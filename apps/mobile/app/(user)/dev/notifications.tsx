@@ -1,0 +1,1292 @@
+/**
+ * NotificationTester Page
+ *
+ * A comprehensive testing page for push notifications in dev/staging environments.
+ *
+ * Features:
+ * - Toggle between REAL push (via centralized system) and local notifications
+ * - Dropdown to select notification types (from registry)
+ * - Multi-channel selection (push, email, chat, sms)
+ * - Mode toggle (cascade vs multi)
+ * - Chat target picker for chat channel
+ * - Email preview with subject and HTML
+ * - Sample payload auto-fill
+ * - Editable payload fields
+ * - Live notification preview (iOS-style banner)
+ * - Test deep link handler directly
+ *
+ * IMPORTANT: The "Real Push" mode sends notifications through the centralized
+ * notification system, which correctly handles environment separation
+ * (staging vs production). This is the recommended way to test notifications
+ * as it mirrors the real production flow.
+ *
+ * The "Local" mode only sends device-local notifications and does NOT test
+ * the actual notification infrastructure.
+ *
+ * Only accessible in dev/staging builds.
+ */
+
+import React, { useState, useEffect } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TextInput,
+  Platform,
+  TouchableOpacity,
+  KeyboardAvoidingView,
+  ActivityIndicator,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as Notifications from 'expo-notifications';
+import { Ionicons } from '@expo/vector-icons';
+import { Card, Button, Select, Modal } from '@components/ui';
+import { NotificationPreview } from '@/components/dev/NotificationPreview';
+import {
+  NOTIFICATION_SAMPLES,
+  getNotificationSample,
+  getNotificationTypeOptions,
+} from '@/components/dev/notification-samples';
+import { useNotifications } from '@/providers/NotificationProvider';
+import { useAuth } from '@/providers/AuthProvider';
+import { Environment } from '@/services/environment';
+import { useDevToolsEscapeHatch } from '@/hooks/useDevToolsEscapeHatch';
+import { UserRoute } from '@components/guards/UserRoute';
+import { useQuery, useAction, useMutation, api } from '@services/api/convex';
+
+// Available notification channels
+type NotificationChannel = 'push' | 'email' | 'chat' | 'sms';
+type SendMode = 'cascade' | 'multi';
+type ChatTarget = 'main' | 'leaders';
+
+// Channel display info
+const CHANNEL_INFO: Record<NotificationChannel, { label: string; icon: string; note?: string }> = {
+  push: { label: 'Push', icon: 'notifications' },
+  email: { label: 'Email', icon: 'mail' },
+  chat: { label: 'Chat', icon: 'chatbubbles' },
+  sms: { label: 'SMS', icon: 'phone-portrait', note: '(Not implemented)' },
+};
+
+export default function NotificationTesterPage() {
+  const insets = useSafeAreaInsets();
+  const { handleNotificationTap, expoPushToken } = useNotifications();
+  const { community, user, token: authToken } = useAuth();
+  const { isEnabled: devToolsEnabled } = useDevToolsEscapeHatch();
+
+  // Form state
+  const [selectedType, setSelectedType] = useState<string>(
+    NOTIFICATION_SAMPLES[0].type
+  );
+  const [title, setTitle] = useState('');
+  const [body, setBody] = useState('');
+  const [groupId, setGroupId] = useState('');
+  const [communityId, setCommunityId] = useState('');
+  const [channelId, setChannelId] = useState('');
+  const [shortId, setShortId] = useState('');
+
+  // Multi-channel options (only for real push mode)
+  const [selectedChannels, setSelectedChannels] = useState<NotificationChannel[]>(['push']);
+  const [sendMode, setSendMode] = useState<SendMode>('cascade');
+  const [chatTarget, setChatTarget] = useState<ChatTarget>('main');
+  const [availableChannels, setAvailableChannels] = useState<NotificationChannel[]>(['push', 'email', 'chat', 'sms']);
+
+  // Email preview state
+  const [showEmailPreview, setShowEmailPreview] = useState(false);
+  const [emailPreviewLoading, setEmailPreviewLoading] = useState(false);
+
+  // Result state
+  const [lastResult, setLastResult] = useState<string | null>(null);
+  const [isSending, setIsSending] = useState(false);
+  const [useRealPush, setUseRealPush] = useState(true); // Default to real push
+
+  // Email preview state for manual fetching
+  const [emailPreviewData, setEmailPreviewData] = useState<{ subject: string; html: string } | null>(null);
+  const [emailPreviewError, setEmailPreviewError] = useState<Error | null>(null);
+  const [emailPreviewFetching, setEmailPreviewFetching] = useState(false);
+
+  // Convex queries and actions
+  const notificationTypesData = useQuery(
+    api.functions.notifications.actions.getNotificationTypes,
+    useRealPush ? {} : "skip"
+  );
+  const typesLoading = useRealPush && notificationTypesData === undefined;
+
+  // Debug query to check token status
+  const tokenDebugData = useQuery(
+    api.functions.notifications.debug.debugTokensForUser,
+    user?.id ? { userId: user.id as any } : "skip"
+  );
+
+  // Convex action for sending test notifications
+  const sendTestNotification = useAction(api.functions.notifications.actions.sendTestNotification);
+
+  // Mutation for re-registering token
+  const registerTokenMutation = useMutation(api.functions.notifications.tokens.registerToken);
+  const [isReregistering, setIsReregistering] = useState(false);
+
+  // Mutation for cleaning up legacy tokens
+  const cleanupLegacyTokensMutation = useMutation(api.functions.notifications.tokens.cleanupLegacyTokens);
+  const [isCleaningUp, setIsCleaningUp] = useState(false);
+
+  // Mutation for toggling push notifications (activates/deactivates tokens)
+  const updatePreferencesMutation = useMutation(api.functions.notifications.preferences.updateChannelPreferences);
+  const [isTogglingPush, setIsTogglingPush] = useState(false);
+
+  // Re-register token with correct environment
+  const handleReregisterToken = async () => {
+    if (!expoPushToken || !user) return;
+
+    setIsReregistering(true);
+    try {
+      // Get auth token from storage
+      const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+      const authToken = await AsyncStorage.getItem('auth_token');
+
+      if (!authToken) {
+        setLastResult('Error: No auth token found');
+        return;
+      }
+
+      await registerTokenMutation({
+        authToken,
+        token: expoPushToken,
+        platform: Platform.OS as 'ios' | 'android' | 'web',
+        bundleId: require('expo-constants').default.expoConfig?.ios?.bundleIdentifier,
+      });
+
+      setLastResult('✅ Token re-registered! Refresh the page to see updated status.');
+    } catch (error) {
+      setLastResult(`Error re-registering token: ${error}`);
+    } finally {
+      setIsReregistering(false);
+    }
+  };
+
+  // Clean up legacy tokens (those without environment)
+  const handleCleanupLegacyTokens = async () => {
+    setIsCleaningUp(true);
+    try {
+      const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+      const authToken = await AsyncStorage.getItem('auth_token');
+
+      if (!authToken) {
+        setLastResult('Error: No auth token found');
+        return;
+      }
+
+      const result = await cleanupLegacyTokensMutation({ authToken });
+      setLastResult(
+        `✅ Cleanup complete!\n` +
+        `Deleted ${result.deletedCount} legacy token(s)\n\n` +
+        `If you still see issues, tap "Re-register Token" to create a fresh token.`
+      );
+    } catch (error) {
+      setLastResult(`Error cleaning up: ${error}`);
+    } finally {
+      setIsCleaningUp(false);
+    }
+  };
+
+  // Toggle push notifications (activates/deactivates tokens for current environment)
+  const handleTogglePush = async (enable: boolean) => {
+    setIsTogglingPush(true);
+    try {
+      const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+      const authToken = await AsyncStorage.getItem('auth_token');
+
+      if (!authToken) {
+        setLastResult('Error: No auth token found');
+        return;
+      }
+
+      await updatePreferencesMutation({
+        token: authToken,
+        push: enable,
+      });
+
+      setLastResult(
+        enable
+          ? '✅ Push notifications enabled! Tokens are now active.'
+          : '✅ Push notifications disabled. Tokens are now inactive.'
+      );
+    } catch (error) {
+      setLastResult(`Error toggling push: ${error}`);
+    } finally {
+      setIsTogglingPush(false);
+    }
+  };
+
+  // Environment check - only show in dev/staging or when escape hatch is enabled
+  const shouldShow = __DEV__ || Environment.isStaging() || devToolsEnabled;
+
+  // Get notification type options - use registry if available, otherwise use local samples
+  const notificationTypeOptions = React.useMemo(() => {
+    if (useRealPush && notificationTypesData?.types) {
+      return notificationTypesData.types.map((t: { type: string }) => ({
+        label: t.type.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()),
+        value: t.type,
+      }));
+    }
+    return getNotificationTypeOptions();
+  }, [useRealPush, notificationTypesData]);
+
+  // Get current notification type definition from registry
+  const currentTypeDefinition = React.useMemo(() => {
+    if (useRealPush && notificationTypesData?.types) {
+      return notificationTypesData.types.find((t: { type: string }) => t.type === selectedType);
+    }
+    return null;
+  }, [useRealPush, notificationTypesData, selectedType]);
+
+  // Update available channels and defaults when notification type changes
+  useEffect(() => {
+    if (currentTypeDefinition) {
+      setAvailableChannels(currentTypeDefinition.availableChannels as NotificationChannel[]);
+      setSelectedChannels(currentTypeDefinition.defaultChannels as NotificationChannel[]);
+      setSendMode(currentTypeDefinition.defaultMode as SendMode);
+    } else {
+      // Reset to defaults for local mode
+      setAvailableChannels(['push', 'email', 'chat', 'sms']);
+      setSelectedChannels(['push']);
+      setSendMode('cascade');
+    }
+  }, [currentTypeDefinition, selectedType]);
+
+  // Auto-fill sample data when notification type changes
+  useEffect(() => {
+    const sample = getNotificationSample(selectedType);
+    if (sample) {
+      setTitle(sample.defaultTitle);
+      setBody(sample.defaultBody);
+
+      // Set default IDs from sample data
+      const sampleData = sample.getData({
+        groupId: '',
+        communityId: community?.id?.toString() || '1',
+        channelId: '',
+        shortId: '',
+      });
+
+      if (sampleData.groupId && !groupId) {
+        setGroupId(sampleData.groupId as string);
+      }
+      if (sampleData.communityId && !communityId) {
+        setCommunityId(sampleData.communityId as string);
+      }
+      if (sampleData.channelId && !channelId) {
+        setChannelId(sampleData.channelId as string);
+      }
+      if (sampleData.shortId && !shortId) {
+        setShortId(sampleData.shortId as string);
+      }
+    }
+  }, [selectedType]);
+
+  // Set community ID from auth context
+  useEffect(() => {
+    if (community?.id && !communityId) {
+      setCommunityId(community.id.toString());
+    }
+  }, [community?.id]);
+
+  // Build notification payload
+  const buildPayload = (): Record<string, unknown> => {
+    const sample = getNotificationSample(selectedType);
+    if (!sample) return { type: selectedType };
+
+    return sample.getData({
+      groupId,
+      communityId,
+      channelId,
+      shortId,
+    });
+  };
+
+  // Toggle channel selection
+  const toggleChannel = (channel: NotificationChannel) => {
+    if (!availableChannels.includes(channel)) return;
+
+    setSelectedChannels((prev) => {
+      if (prev.includes(channel)) {
+        // Don't allow removing the last channel
+        if (prev.length === 1) return prev;
+        return prev.filter((c) => c !== channel);
+      }
+      return [...prev, channel];
+    });
+  };
+
+  // Handle email preview - fetch using convexVanilla since we need on-demand fetching
+  const handleEmailPreview = async () => {
+    setShowEmailPreview(true);
+    setEmailPreviewLoading(true);
+    setEmailPreviewError(null);
+    try {
+      const { convexVanilla } = await import('@services/api/convex');
+      const result = await convexVanilla.query(api.functions.notifications.actions.getEmailPreview, {
+        type: selectedType,
+        data: {
+          title: title || undefined,
+          body: body || undefined,
+          groupId: groupId || undefined,
+          communityId: communityId || undefined,
+          channelId: channelId || undefined,
+          shortId: shortId || undefined,
+        },
+      });
+      setEmailPreviewData(result);
+    } catch (error) {
+      console.error('Error fetching email preview:', error);
+      setEmailPreviewError(error instanceof Error ? error : new Error(String(error)));
+    } finally {
+      setEmailPreviewLoading(false);
+    }
+  };
+
+  // Send notification (real push via API or local)
+  const handleSendNotification = async () => {
+    setIsSending(true);
+    setLastResult(null);
+
+    try {
+      const payload = buildPayload();
+
+      if (useRealPush) {
+        // Use Convex action for multi-channel test endpoint
+        if (!user?.id) {
+          throw new Error('User not authenticated - cannot send push notification');
+        }
+
+        if (!authToken) {
+          throw new Error('No auth token available');
+        }
+
+        const result = await sendTestNotification({
+          token: authToken,
+          userId: user.id as any, // Convex ID
+          type: selectedType,
+          channels: selectedChannels,
+          mode: sendMode,
+          data: {
+            title: title || undefined,
+            body: body || undefined,
+            groupId: groupId || undefined,
+            communityId: communityId || undefined,
+            channelId: channelId || undefined,
+            shortId: shortId || undefined,
+          },
+          chatTarget: selectedChannels.includes('chat') ? chatTarget : undefined,
+        });
+
+        setLastResult(
+          `🚀 REAL Push Notification Sent!\n\n` +
+          `Environment: ${result.environment}\n` +
+          `Type: ${result.notificationType}\n` +
+          `Mode: ${sendMode}\n` +
+          `Success: ${result.success}\n` +
+          `Channels Attempted: ${result.channelsAttempted.join(', ') || 'none'}\n` +
+          `Channels Succeeded: ${result.channelsSucceeded.join(', ') || 'none'}\n` +
+          (result.errors.length > 0 ? `\nErrors:\n${result.errors.map((e: { channel: string; error: string }) => `  - ${e.channel}: ${e.error}`).join('\n')}\n` : '') +
+          `\nPayload:\n${JSON.stringify({ type: selectedType, channels: selectedChannels, mode: sendMode, data: { title, body } }, null, 2)}`
+        );
+      } else {
+        // Send LOCAL notification (for testing deep links only)
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title,
+            body,
+            data: payload,
+          },
+          trigger: null, // immediate
+        });
+
+        setLastResult(
+          `📱 Local Notification Sent!\n\n` +
+          `⚠️ Note: This is a LOCAL notification, not a real push.\n` +
+          `It does NOT test the centralized notification system.\n\n` +
+          `Title: ${title}\nBody: ${body}\n\nPayload:\n${JSON.stringify(payload, null, 2)}`
+        );
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      setLastResult(`Error sending notification: ${errorMessage}`);
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  // Test deep link handler directly
+  const handleTestDeepLink = async () => {
+    setLastResult(null);
+
+    try {
+      const payload = buildPayload();
+      setLastResult(
+        `Testing deep link...\n\nPayload:\n${JSON.stringify(payload, null, 2)}`
+      );
+
+      await handleNotificationTap(payload);
+
+      setLastResult(
+        (prev) => `${prev}\n\nDeep link triggered successfully!`
+      );
+    } catch (error) {
+      setLastResult(`Error testing deep link: ${error}`);
+    }
+  };
+
+  // Preview tap handler - test deep link
+  const handlePreviewPress = () => {
+    handleTestDeepLink();
+  };
+
+  if (!shouldShow) {
+    return (
+      <UserRoute>
+        <View style={[styles.container, { paddingTop: insets.top }]}>
+          <Text style={styles.errorText}>
+            This page is only available in dev/staging builds.
+          </Text>
+        </View>
+      </UserRoute>
+    );
+  }
+
+  return (
+    <UserRoute>
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 64 : 0}
+      >
+        <ScrollView
+          style={styles.scrollView}
+          contentContainerStyle={[
+            styles.scrollContent,
+            { paddingBottom: insets.bottom + 24 },
+          ]}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* Header */}
+          <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
+            <Text style={styles.headerTitle}>Notification Tester</Text>
+            <Text style={styles.headerSubtitle}>
+              Test push notifications and deep links
+            </Text>
+          </View>
+
+          {/* Environment Info */}
+          <Card style={styles.section}>
+            <Text style={styles.sectionTitle}>Environment</Text>
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>Environment:</Text>
+              <Text style={styles.infoValue}>
+                {Environment.isStaging() ? 'Staging' : 'Development'}
+              </Text>
+            </View>
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>Community:</Text>
+              <Text style={styles.infoValue}>
+                {community?.name || 'None'} (ID: {community?.id || 'N/A'})
+              </Text>
+            </View>
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>User ID:</Text>
+              <Text
+                style={[styles.infoValue, styles.tokenText]}
+                numberOfLines={1}
+              >
+                {user?.id || 'Not authenticated'}
+              </Text>
+            </View>
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>Push Token:</Text>
+              <Text
+                style={[styles.infoValue, styles.tokenText]}
+                numberOfLines={1}
+              >
+                {expoPushToken || 'Not registered'}
+              </Text>
+            </View>
+            {tokenDebugData && (
+              <>
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoLabel}>Backend Env:</Text>
+                  <Text style={styles.infoValue}>
+                    {tokenDebugData.currentEnvironment}
+                  </Text>
+                </View>
+
+                {/* Push State - based on active tokens (single source of truth) */}
+                <View style={[styles.infoRow, { backgroundColor: tokenDebugData.pushEnabled ? '#E8F5E9' : '#FFEBEE', marginTop: 8, borderRadius: 8, padding: 12 }]}>
+                  <Text style={[styles.infoLabel, { fontWeight: '600' }]}>Push Notifications:</Text>
+                  <Text style={[
+                    styles.infoValue,
+                    {
+                      color: tokenDebugData.pushEnabled ? '#34C759' : '#FF3B30',
+                      fontWeight: '600',
+                    }
+                  ]}>
+                    {tokenDebugData.pushEnabled ? 'ENABLED' : 'DISABLED'}
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 12, color: '#666', marginTop: 4, marginBottom: 8 }}>
+                  {tokenDebugData.pushEnabledReason}
+                </Text>
+
+                {/* Action buttons based on suggested action */}
+                {tokenDebugData.suggestedAction === 'cleanup_legacy' && (
+                  <Button
+                    onPress={handleCleanupLegacyTokens}
+                    loading={isCleaningUp}
+                    variant="primary"
+                    style={{ marginTop: 8 }}
+                  >
+                    Clean Up {tokenDebugData.legacyTokenCount} Legacy Token(s)
+                  </Button>
+                )}
+                {tokenDebugData.suggestedAction === 'enable_push' && (
+                  <Button
+                    onPress={() => handleTogglePush(true)}
+                    loading={isTogglingPush}
+                    variant="primary"
+                    style={{ marginTop: 8 }}
+                  >
+                    Enable Push Notifications
+                  </Button>
+                )}
+                {tokenDebugData.pushEnabled && (
+                  <Button
+                    onPress={() => handleTogglePush(false)}
+                    loading={isTogglingPush}
+                    variant="secondary"
+                    style={{ marginTop: 8 }}
+                  >
+                    Disable Push Notifications
+                  </Button>
+                )}
+
+                <View style={[styles.infoRow, { marginTop: 12 }]}>
+                  <Text style={styles.infoLabel}>Diagnosis:</Text>
+                  <Text style={[
+                    styles.infoValue,
+                    { color: tokenDebugData.diagnosis.startsWith('OK') ? '#34C759' : '#FF3B30' }
+                  ]}>
+                    {tokenDebugData.diagnosis}
+                  </Text>
+                </View>
+                {tokenDebugData.tokens.map((t: any, i: number) => (
+                  <View key={i} style={[styles.infoRow, { flexDirection: 'column', alignItems: 'flex-start' }]}>
+                    <Text style={styles.tokenText}>
+                      Token {i + 1}: {t.environment} / {t.platform} / {t.isActive ? 'active' : 'inactive'}
+                      {t.matchesCurrentEnv ? ' ✓' : ' ✗'}
+                    </Text>
+                  </View>
+                ))}
+                {!tokenDebugData.diagnosis.startsWith('OK') && expoPushToken && (
+                  <Button
+                    onPress={handleReregisterToken}
+                    loading={isReregistering}
+                    variant="secondary"
+                    style={{ marginTop: 12 }}
+                  >
+                    Fix: Re-register Token
+                  </Button>
+                )}
+              </>
+            )}
+          </Card>
+
+          {/* Notification Type Selector */}
+          <Card style={styles.section}>
+            <Text style={styles.sectionTitle}>Notification Type</Text>
+            {typesLoading && useRealPush ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="small" color="#666" />
+                <Text style={styles.loadingText}>Loading notification types...</Text>
+              </View>
+            ) : (
+              <>
+                <Select
+                  label="Type"
+                  placeholder="Select notification type"
+                  value={selectedType}
+                  options={notificationTypeOptions}
+                  onSelect={(value) => setSelectedType(value as string)}
+                  searchable
+                />
+                {getNotificationSample(selectedType) && (
+                  <Text style={styles.typeDescription}>
+                    {getNotificationSample(selectedType)?.description}
+                  </Text>
+                )}
+                {currentTypeDefinition && (
+                  <Text style={styles.typeChannels}>
+                    Supports: {currentTypeDefinition.availableChannels.join(', ')}
+                  </Text>
+                )}
+              </>
+            )}
+          </Card>
+
+          {/* Multi-Channel Options (only for real push mode) */}
+          {useRealPush && (
+            <Card style={styles.section}>
+              <Text style={styles.sectionTitle}>Channels & Mode</Text>
+
+              {/* Channel Selection */}
+              <Text style={styles.inputLabel}>Select Channels</Text>
+              <View style={styles.channelGrid}>
+                {(Object.keys(CHANNEL_INFO) as NotificationChannel[]).map((channel) => {
+                  const info = CHANNEL_INFO[channel];
+                  const isSelected = selectedChannels.includes(channel);
+                  const isAvailable = availableChannels.includes(channel);
+
+                  return (
+                    <TouchableOpacity
+                      key={channel}
+                      style={[
+                        styles.channelChip,
+                        isSelected && styles.channelChipSelected,
+                        !isAvailable && styles.channelChipDisabled,
+                      ]}
+                      onPress={() => toggleChannel(channel)}
+                      disabled={!isAvailable}
+                    >
+                      <Ionicons
+                        name={info.icon as any}
+                        size={16}
+                        color={isSelected ? '#fff' : isAvailable ? '#666' : '#ccc'}
+                      />
+                      <Text
+                        style={[
+                          styles.channelChipText,
+                          isSelected && styles.channelChipTextSelected,
+                          !isAvailable && styles.channelChipTextDisabled,
+                        ]}
+                      >
+                        {info.label}
+                        {info.note && <Text style={styles.channelNote}> {info.note}</Text>}
+                      </Text>
+                      {isSelected && (
+                        <Ionicons name="checkmark" size={14} color="#fff" />
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* Mode Toggle */}
+              <Text style={[styles.inputLabel, { marginTop: 16 }]}>Send Mode</Text>
+              <View style={styles.modeToggle}>
+                <TouchableOpacity
+                  style={[
+                    styles.modeOption,
+                    sendMode === 'cascade' && styles.modeOptionSelected,
+                  ]}
+                  onPress={() => setSendMode('cascade')}
+                >
+                  <Text
+                    style={[
+                      styles.modeOptionText,
+                      sendMode === 'cascade' && styles.modeOptionTextSelected,
+                    ]}
+                  >
+                    Cascade
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.modeOption,
+                    sendMode === 'multi' && styles.modeOptionSelected,
+                  ]}
+                  onPress={() => setSendMode('multi')}
+                >
+                  <Text
+                    style={[
+                      styles.modeOptionText,
+                      sendMode === 'multi' && styles.modeOptionTextSelected,
+                    ]}
+                  >
+                    Multi
+                  </Text>
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.modeDescription}>
+                {sendMode === 'cascade'
+                  ? 'Stops on first successful channel'
+                  : 'Sends to all selected channels'}
+              </Text>
+
+              {/* Chat Target (only when chat is selected) */}
+              {selectedChannels.includes('chat') && (
+                <>
+                  <Text style={[styles.inputLabel, { marginTop: 16 }]}>Chat Target</Text>
+                  <View style={styles.modeToggle}>
+                    <TouchableOpacity
+                      style={[
+                        styles.modeOption,
+                        chatTarget === 'main' && styles.modeOptionSelected,
+                      ]}
+                      onPress={() => setChatTarget('main')}
+                    >
+                      <Text
+                        style={[
+                          styles.modeOptionText,
+                          chatTarget === 'main' && styles.modeOptionTextSelected,
+                        ]}
+                      >
+                        Main Chat
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.modeOption,
+                        chatTarget === 'leaders' && styles.modeOptionSelected,
+                      ]}
+                      onPress={() => setChatTarget('leaders')}
+                    >
+                      <Text
+                        style={[
+                          styles.modeOptionText,
+                          chatTarget === 'leaders' && styles.modeOptionTextSelected,
+                        ]}
+                      >
+                        Leaders Chat
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
+
+              {/* Email Preview Button (only when email is selected) */}
+              {selectedChannels.includes('email') && availableChannels.includes('email') && (
+                <Button
+                  onPress={handleEmailPreview}
+                  variant="secondary"
+                  style={{ marginTop: 16 }}
+                >
+                  Preview Email
+                </Button>
+              )}
+            </Card>
+          )}
+
+          {/* Content Fields */}
+          <Card style={styles.section}>
+            <Text style={styles.sectionTitle}>Notification Content</Text>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Title</Text>
+              <TextInput
+                style={styles.input}
+                value={title}
+                onChangeText={setTitle}
+                placeholder="Notification title"
+                placeholderTextColor="#999"
+              />
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Body</Text>
+              <TextInput
+                style={[styles.input, styles.inputMultiline]}
+                value={body}
+                onChangeText={setBody}
+                placeholder="Notification body"
+                placeholderTextColor="#999"
+                multiline
+                numberOfLines={3}
+              />
+            </View>
+          </Card>
+
+          {/* Data Fields */}
+          <Card style={styles.section}>
+            <Text style={styles.sectionTitle}>Payload Data</Text>
+
+            <View style={styles.inputRow}>
+              <View style={styles.inputHalf}>
+                <Text style={styles.inputLabel}>Group ID</Text>
+                <TextInput
+                  style={styles.input}
+                  value={groupId}
+                  onChangeText={setGroupId}
+                  placeholder="abc123-uuid"
+                  placeholderTextColor="#999"
+                />
+              </View>
+
+              <View style={styles.inputHalf}>
+                <Text style={styles.inputLabel}>Community ID</Text>
+                <TextInput
+                  style={styles.input}
+                  value={communityId}
+                  onChangeText={setCommunityId}
+                  placeholder="1"
+                  placeholderTextColor="#999"
+                  keyboardType="numeric"
+                />
+              </View>
+            </View>
+
+            <View style={styles.inputRow}>
+              <View style={styles.inputHalf}>
+                <Text style={styles.inputLabel}>Channel ID</Text>
+                <TextInput
+                  style={styles.input}
+                  value={channelId}
+                  onChangeText={setChannelId}
+                  placeholder="Optional"
+                  placeholderTextColor="#999"
+                />
+              </View>
+
+              <View style={styles.inputHalf}>
+                <Text style={styles.inputLabel}>Short ID (Event)</Text>
+                <TextInput
+                  style={styles.input}
+                  value={shortId}
+                  onChangeText={setShortId}
+                  placeholder="abc123"
+                  placeholderTextColor="#999"
+                />
+              </View>
+            </View>
+          </Card>
+
+          {/* Live Preview */}
+          <Card style={styles.section}>
+            <Text style={styles.sectionTitle}>Preview</Text>
+            <Text style={styles.previewHint}>
+              Tap the preview to test the deep link
+            </Text>
+            <NotificationPreview
+              title={title || 'Notification Title'}
+              body={body || 'Notification body text...'}
+              onPress={handlePreviewPress}
+            />
+          </Card>
+
+          {/* Action Buttons */}
+          <Card style={styles.section}>
+            <Text style={styles.sectionTitle}>Actions</Text>
+
+            {/* Toggle for Real vs Local Push */}
+            <View style={styles.toggleRow}>
+              <View style={styles.toggleInfo}>
+                <Text style={styles.toggleLabel}>
+                  {useRealPush ? '🚀 Real Push' : '📱 Local Only'}
+                </Text>
+                <Text style={styles.toggleDescription}>
+                  {useRealPush
+                    ? 'Uses centralized notification system (recommended)'
+                    : 'Local notification - does NOT test real flow'}
+                </Text>
+              </View>
+              <Button
+                onPress={() => setUseRealPush(!useRealPush)}
+                variant="secondary"
+                style={styles.toggleButton}
+              >
+                {useRealPush ? 'Switch to Local' : 'Switch to Real'}
+              </Button>
+            </View>
+
+            <Button
+              onPress={handleSendNotification}
+              loading={isSending}
+              style={styles.actionButton}
+            >
+              {useRealPush ? 'Send Real Push Notification' : 'Send Local Notification'}
+            </Button>
+
+            <Button
+              onPress={handleTestDeepLink}
+              variant="secondary"
+              style={styles.actionButton}
+            >
+              Test Deep Link Only
+            </Button>
+          </Card>
+
+          {/* Result Display */}
+          {lastResult && (
+            <Card style={styles.section}>
+              <Text style={styles.sectionTitle}>Result</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={styles.resultScroll}
+              >
+                <Text style={styles.resultText}>{lastResult}</Text>
+              </ScrollView>
+            </Card>
+          )}
+        </ScrollView>
+      </KeyboardAvoidingView>
+
+      {/* Email Preview Modal */}
+      <Modal
+        visible={showEmailPreview}
+        onClose={() => setShowEmailPreview(false)}
+        title="Email Preview"
+      >
+        {emailPreviewLoading || emailPreviewFetching ? (
+          <View style={styles.emailPreviewLoading}>
+            <ActivityIndicator size="large" color="#666" />
+            <Text style={styles.loadingText}>Loading email preview...</Text>
+          </View>
+        ) : emailPreviewError ? (
+          <View style={styles.emailPreviewError}>
+            <Ionicons name="alert-circle" size={48} color="#FF3B30" />
+            <Text style={styles.emailPreviewErrorText}>
+              Failed to load email preview.{'\n'}
+              {emailPreviewError.message || 'Make sure the notification type has an email formatter.'}
+            </Text>
+          </View>
+        ) : emailPreviewData ? (
+          <View style={styles.emailPreviewContent}>
+            <View style={styles.emailSubjectRow}>
+              <Text style={styles.emailSubjectLabel}>Subject:</Text>
+              <Text style={styles.emailSubjectValue}>{emailPreviewData.subject}</Text>
+            </View>
+            <Text style={styles.emailHtmlLabel}>HTML Preview:</Text>
+            <ScrollView style={styles.emailHtmlScroll}>
+              <Text style={styles.emailHtmlText}>{emailPreviewData.html}</Text>
+            </ScrollView>
+            <Text style={styles.emailHtmlNote}>
+              Note: Install react-native-webview for rendered preview
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.emailPreviewError}>
+            <Ionicons name="alert-circle" size={48} color="#FF3B30" />
+            <Text style={styles.emailPreviewErrorText}>
+              Failed to load email preview.{'\n'}
+              Make sure the notification type has an email formatter.
+            </Text>
+          </View>
+        )}
+      </Modal>
+    </UserRoute>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#f5f5f5',
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingHorizontal: 16,
+  },
+  header: {
+    marginBottom: 16,
+    paddingHorizontal: 4,
+  },
+  headerTitle: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  headerSubtitle: {
+    fontSize: 15,
+    color: '#666',
+    marginTop: 4,
+  },
+  section: {
+    marginBottom: 16,
+    padding: 16,
+  },
+  sectionTitle: {
+    fontSize: 17,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 12,
+  },
+  infoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  infoLabel: {
+    fontSize: 14,
+    color: '#666',
+  },
+  infoValue: {
+    fontSize: 14,
+    color: '#333',
+    fontWeight: '500',
+    flex: 1,
+    textAlign: 'right',
+    marginLeft: 12,
+  },
+  tokenText: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontSize: 11,
+  },
+  loadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+  },
+  loadingText: {
+    fontSize: 14,
+    color: '#666',
+    marginLeft: 8,
+  },
+  typeDescription: {
+    fontSize: 13,
+    color: '#666',
+    fontStyle: 'italic',
+    marginTop: 8,
+  },
+  typeChannels: {
+    fontSize: 12,
+    color: '#007AFF',
+    marginTop: 4,
+  },
+  inputGroup: {
+    marginBottom: 16,
+  },
+  inputRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 16,
+  },
+  inputHalf: {
+    flex: 1,
+  },
+  inputLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#666',
+    marginBottom: 6,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    color: '#333',
+    backgroundColor: '#fafafa',
+  },
+  inputMultiline: {
+    minHeight: 80,
+    textAlignVertical: 'top',
+  },
+  // Channel selection styles
+  channelGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 8,
+  },
+  channelChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    backgroundColor: '#f0f0f0',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    gap: 6,
+  },
+  channelChipSelected: {
+    backgroundColor: '#007AFF',
+    borderColor: '#007AFF',
+  },
+  channelChipDisabled: {
+    backgroundColor: '#f5f5f5',
+    borderColor: '#e5e5e5',
+    opacity: 0.6,
+  },
+  channelChipText: {
+    fontSize: 14,
+    color: '#333',
+    fontWeight: '500',
+  },
+  channelChipTextSelected: {
+    color: '#fff',
+  },
+  channelChipTextDisabled: {
+    color: '#999',
+  },
+  channelNote: {
+    fontSize: 11,
+    color: '#999',
+  },
+  // Mode toggle styles
+  modeToggle: {
+    flexDirection: 'row',
+    backgroundColor: '#f0f0f0',
+    borderRadius: 8,
+    padding: 4,
+    marginTop: 8,
+  },
+  modeOption: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  modeOptionSelected: {
+    backgroundColor: '#fff',
+    ...Platform.select({
+      web: {
+        boxShadow: '0px 2px 4px rgba(0, 0, 0, 0.1)',
+      },
+      default: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 2,
+      },
+    }),
+  },
+  modeOptionText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#666',
+  },
+  modeOptionTextSelected: {
+    color: '#333',
+  },
+  modeDescription: {
+    fontSize: 12,
+    color: '#666',
+    fontStyle: 'italic',
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  previewHint: {
+    fontSize: 12,
+    color: '#999',
+    marginBottom: 12,
+    fontStyle: 'italic',
+  },
+  actionButton: {
+    marginBottom: 12,
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#f0f7ff',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+  },
+  toggleInfo: {
+    flex: 1,
+    marginRight: 12,
+  },
+  toggleLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#333',
+  },
+  toggleDescription: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 2,
+  },
+  toggleButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  resultScroll: {
+    maxHeight: 200,
+  },
+  resultText: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontSize: 12,
+    color: '#333',
+    backgroundColor: '#f5f5f5',
+    padding: 12,
+    borderRadius: 8,
+    minWidth: '100%',
+  },
+  errorText: {
+    fontSize: 16,
+    color: '#FF3B30',
+    textAlign: 'center',
+    padding: 20,
+  },
+  // Email preview modal styles
+  emailPreviewLoading: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 40,
+  },
+  emailPreviewContent: {
+    flex: 1,
+  },
+  emailSubjectRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 16,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  emailSubjectLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#666',
+    marginRight: 8,
+  },
+  emailSubjectValue: {
+    fontSize: 14,
+    color: '#333',
+    flex: 1,
+  },
+  emailHtmlLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#666',
+    marginBottom: 8,
+  },
+  emailHtmlScroll: {
+    maxHeight: 300,
+    backgroundColor: '#f5f5f5',
+    borderRadius: 8,
+    padding: 12,
+  },
+  emailHtmlText: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontSize: 11,
+    color: '#333',
+  },
+  emailHtmlNote: {
+    fontSize: 11,
+    color: '#999',
+    fontStyle: 'italic',
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  emailPreviewError: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 40,
+  },
+  emailPreviewErrorText: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+    marginTop: 16,
+  },
+});

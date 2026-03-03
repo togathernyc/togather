@@ -1,0 +1,31 @@
+name: Main Production Builds
+
+# NOTE: Native builds are triggered via GitHub Actions (.github/workflows/eas-build.yml)
+# to control costs ($2/build). This workflow can be run manually if needed.
+# Web deployment is still automatic (free).
+
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  # Native builds disabled - use GitHub Actions "EAS Build" workflow instead
+  # See docs/setup/EAS_BUILDS.md for details
+  #
+  # build_ios:
+  #   type: build
+  #   params:
+  #     platform: ios
+  #     profile: production
+  # submit_ios:
+  #   type: submit
+  #   needs: [build_ios]
+  #   params:
+  #     build_id: ${{ needs.build_ios.outputs.build_id }}
+
+  # Web deployment is free, keep it automatic
+  deploy_web:
+    type: deploy
+    params:
+      platform: web
+      prod: true

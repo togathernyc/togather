@@ -1,0 +1,1 @@
+export { AccessPromptScreen } from "./AccessPromptScreen";

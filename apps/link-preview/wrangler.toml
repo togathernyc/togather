@@ -1,0 +1,42 @@
+# Togather Link Preview Worker - Production
+#
+# This worker intercepts production traffic and serves OG meta tags for social
+# media crawlers while routing users to the appropriate destination.
+#
+# Deployment:
+#   npx wrangler deploy                    # Deploy to production
+#   npx wrangler deploy -c wrangler.staging.toml  # Deploy to staging
+#
+# Set secrets:
+#   echo "<your-convex-site-url>" | npx wrangler secret put CONVEX_SITE_URL
+#
+# Note: Community subdomains (fount.togather.nyc, etc.) use production backend.
+#       Staging uses staging.togather.nyc with separate worker.
+
+name = "togather-link-preview"
+main = "cloudflare-worker.js"
+compatibility_date = "2024-01-01"
+workers_dev = true
+
+# Production Routes
+# - Root domain (togather.nyc)
+# - www subdomain
+# - All community subdomains (*.togather.nyc EXCEPT staging)
+#
+# Note: Cloudflare routes are matched by specificity. The staging worker
+# (wrangler.staging.toml) has a more specific route for staging.togather.nyc
+# which takes precedence over the wildcard.
+
+[[routes]]
+pattern = "togather.nyc/*"
+zone_name = "togather.nyc"
+
+[[routes]]
+pattern = "www.togather.nyc/*"
+zone_name = "togather.nyc"
+
+# Wildcard for community subdomains (fount.togather.nyc, demo.togather.nyc, etc.)
+# The staging worker's more specific route takes precedence for staging.togather.nyc
+[[routes]]
+pattern = "*.togather.nyc/*"
+zone_name = "togather.nyc"

@@ -1,0 +1,70 @@
+{
+  "cli": {
+    "version": ">= 5.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "staging": {
+      "distribution": "store",
+      "channel": "staging",
+      "environment": "preview",
+      "node": "20.0.0",
+      "autoIncrement": true,
+      "prebuildCommand": "npx expo prebuild --clean",
+      "env": {
+        "COREPACK_ENABLE_STRICT": "0",
+        "EXPO_USE_PNPM": "1",
+        "APP_VARIANT": "staging"
+      },
+      "ios": {
+        "simulator": false,
+        "credentialsSource": "remote"
+      },
+      "android": {
+        "buildType": "apk",
+        "credentialsSource": "remote"
+      }
+    },
+    "production": {
+      "autoIncrement": true,
+      "channel": "production",
+      "environment": "production",
+      "node": "20.0.0",
+      "prebuildCommand": "npx expo prebuild --clean",
+      "env": {
+        "COREPACK_ENABLE_STRICT": "0",
+        "EXPO_USE_PNPM": "1"
+      },
+      "ios": {
+        "simulator": false,
+        "credentialsSource": "remote"
+      },
+      "android": {
+        "buildType": "app-bundle",
+        "credentialsSource": "remote"
+      }
+    },
+    "production-apk": {
+      "extends": "production",
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk",
+        "credentialsSource": "remote"
+      }
+    }
+  },
+  "submit": {
+    "staging": {
+      "ios": {
+        "ascAppId": "ASC_STAGING_APP_ID",
+        "bundleIdentifier": "life.togather.staging"
+      }
+    },
+    "production": {
+      "ios": {
+        "ascAppId": "ASC_PRODUCTION_APP_ID",
+        "bundleIdentifier": "app.gatherful.mobile"
+      }
+    }
+  }
+}

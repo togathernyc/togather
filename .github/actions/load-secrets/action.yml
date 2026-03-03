@@ -1,0 +1,88 @@
+name: "Load Infisical Secrets"
+description: "Fetches secrets from Infisical using Universal Auth and exports them as environment variables"
+
+inputs:
+  client-id:
+    description: "Infisical Universal Auth Client ID"
+    required: true
+  client-secret:
+    description: "Infisical Universal Auth Client Secret"
+    required: true
+  environment:
+    description: "Infisical environment (dev, staging, prod)"
+    required: false
+    default: "dev"
+  export-to-file:
+    description: "Also export secrets to .env file"
+    required: false
+    default: "false"
+
+outputs:
+  env-file:
+    description: "Path to exported .env file (if export-to-file is true)"
+    value: ${{ steps.export.outputs.env-file }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Infisical CLI
+      shell: bash
+      run: |
+        if ! command -v infisical &> /dev/null; then
+          curl -1sLf 'https://artifacts-cli.infisical.com/setup.deb.sh' | sudo -E bash
+          sudo apt-get install -y infisical
+        fi
+
+    - name: Fetch and export secrets
+      id: export
+      shell: bash
+      env:
+        INFISICAL_CLIENT_ID: ${{ inputs.client-id }}
+        INFISICAL_CLIENT_SECRET: ${{ inputs.client-secret }}
+        INFISICAL_ENV: ${{ inputs.environment }}
+        EXPORT_FILE: ${{ inputs.export-to-file }}
+      run: |
+        if [ -z "$INFISICAL_WORKSPACE_ID" ]; then
+          echo "::error::INFISICAL_WORKSPACE_ID is not set. Pass it as an environment variable."
+          exit 1
+        fi
+        PROJECT_ID="$INFISICAL_WORKSPACE_ID"
+
+        # Login with Universal Auth to get access token
+        export INFISICAL_TOKEN=$(infisical login \
+          --method=universal-auth \
+          --client-id="$INFISICAL_CLIENT_ID" \
+          --client-secret="$INFISICAL_CLIENT_SECRET" \
+          --silent \
+          --plain)
+
+        # Fetch secrets
+        SECRETS=$(infisical export \
+          --token="$INFISICAL_TOKEN" \
+          --projectId="$PROJECT_ID" \
+          --env="$INFISICAL_ENV" \
+          --format=dotenv)
+
+        # Export each secret to GITHUB_ENV (makes them available to subsequent steps)
+        # Note: Using parameter expansion to handle values containing '=' characters
+        while IFS= read -r line; do
+          # Skip empty lines
+          [ -z "$line" ] && continue
+          # Extract key (everything before first =)
+          key="${line%%=*}"
+          # Extract value (everything after first =)
+          value="${line#*=}"
+          # Remove quotes from value
+          value=$(echo "$value" | sed "s/^['\"]//;s/['\"]$//")
+          # Export to GitHub environment
+          echo "$key=$value" >> $GITHUB_ENV
+        done <<< "$SECRETS"
+
+        echo "✓ Loaded secrets from Infisical ($INFISICAL_ENV)"
+
+        # Optionally export to file
+        if [ "$EXPORT_FILE" = "true" ]; then
+          echo "$SECRETS" > .env.infisical
+          echo "env-file=.env.infisical" >> $GITHUB_OUTPUT
+          echo "✓ Exported to .env.infisical"
+        fi

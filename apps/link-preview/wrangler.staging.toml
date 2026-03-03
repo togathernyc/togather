@@ -1,0 +1,26 @@
+# Togather Link Preview Worker - Staging
+#
+# This worker intercepts staging traffic and serves OG meta tags for social
+# media crawlers while routing users to the appropriate destination.
+#
+# Deployment:
+#   npx wrangler deploy -c wrangler.staging.toml
+#
+# Set secrets:
+#   echo "<your-convex-site-url>" | npx wrangler secret put CONVEX_SITE_URL -c wrangler.staging.toml
+#
+# Note: This worker has a more specific route than the production wildcard,
+#       so it takes precedence for staging.togather.nyc traffic.
+
+name = "togather-link-preview-staging"
+main = "cloudflare-worker.js"
+compatibility_date = "2024-01-01"
+workers_dev = true
+
+# Staging Routes
+# Only handles staging.togather.nyc
+# This specific route takes precedence over the production wildcard (*.togather.nyc/*)
+
+[[routes]]
+pattern = "staging.togather.nyc/*"
+zone_name = "togather.nyc"

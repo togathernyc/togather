@@ -1,0 +1,29 @@
+# Terraform state files - NEVER commit these (contain secrets)
+*.tfstate
+*.tfstate.*
+.terraform.tfstate.lock.info
+
+# Terraform directory
+.terraform/
+
+# Crash log files
+crash.log
+crash.*.log
+
+# Variable files that may contain sensitive data
+*.tfvars
+*.tfvars.json
+!example.tfvars
+
+# Override files
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# CLI configuration files
+.terraformrc
+terraform.rc
+
+# Plan files
+*.tfplan

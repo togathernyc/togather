@@ -1,0 +1,141 @@
+/**
+ * Tests for StatusBar component
+ */
+import React from 'react';
+import { render } from '@testing-library/react-native';
+import { StatusBar } from '../StatusBar';
+
+// Mock connection and OTA providers
+let mockConnectionStatus: any = {
+  status: 'connected',
+  isNetworkAvailable: true,
+  isInternetReachable: true,
+};
+let mockOTAStatus: any = { status: 'idle', errorMessage: null };
+
+jest.mock('@providers/ConnectionProvider', () => ({
+  useConnectionStatus: jest.fn(() => mockConnectionStatus),
+}));
+
+jest.mock('@providers/OTAUpdateProvider', () => ({
+  useOTAUpdateStatus: jest.fn(() => mockOTAStatus),
+}));
+
+jest.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => ({ top: 47, bottom: 34, left: 0, right: 0 }),
+}));
+
+jest.mock('expo-updates', () => ({
+  reloadAsync: jest.fn(),
+}));
+
+describe('StatusBar', () => {
+  beforeEach(() => {
+    mockConnectionStatus = {
+      status: 'connected',
+      isNetworkAvailable: true,
+      isInternetReachable: true,
+    };
+    mockOTAStatus = { status: 'idle', errorMessage: null };
+  });
+
+  it('is hidden when connected and OTA is idle', () => {
+    const { queryByText } = render(<StatusBar />);
+    expect(queryByText('No internet connection')).toBeNull();
+    expect(queryByText('Reconnecting...')).toBeNull();
+    expect(queryByText('Connected')).toBeNull();
+    expect(queryByText('Downloading update...')).toBeNull();
+  });
+
+  it('shows disconnected state', () => {
+    mockConnectionStatus = {
+      status: 'disconnected',
+      isNetworkAvailable: false,
+      isInternetReachable: false,
+    };
+    const { getByText, getByTestId } = render(<StatusBar />);
+    expect(getByTestId('status-bar')).toBeTruthy();
+    expect(getByText('No internet connection')).toBeTruthy();
+  });
+
+  it('shows no internet reachable state', () => {
+    mockConnectionStatus = {
+      status: 'connected',
+      isNetworkAvailable: true,
+      isInternetReachable: false,
+    };
+    const { getByText, getByTestId } = render(<StatusBar />);
+    expect(getByTestId('status-bar')).toBeTruthy();
+    expect(getByText('No internet')).toBeTruthy();
+  });
+
+  it('shows slow connection state', () => {
+    mockConnectionStatus = {
+      ...mockConnectionStatus,
+      status: 'slow',
+    };
+    const { getByText, getByTestId } = render(<StatusBar />);
+    expect(getByTestId('status-bar')).toBeTruthy();
+    expect(getByText('Slow connection')).toBeTruthy();
+  });
+
+  it('shows reconnecting state', () => {
+    mockConnectionStatus = {
+      ...mockConnectionStatus,
+      status: 'reconnecting',
+    };
+    const { getByText, getByTestId } = render(<StatusBar />);
+    expect(getByTestId('status-bar')).toBeTruthy();
+    expect(getByText('Reconnecting...')).toBeTruthy();
+  });
+
+  it('shows reconnected state', () => {
+    mockConnectionStatus = {
+      ...mockConnectionStatus,
+      status: 'reconnected',
+    };
+    const { getByText, getByTestId } = render(<StatusBar />);
+    expect(getByTestId('status-bar')).toBeTruthy();
+    expect(getByText('Connected')).toBeTruthy();
+  });
+
+  it('shows OTA downloading state', () => {
+    mockOTAStatus = { status: 'downloading', errorMessage: null };
+    const { getByText, getByTestId } = render(<StatusBar />);
+    expect(getByTestId('status-bar')).toBeTruthy();
+    expect(getByText('Downloading update...')).toBeTruthy();
+  });
+
+  it('shows OTA ready state', () => {
+    mockOTAStatus = { status: 'ready', errorMessage: null };
+    const { getByText, getByTestId } = render(<StatusBar />);
+    expect(getByTestId('status-bar')).toBeTruthy();
+    expect(getByText('Update ready — tap to restart')).toBeTruthy();
+  });
+
+  it('shows OTA checking state', () => {
+    mockOTAStatus = { status: 'checking', errorMessage: null };
+    const { getByText, getByTestId } = render(<StatusBar />);
+    expect(getByTestId('status-bar')).toBeTruthy();
+    expect(getByText('Checking for updates...')).toBeTruthy();
+  });
+
+  it('shows OTA error state', () => {
+    mockOTAStatus = { status: 'error', errorMessage: 'Network error' };
+    const { getByText, getByTestId } = render(<StatusBar />);
+    expect(getByTestId('status-bar')).toBeTruthy();
+    expect(getByText("Couldn't check for updates")).toBeTruthy();
+  });
+
+  it('prioritizes connection status over OTA status', () => {
+    mockConnectionStatus = {
+      status: 'disconnected',
+      isNetworkAvailable: false,
+      isInternetReachable: false,
+    };
+    mockOTAStatus = { status: 'downloading', errorMessage: null };
+    const { getByText, queryByText } = render(<StatusBar />);
+    expect(getByText('No internet connection')).toBeTruthy();
+    expect(queryByText('Downloading update...')).toBeNull();
+  });
+});

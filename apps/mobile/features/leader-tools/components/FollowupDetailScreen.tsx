@@ -1,0 +1,1505 @@
+import React, { useState, useMemo } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ActivityIndicator,
+  ScrollView,
+  TextInput,
+  Linking,
+  Alert,
+  Modal,
+  Pressable,
+  Image,
+} from "react-native";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { UserRoute } from "@components/guards/UserRoute";
+import { Ionicons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useQuery, useAuthenticatedMutation, api } from "@services/api/convex";
+import { Id } from "@services/api/convex";
+import { useAuth } from "@providers/AuthProvider";
+import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
+import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { DragHandle } from "@components/ui/DragHandle";
+import { useContactConfirmation } from "@features/chat/hooks/useContactConfirmation";
+
+type SnoozeDuration = "1_week" | "2_weeks" | "1_month" | "3_months";
+
+const SNOOZE_OPTIONS: { value: SnoozeDuration; label: string }[] = [
+  { value: "1_week", label: "1 week" },
+  { value: "2_weeks", label: "2 weeks" },
+  { value: "1_month", label: "1 month" },
+  { value: "3_months", label: "3 months" },
+];
+
+export function FollowupDetailScreen() {
+  const { group_id, member_id } = useLocalSearchParams<{
+    group_id: string;
+    member_id: string;
+  }>();
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const { user } = useAuth();
+  const currentUserId = user?.id as Id<"users"> | undefined;
+  const { primaryColor } = useCommunityTheme();
+
+  const [noteText, setNoteText] = useState("");
+  const [showSnoozeModal, setShowSnoozeModal] = useState(false);
+  const [snoozeNote, setSnoozeNote] = useState("");
+  const [showImageModal, setShowImageModal] = useState(false);
+  const [editingMeeting, setEditingMeeting] = useState<{
+    meetingId: string;
+    title: string;
+    date: string;
+    currentStatus: number;
+    groupId?: string; // for cross-group attendance edits
+  } | null>(null);
+
+  // Fetch member history using Convex
+  const historyData = useQuery(
+    api.functions.memberFollowups.history,
+    group_id && member_id
+      ? {
+          groupId: group_id as Id<"groups">,
+          memberId: member_id as Id<"groupMembers">,
+          currentUserId: currentUserId,
+        }
+      : "skip"
+  );
+
+  const isLoading = historyData === undefined;
+  const refetch = () => {}; // Convex auto-updates
+
+  // Transform data for backward compatibility
+  const history = useMemo(() => {
+    if (!historyData) return undefined;
+    return {
+      member: {
+        ...historyData.member,
+        profileImage: historyData.member.profileImage,
+        joinedAt: historyData.member.joinedAt ? new Date(historyData.member.joinedAt).toISOString() : null,
+      },
+      attendanceHistory: historyData.attendanceHistory.map((a: any) => ({
+        meetingId: a.meetingId,
+        title: a.title,
+        date: new Date(a.date).toISOString(),
+        status: a.status,
+      })),
+      followups: historyData.followups.map((f: any) => ({
+        id: f.id,
+        type: f.type,
+        content: f.content,
+        snoozeUntil: f.snoozeUntil ? new Date(f.snoozeUntil).toISOString() : null,
+        createdAt: new Date(f.createdAt).toISOString(),
+        createdBy: f.createdBy,
+      })),
+      isSnoozed: historyData.isSnoozed,
+      snoozedUntil: historyData.snoozedUntil ? new Date(historyData.snoozedUntil).toISOString() : null,
+      scoreBreakdown: historyData.scoreBreakdown,
+      crossGroupAttendance: historyData.crossGroupAttendance ?? [],
+      servingHistory: historyData.servingHistory ?? [],
+      toolDisplayName: historyData.toolDisplayName ?? "Follow-up",
+      triggeredAlerts: historyData.triggeredAlerts ?? [],
+    };
+  }, [historyData]);
+
+  // Convex mutations (auto-inject token)
+  const addFollowup = useAuthenticatedMutation(api.functions.memberFollowups.add);
+  const snoozeMember = useAuthenticatedMutation(api.functions.memberFollowups.snooze);
+  const updateAttendance = useAuthenticatedMutation(api.functions.memberFollowups.updateAttendance);
+  const deleteFollowupMut = useAuthenticatedMutation(api.functions.memberFollowups.deleteFollowup);
+
+  // Confirmation hook — logs action only after user confirms they completed it
+  const { setPendingAction } = useContactConfirmation({
+    onConfirm: (type) => {
+      addFollowupMutation.mutate({
+        groupId: group_id || "",
+        memberId: member_id || "",
+        type,
+        content: type === "call" ? "Made a phone call" : "Sent a text message",
+      });
+    },
+  });
+
+  // Mutation wrapper objects for backward compatibility
+  const addFollowupMutation = {
+    mutate: async (args: { groupId: string; memberId: string; type: string; content?: string }) => {
+      try {
+        await addFollowup({
+          groupId: args.groupId as Id<"groups">,
+          memberId: args.memberId as Id<"groupMembers">,
+          type: args.type as "note" | "call" | "text" | "snooze" | "followed_up",
+          content: args.content,
+        });
+        setNoteText("");
+        // Convex auto-updates reactive queries
+      } catch (err: any) {
+        Alert.alert("Error", err.message || "Failed to add follow-up");
+      }
+    },
+    isPending: false,
+  };
+
+  const snoozeMutation = {
+    mutate: async (args: { groupId: string; memberId: string; duration: SnoozeDuration; note?: string }) => {
+      try {
+        await snoozeMember({
+          groupId: args.groupId as Id<"groups">,
+          memberId: args.memberId as Id<"groupMembers">,
+          duration: args.duration,
+          note: args.note,
+        });
+        setShowSnoozeModal(false);
+        setSnoozeNote("");
+        Alert.alert("Success", "Member has been snoozed");
+      } catch (err: any) {
+        Alert.alert("Error", err.message || "Failed to snooze member");
+      }
+    },
+    isPending: false,
+  };
+
+  const updateAttendanceMutation = {
+    mutate: async (args: { groupId: string; meetingId: string; targetUserId: string; status: number }) => {
+      try {
+        await updateAttendance({
+          groupId: args.groupId as Id<"groups">,
+          meetingId: args.meetingId as Id<"meetings">,
+          targetUserId: args.targetUserId as Id<"users">,
+          status: args.status,
+        });
+        setEditingMeeting(null);
+      } catch (err: any) {
+        Alert.alert("Error", err.message || "Failed to update attendance");
+      }
+    },
+    isPending: false,
+  };
+
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.push(`/(user)/leader-tools/${group_id}/followup`);
+    }
+  };
+
+  const handleCall = () => {
+    if (history?.member.phone) {
+      Linking.openURL(`tel:${history.member.phone}`);
+      // Confirmation dialog appears when user returns to app
+      const name = `${history.member.firstName} ${history.member.lastName}`.trim();
+      setPendingAction("call", name);
+    }
+  };
+
+  const handleText = () => {
+    if (history?.member.phone) {
+      Linking.openURL(`sms:${history.member.phone}`);
+      // Confirmation dialog appears when user returns to app
+      const name = `${history.member.firstName} ${history.member.lastName}`.trim();
+      setPendingAction("text", name);
+    }
+  };
+
+  const handleMarkFollowedUp = () => {
+    addFollowupMutation.mutate({
+      groupId: group_id || "",
+      memberId: member_id || "",
+      type: "followed_up",
+      content: "Marked as followed up",
+    });
+  };
+
+  const handleAddNote = () => {
+    if (!noteText.trim()) return;
+    addFollowupMutation.mutate({
+      groupId: group_id || "",
+      memberId: member_id || "",
+      type: "note",
+      content: noteText.trim(),
+    });
+  };
+
+  const handleSnooze = (duration: SnoozeDuration) => {
+    snoozeMutation.mutate({
+      groupId: group_id || "",
+      memberId: member_id || "",
+      duration,
+      note: snoozeNote.trim() || undefined,
+    });
+  };
+
+  const handleUpdateAttendance = (newStatus: number) => {
+    if (!editingMeeting || !history) return;
+    updateAttendanceMutation.mutate({
+      groupId: editingMeeting.groupId || group_id || "",
+      meetingId: editingMeeting.meetingId,
+      targetUserId: history.member.odUserId, // Use Convex user ID
+      status: newStatus,
+    });
+  };
+
+  const handleDeleteFollowup = (followupId: string) => {
+    Alert.alert(
+      "Delete Entry",
+      "Are you sure you want to delete this follow-up entry?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await deleteFollowupMut({
+                followupId: followupId as Id<"memberFollowups">,
+              });
+            } catch (err: any) {
+              Alert.alert("Error", err.message || "Failed to delete entry");
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  };
+
+  const formatShortDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+    });
+  };
+
+  const formatTime = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  };
+
+  const formatRawValue = (variableId: string, rawValue: number): string => {
+    switch (variableId) {
+      case "attendance_pct":
+      case "attendance_all_groups_pct":
+        return `${rawValue}%`;
+      case "consecutive_missed":
+        return `${rawValue} missed`;
+      case "days_since_last_followup":
+      case "days_since_last_text":
+      case "days_since_last_call":
+      case "days_since_last_in_person":
+        return rawValue >= 999 ? "Never" : `${rawValue} days`;
+      case "pco_services_past_2mo":
+        return `${rawValue} services`;
+      default:
+        return `${rawValue}`;
+    }
+  };
+
+  const getScoreColor = (value: number): string => {
+    if (value >= 70) return "#4CAF50";
+    if (value >= 40) return "#FF9500";
+    return "#FF6B6B";
+  };
+
+  const getFollowupIcon = (type: string) => {
+    switch (type) {
+      case "note":
+        return "document-text-outline";
+      case "call":
+        return "call-outline";
+      case "text":
+        return "chatbubble-outline";
+      case "snooze":
+        return "time-outline";
+      case "followed_up":
+        return "checkmark-circle-outline";
+      case "reach_out":
+        return "hand-left-outline";
+      case "email":
+        return "mail-outline";
+      default:
+        return "ellipse-outline";
+    }
+  };
+
+  const getFollowupColor = (type: string) => {
+    switch (type) {
+      case "note":
+        return "#007AFF";
+      case "call":
+        return "#34C759";
+      case "text":
+        return "#5856D6";
+      case "email":
+        return "#FF6B6B";
+      case "snooze":
+        return "#FF9500";
+      case "followed_up":
+        return "#4CAF50";
+      case "reach_out":
+        return "#8E44AD";
+      default:
+        return "#666";
+    }
+  };
+
+
+  if (isLoading) {
+    return (
+      <UserRoute>
+        <View style={styles.container}>
+          <DragHandle />
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={primaryColor} />
+            <Text style={styles.loadingText}>Loading member details...</Text>
+          </View>
+        </View>
+      </UserRoute>
+    );
+  }
+
+  if (!history) {
+    return (
+      <UserRoute>
+        <View style={styles.container}>
+          <DragHandle />
+          <View style={styles.errorContainer}>
+            <Ionicons name="alert-circle-outline" size={48} color="#e74c3c" />
+            <Text style={styles.errorText}>
+              Failed to load member details
+            </Text>
+            <TouchableOpacity style={styles.retryButton} onPress={() => refetch()}>
+              <Text style={styles.retryButtonText}>Retry</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </UserRoute>
+    );
+  }
+
+  const { member, attendanceHistory, followups } = history;
+
+  return (
+    <UserRoute>
+      <DragHandle />
+      {/* Header */}
+      <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
+        <TouchableOpacity style={styles.backButton} onPress={handleBack}>
+          <Ionicons name="arrow-back" size={24} color="#333" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>{history?.toolDisplayName ?? "Follow-up"}</Text>
+        <View style={styles.headerSpacer} />
+      </View>
+
+      <ScrollView style={styles.content}>
+        {/* Profile Section */}
+        <View style={styles.profileSection}>
+          <TouchableOpacity
+            onPress={() => member.profileImage && setShowImageModal(true)}
+            activeOpacity={member.profileImage ? 0.8 : 1}
+          >
+            {member.profileImage ? (
+              <Image
+                source={{ uri: member.profileImage }}
+                style={styles.profileImage}
+              />
+            ) : (
+              <View style={styles.profileImagePlaceholder}>
+                <Text style={styles.profileInitials}>
+                  {member.firstName.charAt(0).toUpperCase()}
+                  {member.lastName.charAt(0).toUpperCase()}
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
+          <Text style={styles.profileName}>
+            {member.firstName} {member.lastName}
+          </Text>
+          {member.joinedAt && (
+            <Text style={styles.profileJoined}>
+              Member since {formatDate(member.joinedAt)}
+            </Text>
+          )}
+        </View>
+
+        {/* Image Modal */}
+        <Modal
+          visible={showImageModal}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setShowImageModal(false)}
+        >
+          <Pressable
+            style={styles.imageModalOverlay}
+            onPress={() => setShowImageModal(false)}
+          >
+            <View style={styles.imageModalContainer}>
+              {member.profileImage && (
+                <Image
+                  source={{ uri: member.profileImage }}
+                  style={styles.fullImage}
+                  resizeMode="contain"
+                />
+              )}
+              <TouchableOpacity
+                style={styles.imageModalClose}
+                onPress={() => setShowImageModal(false)}
+              >
+                <Ionicons name="close-circle" size={36} color="#fff" />
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Modal>
+
+
+        {/* Alerts */}
+        {history.triggeredAlerts.length > 0 && (
+          <View style={styles.alertSection}>
+            <View style={styles.alertHeader}>
+              <Ionicons name="warning" size={20} color="#DC2626" />
+              <Text style={styles.alertSectionTitle}>Alerts</Text>
+            </View>
+            {history.triggeredAlerts.map((label: string, i: number) => (
+              <View key={i} style={styles.alertItem}>
+                <Ionicons name="alert-circle" size={16} color="#DC2626" />
+                <Text style={styles.alertItemText}>{label}</Text>
+              </View>
+            ))}
+          </View>
+        )}
+
+        {/* Scores */}
+        {history.scoreBreakdown && history.scoreBreakdown.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Scores</Text>
+            <View style={styles.scoresContainer}>
+              {history.scoreBreakdown.map((score: any) => (
+                <View key={score.id} style={styles.scoreCard}>
+                  <View style={styles.scoreHeader}>
+                    <Text style={styles.scoreName}>{score.name}</Text>
+                    <View style={[styles.scoreBadge, { backgroundColor: getScoreColor(score.value) }]}>
+                      <Text style={styles.scoreBadgeText}>{score.value}</Text>
+                    </View>
+                  </View>
+                  <View style={styles.scoreVariables}>
+                    {score.variables.map((variable: any) => (
+                      <View key={variable.id} style={styles.variableRow}>
+                        <View style={styles.variableLabelRow}>
+                          <Text style={styles.variableLabel}>{variable.label}</Text>
+                          <Text style={styles.variableRaw}>
+                            {formatRawValue(variable.id, variable.rawValue)}
+                          </Text>
+                        </View>
+                        <View style={styles.variableBarContainer}>
+                          <View
+                            style={[
+                              styles.variableBar,
+                              {
+                                width: `${Math.max(2, variable.normalizedValue)}%`,
+                                backgroundColor: getScoreColor(variable.normalizedValue),
+                              },
+                            ]}
+                          />
+                        </View>
+                        <Text style={styles.variableHint}>
+                          {variable.normHint}
+                          {score.variables.length > 1 ? ` · weight: ${variable.weight}` : ""}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
+
+        {/* Quick Actions */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Quick Actions</Text>
+          <View style={styles.quickActions}>
+            <TouchableOpacity
+              style={[styles.quickAction, !member.phone && styles.quickActionDisabled]}
+              onPress={handleCall}
+              disabled={!member.phone || addFollowupMutation.isPending}
+            >
+              <Ionicons
+                name="call"
+                size={24}
+                color={member.phone ? "#34C759" : "#ccc"}
+              />
+              <Text
+                style={[
+                  styles.quickActionText,
+                  !member.phone && styles.quickActionTextDisabled,
+                ]}
+              >
+                Call
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.quickAction, !member.phone && styles.quickActionDisabled]}
+              onPress={handleText}
+              disabled={!member.phone || addFollowupMutation.isPending}
+            >
+              <Ionicons
+                name="chatbubble"
+                size={24}
+                color={member.phone ? "#5856D6" : "#ccc"}
+              />
+              <Text
+                style={[
+                  styles.quickActionText,
+                  !member.phone && styles.quickActionTextDisabled,
+                ]}
+              >
+                Text
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.quickAction}
+              onPress={handleMarkFollowedUp}
+              disabled={addFollowupMutation.isPending}
+            >
+              <Ionicons name="checkmark-circle" size={24} color="#4CAF50" />
+              <Text style={styles.quickActionText}>Done</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.quickAction}
+              onPress={() => setShowSnoozeModal(true)}
+            >
+              <Ionicons name="time" size={24} color="#FF9500" />
+              <Text style={styles.quickActionText}>Snooze</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Contact Info */}
+        {(member.phone || member.email) && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Contact</Text>
+            {member.phone && (
+              <Text style={styles.contactText}>{member.phone}</Text>
+            )}
+            {member.email && (
+              <Text style={styles.contactText}>{member.email}</Text>
+            )}
+          </View>
+        )}
+
+        {/* Attendance Summary */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Attendance</Text>
+
+          {/* Stats Grid */}
+          <View style={styles.statsGrid}>
+            <View style={styles.statCard}>
+              <Text style={styles.statValue}>
+                {attendanceHistory.filter((m) => m.status === 1).length}
+              </Text>
+              <Text style={styles.statLabel}>Meetings Attended</Text>
+            </View>
+            <View style={styles.statCard}>
+              <Text style={styles.statValue}>
+                {attendanceHistory.length > 0
+                  ? `${Math.round(
+                      (attendanceHistory.filter((m) => m.status === 1).length /
+                        attendanceHistory.length) *
+                        100
+                    )}%`
+                  : "N/A"}
+              </Text>
+              <Text style={styles.statLabel}>Attendance Rate</Text>
+            </View>
+          </View>
+
+          {/* Recent Attendance List */}
+          {attendanceHistory.length === 0 ? (
+            <Text style={styles.noAttendanceText}>
+              No meetings recorded yet
+            </Text>
+          ) : (
+            <>
+              <Text style={styles.subsectionTitle}>Recent Meetings (tap to edit)</Text>
+              <View style={styles.attendanceList}>
+                {attendanceHistory.slice(0, 20).map((meeting) => (
+                  <TouchableOpacity
+                    key={meeting.meetingId}
+                    style={styles.attendanceRow}
+                    onPress={() => setEditingMeeting({
+                      meetingId: meeting.meetingId,
+                      title: meeting.title || '',
+                      date: meeting.date,
+                      currentStatus: meeting.status,
+                    })}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons
+                      name={meeting.status === 1 ? "checkmark-circle" : "close-circle"}
+                      size={24}
+                      color={meeting.status === 1 ? "#4CAF50" : "#FF6B6B"}
+                    />
+                    <View style={styles.attendanceRowText}>
+                      <Text style={styles.attendanceMeetingTitle} numberOfLines={1}>
+                        {meeting.title || "Meeting"}
+                      </Text>
+                      <Text style={styles.attendanceMeetingDate}>
+                        {formatShortDate(meeting.date)}
+                      </Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={16} color="#ccc" />
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </>
+          )}
+        </View>
+
+        {/* Cross-Group Attendance */}
+        {history.crossGroupAttendance.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Other Group Attendance</Text>
+            {history.crossGroupAttendance.map((group: any) => (
+              <View key={group.groupId} style={styles.crossGroupSection}>
+                <Text style={styles.crossGroupName}>{group.groupName}</Text>
+                <View style={styles.attendanceList}>
+                  {group.meetings.map((meeting: any) => (
+                    <TouchableOpacity
+                      key={meeting.meetingId}
+                      style={styles.attendanceRow}
+                      onPress={() =>
+                        group.canEdit &&
+                        setEditingMeeting({
+                          meetingId: meeting.meetingId,
+                          title: meeting.title || "",
+                          date: new Date(meeting.date).toISOString(),
+                          currentStatus: meeting.status,
+                          groupId: group.groupId,
+                        })
+                      }
+                      activeOpacity={group.canEdit ? 0.7 : 1}
+                      disabled={!group.canEdit}
+                    >
+                      <Ionicons
+                        name={meeting.status === 1 ? "checkmark-circle" : "close-circle"}
+                        size={24}
+                        color={meeting.status === 1 ? "#4CAF50" : "#FF6B6B"}
+                      />
+                      <View style={styles.attendanceRowText}>
+                        <Text style={styles.attendanceMeetingTitle} numberOfLines={1}>
+                          {meeting.title || "Meeting"}
+                        </Text>
+                        <Text style={styles.attendanceMeetingDate}>
+                          {formatShortDate(new Date(meeting.date).toISOString())}
+                        </Text>
+                      </View>
+                      {group.canEdit && (
+                        <Ionicons name="chevron-forward" size={16} color="#ccc" />
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            ))}
+          </View>
+        )}
+
+        {/* Serving History */}
+        {history.servingHistory.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Serving History</Text>
+            <View style={styles.servingList}>
+              {history.servingHistory.map((entry: any, index: number) => (
+                <View key={`${entry.date}-${entry.teamName}-${index}`} style={styles.servingRow}>
+                  <View style={styles.servingIcon}>
+                    <Ionicons name="hand-left-outline" size={16} color="#666" />
+                  </View>
+                  <View style={styles.servingInfo}>
+                    <Text style={styles.servingTitle}>
+                      {formatShortDate(new Date(entry.date).toISOString())}{" "}
+                      {entry.serviceTypeName}{entry.teamName ? ` ${entry.teamName}` : ""}
+                    </Text>
+                    {entry.position && (
+                      <Text style={styles.servingPosition}>{entry.position}</Text>
+                    )}
+                  </View>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
+
+        {/* Add Note */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Add Note</Text>
+          <TextInput
+            style={styles.noteInput}
+            placeholder="Add a follow-up note..."
+            value={noteText}
+            onChangeText={setNoteText}
+            multiline
+            numberOfLines={3}
+          />
+          <TouchableOpacity
+            style={[
+              styles.addNoteButton,
+              (!noteText.trim() || addFollowupMutation.isPending) &&
+                styles.addNoteButtonDisabled,
+            ]}
+            onPress={handleAddNote}
+            disabled={!noteText.trim() || addFollowupMutation.isPending}
+          >
+            {addFollowupMutation.isPending ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Text style={styles.addNoteButtonText}>Add Note</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+
+        {/* Follow-up Timeline */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Follow-up History</Text>
+          {followups.length === 0 ? (
+            <Text style={styles.emptyTimeline}>No follow-ups recorded yet</Text>
+          ) : (
+            <View style={styles.timeline}>
+              {followups.map((entry, index) => (
+                <View key={entry.id} style={styles.timelineItem}>
+                  <View
+                    style={[
+                      styles.timelineIcon,
+                      { backgroundColor: getFollowupColor(entry.type) },
+                    ]}
+                  >
+                    <Ionicons
+                      name={getFollowupIcon(entry.type) as any}
+                      size={16}
+                      color="#fff"
+                    />
+                  </View>
+                  {index < followups.length - 1 && (
+                    <View style={styles.timelineLine} />
+                  )}
+                  <View style={styles.timelineContent}>
+                    <View style={styles.timelineHeader}>
+                      <Text style={styles.timelineType}>
+                        {entry.type.charAt(0).toUpperCase() + entry.type.slice(1).replace("_", " ")}
+                      </Text>
+                      {entry.createdBy?.id === currentUserId && (
+                        <TouchableOpacity
+                          onPress={() => handleDeleteFollowup(entry.id)}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          <Ionicons name="trash-outline" size={16} color="#FF3B30" />
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                    {entry.content && (
+                      <Text style={styles.timelineNote}>{entry.content}</Text>
+                    )}
+                    <Text style={styles.timelineMeta}>
+                      {entry.createdBy?.firstName} {entry.createdBy?.lastName} -{" "}
+                      {formatDate(entry.createdAt)} at {formatTime(entry.createdAt)}
+                    </Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+
+        <View style={{ height: 100 }} />
+      </ScrollView>
+
+      {/* Snooze Modal */}
+      <Modal
+        visible={showSnoozeModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowSnoozeModal(false)}
+      >
+        <Pressable
+          style={styles.modalOverlay}
+          onPress={() => setShowSnoozeModal(false)}
+        >
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Snooze Follow-up</Text>
+            <Text style={styles.modalSubtitle}>
+              How long should we hide this member from the follow-up list?
+            </Text>
+
+            <TextInput
+              style={styles.snoozeNoteInput}
+              placeholder="Add a note (optional)..."
+              value={snoozeNote}
+              onChangeText={setSnoozeNote}
+            />
+
+            <View style={styles.snoozeOptions}>
+              {SNOOZE_OPTIONS.map((option) => (
+                <TouchableOpacity
+                  key={option.value}
+                  style={styles.snoozeOption}
+                  onPress={() => handleSnooze(option.value)}
+                  disabled={snoozeMutation.isPending}
+                >
+                  <Text style={styles.snoozeOptionText}>{option.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <TouchableOpacity
+              style={styles.modalCancelButton}
+              onPress={() => setShowSnoozeModal(false)}
+            >
+              <Text style={styles.modalCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Modal>
+
+      {/* Edit Attendance Modal */}
+      <Modal
+        visible={!!editingMeeting}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setEditingMeeting(null)}
+      >
+        <Pressable
+          style={styles.modalOverlay}
+          onPress={() => setEditingMeeting(null)}
+        >
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Edit Attendance</Text>
+            {editingMeeting && (
+              <>
+                <Text style={styles.attendanceModalMeeting}>
+                  {editingMeeting.title || "Meeting"}
+                </Text>
+                <Text style={styles.attendanceModalDate}>
+                  {formatDate(editingMeeting.date)}
+                </Text>
+
+                <Text style={styles.attendanceModalCurrentStatus}>
+                  Current: {editingMeeting.currentStatus === 1 ? "Present ✓" : "Absent ✗"}
+                </Text>
+
+                <View style={styles.attendanceModalOptions}>
+                  <TouchableOpacity
+                    style={[
+                      styles.attendanceModalOption,
+                      styles.attendanceModalPresent,
+                      editingMeeting.currentStatus === 1 && styles.attendanceModalOptionActive,
+                    ]}
+                    onPress={() => handleUpdateAttendance(1)}
+                    disabled={updateAttendanceMutation.isPending}
+                  >
+                    <Ionicons name="checkmark-circle" size={24} color="#fff" />
+                    <Text style={styles.attendanceModalOptionText}>Mark Present</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.attendanceModalOption,
+                      styles.attendanceModalAbsent,
+                      editingMeeting.currentStatus === 0 && styles.attendanceModalOptionActive,
+                    ]}
+                    onPress={() => handleUpdateAttendance(0)}
+                    disabled={updateAttendanceMutation.isPending}
+                  >
+                    <Ionicons name="close-circle" size={24} color="#fff" />
+                    <Text style={styles.attendanceModalOptionText}>Mark Absent</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {updateAttendanceMutation.isPending && (
+                  <ActivityIndicator size="small" color={primaryColor} style={{ marginTop: 12 }} />
+                )}
+              </>
+            )}
+
+            <TouchableOpacity
+              style={styles.modalCancelButton}
+              onPress={() => setEditingMeeting(null)}
+            >
+              <Text style={styles.modalCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Modal>
+    </UserRoute>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: "#f5f5f5",
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: "#666",
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  errorText: {
+    fontSize: 16,
+    color: "#666",
+    marginTop: 12,
+    marginBottom: 20,
+    textAlign: "center",
+  },
+  retryButton: {
+    backgroundColor: DEFAULT_PRIMARY_COLOR,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 16,
+    backgroundColor: "#fff",
+    borderBottomWidth: 1,
+    borderBottomColor: "#e0e0e0",
+  },
+  backButton: {
+    padding: 4,
+  },
+  headerTitle: {
+    flex: 1,
+    fontSize: 18,
+    fontWeight: "600",
+    color: "#333",
+    textAlign: "center",
+  },
+  headerSpacer: {
+    width: 32,
+  },
+  content: {
+    flex: 1,
+  },
+  profileSection: {
+    alignItems: "center",
+    paddingVertical: 24,
+    backgroundColor: "#fff",
+    borderBottomWidth: 1,
+    borderBottomColor: "#e0e0e0",
+  },
+  profileImage: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    marginBottom: 12,
+  },
+  profileImagePlaceholder: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: DEFAULT_PRIMARY_COLOR,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  profileInitials: {
+    fontSize: 36,
+    fontWeight: "600",
+    color: "#fff",
+  },
+  profileName: {
+    fontSize: 22,
+    fontWeight: "700",
+    color: "#333",
+    marginBottom: 4,
+  },
+  profileJoined: {
+    fontSize: 14,
+    color: "#666",
+  },
+  alertSection: {
+    backgroundColor: "#FEF2F2",
+    padding: 16,
+    marginBottom: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: "#DC2626",
+  },
+  alertHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 12,
+  },
+  alertSectionTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#DC2626",
+  },
+  alertItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 6,
+  },
+  alertItemText: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: "#991B1B",
+  },
+  section: {
+    backgroundColor: "#fff",
+    padding: 16,
+    marginBottom: 8,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#333",
+    marginBottom: 12,
+  },
+  quickActions: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+  },
+  quickAction: {
+    alignItems: "center",
+    padding: 12,
+  },
+  quickActionDisabled: {
+    opacity: 0.5,
+  },
+  quickActionText: {
+    fontSize: 12,
+    color: "#333",
+    marginTop: 4,
+  },
+  quickActionTextDisabled: {
+    color: "#999",
+  },
+  contactText: {
+    fontSize: 14,
+    color: "#666",
+    marginBottom: 4,
+  },
+  statsGrid: {
+    flexDirection: "row",
+    gap: 12,
+    marginBottom: 16,
+  },
+  statCard: {
+    flex: 1,
+    backgroundColor: "#f8f8f8",
+    borderRadius: 12,
+    padding: 16,
+    alignItems: "center",
+  },
+  statValue: {
+    fontSize: 28,
+    fontWeight: "700",
+    color: "#333",
+  },
+  statLabel: {
+    fontSize: 12,
+    color: "#666",
+    marginTop: 4,
+    textAlign: "center",
+  },
+  subsectionTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#666",
+    marginBottom: 12,
+    marginTop: 8,
+  },
+  attendanceIconGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  attendanceIconItem: {
+    width: 36,
+    height: 36,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  noAttendanceText: {
+    fontSize: 14,
+    color: "#999",
+    fontStyle: "italic",
+  },
+  attendanceLegend: {
+    fontSize: 12,
+    color: "#999",
+    marginTop: 12,
+  },
+  noteInput: {
+    borderWidth: 1,
+    borderColor: "#e0e0e0",
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 14,
+    minHeight: 80,
+    textAlignVertical: "top",
+  },
+  addNoteButton: {
+    backgroundColor: DEFAULT_PRIMARY_COLOR,
+    paddingVertical: 12,
+    borderRadius: 8,
+    marginTop: 12,
+    alignItems: "center",
+  },
+  addNoteButtonDisabled: {
+    backgroundColor: "#ccc",
+  },
+  addNoteButtonText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  emptyTimeline: {
+    fontSize: 14,
+    color: "#999",
+    fontStyle: "italic",
+  },
+  timeline: {
+    marginTop: 8,
+  },
+  timelineItem: {
+    flexDirection: "row",
+    marginBottom: 16,
+  },
+  timelineIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12,
+    zIndex: 1,
+  },
+  timelineLine: {
+    position: "absolute",
+    left: 15,
+    top: 32,
+    bottom: -16,
+    width: 2,
+    backgroundColor: "#e0e0e0",
+  },
+  timelineContent: {
+    flex: 1,
+    paddingTop: 4,
+  },
+  timelineHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  timelineType: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#333",
+  },
+  timelineNote: {
+    fontSize: 14,
+    color: "#666",
+    marginTop: 4,
+  },
+  timelineMeta: {
+    fontSize: 12,
+    color: "#999",
+    marginTop: 4,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  modalContent: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 20,
+    width: "100%",
+    maxWidth: 340,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "#333",
+    textAlign: "center",
+  },
+  modalSubtitle: {
+    fontSize: 14,
+    color: "#666",
+    textAlign: "center",
+    marginTop: 8,
+    marginBottom: 16,
+  },
+  snoozeNoteInput: {
+    borderWidth: 1,
+    borderColor: "#e0e0e0",
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 14,
+    marginBottom: 16,
+  },
+  snoozeOptions: {
+    gap: 8,
+  },
+  snoozeOption: {
+    backgroundColor: "#f0f0f0",
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  snoozeOptionText: {
+    fontSize: 16,
+    color: "#333",
+    fontWeight: "500",
+  },
+  modalCancelButton: {
+    marginTop: 16,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  modalCancelText: {
+    fontSize: 16,
+    color: "#666",
+  },
+  imageModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.9)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  imageModalContainer: {
+    width: "100%",
+    height: "100%",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  fullImage: {
+    width: "90%",
+    height: "80%",
+  },
+  imageModalClose: {
+    position: "absolute",
+    top: 60,
+    right: 20,
+  },
+  // Attendance list styles
+  attendanceList: {
+    gap: 8,
+  },
+  attendanceRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#f8f8f8",
+    borderRadius: 8,
+    padding: 12,
+    gap: 12,
+  },
+  attendanceRowText: {
+    flex: 1,
+  },
+  attendanceMeetingTitle: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: "#333",
+  },
+  attendanceMeetingDate: {
+    fontSize: 12,
+    color: "#666",
+    marginTop: 2,
+  },
+  // Cross-group attendance styles
+  crossGroupSection: {
+    marginBottom: 16,
+  },
+  crossGroupName: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#555",
+    marginBottom: 8,
+  },
+  // Serving history styles
+  servingList: {
+    gap: 8,
+  },
+  servingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#f8f8f8",
+    borderRadius: 8,
+    padding: 12,
+    gap: 12,
+  },
+  servingIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#e8e8e8",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  servingInfo: {
+    flex: 1,
+  },
+  servingTitle: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: "#333",
+  },
+  servingPosition: {
+    fontSize: 12,
+    color: "#666",
+    marginTop: 2,
+  },
+  // Attendance modal styles
+  attendanceModalMeeting: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#333",
+    textAlign: "center",
+    marginTop: 12,
+  },
+  attendanceModalDate: {
+    fontSize: 14,
+    color: "#666",
+    textAlign: "center",
+    marginTop: 4,
+  },
+  attendanceModalCurrentStatus: {
+    fontSize: 14,
+    color: "#666",
+    textAlign: "center",
+    marginTop: 12,
+    marginBottom: 16,
+  },
+  attendanceModalOptions: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  attendanceModalOption: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 14,
+    borderRadius: 8,
+    gap: 8,
+  },
+  attendanceModalPresent: {
+    backgroundColor: "#4CAF50",
+  },
+  attendanceModalAbsent: {
+    backgroundColor: "#FF6B6B",
+  },
+  attendanceModalOptionActive: {
+    opacity: 0.6,
+  },
+  attendanceModalOptionText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  // Score breakdown styles
+  scoresContainer: {
+    gap: 12,
+  },
+  scoreCard: {
+    backgroundColor: "#f8f8f8",
+    borderRadius: 12,
+    padding: 14,
+  },
+  scoreHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  scoreName: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#333",
+  },
+  scoreBadge: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  scoreBadgeText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  scoreVariables: {
+    gap: 10,
+  },
+  variableRow: {
+    gap: 4,
+  },
+  variableLabelRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  variableLabel: {
+    fontSize: 13,
+    color: "#555",
+    fontWeight: "500",
+  },
+  variableRaw: {
+    fontSize: 13,
+    color: "#888",
+  },
+  variableBarContainer: {
+    height: 6,
+    backgroundColor: "#e0e0e0",
+    borderRadius: 3,
+    overflow: "hidden",
+  },
+  variableBar: {
+    height: "100%",
+    borderRadius: 3,
+  },
+  variableHint: {
+    fontSize: 11,
+    color: "#aaa",
+  },
+});

@@ -1,0 +1,288 @@
+name: Build Mobile Native (Staging)
+
+# STAGING ONLY - Auto-builds when native code changes are detected on main
+# Production builds go through deploy-to-production.yml
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/mobile/ios/**'
+      - 'apps/mobile/android/**'
+      - 'apps/mobile/app.config.js'
+      - 'apps/mobile/app.json'
+      - 'apps/mobile/eas.json'
+      - 'apps/mobile/package.json'
+      - 'apps/mobile/.fingerprint'
+
+jobs:
+  # First, check if this is actually a native change that requires a build
+  detect-native-change:
+    name: Detect Native Changes
+    runs-on: ubuntu-latest
+    outputs:
+      native_changed: ${{ steps.check.outputs.native_changed }}
+      version: ${{ steps.check.outputs.version }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Need full history to compare across multi-commit pushes
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 8.15.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check for native changes
+        id: check
+        working-directory: apps/mobile
+        run: |
+          # Get current version
+          VERSION=$(node -p "require('./app.config.js').default.expo.runtimeVersion")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+          # Check if fingerprint file changed (indicates native change with version bump)
+          # Use github.event.before to compare all commits in a multi-commit push
+          BEFORE_SHA="${{ github.event.before }}"
+          AFTER_SHA="${{ github.sha }}"
+
+          # Handle case where before is all zeros (new branch)
+          if [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            # For new branches, check if there's a parent commit
+            if git rev-parse HEAD~1 >/dev/null 2>&1; then
+              BEFORE_SHA="HEAD~1"
+            else
+              # Single commit on new branch - check if fingerprint exists in current tree
+              echo "New branch with single commit - checking if fingerprint file exists"
+              if [ -f "apps/mobile/.fingerprint" ]; then
+                echo "Fingerprint file exists in first commit - native build required"
+                echo "native_changed=true" >> $GITHUB_OUTPUT
+              else
+                echo "No fingerprint file - no native build required"
+                echo "native_changed=false" >> $GITHUB_OUTPUT
+              fi
+              exit 0
+            fi
+          fi
+
+          echo "Comparing $BEFORE_SHA..$AFTER_SHA"
+
+          if git diff --name-only "$BEFORE_SHA" "$AFTER_SHA" | grep -q "apps/mobile/.fingerprint"; then
+            echo "Fingerprint changed - native build required"
+            echo "native_changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "No fingerprint change - no native build required"
+            echo "native_changed=false" >> $GITHUB_OUTPUT
+          fi
+
+  # Build staging automatically when native changes detected
+  build-staging:
+    name: Build Staging
+    needs: detect-native-change
+    if: needs.detect-native-change.outputs.native_changed == 'true'
+    runs-on: ubuntu-latest
+    environment: staging
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 8.15.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Load secrets from Infisical
+        uses: ./.github/actions/load-secrets
+        with:
+          client-id: ${{ secrets.INFISICAL_CLIENT_ID }}
+          client-secret: ${{ secrets.INFISICAL_CLIENT_SECRET }}
+          environment: staging
+
+      - name: Setup EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ env.EXPO_TOKEN }}
+
+      - name: Sync secrets to EAS
+        working-directory: apps/mobile
+        run: |
+          # Use eas env:create (eas secret:create is deprecated)
+          # Must match the "environment" field in eas.json staging profile (preview)
+          # Note: EAS custom environments require Production/Enterprise plan, so we use "preview"
+          eas env:create --name EXPO_PUBLIC_MAPBOX_TOKEN --value "$EXPO_PUBLIC_MAPBOX_TOKEN" --environment preview --visibility plaintext --force --non-interactive || true
+          # Convex URL from Infisical
+          eas env:create --name EXPO_PUBLIC_CONVEX_URL --value "$CONVEX_SITE_URL" --environment preview --visibility plaintext --force --non-interactive || true
+          # Project ID for push notifications (constant across all environments)
+          eas env:create --name EXPO_PUBLIC_PROJECT_ID --value "${{ vars.EAS_PROJECT_ID }}" --environment preview --visibility plaintext --force --non-interactive || true
+          # Sentry auth token for source map uploads during native builds
+          eas env:create --name SENTRY_AUTH_TOKEN --value "$SENTRY_AUTH_TOKEN" --environment preview --visibility sensitive --force --non-interactive || true
+          # Sentry DSN for error tracking at runtime
+          eas env:create --name EXPO_PUBLIC_SENTRY_DSN --value "$EXPO_PUBLIC_SENTRY_DSN" --environment preview --visibility sensitive --force --non-interactive || true
+          echo "✓ Synced secrets to EAS preview environment (for staging builds)"
+
+      - name: Build iOS (staging)
+        working-directory: apps/mobile
+        run: eas build --platform ios --profile staging --non-interactive
+
+      - name: Build Android (staging)
+        working-directory: apps/mobile
+        run: eas build --platform android --profile staging --non-interactive
+
+      - name: Submit to TestFlight (staging)
+        working-directory: apps/mobile
+        run: eas submit --platform ios --latest --profile staging --non-interactive
+
+      # Upload iOS manifest to R2 for version checking
+      - name: Upload iOS manifest to R2 (staging)
+        working-directory: apps/mobile
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ env.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ env.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ env.R2_BUCKET_NAME }}
+        run: |
+          # Get version from code
+          VERSION=$(node -p "require('./app.config.js').default.expo.runtimeVersion")
+          echo "Creating iOS staging manifest for version $VERSION..."
+
+          # Install AWS CLI for R2 (S3-compatible)
+          pip install awscli --quiet
+
+          # Override AWS credentials with R2 credentials
+          # (env vars take precedence over aws configure)
+          export AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID"
+          export AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
+          export AWS_DEFAULT_REGION="auto"
+
+          R2_ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"
+
+          # Create and upload iOS staging manifest
+          # availableAfter is set to 45 minutes from now to allow TestFlight processing
+          mkdir -p ./build-output
+          AVAILABLE_AFTER=$(date -u -d '+45 minutes' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v+45M +%Y-%m-%dT%H:%M:%SZ)
+          cat > ./build-output/ios-manifest.json << EOF
+          {
+            "version": "${VERSION}",
+            "platform": "ios",
+            "environment": "staging",
+            "releaseDate": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "availableAfter": "${AVAILABLE_AFTER}",
+            "downloadUrl": "https://testflight.apple.com/join/JNdDOp2N",
+            "minSupportedVersion": "1.0.0"
+          }
+          EOF
+
+          aws s3 cp ./build-output/ios-manifest.json "s3://${R2_BUCKET_NAME}/releases/ios/staging/manifest.json" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --content-type "application/json"
+          echo "✓ Uploaded iOS staging manifest.json"
+
+      # Upload Android APK to R2 for staging distribution
+      - name: Upload Android APK to R2 (staging)
+        working-directory: apps/mobile
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ env.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ env.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ env.R2_BUCKET_NAME }}
+        run: |
+          # Get version from code
+          VERSION=$(node -p "require('./app.config.js').default.expo.runtimeVersion")
+          echo "Uploading staging Android APK version $VERSION to R2..."
+
+          # Download the latest Android APK from EAS
+          mkdir -p ./build-output
+          # Get the artifact URL from the latest build
+          APK_URL=$(eas build:list --platform android --build-profile staging --limit 1 --json --non-interactive | jq -r '.[0].artifacts.applicationArchiveUrl')
+          echo "Downloading APK from: $APK_URL"
+          curl -fL -o ./build-output/togather-staging.apk "$APK_URL"
+
+          # Get file size for manifest
+          FILE_SIZE=$(stat -c%s ./build-output/togather-staging.apk 2>/dev/null || stat -f%z ./build-output/togather-staging.apk)
+          echo "APK size: $FILE_SIZE bytes"
+
+          # Install AWS CLI for R2 (S3-compatible)
+          pip install awscli --quiet
+
+          # Override AWS credentials with R2 credentials
+          # (env vars take precedence over aws configure)
+          export AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID"
+          export AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
+          export AWS_DEFAULT_REGION="auto"
+
+          R2_ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"
+
+          # Upload versioned APK to staging folder
+          aws s3 cp ./build-output/togather-staging.apk "s3://${R2_BUCKET_NAME}/releases/android/staging/togather-staging-${VERSION}.apk" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --content-type "application/vnd.android.package-archive"
+          echo "✓ Uploaded togather-staging-${VERSION}.apk"
+
+          # Upload as latest
+          aws s3 cp ./build-output/togather-staging.apk "s3://${R2_BUCKET_NAME}/releases/android/staging/togather-staging-latest.apk" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --content-type "application/vnd.android.package-archive"
+          echo "✓ Uploaded togather-staging-latest.apk"
+
+          # Create and upload staging manifest
+          # Android APKs are uploaded directly to R2, so available immediately (no review period)
+          RELEASE_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          cat > ./build-output/manifest.json << EOF
+          {
+            "version": "${VERSION}",
+            "platform": "android",
+            "environment": "staging",
+            "releaseDate": "${RELEASE_DATE}",
+            "availableAfter": "${RELEASE_DATE}",
+            "fileSize": ${FILE_SIZE},
+            "downloadUrl": "${IMAGE_CDN_URL}/releases/android/staging/togather-staging-${VERSION}.apk",
+            "latestUrl": "${IMAGE_CDN_URL}/releases/android/staging/togather-staging-latest.apk",
+            "minSupportedVersion": "1.0.0"
+          }
+          EOF
+
+          aws s3 cp ./build-output/manifest.json "s3://${R2_BUCKET_NAME}/releases/android/staging/manifest.json" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --content-type "application/json"
+          echo "✓ Uploaded staging manifest.json"
+
+      - name: Summary
+        run: |
+          echo "## Staging Build Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ needs.detect-native-change.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** staging" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### iOS" >> $GITHUB_STEP_SUMMARY
+          echo "- Built and submitted to TestFlight" >> $GITHUB_STEP_SUMMARY
+          echo "- Wait for processing (~15-30 min)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Android" >> $GITHUB_STEP_SUMMARY
+          echo "- APK uploaded to R2" >> $GITHUB_STEP_SUMMARY
+          echo "- Download: https://togather.nyc/android-staging" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Next steps:**" >> $GITHUB_STEP_SUMMARY
+          echo "1. Test the staging apps thoroughly" >> $GITHUB_STEP_SUMMARY
+          echo "2. When ready, use 'Promote to Production' workflow" >> $GITHUB_STEP_SUMMARY

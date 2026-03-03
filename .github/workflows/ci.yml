@@ -1,0 +1,197 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  detect-changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      shared: ${{ steps.changes.outputs.shared }}
+      mobile: ${{ steps.changes.outputs.mobile }}
+      convex: ${{ steps.changes.outputs.convex }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Detect file changes
+        uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: |
+            shared:
+              - 'packages/shared/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'tsconfig.json'
+              - 'pnpm-workspace.yaml'
+            mobile:
+              - 'apps/mobile/**'
+              - 'packages/shared/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'tsconfig.json'
+              - 'pnpm-workspace.yaml'
+            convex:
+              - 'apps/convex/**'
+              - 'packages/shared/**'
+              - 'packages/notifications/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'tsconfig.json'
+              - 'pnpm-workspace.yaml'
+
+  test-shared:
+    name: Test Shared Package
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.shared == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 8.15.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run tests
+        run: pnpm --filter @togather/shared test
+
+  test-mobile:
+    name: Test Mobile App
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.mobile == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 8.15.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run tests
+        working-directory: apps/mobile
+        run: pnpm test
+
+      - name: Check native fingerprint
+        working-directory: apps/mobile
+        run: node scripts/check-fingerprint.js
+
+      - name: Verify Metro bundler (catch import errors)
+        working-directory: apps/mobile
+        run: |
+          # Export to verify Metro can resolve all imports
+          # This catches broken imports that TypeScript might miss
+          # Using --no-bytecode and --no-minify to speed up CI (we only need to validate imports)
+          npx expo export --platform ios --output-dir /tmp/expo-bundle-check --clear --no-bytecode --no-minify
+        env:
+          # Use dummy values for required env vars during bundling
+          EXPO_PUBLIC_PROJECT_ID: "dummy-project-id"
+          EXPO_PUBLIC_MAPBOX_TOKEN: "pk.dummy-token"
+          EXPO_PUBLIC_CONVEX_URL: "https://dummy-convex-url.convex.cloud"
+
+  test-convex:
+    name: Test Convex Backend
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.convex == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 8.15.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build shared package
+        run: pnpm --filter @togather/shared build
+
+      - name: Build notifications email templates
+        run: pnpm --filter @togather/notifications build:email
+
+      - name: Type check Convex functions
+        run: npx convex typecheck
+
+      - name: Run Convex tests
+        working-directory: apps/convex
+        run: pnpm test
+
+  test-summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: [detect-changes, test-shared, test-mobile, test-convex]
+    if: always()
+    steps:
+      - name: Check test results
+        run: |
+          # First verify detect-changes succeeded (if it failed, skipped jobs are NOT intentional)
+          detect="${{ needs.detect-changes.result }}"
+          if [ "$detect" != "success" ]; then
+            echo "❌ detect-changes: $detect"
+            echo "Change detection failed — cannot determine which tests to run"
+            exit 1
+          fi
+          echo "✅ detect-changes: $detect"
+
+          # Skipped jobs (due to no relevant changes) count as passing
+          shared="${{ needs.test-shared.result }}"
+          mobile="${{ needs.test-mobile.result }}"
+          convex="${{ needs.test-convex.result }}"
+
+          failed=false
+          for job in shared mobile convex; do
+            result=$(eval echo \$$job)
+            if [ "$result" != "success" ] && [ "$result" != "skipped" ]; then
+              echo "❌ test-$job: $result"
+              failed=true
+            else
+              echo "✅ test-$job: $result"
+            fi
+          done
+
+          if [ "$failed" = true ]; then
+            echo ""
+            echo "One or more test suites failed"
+            exit 1
+          fi
+          echo ""
+          echo "All tests passed!"

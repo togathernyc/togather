@@ -1,0 +1,16 @@
+{
+  "description": "Project hooks for Togather - includes ralph-loop logging",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/ralph-logger.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

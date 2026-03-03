@@ -1,0 +1,450 @@
+#!/usr/bin/env node
+
+/**
+ * Development script for Convex + Expo
+ *
+ * Usage:
+ *   pnpm dev              # Run Convex dev + Expo together
+ *   pnpm dev --mobile     # Run only Expo (if Convex is already running)
+ *   pnpm dev --convex     # Run only Convex dev
+ *   pnpm dev --agent=N    # Use worker N's Metro port (19000+N) for parallel development
+ */
+
+const { spawn, execSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+
+/**
+ * Check if dependencies need to be installed by comparing lockfile hash
+ * @returns {boolean} True if pnpm install should be run
+ */
+function needsInstall() {
+  const lockfilePath = path.join(__dirname, '..', 'pnpm-lock.yaml');
+  const hashMarkerPath = path.join(__dirname, '..', 'node_modules', '.pnpm-lock-hash');
+
+  // If node_modules doesn't exist, definitely need install
+  if (!fs.existsSync(path.join(__dirname, '..', 'node_modules'))) {
+    return true;
+  }
+
+  // If lockfile doesn't exist, skip check
+  if (!fs.existsSync(lockfilePath)) {
+    return false;
+  }
+
+  // Get current lockfile hash (use mtime + size for speed, not full content hash)
+  const stats = fs.statSync(lockfilePath);
+  const currentHash = `${stats.mtimeMs}-${stats.size}`;
+
+  // Check stored hash
+  if (!fs.existsSync(hashMarkerPath)) {
+    return true;
+  }
+
+  const storedHash = fs.readFileSync(hashMarkerPath, 'utf-8').trim();
+  return currentHash !== storedHash;
+}
+
+/**
+ * Update the stored lockfile hash marker
+ */
+function updateLockfileHash() {
+  const lockfilePath = path.join(__dirname, '..', 'pnpm-lock.yaml');
+  const hashMarkerPath = path.join(__dirname, '..', 'node_modules', '.pnpm-lock-hash');
+
+  if (!fs.existsSync(lockfilePath)) {
+    return;
+  }
+
+  const stats = fs.statSync(lockfilePath);
+  const currentHash = `${stats.mtimeMs}-${stats.size}`;
+
+  fs.writeFileSync(hashMarkerPath, currentHash);
+}
+
+/**
+ * Run pnpm install if lockfile has changed
+ */
+function ensureDependencies() {
+  if (!needsInstall()) {
+    return;
+  }
+
+  console.log('📦 Lockfile changed - installing dependencies...');
+  try {
+    execSync('pnpm install', {
+      cwd: path.join(__dirname, '..'),
+      stdio: 'inherit'
+    });
+    updateLockfileHash();
+    console.log('✅ Dependencies installed\n');
+  } catch (e) {
+    console.error('❌ Failed to install dependencies');
+    process.exit(1);
+  }
+}
+
+/**
+ * Parse --agent=N argument
+ * @returns {number} Agent number (0 for default, 1-4 for workers)
+ */
+function getAgentNumber() {
+  const agentArg = process.argv.find(arg => arg.startsWith('--agent='));
+  if (!agentArg) return 0;
+
+  const agentNum = parseInt(agentArg.split('=')[1], 10);
+  if (isNaN(agentNum) || agentNum < 1 || agentNum > 4) {
+    console.error('❌ Invalid --agent value. Must be 1-4');
+    process.exit(1);
+  }
+  return agentNum;
+}
+
+/**
+ * Get Metro port for an agent
+ * @param {number} agentNum - Agent number (0 for default, 1-4 for workers)
+ * @returns {number}
+ */
+function getMetroPort(agentNum) {
+  if (agentNum === 0) {
+    return 8081;
+  }
+  return 19000 + agentNum; // 19001-19004
+}
+
+/**
+ * Kill any process using the specified port
+ * @param {number} port - Port number to clear
+ * @param {string} [label] - Optional label for logging
+ */
+function killProcessOnPort(port, label = '') {
+  try {
+    const result = execSync(`lsof -Pi :${port} -sTCP:LISTEN -t 2>/dev/null`, { encoding: 'utf-8' });
+    if (!result.trim()) {
+      return;
+    }
+
+    const pids = result.trim().split('\n').filter(Boolean);
+    const portLabel = label ? ` (${label})` : '';
+    console.log(`🔄 Killing ${pids.length} process(es) on port ${port}${portLabel}...`);
+
+    for (const pid of pids) {
+      try {
+        execSync(`kill -9 ${pid} 2>/dev/null`, { stdio: 'ignore' });
+      } catch (e) {
+        // Process might have already exited
+      }
+    }
+
+    execSync('sleep 1', { stdio: 'ignore' });
+    console.log(`✅ Port ${port} is now free`);
+  } catch (e) {
+    // No process on port or lsof failed
+  }
+}
+
+function quoteCommand(cmd) {
+  if (!cmd) return '""';
+  const escaped = cmd.replace(/"/g, '\\"');
+  return `"${escaped}"`;
+}
+
+/**
+ * Read CONVEX_DEPLOYMENT from .env.local and derive EXPO_PUBLIC_CONVEX_URL
+ * @returns {string|null} The Convex URL, or null if not found
+ */
+function getConvexUrlFromEnvLocal() {
+  const envLocalPath = path.join(__dirname, '..', '.env.local');
+
+  if (!fs.existsSync(envLocalPath)) {
+    return null;
+  }
+
+  const content = fs.readFileSync(envLocalPath, 'utf-8');
+  const lines = content.split('\n');
+
+  // Look for existing EXPO_PUBLIC_CONVEX_URL
+  for (const line of lines) {
+    const match = line.match(/^EXPO_PUBLIC_CONVEX_URL\s*=\s*(.+)/);
+    if (match) {
+      return match[1].replace(/['"]/g, '').trim();
+    }
+  }
+
+  // Derive from CONVEX_DEPLOYMENT (format: "dev:slug-name" or "prod:slug-name")
+  for (const line of lines) {
+    const match = line.match(/^CONVEX_DEPLOYMENT\s*=\s*(.+)/);
+    if (match) {
+      const deployment = match[1].replace(/['"]/g, '').trim();
+      // Extract slug (e.g., "dev:<deployment-name>" -> "<deployment-name>")
+      const slug = deployment.includes(':') ? deployment.split(':')[1] : deployment;
+      return `https://${slug}.convex.cloud`;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Check if Convex environment variables are configured
+ * @returns {boolean} True if JWT_SECRET is set with a real value
+ */
+function checkConvexEnvVars() {
+  try {
+    const result = execSync('npx convex env list 2>/dev/null', { encoding: 'utf-8' });
+    // Check JWT_SECRET exists and has a non-empty value
+    const hasJWT = result.split('\n').some(line => {
+      if (!line.startsWith('JWT_SECRET=')) return false;
+      const value = line.substring('JWT_SECRET='.length);
+      return value && value !== '""' && value !== "''" && value.length > 2;
+    });
+    return hasJWT;
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Check if user is logged into Infisical
+ * @returns {boolean}
+ */
+function isInfisicalLoggedIn() {
+  try {
+    execSync('infisical user get token 2>/dev/null', { encoding: 'utf-8' });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Sync environment variables from Infisical to Convex
+ */
+function syncConvexEnvVars() {
+  console.log('🔄 Syncing environment variables to Convex...');
+
+  const projectId = process.env.INFISICAL_WORKSPACE_ID;
+  if (!projectId) {
+    console.error('❌ INFISICAL_WORKSPACE_ID environment variable is not set.');
+    console.error('   Set it in your shell profile or .env.local');
+    return false;
+  }
+  const infisicalEnv = 'dev';
+
+  // Keys to sync
+  const convexKeys = [
+    'JWT_SECRET', 'EXPO_ACCESS_TOKEN', 'RESEND_API_KEY',
+    'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN',
+    'TWILIO_API_KEY_SID', 'TWILIO_API_KEY_SECRET', 'TWILIO_VERIFY_SERVICE_SID',
+    'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_S3_BUCKET',
+    'AWS_REGION', 'AWS_S3_COMPRESSED_BUCKET_URL',
+    'PLANNING_CENTER_CLIENT_ID', 'PLANNING_CENTER_CLIENT_SECRET',
+    'OTP_TEST_PHONE_NUMBERS',
+    'CLOUDFLARE_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY',
+    'R2_BUCKET_NAME', 'R2_PUBLIC_URL'
+  ];
+
+  try {
+    // Fetch secrets from Infisical
+    const secrets = execSync(
+      `infisical export --projectId="${projectId}" --env="${infisicalEnv}" --format=dotenv 2>/dev/null`,
+      { encoding: 'utf-8' }
+    );
+
+    // Parse secrets into a map
+    const secretMap = {};
+    for (const line of secrets.split('\n')) {
+      if (!line || line.startsWith('#')) continue;
+      const eqIndex = line.indexOf('=');
+      if (eqIndex === -1) continue;
+      const key = line.substring(0, eqIndex);
+      let value = line.substring(eqIndex + 1);
+      // Remove surrounding quotes
+      value = value.replace(/^['"]|['"]$/g, '');
+      secretMap[key] = value;
+    }
+
+    // Set APP_ENV
+    execSync('npx convex env set APP_ENV=development 2>/dev/null', { stdio: 'ignore' });
+    execSync('npx convex env set APP_URL=http://localhost:8081 2>/dev/null', { stdio: 'ignore' });
+
+    // Sync each key
+    let synced = 0;
+    for (const key of convexKeys) {
+      const value = secretMap[key];
+      if (value) {
+        process.stdout.write(`   ${key}...`);
+        try {
+          execSync(`npx convex env set "${key}=${value}" 2>/dev/null`, { stdio: 'ignore' });
+          console.log(' ✓');
+          synced++;
+        } catch (e) {
+          console.log(' ✗');
+        }
+      }
+    }
+
+    console.log(`✅ Synced ${synced} environment variables to Convex`);
+    return true;
+  } catch (e) {
+    console.error('❌ Failed to sync environment variables:', e.message);
+    return false;
+  }
+}
+
+function startConcurrently(names, colors, commands, env) {
+  const quotedCommands = commands.map(quoteCommand);
+  const concurrently = spawn(
+    'pnpm',
+    [
+      'exec',
+      'concurrently',
+      '-n',
+      names,
+      '-c',
+      colors,
+      ...quotedCommands
+    ],
+    {
+      stdio: 'inherit',
+      env,
+      shell: true,
+    }
+  );
+
+  concurrently.on('error', (error) => {
+    console.error('Error starting dev servers:', error);
+    process.exit(1);
+  });
+
+  concurrently.on('exit', (code) => {
+    process.exit(code || 0);
+  });
+}
+
+function main() {
+  // Ensure dependencies are up to date
+  ensureDependencies();
+
+  // Check for flags
+  const mobileOnly = process.argv.includes('--mobile');
+  const convexOnly = process.argv.includes('--convex');
+
+  // Get agent number and port
+  const agentNum = getAgentNumber();
+  const metroPort = getMetroPort(agentNum);
+
+  const env = { ...process.env };
+
+  // Show agent info if using parallel development
+  if (agentNum > 0) {
+    console.log(`🤖 Agent ${agentNum} - Metro port: ${metroPort}`);
+  }
+
+  // Kill Expo if running on target port
+  killProcessOnPort(metroPort, 'Metro');
+
+  if (convexOnly) {
+    // Convex only mode
+    console.log('🔧 Starting Convex dev server...');
+    startConcurrently('convex', 'magenta', ['npx convex dev'], env);
+    return;
+  }
+
+  // Check for mobile .env file (contains Mapbox token, etc.)
+  const mobileEnvPath = path.join(__dirname, '..', 'apps', 'mobile', '.env');
+  if (!fs.existsSync(mobileEnvPath)) {
+    console.error('');
+    console.error('❌ Mobile environment not configured!');
+    console.error('');
+    console.error('   Run the setup script first:');
+    console.error('');
+    console.error('   1. infisical login');
+    console.error('   2. ./scripts/setup-env.sh');
+    console.error('');
+    console.error('   See CLAUDE.md for full setup instructions.');
+    console.error('');
+    process.exit(1);
+  }
+
+  // For mobile-only or full dev mode, we need the Convex URL
+  // Automatically derive it from .env.local if not already set
+  if (!env.EXPO_PUBLIC_CONVEX_URL) {
+    const convexUrl = getConvexUrlFromEnvLocal();
+    if (convexUrl) {
+      env.EXPO_PUBLIC_CONVEX_URL = convexUrl;
+      console.log(`📡 Convex URL: ${convexUrl}`);
+    } else {
+      // No .env.local found - show setup instructions
+      console.error('');
+      console.error('❌ No Convex deployment found!');
+      console.error('');
+      console.error('   First-time setup required:');
+      console.error('');
+      console.error('   1. Run "npx convex dev" to create your personal Convex deployment');
+      console.error('      (This opens a browser to login and create your project)');
+      console.error('');
+      console.error('   2. Run "./scripts/setup-env.sh" to sync environment variables');
+      console.error('');
+      console.error('   3. Run "pnpm dev" again');
+      console.error('');
+      console.error('   See CLAUDE.md for full setup instructions.');
+      console.error('');
+      process.exit(1);
+    }
+  } else {
+    console.log(`📡 Convex URL: ${env.EXPO_PUBLIC_CONVEX_URL}`);
+  }
+
+  // Check if Convex environment variables are configured
+  if (!checkConvexEnvVars()) {
+    console.log('');
+    console.log('⚠️  Convex environment variables not configured.');
+    console.log('');
+
+    // Check if logged into Infisical
+    if (!isInfisicalLoggedIn()) {
+      console.error('❌ Not logged into Infisical!');
+      console.error('');
+      console.error('   Run "infisical login" first, then run "pnpm dev" again.');
+      console.error('');
+      process.exit(1);
+    }
+
+    // Auto-sync from Infisical
+    if (!syncConvexEnvVars()) {
+      console.error('');
+      console.error('   Failed to sync. Try running "./scripts/setup-env.sh" manually.');
+      console.error('');
+      process.exit(1);
+    }
+    console.log('');
+  }
+
+  if (mobileOnly) {
+    // Mobile only mode (assumes Convex is running separately)
+    console.log('📱 Starting Expo (Convex should be running separately)...');
+    startConcurrently(
+      'mobile',
+      'green',
+      [`cd apps/mobile && expo start --port ${metroPort}`],
+      env
+    );
+    return;
+  }
+
+  // Default: run both Convex and Expo
+  console.log('🚀 Starting Convex + Expo development servers...');
+  console.log('   Convex: Syncing functions to cloud');
+  console.log(`   Expo:   http://localhost:${metroPort}`);
+  console.log('');
+
+  const commands = [
+    'npx convex dev',
+    `cd apps/mobile && expo start --port ${metroPort}`
+  ];
+
+  startConcurrently('convex,mobile', 'magenta,green', commands, env);
+}
+
+main();

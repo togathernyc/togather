@@ -1,0 +1,81 @@
+{
+  "name": "togather-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "description": "Togather monorepo - Backend API and cross-platform mobile app. Note: Uses React 18.3.1 (web) and React 19.1.0 (mobile) - see docs/architecture/decisions/ADR-004-dual-react-versions.md",
+  "scripts": {
+    "dev": "node scripts/dev.js",
+    "dev:mobile": "node scripts/dev.js --mobile",
+    "dev:convex": "node scripts/dev.js --convex",
+    "dev:agent": "node scripts/agent-dev.js",
+    "dev:web": "cd apps/web && next dev",
+    "convex:deploy": "npx convex deploy",
+    "convex:logs": "npx convex logs",
+    "convex:dashboard": "npx convex dashboard",
+    "convex:codegen": "npx convex codegen",
+    "convex:sync-secrets": "./scripts/sync-infisical-to-convex.sh",
+    "convex:sync-secrets:staging": "./scripts/sync-infisical-to-convex.sh staging",
+    "convex:sync-secrets:prod": "./scripts/sync-infisical-to-convex.sh prod",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "clean": "turbo run clean",
+    "eas-build-pre-install": "corepack enable && corepack prepare pnpm@8.15.0",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "prepare": "husky",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-s3": "^3.952.0",
+    "@aws-sdk/s3-request-presigner": "^3.952.0",
+    "@jest/test-sequencer": "^29.7.0",
+    "@types/bcryptjs": "^3.0.0",
+    "@types/pg": "^8.16.0",
+    "chokidar": "^3.5.3",
+    "concurrently": "^8.2.2",
+    "dotenv": "^16.3.1",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.7",
+    "pg": "^8.16.3",
+    "playwright": "^1.57.0",
+    "rxjs": "^7.8.2",
+    "tsx": "^4.21.0",
+    "turbo": "^2.0.0",
+    "typescript": "^5.3.0",
+    "wait-on": "^7.2.0"
+  },
+  "packageManager": "pnpm@8.15.0",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "dependencies": {
+    "@auth/core": "^0.37.4",
+    "@convex-dev/auth": "^0.0.90",
+    "bcryptjs": "^3.0.3",
+    "convex": "^1.31.3",
+    "expo": "~54.0.23",
+    "jose": "^6.1.3",
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "tree-kill": "^1.2.2"
+  },
+  "lint-staged": {
+    "apps/mobile/**/*.{ts,tsx}": "pnpm --filter mobile exec eslint",
+    "apps/web/**/*.{ts,tsx}": "pnpm --filter @togather/web exec eslint"
+  },
+  "pnpm": {
+    "overrides": {
+      "@jest/test-sequencer": "^29.7.0",
+      "@smithy/types": "4.11.0",
+      "@smithy/smithy-client": "4.10.2",
+      "@smithy/middleware-endpoint": "4.4.1",
+      "@smithy/protocol-http": "5.3.7",
+      "@smithy/middleware-stack": "4.2.7",
+      "@smithy/util-stream": "4.5.8"
+    }
+  }
+}

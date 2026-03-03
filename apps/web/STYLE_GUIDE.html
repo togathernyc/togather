@@ -1,0 +1,969 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Togather Design System</title>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      /* Primary Colors */
+      --primary-50: #faf7f4;
+      --primary-100: #f5ede5;
+      --primary-200: #ecddd0;
+      --primary-300: #dfc6b0;
+      --primary-400: #d4a574;
+      --primary-500: #c8935f;
+      --primary-600: #b87d4a;
+      --primary-700: #9a6640;
+      --primary-800: #7d5339;
+      --primary-900: #664531;
+
+      /* Neutral Colors */
+      --neutral-50: #fafaf9;
+      --neutral-100: #f5f5f4;
+      --neutral-200: #e7e5e4;
+      --neutral-300: #d6d3d1;
+      --neutral-400: #a8a29e;
+      --neutral-500: #78716c;
+      --neutral-600: #57534e;
+      --neutral-700: #44403c;
+      --neutral-800: #292524;
+      --neutral-900: #1c1917;
+
+      /* Accent Colors */
+      --accent-400: #4ade80;
+      --accent-500: #22c55e;
+      --accent-600: #16a34a;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+      color: var(--neutral-800);
+      background-color: var(--neutral-50);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .container {
+      max-width: 1000px;
+      margin: 0 auto;
+      padding: 3rem 2rem;
+    }
+
+    h1 {
+      font-size: 2.5rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+      color: var(--neutral-900);
+    }
+
+    h2 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      margin: 3rem 0 1.5rem;
+      color: var(--neutral-900);
+      border-bottom: 2px solid var(--neutral-200);
+      padding-bottom: 0.5rem;
+    }
+
+    h3 {
+      font-size: 1.25rem;
+      font-weight: 600;
+      margin: 2rem 0 1rem;
+      color: var(--neutral-800);
+    }
+
+    h4 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin: 1.5rem 0 0.75rem;
+      color: var(--neutral-700);
+    }
+
+    p {
+      margin-bottom: 1rem;
+      color: var(--neutral-600);
+    }
+
+    .subtitle {
+      font-size: 1.125rem;
+      color: var(--neutral-500);
+      margin-bottom: 2rem;
+    }
+
+    /* Color Swatches */
+    .color-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 1rem;
+      margin: 1rem 0 2rem;
+    }
+
+    .color-swatch {
+      border-radius: 12px;
+      overflow: hidden;
+      background: white;
+      border: 1px solid var(--neutral-200);
+    }
+
+    .color-preview {
+      height: 80px;
+      display: flex;
+      align-items: flex-end;
+      padding: 0.5rem;
+    }
+
+    .color-info {
+      padding: 0.75rem;
+    }
+
+    .color-name {
+      font-weight: 600;
+      font-size: 0.875rem;
+      color: var(--neutral-900);
+    }
+
+    .color-hex {
+      font-size: 0.75rem;
+      color: var(--neutral-500);
+      font-family: 'Monaco', 'Menlo', monospace;
+    }
+
+    .color-usage {
+      font-size: 0.75rem;
+      color: var(--neutral-400);
+      margin-top: 0.25rem;
+    }
+
+    /* Gradient Preview */
+    .gradient-preview {
+      height: 120px;
+      border-radius: 16px;
+      margin: 1rem 0;
+      position: relative;
+    }
+
+    .gradient-hero {
+      background: linear-gradient(180deg, #e5d2c0 0%, #f0e5db 25%, #f8f2ec 50%, #f0e5db 75%, #e5d2c0 100%);
+    }
+
+    .gradient-feature {
+      background: linear-gradient(180deg, #e5d2c0 0%, #f0e5db 40%, #f8f2ec 70%, #f0e5db 100%);
+    }
+
+    .gradient-label {
+      position: absolute;
+      bottom: 0.75rem;
+      left: 1rem;
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: var(--neutral-700);
+      background: white;
+      padding: 0.25rem 0.75rem;
+      border-radius: 999px;
+    }
+
+    /* Typography Preview */
+    .type-sample {
+      background: white;
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin: 1rem 0;
+      border: 1px solid var(--neutral-200);
+    }
+
+    .type-row {
+      display: flex;
+      align-items: baseline;
+      gap: 1.5rem;
+      padding: 0.75rem 0;
+      border-bottom: 1px solid var(--neutral-100);
+    }
+
+    .type-row:last-child {
+      border-bottom: none;
+    }
+
+    .type-label {
+      font-size: 0.75rem;
+      color: var(--neutral-400);
+      width: 120px;
+      flex-shrink: 0;
+    }
+
+    .type-preview {
+      flex-grow: 1;
+    }
+
+    .type-hero { font-size: 3rem; font-weight: 700; line-height: 1.1; }
+    .type-section { font-size: 2.25rem; font-weight: 700; line-height: 1.2; }
+    .type-feature { font-size: 1.5rem; font-weight: 500; line-height: 1.4; }
+    .type-card-title { font-size: 1.125rem; font-weight: 700; line-height: 1.4; }
+    .type-body-lg { font-size: 1.125rem; font-weight: 400; line-height: 1.6; }
+    .type-body { font-size: 1rem; font-weight: 400; line-height: 1.5; }
+    .type-small { font-size: 0.875rem; font-weight: 400; line-height: 1.4; }
+
+    /* Component Previews */
+    .component-preview {
+      background: var(--neutral-100);
+      border-radius: 16px;
+      padding: 2rem;
+      margin: 1rem 0;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .component-preview.dark {
+      background: var(--neutral-900);
+    }
+
+    /* Button Styles */
+    .btn-primary {
+      display: inline-block;
+      padding: 0.625rem 1.25rem;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: white;
+      background: var(--neutral-900);
+      border-radius: 12px;
+      text-decoration: none;
+      cursor: pointer;
+      border: none;
+    }
+
+    .btn-secondary {
+      display: inline-block;
+      padding: 0.625rem 1.25rem;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--neutral-700);
+      background: transparent;
+      text-decoration: none;
+      cursor: pointer;
+      border: none;
+    }
+
+    /* Tab Styles */
+    .tab-active {
+      padding: 0.75rem 1.75rem;
+      font-size: 1.125rem;
+      font-weight: 600;
+      color: var(--neutral-900);
+      background: white;
+      border: 1px solid var(--neutral-300);
+      border-radius: 16px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+      cursor: pointer;
+    }
+
+    .tab-inactive {
+      padding: 0.75rem 1.75rem;
+      font-size: 1.125rem;
+      font-weight: 500;
+      color: var(--neutral-400);
+      background: transparent;
+      border: none;
+      border-radius: 16px;
+      cursor: pointer;
+    }
+
+    /* Card Styles */
+    .card-feature {
+      background: var(--neutral-50);
+      border: 1px solid var(--neutral-200);
+      border-radius: 16px;
+      padding: 1.75rem;
+      max-width: 320px;
+    }
+
+    .card-icon {
+      width: 40px;
+      height: 40px;
+      background: white;
+      border: 1px solid var(--neutral-200);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--neutral-700);
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 0.875rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .card-title {
+      font-size: 1.125rem;
+      font-weight: 700;
+      color: var(--neutral-900);
+    }
+
+    .card-desc {
+      font-size: 0.9375rem;
+      color: var(--neutral-600);
+      line-height: 1.5;
+      margin: 0;
+    }
+
+    /* FAQ Style */
+    .faq-item {
+      background: white;
+      border: 1px solid var(--neutral-200);
+      border-radius: 12px;
+      padding: 1rem 1.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      max-width: 400px;
+    }
+
+    .faq-question {
+      font-weight: 500;
+      color: var(--neutral-900);
+    }
+
+    .faq-icon {
+      color: var(--neutral-400);
+      font-size: 1.25rem;
+    }
+
+    /* Badge Style */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.75rem 1.25rem;
+      background: var(--neutral-900);
+      border-radius: 999px;
+      color: white;
+      font-size: 0.875rem;
+    }
+
+    .badge-icon {
+      width: 24px;
+      height: 24px;
+      background: var(--neutral-700);
+      border-radius: 4px;
+    }
+
+    .badge strong {
+      font-weight: 600;
+    }
+
+    .badge span {
+      opacity: 0.9;
+    }
+
+    /* Code Block */
+    code {
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 0.875rem;
+      background: var(--neutral-100);
+      padding: 0.125rem 0.375rem;
+      border-radius: 4px;
+      color: var(--neutral-700);
+    }
+
+    pre {
+      background: var(--neutral-900);
+      color: var(--neutral-100);
+      padding: 1.25rem;
+      border-radius: 12px;
+      overflow-x: auto;
+      margin: 1rem 0;
+    }
+
+    pre code {
+      background: transparent;
+      padding: 0;
+      color: inherit;
+      font-size: 0.8125rem;
+      line-height: 1.6;
+    }
+
+    /* Spacing Preview */
+    .spacing-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin: 1rem 0;
+    }
+
+    .spacing-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem;
+      background: white;
+      border-radius: 8px;
+      border: 1px solid var(--neutral-200);
+    }
+
+    .spacing-box {
+      background: var(--primary-400);
+      border-radius: 4px;
+    }
+
+    .spacing-label {
+      font-size: 0.75rem;
+      color: var(--neutral-500);
+    }
+
+    /* Radius Preview */
+    .radius-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.5rem;
+      margin: 1rem 0;
+    }
+
+    .radius-item {
+      text-align: center;
+    }
+
+    .radius-box {
+      width: 80px;
+      height: 80px;
+      background: var(--primary-200);
+      border: 2px solid var(--primary-400);
+      margin-bottom: 0.5rem;
+    }
+
+    .radius-label {
+      font-size: 0.75rem;
+      color: var(--neutral-500);
+    }
+
+    /* Quick Reference Table */
+    .ref-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1rem 0;
+      font-size: 0.875rem;
+    }
+
+    .ref-table th {
+      text-align: left;
+      padding: 0.75rem;
+      background: var(--neutral-100);
+      font-weight: 600;
+      color: var(--neutral-700);
+    }
+
+    .ref-table td {
+      padding: 0.75rem;
+      border-bottom: 1px solid var(--neutral-200);
+      color: var(--neutral-600);
+    }
+
+    .ref-table code {
+      font-size: 0.8125rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Togather Design System</h1>
+    <p class="subtitle">A comprehensive style guide for maintaining visual consistency across Togather products.</p>
+
+    <!-- Colors Section -->
+    <h2>Color Palette</h2>
+
+    <h3>Primary Colors (Warm Brown/Tan)</h3>
+    <p>Our primary palette uses warm, earthy tones that feel approachable and community-focused.</p>
+
+    <div class="color-grid">
+      <div class="color-swatch">
+        <div class="color-preview" style="background: var(--primary-50)"></div>
+        <div class="color-info">
+          <div class="color-name">primary-50</div>
+          <div class="color-hex">#faf7f4</div>
+          <div class="color-usage">Light backgrounds</div>
+        </div>
+      </div>
+      <div class="color-swatch">
+        <div class="color-preview" style="background: var(--primary-100)"></div>
+        <div class="color-info">
+          <div class="color-name">primary-100</div>
+          <div class="color-hex">#f5ede5</div>
+          <div class="color-usage">Mobile menu</div>
+        </div>
+      </div>
+      <div class="color-swatch">
+        <div class="color-preview" style="background: var(--primary-200)"></div>
+        <div class="color-info">
+          <div class="color-name">primary-200</div>
+          <div class="color-hex">#ecddd0</div>
+          <div class="color-usage">Borders, dividers</div>
+        </div>
+      </div>
+      <div class="color-swatch">
+        <div class="color-preview" style="background: var(--primary-300)"></div>
+        <div class="color-info">
+          <div class="color-name">primary-300</div>
+          <div class="color-hex">#dfc6b0</div>
+          <div class="color-usage">Disabled states</div>
+        </div>
+      </div>
+      <div class="color-swatch">
+        <div class="color-preview" style="background: var(--primary-400)"></div>
+        <div class="color-info">
+          <div class="color-name">primary-400</div>
+          <div class="color-hex">#d4a574</div>
+          <div class="color-usage">Accent (sparingly)</div>
+        </div>
+      </div>
+      <div class="color-swatch">
+        <div class="color-preview" style="background: var(--primary-500)"></div>
+        <div class="color-info">
+          <div class="color-name">primary-500</div>
+          <div class="color-hex">#c8935f</div>
+          <div class="color-usage">Hover accents</div>
+        </div>
+      </div>
+      <div class="color-swatch">
+        <div class="color-preview" style="background: var(--primary-600)"></div>
+        <div class="color-info">
+          <div class="color-name">primary-600</div>
+          <div class="color-hex">#b87d4a</div>
+          <div class="color-usage">Active accents</div>
+        </div>
+      </div>
+      <div class="color-swatch">
+        <div class="color-preview" style="background: var(--primary-700)"></div>
+        <div class="color-info">
+          <div class="color-name">primary-700</div>
+          <div class="color-hex">#9a6640</div>
+          <div class="color-usage">Dark accents</div>
+        </div>
+      </div>
+      <div class="color-swatch">
+        <div class="color-preview" style="background: var(--primary-800)"></div>
+        <div class="color-info">
+          <div class="color-name">primary-800</div>
+          <div class="color-hex">#7d5339</div>
+          <div class="color-usage">Very dark accents</div>
+        </div>
+      </div>
+      <div class="color-swatch">
+        <div class="color-preview" style="background: var(--primary-900)">
+          <span style="color: white; font-size: 0.625rem;">Aa</span>
+        </div>
+        <div class="color-info">
+          <div class="color-name">primary-900</div>
+          <div class="color-hex">#664531</div>
+          <div class="color-usage">Text on light</div>
+        </div>
+      </div>
+    </div>
+
+    <h3>Neutral Colors (Warm Grays)</h3>
+    <p>Warm gray tones that complement the primary palette. <strong>These are used most frequently.</strong></p>
+
+    <div class="color-grid">
+      <div class="color-swatch">
+        <div class="color-preview" style="background: var(--neutral-50)"></div>
+        <div class="color-info">
+          <div class="color-name">neutral-50</div>
+          <div class="color-hex">#fafaf9</div>
+          <div class="color-usage">Card backgrounds</div>
+        </div>
+      </div>
+      <div class="color-swatch">
+        <div class="color-preview" style="background: var(--neutral-100)"></div>
+        <div class="color-info">
+          <div class="color-name">neutral-100</div>
+          <div class="color-hex">#f5f5f4</div>
+          <div class="color-usage">Alternating rows</div>
+        </div>
+      </div>
+      <div class="color-swatch">
+        <div class="color-preview" style="background: var(--neutral-200)"></div>
+        <div class="color-info">
+          <div class="color-name">neutral-200</div>
+          <div class="color-hex">#e7e5e4</div>
+          <div class="color-usage">Card borders</div>
+        </div>
+      </div>
+      <div class="color-swatch">
+        <div class="color-preview" style="background: var(--neutral-300)"></div>
+        <div class="color-info">
+          <div class="color-name">neutral-300</div>
+          <div class="color-hex">#d6d3d1</div>
+          <div class="color-usage">Active tab border</div>
+        </div>
+      </div>
+      <div class="color-swatch">
+        <div class="color-preview" style="background: var(--neutral-400)"></div>
+        <div class="color-info">
+          <div class="color-name">neutral-400</div>
+          <div class="color-hex">#a8a29e</div>
+          <div class="color-usage">Placeholder, icons</div>
+        </div>
+      </div>
+      <div class="color-swatch">
+        <div class="color-preview" style="background: var(--neutral-500)"></div>
+        <div class="color-info">
+          <div class="color-name">neutral-500</div>
+          <div class="color-hex">#78716c</div>
+          <div class="color-usage">Secondary text</div>
+        </div>
+      </div>
+      <div class="color-swatch">
+        <div class="color-preview" style="background: var(--neutral-600)">
+          <span style="color: white; font-size: 0.625rem;">Aa</span>
+        </div>
+        <div class="color-info">
+          <div class="color-name">neutral-600</div>
+          <div class="color-hex">#57534e</div>
+          <div class="color-usage">Body text</div>
+        </div>
+      </div>
+      <div class="color-swatch">
+        <div class="color-preview" style="background: var(--neutral-700)">
+          <span style="color: white; font-size: 0.625rem;">Aa</span>
+        </div>
+        <div class="color-info">
+          <div class="color-name">neutral-700</div>
+          <div class="color-hex">#44403c</div>
+          <div class="color-usage">Nav links</div>
+        </div>
+      </div>
+      <div class="color-swatch">
+        <div class="color-preview" style="background: var(--neutral-800)">
+          <span style="color: white; font-size: 0.625rem;">Aa</span>
+        </div>
+        <div class="color-info">
+          <div class="color-name">neutral-800</div>
+          <div class="color-hex">#292524</div>
+          <div class="color-usage"><strong>Primary text</strong></div>
+        </div>
+      </div>
+      <div class="color-swatch">
+        <div class="color-preview" style="background: var(--neutral-900)">
+          <span style="color: white; font-size: 0.625rem;">Aa</span>
+        </div>
+        <div class="color-info">
+          <div class="color-name">neutral-900</div>
+          <div class="color-hex">#1c1917</div>
+          <div class="color-usage"><strong>Headings, buttons</strong></div>
+        </div>
+      </div>
+    </div>
+
+    <h3>Accent Colors</h3>
+    <p>Used sparingly for status indicators.</p>
+
+    <div class="color-grid">
+      <div class="color-swatch">
+        <div class="color-preview" style="background: var(--accent-400)"></div>
+        <div class="color-info">
+          <div class="color-name">accent-400</div>
+          <div class="color-hex">#4ade80</div>
+          <div class="color-usage">Success (light)</div>
+        </div>
+      </div>
+      <div class="color-swatch">
+        <div class="color-preview" style="background: var(--accent-500)"></div>
+        <div class="color-info">
+          <div class="color-name">accent-500</div>
+          <div class="color-hex">#22c55e</div>
+          <div class="color-usage">Success, active</div>
+        </div>
+      </div>
+      <div class="color-swatch">
+        <div class="color-preview" style="background: var(--accent-600)"></div>
+        <div class="color-info">
+          <div class="color-name">accent-600</div>
+          <div class="color-hex">#16a34a</div>
+          <div class="color-usage">Success (dark)</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Gradients Section -->
+    <h2>Gradients</h2>
+
+    <h3>Hero Background Gradient</h3>
+    <p>The hero section uses a layered gradient for depth and warmth.</p>
+
+    <div class="gradient-preview gradient-hero">
+      <span class="gradient-label">Hero gradient</span>
+    </div>
+
+    <pre><code>background: linear-gradient(
+  180deg,
+  #e5d2c0 0%,    /* Darker tan at edges */
+  #f0e5db 25%,   /* Warm cream */
+  #f8f2ec 50%,   /* Lightest in center */
+  #f0e5db 75%,   /* Warm cream */
+  #e5d2c0 100%   /* Darker tan at edges */
+);</code></pre>
+
+    <h3>Feature Card Gradient</h3>
+    <div class="gradient-preview gradient-feature">
+      <span class="gradient-label">Feature card gradient</span>
+    </div>
+
+    <pre><code>background: linear-gradient(
+  180deg,
+  #e5d2c0 0%,
+  #f0e5db 40%,
+  #f8f2ec 70%,
+  #f0e5db 100%
+);</code></pre>
+
+    <!-- Typography Section -->
+    <h2>Typography</h2>
+
+    <h3>Font Family</h3>
+    <p><strong>Plus Jakarta Sans</strong> - A clean, modern sans-serif with slightly rounded letterforms.</p>
+
+    <pre><code>font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;</code></pre>
+
+    <h3>Type Scale</h3>
+
+    <div class="type-sample">
+      <div class="type-row">
+        <span class="type-label">Hero H1<br>700 / 1.1</span>
+        <span class="type-preview type-hero">Your community</span>
+      </div>
+      <div class="type-row">
+        <span class="type-label">Section H2<br>700 / 1.2</span>
+        <span class="type-preview type-section">Everything your community needs</span>
+      </div>
+      <div class="type-row">
+        <span class="type-label">Feature Headline<br>500 / 1.4</span>
+        <span class="type-preview type-feature">Organize your community into groups</span>
+      </div>
+      <div class="type-row">
+        <span class="type-label">Card Title<br>700 / 1.4</span>
+        <span class="type-preview type-card-title">Group Types</span>
+      </div>
+      <div class="type-row">
+        <span class="type-label">Body Large<br>400 / 1.6</span>
+        <span class="type-preview type-body-lg">Stop juggling multiple apps. Togather brings groups, messaging, events, and leader tools into one seamless experience.</span>
+      </div>
+      <div class="type-row">
+        <span class="type-label">Body<br>400 / 1.5</span>
+        <span class="type-preview type-body">Create any type of group - life groups, teams, classes, or whatever fits your community's culture.</span>
+      </div>
+      <div class="type-row">
+        <span class="type-label">Small<br>400/500 / 1.4</span>
+        <span class="type-preview type-small">Trusted by 100+ world-class communities</span>
+      </div>
+    </div>
+
+    <!-- Spacing Section -->
+    <h2>Spacing</h2>
+    <p>Use multiples of 4px (0.25rem) for consistent spacing.</p>
+
+    <div class="spacing-grid">
+      <div class="spacing-item">
+        <div class="spacing-box" style="width: 8px; height: 8px;"></div>
+        <span class="spacing-label">2 (8px)</span>
+      </div>
+      <div class="spacing-item">
+        <div class="spacing-box" style="width: 12px; height: 12px;"></div>
+        <span class="spacing-label">3 (12px)</span>
+      </div>
+      <div class="spacing-item">
+        <div class="spacing-box" style="width: 16px; height: 16px;"></div>
+        <span class="spacing-label">4 (16px)</span>
+      </div>
+      <div class="spacing-item">
+        <div class="spacing-box" style="width: 20px; height: 20px;"></div>
+        <span class="spacing-label">5 (20px)</span>
+      </div>
+      <div class="spacing-item">
+        <div class="spacing-box" style="width: 24px; height: 24px;"></div>
+        <span class="spacing-label">6 (24px)</span>
+      </div>
+      <div class="spacing-item">
+        <div class="spacing-box" style="width: 28px; height: 28px;"></div>
+        <span class="spacing-label">7 (28px)</span>
+      </div>
+      <div class="spacing-item">
+        <div class="spacing-box" style="width: 32px; height: 32px;"></div>
+        <span class="spacing-label">8 (32px)</span>
+      </div>
+      <div class="spacing-item">
+        <div class="spacing-box" style="width: 40px; height: 40px;"></div>
+        <span class="spacing-label">10 (40px)</span>
+      </div>
+      <div class="spacing-item">
+        <div class="spacing-box" style="width: 48px; height: 48px;"></div>
+        <span class="spacing-label">12 (48px)</span>
+      </div>
+    </div>
+
+    <!-- Border Radius Section -->
+    <h2>Border Radius</h2>
+
+    <div class="radius-grid">
+      <div class="radius-item">
+        <div class="radius-box" style="border-radius: 12px;"></div>
+        <div class="radius-label">xl (12px)<br>Buttons</div>
+      </div>
+      <div class="radius-item">
+        <div class="radius-box" style="border-radius: 16px;"></div>
+        <div class="radius-label">2xl (16px)<br>Tabs, cards</div>
+      </div>
+      <div class="radius-item">
+        <div class="radius-box" style="border-radius: 24px;"></div>
+        <div class="radius-label">3xl (24px)<br>Large cards</div>
+      </div>
+      <div class="radius-item">
+        <div class="radius-box" style="border-radius: 32px;"></div>
+        <div class="radius-label">[2rem] (32px)<br>CTA section</div>
+      </div>
+      <div class="radius-item">
+        <div class="radius-box" style="border-radius: 40px;"></div>
+        <div class="radius-label">[2.5rem] (40px)<br>Main content</div>
+      </div>
+    </div>
+
+    <!-- Components Section -->
+    <h2>Components</h2>
+
+    <h3>Buttons</h3>
+    <div class="component-preview">
+      <button class="btn-primary">Download</button>
+      <button class="btn-secondary">Sign in</button>
+    </div>
+
+    <pre><code>/* Primary Button */
+&lt;button class="px-5 py-2.5 text-sm font-medium text-white bg-neutral-900 hover:bg-neutral-800 rounded-xl"&gt;
+  Download
+&lt;/button&gt;
+
+/* Secondary Button */
+&lt;button class="px-5 py-2.5 text-sm font-medium text-neutral-700 hover:text-neutral-900"&gt;
+  Sign in
+&lt;/button&gt;</code></pre>
+
+    <h3>Tab Navigation</h3>
+    <div class="component-preview">
+      <button class="tab-active">Groups</button>
+      <button class="tab-inactive">Messaging</button>
+      <button class="tab-inactive">Events</button>
+      <button class="tab-inactive">Admin Tools</button>
+    </div>
+
+    <pre><code>/* Active Tab */
+&lt;button class="px-7 py-3 rounded-2xl text-lg bg-white text-neutral-900 font-semibold shadow-sm border border-neutral-300"&gt;
+  Active
+&lt;/button&gt;
+
+/* Inactive Tab */
+&lt;button class="px-7 py-3 rounded-2xl text-lg text-neutral-400 font-medium hover:text-neutral-700"&gt;
+  Inactive
+&lt;/button&gt;</code></pre>
+
+    <h3>Feature Card</h3>
+    <div class="component-preview">
+      <div class="card-feature">
+        <div class="card-header">
+          <div class="card-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+              <circle cx="9" cy="7" r="4"/>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+          </div>
+          <span class="card-title">Group Types</span>
+        </div>
+        <p class="card-desc">Create any type of group - life groups, teams, classes, or whatever fits your community's culture.</p>
+      </div>
+    </div>
+
+    <h3>FAQ Accordion</h3>
+    <div class="component-preview">
+      <div class="faq-item">
+        <span class="faq-question">Is Togather really free?</span>
+        <span class="faq-icon">+</span>
+      </div>
+    </div>
+
+    <h3>Integration Badge</h3>
+    <div class="component-preview dark">
+      <div class="badge">
+        <div class="badge-icon"></div>
+        <span><strong>Planning Center integration</strong> available to sync your member data.</span>
+      </div>
+    </div>
+
+    <!-- Quick Reference Section -->
+    <h2>Quick Reference</h2>
+
+    <h3>Most Used Classes</h3>
+    <table class="ref-table">
+      <tr>
+        <th>Category</th>
+        <th>Classes</th>
+      </tr>
+      <tr>
+        <td>Text Colors</td>
+        <td><code>text-neutral-900</code>, <code>text-neutral-700</code>, <code>text-neutral-600</code>, <code>text-neutral-400</code></td>
+      </tr>
+      <tr>
+        <td>Backgrounds</td>
+        <td><code>bg-white</code>, <code>bg-neutral-50</code>, <code>bg-neutral-900</code></td>
+      </tr>
+      <tr>
+        <td>Borders</td>
+        <td><code>border-neutral-200</code>, <code>border-neutral-300</code></td>
+      </tr>
+      <tr>
+        <td>Buttons</td>
+        <td><code>bg-neutral-900 hover:bg-neutral-800 text-white rounded-xl</code></td>
+      </tr>
+      <tr>
+        <td>Cards</td>
+        <td><code>bg-neutral-50 rounded-2xl border border-neutral-200 p-7</code></td>
+      </tr>
+      <tr>
+        <td>Tabs</td>
+        <td><code>rounded-2xl text-lg px-7 py-3</code></td>
+      </tr>
+      <tr>
+        <td>Container</td>
+        <td><code>max-w-7xl mx-auto px-6 md:px-10</code></td>
+      </tr>
+    </table>
+
+    <h3>Key Gradient</h3>
+    <pre><code>linear-gradient(180deg, #e5d2c0 0%, #f0e5db 40%, #f8f2ec 70%, #f0e5db 100%)</code></pre>
+
+    <h3>Page Structure</h3>
+    <pre><code>&lt;div class="bg-neutral-900"&gt;
+  &lt;main class="relative z-10 bg-white rounded-b-[2.5rem] md:rounded-b-[3rem] pb-8"&gt;
+    {/* All page sections */}
+  &lt;/main&gt;
+  &lt;footer class="sticky bottom-0 z-0"&gt;
+    {/* Footer revealed on scroll */}
+  &lt;/footer&gt;
+&lt;/div&gt;</code></pre>
+
+    <hr style="margin: 3rem 0; border: none; border-top: 1px solid var(--neutral-200);">
+
+    <p style="text-align: center; color: var(--neutral-400); font-size: 0.875rem;">
+      Togather Design System - Updated January 2026
+    </p>
+  </div>
+</body>
+</html>

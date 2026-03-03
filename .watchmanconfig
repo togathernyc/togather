@@ -1,0 +1,4 @@
+{
+  "_comment": "WARNING: Do NOT add 'node_modules' to ignore_dirs! Metro bundler requires watchman to watch node_modules to compute SHA-1 hashes for files. If node_modules is ignored, you'll get 'Failed to get the SHA-1 for: .../node_modules/.pnpm/.../entry.js' errors when bundling. This is especially critical with pnpm's symlinked node_modules structure.",
+  "ignore_dirs": [".git", "ios", "android"]
+}

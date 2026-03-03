@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 120" fill="none">
+  <!-- Left balloon -->
+  <ellipse cx="28" cy="70" rx="22" ry="28" stroke="#D4A574" stroke-width="5" fill="none"/>
+  <!-- Left balloon knot -->
+  <path d="M28 98 L25 103 L31 103 Z" stroke="#D4A574" stroke-width="5" stroke-linejoin="round" fill="none"/>
+  <!-- Left string -->
+  <path d="M28 103 Q26 115, 30 120" stroke="#D4A574" stroke-width="5" stroke-linecap="round" fill="none"/>
+
+  <!-- Middle balloon (behind) -->
+  <ellipse cx="50" cy="45" rx="24" ry="32" stroke="#D4A574" stroke-width="5" fill="none"/>
+  <!-- Middle balloon knot -->
+  <path d="M50 77 L47 82 L53 82 Z" stroke="#D4A574" stroke-width="5" stroke-linejoin="round" fill="none"/>
+  <!-- Middle string -->
+  <path d="M50 82 Q48 100, 45 120" stroke="#D4A574" stroke-width="5" stroke-linecap="round" fill="none"/>
+
+  <!-- Right balloon -->
+  <ellipse cx="72" cy="58" rx="23" ry="30" stroke="#D4A574" stroke-width="5" fill="none"/>
+  <!-- Right balloon knot -->
+  <path d="M72 88 L69 93 L75 93 Z" stroke="#D4A574" stroke-width="5" stroke-linejoin="round" fill="none"/>
+  <!-- Right string -->
+  <path d="M72 93 Q75 108, 68 120" stroke="#D4A574" stroke-width="5" stroke-linecap="round" fill="none"/>
+</svg>

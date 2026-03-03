@@ -1,0 +1,1514 @@
+import React, { useState, useEffect, useMemo } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  TextInput,
+  Alert,
+  ActivityIndicator,
+  Switch,
+  KeyboardAvoidingView,
+  Platform,
+} from "react-native";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { UserRoute } from "@components/guards/UserRoute";
+import { Ionicons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { uploadAsync, FileSystemUploadType } from "expo-file-system/legacy";
+import { useQuery as useConvexQuery, useMutation as useConvexMutation, api, convexVanilla, useAuthenticatedMutation, useAuthenticatedAction } from "@services/api/convex";
+import type { Id } from "@services/api/convex";
+import { useGroupDetails } from "../../groups/hooks/useGroupDetails";
+import { DatePicker } from "@components/ui/DatePicker";
+import { ImagePickerComponent } from "@components/ui/ImagePicker";
+import {
+  RsvpOptionsEditor,
+  RsvpOption,
+  DEFAULT_RSVP_OPTIONS,
+} from "./RsvpOptionsEditor";
+import { VisibilitySelector, VisibilityLevel } from "./VisibilitySelector";
+import { useLeaderGroups } from "../../explore/hooks/useCommunityEvents";
+import { ShareToChatModal } from "./ShareToChatModal";
+import { ConfirmModal } from "@components/ui/ConfirmModal";
+import { getGroupCoordinates, geocodeAddressAsync } from "../../groups/utils/geocodeLocation";
+import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
+import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useAuth } from "@providers/AuthProvider";
+import { formatError } from "@/utils/error-handling";
+import { useGroupTypes } from "../../admin/hooks/useGroupTypes";
+import { DragHandle } from "@components/ui/DragHandle";
+
+interface CreateMeetingInput {
+  scheduledAt: string;
+  title?: string;
+  meetingType?: number;
+  meetingLink?: string;
+  locationOverride?: string;
+  note?: string;
+  coverImage?: string;
+  rsvpEnabled?: boolean;
+  rsvpOptions?: RsvpOption[];
+  visibility?: VisibilityLevel;
+}
+
+export function CreateEventScreen() {
+  // All hooks must be called at the top level, before any early returns
+  const { group_id, event_id: eventIdParam, hostingGroupId } = useLocalSearchParams<{
+    group_id?: string;
+    event_id?: string;
+    hostingGroupId?: string;
+  }>();
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const { primaryColor } = useCommunityTheme();
+  const { token, user, community } = useAuth();
+
+  // Check if user is a community admin
+  const isAdmin = user?.is_admin === true;
+
+  // Determine if we're in unified mode (no group_id in route) vs legacy mode
+  const isUnifiedMode = !group_id;
+
+  // Community-wide event toggle should only show for admins in unified mode (not editing)
+  const canCreateCommunityWide = isAdmin && isUnifiedMode;
+
+  // Fetch leader groups for unified mode dropdown
+  const { data: leaderGroups, isLoading: isLoadingLeaderGroups } = useLeaderGroups();
+
+  // Fetch group types for community-wide event creation (only for admins)
+  const { groupTypes, isLoading: isLoadingGroupTypes } = useGroupTypes();
+
+  // Community-wide event state
+  const [isCommunityWideEnabled, setIsCommunityWideEnabled] = useState(false);
+  const [selectedGroupTypeId, setSelectedGroupTypeId] = useState<string | null>(null);
+  const [isGroupTypeDropdownOpen, setIsGroupTypeDropdownOpen] = useState(false);
+
+  // Get selected group type for display
+  const selectedGroupType = useMemo(() => {
+    if (!selectedGroupTypeId || !groupTypes) return null;
+    return groupTypes.find(gt => gt.id === selectedGroupTypeId) || null;
+  }, [selectedGroupTypeId, groupTypes]);
+
+  // Get count of active groups for selected type
+  const groupCountForType = useConvexQuery(
+    api.functions.meetings.communityEvents.countGroupsByType,
+    isCommunityWideEnabled && selectedGroupTypeId && community?.id
+      ? {
+          communityId: community.id as Id<"communities">,
+          groupTypeId: selectedGroupTypeId as Id<"groupTypes">,
+        }
+      : "skip"
+  );
+
+  // Form state - must be declared before any conditional logic
+  const [scheduledAt, setScheduledAt] = useState<Date | null>(null);
+  const [title, setTitle] = useState("");
+  const [location, setLocation] = useState("");
+  const [isOnline, setIsOnline] = useState(false);
+  const [meetingLink, setMeetingLink] = useState("");
+  const [note, setNote] = useState("");
+  const [coverImage, setCoverImage] = useState<string | undefined>();
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+
+  // Convex action for getting R2 presigned upload URL
+  const getR2UploadUrl = useAuthenticatedAction(api.functions.uploads.getR2UploadUrl);
+  const [errors, setErrors] = useState<{ scheduledAt?: string; hostingGroup?: string; groupType?: string }>({});
+  const [rsvpEnabled, setRsvpEnabled] = useState(true);
+  const [rsvpOptions, setRsvpOptions] =
+    useState<RsvpOption[]>(DEFAULT_RSVP_OPTIONS);
+  const [visibility, setVisibility] = useState<VisibilityLevel>("public");
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(hostingGroupId || null);
+  const [isGroupDropdownOpen, setIsGroupDropdownOpen] = useState(false);
+
+  // Share to chat modal state
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [pendingMeetingId, setPendingMeetingId] = useState<string | null>(null);
+
+  // Past date confirmation modal state (for admins only)
+  const [showPastDateModal, setShowPastDateModal] = useState(false);
+
+  // Location geocoding validation state
+  const [locationCanBeGeocoded, setLocationCanBeGeocoded] = useState<boolean | null>(null);
+  const [isCheckingLocation, setIsCheckingLocation] = useState(false);
+
+  // The effective group ID is either from route params or selected
+  const effectiveGroupId = group_id || selectedGroupId;
+
+  // Parse meetingId from event_id parameter if editing
+  let meetingId: string | null = null;
+  if (eventIdParam?.startsWith("id-")) {
+    const afterPrefix = eventIdParam.replace("id-", "");
+    const separatorIndex = afterPrefix.indexOf("|");
+    if (separatorIndex > 0) {
+      meetingId = afterPrefix.substring(0, separatorIndex);
+    }
+  }
+
+  const isEditMode = !!meetingId;
+
+  // Fetch group details to get group type name
+  const { data: groupDetails } = useGroupDetails(effectiveGroupId ?? undefined);
+  const groupTypeName = groupDetails?.group_type_name || "Event";
+
+  // Get selected group info from leaderGroups for display
+  const selectedGroup = useMemo(() => {
+    if (!selectedGroupId || !leaderGroups) return null;
+    return leaderGroups.find(g => g && g.id === selectedGroupId) || null;
+  }, [selectedGroupId, leaderGroups]);
+
+  // Fetch existing meeting data if editing (using Convex)
+  const meetingData = useConvexQuery(
+    api.functions.meetings.queries.getWithDetails,
+    isEditMode && !!meetingId ? { meetingId: meetingId as Id<"meetings"> } : "skip"
+  );
+  const meeting = meetingData ?? undefined;
+  const isLoadingMeeting = isEditMode && !!meetingId && meetingData === undefined;
+
+  // Initialize form from meeting data when editing
+  useEffect(() => {
+    if (meeting && isEditMode) {
+      if (meeting.scheduledAt) {
+        // Convex stores scheduledAt as a timestamp number
+        setScheduledAt(new Date(meeting.scheduledAt));
+      }
+      setTitle(meeting.title || "");
+      setLocation(meeting.locationOverride || "");
+      setIsOnline(meeting.meetingType === 2); // 2 = online
+      setMeetingLink(meeting.meetingLink || "");
+      setNote(meeting.note || "");
+      setCoverImage(meeting.coverImage || undefined);
+
+      // Initialize RSVP fields
+      if (meeting.rsvpEnabled !== undefined) {
+        setRsvpEnabled(meeting.rsvpEnabled);
+      }
+      if (meeting.rsvpOptions && Array.isArray(meeting.rsvpOptions)) {
+        setRsvpOptions(meeting.rsvpOptions as unknown as RsvpOption[]);
+      }
+      if (meeting.visibility) {
+        setVisibility(meeting.visibility as VisibilityLevel);
+      }
+    }
+  }, [meeting, isEditMode]);
+
+  // Debounced geocoding check for location field
+  useEffect(() => {
+    // Only check if location is filled and event is in-person
+    if (!location.trim() || isOnline) {
+      setLocationCanBeGeocoded(null);
+      return;
+    }
+
+    const timeoutId = setTimeout(async () => {
+      setIsCheckingLocation(true);
+      try {
+        // First try sync geocoding (zip code extraction)
+        const syncCoords = getGroupCoordinates({ location: location.trim() });
+        if (syncCoords) {
+          setLocationCanBeGeocoded(true);
+          setIsCheckingLocation(false);
+          return;
+        }
+
+        // Try async geocoding
+        const asyncCoords = await geocodeAddressAsync(location.trim());
+        setLocationCanBeGeocoded(!!asyncCoords);
+      } catch (error) {
+        setLocationCanBeGeocoded(false);
+      }
+      setIsCheckingLocation(false);
+    }, 800); // Debounce for 800ms
+
+    return () => clearTimeout(timeoutId);
+  }, [location, isOnline]);
+
+  // Convex mutations for meetings - use authenticated versions that auto-inject token
+  const createMeetingMutation = useAuthenticatedMutation(api.functions.meetings.index.create);
+  const updateMeetingMutation = useAuthenticatedMutation(api.functions.meetings.index.update);
+  const cancelMeetingMutation = useAuthenticatedMutation(api.functions.meetings.index.cancel);
+  const createCommunityWideEventMutation = useAuthenticatedMutation(api.functions.meetings.communityEvents.createCommunityWideEvent);
+
+  // Mutation state tracking
+  const [isCreating, setIsCreating] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
+  const [isPostingToChat, setIsPostingToChat] = useState(false);
+  const [isCreatingCommunityWide, setIsCreatingCommunityWide] = useState(false);
+
+  // Show the share to chat modal
+  const showShareToChatModal = (eventMeetingId: string) => {
+    setPendingMeetingId(eventMeetingId);
+    setShowShareModal(true);
+  };
+
+  // Handle sending the event to chat with a message
+  // Note: useAuthenticatedMutation auto-injects the token
+  const handleSendToChat = async (message: string) => {
+    if (!pendingMeetingId) return;
+    setIsPostingToChat(true);
+    try {
+      await updateMeetingMutation({
+        meetingId: pendingMeetingId as Id<"meetings">,
+        // Note: postToChat functionality may need to be handled separately
+        // For now, just close the modal after update
+      });
+      setShowShareModal(false);
+      setPendingMeetingId(null);
+      router.back();
+    } catch (error: any) {
+      Alert.alert(
+        "Error",
+        error.message || "Failed to post event to chat. Please try again."
+      );
+    } finally {
+      setIsPostingToChat(false);
+    }
+  };
+
+  // Handle skipping the share to chat
+  const handleSkipShare = () => {
+    setShowShareModal(false);
+    setPendingMeetingId(null);
+    router.back();
+  };
+
+  // Wrapper for create mutation with state tracking
+  // Note: useAuthenticatedMutation auto-injects the token
+  const createMeeting = {
+    mutate: async (data: { groupId: string; scheduledAt: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; note?: string; coverImage?: string; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; visibility?: VisibilityLevel }) => {
+      setIsCreating(true);
+      try {
+        const newMeetingId = await createMeetingMutation({
+          groupId: data.groupId as Id<"groups">,
+          scheduledAt: new Date(data.scheduledAt).getTime(),
+          title: data.title,
+          meetingType: data.meetingType ?? 1,
+          meetingLink: data.meetingLink,
+          locationOverride: data.locationOverride,
+          note: data.note,
+          coverImage: data.coverImage,
+          rsvpEnabled: data.rsvpEnabled,
+          rsvpOptions: data.rsvpOptions,
+          visibility: data.visibility,
+        });
+        // Convex automatically updates queries, so no need to invalidate
+        // Show the share to chat modal
+        showShareToChatModal(newMeetingId);
+      } catch (error: any) {
+        Alert.alert("Error", formatError(error, "Failed to create event"));
+      } finally {
+        setIsCreating(false);
+      }
+    },
+    isPending: isCreating,
+  };
+
+  // Wrapper for update mutation with state tracking
+  // Note: useAuthenticatedMutation auto-injects the token
+  const updateMeeting = {
+    mutate: async (data: { meetingId: string; scheduledAt?: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; note?: string; coverImage?: string; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; visibility?: VisibilityLevel; notifyGuests?: boolean }) => {
+      setIsUpdating(true);
+      try {
+        await updateMeetingMutation({
+          meetingId: data.meetingId as Id<"meetings">,
+          scheduledAt: data.scheduledAt ? new Date(data.scheduledAt).getTime() : undefined,
+          title: data.title,
+          meetingType: data.meetingType,
+          meetingLink: data.meetingLink,
+          locationOverride: data.locationOverride,
+          note: data.note,
+          coverImage: data.coverImage,
+          rsvpEnabled: data.rsvpEnabled,
+          rsvpOptions: data.rsvpOptions,
+          visibility: data.visibility,
+        });
+        // Convex automatically updates queries
+        router.back();
+      } catch (error: any) {
+        Alert.alert("Error", formatError(error, "Failed to update event"));
+      } finally {
+        setIsUpdating(false);
+      }
+    },
+    isPending: isUpdating,
+  };
+
+  // Wrapper for cancel mutation with state tracking
+  // Note: useAuthenticatedMutation auto-injects the token
+  const cancelMeeting = {
+    mutate: async (data: { meetingId: string }) => {
+      setIsCancelling(true);
+      try {
+        await cancelMeetingMutation({
+          meetingId: data.meetingId as Id<"meetings">,
+        });
+        // Convex automatically updates queries
+        Alert.alert(
+          "Event Cancelled",
+          "This event has been cancelled.",
+          [{ text: "OK", onPress: () => router.back() }]
+        );
+      } catch (error: any) {
+        Alert.alert("Error", formatError(error, "Failed to cancel event"));
+      } finally {
+        setIsCancelling(false);
+      }
+    },
+    isPending: isCancelling,
+  };
+
+  // Post to chat mutation state (for the modal)
+  const postToChatMutation = {
+    isPending: isPostingToChat,
+  };
+
+  const handleCancelEvent = () => {
+    Alert.alert(
+      "Cancel Event",
+      "Are you sure you want to cancel this event? This action cannot be undone and all attendees will be notified.",
+      [
+        {
+          text: "Keep Event",
+          style: "cancel",
+        },
+        {
+          text: "Cancel Event",
+          style: "destructive",
+          onPress: () => {
+            if (meetingId) {
+              cancelMeeting.mutate({ meetingId });
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const validateForm = (): boolean => {
+    const newErrors: { scheduledAt?: string; hostingGroup?: string; groupType?: string } = {};
+
+    if (!scheduledAt) {
+      newErrors.scheduledAt = "Date and time is required";
+    } else if (scheduledAt < new Date() && !isAdmin) {
+      // Non-admins cannot create events in the past
+      newErrors.scheduledAt = "Event date cannot be in the past";
+    }
+    // Note: Admins can create past events but will see a confirmation modal
+
+    // For community-wide events, require a group type
+    if (isCommunityWideEnabled) {
+      if (!selectedGroupTypeId) {
+        newErrors.groupType = "Please select a group type";
+      }
+    } else if (isUnifiedMode && !selectedGroupId && !isEditMode) {
+      // In unified mode (non-community-wide), require a hosting group to be selected
+      newErrors.hostingGroup = "Please select a hosting group";
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
+  // Check if the scheduled date is in the past
+  const isDateInPast = (): boolean => {
+    if (!scheduledAt) return false;
+    return scheduledAt < new Date();
+  };
+
+  /**
+   * Upload cover image to R2 if it's a local file URI
+   * Returns the R2 storage path if upload succeeds, or the original URL if already a remote URL
+   */
+  const uploadCoverImageToR2 = async (imageUri: string): Promise<string> => {
+    // If it's already an http URL, return as-is
+    if (imageUri.startsWith('http://') || imageUri.startsWith('https://')) {
+      return imageUri;
+    }
+
+    // It's a local file URI - need to upload to R2
+    setIsUploadingImage(true);
+    try {
+      const fileName = imageUri.split('/').pop() || 'event-cover.jpg';
+      const cleanFileName = fileName.split('?')[0];
+      const fileExtension = cleanFileName.split('.').pop()?.toLowerCase() || 'jpg';
+      const contentType = `image/${fileExtension === 'jpg' ? 'jpeg' : fileExtension}`;
+
+      // Get R2 presigned URL from Convex
+      const { uploadUrl, storagePath } = await getR2UploadUrl({
+        fileName: cleanFileName,
+        contentType,
+        folder: 'meetings',
+      });
+
+      // Upload to R2
+      if (Platform.OS === 'web') {
+        const response = await fetch(imageUri);
+        const blob = await response.blob();
+        const uploadResponse = await fetch(uploadUrl, {
+          method: 'PUT',
+          body: blob,
+          headers: {
+            'Content-Type': contentType,
+          },
+        });
+        if (!uploadResponse.ok) {
+          throw new Error(`R2 upload failed: ${uploadResponse.status}`);
+        }
+      } else {
+        const uploadResult = await uploadAsync(uploadUrl, imageUri, {
+          httpMethod: 'PUT',
+          uploadType: FileSystemUploadType.BINARY_CONTENT,
+          headers: {
+            'Content-Type': contentType,
+          },
+        });
+        if (uploadResult.status < 200 || uploadResult.status >= 300) {
+          throw new Error(`R2 upload failed: ${uploadResult.status}`);
+        }
+      }
+
+      return storagePath; // Return the R2 storage path (e.g., "r2:meetings/uuid-filename.jpg")
+    } finally {
+      setIsUploadingImage(false);
+    }
+  };
+
+  // The actual submission logic, called after all validations and confirmations
+  const proceedWithSubmit = async () => {
+    try {
+      // Upload cover image to R2 if it's a local file (not already a remote URL)
+      let finalCoverImage = coverImage;
+      console.log('[CreateEvent] coverImage state:', coverImage);
+      if (coverImage && !coverImage.startsWith('http://') && !coverImage.startsWith('https://')) {
+        console.log('[CreateEvent] Uploading local image to R2...');
+        finalCoverImage = await uploadCoverImageToR2(coverImage);
+        console.log('[CreateEvent] R2 upload complete, path:', finalCoverImage);
+      }
+
+      const data: CreateMeetingInput = {
+        scheduledAt: scheduledAt!.toISOString(),
+        title: title.trim() || undefined,
+        meetingType: isOnline ? 2 : 1, // 1 = In-Person, 2 = Online
+        meetingLink:
+          isOnline && meetingLink.trim() ? meetingLink.trim() : undefined,
+        locationOverride:
+          !isOnline && location.trim() ? location.trim() : undefined,
+        note: note.trim() || undefined,
+        coverImage: finalCoverImage || undefined,
+        rsvpEnabled: rsvpEnabled,
+        rsvpOptions: rsvpOptions.filter((opt) => opt.enabled),
+        visibility: visibility,
+      };
+
+      if (isEditMode && meetingId) {
+        // Check if time or location changed
+        const originalScheduledAt = meeting?.scheduledAt ? new Date(meeting.scheduledAt).toISOString() : null;
+        const newScheduledAt = data.scheduledAt;
+        const originalLocation = meeting?.locationOverride || '';
+        const newLocation = data.locationOverride || '';
+
+        const timeChanged = originalScheduledAt !== newScheduledAt;
+        const locationChanged = newLocation !== originalLocation;
+
+        if (timeChanged || locationChanged) {
+          // Check for "Going" RSVPs and prompt user before updating
+          promptToNotifyGuestsBeforeUpdate(meetingId, data, timeChanged, locationChanged);
+        } else {
+          // No time/location change, just update without notification
+          updateMeeting.mutate({ meetingId, ...data });
+        }
+      } else if (isCommunityWideEnabled && selectedGroupTypeId && community?.id) {
+        // Create community-wide event
+        setIsCreatingCommunityWide(true);
+        console.log('[CreateEvent] Creating community-wide event with coverImage:', finalCoverImage);
+        try {
+          const result = await createCommunityWideEventMutation({
+            communityId: community.id as Id<"communities">,
+            groupTypeId: selectedGroupTypeId as Id<"groupTypes">,
+            title: title.trim() || selectedGroupType?.name || "Event",
+            scheduledAt: new Date(data.scheduledAt).getTime(),
+            meetingType: data.meetingType ?? 1,
+            meetingLink: data.meetingLink,
+            note: data.note,
+            visibility: data.visibility,
+            coverImage: finalCoverImage,
+            rsvpEnabled: data.rsvpEnabled,
+            rsvpOptions: data.rsvpOptions,
+          });
+          Alert.alert(
+            "Events Created",
+            `Created events for ${result.groupCount} ${result.groupTypeName} groups`,
+            [{ text: "OK", onPress: () => router.back() }]
+          );
+        } catch (error: any) {
+          Alert.alert("Error", formatError(error, "Failed to create community-wide event"));
+        } finally {
+          setIsCreatingCommunityWide(false);
+        }
+      } else if (effectiveGroupId) {
+        createMeeting.mutate({ groupId: effectiveGroupId, ...data });
+      }
+    } catch (error: any) {
+      Alert.alert("Upload Error", formatError(error, "Failed to upload cover image"));
+    }
+  };
+
+  // Main submit handler - validates and shows confirmation modal for past dates
+  const handleSubmit = async () => {
+    if (!validateForm()) return;
+
+    // For admins creating NEW events in the past, show confirmation modal
+    // Skip if editing an existing event that already had a past date
+    const originalDateWasInPast =
+      isEditMode && meeting?.scheduledAt && new Date(meeting.scheduledAt) < new Date();
+    if (isAdmin && isDateInPast() && !originalDateWasInPast) {
+      setShowPastDateModal(true);
+      return;
+    }
+
+    await proceedWithSubmit();
+  };
+
+  // Prompt user about notifying guests BEFORE making the update
+  const promptToNotifyGuestsBeforeUpdate = async (
+    eventMeetingId: string,
+    data: CreateMeetingInput,
+    timeChanged: boolean,
+    locationChanged: boolean
+  ) => {
+    try {
+      // Check if there are any "Going" RSVPs before prompting (using Convex)
+      const rsvpData = await convexVanilla.query(api.functions.meetingRsvps.list, {
+        meetingId: eventMeetingId as Id<"meetings">,
+      });
+      // Find the count for option 1 (Going) from the grouped response
+      const goingRsvp = rsvpData?.rsvps?.find((r) => r.option.id === 1);
+      const goingCount = goingRsvp?.count || 0;
+
+      if (goingCount === 0) {
+        // No guests to notify, just update
+        updateMeeting.mutate({ meetingId: eventMeetingId, ...data });
+        return;
+      }
+
+      // Build change description for the prompt
+      const changeDescriptions: string[] = [];
+      if (timeChanged) changeDescriptions.push("time");
+      if (locationChanged) changeDescriptions.push("location");
+      const changeText = changeDescriptions.join(" and ");
+
+      Alert.alert(
+        "Notify Guests?",
+        `You changed the ${changeText}. Would you like to notify ${goingCount} guest${goingCount > 1 ? 's' : ''} who RSVP'd 'Going'?`,
+        [
+          {
+            text: "No",
+            style: "cancel",
+            onPress: () => {
+              // Update without notification
+              updateMeeting.mutate({ meetingId: eventMeetingId, ...data });
+            },
+          },
+          {
+            text: "Yes, Notify",
+            onPress: () => {
+              // Update WITH notification
+              updateMeeting.mutate({ meetingId: eventMeetingId, ...data, notifyGuests: true });
+            },
+          },
+        ]
+      );
+    } catch (error) {
+      console.error("Failed to check RSVPs:", error);
+      // Fall back to showing prompt anyway
+      Alert.alert(
+        "Notify Guests?",
+        "Would you like to notify guests who RSVP'd 'Going' about this change?",
+        [
+          {
+            text: "No",
+            style: "cancel",
+            onPress: () => {
+              updateMeeting.mutate({ meetingId: eventMeetingId, ...data });
+            },
+          },
+          {
+            text: "Yes, Notify",
+            onPress: () => {
+              updateMeeting.mutate({ meetingId: eventMeetingId, ...data, notifyGuests: true });
+            },
+          },
+        ]
+      );
+    }
+  };
+
+  // Handle confirmation of past date event creation
+  const handleConfirmPastDate = async () => {
+    setShowPastDateModal(false);
+    // Proceed with submission directly (bypassing the past date check)
+    await proceedWithSubmit();
+  };
+
+  // Handle cancellation of past date event creation
+  const handleCancelPastDate = () => {
+    setShowPastDateModal(false);
+  };
+
+  const isSubmitting =
+    createMeeting.isPending ||
+    updateMeeting.isPending ||
+    postToChatMutation.isPending ||
+    cancelMeeting.isPending ||
+    isUploadingImage ||
+    isCreatingCommunityWide;
+
+  // Show loading state while fetching meeting data for edit
+  if (isEditMode && isLoadingMeeting) {
+    return (
+      <UserRoute>
+        <View style={[styles.container, { paddingTop: insets.top + 16 }]}>
+          <DragHandle />
+          <View style={styles.header}>
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={() => router.back()}
+            >
+              <Ionicons name="arrow-back" size={24} color="#333" />
+            </TouchableOpacity>
+            <View style={styles.headerContent}>
+              <Text style={styles.headerTitle}>Edit Event</Text>
+            </View>
+          </View>
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={primaryColor} />
+            <Text style={styles.loadingText}>Loading event details...</Text>
+          </View>
+        </View>
+      </UserRoute>
+    );
+  }
+
+  // Show error state if meeting not found
+  if (isEditMode && !meeting && !isLoadingMeeting) {
+    return (
+      <UserRoute>
+        <View style={[styles.container, { paddingTop: insets.top + 16 }]}>
+          <DragHandle />
+          <View style={styles.header}>
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={() => router.back()}
+            >
+              <Ionicons name="arrow-back" size={24} color="#333" />
+            </TouchableOpacity>
+            <View style={styles.headerContent}>
+              <Text style={styles.headerTitle}>Edit Event</Text>
+            </View>
+          </View>
+          <View style={styles.errorContainer}>
+            <Text style={styles.errorText}>Event not found</Text>
+            <TouchableOpacity
+              style={styles.backButtonError}
+              onPress={() => router.back()}
+            >
+              <Text style={styles.backButtonErrorText}>Go Back</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </UserRoute>
+    );
+  }
+
+  return (
+    <UserRoute>
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+      >
+        <DragHandle />
+        {/* Header */}
+        <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
+          <TouchableOpacity
+            testID="back-button"
+            style={styles.backButton}
+            onPress={() => router.back()}
+            disabled={isSubmitting}
+          >
+            <Ionicons name="arrow-back" size={24} color="#333" />
+          </TouchableOpacity>
+          <View style={styles.headerContent}>
+            <Text style={styles.headerTitle}>
+              {isEditMode ? "Edit Event" : "Create Event"}
+            </Text>
+          </View>
+        </View>
+
+        {/* Content */}
+        <ScrollView
+          style={styles.content}
+          contentContainerStyle={styles.contentContainer}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* Community-Wide Event Toggle - only show for admins in unified mode */}
+          {canCreateCommunityWide && !isEditMode && (
+            <View style={styles.communityWideSection}>
+              <View style={styles.communityWideToggleRow}>
+                <View style={styles.communityWideToggleLabel}>
+                  <Text style={styles.label}>Create for all</Text>
+                </View>
+                <Switch
+                  value={isCommunityWideEnabled}
+                  onValueChange={(value) => {
+                    setIsCommunityWideEnabled(value);
+                    // Reset selections when toggling
+                    if (value) {
+                      setSelectedGroupId(null);
+                      setIsGroupDropdownOpen(false);
+                    } else {
+                      setSelectedGroupTypeId(null);
+                      setIsGroupTypeDropdownOpen(false);
+                    }
+                    setErrors({});
+                  }}
+                  trackColor={{ false: "#e0e0e0", true: primaryColor }}
+                  thumbColor="#fff"
+                  disabled={isSubmitting}
+                />
+              </View>
+
+              {/* Group Type Selector - only show when toggle is ON */}
+              {isCommunityWideEnabled && (
+                <View style={styles.groupTypeSelector}>
+                  {isLoadingGroupTypes ? (
+                    <View style={styles.loadingDropdown}>
+                      <ActivityIndicator size="small" color={primaryColor} />
+                      <Text style={styles.loadingDropdownText}>Loading group types...</Text>
+                    </View>
+                  ) : !groupTypes || groupTypes.length === 0 ? (
+                    <View style={styles.noGroupsContainer}>
+                      <Text style={styles.noGroupsText}>
+                        No group types available.
+                      </Text>
+                    </View>
+                  ) : (
+                    <>
+                      <TouchableOpacity
+                        style={[
+                          styles.dropdownButton,
+                          errors.groupType && styles.dropdownButtonError,
+                        ]}
+                        onPress={() => setIsGroupTypeDropdownOpen(!isGroupTypeDropdownOpen)}
+                        disabled={isSubmitting}
+                      >
+                        {selectedGroupType ? (
+                          <Text style={styles.selectedGroupName}>{selectedGroupType.name}</Text>
+                        ) : (
+                          <Text style={styles.dropdownPlaceholder}>Select group type</Text>
+                        )}
+                        <Ionicons
+                          name={isGroupTypeDropdownOpen ? "chevron-up" : "chevron-down"}
+                          size={20}
+                          color="#666"
+                        />
+                      </TouchableOpacity>
+                      {isGroupTypeDropdownOpen && (
+                        <View style={styles.dropdownList}>
+                          {groupTypes.map((gt) => (
+                            <TouchableOpacity
+                              key={gt.id}
+                              style={[
+                                styles.dropdownItem,
+                                selectedGroupTypeId === gt.id && styles.dropdownItemSelected,
+                              ]}
+                              onPress={() => {
+                                setSelectedGroupTypeId(gt.id);
+                                setIsGroupTypeDropdownOpen(false);
+                                setErrors((prev) => ({ ...prev, groupType: undefined }));
+                              }}
+                            >
+                              <Text
+                                style={[
+                                  styles.dropdownItemText,
+                                  selectedGroupTypeId === gt.id && styles.dropdownItemTextSelected,
+                                ]}
+                              >
+                                {gt.name}
+                              </Text>
+                              <Text style={styles.dropdownItemSubtext}>
+                                {gt.groupCount} {gt.groupCount === 1 ? "group" : "groups"}
+                              </Text>
+                              {selectedGroupTypeId === gt.id && (
+                                <Ionicons name="checkmark" size={18} color={primaryColor} />
+                              )}
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      )}
+                      {errors.groupType && (
+                        <Text style={styles.fieldErrorText}>{errors.groupType}</Text>
+                      )}
+                    </>
+                  )}
+
+                  {/* Show count of groups that will receive the event */}
+                  {selectedGroupTypeId && groupCountForType !== undefined && (
+                    <View style={styles.groupCountInfo}>
+                      <Ionicons name="information-circle" size={16} color="#6366F1" />
+                      <Text style={styles.groupCountText}>
+                        This will create events for {groupCountForType} {selectedGroupType?.name || "group"} groups
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              )}
+            </View>
+          )}
+
+          {/* Community-Wide Event Edit Warning */}
+          {isEditMode && meeting?.communityWideEventId && !meeting?.isOverridden && (
+            <View style={styles.communityWideWarning}>
+              <View style={styles.communityWideWarningHeader}>
+                <Ionicons name="globe-outline" size={20} color="#4338CA" />
+                <Text style={styles.communityWideWarningTitle}>Community-wide event</Text>
+              </View>
+              <Text style={styles.communityWideWarningText}>
+                Editing will disconnect this event from community-wide updates. Future changes to the parent event won't affect this group's event.
+              </Text>
+            </View>
+          )}
+
+          {/* Hosting Group Selector - only show in unified mode when NOT creating community-wide event */}
+          {isUnifiedMode && !isEditMode && !isCommunityWideEnabled && (
+            <View style={styles.fieldContainer}>
+              <Text style={styles.label}>Hosting Group *</Text>
+              {isLoadingLeaderGroups ? (
+                <View style={styles.loadingDropdown}>
+                  <ActivityIndicator size="small" color={primaryColor} />
+                  <Text style={styles.loadingDropdownText}>Loading groups...</Text>
+                </View>
+              ) : !leaderGroups || leaderGroups.length === 0 ? (
+                <View style={styles.noGroupsContainer}>
+                  <Text style={styles.noGroupsText}>
+                    You don't have permission to create events for any groups.
+                  </Text>
+                </View>
+              ) : (
+                <>
+                  <TouchableOpacity
+                    style={[
+                      styles.dropdownButton,
+                      errors.hostingGroup && styles.dropdownButtonError,
+                    ]}
+                    onPress={() => setIsGroupDropdownOpen(!isGroupDropdownOpen)}
+                    disabled={isSubmitting}
+                  >
+                    {selectedGroup ? (
+                      <View style={styles.selectedGroupRow}>
+                        <Text style={styles.selectedGroupName}>{selectedGroup.name}</Text>
+                        <Text style={styles.selectedGroupType}>{selectedGroup.groupTypeName}</Text>
+                      </View>
+                    ) : (
+                      <Text style={styles.dropdownPlaceholder}>Select a group</Text>
+                    )}
+                    <Ionicons
+                      name={isGroupDropdownOpen ? "chevron-up" : "chevron-down"}
+                      size={20}
+                      color="#666"
+                    />
+                  </TouchableOpacity>
+                  {isGroupDropdownOpen && (
+                    <View style={styles.dropdownList}>
+                      {leaderGroups.filter(Boolean).map((group) => (
+                        <TouchableOpacity
+                          key={group!.id}
+                          style={[
+                            styles.dropdownItem,
+                            selectedGroupId === group!.id && styles.dropdownItemSelected,
+                          ]}
+                          onPress={() => {
+                            setSelectedGroupId(group!.id);
+                            setIsGroupDropdownOpen(false);
+                            setErrors((prev) => ({ ...prev, hostingGroup: undefined }));
+                          }}
+                        >
+                          <Text
+                            style={[
+                              styles.dropdownItemText,
+                              selectedGroupId === group!.id && styles.dropdownItemTextSelected,
+                            ]}
+                          >
+                            {group!.name}
+                          </Text>
+                          <Text style={styles.dropdownItemSubtext}>{group!.groupTypeName}</Text>
+                          {selectedGroupId === group!.id && (
+                            <Ionicons name="checkmark" size={18} color={primaryColor} />
+                          )}
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
+                  {errors.hostingGroup && (
+                    <Text style={styles.fieldErrorText}>{errors.hostingGroup}</Text>
+                  )}
+                </>
+              )}
+            </View>
+          )}
+
+          {/* Date & Time */}
+          <DatePicker
+            label="Date & Time"
+            value={scheduledAt}
+            onChange={setScheduledAt}
+            mode="datetime"
+            placeholder="Select date and time"
+            error={errors.scheduledAt}
+            required
+          />
+
+          {/* Title */}
+          <View style={styles.fieldContainer}>
+            <Text style={styles.label}>Title</Text>
+            <TextInput
+              style={styles.input}
+              placeholder={`e.g., "${groupTypeName}" (leave blank for default)`}
+              value={title}
+              onChangeText={setTitle}
+              editable={!isSubmitting}
+            />
+            <Text style={styles.helperText}>
+              Leave blank to use "{groupTypeName}" as the title
+            </Text>
+          </View>
+
+          {/* Cover Photo */}
+          <View style={styles.fieldContainer}>
+            <Text style={styles.label}>Cover Photo</Text>
+            <ImagePickerComponent
+              currentImage={coverImage}
+              onImageSelected={(uri) => {
+                setCoverImage(uri);
+              }}
+              onImageRemoved={() => {
+                setCoverImage(undefined);
+              }}
+              buttonText="Add Cover Photo"
+              aspect={[16, 9]}
+              isUploading={isUploadingImage}
+            />
+          </View>
+
+          {/* Meeting Type Toggle */}
+          <View style={styles.fieldContainer}>
+            <View style={styles.toggleRow}>
+              <Text style={styles.label}>Online Event</Text>
+              <Switch
+                value={isOnline}
+                onValueChange={setIsOnline}
+                trackColor={{ false: "#e0e0e0", true: primaryColor }}
+                thumbColor="#fff"
+                disabled={isSubmitting}
+              />
+            </View>
+          </View>
+
+          {/* Meeting Link (only if online) */}
+          {isOnline && (
+            <View style={styles.fieldContainer}>
+              <Text style={styles.label}>Meeting Link</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="https://zoom.us/j/..."
+                value={meetingLink}
+                onChangeText={setMeetingLink}
+                keyboardType="url"
+                autoCapitalize="none"
+                editable={!isSubmitting}
+              />
+            </View>
+          )}
+
+          {/* Location (only if in-person) */}
+          {!isOnline && (
+            <View style={styles.fieldContainer}>
+              <Text style={styles.label}>Location</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Enter full address with ZIP code"
+                value={location}
+                onChangeText={setLocation}
+                editable={!isSubmitting}
+              />
+              {/* Geocoding status indicator */}
+              {location.trim() && !isOnline && (
+                <>
+                  {isCheckingLocation && (
+                    <View style={styles.locationStatus}>
+                      <ActivityIndicator size="small" color={primaryColor} />
+                      <Text style={styles.locationStatusText}>Checking location...</Text>
+                    </View>
+                  )}
+                  {!isCheckingLocation && locationCanBeGeocoded === false && (
+                    <View style={styles.locationWarning}>
+                      <Ionicons name="warning" size={20} color="#F59E0B" />
+                      <Text style={styles.locationWarningText}>
+                        This address couldn't be found. Enter a full address with ZIP code (e.g., "123 Main St, Dallas, TX 75201") so this event appears on the map.
+                      </Text>
+                    </View>
+                  )}
+                  {!isCheckingLocation && locationCanBeGeocoded === true && (
+                    <View style={styles.locationSuccess}>
+                      <Ionicons name="checkmark-circle" size={16} color="#10B981" />
+                      <Text style={styles.locationSuccessText}>Location found</Text>
+                    </View>
+                  )}
+                </>
+              )}
+            </View>
+          )}
+
+          {/* Notes */}
+          <View style={styles.fieldContainer}>
+            <Text style={styles.label}>Notes</Text>
+            <TextInput
+              style={[styles.input, styles.textArea]}
+              placeholder="Add any notes about this event..."
+              value={note}
+              onChangeText={setNote}
+              multiline
+              numberOfLines={4}
+              textAlignVertical="top"
+              editable={!isSubmitting}
+            />
+          </View>
+
+          {/* RSVP Options */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>RSVP Options</Text>
+            <View style={styles.toggleRow}>
+              <Text style={styles.toggleLabel}>Enable RSVPs</Text>
+              <Switch value={rsvpEnabled} onValueChange={setRsvpEnabled} />
+            </View>
+            {rsvpEnabled && (
+              <RsvpOptionsEditor
+                options={rsvpOptions}
+                onChange={setRsvpOptions}
+              />
+            )}
+          </View>
+
+          {/* Visibility */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Event Visibility</Text>
+            <VisibilitySelector value={visibility} onChange={setVisibility} />
+          </View>
+
+          {/* Submit Button */}
+          <TouchableOpacity
+            testID="submit-button"
+            style={[
+              styles.submitButton,
+              isSubmitting && styles.submitButtonDisabled,
+            ]}
+            onPress={handleSubmit}
+            disabled={isSubmitting}
+          >
+            {isSubmitting ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.submitButtonText}>
+                {isEditMode ? "Save Changes" : "Create Event"}
+              </Text>
+            )}
+          </TouchableOpacity>
+
+          {/* Cancel Event Button - only show in edit mode */}
+          {isEditMode && (
+            <TouchableOpacity
+              style={[
+                styles.cancelEventButton,
+                isSubmitting && styles.cancelEventButtonDisabled,
+              ]}
+              onPress={handleCancelEvent}
+              disabled={isSubmitting}
+            >
+              <Ionicons name="close-circle-outline" size={20} color="#DC2626" />
+              <Text style={styles.cancelEventButtonText}>Cancel Event</Text>
+            </TouchableOpacity>
+          )}
+        </ScrollView>
+
+        {/* Share to Chat Modal */}
+        <ShareToChatModal
+          visible={showShareModal}
+          onClose={() => {
+            setShowShareModal(false);
+            setPendingMeetingId(null);
+            router.back();
+          }}
+          onSend={handleSendToChat}
+          onSkip={handleSkipShare}
+          isLoading={postToChatMutation.isPending}
+          eventTitle={title || groupTypeName}
+        />
+
+        {/* Past Date Confirmation Modal (for admins only) */}
+        <ConfirmModal
+          visible={showPastDateModal}
+          title={isEditMode ? "Update to Past Date?" : "Create Past Event?"}
+          message={isEditMode
+            ? "You are changing this event's date to a time in the past. This will make it appear as a historical event. Are you sure you want to continue?"
+            : "You are creating an event scheduled for a date in the past. This is typically used for recording historical events. Are you sure you want to continue?"
+          }
+          onConfirm={handleConfirmPastDate}
+          onCancel={handleCancelPastDate}
+          confirmText={isEditMode ? "Yes, Update Event" : "Yes, Create Event"}
+          cancelText="Cancel"
+        />
+      </KeyboardAvoidingView>
+    </UserRoute>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: "#f5f5f5",
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 16,
+    backgroundColor: "#fff",
+    borderBottomWidth: 1,
+    borderBottomColor: "#e0e0e0",
+  },
+  backButton: {
+    marginRight: 12,
+    padding: 4,
+  },
+  headerContent: {
+    flex: 1,
+  },
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: "bold",
+    color: "#333",
+  },
+  content: {
+    flex: 1,
+  },
+  contentContainer: {
+    padding: 20,
+    paddingBottom: 40,
+  },
+  fieldContainer: {
+    marginBottom: 20,
+  },
+  label: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#333",
+    marginBottom: 8,
+  },
+  input: {
+    borderWidth: 2,
+    borderColor: "#ecedf0",
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: "#fff",
+    fontSize: 16,
+    color: "#333",
+  },
+  textArea: {
+    minHeight: 150,
+    paddingTop: 12,
+  },
+  helperText: {
+    fontSize: 12,
+    color: "#999",
+    marginTop: 4,
+  },
+  section: {
+    marginBottom: 24,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#333",
+    marginBottom: 12,
+  },
+  toggleRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 8,
+  },
+  toggleLabel: {
+    fontSize: 15,
+    color: "#333",
+  },
+  toggleHint: {
+    fontSize: 13,
+    color: "#666",
+    marginTop: 2,
+  },
+  submitButton: {
+    backgroundColor: DEFAULT_PRIMARY_COLOR,
+    borderRadius: 8,
+    paddingVertical: 16,
+    alignItems: "center",
+    marginTop: 20,
+  },
+  submitButtonDisabled: {
+    opacity: 0.6,
+  },
+  submitButtonText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 40,
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: "#666",
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 40,
+  },
+  errorText: {
+    fontSize: 18,
+    color: "#666",
+    marginBottom: 20,
+  },
+  backButtonError: {
+    backgroundColor: DEFAULT_PRIMARY_COLOR,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  backButtonErrorText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  // Hosting group dropdown styles
+  loadingDropdown: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 16,
+    backgroundColor: "#f5f5f5",
+    borderRadius: 8,
+    gap: 12,
+  },
+  loadingDropdownText: {
+    fontSize: 14,
+    color: "#666",
+  },
+  noGroupsContainer: {
+    padding: 16,
+    backgroundColor: "#FEF2F2",
+    borderRadius: 8,
+  },
+  noGroupsText: {
+    fontSize: 14,
+    color: "#991B1B",
+  },
+  dropdownButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderWidth: 2,
+    borderColor: "#ecedf0",
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: "#fff",
+  },
+  dropdownButtonError: {
+    borderColor: "#DC2626",
+  },
+  dropdownPlaceholder: {
+    fontSize: 16,
+    color: "#999",
+  },
+  selectedGroupRow: {
+    flex: 1,
+  },
+  selectedGroupName: {
+    fontSize: 16,
+    fontWeight: "500",
+    color: "#333",
+  },
+  selectedGroupType: {
+    fontSize: 12,
+    color: "#666",
+    marginTop: 2,
+  },
+  dropdownList: {
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: "#ecedf0",
+    borderRadius: 8,
+    backgroundColor: "#fff",
+    overflow: "hidden",
+  },
+  dropdownItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f0f0f0",
+  },
+  dropdownItemSelected: {
+    backgroundColor: "#F5F3FF",
+  },
+  dropdownItemText: {
+    flex: 1,
+    fontSize: 15,
+    color: "#333",
+  },
+  dropdownItemTextSelected: {
+    color: DEFAULT_PRIMARY_COLOR,
+    fontWeight: "500",
+  },
+  dropdownItemSubtext: {
+    fontSize: 12,
+    color: "#666",
+    marginRight: 8,
+  },
+  fieldErrorText: {
+    fontSize: 12,
+    color: "#DC2626",
+    marginTop: 4,
+  },
+  cancelEventButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginTop: 16,
+    paddingVertical: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#DC2626",
+    backgroundColor: "#FEF2F2",
+  },
+  cancelEventButtonDisabled: {
+    opacity: 0.6,
+  },
+  cancelEventButtonText: {
+    color: "#DC2626",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  // Location geocoding status styles
+  locationStatus: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 8,
+    gap: 8,
+  },
+  locationStatusText: {
+    fontSize: 13,
+    color: "#666",
+  },
+  locationWarning: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    backgroundColor: "#FEF3C7",
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 8,
+    gap: 8,
+  },
+  locationWarningText: {
+    flex: 1,
+    fontSize: 13,
+    color: "#92400E",
+    lineHeight: 18,
+  },
+  locationSuccess: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 8,
+    gap: 4,
+  },
+  locationSuccessText: {
+    fontSize: 13,
+    color: "#10B981",
+  },
+  // Community-wide event styles
+  communityWideSection: {
+    marginBottom: 20,
+    backgroundColor: "#F5F3FF",
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#E0E7FF",
+  },
+  communityWideToggleRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  communityWideToggleLabel: {
+    flex: 1,
+  },
+  groupTypeSelector: {
+    marginTop: 12,
+  },
+  groupCountInfo: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 12,
+    padding: 12,
+    backgroundColor: "#EEF2FF",
+    borderRadius: 8,
+    gap: 8,
+  },
+  groupCountText: {
+    flex: 1,
+    fontSize: 13,
+    color: "#4338CA",
+    lineHeight: 18,
+  },
+  // Community-wide event edit warning
+  communityWideWarning: {
+    backgroundColor: "#FEF3C7",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: "#FCD34D",
+  },
+  communityWideWarningHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 8,
+  },
+  communityWideWarningTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#92400E",
+  },
+  communityWideWarningText: {
+    fontSize: 13,
+    color: "#92400E",
+    lineHeight: 18,
+  },
+});

@@ -1,0 +1,19 @@
+{
+  "name": "link-preview",
+  "version": "1.0.0",
+  "license": "AGPL-3.0-or-later",
+  "description": "Cloudflare Worker for OG meta tags and link previews",
+  "main": "cloudflare-worker.js",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "node --test cloudflare-worker.test.js"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

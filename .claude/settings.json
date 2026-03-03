@@ -1,0 +1,8 @@
+{
+  "enabledPlugins": {
+    "ralph-loop@claude-plugins-official": true
+  },
+  "permissions": {
+    "dangerouslySkipPermissions": true
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "android": {
+    "package": "com.togathernyc.togather"
+  },
+  "ios": {
+    "bundleIdentifier": "com.togathernyc.togather"
+  }
+}

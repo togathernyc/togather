@@ -1,0 +1,18 @@
+# CODEOWNERS - Defines who must review changes to specific files
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for everything (fallback)
+* @togathernyc
+
+# Critical infrastructure - require review
+/.github/workflows/ @togathernyc
+/apps/api-trpc/src/prisma/ @togathernyc
+
+# Mobile native code - require review for native changes
+/apps/mobile/ios/ @togathernyc
+/apps/mobile/android/ @togathernyc
+/apps/mobile/app.config.js @togathernyc
+/apps/mobile/.fingerprint @togathernyc
+
+# Shared packages affect multiple apps
+/packages/ @togathernyc
