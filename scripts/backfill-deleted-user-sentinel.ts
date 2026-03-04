@@ -7,7 +7,7 @@
  * 2. Finds all records with undefined user references
  * 3. Updates them to point to the sentinel user
  *
- * Run with: infisical run --env=prod -- npx tsx scripts/backfill-deleted-user-sentinel.ts
+ * Run with: op run --env-file=.env.production -- npx tsx scripts/backfill-deleted-user-sentinel.ts
  *
  * Add --dry-run to see what would be updated without actually updating
  */

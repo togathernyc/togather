@@ -3,7 +3,7 @@
  * Targeted Group Members Sync Script
  *
  * Syncs just group members from Supabase to Convex.
- * Run with: infisical run --env=staging -- npx ts-node scripts/sync-group-members.ts
+ * Run with: op run --env-file=.env.staging -- npx ts-node scripts/sync-group-members.ts
  */
 
 import { ConvexHttpClient } from "convex/browser";
