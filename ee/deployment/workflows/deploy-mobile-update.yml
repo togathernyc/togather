@@ -28,6 +28,8 @@ jobs:
     name: Push OTA Update
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.channel || 'staging' }}
+    env:
+      EAS_PROJECT_ID: ${{ vars.EAS_PROJECT_ID }}
     defaults:
       run:
         working-directory: apps/mobile

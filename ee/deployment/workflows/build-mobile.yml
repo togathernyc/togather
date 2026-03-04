@@ -38,6 +38,8 @@ jobs:
     name: Build Mobile App
     runs-on: ubuntu-latest
     environment: production
+    env:
+      EAS_PROJECT_ID: ${{ vars.EAS_PROJECT_ID }}
 
     steps:
       - name: Checkout code
