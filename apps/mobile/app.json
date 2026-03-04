@@ -66,6 +66,6 @@
       "_comment_eas_projectId": "IMPORTANT: This is a static fallback. Set EAS_PROJECT_ID env var to override in app.config.js.",
       "router": {}
     },
-    "owner": "togathernyc"
+    "owner": "lilseyi"
   }
 }

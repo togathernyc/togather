@@ -201,6 +201,6 @@ export default {
       },
       router: {}
     },
-    owner: process.env.EXPO_OWNER || "togathernyc"
+    owner: process.env.EXPO_OWNER || "lilseyi"
   }
 };
