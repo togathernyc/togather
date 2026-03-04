@@ -93,6 +93,8 @@ jobs:
     if: needs.detect-native-change.outputs.native_changed == 'true'
     runs-on: ubuntu-latest
     environment: staging
+    env:
+      EAS_PROJECT_ID: ${{ vars.EAS_PROJECT_ID }}
 
     steps:
       - name: Checkout code

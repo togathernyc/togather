@@ -27,6 +27,8 @@ jobs:
     name: Deploy Web App
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment || 'staging' }}
+    env:
+      EAS_PROJECT_ID: ${{ vars.EAS_PROJECT_ID }}
     defaults:
       run:
         working-directory: apps/mobile
