@@ -195,9 +195,6 @@ export default {
       isStaging: IS_STAGING,
       // streamApiKey removed - migration to Convex-native messaging complete
       mapboxAccessToken: process.env.EXPO_PUBLIC_MAPBOX_TOKEN || "",
-      googleClientId: process.env.GOOGLE_OAUTH_WEB_CLIENT_ID || "",
-      googleIosClientId: process.env.GOOGLE_OAUTH_IOS_CLIENT_ID || "",
-      _comment_googleClientId: "Web and iOS Client IDs from Google Cloud Console. Set GOOGLE_OAUTH_WEB_CLIENT_ID and GOOGLE_OAUTH_IOS_CLIENT_ID env vars.",
       eas: {
         // TODO: Move EAS project ID to env var (EXPO_PUBLIC_PROJECT_ID) once all CI workflows are updated
         projectId: process.env.EAS_PROJECT_ID || "bfc79fc8-7066-4386-b9e0-52d0207ad8f4"

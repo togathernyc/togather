@@ -60,7 +60,6 @@
     },
     "runtimeVersion": "1.0.21",
     "extra": {
-      "_comment_googleClientId": "Set GOOGLE_OAUTH_WEB_CLIENT_ID and GOOGLE_OAUTH_IOS_CLIENT_ID env vars. See Infisical for values.",
       "eas": {
         "projectId": "bfc79fc8-7066-4386-b9e0-52d0207ad8f4"
       },

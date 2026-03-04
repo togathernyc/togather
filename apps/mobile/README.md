@@ -248,7 +248,6 @@ This creates a static export in the `dist/` directory.
 
 ### Authentication
 - Email/password authentication
-- Google OAuth integration
 - Password reset functionality
 - Session management with secure storage
 
