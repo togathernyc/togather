@@ -1234,7 +1234,7 @@ Environment variables are set in the Trigger.dev dashboard:
 ### API (Fly.io) - No Changes
 
 The API only needs the Trigger.dev secret key to schedule jobs:
-- `TRIGGER_SECRET_KEY` - Added to Infisical/Fly.io secrets
+- `TRIGGER_SECRET_KEY` - Added to 1Password/Fly.io secrets
 
 ## Implementation Plan
 
@@ -1272,7 +1272,7 @@ STREAM_API_KEY=xxxxx
 STREAM_API_SECRET=xxxxx
 ```
 
-### Fly.io / Infisical (for apps/api-trpc)
+### Fly.io / 1Password (for apps/api-trpc)
 ```bash
 # Existing vars...
 TRIGGER_SECRET_KEY=tr_xxxxx  # NEW: For scheduling jobs
@@ -1383,7 +1383,7 @@ pnpm dev  # runs: trigger dev
 - [ ] Test endpoints via tRPC playground or curl
 
 #### 1.6 Environment Variables
-- [ ] Add `RESEND_API_KEY` to Infisical (dev, staging, prod)
+- [ ] Add `RESEND_API_KEY` to 1Password (dev, staging, prod)
 - [ ] Add `RESEND_API_KEY` to local `.env`
 - [ ] Verify Resend account and domain verification
 
@@ -1432,7 +1432,7 @@ pnpm dev  # runs: trigger dev
 
 #### 2.5 API Integration
 - [ ] Create `apps/api-trpc/src/lib/trigger.ts` - trigger client
-- [ ] Add `TRIGGER_SECRET_KEY` to Infisical and local `.env`
+- [ ] Add `TRIGGER_SECRET_KEY` to 1Password and local `.env`
 - [ ] Implement `scheduleReminderBucket()` function with idempotency key
 
 #### 2.6 Hook into Meeting Creation

@@ -41,7 +41,7 @@ main              ← Production (updated only by promote workflow)
 | **S3 Buckets** | Staging bucket | `togather-production-bucket` | Separate buckets |
 | **Expo OTA Channel** | `staging` channel | `production` channel | Same project, separate channels |
 | **iOS App** | `life.togather.staging` (TestFlight) | `app.gatherful.mobile` (App Store) | Different bundle IDs |
-| **Infisical Secrets** | `staging` environment | `prod` environment | Separate vaults |
+| **1Password Secrets** | `staging` environment | `prod` environment | Separate vaults |
 | **EAS Hosting (Web)** | staging environment | production environment | Separate environments |
 | **Convex Crons (Jobs)** | Part of Convex staging deployment | Part of Convex prod deployment | Deployed with Convex functions |
 
@@ -104,7 +104,7 @@ The environment is detected via:
 
 ### Environment Variables
 
-Loaded from Infisical and synced to Convex dashboard:
+Loaded from 1Password and synced to Convex dashboard:
 - `JWT_SECRET`
 - `AWS_*` (S3 credentials and bucket names)
 - `TWILIO_*` (SMS and OTP)
@@ -128,7 +128,7 @@ Loaded from Infisical and synced to Convex dashboard:
 
 ### OTA Updates
 
-Both environments share the same Expo project (see `EAS_PROJECT_ID` in Infisical) but use different update channels:
+Both environments share the same Expo project (see `EAS_PROJECT_ID` in 1Password) but use different update channels:
 
 ```
 Expo Project
@@ -227,10 +227,10 @@ Web changed:           apps/mobile/** or packages/shared/**
 
 ## Secrets Management
 
-### Infisical Structure
+### 1Password Structure
 
 ```
-Infisical Project: <INFISICAL_WORKSPACE_ID>
+1Password Vault: Togather
 ├── dev      ← Local development
 ├── staging  ← Staging environment
 └── prod     ← Production environment
@@ -239,7 +239,7 @@ Infisical Project: <INFISICAL_WORKSPACE_ID>
 ### Loading Secrets in CI
 
 All workflows use `.github/actions/load-secrets`:
-1. Authenticate with Infisical using GitHub secrets
+1. Authenticate with 1Password using `OP_SERVICE_ACCOUNT_TOKEN`
 2. Load environment-specific variables
 3. Export as GitHub Actions environment variables
 

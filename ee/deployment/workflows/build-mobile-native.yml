@@ -112,11 +112,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Load secrets from Infisical
+      - name: Load secrets from 1Password
         uses: ./.github/actions/load-secrets
         with:
-          client-id: ${{ secrets.INFISICAL_CLIENT_ID }}
-          client-secret: ${{ secrets.INFISICAL_CLIENT_SECRET }}
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
           environment: staging
 
       - name: Setup EAS
@@ -132,7 +131,7 @@ jobs:
           # Must match the "environment" field in eas.json staging profile (preview)
           # Note: EAS custom environments require Production/Enterprise plan, so we use "preview"
           eas env:create --name EXPO_PUBLIC_MAPBOX_TOKEN --value "$EXPO_PUBLIC_MAPBOX_TOKEN" --environment preview --visibility plaintext --force --non-interactive || true
-          # Convex URL from Infisical
+          # Convex URL from 1Password
           eas env:create --name EXPO_PUBLIC_CONVEX_URL --value "$CONVEX_SITE_URL" --environment preview --visibility plaintext --force --non-interactive || true
           # Project ID for push notifications (constant across all environments)
           eas env:create --name EXPO_PUBLIC_PROJECT_ID --value "${{ vars.EAS_PROJECT_ID }}" --environment preview --visibility plaintext --force --non-interactive || true

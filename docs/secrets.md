@@ -50,18 +50,6 @@ pnpm dev
 | `R2_PUBLIC_URL` | Public URL for images | Images not displayed |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account identifier | Image uploads fail |
 
-### AWS S3 (Legacy -- for backwards compatibility only)
-
-> **Note**: S3 is deprecated. New uploads use Cloudflare R2. These variables are only needed to serve existing images that haven't been migrated.
-
-| Secret | Description | Degradation |
-|--------|-------------|-------------|
-| `AWS_REGION` | AWS region (default: us-east-1) | Legacy images may not load |
-| `AWS_ACCESS_KEY_ID` | IAM access key | Legacy images may not load |
-| `AWS_SECRET_ACCESS_KEY` | IAM secret key | Legacy images may not load |
-| `AWS_S3_BUCKET` | Bucket name | Legacy images may not load |
-| `AWS_S3_COMPRESSED_BUCKET_URL` | Compressed images URL | Legacy images may not load |
-
 ### Twilio SMS (Required for production, optional for local dev)
 
 | Secret | Description | Degradation |

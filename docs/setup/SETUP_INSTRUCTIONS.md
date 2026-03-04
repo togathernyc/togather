@@ -18,12 +18,15 @@
 
 2. **Node.js 18+** (required)
 
-3. **Infisical CLI** (for environment variables):
+3. **1Password CLI** (optional — for automatic environment variable setup):
 
    ```bash
-   brew install infisical/get-cli/infisical
-   infisical login
+   brew install 1password-cli
+   op signin
    ```
+
+   If you don't have 1Password access, you can set up environment variables manually.
+   See `docs/secrets.md` for required variables.
 
 ## Step 1: Install Dependencies
 
@@ -117,11 +120,7 @@ togather/
 
 ### Environment Variables
 
-Environment variables are managed via Infisical. Make sure you're logged in:
-
-```bash
-infisical login
-```
+Environment variables can be synced automatically via 1Password (`op signin`), or configured manually. See [secrets.md](../secrets.md) for required variables.
 
 ### Convex Configuration
 
@@ -136,7 +135,7 @@ The mobile app connects to Convex cloud:
 
 - [ ] PNPM installed
 - [ ] Node.js 18+ installed
-- [ ] Infisical CLI installed and logged in
+- [ ] Environment variables configured (via 1Password or manually)
 - [ ] All dependencies installed (`pnpm install`)
 - [ ] Dev servers start successfully (`pnpm dev`)
 - [ ] Mobile app connects to Convex

@@ -57,13 +57,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Load secrets from Infisical
+      - name: Load secrets from 1Password
         uses: ./.github/actions/load-secrets
         with:
-          client-id: ${{ secrets.INFISICAL_CLIENT_ID }}
-          client-secret: ${{ secrets.INFISICAL_CLIENT_SECRET }}
-          # Use staging secrets for staging profile, prod for production/tags
-          environment: ${{ inputs.profile == 'staging' && 'staging' || 'prod' }}
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          # Use staging secrets for staging profile, production for production/tags
+          environment: ${{ inputs.profile == 'staging' && 'staging' || 'production' }}
 
       - name: Setup EAS
         uses: expo/expo-github-action@v8
@@ -81,7 +80,7 @@ jobs:
           # Use eas env:create (eas secret:create is deprecated)
           # Only sync to the environment matching the selected profile to avoid cross-contamination
           eas env:create --name EXPO_PUBLIC_MAPBOX_TOKEN --value "$EXPO_PUBLIC_MAPBOX_TOKEN" --environment "$EAS_ENV" --visibility plaintext --force --non-interactive || true
-          # Convex URL from Infisical (already loaded per environment)
+          # Convex URL from 1Password (already loaded per environment)
           eas env:create --name EXPO_PUBLIC_CONVEX_URL --value "$CONVEX_SITE_URL" --environment "$EAS_ENV" --visibility plaintext --force --non-interactive || true
           # Project ID for push notifications (constant across all environments)
           eas env:create --name EXPO_PUBLIC_PROJECT_ID --value "${{ vars.EAS_PROJECT_ID }}" --environment "$EAS_ENV" --visibility plaintext --force --non-interactive || true

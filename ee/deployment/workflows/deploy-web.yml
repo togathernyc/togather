@@ -47,10 +47,10 @@ jobs:
 
           if [ "$TARGET" = "production" ]; then
             echo "target=production" >> $GITHUB_OUTPUT
-            echo "infisical_env=prod" >> $GITHUB_OUTPUT
+            echo "secrets_env=production" >> $GITHUB_OUTPUT
           else
             echo "target=staging" >> $GITHUB_OUTPUT
-            echo "infisical_env=staging" >> $GITHUB_OUTPUT
+            echo "secrets_env=staging" >> $GITHUB_OUTPUT
           fi
 
       - name: Setup pnpm
@@ -68,12 +68,11 @@ jobs:
         run: pnpm install --frozen-lockfile
         working-directory: .
 
-      - name: Load secrets from Infisical
+      - name: Load secrets from 1Password
         uses: ./.github/actions/load-secrets
         with:
-          client-id: ${{ secrets.INFISICAL_CLIENT_ID }}
-          client-secret: ${{ secrets.INFISICAL_CLIENT_SECRET }}
-          environment: ${{ steps.env.outputs.infisical_env }}
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          environment: ${{ steps.env.outputs.secrets_env }}
 
       - name: Setup EAS
         uses: expo/expo-github-action@v8

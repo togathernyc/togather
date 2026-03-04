@@ -38,11 +38,11 @@ jobs:
           fi
           echo "target=$TARGET" >> $GITHUB_OUTPUT
 
-          # Set Infisical environment
+          # Set secrets environment
           if [[ "$TARGET" == "production" ]]; then
-            echo "infisical_env=prod" >> $GITHUB_OUTPUT
+            echo "secrets_env=production" >> $GITHUB_OUTPUT
           else
-            echo "infisical_env=staging" >> $GITHUB_OUTPUT
+            echo "secrets_env=staging" >> $GITHUB_OUTPUT
           fi
 
       - name: Setup Node.js
@@ -50,12 +50,11 @@ jobs:
         with:
           node-version: 20
 
-      - name: Load secrets from Infisical
+      - name: Load secrets from 1Password
         uses: ./.github/actions/load-secrets
         with:
-          client-id: ${{ secrets.INFISICAL_CLIENT_ID }}
-          client-secret: ${{ secrets.INFISICAL_CLIENT_SECRET }}
-          environment: ${{ steps.env.outputs.infisical_env }}
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          environment: ${{ steps.env.outputs.secrets_env }}
 
       - name: Install Wrangler
         run: npm install -g wrangler

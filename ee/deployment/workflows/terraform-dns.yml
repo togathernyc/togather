@@ -1,6 +1,6 @@
 name: Terraform DNS
 
-# Uses CLOUDFLARE_API_TOKEN from Infisical (prod environment)
+# Uses CLOUDFLARE_API_TOKEN from 1Password (production environment)
 # Token requires Zone:DNS:Edit and Zone:Zone:Read permissions
 
 on:
@@ -30,12 +30,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Load secrets from Infisical
+      - name: Load secrets from 1Password
         uses: ./.github/actions/load-secrets
         with:
-          client-id: ${{ secrets.INFISICAL_CLIENT_ID }}
-          client-secret: ${{ secrets.INFISICAL_CLIENT_SECRET }}
-          environment: prod
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          environment: production
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3

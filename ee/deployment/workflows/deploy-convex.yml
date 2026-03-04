@@ -3,8 +3,8 @@
 # Automatically deploys to staging on push to main branch
 # Production deployment is manual only (workflow_dispatch)
 #
-# All secrets (including CONVEX_DEPLOY_KEY) are loaded from Infisical
-# Only requires INFISICAL_CLIENT_ID and INFISICAL_CLIENT_SECRET in GitHub Secrets
+# All secrets (including CONVEX_DEPLOY_KEY) are loaded from 1Password
+# Only requires OP_SERVICE_ACCOUNT_TOKEN in GitHub Secrets
 
 name: Deploy Convex
 
@@ -50,14 +50,8 @@ jobs:
             # Push to main triggers staging deploy
             GH_ENV="staging"
           fi
-          # Map GitHub environment name to Infisical environment name
-          if [ "$GH_ENV" = "production" ]; then
-            INFISICAL_ENV="prod"
-          else
-            INFISICAL_ENV="$GH_ENV"
-          fi
           echo "environment=$GH_ENV" >> $GITHUB_OUTPUT
-          echo "infisical_env=$INFISICAL_ENV" >> $GITHUB_OUTPUT
+          echo "secrets_env=$GH_ENV" >> $GITHUB_OUTPUT
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -80,17 +74,16 @@ jobs:
       - name: Type check Convex functions
         run: npx convex typecheck
 
-      - name: Load secrets from Infisical
+      - name: Load secrets from 1Password
         uses: ./.github/actions/load-secrets
         with:
-          client-id: ${{ secrets.INFISICAL_CLIENT_ID }}
-          client-secret: ${{ secrets.INFISICAL_CLIENT_SECRET }}
-          environment: ${{ steps.env.outputs.infisical_env }}
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          environment: ${{ steps.env.outputs.secrets_env }}
 
       - name: Sync secrets to Convex
         run: |
-          chmod +x scripts/sync-infisical-to-convex.sh
-          ./scripts/sync-infisical-to-convex.sh ${{ steps.env.outputs.infisical_env }}
+          chmod +x ee/scripts/sync-secrets-to-convex.sh
+          ./ee/scripts/sync-secrets-to-convex.sh ${{ steps.env.outputs.secrets_env }}
 
       - name: Deploy to Convex
         run: npx convex deploy

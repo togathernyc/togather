@@ -45,19 +45,19 @@ jobs:
             CHANNEL="staging"
           fi
 
-          # Map to Infisical and EAS environments
+          # Map to secrets and EAS environments
           if [ "$CHANNEL" = "production" ]; then
-            INFISICAL_ENV="prod"
+            SECRETS_ENV="production"
             EAS_ENV="production"
           else
-            INFISICAL_ENV="staging"
+            SECRETS_ENV="staging"
             EAS_ENV="preview"
           fi
 
           echo "channel=$CHANNEL" >> $GITHUB_OUTPUT
-          echo "infisical_env=$INFISICAL_ENV" >> $GITHUB_OUTPUT
+          echo "secrets_env=$SECRETS_ENV" >> $GITHUB_OUTPUT
           echo "eas_env=$EAS_ENV" >> $GITHUB_OUTPUT
-          echo "Deploying to: $CHANNEL (Infisical: $INFISICAL_ENV, EAS: $EAS_ENV)"
+          echo "Deploying to: $CHANNEL (secrets: $SECRETS_ENV, EAS: $EAS_ENV)"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -74,12 +74,11 @@ jobs:
         run: pnpm install --frozen-lockfile
         working-directory: .
 
-      - name: Load secrets from Infisical
+      - name: Load secrets from 1Password
         uses: ./.github/actions/load-secrets
         with:
-          client-id: ${{ secrets.INFISICAL_CLIENT_ID }}
-          client-secret: ${{ secrets.INFISICAL_CLIENT_SECRET }}
-          environment: ${{ steps.env.outputs.infisical_env }}
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          environment: ${{ steps.env.outputs.secrets_env }}
 
       - name: Setup EAS
         uses: expo/expo-github-action@v8

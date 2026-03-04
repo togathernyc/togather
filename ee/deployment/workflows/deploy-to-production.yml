@@ -137,17 +137,16 @@ jobs:
       - name: Type check Convex functions
         run: npx convex typecheck
 
-      - name: Load secrets from Infisical
+      - name: Load secrets from 1Password
         uses: ./.github/actions/load-secrets
         with:
-          client-id: ${{ secrets.INFISICAL_CLIENT_ID }}
-          client-secret: ${{ secrets.INFISICAL_CLIENT_SECRET }}
-          environment: prod
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          environment: production
 
       - name: Sync secrets to Convex
         run: |
-          chmod +x scripts/sync-infisical-to-convex.sh
-          ./scripts/sync-infisical-to-convex.sh prod
+          chmod +x ee/scripts/sync-secrets-to-convex.sh
+          ./ee/scripts/sync-secrets-to-convex.sh production
 
       - name: Deploy to Convex
         run: npx convex deploy
@@ -192,12 +191,11 @@ jobs:
           fi
           echo "✅ Version validated: $VERSION"
 
-      - name: Load secrets from Infisical
+      - name: Load secrets from 1Password
         uses: ./.github/actions/load-secrets
         with:
-          client-id: ${{ secrets.INFISICAL_CLIENT_ID }}
-          client-secret: ${{ secrets.INFISICAL_CLIENT_SECRET }}
-          environment: prod
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          environment: production
 
       - name: Setup EAS
         uses: expo/expo-github-action@v8
@@ -211,7 +209,7 @@ jobs:
           # Use eas env:create (eas secret:create is deprecated)
           # Production builds use the production EAS environment
           eas env:create --name EXPO_PUBLIC_MAPBOX_TOKEN --value "$EXPO_PUBLIC_MAPBOX_TOKEN" --environment production --visibility plaintext --force --non-interactive || true
-          # Convex URL from Infisical
+          # Convex URL from 1Password
           eas env:create --name EXPO_PUBLIC_CONVEX_URL --value "$CONVEX_SITE_URL" --environment production --visibility plaintext --force --non-interactive || true
           # Project ID for push notifications (constant across all environments)
           eas env:create --name EXPO_PUBLIC_PROJECT_ID --value "${{ vars.EAS_PROJECT_ID }}" --environment production --visibility plaintext --force --non-interactive || true
@@ -383,12 +381,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Load secrets from Infisical
+      - name: Load secrets from 1Password
         uses: ./.github/actions/load-secrets
         with:
-          client-id: ${{ secrets.INFISICAL_CLIENT_ID }}
-          client-secret: ${{ secrets.INFISICAL_CLIENT_SECRET }}
-          environment: prod
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          environment: production
 
       - name: Setup EAS
         uses: expo/expo-github-action@v8
@@ -402,7 +399,7 @@ jobs:
           # Sync secrets and config to EAS production environment
           # Required because eas update --environment reads from EAS env vars for app.config.js
           eas env:create --name EXPO_PUBLIC_MAPBOX_TOKEN --value "$EXPO_PUBLIC_MAPBOX_TOKEN" --environment production --visibility plaintext --force --non-interactive || true
-          # Convex URL from Infisical
+          # Convex URL from 1Password
           eas env:create --name EXPO_PUBLIC_CONVEX_URL --value "$CONVEX_SITE_URL" --environment production --visibility plaintext --force --non-interactive || true
           # Project ID for push notifications (constant across all environments)
           eas env:create --name EXPO_PUBLIC_PROJECT_ID --value "${{ vars.EAS_PROJECT_ID }}" --environment production --visibility plaintext --force --non-interactive || true
@@ -463,12 +460,11 @@ jobs:
       - name: Build landing page
         run: pnpm --filter @togather/web build
 
-      - name: Load secrets from Infisical
+      - name: Load secrets from 1Password
         uses: ./.github/actions/load-secrets
         with:
-          client-id: ${{ secrets.INFISICAL_CLIENT_ID }}
-          client-secret: ${{ secrets.INFISICAL_CLIENT_SECRET }}
-          environment: prod
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          environment: production
 
       - name: Install Wrangler
         run: npm install -g wrangler
@@ -497,12 +493,11 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Load secrets from Infisical
+      - name: Load secrets from 1Password
         uses: ./.github/actions/load-secrets
         with:
-          client-id: ${{ secrets.INFISICAL_CLIENT_ID }}
-          client-secret: ${{ secrets.INFISICAL_CLIENT_SECRET }}
-          environment: prod
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          environment: production
 
       - name: Install Wrangler
         run: npm install -g wrangler

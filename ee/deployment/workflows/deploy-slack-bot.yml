@@ -4,9 +4,9 @@
 # This workflow is specific to the FOUNT service planning bot.
 #
 # Prerequisites:
-# - SLACK_BOT_TOKEN must be set in Infisical prod environment
-# - SLACK_SIGNING_SECRET must be set in Infisical prod environment
-# - OPENAI_SECRET_KEY must be set in Infisical prod environment
+# - SLACK_BOT_TOKEN must be set in 1Password production environment
+# - SLACK_SIGNING_SECRET must be set in 1Password production environment
+# - OPENAI_SECRET_KEY must be set in 1Password production environment
 
 name: Deploy Slack Bot
 
@@ -52,17 +52,16 @@ jobs:
       - name: Run Slack bot tests
         run: cd apps/convex && pnpm test __tests__/slackServiceBot.test.ts
 
-      - name: Load secrets from Infisical
+      - name: Load secrets from 1Password
         uses: ./.github/actions/load-secrets
         with:
-          client-id: ${{ secrets.INFISICAL_CLIENT_ID }}
-          client-secret: ${{ secrets.INFISICAL_CLIENT_SECRET }}
-          environment: prod
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          environment: production
 
       - name: Sync secrets to Convex
         run: |
-          chmod +x scripts/sync-infisical-to-convex.sh
-          ./scripts/sync-infisical-to-convex.sh prod
+          chmod +x ee/scripts/sync-secrets-to-convex.sh
+          ./ee/scripts/sync-secrets-to-convex.sh production
 
       - name: Deploy to Convex
         run: npx convex deploy

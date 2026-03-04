@@ -186,7 +186,7 @@ This will set up credentials in EAS, and future builds will use them automatical
 #### Option 2: Set Up Credentials via EAS Dashboard
 
 1. Go to [expo.dev](https://expo.dev)
-2. Navigate to your project (project ID: see `EAS_PROJECT_ID` in Infisical)
+2. Navigate to your project (project ID: see `EAS_PROJECT_ID` in 1Password)
 3. Go to **Credentials** → **iOS**
 4. Click **Set up credentials** or **Add credentials**
 5. Choose **Automatic setup**
