@@ -1,0 +1,60 @@
+name: "Load 1Password Secrets"
+description: "Fetches secrets from 1Password and exports them as environment variables"
+
+inputs:
+  op-service-account-token:
+    description: "1Password Service Account Token"
+    required: true
+  environment:
+    description: "Environment to load secrets for (staging or production)"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install 1Password CLI
+      uses: 1password/install-cli-action@v1
+
+    - name: Load common secrets
+      uses: 1password/load-secrets-action@v2
+      env:
+        OP_SERVICE_ACCOUNT_TOKEN: ${{ inputs.op-service-account-token }}
+        CONVEX_DEPLOY_KEY: op://Togather/CONVEX_DEPLOY_KEY/${{ inputs.environment }}
+        JWT_SECRET: op://Togather/JWT_SECRET/${{ inputs.environment }}
+        EXPO_ACCESS_TOKEN: op://Togather/EXPO_ACCESS_TOKEN/${{ inputs.environment }}
+        RESEND_API_KEY: op://Togather/RESEND_API_KEY/${{ inputs.environment }}
+        TWILIO_ACCOUNT_SID: op://Togather/TWILIO_ACCOUNT_SID/${{ inputs.environment }}
+        TWILIO_AUTH_TOKEN: op://Togather/TWILIO_AUTH_TOKEN/${{ inputs.environment }}
+        TWILIO_API_KEY_SID: op://Togather/TWILIO_API_KEY_SID/${{ inputs.environment }}
+        TWILIO_API_KEY_SECRET: op://Togather/TWILIO_API_KEY_SECRET/${{ inputs.environment }}
+        TWILIO_VERIFY_SERVICE_SID: op://Togather/TWILIO_VERIFY_SERVICE_SID/${{ inputs.environment }}
+        PLANNING_CENTER_CLIENT_ID: op://Togather/PLANNING_CENTER_CLIENT_ID/${{ inputs.environment }}
+        PLANNING_CENTER_CLIENT_SECRET: op://Togather/PLANNING_CENTER_CLIENT_SECRET/${{ inputs.environment }}
+        OTP_TEST_PHONE_NUMBERS: op://Togather/OTP_TEST_PHONE_NUMBERS/${{ inputs.environment }}
+        CLOUDFLARE_ACCOUNT_ID: op://Togather/CLOUDFLARE_ACCOUNT_ID/${{ inputs.environment }}
+        R2_ACCESS_KEY_ID: op://Togather/R2_ACCESS_KEY_ID/${{ inputs.environment }}
+        R2_SECRET_ACCESS_KEY: op://Togather/R2_SECRET_ACCESS_KEY/${{ inputs.environment }}
+        R2_BUCKET_NAME: op://Togather/R2_BUCKET_NAME/${{ inputs.environment }}
+        R2_PUBLIC_URL: op://Togather/R2_PUBLIC_URL/${{ inputs.environment }}
+        SLACK_BOT_TOKEN: op://Togather/SLACK_BOT_TOKEN/${{ inputs.environment }}
+        SLACK_SIGNING_SECRET: op://Togather/SLACK_SIGNING_SECRET/${{ inputs.environment }}
+        OPENAI_SECRET_KEY: op://Togather/OPENAI_SECRET_KEY/${{ inputs.environment }}
+      with:
+        export-env: true
+
+    - name: Load optional secrets
+      uses: 1password/load-secrets-action@v2
+      continue-on-error: true
+      env:
+        OP_SERVICE_ACCOUNT_TOKEN: ${{ inputs.op-service-account-token }}
+        EXPO_TOKEN: op://Togather/EXPO_TOKEN/${{ inputs.environment }}
+        CLOUDFLARE_API_TOKEN: op://Togather/CLOUDFLARE_API_TOKEN/${{ inputs.environment }}
+        TF_API_TOKEN: op://Togather/TF_API_TOKEN/${{ inputs.environment }}
+        SENTRY_AUTH_TOKEN: op://Togather/SENTRY_AUTH_TOKEN/${{ inputs.environment }}
+        EXPO_PUBLIC_MAPBOX_TOKEN: op://Togather/EXPO_PUBLIC_MAPBOX_TOKEN/${{ inputs.environment }}
+        EXPO_PUBLIC_SENTRY_DSN: op://Togather/EXPO_PUBLIC_SENTRY_DSN/${{ inputs.environment }}
+        EXPO_PUBLIC_CONVEX_URL: op://Togather/EXPO_PUBLIC_CONVEX_URL/${{ inputs.environment }}
+        EXPO_PUBLIC_POSTHOG_API_KEY: op://Togather/EXPO_PUBLIC_POSTHOG_API_KEY/${{ inputs.environment }}
+        IMAGE_CDN_URL: op://Togather/IMAGE_CDN_URL/${{ inputs.environment }}
+      with:
+        export-env: true
