@@ -21,10 +21,8 @@ runs:
         OP_SERVICE_ACCOUNT_TOKEN: ${{ inputs.op-service-account-token }}
         CONVEX_DEPLOY_KEY: op://Togather/CONVEX_DEPLOY_KEY/${{ inputs.environment }}
         JWT_SECRET: op://Togather/JWT_SECRET/${{ inputs.environment }}
-        EXPO_ACCESS_TOKEN: op://Togather/EXPO_ACCESS_TOKEN/${{ inputs.environment }}
         RESEND_API_KEY: op://Togather/RESEND_API_KEY/${{ inputs.environment }}
         TWILIO_ACCOUNT_SID: op://Togather/TWILIO_ACCOUNT_SID/${{ inputs.environment }}
-        TWILIO_AUTH_TOKEN: op://Togather/TWILIO_AUTH_TOKEN/${{ inputs.environment }}
         TWILIO_API_KEY_SID: op://Togather/TWILIO_API_KEY_SID/${{ inputs.environment }}
         TWILIO_API_KEY_SECRET: op://Togather/TWILIO_API_KEY_SECRET/${{ inputs.environment }}
         TWILIO_VERIFY_SERVICE_SID: op://Togather/TWILIO_VERIFY_SERVICE_SID/${{ inputs.environment }}
