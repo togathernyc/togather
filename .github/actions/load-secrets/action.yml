@@ -37,6 +37,7 @@ runs:
         SLACK_BOT_TOKEN: op://Togather/SLACK_BOT_TOKEN/${{ inputs.environment }}
         SLACK_SIGNING_SECRET: op://Togather/SLACK_SIGNING_SECRET/${{ inputs.environment }}
         OPENAI_SECRET_KEY: op://Togather/OPENAI_SECRET_KEY/${{ inputs.environment }}
+        EXPO_TOKEN: op://Togather/EXPO_TOKEN/${{ inputs.environment }}
       with:
         export-env: true
 
@@ -45,7 +46,6 @@ runs:
       continue-on-error: true
       env:
         OP_SERVICE_ACCOUNT_TOKEN: ${{ inputs.op-service-account-token }}
-        EXPO_TOKEN: op://Togather/EXPO_TOKEN/${{ inputs.environment }}
         CLOUDFLARE_API_TOKEN: op://Togather/CLOUDFLARE_API_TOKEN/${{ inputs.environment }}
         TF_API_TOKEN: op://Togather/TF_API_TOKEN/${{ inputs.environment }}
         SENTRY_AUTH_TOKEN: op://Togather/SENTRY_AUTH_TOKEN/${{ inputs.environment }}
