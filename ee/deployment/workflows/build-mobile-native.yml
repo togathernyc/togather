@@ -78,11 +78,23 @@ jobs:
 
           echo "Comparing $BEFORE_SHA..$AFTER_SHA"
 
-          if git diff --name-only "$BEFORE_SHA" "$AFTER_SHA" | grep -q "apps/mobile/.fingerprint"; then
-            echo "Fingerprint changed - native build required"
+          # Extract FINGERPRINT_HASH from before and after commits
+          # Only trigger a native build if the actual hash changed (not just RUNTIME_VERSION)
+          BEFORE_HASH=$(git show "$BEFORE_SHA:apps/mobile/.fingerprint" 2>/dev/null | grep "FINGERPRINT_HASH=" | cut -d= -f2)
+          AFTER_HASH=$(git show "$AFTER_SHA:apps/mobile/.fingerprint" 2>/dev/null | grep "FINGERPRINT_HASH=" | cut -d= -f2)
+
+          echo "Before FINGERPRINT_HASH: ${BEFORE_HASH:-<not found>}"
+          echo "After FINGERPRINT_HASH: ${AFTER_HASH:-<not found>}"
+
+          if [ -z "$BEFORE_HASH" ]; then
+            # No fingerprint in before commit - treat as native change
+            echo "No fingerprint in before commit - native build required"
+            echo "native_changed=true" >> $GITHUB_OUTPUT
+          elif [ "$BEFORE_HASH" != "$AFTER_HASH" ]; then
+            echo "FINGERPRINT_HASH changed - native build required"
             echo "native_changed=true" >> $GITHUB_OUTPUT
           else
-            echo "No fingerprint change - no native build required"
+            echo "FINGERPRINT_HASH unchanged ($AFTER_HASH) - only metadata changed, skipping native build"
             echo "native_changed=false" >> $GITHUB_OUTPUT
           fi
 

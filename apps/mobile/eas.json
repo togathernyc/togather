@@ -56,13 +56,11 @@
   "submit": {
     "staging": {
       "ios": {
-        "ascAppId": "ASC_STAGING_APP_ID",
         "bundleIdentifier": "life.togather.staging"
       }
     },
     "production": {
       "ios": {
-        "ascAppId": "ASC_PRODUCTION_APP_ID",
         "bundleIdentifier": "app.gatherful.mobile"
       }
     }
