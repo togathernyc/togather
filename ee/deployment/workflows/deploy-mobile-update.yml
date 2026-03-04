@@ -1,0 +1,163 @@
+name: Deploy Mobile Update
+
+# Auto-deploys OTA updates to staging on push to main branch
+# Production deployment is manual only (workflow_dispatch)
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: 'Update channel'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+  push:
+    branches: [main]
+    paths:
+      - 'apps/mobile/**'
+      - 'packages/**'
+      - '!apps/mobile/ios/**'
+      - '!apps/mobile/android/**'
+      - '!**/*.md'
+
+jobs:
+  update:
+    name: Push OTA Update
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.channel || 'staging' }}
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine environment
+        id: env
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            CHANNEL="${{ github.event.inputs.channel }}"
+          else
+            # Push to main triggers staging deploy
+            CHANNEL="staging"
+          fi
+
+          # Map to secrets and EAS environments
+          if [ "$CHANNEL" = "production" ]; then
+            SECRETS_ENV="production"
+            EAS_ENV="production"
+          else
+            SECRETS_ENV="staging"
+            EAS_ENV="preview"
+          fi
+
+          echo "channel=$CHANNEL" >> $GITHUB_OUTPUT
+          echo "secrets_env=$SECRETS_ENV" >> $GITHUB_OUTPUT
+          echo "eas_env=$EAS_ENV" >> $GITHUB_OUTPUT
+          echo "Deploying to: $CHANNEL (secrets: $SECRETS_ENV, EAS: $EAS_ENV)"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 8.15.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: .
+
+      - name: Load secrets from 1Password
+        uses: ./.github/actions/load-secrets
+        with:
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          environment: ${{ steps.env.outputs.secrets_env }}
+
+      - name: Setup EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ env.EXPO_TOKEN }}
+
+      - name: Sync secrets to EAS
+        env:
+          EAS_ENV: ${{ steps.env.outputs.eas_env }}
+          CHANNEL: ${{ steps.env.outputs.channel }}
+        run: |
+          echo "Syncing secrets to EAS $EAS_ENV environment..."
+          eas env:create --name EXPO_PUBLIC_MAPBOX_TOKEN --value "$EXPO_PUBLIC_MAPBOX_TOKEN" --environment $EAS_ENV --visibility plaintext --force --non-interactive || true
+          eas env:create --name EXPO_PUBLIC_CONVEX_URL --value "$CONVEX_SITE_URL" --environment $EAS_ENV --visibility plaintext --force --non-interactive || true
+          eas env:create --name EXPO_PUBLIC_PROJECT_ID --value "${{ vars.EAS_PROJECT_ID }}" --environment $EAS_ENV --visibility plaintext --force --non-interactive || true
+
+          # APP_VARIANT for staging builds (determines bundle ID)
+          if [ "$CHANNEL" = "staging" ]; then
+            eas env:create --name APP_VARIANT --value "staging" --environment $EAS_ENV --visibility plaintext --force --non-interactive || true
+          fi
+
+          echo "✓ Synced secrets to EAS $EAS_ENV environment"
+
+      - name: Check for native code changes
+        run: |
+          echo "Checking if native code has changed..."
+          node scripts/check-fingerprint.js
+
+          # If fingerprint check fails, it means native code changed
+          # and we need a new build, not an OTA update
+          if [ $? -ne 0 ]; then
+            echo "❌ Native code has changed! Cannot push OTA update."
+            echo "   A new native build is required: eas build --platform all"
+            exit 1
+          fi
+
+          echo "✅ Fingerprint matches - safe to push OTA update"
+
+      - name: Generate OTA version
+        id: ota_version
+        run: |
+          # Get runtime version from app.config.js
+          RUNTIME_VERSION=$(node -p "require('./app.config.js').default.expo.runtimeVersion")
+
+          # Generate date and time in UTC (MMDDYY.HHMM format)
+          DATE_PART=$(date -u +"%m%d%y")
+          TIME_PART=$(date -u +"%H%M")
+
+          # Construct full OTA version: X.Y.Z.MMDDYY.HHMM
+          OTA_VERSION="${RUNTIME_VERSION}.${DATE_PART}.${TIME_PART}"
+
+          echo "ota_version=$OTA_VERSION" >> $GITHUB_OUTPUT
+          echo "Generated OTA version: $OTA_VERSION"
+
+      - name: Publish OTA Update
+        env:
+          COMMIT_MSG: ${{ github.event.head_commit.message || '' }}
+          UPDATE_CHANNEL: ${{ steps.env.outputs.channel }}
+          EAS_ENV: ${{ steps.env.outputs.eas_env }}
+          OTA_VERSION: ${{ steps.ota_version.outputs.ota_version }}
+        run: |
+          # Extract only the first line (subject) of the commit message
+          if [ -n "$COMMIT_MSG" ]; then
+            COMMIT_SUBJECT=$(echo "$COMMIT_MSG" | head -n 1)
+          else
+            COMMIT_SUBJECT="Manual OTA deployment v$OTA_VERSION"
+          fi
+          echo "Publishing to channel: $UPDATE_CHANNEL"
+          echo "OTA Version: $OTA_VERSION"
+          eas update --channel "$UPDATE_CHANNEL" --environment $EAS_ENV --message "$COMMIT_SUBJECT" --non-interactive
+
+      - name: Deployment summary
+        env:
+          CHANNEL: ${{ steps.env.outputs.channel }}
+          OTA_VERSION: ${{ steps.ota_version.outputs.ota_version }}
+        run: |
+          echo "## OTA Update Published" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Channel:** $CHANNEL" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version:** $OTA_VERSION" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY

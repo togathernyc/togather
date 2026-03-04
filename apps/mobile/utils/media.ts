@@ -2,14 +2,11 @@
  * Media URL utilities for the mobile app
  *
  * Mirrors the backend getMediaUrl logic from apps/convex/lib/utils.ts
- * to resolve storage paths (r2:, s3 legacy) to full URLs on the client.
+ * to resolve storage paths to full URLs on the client.
  */
 
 // R2 public URL - this is the Cloudflare CDN endpoint for images
 const R2_PUBLIC_URL = process.env.EXPO_PUBLIC_IMAGE_CDN_URL || 'https://images.togather.nyc';
-
-// Legacy S3 bucket URL (for backwards compatibility with old images)
-const S3_BUCKET_URL = process.env.EXPO_PUBLIC_LEGACY_S3_URL || 'https://togather-s3.s3.us-east-1.amazonaws.com';
 
 /**
  * Convert a stored media path to a full URL
@@ -17,7 +14,6 @@ const S3_BUCKET_URL = process.env.EXPO_PUBLIC_LEGACY_S3_URL || 'https://togather
  * Supports:
  * - Full URLs (http:// or https://) - returned as-is
  * - R2 paths (r2:folder/file.jpg) - converted to R2 CDN URL
- * - Legacy S3 paths (folder/file.jpg) - converted to S3 URL
  *
  * @param path - The stored path or URL
  * @returns Full URL string, or undefined if path is empty
@@ -28,9 +24,6 @@ const S3_BUCKET_URL = process.env.EXPO_PUBLIC_LEGACY_S3_URL || 'https://togather
  *
  * getMediaUrl('https://example.com/image.jpg')
  * // => 'https://example.com/image.jpg'
- *
- * getMediaUrl('images/profiles/old-photo.jpg')
- * // => '{S3_BUCKET_URL}/images/profiles/old-photo.jpg'
  */
 export function getMediaUrl(path: string | null | undefined): string | undefined {
   if (!path) {
@@ -53,8 +46,8 @@ export function getMediaUrl(path: string | null | undefined): string | undefined
     return `${R2_PUBLIC_URL}/${r2Path}`;
   }
 
-  // Legacy S3 path (backwards compatibility)
-  return `${S3_BUCKET_URL}/${path}`;
+  // Unrecognized path format
+  return undefined;
 }
 
 /**

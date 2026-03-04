@@ -140,12 +140,12 @@ export function SettingsContent() {
       const contentType = `image/${fileExtension === "jpg" ? "jpeg" : fileExtension}`;
 
       // Get presigned URL
-      const { uploadUrl, key } = await uploadLogo({
+      const { uploadUrl, storagePath } = await uploadLogo({
         fileName: cleanFileName,
         contentType,
       });
 
-      // Upload to S3
+      // Upload to R2
       if (Platform.OS === "web") {
         const response = await fetch(imageUri);
         const blob = await response.blob();
@@ -157,7 +157,7 @@ export function SettingsContent() {
           },
         });
         if (!uploadResponse.ok) {
-          throw new Error(`S3 upload failed: ${uploadResponse.status}`);
+          throw new Error(`Upload failed: ${uploadResponse.status}`);
         }
       } else {
         const uploadResult = await uploadAsync(uploadUrl, imageUri, {
@@ -168,12 +168,12 @@ export function SettingsContent() {
           },
         });
         if (uploadResult.status < 200 || uploadResult.status >= 300) {
-          throw new Error(`S3 upload failed: ${uploadResult.status}`);
+          throw new Error(`Upload failed: ${uploadResult.status}`);
         }
       }
 
       // Save the logo path to the community record
-      await updateSettings({ logo: key });
+      await updateSettings({ logo: storagePath });
 
       // Success
       setIsUploadingImage(false);

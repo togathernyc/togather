@@ -1,0 +1,131 @@
+name: Deploy Link Preview Worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/link-preview/**'
+      - '.github/workflows/deploy-link-preview.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+jobs:
+  deploy:
+    name: Deploy Cloudflare Worker
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine environment
+        id: env
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TARGET="${{ github.event.inputs.environment }}"
+          else
+            # Push to main -> staging (trunk-based development)
+            TARGET="staging"
+          fi
+          echo "target=$TARGET" >> $GITHUB_OUTPUT
+
+          # Set secrets environment
+          if [[ "$TARGET" == "production" ]]; then
+            echo "secrets_env=production" >> $GITHUB_OUTPUT
+          else
+            echo "secrets_env=staging" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Load secrets from 1Password
+        uses: ./.github/actions/load-secrets
+        with:
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          environment: ${{ steps.env.outputs.secrets_env }}
+
+      - name: Install Wrangler
+        run: npm install -g wrangler
+
+      - name: Deploy Worker
+        working-directory: apps/link-preview
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ env.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
+          TARGET_ENV: ${{ steps.env.outputs.target }}
+        run: |
+          if [[ "$TARGET_ENV" == "production" ]]; then
+            echo "Deploying to production worker (togather-link-preview)..."
+            wrangler deploy
+          else
+            echo "Deploying to staging worker (togather-link-preview-staging)..."
+            wrangler deploy -c wrangler.staging.toml
+          fi
+
+      - name: Configure Convex backend for worker
+        working-directory: apps/link-preview
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ env.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
+          CONVEX_SITE_URL: ${{ env.CONVEX_SITE_URL }}
+          TARGET_ENV: ${{ steps.env.outputs.target }}
+        run: |
+          # Set the Convex site URL as a secret for the worker
+          # The worker uses this to fetch event/group data for OG tags
+          if [ -z "$CONVEX_SITE_URL" ]; then
+            echo "CONVEX_SITE_URL is not set; cannot configure link-preview Convex endpoint." >&2
+            exit 1
+          fi
+
+          # Convert .convex.cloud to .convex.site for HTTP endpoints
+          # The WebSocket API uses .cloud, but HTTP endpoints use .site
+          CONVEX_HTTP_URL="${CONVEX_SITE_URL/.convex.cloud/.convex.site}"
+          echo "Using Convex HTTP URL: $CONVEX_HTTP_URL"
+
+          if [[ "$TARGET_ENV" == "production" ]]; then
+            printf "%s" "$CONVEX_HTTP_URL" | wrangler secret put CONVEX_SITE_URL
+          else
+            printf "%s" "$CONVEX_HTTP_URL" | wrangler secret put CONVEX_SITE_URL -c wrangler.staging.toml
+          fi
+
+      - name: Summary
+        env:
+          TARGET_ENV: ${{ steps.env.outputs.target }}
+        run: |
+          echo "## Link Preview Worker Deployed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [[ "$TARGET_ENV" == "production" ]]; then
+            echo "**Environment:** Production" >> $GITHUB_STEP_SUMMARY
+            echo "**Worker:** togather-link-preview" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Routes" >> $GITHUB_STEP_SUMMARY
+            echo "- \`togather.nyc/*\` - Root domain traffic" >> $GITHUB_STEP_SUMMARY
+            echo "- \`www.togather.nyc/*\` - www subdomain" >> $GITHUB_STEP_SUMMARY
+            echo "- \`*.togather.nyc/*\` - Community subdomain traffic" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**Environment:** Staging" >> $GITHUB_STEP_SUMMARY
+            echo "**Worker:** togather-link-preview-staging" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Routes" >> $GITHUB_STEP_SUMMARY
+            echo "- \`staging.togather.nyc/*\` - Staging traffic" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### OG Tag Routes" >> $GITHUB_STEP_SUMMARY
+          echo "- \`/e/:shortId\` - Event previews" >> $GITHUB_STEP_SUMMARY
+          echo "- \`/g/:shortId\` - Group previews" >> $GITHUB_STEP_SUMMARY
+          echo "- \`/nearme\` - Near me page previews" >> $GITHUB_STEP_SUMMARY
+          echo "- \`/\` - Homepage (bots only)" >> $GITHUB_STEP_SUMMARY

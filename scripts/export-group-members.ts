@@ -2,7 +2,7 @@
 /**
  * Export group members to CSV ordered by join date
  *
- * Run with: infisical run --env=prod -- npx tsx scripts/export-group-members.ts "Midtown East"
+ * Run with: op run --env-file=.env.production -- npx tsx scripts/export-group-members.ts "Midtown East"
  */
 
 import { ConvexHttpClient } from "convex/browser";

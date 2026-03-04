@@ -11,7 +11,6 @@ import { useRouter } from "expo-router";
 import { PhoneInput } from "@/components/ui/PhoneInput";
 import { OTPInput } from "@/components/ui/OTPInput";
 import { ProgrammaticTextInput } from "@/components/ui/ProgrammaticTextInput";
-import { GoogleSignInButton } from "./GoogleSignInButton";
 
 interface PhoneSignInFormProps {
   // Phone step
@@ -44,10 +43,6 @@ interface PhoneSignInFormProps {
   onSignUp: () => void;
   onForgotPassword: () => void;
 
-  // Google sign in
-  onGoogleSignIn?: () => void;
-  googleLoading?: boolean;
-
   // State
   error: string;
   isLoading: boolean;
@@ -76,8 +71,6 @@ export function PhoneSignInForm({
   onSwitchToPhone,
   onSignUp,
   onForgotPassword,
-  onGoogleSignIn,
-  googleLoading,
   error,
   isLoading,
 }: PhoneSignInFormProps) {
@@ -278,22 +271,6 @@ export function PhoneSignInForm({
         <Text style={styles.linkText}>Forgot Password?</Text>
       </TouchableOpacity>
 
-      {onGoogleSignIn && (
-        <>
-          <View style={styles.dividerContainer}>
-            <View style={styles.divider} />
-            <Text style={styles.dividerText}>or</Text>
-            <View style={styles.divider} />
-          </View>
-
-          <GoogleSignInButton
-            onPress={onGoogleSignIn}
-            disabled={isLoading || googleLoading}
-            loading={googleLoading}
-          />
-        </>
-      )}
-
       <View style={styles.footer}>
         <Text style={styles.footerText}>Don't have an account? </Text>
         <TouchableOpacity onPress={onSignUp}>
@@ -356,21 +333,6 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 18,
     fontWeight: "600",
-  },
-  dividerContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginVertical: 24,
-  },
-  divider: {
-    flex: 1,
-    height: 1,
-    backgroundColor: "#ddd",
-  },
-  dividerText: {
-    marginHorizontal: 16,
-    color: "#666",
-    fontSize: 14,
   },
   footer: {
     flexDirection: "row",

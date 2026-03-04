@@ -1,0 +1,97 @@
+# Deploy Convex backend
+#
+# Automatically deploys to staging on push to main branch
+# Production deployment is manual only (workflow_dispatch)
+#
+# All secrets (including CONVEX_DEPLOY_KEY) are loaded from 1Password
+# Only requires OP_SERVICE_ACCOUNT_TOKEN in GitHub Secrets
+
+name: Deploy Convex
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/convex/**"
+      - "packages/shared/**"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to deploy to"
+        required: true
+        default: "staging"
+        type: choice
+        options:
+          - staging
+          - production
+
+concurrency:
+  group: deploy-convex-${{ github.event.inputs.environment || 'staging' }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Convex
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine environment
+        id: env
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            GH_ENV="${{ github.event.inputs.environment }}"
+          else
+            # Push to main triggers staging deploy
+            GH_ENV="staging"
+          fi
+          echo "environment=$GH_ENV" >> $GITHUB_OUTPUT
+          echo "secrets_env=$GH_ENV" >> $GITHUB_OUTPUT
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build shared package
+        run: pnpm --filter @togather/shared build
+
+      - name: Build notifications email templates
+        run: pnpm --filter @togather/notifications build:email
+
+      - name: Type check Convex functions
+        run: npx convex typecheck
+
+      - name: Load secrets from 1Password
+        uses: ./.github/actions/load-secrets
+        with:
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          environment: ${{ steps.env.outputs.secrets_env }}
+
+      - name: Sync secrets to Convex
+        run: |
+          chmod +x ee/scripts/sync-secrets-to-convex.sh
+          ./ee/scripts/sync-secrets-to-convex.sh ${{ steps.env.outputs.secrets_env }}
+
+      - name: Deploy to Convex
+        run: npx convex deploy
+
+      - name: Deployment summary
+        run: |
+          echo "## Convex Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment:** ${{ steps.env.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Triggered by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY

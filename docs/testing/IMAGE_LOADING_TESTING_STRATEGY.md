@@ -62,12 +62,14 @@ export function getMediaUrl(path: string | null | undefined): string | undefined
   if (!path) return undefined;
   if (path.startsWith("http://") || path.startsWith("https://")) return path;
 
-  const bucket = process.env.AWS_S3_BUCKET;
-  const region = process.env.AWS_REGION || "us-east-1";
+  // R2 storage
+  if (path.startsWith("r2:")) {
+    const r2Path = path.slice(3);
+    return `${process.env.R2_PUBLIC_URL}/${r2Path}`;
+  }
 
-  // Future: When compressed images ready, return compressed URL here
-  // For now: Always return original S3 URL
-  return `https://${bucket}.s3.${region}.amazonaws.com/${path}`;
+  // All images use R2 now
+  return `${process.env.R2_PUBLIC_URL}/${path}`;
 }
 ```
 
@@ -83,8 +85,7 @@ import { getMediaUrl } from '../lib/utils';
 
 describe('getMediaUrl', () => {
   beforeEach(() => {
-    process.env.AWS_S3_BUCKET = 'test-bucket';
-    process.env.AWS_REGION = 'us-east-1';
+    process.env.R2_PUBLIC_URL = 'https://images.togather.nyc';
   });
 
   it('returns undefined for null path', () => {
@@ -96,9 +97,14 @@ describe('getMediaUrl', () => {
     expect(getMediaUrl('')).toBeUndefined();
   });
 
-  it('constructs correct S3 URL for path', () => {
+  it('constructs correct R2 URL for path', () => {
     const url = getMediaUrl('communities/logo.png');
-    expect(url).toBe('https://test-bucket.s3.us-east-1.amazonaws.com/communities/logo.png');
+    expect(url).toBe('https://images.togather.nyc/communities/logo.png');
+  });
+
+  it('constructs correct R2 URL for r2: prefixed path', () => {
+    const url = getMediaUrl('r2:profiles/abc123.jpg');
+    expect(url).toBe('https://images.togather.nyc/profiles/abc123.jpg');
   });
 
   it('returns existing URL unchanged', () => {
@@ -109,11 +115,6 @@ describe('getMediaUrl', () => {
   it('handles paths with special characters', () => {
     const url = getMediaUrl('groups/1/preview_abc123.jpg');
     expect(url).toContain('groups/1/preview_abc123.jpg');
-  });
-
-  it('returns undefined when bucket not configured', () => {
-    delete process.env.AWS_S3_BUCKET;
-    expect(getMediaUrl('path/to/image.png')).toBeUndefined();
   });
 });
 ```
@@ -154,7 +155,7 @@ describe('Query Response Shapes - Images', () => {
     expect(result.communityMemberships).toHaveLength(1);
     expect(result.communityMemberships[0]).toHaveProperty('communityLogo');
     expect(result.communityMemberships[0].communityLogo).toMatch(/^https:\/\//);
-    expect(result.communityMemberships[0].communityLogo).toContain('s3.amazonaws.com');
+    expect(result.communityMemberships[0].communityLogo).toContain('images.togather.nyc');
   });
 
   it('groups.getById returns preview URL', async () => {
@@ -249,7 +250,7 @@ describe('Image Loading Integration', () => {
     const memberships = result.current?.communityMemberships || [];
     memberships.forEach(membership => {
       if (membership.communityLogo) {
-        expect(membership.communityLogo).toMatch(/^https:\/\/.*s3.*amazonaws\.com/);
+        expect(membership.communityLogo).toMatch(/^https:\/\/images\.togather\.nyc/);
       }
     });
   });
@@ -264,7 +265,7 @@ describe('Image Loading Integration', () => {
     const groups = result.current || [];
     groups.forEach(group => {
       if (group.preview) {
-        expect(group.preview).toMatch(/^https:\/\/.*s3.*amazonaws\.com/);
+        expect(group.preview).toMatch(/^https:\/\/images\.togather\.nyc/);
       }
     });
   });
@@ -299,8 +300,8 @@ test.describe('Image Loading E2E', () => {
     for (let i = 0; i < count; i++) {
       const avatar = avatars.nth(i);
 
-      // Should have an img element with src containing s3.amazonaws.com
-      const img = avatar.locator('img[src*="s3.amazonaws.com"]');
+      // Should have an img element with src containing images.togather.nyc
+      const img = avatar.locator('img[src*="images.togather.nyc"]');
       await expect(img).toBeVisible({ timeout: 5000 });
 
       // Should NOT show initials fallback (single/double letter text)
@@ -346,7 +347,7 @@ test.describe('Image Loading E2E', () => {
 
     if (count > 0) {
       const firstAvatar = messageAvatars.first();
-      const img = firstAvatar.locator('img[src*="s3.amazonaws.com"]');
+      const img = firstAvatar.locator('img[src*="images.togather.nyc"]');
       await expect(img).toBeVisible();
     }
   });
@@ -415,7 +416,7 @@ Before deploying changes that affect images:
 ### Backend Checklist
 - [ ] All queries returning image paths call `getMediaUrl()`
 - [ ] All image fields use `?? null` (not `?? undefined`)
-- [ ] `AWS_S3_BUCKET` and `AWS_REGION` environment variables set in Convex
+- [ ] `R2_PUBLIC_URL` environment variable set in Convex
 - [ ] No references to removed `*Fallback` fields
 
 ### Frontend Checklist
@@ -480,7 +481,7 @@ const handleError = useCallback(() => {
 Set up alerts for:
 - Image load success rate drops below 95%
 - Specific communities/groups with >50% image failures
-- AWS S3 bucket misconfiguration (all images fail)
+- R2 bucket misconfiguration (all images fail)
 
 ## Linting Rules
 
@@ -506,58 +507,12 @@ module.exports = {
 };
 ```
 
-## Future: Compressed Image Pipeline
+## Image Optimization
 
-When compressed images are ready:
-
-### Backend Update (Single Location)
-```typescript
-// apps/convex/lib/utils.ts - Only file that needs changes
-export function getMediaUrl(path: string | null | undefined): string | undefined {
-  if (!path) return undefined;
-  if (path.startsWith("http://") || path.startsWith("https://")) return path;
-
-  const bucket = process.env.AWS_S3_BUCKET;
-  const region = process.env.AWS_REGION || "us-east-1";
-  const compressedBucket = process.env.AWS_S3_COMPRESSED_BUCKET;
-
-  if (!bucket) return undefined;
-
-  // NEW: Check if compressed image exists
-  // If yes, return compressed URL
-  // If no, return original URL
-  if (compressedBucket && await imageExistsInCompressedBucket(path)) {
-    return `https://${compressedBucket}.s3.${region}.amazonaws.com/${path}`;
-  }
-
-  // Fallback to original
-  return `https://${bucket}.s3.${region}.amazonaws.com/${path}`;
-}
-```
+All images are served through Cloudflare R2 with Image Transformations for on-the-fly resizing and optimization. See [ADR-016](../architecture/ADR-016-cloudflare-images-migration.md) for details.
 
 ### Frontend Changes
-**NONE!** Frontend receives single URL, doesn't care if it's compressed or original.
-
-### Testing for Compression
-Add test to verify compression preference:
-```typescript
-it('returns compressed URL when available', async () => {
-  process.env.AWS_S3_COMPRESSED_BUCKET = 'compressed-bucket';
-  mockImageExists(true);
-
-  const url = await getMediaUrl('test.jpg');
-  expect(url).toContain('compressed-bucket');
-});
-
-it('falls back to original when compressed unavailable', async () => {
-  process.env.AWS_S3_COMPRESSED_BUCKET = 'compressed-bucket';
-  mockImageExists(false);
-
-  const url = await getMediaUrl('test.jpg');
-  expect(url).toContain('original-bucket');
-  expect(url).not.toContain('compressed-bucket');
-});
-```
+**NONE!** Frontend receives single URL, doesn't care about optimization details.
 
 ## Summary
 

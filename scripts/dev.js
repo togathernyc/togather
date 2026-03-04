@@ -205,12 +205,12 @@ function checkConvexEnvVars() {
 }
 
 /**
- * Check if user is logged into Infisical
+ * Check if 1Password CLI is installed
  * @returns {boolean}
  */
-function isInfisicalLoggedIn() {
+function has1PasswordCLI() {
   try {
-    execSync('infisical user get token 2>/dev/null', { encoding: 'utf-8' });
+    execSync('which op 2>/dev/null', { encoding: 'utf-8' });
     return true;
   } catch (e) {
     return false;
@@ -218,26 +218,28 @@ function isInfisicalLoggedIn() {
 }
 
 /**
- * Sync environment variables from Infisical to Convex
+ * Check if user is logged into 1Password
+ * @returns {boolean}
+ */
+function is1PasswordLoggedIn() {
+  try {
+    execSync('op account list 2>/dev/null', { encoding: 'utf-8' });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Sync environment variables from 1Password to Convex
  */
 function syncConvexEnvVars() {
   console.log('🔄 Syncing environment variables to Convex...');
 
-  const projectId = process.env.INFISICAL_WORKSPACE_ID;
-  if (!projectId) {
-    console.error('❌ INFISICAL_WORKSPACE_ID environment variable is not set.');
-    console.error('   Set it in your shell profile or .env.local');
-    return false;
-  }
-  const infisicalEnv = 'dev';
-
-  // Keys to sync
   const convexKeys = [
     'JWT_SECRET', 'EXPO_ACCESS_TOKEN', 'RESEND_API_KEY',
     'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN',
     'TWILIO_API_KEY_SID', 'TWILIO_API_KEY_SECRET', 'TWILIO_VERIFY_SERVICE_SID',
-    'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_S3_BUCKET',
-    'AWS_REGION', 'AWS_S3_COMPRESSED_BUCKET_URL',
     'PLANNING_CENTER_CLIENT_ID', 'PLANNING_CENTER_CLIENT_SECRET',
     'OTP_TEST_PHONE_NUMBERS',
     'CLOUDFLARE_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY',
@@ -245,42 +247,28 @@ function syncConvexEnvVars() {
   ];
 
   try {
-    // Fetch secrets from Infisical
-    const secrets = execSync(
-      `infisical export --projectId="${projectId}" --env="${infisicalEnv}" --format=dotenv 2>/dev/null`,
-      { encoding: 'utf-8' }
-    );
-
-    // Parse secrets into a map
-    const secretMap = {};
-    for (const line of secrets.split('\n')) {
-      if (!line || line.startsWith('#')) continue;
-      const eqIndex = line.indexOf('=');
-      if (eqIndex === -1) continue;
-      const key = line.substring(0, eqIndex);
-      let value = line.substring(eqIndex + 1);
-      // Remove surrounding quotes
-      value = value.replace(/^['"]|['"]$/g, '');
-      secretMap[key] = value;
-    }
-
     // Set APP_ENV
     execSync('npx convex env set APP_ENV=development 2>/dev/null', { stdio: 'ignore' });
     execSync('npx convex env set APP_URL=http://localhost:8081 2>/dev/null', { stdio: 'ignore' });
 
-    // Sync each key
+    // Sync each key from 1Password
     let synced = 0;
     for (const key of convexKeys) {
-      const value = secretMap[key];
-      if (value) {
-        process.stdout.write(`   ${key}...`);
-        try {
+      process.stdout.write(`   ${key}...`);
+      try {
+        const value = execSync(
+          `op read "op://Togather/${key}/dev" 2>/dev/null`,
+          { encoding: 'utf-8' }
+        ).trim();
+        if (value) {
           execSync(`npx convex env set "${key}=${value}" 2>/dev/null`, { stdio: 'ignore' });
           console.log(' ✓');
           synced++;
-        } catch (e) {
-          console.log(' ✗');
+        } else {
+          console.log(' (empty)');
         }
+      } catch (e) {
+        console.log(' ✗');
       }
     }
 
@@ -357,10 +345,15 @@ function main() {
     console.error('');
     console.error('❌ Mobile environment not configured!');
     console.error('');
-    console.error('   Run the setup script first:');
-    console.error('');
-    console.error('   1. infisical login');
-    console.error('   2. ./scripts/setup-env.sh');
+    if (has1PasswordCLI()) {
+      console.error('   Run the setup script first:');
+      console.error('');
+      console.error('   1. op signin');
+      console.error('   2. ./scripts/setup-env.sh');
+    } else {
+      console.error('   Create apps/mobile/.env with your environment variables.');
+      console.error('   See .env.example and docs/secrets.md for required values.');
+    }
     console.error('');
     console.error('   See CLAUDE.md for full setup instructions.');
     console.error('');
@@ -402,23 +395,32 @@ function main() {
     console.log('⚠️  Convex environment variables not configured.');
     console.log('');
 
-    // Check if logged into Infisical
-    if (!isInfisicalLoggedIn()) {
-      console.error('❌ Not logged into Infisical!');
+    // Try auto-sync from 1Password if available
+    if (!has1PasswordCLI()) {
+      console.log('   Set environment variables manually using the Convex dashboard');
+      console.log('   or the CLI:');
+      console.log('');
+      console.log('     npx convex env set JWT_SECRET=your-secret');
+      console.log('');
+      console.log('   See docs/secrets.md for required variables.');
+      console.log('   The app will start, but some features may not work without secrets.');
+      console.log('');
+    } else if (!is1PasswordLoggedIn()) {
+      console.error('❌ Not logged into 1Password!');
       console.error('');
-      console.error('   Run "infisical login" first, then run "pnpm dev" again.');
+      console.error('   Run "op signin" first, then run "pnpm dev" again.');
       console.error('');
       process.exit(1);
+    } else {
+      // Auto-sync from 1Password
+      if (!syncConvexEnvVars()) {
+        console.error('');
+        console.error('   Failed to sync. Try running "./scripts/setup-env.sh" manually.');
+        console.error('');
+        process.exit(1);
+      }
+      console.log('');
     }
-
-    // Auto-sync from Infisical
-    if (!syncConvexEnvVars()) {
-      console.error('');
-      console.error('   Failed to sync. Try running "./scripts/setup-env.sh" manually.');
-      console.error('');
-      process.exit(1);
-    }
-    console.log('');
   }
 
   if (mobileOnly) {

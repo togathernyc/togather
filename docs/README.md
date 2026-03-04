@@ -12,7 +12,7 @@ This directory contains documentation for the Togather monorepo, including archi
 - **Notifications**: Expo Push + Twilio SMS
 - **Background Jobs**: Convex Crons (scheduled functions)
 - **Storage**: Cloudflare R2 (with Image Transformations)
-- **Secrets**: Infisical
+- **Secrets**: 1Password
 - **DNS/CDN**: Cloudflare + Terraform
 
 For architecture diagrams, see the [Main README](../README.md).
@@ -83,9 +83,8 @@ For architecture diagrams, see the [Main README](../README.md).
 | [EAS Workflows](./setup/EAS_WORKFLOWS_SETUP.md) | EAS Workflows for CI/CD |
 | [iOS Build Credentials](./setup/IOS_BUILD_CREDENTIALS.md) | iOS signing setup |
 | [Notification Setup](./setup/NOTIFICATION_SETUP.md) | Push notification configuration |
-| [S3 CORS](./setup/s3-cors-configuration.md) | S3 CORS configuration (legacy) |
 
-**Secrets Management:** [secrets.md](./secrets.md) - Infisical integration
+**Secrets Management:** [secrets.md](./secrets.md) - 1Password integration
 
 ---
 
@@ -118,9 +117,7 @@ For architecture diagrams, see the [Main README](../README.md).
 
 | Issue | Description |
 |-------|-------------|
-| [Image Compression Path](./tech-debt/image-compression-path-migration.md) | Legacy S3 path migration (superseded by R2) |
 | [Image Compression Workflow](./tech-debt/image-compression-workflow.md) | Legacy compression implementation (superseded by R2) |
-| [S3 Path Migration Fix](./tech-debt/s3-path-migration-fix.md) | Legacy S3 path fixes (superseded by R2) |
 
 ---
 

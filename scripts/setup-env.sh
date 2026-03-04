@@ -1,12 +1,12 @@
 #!/bin/bash
 # =============================================================================
-# Togather Environment Setup Script (Infisical)
+# Togather Environment Setup Script (1Password)
 # =============================================================================
-# Fetches secrets from Infisical and generates .env files for local development.
+# Fetches secrets from 1Password and generates .env files for local development.
 #
 # Prerequisites:
-#   1. Infisical CLI: brew install infisical/get-cli/infisical
-#   2. Login: infisical login
+#   1. 1Password CLI: brew install 1password-cli
+#   2. Sign in: op signin
 #
 # Usage:
 #   ./scripts/setup-env.sh [environment]
@@ -14,7 +14,7 @@
 # Environments:
 #   dev (default)  - Local development
 #   staging        - Staging environment
-#   prod           - Production (use with caution!)
+#   production     - Production (use with caution!)
 # =============================================================================
 
 set -e
@@ -32,14 +32,6 @@ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 
 # Configuration
 ENV="${1:-dev}"
-if [ -z "$INFISICAL_WORKSPACE_ID" ]; then
-    echo -e "${RED}Error: INFISICAL_WORKSPACE_ID is not set${NC}"
-    echo ""
-    echo "Set it in your shell profile or .env file:"
-    echo "  export INFISICAL_WORKSPACE_ID=your-workspace-id"
-    exit 1
-fi
-PROJECT_ID="$INFISICAL_WORKSPACE_ID"
 
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}  Togather Environment Setup${NC}"
@@ -56,26 +48,29 @@ echo ""
 check_prerequisites() {
     echo -e "${YELLOW}Checking prerequisites...${NC}"
 
-    if ! command -v infisical &> /dev/null; then
-        echo -e "${RED}Error: Infisical CLI not installed${NC}"
+    if ! command -v op &> /dev/null; then
+        echo -e "${RED}Error: 1Password CLI not installed${NC}"
         echo ""
-        echo "Install with:"
-        echo "  brew install infisical/get-cli/infisical"
+        echo "This script requires the 1Password CLI to fetch secrets."
+        echo ""
+        echo "Options:"
+        echo "  1. Install 1Password CLI: brew install 1password-cli"
+        echo "  2. Set up environment manually:"
+        echo "     - Copy .env.example to .env.local and fill in values"
+        echo "     - Create apps/mobile/.env with EXPO_PUBLIC_* variables"
+        echo "     - Set Convex env vars via: npx convex env set KEY=value"
+        echo "     - See docs/secrets.md for required variables"
         exit 1
     fi
-    echo -e "  ${GREEN}✓${NC} Infisical CLI installed"
+    echo -e "  ${GREEN}✓${NC} 1Password CLI installed"
 
-    if [ -z "$INFISICAL_TOKEN" ]; then
-        if ! infisical user get token &>/dev/null; then
-            echo -e "${RED}Error: Not logged into Infisical${NC}"
-            echo ""
-            echo "Run: infisical login"
-            exit 1
-        fi
-        echo -e "  ${GREEN}✓${NC} Logged into Infisical"
-    else
-        echo -e "  ${GREEN}✓${NC} Using INFISICAL_TOKEN"
+    if ! op account list &>/dev/null; then
+        echo -e "${RED}Error: Not signed into 1Password${NC}"
+        echo ""
+        echo "Run: op signin"
+        exit 1
     fi
+    echo -e "  ${GREEN}✓${NC} Signed into 1Password"
 
     echo ""
 }
@@ -89,12 +84,21 @@ generate_mobile_env() {
 
     local mobile_env="${ROOT_DIR}/apps/mobile/.env"
 
-    # Export only EXPO_PUBLIC_* secrets for mobile
-    infisical export \
-        --projectId="$PROJECT_ID" \
-        --env="$ENV" \
-        --format=dotenv \
-        | grep "^EXPO_PUBLIC_" > "$mobile_env" || true
+    # EXPO_PUBLIC_* secrets to fetch from 1Password
+    local EXPO_KEYS="EXPO_PUBLIC_MAPBOX_TOKEN EXPO_PUBLIC_CONVEX_URL EXPO_PUBLIC_SENTRY_DSN EXPO_PUBLIC_PROJECT_ID EXPO_PUBLIC_POSTHOG_API_KEY"
+
+    > "$mobile_env"
+
+    for key in $EXPO_KEYS; do
+        local value
+        value=$(op read "op://Togather/${key}/${ENV}" 2>/dev/null || true)
+        if [ -n "$value" ]; then
+            echo "${key}=${value}" >> "$mobile_env"
+            echo -e "  ${GREEN}✓${NC} ${key}"
+        else
+            echo -e "  ${YELLOW}⚠${NC} ${key} (not found)"
+        fi
+    done
 
     echo -e "  ${GREEN}✓${NC} Created ${mobile_env}"
 }
@@ -116,30 +120,21 @@ sync_convex_env() {
 
     echo -e "${YELLOW}Syncing environment variables to Convex...${NC}"
 
-    # Fetch all secrets from Infisical and save to temp file
-    local secrets_file=$(mktemp)
-    infisical export \
-        --projectId="$PROJECT_ID" \
-        --env="$ENV" \
-        --format=dotenv > "$secrets_file"
-
     # Set APP_ENV for dev environment
     echo -e "  Setting APP_ENV=development..."
     npx convex env set APP_ENV=development 2>/dev/null || true
     npx convex env set APP_URL=http://localhost:8081 2>/dev/null || true
 
     # Keys to sync to Convex
-    local CONVEX_KEYS="JWT_SECRET EXPO_ACCESS_TOKEN RESEND_API_KEY TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TWILIO_API_KEY_SID TWILIO_API_KEY_SECRET TWILIO_VERIFY_SERVICE_SID AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_S3_BUCKET AWS_REGION AWS_S3_COMPRESSED_BUCKET_URL PLANNING_CENTER_CLIENT_ID PLANNING_CENTER_CLIENT_SECRET OTP_TEST_PHONE_NUMBERS CLOUDFLARE_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_BUCKET_NAME R2_PUBLIC_URL"
+    local CONVEX_KEYS="JWT_SECRET EXPO_ACCESS_TOKEN RESEND_API_KEY TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TWILIO_API_KEY_SID TWILIO_API_KEY_SECRET TWILIO_VERIFY_SERVICE_SID PLANNING_CENTER_CLIENT_ID PLANNING_CENTER_CLIENT_SECRET OTP_TEST_PHONE_NUMBERS CLOUDFLARE_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_BUCKET_NAME R2_PUBLIC_URL"
 
-    # Sync each key by grepping from secrets file
+    # Sync each key from 1Password
     local synced=0
     local skipped=0
     for key in $CONVEX_KEYS; do
-        local line=$(grep "^${key}=" "$secrets_file" 2>/dev/null || true)
-        if [ -n "$line" ]; then
-            local value="${line#*=}"
-            # Remove surrounding quotes
-            value=$(echo "$value" | sed "s/^['\"]//;s/['\"]$//")
+        local value
+        value=$(op read "op://Togather/${key}/${ENV}" 2>/dev/null || true)
+        if [ -n "$value" ]; then
             echo -e "  Setting $key..."
             npx convex env set "$key=$value" 2>/dev/null || true
             ((synced++)) || true
@@ -148,8 +143,7 @@ sync_convex_env() {
         fi
     done
 
-    rm -f "$secrets_file"
-    echo -e "  ${GREEN}✓${NC} Synced $synced variables to Convex ($skipped not found in Infisical)"
+    echo -e "  ${GREEN}✓${NC} Synced $synced variables to Convex ($skipped not found in 1Password)"
 }
 
 # -----------------------------------------------------------------------------
@@ -202,16 +196,17 @@ print_help() {
     echo "Usage: ./scripts/setup-env.sh [environment]"
     echo ""
     echo "Environments:"
-    echo "  dev      Development (default)"
-    echo "  staging  Staging"
-    echo "  prod     Production"
+    echo "  dev         Development (default)"
+    echo "  staging     Staging"
+    echo "  production  Production"
     echo ""
     echo "Examples:"
-    echo "  ./scripts/setup-env.sh          # Dev environment"
-    echo "  ./scripts/setup-env.sh staging  # Staging environment"
+    echo "  ./scripts/setup-env.sh             # Dev environment"
+    echo "  ./scripts/setup-env.sh staging     # Staging environment"
     echo ""
-    echo "Environment Variables:"
-    echo "  INFISICAL_TOKEN  Machine identity token (for CI/CD)"
+    echo "Prerequisites:"
+    echo "  1. Install 1Password CLI: brew install 1password-cli"
+    echo "  2. Sign in: op signin"
     echo ""
 }
 

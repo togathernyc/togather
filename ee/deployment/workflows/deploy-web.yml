@@ -1,0 +1,176 @@
+name: Deploy Web
+
+# Auto-deploys to staging on push to main branch
+# Production deployment is manual only (workflow_dispatch)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/mobile/**'
+      - 'packages/shared/**'
+      - '.github/workflows/deploy-web.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - preview
+          - staging
+          - production
+
+jobs:
+  deploy:
+    name: Deploy Web App
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+    defaults:
+      run:
+        working-directory: apps/mobile
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine environment
+        id: env
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TARGET="${{ github.event.inputs.environment }}"
+          else
+            # Push to main triggers staging deploy
+            TARGET="staging"
+          fi
+
+          if [ "$TARGET" = "production" ]; then
+            echo "target=production" >> $GITHUB_OUTPUT
+            echo "secrets_env=production" >> $GITHUB_OUTPUT
+          else
+            echo "target=staging" >> $GITHUB_OUTPUT
+            echo "secrets_env=staging" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: .
+
+      - name: Load secrets from 1Password
+        uses: ./.github/actions/load-secrets
+        with:
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          environment: ${{ steps.env.outputs.secrets_env }}
+
+      - name: Setup EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ env.EXPO_TOKEN }}
+
+      - name: Export web app
+        env:
+          EXPO_PUBLIC_CONVEX_URL: ${{ env.CONVEX_SITE_URL }}
+        run: npx expo export --platform web
+
+      - name: Deploy to EAS Hosting
+        id: deploy
+        env:
+          TARGET_ENV: ${{ steps.env.outputs.target }}
+        run: |
+          # Determine environment and flags for deployment
+          # TARGET_ENV is set by the "Determine environment" step:
+          # - Push to main -> staging
+          # - workflow_dispatch -> selected environment
+          if [[ "$TARGET_ENV" == "production" ]]; then
+            PROD_FLAG="--prod"
+            ENV_FLAG="--environment=production"
+          else
+            # Staging or preview deployments
+            PROD_FLAG=""
+            ENV_FLAG="--environment=preview"
+          fi
+
+          echo "Deploying with flags: $PROD_FLAG $ENV_FLAG (target: $TARGET_ENV)"
+
+          # Deploy and save JSON output to file (stderr goes to console)
+          npx eas-cli deploy $PROD_FLAG $ENV_FLAG --json --non-interactive > deploy_output.json || true
+
+          echo "Deploy output:"
+          cat deploy_output.json
+
+          # Extract deployment identifier using jq (more reliable than grep)
+          DEPLOYMENT_ID=$(cat deploy_output.json | jq -r '.identifier // empty' 2>/dev/null)
+
+          # Fallback to grep if jq fails
+          if [ -z "$DEPLOYMENT_ID" ]; then
+            DEPLOYMENT_ID=$(grep -o '"identifier":"[^"]*"' deploy_output.json | head -1 | cut -d'"' -f4)
+          fi
+
+          echo "Extracted deployment ID: $DEPLOYMENT_ID"
+          echo "deployment_id=$DEPLOYMENT_ID" >> $GITHUB_OUTPUT
+
+          if [ -z "$DEPLOYMENT_ID" ]; then
+            echo "❌ Failed to get deployment ID"
+            echo "Full output:"
+            cat deploy_output.json
+            exit 1
+          fi
+
+          echo "✅ Deployed with ID: $DEPLOYMENT_ID"
+
+      - name: Update subdomain aliases
+        env:
+          TARGET_ENV: ${{ steps.env.outputs.target }}
+        run: |
+          DEPLOYMENT_ID="${{ steps.deploy.outputs.deployment_id }}"
+
+          if [[ "$TARGET_ENV" == "staging" ]]; then
+            # Staging gets its own subdomain
+            ALIASES=("staging")
+          else
+            # Production gets the main aliases
+            # Note: Root domain (@) is handled by DNS/Cloudflare routing, not EAS aliases
+            ALIASES=("www" "app" "fount" "demo-community")
+          fi
+
+          echo "🔗 Updating subdomain aliases to deployment: $DEPLOYMENT_ID"
+
+          for ALIAS in "${ALIASES[@]}"; do
+            echo "   Updating alias: $ALIAS"
+            npx eas-cli deploy:alias --alias "$ALIAS" --id "$DEPLOYMENT_ID" --non-interactive
+          done
+
+          echo "✅ All aliases updated"
+
+      - name: Summary
+        working-directory: .
+        env:
+          TARGET_ENV: ${{ steps.env.outputs.target }}
+        run: |
+          # Get domain from config
+          BASE_DOMAIN=$(node -e "const { DOMAIN_CONFIG } = require('./packages/shared/src/config/domain.js'); console.log(DOMAIN_CONFIG.baseDomain);")
+          echo "## 🎉 Deployment Complete ($TARGET_ENV)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Deployment ID:** \`${{ steps.deploy.outputs.deployment_id }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### URLs" >> $GITHUB_STEP_SUMMARY
+          if [[ "$TARGET_ENV" == "staging" ]]; then
+            echo "- Staging: https://staging.$BASE_DOMAIN" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- App: https://app.$BASE_DOMAIN" >> $GITHUB_STEP_SUMMARY
+            echo "- Fount: https://fount.$BASE_DOMAIN" >> $GITHUB_STEP_SUMMARY
+            echo "- Demo: https://demo-community.$BASE_DOMAIN" >> $GITHUB_STEP_SUMMARY
+          fi

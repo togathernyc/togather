@@ -197,8 +197,7 @@ apps/backend/src/shared/static_data/postgres-snapshots/
 *.dump
 apps/mobile/.env.local
 
-# Infisical (project config files are machine-specific)
-.infisical.json
+# 1Password
 
 # Convex
 # Note: _generated files are committed for CI (they're needed for typechecking)

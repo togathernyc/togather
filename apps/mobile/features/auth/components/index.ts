@@ -1,5 +1,4 @@
 // Auth components barrel export
-export * from "./GoogleSignInButton";
 export * from "./CommunitySearch";
 export * from "./CommunitySelector";
 export * from "./SignUpForm";

@@ -141,59 +141,8 @@ const createCircularImage = (
       resolve(canvas);
     };
 
-    // Try compressed URL first, then fall back to regular bucket URL if it fails
     img.onerror = () => {
-      // If this is a compressed bucket URL, try regular bucket URL as fallback
-      const regularUrl = imageUrl?.replace(
-        'togather-production-bucket-compressed.s3.amazonaws.com',
-        'togather-production-bucket.s3.amazonaws.com'
-      );
-      
-      if (regularUrl && regularUrl !== imageUrl) {
-        // Try loading from regular bucket
-        const fallbackImg = new Image();
-        fallbackImg.crossOrigin = 'anonymous';
-        
-        fallbackImg.onload = () => {
-          // Draw the colored ring
-          ctx.beginPath();
-          ctx.arc(totalSize / 2, totalSize / 2, totalSize / 2, 0, Math.PI * 2);
-          ctx.fillStyle = ringColor;
-          ctx.fill();
-
-          // Draw white border
-          ctx.beginPath();
-          ctx.arc(totalSize / 2, totalSize / 2, totalSize / 2 - 2, 0, Math.PI * 2);
-          ctx.fillStyle = '#ffffff';
-          ctx.fill();
-
-          // Clip to circle for the image
-          ctx.beginPath();
-          ctx.arc(totalSize / 2, totalSize / 2, size / 2, 0, Math.PI * 2);
-          ctx.clip();
-
-          // Draw the image centered
-          ctx.drawImage(
-            fallbackImg,
-            ringWidth,
-            ringWidth,
-            size,
-            size
-          );
-
-          resolve(canvas);
-        };
-
-        fallbackImg.onerror = () => {
-          // Both URLs failed, show initials placeholder
-          drawInitialsPlaceholder();
-        };
-
-        fallbackImg.src = regularUrl;
-      } else {
-        // No fallback available, show initials placeholder
-        drawInitialsPlaceholder();
-      }
+      drawInitialsPlaceholder();
     };
 
     img.src = imageUrl;

@@ -1,0 +1,613 @@
+name: Deploy to Production
+
+# Manual workflow to deploy to production
+# This is the ONLY way to deploy to production - ensures thorough testing first
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "deploy" to confirm you have tested staging'
+        required: true
+        type: string
+
+jobs:
+  # Validate confirmation and detect what needs to be deployed
+  validate-and-detect:
+    name: Validate & Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      convex_changed: ${{ steps.detect.outputs.convex_changed }}
+      mobile_native_changed: ${{ steps.detect.outputs.mobile_native_changed }}
+      mobile_js_changed: ${{ steps.detect.outputs.mobile_js_changed }}
+      version: ${{ steps.detect.outputs.version }}
+      changes_summary: ${{ steps.detect.outputs.changes_summary }}
+
+    steps:
+      - name: Validate confirmation
+        run: |
+          if [ "${{ inputs.confirm }}" != "deploy" ]; then
+            echo "❌ You must type 'deploy' to confirm deployment"
+            echo "   This ensures you have tested the staging environment first."
+            exit 1
+          fi
+          echo "✅ Confirmation received"
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for change detection
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 8.15.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Detect changes since last production deploy
+        id: detect
+        run: |
+          echo "Detecting changes to deploy..."
+
+          # Get the last production deployment tag or commit
+          # For now, we'll deploy everything that's on main
+          # In the future, you could track the last deployed commit
+
+          # Check for Convex changes
+          echo "convex_changed=true" >> $GITHUB_OUTPUT
+          echo "✓ Will deploy Convex"
+
+          # Check for mobile changes - detect based on fingerprint comparison
+          # Run fingerprint check to see if native code changed since last build
+          cd apps/mobile
+          if node scripts/check-fingerprint.js 2>/dev/null; then
+            # Fingerprint matches - only JS changes, safe for OTA
+            echo "mobile_native_changed=false" >> $GITHUB_OUTPUT
+            echo "mobile_js_changed=true" >> $GITHUB_OUTPUT
+            echo "✓ Fingerprint unchanged - will deploy mobile OTA"
+          else
+            # Fingerprint changed or doesn't exist - need native build
+            echo "mobile_native_changed=true" >> $GITHUB_OUTPUT
+            echo "mobile_js_changed=false" >> $GITHUB_OUTPUT
+            echo "✓ Fingerprint changed - will build mobile native"
+          fi
+          cd ../..
+
+          # Get version - must run from apps/mobile for proper package resolution
+          VERSION=$(cd apps/mobile && node -p "require('./app.config.js').default.expo.runtimeVersion")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+          # Create summary
+          echo "changes_summary=Convex, Mobile" >> $GITHUB_OUTPUT
+
+      - name: Show deployment plan
+        run: |
+          echo "## Deployment Plan" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ steps.detect.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Convex | ${{ steps.detect.outputs.convex_changed == 'true' && '🔄 Will deploy' || '⏭️ No changes' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Mobile Native | ${{ steps.detect.outputs.mobile_native_changed == 'true' && '🔄 Will build & submit' || '⏭️ No changes' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Mobile OTA | ${{ steps.detect.outputs.mobile_js_changed == 'true' && '🔄 Will deploy' || '⏭️ No changes' }} |" >> $GITHUB_STEP_SUMMARY
+
+  # Deploy Convex to production
+  deploy-convex:
+    name: Deploy Convex
+    needs: validate-and-detect
+    if: needs.validate-and-detect.outputs.convex_changed == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ vars.CONVEX_PRODUCTION_URL }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 8.15.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build shared package
+        run: pnpm --filter @togather/shared build
+
+      - name: Build notifications email templates
+        run: pnpm --filter @togather/notifications build:email
+
+      - name: Type check Convex functions
+        run: npx convex typecheck
+
+      - name: Load secrets from 1Password
+        uses: ./.github/actions/load-secrets
+        with:
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          environment: production
+
+      - name: Sync secrets to Convex
+        run: |
+          chmod +x ee/scripts/sync-secrets-to-convex.sh
+          ./ee/scripts/sync-secrets-to-convex.sh production
+
+      - name: Deploy to Convex
+        run: npx convex deploy
+
+  # Build and submit mobile native app
+  deploy-mobile-native:
+    name: Build Mobile Native
+    needs: validate-and-detect
+    if: needs.validate-and-detect.outputs.mobile_native_changed == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://apps.apple.com/app/togather
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 8.15.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate version
+        working-directory: apps/mobile
+        run: |
+          VERSION=$(node -p "require('./app.config.js').default.expo.runtimeVersion")
+          APP_JSON_VERSION=$(node -p "require('./app.json').expo.version")
+
+          if [ "$VERSION" != "$APP_JSON_VERSION" ]; then
+            echo "❌ Version mismatch!"
+            exit 1
+          fi
+          echo "✅ Version validated: $VERSION"
+
+      - name: Load secrets from 1Password
+        uses: ./.github/actions/load-secrets
+        with:
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          environment: production
+
+      - name: Setup EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ env.EXPO_TOKEN }}
+
+      - name: Sync secrets to EAS
+        working-directory: apps/mobile
+        run: |
+          # Use eas env:create (eas secret:create is deprecated)
+          # Production builds use the production EAS environment
+          eas env:create --name EXPO_PUBLIC_MAPBOX_TOKEN --value "$EXPO_PUBLIC_MAPBOX_TOKEN" --environment production --visibility plaintext --force --non-interactive || true
+          # Convex URL from 1Password
+          eas env:create --name EXPO_PUBLIC_CONVEX_URL --value "$CONVEX_SITE_URL" --environment production --visibility plaintext --force --non-interactive || true
+          # Project ID for push notifications (constant across all environments)
+          eas env:create --name EXPO_PUBLIC_PROJECT_ID --value "${{ vars.EAS_PROJECT_ID }}" --environment production --visibility plaintext --force --non-interactive || true
+          echo "✓ Synced secrets to EAS production environment"
+
+      - name: Build iOS
+        working-directory: apps/mobile
+        run: eas build --platform ios --profile production --non-interactive
+
+      - name: Build Android
+        working-directory: apps/mobile
+        run: eas build --platform android --profile production --non-interactive
+
+      - name: Submit to App Store
+        working-directory: apps/mobile
+        run: eas submit --platform ios --latest --non-interactive
+
+      # Upload iOS manifest to R2 for version checking
+      - name: Upload iOS manifest to R2
+        working-directory: apps/mobile
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ env.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ env.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ env.R2_BUCKET_NAME }}
+        run: |
+          # Get version from code
+          VERSION=$(node -p "require('./app.config.js').default.expo.runtimeVersion")
+          echo "Creating iOS production manifest for version $VERSION..."
+
+          # Install AWS CLI for R2 (S3-compatible)
+          pip install awscli --quiet
+
+          # Override AWS credentials with R2 credentials
+          # (env vars take precedence over aws configure)
+          export AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID"
+          export AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
+          export AWS_DEFAULT_REGION="auto"
+
+          R2_ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"
+
+          # Create and upload iOS production manifest
+          # availableAfter is set to 48 hours from now to allow App Store review
+          # NOTE: After app is approved, you can manually update the manifest to make
+          # the update available sooner by re-uploading with an earlier availableAfter
+          mkdir -p ./build-output
+          AVAILABLE_AFTER=$(date -u -d '+48 hours' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v+48H +%Y-%m-%dT%H:%M:%SZ)
+          cat > ./build-output/ios-manifest.json << EOF
+          {
+            "version": "${VERSION}",
+            "platform": "ios",
+            "environment": "production",
+            "releaseDate": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "availableAfter": "${AVAILABLE_AFTER}",
+            "downloadUrl": "https://apps.apple.com/us/app/togather-life-in-community/id6756286011",
+            "minSupportedVersion": "1.0.0"
+          }
+          EOF
+
+          aws s3 cp ./build-output/ios-manifest.json "s3://${R2_BUCKET_NAME}/releases/ios/production/manifest.json" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --content-type "application/json"
+          echo "✓ Uploaded iOS production manifest.json"
+
+      - name: Submit to Play Store
+        working-directory: apps/mobile
+        run: eas submit --platform android --latest --non-interactive
+
+      # Build APK for website distribution (separate from AAB for Play Store)
+      - name: Build Android APK for website
+        working-directory: apps/mobile
+        run: eas build --platform android --profile production-apk --non-interactive
+
+      # Upload Android APK to R2 for website distribution
+      - name: Upload Android APK to R2
+        working-directory: apps/mobile
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ env.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ env.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ env.R2_BUCKET_NAME }}
+        run: |
+          # Get version from code
+          VERSION=$(node -p "require('./app.config.js').default.expo.runtimeVersion")
+          echo "Uploading production Android APK version $VERSION to R2..."
+
+          # Download the latest Android APK from EAS (the production-apk build we just created)
+          mkdir -p ./build-output
+          # Get the artifact URL from the latest build
+          APK_URL=$(eas build:list --platform android --build-profile production-apk --limit 1 --json --non-interactive | jq -r '.[0].artifacts.applicationArchiveUrl')
+          echo "Downloading APK from: $APK_URL"
+          curl -fL -o ./build-output/togather.apk "$APK_URL"
+
+          # Get file size for manifest
+          FILE_SIZE=$(stat -c%s ./build-output/togather.apk 2>/dev/null || stat -f%z ./build-output/togather.apk)
+          echo "APK size: $FILE_SIZE bytes"
+
+          # Install AWS CLI for R2 (S3-compatible)
+          pip install awscli --quiet
+
+          # Override AWS credentials with R2 credentials
+          # (env vars take precedence over aws configure)
+          export AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID"
+          export AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
+          export AWS_DEFAULT_REGION="auto"
+
+          R2_ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"
+
+          # Upload versioned APK
+          aws s3 cp ./build-output/togather.apk "s3://${R2_BUCKET_NAME}/releases/android/production/togather-${VERSION}.apk" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --content-type "application/vnd.android.package-archive"
+          echo "✓ Uploaded togather-${VERSION}.apk"
+
+          # Upload as latest
+          aws s3 cp ./build-output/togather.apk "s3://${R2_BUCKET_NAME}/releases/android/production/togather-latest.apk" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --content-type "application/vnd.android.package-archive"
+          echo "✓ Uploaded togather-latest.apk"
+
+          # Create and upload manifest
+          # Android APKs are uploaded directly to R2, so available immediately (no review period)
+          RELEASE_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          cat > ./build-output/manifest.json << EOF
+          {
+            "version": "${VERSION}",
+            "platform": "android",
+            "environment": "production",
+            "releaseDate": "${RELEASE_DATE}",
+            "availableAfter": "${RELEASE_DATE}",
+            "fileSize": ${FILE_SIZE},
+            "latestUrl": "${IMAGE_CDN_URL}/releases/android/production/togather-latest.apk",
+            "downloadUrl": "${IMAGE_CDN_URL}/releases/android/production/togather-${VERSION}.apk",
+            "minSupportedVersion": "1.0.0"
+          }
+          EOF
+          aws s3 cp ./build-output/manifest.json "s3://${R2_BUCKET_NAME}/releases/android/production/manifest.json" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --content-type "application/json"
+          echo "✓ Uploaded manifest.json"
+
+          echo "Production Android APK available at: ${IMAGE_CDN_URL}/releases/android/production/togather-latest.apk"
+
+  # Deploy mobile OTA update
+  deploy-mobile-ota:
+    name: Deploy Mobile OTA
+    needs: validate-and-detect
+    # mobile_js_changed is only true when fingerprint didn't change (no native changes)
+    if: needs.validate-and-detect.outputs.mobile_js_changed == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 8.15.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Load secrets from 1Password
+        uses: ./.github/actions/load-secrets
+        with:
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          environment: production
+
+      - name: Setup EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ env.EXPO_TOKEN }}
+
+      - name: Sync secrets to EAS
+        working-directory: apps/mobile
+        run: |
+          # Sync secrets and config to EAS production environment
+          # Required because eas update --environment reads from EAS env vars for app.config.js
+          eas env:create --name EXPO_PUBLIC_MAPBOX_TOKEN --value "$EXPO_PUBLIC_MAPBOX_TOKEN" --environment production --visibility plaintext --force --non-interactive || true
+          # Convex URL from 1Password
+          eas env:create --name EXPO_PUBLIC_CONVEX_URL --value "$CONVEX_SITE_URL" --environment production --visibility plaintext --force --non-interactive || true
+          # Project ID for push notifications (constant across all environments)
+          eas env:create --name EXPO_PUBLIC_PROJECT_ID --value "${{ vars.EAS_PROJECT_ID }}" --environment production --visibility plaintext --force --non-interactive || true
+          echo "✓ Synced secrets to EAS production environment"
+
+      - name: Verify fingerprint matches
+        working-directory: apps/mobile
+        run: |
+          echo "Verifying native code hasn't changed..."
+          node scripts/check-fingerprint.js
+          echo "✅ Fingerprint verified - safe for OTA"
+
+      - name: Generate OTA version
+        id: ota_version
+        working-directory: apps/mobile
+        run: |
+          RUNTIME_VERSION=$(node -p "require('./app.config.js').default.expo.runtimeVersion")
+          DATE_PART=$(date -u +"%m%d%y")
+          TIME_PART=$(date -u +"%H%M")
+          OTA_VERSION="${RUNTIME_VERSION}.${DATE_PART}.${TIME_PART}"
+          echo "ota_version=$OTA_VERSION" >> $GITHUB_OUTPUT
+          echo "OTA Version: $OTA_VERSION"
+
+      - name: Publish OTA Update
+        working-directory: apps/mobile
+        env:
+          OTA_VERSION: ${{ steps.ota_version.outputs.ota_version }}
+        run: |
+          echo "Publishing production OTA update..."
+          # --environment production ensures EAS env vars are available when evaluating app.config.js
+          eas update --channel production --environment production --message "Production release $OTA_VERSION" --non-interactive
+
+  # Deploy landing page to production
+  deploy-landing:
+    name: Deploy Landing Page
+    needs: validate-and-detect
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://togather.nyc
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build landing page
+        run: pnpm --filter @togather/web build
+
+      - name: Load secrets from 1Password
+        uses: ./.github/actions/load-secrets
+        with:
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          environment: production
+
+      - name: Install Wrangler
+        run: npm install -g wrangler
+
+      - name: Deploy to Cloudflare Pages
+        working-directory: apps/web
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ env.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
+        run: wrangler pages deploy dist --project-name=togather-landing --branch=main
+
+  # Deploy link preview worker to production
+  deploy-link-preview:
+    name: Deploy Link Preview Worker
+    needs: validate-and-detect
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Load secrets from 1Password
+        uses: ./.github/actions/load-secrets
+        with:
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          environment: production
+
+      - name: Install Wrangler
+        run: npm install -g wrangler
+
+      - name: Deploy Worker
+        working-directory: apps/link-preview
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ env.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
+        run: wrangler deploy
+
+      - name: Configure Convex backend for worker
+        working-directory: apps/link-preview
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ env.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
+          CONVEX_SITE_URL: ${{ env.CONVEX_SITE_URL }}
+        run: |
+          # Set the Convex site URL as a secret for the worker
+          if [ -z "$CONVEX_SITE_URL" ]; then
+            echo "CONVEX_SITE_URL is not set; cannot configure link-preview Convex endpoint." >&2
+            exit 1
+          fi
+
+          # Convert .convex.cloud to .convex.site for HTTP endpoints
+          CONVEX_HTTP_URL="${CONVEX_SITE_URL/.convex.cloud/.convex.site}"
+          echo "Using Convex HTTP URL: $CONVEX_HTTP_URL"
+
+          printf "%s" "$CONVEX_HTTP_URL" | wrangler secret put CONVEX_SITE_URL
+
+  # Summary after deployments
+  summary:
+    name: Deployment Summary
+    needs: [validate-and-detect, deploy-convex, deploy-mobile-native, deploy-mobile-ota, deploy-landing, deploy-link-preview]
+    if: always() && needs.validate-and-detect.result == 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check deployment results
+        run: |
+          # Check if any deployments that were supposed to run failed
+          CONVEX_RESULT="${{ needs.deploy-convex.result }}"
+          NATIVE_RESULT="${{ needs.deploy-mobile-native.result }}"
+          OTA_RESULT="${{ needs.deploy-mobile-ota.result }}"
+          LANDING_RESULT="${{ needs.deploy-landing.result }}"
+          LINK_PREVIEW_RESULT="${{ needs.deploy-link-preview.result }}"
+
+          FAILED=false
+
+          if [ "${{ needs.validate-and-detect.outputs.convex_changed }}" == "true" ] && [ "$CONVEX_RESULT" != "success" ]; then
+            echo "❌ Convex deployment failed"
+            FAILED=true
+          fi
+
+          if [ "${{ needs.validate-and-detect.outputs.mobile_native_changed }}" == "true" ] && [ "$NATIVE_RESULT" != "success" ]; then
+            echo "❌ Mobile native deployment failed"
+            FAILED=true
+          fi
+
+          if [ "${{ needs.validate-and-detect.outputs.mobile_js_changed }}" == "true" ] && [ "$OTA_RESULT" != "success" ]; then
+            echo "❌ Mobile OTA deployment failed"
+            FAILED=true
+          fi
+
+          if [ "$LANDING_RESULT" != "success" ]; then
+            echo "❌ Landing page deployment failed"
+            FAILED=true
+          fi
+
+          if [ "$LINK_PREVIEW_RESULT" != "success" ]; then
+            echo "❌ Link preview worker deployment failed"
+            FAILED=true
+          fi
+
+          if [ "$FAILED" == "true" ]; then
+            echo ""
+            echo "Some deployments failed. Please check the logs and retry."
+            exit 1
+          fi
+
+          echo "✅ All required deployments succeeded"
+
+      - name: Summary
+        run: |
+          echo "## Production Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ needs.validate-and-detect.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Deployed Components" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Convex | ${{ needs.deploy-convex.result == 'success' && '✅ Deployed' || (needs.validate-and-detect.outputs.convex_changed == 'true' && '❌ Failed' || '⏭️ Skipped') }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Mobile Native | ${{ needs.deploy-mobile-native.result == 'success' && '✅ Submitted' || (needs.validate-and-detect.outputs.mobile_native_changed == 'true' && '❌ Failed' || '⏭️ Skipped') }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Mobile OTA | ${{ needs.deploy-mobile-ota.result == 'success' && '✅ Published' || (needs.validate-and-detect.outputs.mobile_js_changed == 'true' && '❌ Failed' || '⏭️ Skipped') }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Landing Page | ${{ needs.deploy-landing.result == 'success' && '✅ Deployed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Link Preview | ${{ needs.deploy-link-preview.result == 'success' && '✅ Deployed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### What's Next" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ needs.deploy-mobile-native.result }}" == "success" ]; then
+            echo "- **iOS**: Wait for App Store review (~24-48 hours)" >> $GITHUB_STEP_SUMMARY
+            echo "- **Android**: Wait for Play Store review (~hours to days)" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [ "${{ needs.deploy-mobile-ota.result }}" == "success" ]; then
+            echo "- **OTA**: Users will receive the update within minutes" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [ "${{ needs.deploy-convex.result }}" == "success" ]; then
+            echo "- **Convex**: Deployed to production" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [ "${{ needs.deploy-landing.result }}" == "success" ]; then
+            echo "- **Landing Page**: Live at https://togather.nyc" >> $GITHUB_STEP_SUMMARY
+          fi

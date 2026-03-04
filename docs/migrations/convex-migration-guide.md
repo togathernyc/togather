@@ -932,29 +932,7 @@ async function uploadImage(imageUri: string) {
 }
 ```
 
-If you still need S3 for specific use cases, use actions:
-
-```typescript
-// apps/convex/functions/s3.ts
-import { action } from "../_generated/server";
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
-
-const s3 = new S3Client({
-  region: process.env.AWS_REGION!,
-  credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
-  },
-});
-
-export const uploadToS3 = action({
-  args: { key: v.string(), contentType: v.string() },
-  handler: async (ctx, args) => {
-    // Generate presigned URL for client upload
-    // ...
-  },
-});
-```
+> **Note:** S3 is no longer used. All file storage uses Cloudflare R2. See [ADR-016](../architecture/ADR-016-cloudflare-images-migration.md) for the R2 upload pattern with presigned URLs.
 
 ### Scheduled Functions (Reminder Bots)
 

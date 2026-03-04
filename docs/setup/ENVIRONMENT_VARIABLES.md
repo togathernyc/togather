@@ -4,7 +4,7 @@
 
 The backend uses **Convex** (serverless functions + real-time database). There is no local backend server to run -- Convex dev mode syncs your functions to Convex cloud automatically.
 
-Environment variables and secrets are managed via **Infisical**.
+Environment variables and secrets are managed via **1Password** for team members, or can be configured manually for open source contributors.
 
 ## Development
 
@@ -23,13 +23,22 @@ When you run `pnpm dev`, the Convex dev server syncs your local functions to the
 
 ## Secrets Management
 
-Secrets are stored in Infisical. Make sure you're logged in:
+### With 1Password (team members)
 
 ```bash
-infisical login
+op account list  # Check if already signed in
+op signin       # Sign in if needed
 ```
 
-See [secrets.md](../secrets.md) for detailed Infisical integration instructions.
+The dev script will auto-sync secrets from 1Password to your Convex deployment.
+
+### Without 1Password (open source contributors)
+
+1. Copy `.env.example` to `.env.local` and fill in your values
+2. Create `apps/mobile/.env` with `EXPO_PUBLIC_*` variables
+3. Set Convex env vars via `npx convex env set KEY=value`
+
+See [secrets.md](../secrets.md) for required variables and what each one does.
 
 ## Convex Configuration
 

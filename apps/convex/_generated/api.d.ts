@@ -59,6 +59,7 @@ import type * as functions_messaging_blocking from "../functions/messaging/block
 import type * as functions_messaging_channels from "../functions/messaging/channels.js";
 import type * as functions_messaging_events from "../functions/messaging/events.js";
 import type * as functions_messaging_flagging from "../functions/messaging/flagging.js";
+import type * as functions_messaging_helpers from "../functions/messaging/helpers.js";
 import type * as functions_messaging_index from "../functions/messaging/index.js";
 import type * as functions_messaging_messages from "../functions/messaging/messages.js";
 import type * as functions_messaging_reachOut from "../functions/messaging/reachOut.js";
@@ -194,6 +195,7 @@ declare const fullApi: ApiFromModules<{
   "functions/messaging/channels": typeof functions_messaging_channels;
   "functions/messaging/events": typeof functions_messaging_events;
   "functions/messaging/flagging": typeof functions_messaging_flagging;
+  "functions/messaging/helpers": typeof functions_messaging_helpers;
   "functions/messaging/index": typeof functions_messaging_index;
   "functions/messaging/messages": typeof functions_messaging_messages;
   "functions/messaging/reachOut": typeof functions_messaging_reachOut;

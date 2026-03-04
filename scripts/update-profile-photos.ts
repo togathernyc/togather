@@ -4,7 +4,7 @@
  *
  * Updates profile photos for Josh Kelsey and Mikey Akins to use the migrated R2 paths.
  *
- * Run with: infisical run --env=prod -- npx tsx scripts/update-profile-photos.ts
+ * Run with: op run --env-file=.env.production -- npx tsx scripts/update-profile-photos.ts
  */
 
 import { ConvexHttpClient } from "convex/browser";

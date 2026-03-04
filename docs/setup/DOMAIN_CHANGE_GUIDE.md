@@ -82,7 +82,7 @@ If using Cloudflare:
    - Add the new domain's zone to the token's permissions:
      - Zone → Zone → Edit (for the new zone)
      - Zone → Workers Routes → Edit (for the new zone)
-   - If using Infisical, the token is stored there and used by CI/CD
+   - The token is stored in 1Password and used by CI/CD
 4. Deploy the updated worker: `cd apps/link-preview && wrangler deploy`
 
 #### Resend (Email)
