@@ -30,8 +30,8 @@ export function useCommunitySettings() {
     api.functions.admin.settings.updateCommunitySettings
   );
 
-  // Action for S3 presigned URL
-  const getS3PresignedUrl = useAction(api.functions.uploads.getS3PresignedUrl);
+  // Action for R2 presigned URL
+  const getR2UploadUrl = useAction(api.functions.uploads.getR2UploadUrl);
 
   // Update settings function
   const updateSettings = useCallback(
@@ -77,7 +77,7 @@ export function useCommunitySettings() {
   );
 
   // Upload logo function
-  // NOTE: This uses S3 presigned URLs for logo storage
+  // NOTE: This uses R2 presigned URLs for logo storage
   const uploadLogo = useCallback(
     async (data: { fileName: string; contentType: string }) => {
       if (!community?.id || !user?.id || !token) {
@@ -87,8 +87,8 @@ export function useCommunitySettings() {
       setIsUploadingLogo(true);
 
       try {
-        // Get S3 presigned URL for community logos
-        const result = await getS3PresignedUrl({
+        // Get R2 presigned URL for community logos
+        const result = await getR2UploadUrl({
           token,
           fileName: data.fileName,
           contentType: data.contentType,
@@ -100,7 +100,7 @@ export function useCommunitySettings() {
         setIsUploadingLogo(false);
       }
     },
-    [community?.id, user?.id, token, getS3PresignedUrl]
+    [community?.id, user?.id, token, getR2UploadUrl]
   );
 
   // Refetch is a no-op in Convex (auto-updating), but keep for API compatibility

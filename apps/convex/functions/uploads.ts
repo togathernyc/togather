@@ -2,7 +2,7 @@
  * Upload functions
  *
  * Functions for handling file uploads using Convex built-in storage
- * and S3 for specific use cases that require presigned URLs.
+ * and Cloudflare R2 for presigned URL uploads.
  *
  * Convex File Storage: https://docs.convex.dev/file-storage
  */
@@ -218,145 +218,7 @@ export const deleteFile = mutation({
 });
 
 // ============================================================================
-// S3 Presigned URL Functions (For Legacy/External Integration)
-// ============================================================================
-
-/**
- * Get presigned URL for S3 upload (action - can call external APIs)
- *
- * Use this when you need:
- * - Specific S3 bucket paths
- * - Integration with existing S3 infrastructure
- * - Image compression pipeline
- *
- * NOTE: This requires AWS credentials to be set as environment variables:
- * - AWS_REGION
- * - AWS_ACCESS_KEY_ID
- * - AWS_SECRET_ACCESS_KEY
- * - AWS_S3_BUCKET
- */
-export const getS3PresignedUrl = action({
-  args: {
-    token: v.string(),
-    fileName: v.string(),
-    contentType: v.string(),
-    folder: folderValidator,
-  },
-  handler: async (_ctx, args): Promise<{
-    uploadUrl: string;
-    key: string;
-    publicUrl: string;
-  }> => {
-    await requireAuthFromToken(args.token);
-    // Validate file extension
-    const ext = "." + args.fileName.split(".").pop()?.toLowerCase();
-    if (!ALLOWED_EXTENSIONS.includes(ext)) {
-      throw new Error(
-        `Invalid file type. Allowed: ${ALLOWED_EXTENSIONS.join(", ")}`
-      );
-    }
-
-    // Validate content type
-    if (!ALLOWED_CONTENT_TYPES.includes(args.contentType)) {
-      throw new Error(
-        `Invalid content type. Allowed: ${ALLOWED_CONTENT_TYPES.join(", ")}`
-      );
-    }
-
-    // Get AWS configuration from environment
-    const region = process.env.AWS_REGION || "us-east-1";
-    const bucket = process.env.AWS_S3_BUCKET;
-    const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
-    const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
-
-    if (!bucket || !accessKeyId || !secretAccessKey) {
-      throw new Error("AWS S3 not configured. Missing environment variables.");
-    }
-
-    // Generate unique key with UUID hash
-    const hash = crypto.randomUUID().slice(0, 8);
-    const baseName = args.fileName.replace(/\.[^.]+$/, "");
-    const key = `${args.folder}/${baseName}_${hash}${ext}`;
-
-    // Import AWS SDK dynamically (it's a heavy dependency)
-    // Note: @aws-sdk/client-s3 and @aws-sdk/s3-request-presigner must be installed
-    const { S3Client, PutObjectCommand } = await import("@aws-sdk/client-s3");
-    const { getSignedUrl } = await import("@aws-sdk/s3-request-presigner");
-
-    const s3Client = new S3Client({
-      region,
-      credentials: {
-        accessKeyId,
-        secretAccessKey,
-      },
-    });
-
-    const command = new PutObjectCommand({
-      Bucket: bucket,
-      Key: key,
-      ContentType: args.contentType,
-    });
-
-    const uploadUrl = await getSignedUrl(s3Client, command, {
-      expiresIn: 3600,
-    }); // 1 hour
-
-    return {
-      uploadUrl,
-      key,
-      publicUrl: `https://${bucket}.s3.amazonaws.com/${key}`,
-    };
-  },
-});
-
-/**
- * Get presigned download URL for S3 file (action - can call external APIs)
- *
- * Generates a temporary download URL for private files stored in S3.
- * URL is valid for 1 hour.
- */
-export const getS3DownloadUrl = action({
-  args: {
-    token: v.string(),
-    key: v.string(),
-  },
-  handler: async (_ctx, args): Promise<{ url: string }> => {
-    await requireAuthFromToken(args.token);
-    // Get AWS configuration from environment
-    const region = process.env.AWS_REGION || "us-east-1";
-    const bucket = process.env.AWS_S3_BUCKET;
-    const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
-    const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
-
-    if (!bucket || !accessKeyId || !secretAccessKey) {
-      throw new Error("AWS S3 not configured. Missing environment variables.");
-    }
-
-    // Import AWS SDK dynamically
-    const { S3Client, GetObjectCommand } = await import("@aws-sdk/client-s3");
-    const { getSignedUrl } = await import("@aws-sdk/s3-request-presigner");
-
-    const s3Client = new S3Client({
-      region,
-      credentials: {
-        accessKeyId,
-        secretAccessKey,
-      },
-    });
-
-    const command = new GetObjectCommand({
-      Bucket: bucket,
-      Key: args.key,
-    });
-
-    const url = await getSignedUrl(s3Client, command, { expiresIn: 3600 }); // 1 hour
-
-    return { url };
-  },
-});
-
-// ============================================================================
-// Cloudflare R2 Functions (New - Preferred)
+// Cloudflare R2 Functions
 // ============================================================================
 
 /**
@@ -559,7 +421,7 @@ export const getR2FileUploadUrl = action({
 
 /**
  * Convert a stored path to a full URL
- * Supports R2 (new), S3 (legacy), and full URLs
+ * Supports R2 and full URLs
  */
 export const getMediaUrl = query({
   args: { path: v.optional(v.string()) },
@@ -582,21 +444,7 @@ export const getMediaUrl = query({
       return `${r2PublicUrl}/${r2Path}`;
     }
 
-    // Legacy S3 path (backwards compatibility)
-    const bucket = process.env.AWS_S3_BUCKET;
-    const region = process.env.AWS_REGION || "us-east-1";
-    const compressedBucketUrl = process.env.AWS_S3_COMPRESSED_BUCKET_URL;
-
-    // Priority 1: Use compressed bucket URL (for optimized images)
-    if (compressedBucketUrl) {
-      return `${compressedBucketUrl.replace(/\/$/, "")}/${args.path}`;
-    }
-
-    // Priority 2: Fall back to regular bucket URL
-    if (bucket) {
-      return `https://${bucket}.s3.${region}.amazonaws.com/${args.path}`;
-    }
-
+    // Unrecognized path format
     return null;
   },
 });

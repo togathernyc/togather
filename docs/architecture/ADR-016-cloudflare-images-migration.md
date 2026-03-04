@@ -5,17 +5,19 @@ Implemented
 
 ## Context
 
-We currently store images across multiple systems:
+We previously stored images across multiple systems:
 - **AWS S3** (primary) - profile photos, community logos, group previews, meeting covers
 - **Convex Storage** - some chat attachments
 - **Legacy S3 bucket** (`togather-chat-images`) - one old chat attachment
 
-This system has several issues:
+That system had several issues:
 - Inconsistent URL formats in the database (full URLs, relative paths, broken local paths)
 - Lambda compression only covers some paths (tech debt around `dinner/previews/` workaround)
 - No on-the-fly resizing for thumbnails vs full images
 - Multiple storage systems to maintain
 - S3 costs will grow as usage increases
+
+**Migration Status: Complete.** All images have been migrated from S3 to Cloudflare R2. S3 buckets and credentials are no longer needed.
 
 ## Decision
 
@@ -116,14 +118,14 @@ export function getMediaUrl(path: string | null | undefined): string | undefined
     return path;
   }
 
-  // R2 storage (new format)
+  // R2 storage
   if (path.startsWith("r2:")) {
     const r2Path = path.slice(3);
     return `${R2_PUBLIC_URL}/${r2Path}`;
   }
 
-  // Legacy S3 path (backwards compatibility)
-  return `https://${S3_BUCKET}.s3.${S3_REGION}.amazonaws.com/${path}`;
+  // All images use R2 now (S3 migration is complete)
+  return `${R2_PUBLIC_URL}/${path}`;
 }
 
 // Helper for transformed images (resized, optimized)
@@ -219,12 +221,14 @@ Use these common transformations in the app:
 | Card preview | `/cdn-cgi/image/width=400,height=300,fit=cover,format=auto/...` |
 | Full image | `/cdn-cgi/image/format=auto,quality=85/...` |
 
-## Rollback Plan
+## Rollback Plan (Historical)
 
-1. `getMediaUrl()` still supports all legacy formats
+> **Note:** The migration to R2 is complete and S3 is no longer used. This section is preserved for historical context.
+
+1. ~~`getMediaUrl()` still supports all legacy formats~~
 2. Mapping file allows reverting individual records
-3. Can revert upload code to S3 while keeping read compatibility
-4. S3 buckets remain for 30 days after migration
+3. ~~Can revert upload code to S3 while keeping read compatibility~~
+4. ~~S3 buckets remain for 30 days after migration~~
 
 ## Future: Video Support
 

@@ -132,7 +132,7 @@ export function generateShortId(): string {
 
 /**
  * Get media URL for a path
- * Supports R2 (new), S3 (legacy), and full URLs
+ * Supports R2 and full URLs
  */
 export function getMediaUrl(path: string | null | undefined): string | undefined {
   if (!path) {
@@ -155,22 +155,15 @@ export function getMediaUrl(path: string | null | undefined): string | undefined
     return `${r2PublicUrl}/${r2Path}`;
   }
 
-  // Legacy S3 path (backwards compatibility)
-  const bucket = process.env.AWS_S3_BUCKET;
-  const region = process.env.AWS_REGION || "us-east-1";
-
-  if (!bucket) {
-    return undefined;
-  }
-
-  return `https://${bucket}.s3.${region}.amazonaws.com/${path}`;
+  // Unrecognized path format
+  return undefined;
 }
 
 /**
  * Get media URL with Cloudflare Image Transformations
  * Only works for R2 images served via the image CDN (R2_PUBLIC_URL)
  *
- * @param path - The stored path (r2:path or legacy S3 path)
+ * @param path - The stored path (r2:path format)
  * @param options - Transformation options (width, height, fit, quality)
  * @returns Transformed image URL or base URL if transforms not available
  */
