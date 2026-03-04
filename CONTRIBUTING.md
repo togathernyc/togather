@@ -75,6 +75,12 @@ Thank you for your interest in contributing to Togather! This guide will help yo
 
 This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code.
 
+## The `/ee` Directory
+
+The `/ee` directory contains enterprise-only code licensed under the [Elastic License 2.0](./ee/LICENSE). This code is **not open for outside contributions**. Please do not submit PRs that modify files in `/ee`.
+
+All community contributions should target the core codebase outside of `/ee`.
+
 ## License
 
 By contributing to Togather, you agree that your contributions will be licensed under the [AGPL-3.0 License](LICENSE).

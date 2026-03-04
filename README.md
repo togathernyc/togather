@@ -44,7 +44,7 @@ togather/
 │   └── notifications/    # Notification templates and utilities
 ├── docs/                 # Architecture docs and ADRs
 ├── scripts/              # Development and deployment scripts
-├── infrastructure/       # Infrastructure config (Cloudflare)
+├── ee/                   # Enterprise edition (BSL-licensed, see ee/README.md)
 └── package.json          # Root workspace configuration
 ```
 
@@ -148,3 +148,5 @@ We welcome contributions! Here's how to get started:
 ## License
 
 This project is licensed under the [GNU Affero General Public License v3.0 (AGPL-3.0)](./LICENSE).
+
+The `/ee` directory contains enterprise features licensed under the [Elastic License 2.0](./ee/LICENSE). See [ee/README.md](./ee/README.md) for details.
