@@ -38,6 +38,7 @@ runs:
         SLACK_SIGNING_SECRET: op://Togather/SLACK_SIGNING_SECRET/${{ inputs.environment }}
         OPENAI_SECRET_KEY: op://Togather/OPENAI_SECRET_KEY/${{ inputs.environment }}
         EXPO_TOKEN: op://Togather/EXPO_TOKEN/${{ inputs.environment }}
+        EAS_PROJECT_ID: op://Togather/EAS_PROJECT_ID/${{ inputs.environment }}
       with:
         export-env: true
 

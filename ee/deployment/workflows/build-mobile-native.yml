@@ -93,8 +93,6 @@ jobs:
     if: needs.detect-native-change.outputs.native_changed == 'true'
     runs-on: ubuntu-latest
     environment: staging
-    env:
-      EAS_PROJECT_ID: ${{ vars.EAS_PROJECT_ID }}
 
     steps:
       - name: Checkout code
@@ -136,7 +134,7 @@ jobs:
           # Convex URL from 1Password
           eas env:create --name EXPO_PUBLIC_CONVEX_URL --value "$CONVEX_SITE_URL" --environment preview --visibility plaintext --force --non-interactive || true
           # Project ID for push notifications (constant across all environments)
-          eas env:create --name EXPO_PUBLIC_PROJECT_ID --value "${{ vars.EAS_PROJECT_ID }}" --environment preview --visibility plaintext --force --non-interactive || true
+          eas env:create --name EXPO_PUBLIC_PROJECT_ID --value "$EAS_PROJECT_ID" --environment preview --visibility plaintext --force --non-interactive || true
           # Sentry auth token for source map uploads during native builds
           eas env:create --name SENTRY_AUTH_TOKEN --value "$SENTRY_AUTH_TOKEN" --environment preview --visibility sensitive --force --non-interactive || true
           # Sentry DSN for error tracking at runtime

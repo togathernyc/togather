@@ -160,8 +160,6 @@ jobs:
     environment:
       name: production
       url: https://apps.apple.com/app/togather
-    env:
-      EAS_PROJECT_ID: ${{ vars.EAS_PROJECT_ID }}
 
     steps:
       - name: Checkout code
@@ -214,7 +212,7 @@ jobs:
           # Convex URL from 1Password
           eas env:create --name EXPO_PUBLIC_CONVEX_URL --value "$CONVEX_SITE_URL" --environment production --visibility plaintext --force --non-interactive || true
           # Project ID for push notifications (constant across all environments)
-          eas env:create --name EXPO_PUBLIC_PROJECT_ID --value "${{ vars.EAS_PROJECT_ID }}" --environment production --visibility plaintext --force --non-interactive || true
+          eas env:create --name EXPO_PUBLIC_PROJECT_ID --value "$EAS_PROJECT_ID" --environment production --visibility plaintext --force --non-interactive || true
           echo "✓ Synced secrets to EAS production environment"
 
       - name: Build iOS
@@ -364,8 +362,6 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: production
-    env:
-      EAS_PROJECT_ID: ${{ vars.EAS_PROJECT_ID }}
 
     steps:
       - name: Checkout code
@@ -406,7 +402,7 @@ jobs:
           # Convex URL from 1Password
           eas env:create --name EXPO_PUBLIC_CONVEX_URL --value "$CONVEX_SITE_URL" --environment production --visibility plaintext --force --non-interactive || true
           # Project ID for push notifications (constant across all environments)
-          eas env:create --name EXPO_PUBLIC_PROJECT_ID --value "${{ vars.EAS_PROJECT_ID }}" --environment production --visibility plaintext --force --non-interactive || true
+          eas env:create --name EXPO_PUBLIC_PROJECT_ID --value "$EAS_PROJECT_ID" --environment production --visibility plaintext --force --non-interactive || true
           echo "✓ Synced secrets to EAS production environment"
 
       - name: Verify fingerprint matches
