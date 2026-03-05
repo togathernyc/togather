@@ -1,0 +1,52 @@
+name: Tech Maintenance
+description: Internal work — refactors, architecture changes, dependency updates, DevOps, etc.
+labels: ["maintenance"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For non-user-facing technical work. Refactors, infrastructure changes, dependency updates, CI/CD improvements, etc.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What needs to change?
+      description: Describe the current state and what you want to change.
+      placeholder: |
+        Example: "Our Convex queries for group membership are making separate calls for user profiles and roles. We should consolidate these into a single query to reduce latency."
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Why is this needed?
+      description: What's the risk of not doing this? What does it unblock or improve?
+      placeholder: |
+        Example: "The current approach causes visible loading delays on the groups page. It also makes the code harder to maintain since the logic is split across 3 files."
+    validations:
+      required: true
+
+  - type: textarea
+    id: plan
+    attributes:
+      label: Proposed approach (optional)
+      description: If you have a rough plan, outline it here.
+      placeholder: |
+        1. Combine queries in groups.ts
+        2. Update frontend hooks
+        3. Remove old query files
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Backend (Convex functions, schema)
+        - Frontend (React Native, Expo)
+        - Infrastructure (CI/CD, deployments)
+        - Dependencies (upgrades, security patches)
+        - Database (migrations, indexes)
+        - Other
+    validations:
+      required: true
