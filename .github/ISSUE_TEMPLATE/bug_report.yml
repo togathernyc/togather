@@ -1,0 +1,81 @@
+name: Bug Report
+description: Something isn't working as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this! Please fill out the sections below so we can understand and fix the issue quickly.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the bug in detail. What were you doing when it happened? What did you see?
+      placeholder: |
+        Example: "I tapped on my group chat and the app froze for about 5 seconds, then showed a blank white screen instead of the messages."
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Walk us through exactly how to trigger this bug, step by step.
+      placeholder: |
+        1. Open the app
+        2. Go to Groups tab
+        3. Tap on "Sunday Night Dinner"
+        4. Tap "Chat"
+        5. Screen goes blank
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should have happened?
+      description: Describe what you expected to see or happen instead.
+      placeholder: |
+        Example: "The group chat should load and show the recent messages."
+    validations:
+      required: true
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: Add 1-3 screenshots showing the issue. You can drag and drop images here.
+      placeholder: |
+        Drag and drop screenshots here, or paste them from your clipboard.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: What device are you using?
+      options:
+        - iPhone
+        - Android
+        - Web (browser)
+    validations:
+      required: true
+
+  - type: input
+    id: device-info
+    attributes:
+      label: Device details (optional)
+      description: Phone model, OS version, or browser name — whatever you know.
+      placeholder: "iPhone 15, iOS 18 / Pixel 8, Android 15 / Chrome on Mac"
+
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: How often does this happen?
+      options:
+        - Every time
+        - Sometimes
+        - It happened once
+    validations:
+      required: true
