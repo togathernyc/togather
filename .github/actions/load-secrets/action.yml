@@ -39,6 +39,9 @@ runs:
         OPENAI_SECRET_KEY: op://Togather/OPENAI_SECRET_KEY/${{ inputs.environment }}
         EXPO_TOKEN: op://Togather/EXPO_TOKEN/${{ inputs.environment }}
         EAS_PROJECT_ID: op://Togather/EAS_PROJECT_ID/${{ inputs.environment }}
+        CONVEX_SITE_URL: op://Togather/CONVEX_SITE_URL/${{ inputs.environment }}
+        # IMAGE_CDN_URL is the same as R2_PUBLIC_URL (CDN in front of R2 bucket)
+        IMAGE_CDN_URL: op://Togather/R2_PUBLIC_URL/${{ inputs.environment }}
       with:
         export-env: true
 
@@ -52,8 +55,6 @@ runs:
         SENTRY_AUTH_TOKEN: op://Togather/SENTRY_AUTH_TOKEN/${{ inputs.environment }}
         EXPO_PUBLIC_MAPBOX_TOKEN: op://Togather/EXPO_PUBLIC_MAPBOX_TOKEN/${{ inputs.environment }}
         EXPO_PUBLIC_SENTRY_DSN: op://Togather/EXPO_PUBLIC_SENTRY_DSN/${{ inputs.environment }}
-        EXPO_PUBLIC_CONVEX_URL: op://Togather/EXPO_PUBLIC_CONVEX_URL/${{ inputs.environment }}
         EXPO_PUBLIC_POSTHOG_API_KEY: op://Togather/EXPO_PUBLIC_POSTHOG_API_KEY/${{ inputs.environment }}
-        IMAGE_CDN_URL: op://Togather/IMAGE_CDN_URL/${{ inputs.environment }}
       with:
         export-env: true
