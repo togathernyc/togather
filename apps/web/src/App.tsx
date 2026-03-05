@@ -293,6 +293,30 @@ function IconInbox({ className = "w-5 h-5" }: { className?: string }) {
   );
 }
 
+function IconAndroid({ className = "w-5 h-5" }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+    >
+      <path d="M17.6 9.48l1.84-3.18c.16-.31.04-.69-.26-.85a.637.637 0 00-.83.22l-1.88 3.24a11.463 11.463 0 00-8.94 0L5.65 5.67a.643.643 0 00-.87-.2c-.28.18-.37.54-.22.83L6.4 9.48A10.78 10.78 0 001 18h22a10.78 10.78 0 00-5.4-8.52zM7 15.25a1.25 1.25 0 110-2.5 1.25 1.25 0 010 2.5zm10 0a1.25 1.25 0 110-2.5 1.25 1.25 0 010 2.5z" />
+    </svg>
+  );
+}
+
+function IconGitHub({ className = "w-5 h-5" }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+    >
+      <path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" />
+    </svg>
+  );
+}
+
 function IconMenu({ className = "w-6 h-6" }: { className?: string }) {
   return (
     <svg
@@ -390,6 +414,15 @@ function HeroSection() {
               >
                 FAQ
               </a>
+              <a
+                href="https://github.com/togathernyc/togather"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm font-medium text-neutral-700 hover:text-neutral-900 inline-flex items-center gap-1.5"
+              >
+                <IconGitHub className="w-4 h-4" />
+                GitHub
+              </a>
             </div>
 
             {/* Desktop CTA */}
@@ -434,6 +467,15 @@ function HeroSection() {
             >
               FAQ
             </a>
+            <a
+              href="https://github.com/togathernyc/togather"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 text-neutral-600 hover:text-neutral-900 py-2"
+            >
+              <IconGitHub className="w-4 h-4" />
+              GitHub
+            </a>
             <div className="pt-2 space-y-2">
               <a
                 href="/signin"
@@ -463,12 +505,12 @@ function HeroSection() {
               </h1>
 
               <p className="text-base md:text-lg text-neutral-600 mb-8 max-w-xl mx-auto xl:mx-0 leading-relaxed">
-                Togather brings your groups, messaging, and events into one
-                place. Help members find their people and give leaders the tools
-                to make sure no one slips through the cracks.
+                Togather is an open-source community platform that brings your
+                groups, messaging, and events into one place. Built in the open,
+                shaped by the communities that use it.
               </p>
 
-              {/* App Store Buttons */}
+              {/* Download Buttons */}
               <div className="flex flex-col sm:flex-row gap-3 justify-center xl:justify-start items-center">
                 <a href="https://apps.apple.com/us/app/togather-life-in-community/id6756286011">
                   <img
@@ -477,13 +519,16 @@ function HeroSection() {
                     className="h-[52px]"
                   />
                 </a>
-                <a href="https://togather.nyc/android">
-                  <img
-                    src="/images/google-play-badge.svg"
-                    alt="Get it on Google Play"
-                    className="h-[52px]"
-                  />
-                </a>
+                <Link
+                  to="/android"
+                  className="h-[52px] px-5 inline-flex items-center gap-2.5 bg-neutral-900 hover:bg-neutral-800 text-white rounded-xl transition-colors"
+                >
+                  <IconAndroid className="w-6 h-6" />
+                  <div className="flex flex-col leading-tight">
+                    <span className="text-[10px] font-medium text-white/70 uppercase tracking-wide">Download</span>
+                    <span className="text-base font-semibold -mt-0.5">APK for Android</span>
+                  </div>
+                </Link>
               </div>
             </div>
 
@@ -510,43 +555,6 @@ function HeroPhoneMockup() {
   );
 }
 
-function TrustedBySection() {
-  const logos = [
-    { src: "/images/logo-c3-nyc.png", alt: "C3 NYC", height: "h-8" },
-    { src: "/images/logo-fount.png", alt: "Fount", height: "h-10" },
-    {
-      src: "/images/logo-fount-text.png",
-      alt: "Fount",
-      height: "h-7",
-      invert: true,
-    },
-    {
-      src: "/images/logo-public-worship.png",
-      alt: "Public Worship",
-      height: "h-9",
-    },
-  ];
-
-  return (
-    <section className="py-8 md:py-10">
-      <div className="max-w-5xl mx-auto px-6 text-center">
-        <p className="text-sm font-medium text-neutral-400 mb-8">
-          Trusted by 100+ world-class communities
-        </p>
-        <div className="flex flex-wrap items-center justify-center gap-12 md:gap-16">
-          {logos.map((logo) => (
-            <img
-              key={logo.alt + logo.src}
-              src={logo.src}
-              alt={logo.alt}
-              className={`${logo.height} object-contain opacity-60 grayscale hover:opacity-100 hover:grayscale-0 transition-all duration-300 ${"invert" in logo && logo.invert ? "invert" : ""}`}
-            />
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
 
 function FeaturesSection() {
   const [activeTab, setActiveTab] = useState<
@@ -679,7 +687,8 @@ function FeaturesSection() {
           </h2>
           <p className="text-lg text-neutral-600 max-w-2xl">
             Stop juggling multiple apps. Togather brings groups, messaging,
-            events, and leader tools into one seamless experience.
+            events, and leader tools into one seamless experience — all
+            open source, so you're never locked in.
           </p>
         </div>
 
@@ -785,14 +794,14 @@ function FeaturesSection() {
 function FAQSection() {
   const faqs = [
     {
-      question: "Is Togather really free?",
+      question: "What does it mean that Togather is open source?",
       answer:
-        "Yes! Togather is free to download and use. We offer premium features for larger organizations, but the core experience is completely free.",
+        "It means the entire codebase is public on GitHub under the AGPL-3.0 license. For your church or organization, that means full transparency into how your data is handled, no vendor lock-in, and a product shaped by the community that uses it. You don't need to think about any of that to get started though — we offer shared hosting so you can sign up and go in minutes.",
     },
     {
       question: "What platforms does Togather support?",
       answer:
-        "Togather is available on iOS, Android, and the web. Your data syncs seamlessly across all devices.",
+        "Togather is available on iOS (App Store), Android (APK download), and the web. Your data syncs seamlessly across all devices.",
     },
     {
       question: "Can I import members from Planning Center?",
@@ -875,7 +884,7 @@ function CTASection() {
             src="/images/cta-community.webp"
             alt=""
             className="absolute inset-0 w-full h-full object-cover blur-[2px] scale-[1.01]"
-            style={{ objectPosition: "center 30%" }}
+            style={{ objectPosition: "center 55%" }}
           />
           {/* Dark gradient overlay — stronger at top for text, fading toward bottom */}
           <div
@@ -895,11 +904,11 @@ function CTASection() {
               Ready to bring your community together?
             </h2>
             <p className="text-base md:text-lg text-white/75 mb-6">
-              Download Togather and start building real connections today.
+              Download Togather — free, open source, and built for communities like yours.
             </p>
 
-            {/* App Store Badges */}
-            <div className="flex flex-row gap-3 justify-center">
+            {/* Download Badges */}
+            <div className="flex flex-row gap-3 justify-center items-center">
               <a href="https://apps.apple.com/us/app/togather-life-in-community/id6756286011">
                 <img
                   src="/images/app-store-badge.svg"
@@ -907,13 +916,16 @@ function CTASection() {
                   className="h-[40px]"
                 />
               </a>
-              <a href="https://togather.nyc/android">
-                <img
-                  src="/images/google-play-badge.svg"
-                  alt="Get it on Google Play"
-                  className="h-[40px]"
-                />
-              </a>
+              <Link
+                to="/android"
+                className="h-[40px] px-4 inline-flex items-center gap-2 bg-white/15 hover:bg-white/25 backdrop-blur-sm text-white rounded-xl border border-white/20 transition-colors"
+              >
+                <IconAndroid className="w-5 h-5" />
+                <div className="flex flex-col leading-tight">
+                  <span className="text-[9px] font-medium text-white/70 uppercase tracking-wide">Download</span>
+                  <span className="text-sm font-semibold -mt-0.5">APK for Android</span>
+                </div>
+              </Link>
             </div>
           </div>
 
@@ -936,7 +948,7 @@ function Footer() {
               <span className="text-xl font-semibold">Togather</span>
             </a>
             <p className="text-sm text-neutral-400">
-              Bringing communities together,<br />one connection at a time.
+              Open-source community platform.<br />Built in the open, shaped by you.
             </p>
           </div>
 
@@ -958,6 +970,22 @@ function Footer() {
                 <li>
                   <a href="#download" className="hover:text-white">
                     Download
+                  </a>
+                </li>
+              </ul>
+            </div>
+            <div>
+              <h4 className="font-semibold mb-4 text-neutral-300 text-sm uppercase tracking-wider">Open Source</h4>
+              <ul className="space-y-3 text-neutral-400 text-sm">
+                <li>
+                  <a href="https://github.com/togathernyc/togather" target="_blank" rel="noopener noreferrer" className="hover:text-white inline-flex items-center gap-1.5">
+                    <IconGitHub className="w-3.5 h-3.5" />
+                    GitHub
+                  </a>
+                </li>
+                <li>
+                  <a href="https://github.com/togathernyc/togather/issues" target="_blank" rel="noopener noreferrer" className="hover:text-white">
+                    Contribute
                   </a>
                 </li>
               </ul>
@@ -1005,7 +1033,6 @@ export default function App() {
     <div className="bg-neutral-900">
       <main className="relative z-10 bg-white rounded-b-[2.5rem] md:rounded-b-[3rem] pb-8">
         <HeroSection />
-        <TrustedBySection />
         <FeaturesSection />
         <FAQSection />
         <CTASection />
