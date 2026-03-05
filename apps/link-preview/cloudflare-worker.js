@@ -97,6 +97,8 @@ function generateAppleAppSiteAssociation(hostname) {
           "NOT /download",   // Exclude download page
           "NOT /privacy",    // Exclude privacy policy
           "NOT /terms",      // Exclude terms of service
+          "NOT /contribute", // Exclude contribute page
+          "NOT /issue",      // Exclude issue reporting page
           "NOT /_expo/*",    // Exclude Expo internal routes
           "*",               // Match everything else (app routes)
         ],
@@ -178,7 +180,7 @@ const DEFAULT_OG_IMAGE = "";
 
 // Static paths that should go to the landing page (not the app)
 // Note: /android path handling is environment-aware (see isLandingPagePath)
-const LANDING_PAGE_PATHS = ["/", "/download", "/legal", "/legal/privacy", "/legal/terms"];
+const LANDING_PAGE_PATHS = ["/", "/download", "/legal", "/legal/privacy", "/legal/terms", "/contribute", "/issue"];
 
 // Static asset extensions that should go to the landing page (when at root level)
 const LANDING_PAGE_ASSET_EXTENSIONS = [
