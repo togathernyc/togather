@@ -823,6 +823,12 @@ function FAQSection() {
       answer:
         "Group leaders can schedule one-time or recurring meetings. Members get reminders and can RSVP directly in the app. You can even share events with non-members via a public link.",
     },
+    {
+      question: "Something is broken or I'd like something changed — what should I do?",
+      answer:
+        "We'd love to hear from you! Head over to our issue page to learn how to report a bug or request a feature. No technical skills needed — just a free GitHub account and a few minutes.",
+      link: "/issue",
+    },
   ];
 
   return (
@@ -841,7 +847,7 @@ function FAQSection() {
         {/* FAQ List */}
         <div className="space-y-4">
           {faqs.map((faq, index) => (
-            <FAQItem key={index} question={faq.question} answer={faq.answer} />
+            <FAQItem key={index} question={faq.question} answer={faq.answer} link={"link" in faq ? faq.link : undefined} />
           ))}
         </div>
       </div>
@@ -849,7 +855,7 @@ function FAQSection() {
   );
 }
 
-function FAQItem({ question, answer }: { question: string; answer: string }) {
+function FAQItem({ question, answer, link }: { question: string; answer: string; link?: string }) {
   const [isOpen, setIsOpen] = useState(false);
 
   return (
@@ -868,6 +874,11 @@ function FAQItem({ question, answer }: { question: string; answer: string }) {
       {isOpen && (
         <div className="px-6 pb-4">
           <p className="text-neutral-600">{answer}</p>
+          {link && (
+            <Link to={link} className="inline-block mt-3 text-sm font-medium text-neutral-900 underline underline-offset-2 hover:text-neutral-700">
+              Learn more &rarr;
+            </Link>
+          )}
         </div>
       )}
     </div>
@@ -984,9 +995,9 @@ function Footer() {
                   </a>
                 </li>
                 <li>
-                  <a href="https://github.com/togathernyc/togather/issues" target="_blank" rel="noopener noreferrer" className="hover:text-white">
+                  <Link to="/contribute" className="hover:text-white">
                     Contribute
-                  </a>
+                  </Link>
                 </li>
               </ul>
             </div>
