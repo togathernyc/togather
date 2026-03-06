@@ -17,9 +17,10 @@ import {
 import { internal } from "../../_generated/api";
 import { ActionCtx } from "../../_generated/server";
 import { MAGIC_CODE, isTestEmail } from "./helpers";
+import { DOMAIN_CONFIG } from "@togather/shared/config";
 
-// Email sender address
-const EMAIL_FROM = "Togather <togather@studios.supa.media>";
+// Email sender address - use shared config (notifications@togather.nyc)
+const EMAIL_FROM = DOMAIN_CONFIG.emailFrom;
 
 // Lazy-initialize Resend client to avoid throwing if API key is missing at module load
 let resendClient: Resend | null = null;
