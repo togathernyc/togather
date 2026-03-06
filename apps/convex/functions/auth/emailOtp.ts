@@ -19,7 +19,7 @@ import { ActionCtx } from "../../_generated/server";
 import { MAGIC_CODE, isTestEmail } from "./helpers";
 
 // Email sender address
-const EMAIL_FROM = "Togather <togather@supa.media>";
+const EMAIL_FROM = "Togather <togather@studios.supa.media>";
 
 // Lazy-initialize Resend client to avoid throwing if API key is missing at module load
 let resendClient: Resend | null = null;
