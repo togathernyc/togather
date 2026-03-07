@@ -1509,6 +1509,7 @@ export default defineSchema({
       slot: v.optional(v.string()),  // "customText1", "customBool3", etc. If null, field only appears in notes summary
       label: v.string(),
       type: v.string(),              // "text" | "number" | "boolean" | "dropdown"
+      placeholder: v.optional(v.string()),
       options: v.optional(v.array(v.string())),
       required: v.boolean(),
       order: v.number(),

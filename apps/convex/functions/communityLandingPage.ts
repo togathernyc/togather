@@ -29,46 +29,41 @@ import { checkRateLimit } from "../lib/rateLimit";
 export const getBySlug = query({
   args: { slug: v.string() },
   handler: async (ctx, args) => {
-    try {
-      let community = await ctx.db
+    let community = await ctx.db
+      .query("communities")
+      .withIndex("by_slug", (q) => q.eq("slug", args.slug))
+      .first();
+
+    // Fallback to subdomain lookup (legacy communities may only have subdomain set)
+    if (!community) {
+      community = await ctx.db
         .query("communities")
-        .withIndex("by_slug", (q) => q.eq("slug", args.slug))
+        .withIndex("by_subdomain", (q) => q.eq("subdomain", args.slug))
         .first();
-
-      // Fallback to subdomain lookup (legacy communities may only have subdomain set)
-      if (!community) {
-        community = await ctx.db
-          .query("communities")
-          .withIndex("by_subdomain", (q) => q.eq("subdomain", args.slug))
-          .first();
-      }
-
-      if (!community) return null;
-
-      const landingPage = await ctx.db
-        .query("communityLandingPages")
-        .withIndex("by_community", (q) => q.eq("communityId", community._id))
-        .first();
-
-      if (!landingPage || !landingPage.isEnabled) return null;
-
-      return {
-        community: {
-          name: community.name,
-          logo: community.logo,
-          primaryColor: community.primaryColor,
-          slug: community.slug,
-        },
-        title: landingPage.title,
-        description: landingPage.description,
-        submitButtonText: landingPage.submitButtonText,
-        successMessage: landingPage.successMessage,
-        formFields: landingPage.formFields,
-      };
-    } catch (e: any) {
-      console.error("getBySlug error:", e.message, e.stack);
-      throw e;
     }
+
+    if (!community) return null;
+
+    const landingPage = await ctx.db
+      .query("communityLandingPages")
+      .withIndex("by_community", (q) => q.eq("communityId", community._id))
+      .first();
+
+    if (!landingPage || !landingPage.isEnabled) return null;
+
+    return {
+      community: {
+        name: community.name,
+        logo: community.logo,
+        primaryColor: community.primaryColor,
+        slug: community.slug,
+      },
+      title: landingPage.title,
+      description: landingPage.description,
+      submitButtonText: landingPage.submitButtonText,
+      successMessage: landingPage.successMessage,
+      formFields: landingPage.formFields,
+    };
   },
 });
 
