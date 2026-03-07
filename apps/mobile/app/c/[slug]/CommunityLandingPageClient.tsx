@@ -88,7 +88,13 @@ export default function CommunityLandingPageClient() {
       if (field.required) {
         const key = field.slot || field.label;
         const value = customFieldValues[key];
-        if (value === undefined || value === null || value === "") {
+        // For boolean fields, "required" means it must be checked (true)
+        if (field.type === "boolean") {
+          if (value !== true) {
+            setSubmitError(`${field.label} must be checked`);
+            return;
+          }
+        } else if (value === undefined || value === null || value === "") {
           setSubmitError(`${field.label} is required`);
           return;
         }

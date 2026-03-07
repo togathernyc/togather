@@ -568,7 +568,20 @@ function FieldEditorModal({
                       modalStyles.chip,
                       type === t.value && modalStyles.chipSelected,
                     ]}
-                    onPress={() => setType(t.value)}
+                    onPress={() => {
+                      setType(t.value);
+                      // Reset slot if incompatible with new type
+                      if (slot) {
+                        const isCompatible =
+                          (t.value === "text" || t.value === "dropdown") ? slot.startsWith("customText") :
+                          t.value === "number" ? slot.startsWith("customNum") :
+                          t.value === "boolean" ? slot.startsWith("customBool") :
+                          false;
+                        if (!isCompatible) {
+                          setSlot("");
+                        }
+                      }
+                    }}
                   >
                     <Text
                       style={[

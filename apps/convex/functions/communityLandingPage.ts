@@ -601,10 +601,25 @@ export const saveConfig = mutation({
     await requireCommunityAdmin(ctx, args.communityId, userId);
     const timestamp = Date.now();
 
+    // Slot prefix to allowed types mapping
+    const SLOT_PREFIX_TYPE: Record<string, string[]> = {
+      customText: ["text", "dropdown"],
+      customNum: ["number"],
+      customBool: ["boolean"],
+    };
+
     // Validate form field slots
     for (const field of args.formFields) {
-      if (field.slot && !VALID_CUSTOM_SLOTS.has(field.slot)) {
-        throw new Error(`Invalid custom field slot: ${field.slot}`);
+      if (field.slot) {
+        if (!VALID_CUSTOM_SLOTS.has(field.slot)) {
+          throw new Error(`Invalid custom field slot: ${field.slot}`);
+        }
+        // Validate type matches slot prefix
+        const prefix = field.slot.replace(/\d+$/, "");
+        const allowedTypes = SLOT_PREFIX_TYPE[prefix];
+        if (!allowedTypes || !allowedTypes.includes(field.type)) {
+          throw new Error(`Slot ${field.slot} does not support type "${field.type}"`);
+        }
       }
     }
 
