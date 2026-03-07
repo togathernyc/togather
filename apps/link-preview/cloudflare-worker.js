@@ -1039,6 +1039,7 @@ function generateCommunityErrorHtml(slug, config) {
   <meta property="og:title" content="${BRAND_NAME}">
   <meta property="og:description" content="Connect with your community on Togather">
   <meta property="og:type" content="website">
+  <meta property="og:url" content="${pageUrl}">
   <meta http-equiv="refresh" content="0;url=${config.baseUrl}/c/${slug}">
 </head>
 <body>
