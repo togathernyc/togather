@@ -1,10 +1,8 @@
-"use node";
-
 /**
- * Community Landing Page — Actions (Node.js runtime)
+ * Community Landing Page — Actions
  *
- * The submitForm action needs Node.js for JWT token generation (jose).
- * Queries and mutations live in communityLandingPage.ts.
+ * The submitForm action orchestrates user creation, community join,
+ * and follow-up data setup. Queries and mutations live in communityLandingPage.ts.
  */
 
 import { v } from "convex/values";
