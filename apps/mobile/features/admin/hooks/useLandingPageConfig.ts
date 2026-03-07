@@ -25,6 +25,7 @@ export function useLandingPageConfig() {
   const isLoading = result === undefined;
   const config = result?.config;
   const communitySlug = result?.community?.slug;
+  const followupCustomFields = result?.followupCustomFields ?? [];
 
   // Save mutation
   const saveConfigMutation = useMutation(
@@ -90,6 +91,7 @@ export function useLandingPageConfig() {
   return {
     config,
     communitySlug,
+    followupCustomFields,
     isLoading,
     isSaving,
     saveError,

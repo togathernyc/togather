@@ -559,12 +559,23 @@ export const getConfig = query({
       .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
       .first();
 
+    // Fetch announcement group's custom fields for two-way sync
+    const announcementGroup = await ctx.db
+      .query("groups")
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .filter((q) => q.eq(q.field("isAnnouncementGroup"), true))
+      .first();
+
+    const followupCustomFields =
+      announcementGroup?.followupColumnConfig?.customFields ?? [];
+
     return {
       community: {
         slug: community?.slug,
         name: community?.name,
       },
       config: landingPage,
+      followupCustomFields,
     };
   },
 });

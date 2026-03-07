@@ -49,6 +49,14 @@ const OPERATORS = [
   { value: "is_false", label: "Is Not Checked" },
 ];
 
+// Built-in fields that are always included on the form (non-editable)
+const BUILT_IN_FIELDS = [
+  { label: "First Name", type: "text", required: true },
+  { label: "Last Name", type: "text", required: true },
+  { label: "Phone", type: "phone", required: true },
+  { label: "Email", type: "email", required: false },
+];
+
 type FormField = {
   slot?: string;
   label: string;
@@ -76,7 +84,7 @@ type AutomationRule = {
 };
 
 export function LandingPageContent() {
-  const { config, communitySlug, isLoading, isSaving, saveConfig } =
+  const { config, communitySlug, followupCustomFields, isLoading, isSaving, saveConfig } =
     useLandingPageConfig();
 
   // Page settings state
@@ -102,7 +110,7 @@ export function LandingPageContent() {
   // Dirty tracking
   const [isDirty, setIsDirty] = useState(false);
 
-  // Initialize from config
+  // Initialize from config, merging follow-up custom fields
   useEffect(() => {
     if (config) {
       setIsEnabled(config.isEnabled);
@@ -111,7 +119,30 @@ export function LandingPageContent() {
       setSubmitButtonText(config.submitButtonText || "");
       setSuccessMessage(config.successMessage || "");
       setGenerateNoteSummary(config.generateNoteSummary ?? true);
-      setFormFields(config.formFields || []);
+
+      // Merge landing page fields with follow-up custom fields (two-way sync)
+      const landingFields: FormField[] = config.formFields || [];
+      const landingSlotsSet = new Set(
+        landingFields.map((f) => f.slot).filter(Boolean)
+      );
+
+      // Add follow-up custom fields not already in landing page config
+      const followupOnly: FormField[] = (followupCustomFields || [])
+        .filter(
+          (f: { slot: string }) => f.slot && !landingSlotsSet.has(f.slot)
+        )
+        .map((f: { slot: string; name: string; type: string; options?: string[] }, i: number) => ({
+          slot: f.slot,
+          label: f.name,
+          type: f.type,
+          options: f.options,
+          required: false,
+          order: landingFields.length + i,
+          includeInNotes: true,
+        }));
+
+      setFormFields([...landingFields, ...followupOnly]);
+
       setAutomationRules(
         (config.automationRules || []).map((r: any) => ({
           ...r,
@@ -124,7 +155,7 @@ export function LandingPageContent() {
       );
       setIsDirty(false);
     }
-  }, [config]);
+  }, [config, followupCustomFields]);
 
   const markDirty = useCallback(() => setIsDirty(true), []);
 
@@ -298,8 +329,21 @@ export function LandingPageContent() {
         </View>
 
         <Text style={styles.sectionHint}>
-          Name, phone, and email are always included. Add custom fields below.
+          Built-in fields are always included. Add custom fields below.
         </Text>
+
+        {/* Built-in fields (always included, non-editable) */}
+        {BUILT_IN_FIELDS.map((field) => (
+          <View key={field.label} style={[styles.listItem, { opacity: 0.5 }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.listItemTitle}>{field.label}</Text>
+              <Text style={styles.listItemSubtitle}>
+                {field.type}{field.required ? " · required" : " · optional"}
+              </Text>
+            </View>
+            <Ionicons name="lock-closed" size={16} color="#999" style={{ padding: 8 }} />
+          </View>
+        ))}
 
         {formFields.length === 0 ? (
           <Text style={styles.emptyText}>No custom fields configured</Text>
