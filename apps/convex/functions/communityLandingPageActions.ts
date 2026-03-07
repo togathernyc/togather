@@ -45,6 +45,30 @@ export const submitForm = action({
     }),
   }),
   handler: async (ctx, args) => {
+    // Server-side input validation
+    const trimmedFirstName = args.firstName.trim();
+    const trimmedLastName = args.lastName.trim();
+    const trimmedPhone = args.phone.trim();
+
+    if (!trimmedFirstName) {
+      throw new Error("First name is required");
+    }
+    if (!trimmedLastName) {
+      throw new Error("Last name is required");
+    }
+
+    // Validate phone has at least some digits
+    const phoneDigits = trimmedPhone.replace(/\D/g, "");
+    if (phoneDigits.length < 10) {
+      throw new Error("Please enter a valid phone number");
+    }
+
+    // Rate limit by phone number (5 attempts per hour)
+    await ctx.runMutation(
+      internal.functions.communityLandingPage.checkFormRateLimit,
+      { phone: trimmedPhone }
+    );
+
     // 1. Look up community + landing page config
     const result = await ctx.runQuery(
       internal.functions.communityLandingPage.getConfigBySlugInternal,
@@ -61,9 +85,9 @@ export const submitForm = action({
     const userId: string = await ctx.runMutation(
       internal.functions.communityLandingPage.findOrCreateUser,
       {
-        phone: args.phone,
-        firstName: args.firstName,
-        lastName: args.lastName,
+        phone: trimmedPhone,
+        firstName: trimmedFirstName,
+        lastName: trimmedLastName,
         email: args.email,
       }
     );
@@ -94,8 +118,8 @@ export const submitForm = action({
       success: true,
       user: {
         id: userId,
-        firstName: args.firstName,
-        lastName: args.lastName,
+        firstName: trimmedFirstName,
+        lastName: trimmedLastName,
       },
     };
   },

@@ -4,8 +4,8 @@
  * Public web form at /c/[slug] that digitizes the "gold card" —
  * newcomers fill out name, phone, email, and community-configured custom fields.
  *
- * This file contains queries and mutations (Convex runtime).
- * The submitForm action lives in communityLandingPageActions.ts ("use node" runtime).
+ * This file contains queries and mutations.
+ * The submitForm action lives in communityLandingPageActions.ts.
  */
 
 import { v } from "convex/values";
@@ -16,6 +16,7 @@ import { requireCommunityAdmin } from "../lib/permissions";
 import { VALID_CUSTOM_SLOTS } from "../lib/followupConstants";
 import { normalizePhone, buildSearchText, now } from "../lib/utils";
 import { syncUserChannelMembershipsLogic } from "./sync/memberships";
+import { checkRateLimit } from "../lib/rateLimit";
 
 // ============================================================================
 // Public Queries (no auth required)
@@ -89,6 +90,20 @@ export const getConfigBySlugInternal = internalQuery({
 // ============================================================================
 // Internal Mutations (used by submitForm action)
 // ============================================================================
+
+/**
+ * Rate limit form submissions by phone number.
+ * Allows 5 submissions per hour to prevent spam.
+ */
+export const checkFormRateLimit = internalMutation({
+  args: { phone: v.string() },
+  handler: async (ctx, args) => {
+    const normalizedPhone = normalizePhone(args.phone);
+    const rateLimitKey = `landing_form:${normalizedPhone}`;
+    const ONE_HOUR_MS = 60 * 60 * 1000;
+    await checkRateLimit(ctx, rateLimitKey, 5, ONE_HOUR_MS);
+  },
+});
 
 /**
  * Find existing user by phone or create a new one.
@@ -430,7 +445,7 @@ export const setCustomFieldsAndNotes = internalMutation({
       });
     }
 
-    // Run automation rules
+    // Run automation rules (first matching rule wins for set_assignee)
     for (const rule of args.automationRules) {
       if (!rule.isEnabled) continue;
 
@@ -456,6 +471,8 @@ export const setCustomFieldsAndNotes = internalMutation({
             assigneeId,
             updatedAt: timestamp,
           });
+          // Stop after first matching assignee rule to provide deterministic behavior
+          break;
         }
       }
     }
