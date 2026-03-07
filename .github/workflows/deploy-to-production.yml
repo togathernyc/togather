@@ -528,10 +528,95 @@ jobs:
 
           printf "%s" "$CONVEX_HTTP_URL" | wrangler secret put CONVEX_SITE_URL
 
+  # Deploy Expo web app to EAS Hosting
+  deploy-web:
+    name: Deploy Web App
+    needs: validate-and-detect
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    defaults:
+      run:
+        working-directory: apps/mobile
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 8.15.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: .
+
+      - name: Load secrets from 1Password
+        uses: ./.github/actions/load-secrets
+        with:
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          environment: production
+
+      - name: Setup EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ env.EXPO_TOKEN }}
+
+      - name: Export web app
+        env:
+          EXPO_PUBLIC_CONVEX_URL: ${{ env.CONVEX_SITE_URL }}
+        run: npx expo export --platform web
+
+      - name: Deploy to EAS Hosting
+        id: deploy
+        run: |
+          npx eas-cli deploy --prod --environment=production --json --non-interactive > deploy_output.json || true
+
+          echo "Deploy output:"
+          cat deploy_output.json
+
+          DEPLOYMENT_ID=$(cat deploy_output.json | jq -r '.identifier // empty' 2>/dev/null)
+
+          if [ -z "$DEPLOYMENT_ID" ]; then
+            DEPLOYMENT_ID=$(grep -o '"identifier":"[^"]*"' deploy_output.json | head -1 | cut -d'"' -f4)
+          fi
+
+          echo "deployment_id=$DEPLOYMENT_ID" >> $GITHUB_OUTPUT
+
+          if [ -z "$DEPLOYMENT_ID" ]; then
+            echo "❌ Failed to get deployment ID"
+            cat deploy_output.json
+            exit 1
+          fi
+
+          echo "✅ Deployed with ID: $DEPLOYMENT_ID"
+
+      - name: Update subdomain aliases
+        run: |
+          DEPLOYMENT_ID="${{ steps.deploy.outputs.deployment_id }}"
+          ALIASES=("www" "app" "fount" "demo-community")
+
+          echo "🔗 Updating subdomain aliases to deployment: $DEPLOYMENT_ID"
+
+          for ALIAS in "${ALIASES[@]}"; do
+            echo "   Updating alias: $ALIAS"
+            npx eas-cli deploy:alias --alias "$ALIAS" --id "$DEPLOYMENT_ID" --non-interactive
+          done
+
+          echo "✅ All aliases updated"
+
   # Summary after deployments
   summary:
     name: Deployment Summary
-    needs: [validate-and-detect, deploy-convex, deploy-mobile-native, deploy-mobile-ota, deploy-landing, deploy-link-preview]
+    needs: [validate-and-detect, deploy-convex, deploy-mobile-native, deploy-mobile-ota, deploy-landing, deploy-link-preview, deploy-web]
     if: always() && needs.validate-and-detect.result == 'success'
     runs-on: ubuntu-latest
 
@@ -544,6 +629,7 @@ jobs:
           OTA_RESULT="${{ needs.deploy-mobile-ota.result }}"
           LANDING_RESULT="${{ needs.deploy-landing.result }}"
           LINK_PREVIEW_RESULT="${{ needs.deploy-link-preview.result }}"
+          WEB_RESULT="${{ needs.deploy-web.result }}"
 
           FAILED=false
 
@@ -572,6 +658,11 @@ jobs:
             FAILED=true
           fi
 
+          if [ "$WEB_RESULT" != "success" ]; then
+            echo "❌ Web app deployment failed"
+            FAILED=true
+          fi
+
           if [ "$FAILED" == "true" ]; then
             echo ""
             echo "Some deployments failed. Please check the logs and retry."
@@ -595,6 +686,7 @@ jobs:
           echo "| Mobile OTA | ${{ needs.deploy-mobile-ota.result == 'success' && '✅ Published' || (needs.validate-and-detect.outputs.mobile_js_changed == 'true' && '❌ Failed' || '⏭️ Skipped') }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Landing Page | ${{ needs.deploy-landing.result == 'success' && '✅ Deployed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Link Preview | ${{ needs.deploy-link-preview.result == 'success' && '✅ Deployed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Web App | ${{ needs.deploy-web.result == 'success' && '✅ Deployed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### What's Next" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -610,4 +702,7 @@ jobs:
           fi
           if [ "${{ needs.deploy-landing.result }}" == "success" ]; then
             echo "- **Landing Page**: Live at https://togather.nyc" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [ "${{ needs.deploy-web.result }}" == "success" ]; then
+            echo "- **Web App**: Live at https://app.togather.nyc" >> $GITHUB_STEP_SUMMARY
           fi
