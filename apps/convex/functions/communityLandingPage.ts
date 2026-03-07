@@ -29,41 +29,46 @@ import { checkRateLimit } from "../lib/rateLimit";
 export const getBySlug = query({
   args: { slug: v.string() },
   handler: async (ctx, args) => {
-    // Look up by slug first, then fall back to subdomain
-    let community = await ctx.db
-      .query("communities")
-      .withIndex("by_slug", (q) => q.eq("slug", args.slug))
-      .first();
-
-    if (!community) {
-      community = await ctx.db
+    try {
+      let community = await ctx.db
         .query("communities")
-        .withIndex("by_subdomain", (q) => q.eq("subdomain", args.slug))
+        .withIndex("by_slug", (q) => q.eq("slug", args.slug))
         .first();
+
+      // Fallback to subdomain lookup (legacy communities may only have subdomain set)
+      if (!community) {
+        community = await ctx.db
+          .query("communities")
+          .withIndex("by_subdomain", (q) => q.eq("subdomain", args.slug))
+          .first();
+      }
+
+      if (!community) return null;
+
+      const landingPage = await ctx.db
+        .query("communityLandingPages")
+        .withIndex("by_community", (q) => q.eq("communityId", community._id))
+        .first();
+
+      if (!landingPage || !landingPage.isEnabled) return null;
+
+      return {
+        community: {
+          name: community.name,
+          logo: community.logo,
+          primaryColor: community.primaryColor,
+          slug: community.slug,
+        },
+        title: landingPage.title,
+        description: landingPage.description,
+        submitButtonText: landingPage.submitButtonText,
+        successMessage: landingPage.successMessage,
+        formFields: landingPage.formFields,
+      };
+    } catch (e: any) {
+      console.error("getBySlug error:", e.message, e.stack);
+      throw e;
     }
-
-    if (!community) return null;
-
-    const landingPage = await ctx.db
-      .query("communityLandingPages")
-      .withIndex("by_community", (q) => q.eq("communityId", community._id))
-      .first();
-
-    if (!landingPage || !landingPage.isEnabled) return null;
-
-    return {
-      community: {
-        name: community.name,
-        logo: community.logo,
-        primaryColor: community.primaryColor,
-        slug: community.slug,
-      },
-      title: landingPage.title,
-      description: landingPage.description,
-      submitButtonText: landingPage.submitButtonText,
-      successMessage: landingPage.successMessage,
-      formFields: landingPage.formFields,
-    };
   },
 });
 
@@ -77,7 +82,6 @@ export const getBySlug = query({
 export const getConfigBySlugInternal = internalQuery({
   args: { slug: v.string() },
   handler: async (ctx, args) => {
-    // Look up by slug first, then fall back to subdomain
     let community = await ctx.db
       .query("communities")
       .withIndex("by_slug", (q) => q.eq("slug", args.slug))
@@ -641,6 +645,7 @@ export const saveConfig = mutation({
 
     // Validate form field slots
     for (const field of args.formFields) {
+      if (field.type === "section_header" || field.type === "subtitle") continue;
       if (field.slot) {
         if (!VALID_CUSTOM_SLOTS.has(field.slot)) {
           throw new Error(`Invalid custom field slot: ${field.slot}`);
