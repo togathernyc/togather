@@ -321,9 +321,9 @@ For EACH unresolved thread or actionable comment:
 2. **Check if Bugbot Autofix already fixed it:**
    - Read the file at the mentioned path and line
    - Compare the current code against the issue described in the comment
-   - If the issue is already resolved (Autofix pushed a commit), skip to step 6 (resolve thread)
+   - If the issue is already resolved (Autofix pushed a commit), **skip straight to section 4.5 (resolve thread)** — do not commit
    - Check git log for recent Autofix commits: `git log --oneline -5 --author="cursor"`
-3. **If bugbot_review_round >= 3 and severity is Low:** skip to step 6 (resolve thread without fixing)
+3. **If bugbot_review_round >= 3 and severity is Low:** **skip straight to section 4.5 (resolve thread without fixing)** — do not commit
 4. **Make the fix** - Edit the file to address the concern
 5. **Verify the fix doesn't break anything:**
    ```bash
@@ -464,7 +464,7 @@ git pull origin $BRANCH
 
 ### 5.5 Re-Check Everything
 
-After each push, go back to Phase 1 and re-fetch EVERYTHING. Don't assume previous state. Increment `bugbot_review_round` counter.
+After each push, go back to Phase 1 and re-fetch EVERYTHING. Don't assume previous state. (The `bugbot_review_round` counter is incremented in Phase 3.5.3 when Bugbot completes a new review.)
 
 ---
 
