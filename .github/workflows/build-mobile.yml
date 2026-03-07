@@ -37,7 +37,7 @@ jobs:
   build:
     name: Build Mobile App
     runs-on: ubuntu-latest
-    environment: production
+    environment: ${{ inputs.profile == 'staging' && 'staging' || 'production' }}
 
     steps:
       - name: Checkout code
@@ -57,12 +57,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Load secrets from 1Password
+      - name: Load secrets
         uses: ./.github/actions/load-secrets
         with:
-          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          # Use staging secrets for staging profile, production for production/tags
-          environment: ${{ inputs.profile == 'staging' && 'staging' || 'production' }}
+          secrets-json: ${{ toJSON(secrets) }}
 
       - name: Setup EAS
         uses: expo/expo-github-action@v8
@@ -80,7 +78,7 @@ jobs:
           # Use eas env:create (eas secret:create is deprecated)
           # Only sync to the environment matching the selected profile to avoid cross-contamination
           eas env:create --name EXPO_PUBLIC_MAPBOX_TOKEN --value "$EXPO_PUBLIC_MAPBOX_TOKEN" --environment "$EAS_ENV" --visibility plaintext --force --non-interactive || true
-          # Convex URL from 1Password (already loaded per environment)
+          # Convex URL from loaded secrets
           eas env:create --name EXPO_PUBLIC_CONVEX_URL --value "$CONVEX_SITE_URL" --environment "$EAS_ENV" --visibility plaintext --force --non-interactive || true
           # Project ID for push notifications (constant across all environments)
           eas env:create --name EXPO_PUBLIC_PROJECT_ID --value "$EAS_PROJECT_ID" --environment "$EAS_ENV" --visibility plaintext --force --non-interactive || true

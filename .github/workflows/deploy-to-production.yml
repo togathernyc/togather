@@ -137,11 +137,10 @@ jobs:
       - name: Type check Convex functions
         run: npx convex typecheck
 
-      - name: Load secrets from 1Password
+      - name: Load secrets
         uses: ./.github/actions/load-secrets
         with:
-          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          environment: production
+          secrets-json: ${{ toJSON(secrets) }}
 
       - name: Sync secrets to Convex
         run: |
@@ -191,11 +190,10 @@ jobs:
           fi
           echo "✅ Version validated: $VERSION"
 
-      - name: Load secrets from 1Password
+      - name: Load secrets
         uses: ./.github/actions/load-secrets
         with:
-          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          environment: production
+          secrets-json: ${{ toJSON(secrets) }}
 
       - name: Setup EAS
         uses: expo/expo-github-action@v8
@@ -209,7 +207,7 @@ jobs:
           # Use eas env:create (eas secret:create is deprecated)
           # Production builds use the production EAS environment
           eas env:create --name EXPO_PUBLIC_MAPBOX_TOKEN --value "$EXPO_PUBLIC_MAPBOX_TOKEN" --environment production --visibility plaintext --force --non-interactive || true
-          # Convex URL from 1Password
+          # Convex URL from loaded secrets
           eas env:create --name EXPO_PUBLIC_CONVEX_URL --value "$CONVEX_SITE_URL" --environment production --visibility plaintext --force --non-interactive || true
           # Project ID for push notifications (constant across all environments)
           eas env:create --name EXPO_PUBLIC_PROJECT_ID --value "$EAS_PROJECT_ID" --environment production --visibility plaintext --force --non-interactive || true
@@ -381,11 +379,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Load secrets from 1Password
+      - name: Load secrets
         uses: ./.github/actions/load-secrets
         with:
-          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          environment: production
+          secrets-json: ${{ toJSON(secrets) }}
 
       - name: Setup EAS
         uses: expo/expo-github-action@v8
@@ -399,7 +396,7 @@ jobs:
           # Sync secrets and config to EAS production environment
           # Required because eas update --environment reads from EAS env vars for app.config.js
           eas env:create --name EXPO_PUBLIC_MAPBOX_TOKEN --value "$EXPO_PUBLIC_MAPBOX_TOKEN" --environment production --visibility plaintext --force --non-interactive || true
-          # Convex URL from 1Password
+          # Convex URL from loaded secrets
           eas env:create --name EXPO_PUBLIC_CONVEX_URL --value "$CONVEX_SITE_URL" --environment production --visibility plaintext --force --non-interactive || true
           # Project ID for push notifications (constant across all environments)
           eas env:create --name EXPO_PUBLIC_PROJECT_ID --value "$EAS_PROJECT_ID" --environment production --visibility plaintext --force --non-interactive || true
@@ -460,11 +457,10 @@ jobs:
       - name: Build landing page
         run: pnpm --filter @togather/web build
 
-      - name: Load secrets from 1Password
+      - name: Load secrets
         uses: ./.github/actions/load-secrets
         with:
-          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          environment: production
+          secrets-json: ${{ toJSON(secrets) }}
 
       - name: Install Wrangler
         run: npm install -g wrangler
@@ -493,11 +489,10 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Load secrets from 1Password
+      - name: Load secrets
         uses: ./.github/actions/load-secrets
         with:
-          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          environment: production
+          secrets-json: ${{ toJSON(secrets) }}
 
       - name: Install Wrangler
         run: npm install -g wrangler
@@ -558,11 +553,10 @@ jobs:
         run: pnpm install --frozen-lockfile
         working-directory: .
 
-      - name: Load secrets from 1Password
+      - name: Load secrets
         uses: ./.github/actions/load-secrets
         with:
-          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          environment: production
+          secrets-json: ${{ toJSON(secrets) }}
 
       - name: Setup EAS
         uses: expo/expo-github-action@v8

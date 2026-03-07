@@ -74,11 +74,10 @@ jobs:
         run: pnpm install --frozen-lockfile
         working-directory: .
 
-      - name: Load secrets from 1Password
+      - name: Load secrets
         uses: ./.github/actions/load-secrets
         with:
-          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          environment: ${{ steps.env.outputs.secrets_env }}
+          secrets-json: ${{ toJSON(secrets) }}
 
       - name: Setup EAS
         uses: expo/expo-github-action@v8

@@ -65,11 +65,10 @@ jobs:
       - name: Build landing page
         run: pnpm --filter @togather/web build
 
-      - name: Load secrets from 1Password
+      - name: Load secrets
         uses: ./.github/actions/load-secrets
         with:
-          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          environment: ${{ steps.env.outputs.secrets_env }}
+          secrets-json: ${{ toJSON(secrets) }}
 
       - name: Install Wrangler
         run: npm install -g wrangler

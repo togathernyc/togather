@@ -3,8 +3,7 @@
 # Automatically deploys to staging on push to main branch
 # Production deployment is manual only (workflow_dispatch)
 #
-# All secrets (including CONVEX_DEPLOY_KEY) are loaded from 1Password
-# Only requires OP_SERVICE_ACCOUNT_TOKEN in GitHub Secrets
+# All secrets (including CONVEX_DEPLOY_KEY) are loaded from GitHub environment secrets
 
 name: Deploy Convex
 
@@ -74,11 +73,10 @@ jobs:
       - name: Type check Convex functions
         run: npx convex typecheck
 
-      - name: Load secrets from 1Password
+      - name: Load secrets
         uses: ./.github/actions/load-secrets
         with:
-          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          environment: ${{ steps.env.outputs.secrets_env }}
+          secrets-json: ${{ toJSON(secrets) }}
 
       - name: Sync secrets to Convex
         run: |
