@@ -158,7 +158,7 @@ gh pr view <PR_NUMBER> --json statusCheckRollup --jq '.statusCheckRollup[] | {na
 
 **Bugbot-specific statuses:**
 - `Cursor Bugbot`: `NEUTRAL` = found issues (check threads), `SUCCESS` = no issues
-- `Cursor Bugbot Autofix`: `IN_PROGRESS` = actively fixing issues, may push commits at any time. **NEVER commit or push while this is running.**
+- `Cursor Bugbot Autofix`: `IN_PROGRESS` = actively fixing issues, may push commits at any time. **Do not process review comments (Phase 4) while this is running** — wait for it to finish first. CI fixes (Phase 3.3) may proceed independently since they address different concerns.
 
 ### 3.3 Fix CI Failures
 
