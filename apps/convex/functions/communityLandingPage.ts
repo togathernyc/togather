@@ -10,6 +10,7 @@
 
 import { v } from "convex/values";
 import { query, mutation, internalMutation, internalQuery } from "../_generated/server";
+import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
 import { requireAuth } from "../lib/auth";
 import { requireCommunityAdmin } from "../lib/permissions";
@@ -495,6 +496,14 @@ export const setCustomFieldsAndNotes = internalMutation({
             assigneeId,
             updatedAt: timestamp,
           });
+
+          // Notify the assignee about the auto-assignment
+          await ctx.scheduler.runAfter(0, internal.functions.notifications.senders.notifyFollowupAssigned, {
+            assigneeId,
+            groupId: announcementGroup._id,
+            groupMemberId: groupMember._id,
+          });
+
           // Stop after first matching assignee rule to provide deterministic behavior
           break;
         }

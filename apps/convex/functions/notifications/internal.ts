@@ -151,6 +151,21 @@ export const getGroupMembersForNotification = internalQuery({
 });
 
 /**
+ * Get group member info (userId) from a groupMembers doc
+ * Used by followup assignment notifications
+ */
+export const getGroupMemberInfo = internalQuery({
+  args: {
+    groupMemberId: v.id("groupMembers"),
+  },
+  handler: async (ctx, args) => {
+    const member = await ctx.db.get(args.groupMemberId);
+    if (!member) return null;
+    return { userId: member.userId };
+  },
+});
+
+/**
  * Get a chat channel for test notifications
  * Used by the dev notification tester
  */
