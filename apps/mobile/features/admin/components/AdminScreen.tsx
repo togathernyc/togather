@@ -20,8 +20,9 @@ import { PendingRequestsContent } from "./PendingRequestsContent";
 import { StatsContent } from "./StatsContent";
 import { PeopleContent } from "./PeopleContent";
 import { SettingsContent } from "./SettingsContent";
+import { LandingPageContent } from "./LandingPageContent";
 
-type TabKey = "requests" | "people" | "stats" | "settings";
+type TabKey = "requests" | "people" | "stats" | "settings" | "landing";
 
 interface Tab {
   key: TabKey;
@@ -33,6 +34,7 @@ const TABS: Tab[] = [
   { key: "people", label: "People" },
   { key: "stats", label: "Stats" },
   { key: "settings", label: "Settings" },
+  { key: "landing", label: "Landing" },
 ];
 
 export function AdminScreen() {
@@ -98,8 +100,10 @@ export function AdminScreen() {
           <PeopleContent />
         ) : activeTab === "stats" ? (
           <StatsContent />
-        ) : (
+        ) : activeTab === "settings" ? (
           <SettingsContent />
+        ) : (
+          <LandingPageContent />
         )}
       </View>
     </View>

@@ -24,4 +24,9 @@ export const VALID_CUSTOM_SLOTS = new Set([
   "customBool3",
   "customBool4",
   "customBool5",
+  "customBool6",
+  "customBool7",
+  "customBool8",
+  "customBool9",
+  "customBool10",
 ]);

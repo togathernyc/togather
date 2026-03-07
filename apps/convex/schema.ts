@@ -805,6 +805,11 @@ export default defineSchema({
     customBool3: v.optional(v.boolean()),
     customBool4: v.optional(v.boolean()),
     customBool5: v.optional(v.boolean()),
+    customBool6: v.optional(v.boolean()),
+    customBool7: v.optional(v.boolean()),
+    customBool8: v.optional(v.boolean()),
+    customBool9: v.optional(v.boolean()),
+    customBool10: v.optional(v.boolean()),
 
     // ── Denormalized search field (firstName + lastName + email + phone) ──
     searchText: v.optional(v.string()),
@@ -1485,6 +1490,49 @@ export default defineSchema({
     .index("by_submittedBy", ["submittedById"])
     .index("by_assignedTo", ["assignedToId"])
     .index("by_groupMember", ["groupMemberId"]),
+
+  // =============================================================================
+  // COMMUNITY LANDING PAGES
+  // =============================================================================
+
+  communityLandingPages: defineTable({
+    communityId: v.id("communities"),
+    isEnabled: v.boolean(),
+    // Page content
+    title: v.optional(v.string()),
+    description: v.optional(v.string()),
+    submitButtonText: v.optional(v.string()),
+    successMessage: v.optional(v.string()),
+    generateNoteSummary: v.optional(v.boolean()),
+    // Form fields — maps to followup custom field slots
+    formFields: v.array(v.object({
+      slot: v.optional(v.string()),  // "customText1", "customBool3", etc. If null, field only appears in notes summary
+      label: v.string(),
+      type: v.string(),              // "text" | "number" | "boolean" | "dropdown"
+      options: v.optional(v.array(v.string())),
+      required: v.boolean(),
+      order: v.number(),
+      includeInNotes: v.optional(v.boolean()),
+    })),
+    // Automation rules
+    automationRules: v.array(v.object({
+      id: v.string(),
+      name: v.string(),
+      isEnabled: v.boolean(),
+      condition: v.object({
+        field: v.string(),       // Slot name or form field label
+        operator: v.string(),    // "equals" | "contains" | "not_equals" | "is_true" | "is_false"
+        value: v.optional(v.string()),
+      }),
+      action: v.object({
+        type: v.string(),        // "set_assignee"
+        assigneePhone: v.optional(v.string()),
+        assigneeUserId: v.optional(v.id("users")),
+      }),
+    })),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_community", ["communityId"]),
 
   // =============================================================================
 });

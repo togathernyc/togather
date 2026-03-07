@@ -18,6 +18,7 @@ export const DOMAIN_CONFIG: {
   groupShareUrl(shortId: string): string;
   communityUrl(subdomain: string): string;
   attendanceConfirmationUrl(token: string): string;
+  communityLandingUrl(slug: string): string;
   eventLinkRegex(): RegExp;
   eventLinkRegexSingle(): RegExp;
   groupLinkRegex(): RegExp;

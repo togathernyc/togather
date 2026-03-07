@@ -8,6 +8,7 @@ import { TermsOfService } from './pages/TermsOfService.tsx'
 import { AndroidDownload } from './pages/AndroidDownload.tsx'
 import { Contribute } from './pages/Contribute.tsx'
 import { ReportIssue } from './pages/ReportIssue.tsx'
+import { CommunityRedirect } from './pages/CommunityRedirect.tsx'
 import { ScrollToTop } from './components/ScrollToTop.tsx'
 
 createRoot(document.getElementById('root')!).render(
@@ -22,6 +23,8 @@ createRoot(document.getElementById('root')!).render(
         <Route path="/issue" element={<ReportIssue />} />
         <Route path="/legal/privacy" element={<PrivacyPolicy />} />
         <Route path="/legal/terms" element={<TermsOfService />} />
+        {/* Catch-all: redirect /:slug to community landing page */}
+        <Route path="/:slug" element={<CommunityRedirect />} />
       </Routes>
     </BrowserRouter>
   </StrictMode>,
