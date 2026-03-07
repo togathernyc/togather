@@ -172,7 +172,7 @@ sync_environment() {
         echo "  [dry-run] Would set $KEY"
       else
         echo -n "  Setting $KEY..."
-        if printf '%s' "$VALUE" | gh secret set "$KEY" --env "$env" --repo "$REPO" --body -; then
+        if printf '%s' "$VALUE" | gh secret set "$KEY" --env "$env" --repo "$REPO"; then
           echo " done"
         else
           echo " FAILED"
@@ -198,7 +198,7 @@ sync_environment() {
         echo "  [dry-run] Would set $KEY"
       else
         echo -n "  Setting $KEY..."
-        if printf '%s' "$VALUE" | gh secret set "$KEY" --env "$env" --repo "$REPO" --body -; then
+        if printf '%s' "$VALUE" | gh secret set "$KEY" --env "$env" --repo "$REPO"; then
           echo " done"
         else
           echo " FAILED"
@@ -223,7 +223,7 @@ sync_environment() {
       synced=$((synced + 1))
     else
       echo -n "  Setting IMAGE_CDN_URL (alias for R2_PUBLIC_URL)..."
-      if printf '%s' "$R2_URL" | gh secret set "IMAGE_CDN_URL" --env "$env" --repo "$REPO" --body -; then
+      if printf '%s' "$R2_URL" | gh secret set "IMAGE_CDN_URL" --env "$env" --repo "$REPO"; then
         echo " done"
         synced=$((synced + 1))
       else
