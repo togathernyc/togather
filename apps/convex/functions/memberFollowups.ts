@@ -467,6 +467,49 @@ export const internalScoreBatch = internalQuery({
           otherGroupAttendance: 0,
         });
 
+        // Cross-group attendance: find all other groups this user is in
+        let crossGroupAttendancePct: number | undefined;
+        if (useCustomScoring) {
+          const sixtyDaysAgo = currentTime - 60 * 24 * 60 * 60 * 1000;
+          const allMemberships = await ctx.db
+            .query("groupMembers")
+            .withIndex("by_user", (q) => q.eq("userId", member.userId))
+            .filter((q) => q.eq(q.field("leftAt"), undefined))
+            .collect();
+
+          let allGroupsTotal = memberMeetings.length;
+          let allGroupsAttended = meetingData.filter((m) => m.wasPresent).length;
+
+          for (const otherMember of allMemberships) {
+            if (otherMember.groupId.toString() === args.groupId.toString()) continue;
+            const otherMeetings = await ctx.db
+              .query("meetings")
+              .withIndex("by_group_status", (q) =>
+                q.eq("groupId", otherMember.groupId).eq("status", "completed")
+              )
+              .filter((q) => q.gte(q.field("scheduledAt"), sixtyDaysAgo))
+              .order("desc")
+              .take(10);
+
+            const otherAttendances = await Promise.all(
+              otherMeetings.map((m) =>
+                ctx.db
+                  .query("meetingAttendances")
+                  .withIndex("by_meeting_user", (q) =>
+                    q.eq("meetingId", m._id).eq("userId", member.userId)
+                  )
+                  .first()
+              )
+            );
+
+            allGroupsTotal += otherMeetings.length;
+            allGroupsAttended += otherAttendances.filter((a) => a?.status === 1).length;
+          }
+
+          crossGroupAttendancePct =
+            allGroupsTotal > 0 ? Math.round((allGroupsAttended / allGroupsTotal) * 100) : 0;
+        }
+
         // Compute configurable scores
         let memberScores: Record<string, number>;
         let triggeredAlerts: string[] = [];
@@ -483,7 +526,7 @@ export const internalScoreBatch = internalQuery({
           const pcoServing = pcoServingMap.get(member.userId.toString());
           const rawValues = extractRawValues(
             meetingData, followupData, isSnoozed, currentTime, connectionParts, pcoServing,
-            undefined
+            crossGroupAttendancePct
           );
           memberScores = calculateAllScores(scoreConfig, rawValues);
           if (scoreConfig.alerts?.length) {

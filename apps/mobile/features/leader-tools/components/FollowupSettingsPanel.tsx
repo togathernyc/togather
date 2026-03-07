@@ -597,29 +597,31 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
             <Ionicons name="close" size={18} color="#6B7280" />
           </TouchableOpacity>
         </View>
-        {Array.from(variablesByCategory.entries()).map(([category, variables]) => (
-          <View key={category}>
-            <Text style={styles.categoryHeader}>
-              {category.charAt(0).toUpperCase() + category.slice(1)}
-            </Text>
-            {variables.map((v) => {
-              const isUsed = usedIds.has(v.id);
-              return (
-                <Pressable
-                  key={v.id}
-                  style={[styles.pickerRow, isUsed && styles.pickerRowDisabled]}
-                  onPress={() => !isUsed && onSelect(v.id)}
-                  disabled={isUsed}
-                >
-                  <Text style={[styles.pickerLabel, isUsed && styles.pickerLabelDisabled]}>
-                    {v.label}
-                  </Text>
-                  <Text style={styles.pickerDesc}>{v.description}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        ))}
+        <ScrollView style={styles.inlinePickerScroll} nestedScrollEnabled bounces={false}>
+          {Array.from(variablesByCategory.entries()).map(([category, variables]) => (
+            <View key={category}>
+              <Text style={styles.categoryHeader}>
+                {category.charAt(0).toUpperCase() + category.slice(1)}
+              </Text>
+              {variables.map((v) => {
+                const isUsed = usedIds.has(v.id);
+                return (
+                  <Pressable
+                    key={v.id}
+                    style={[styles.pickerRow, isUsed && styles.pickerRowDisabled]}
+                    onPress={() => !isUsed && onSelect(v.id)}
+                    disabled={isUsed}
+                  >
+                    <Text style={[styles.pickerLabel, isUsed && styles.pickerLabelDisabled]}>
+                      {v.label}
+                    </Text>
+                    <Text style={styles.pickerDesc}>{v.description}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ))}
+        </ScrollView>
       </View>
     );
   };
@@ -1672,7 +1674,11 @@ const styles = StyleSheet.create({
     borderColor: "#E5E7EB",
     borderRadius: 6,
     padding: 8,
-    maxHeight: 220,
+    maxHeight: 260,
+    overflow: "hidden",
+  },
+  inlinePickerScroll: {
+    flexGrow: 0,
   },
   inlinePickerHeader: {
     flexDirection: "row",
