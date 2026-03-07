@@ -29,10 +29,18 @@ import { checkRateLimit } from "../lib/rateLimit";
 export const getBySlug = query({
   args: { slug: v.string() },
   handler: async (ctx, args) => {
-    const community = await ctx.db
+    // Look up by slug first, then fall back to subdomain
+    let community = await ctx.db
       .query("communities")
       .withIndex("by_slug", (q) => q.eq("slug", args.slug))
       .first();
+
+    if (!community) {
+      community = await ctx.db
+        .query("communities")
+        .withIndex("by_subdomain", (q) => q.eq("subdomain", args.slug))
+        .first();
+    }
 
     if (!community) return null;
 
@@ -69,10 +77,18 @@ export const getBySlug = query({
 export const getConfigBySlugInternal = internalQuery({
   args: { slug: v.string() },
   handler: async (ctx, args) => {
-    const community = await ctx.db
+    // Look up by slug first, then fall back to subdomain
+    let community = await ctx.db
       .query("communities")
       .withIndex("by_slug", (q) => q.eq("slug", args.slug))
       .first();
+
+    if (!community) {
+      community = await ctx.db
+        .query("communities")
+        .withIndex("by_subdomain", (q) => q.eq("subdomain", args.slug))
+        .first();
+    }
 
     if (!community) return null;
 
@@ -543,12 +559,23 @@ export const getConfig = query({
       .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
       .first();
 
+    // Fetch announcement group's custom fields for two-way sync
+    const announcementGroup = await ctx.db
+      .query("groups")
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .filter((q) => q.eq(q.field("isAnnouncementGroup"), true))
+      .first();
+
+    const followupCustomFields =
+      announcementGroup?.followupColumnConfig?.customFields ?? [];
+
     return {
       community: {
         slug: community?.slug,
         name: community?.name,
       },
       config: landingPage,
+      followupCustomFields,
     };
   },
 });

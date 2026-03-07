@@ -15,6 +15,14 @@ runs:
     - name: Install 1Password CLI
       uses: 1password/install-cli-action@v1
 
+    - name: Check 1Password rate limit (before)
+      shell: bash
+      env:
+        OP_SERVICE_ACCOUNT_TOKEN: ${{ inputs.op-service-account-token }}
+      run: |
+        echo "=== 1Password Rate Limit Status (BEFORE loading secrets) ==="
+        op service-account ratelimit || echo "Failed to get rate limit info"
+
     - name: Load common secrets
       uses: 1password/load-secrets-action@v2
       env:
@@ -44,6 +52,14 @@ runs:
         IMAGE_CDN_URL: op://Togather/R2_PUBLIC_URL/${{ inputs.environment }}
       with:
         export-env: true
+
+    - name: Check 1Password rate limit (after common)
+      shell: bash
+      env:
+        OP_SERVICE_ACCOUNT_TOKEN: ${{ inputs.op-service-account-token }}
+      run: |
+        echo "=== 1Password Rate Limit Status (AFTER loading common secrets) ==="
+        op service-account ratelimit || echo "Failed to get rate limit info"
 
     - name: Load optional secrets
       uses: 1password/load-secrets-action@v2
