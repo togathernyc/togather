@@ -1499,6 +1499,16 @@ export const setAssignee = mutation({
       assigneeId: args.assigneeId,
       updatedAt: Date.now(),
     });
+
+    // Notify the assignee (skip if clearing assignment)
+    if (args.assigneeId) {
+      await ctx.scheduler.runAfter(0, internal.functions.notifications.senders.notifyFollowupAssigned, {
+        assigneeId: args.assigneeId,
+        groupId: args.groupId,
+        groupMemberId: args.groupMemberId,
+      });
+    }
+
     return { success: true };
   },
 });

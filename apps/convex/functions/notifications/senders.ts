@@ -411,6 +411,101 @@ export const notifyLeaderPromotion = internalAction({
 });
 
 // ============================================================================
+// Notification Action for Follow-up Assignment
+// ============================================================================
+
+/**
+ * Notify a leader when they are assigned to follow up with a member.
+ * Called from setAssignee mutation (manual) and setCustomFieldsAndNotes (auto-assignment).
+ */
+export const notifyFollowupAssigned = internalAction({
+  args: {
+    assigneeId: v.id("users"),
+    groupId: v.id("groups"),
+    groupMemberId: v.id("groupMembers"),
+  },
+  handler: async (ctx, args): Promise<{ success: boolean; error?: string; sent?: number }> => {
+    try {
+      // Get group info
+      const groupInfo = await ctx.runQuery(internal.functions.notifications.internal.getGroupInfo, {
+        groupId: args.groupId,
+      });
+      if (!groupInfo) {
+        console.log("[NotifyFollowupAssigned] Group not found, skipping notification");
+        return { success: false, error: "Group not found" };
+      }
+
+      // Get group member doc to find the member's userId
+      const groupMember: { userId: Id<"users"> } | null = await ctx.runQuery(internal.functions.notifications.internal.getGroupMemberInfo, {
+        groupMemberId: args.groupMemberId,
+      });
+      if (!groupMember) {
+        console.log("[NotifyFollowupAssigned] Group member not found, skipping notification");
+        return { success: false, error: "Group member not found" };
+      }
+
+      // Get member name
+      const memberName: string = await ctx.runQuery(internal.functions.notifications.internal.getUserDisplayName, {
+        userId: groupMember.userId,
+      });
+
+      // Get assignee's push tokens
+      const tokens: Array<{ token: string; platform: string }> = await ctx.runQuery(internal.functions.notifications.tokens.getActiveTokensForUser, {
+        userId: args.assigneeId,
+      });
+
+      if (tokens.length === 0) {
+        console.log("[NotifyFollowupAssigned] No push tokens for assignee");
+        return { success: true, sent: 0 };
+      }
+
+      const title = "New follow-up assignment";
+      const body = `You've been assigned to follow up with ${memberName} in ${groupInfo.name}`;
+
+      // Build notifications
+      const notifications: Array<{ token: string; title: string; body: string; data: Record<string, unknown> }> = tokens.map((t: { token: string; platform: string }) => ({
+        token: t.token,
+        title,
+        body,
+        data: {
+          type: "followup_assigned",
+          groupId: args.groupId,
+          groupMemberId: args.groupMemberId,
+          communityId: groupInfo.communityId,
+        },
+      }));
+
+      // Send push notifications
+      const result: { success: boolean; ticketIds: string[]; errors: string[] } = await ctx.runAction(internal.functions.notifications.internal.sendBatchPushNotifications, {
+        notifications,
+      });
+
+      // Create notification record
+      await ctx.runMutation(internal.functions.notifications.mutations.createNotification, {
+        userId: args.assigneeId,
+        communityId: groupInfo.communityId,
+        groupId: args.groupId,
+        notificationType: "followup_assigned",
+        title,
+        body,
+        data: {
+          groupId: args.groupId,
+          groupMemberId: args.groupMemberId,
+          communityId: groupInfo.communityId,
+        },
+        status: result.success ? "sent" : "failed",
+      });
+
+      console.log(`[NotifyFollowupAssigned] Sent notification to assignee for member ${memberName} in ${groupInfo.name}`);
+      return { success: result.success, sent: notifications.length };
+    } catch (error) {
+      console.error("[NotifyFollowupAssigned] Error:", error);
+      return { success: false, error: String(error) };
+    }
+  },
+});
+
+// ============================================================================
 // Notification Action for Shared Channel Invitations
 // ============================================================================
 
