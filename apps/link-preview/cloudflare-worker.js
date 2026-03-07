@@ -961,6 +961,94 @@ function generateNearmeErrorHtml(originalUrl) {
 }
 
 /**
+ * Generate community landing page OG HTML for bots
+ */
+function generateCommunityOgHtml(data, slug, config) {
+  const communityName = escapeHtml(data.community?.name || "Community");
+  const title = communityName;
+  const description = `Join ${communityName} on Togather`;
+  const imageUrl = data.community?.logo || data.community?.logoFallback || "";
+  const pageUrl = `${config.baseUrl}/${slug}`;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Primary Meta Tags -->
+  <title>${title} | ${BRAND_NAME}</title>
+  <meta name="title" content="${title} | ${BRAND_NAME}">
+  <meta name="description" content="${description}">
+
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="${pageUrl}">
+  <meta property="og:title" content="${title}">
+  <meta property="og:description" content="${description}">
+  <meta property="og:site_name" content="${BRAND_NAME}">
+  ${imageUrl ? `<meta property="og:image" content="${imageUrl}">` : ""}
+  ${imageUrl ? `<meta property="og:image:secure_url" content="${imageUrl}">` : ""}
+  ${imageUrl ? `<meta property="og:image:type" content="image/jpeg">` : ""}
+  ${imageUrl ? `<meta property="og:image:width" content="400">` : ""}
+  ${imageUrl ? `<meta property="og:image:height" content="400">` : ""}
+
+  <!-- Twitter -->
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:url" content="${pageUrl}">
+  <meta name="twitter:title" content="${title}">
+  <meta name="twitter:description" content="${description}">
+  ${imageUrl ? `<meta name="twitter:image" content="${imageUrl}">` : ""}
+
+  <!-- Redirect real users to the app -->
+  <meta http-equiv="refresh" content="0;url=${config.baseUrl}/c/${slug}">
+
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 600px;
+      margin: 40px auto;
+      padding: 20px;
+      text-align: center;
+    }
+    h1 { color: #333; }
+    p { color: #666; }
+    a { color: #8C10FE; }
+    .loading { color: #999; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <h1>${title}</h1>
+  <p class="loading">Redirecting to the app...</p>
+  <p><a href="${config.baseUrl}/c/${slug}">Click here if not redirected</a></p>
+</body>
+</html>`;
+}
+
+/**
+ * Generate community error HTML (fallback when API fails)
+ */
+function generateCommunityErrorHtml(slug, config) {
+  const pageUrl = `${config.baseUrl}/${slug}`;
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${BRAND_NAME}</title>
+  <meta property="og:title" content="${BRAND_NAME}">
+  <meta property="og:description" content="Connect with your community on Togather">
+  <meta property="og:type" content="website">
+  <meta http-equiv="refresh" content="0;url=${config.baseUrl}/c/${slug}">
+</head>
+<body>
+  <p>Redirecting...</p>
+  <p><a href="${config.baseUrl}/c/${slug}">Click here if not redirected</a></p>
+</body>
+</html>`;
+}
+
+/**
  * Extract subdomain from hostname (e.g., "fount" from "fount.togather.nyc")
  */
 function getSubdomain(hostname) {
@@ -1241,14 +1329,40 @@ export default {
       return passToApp(request, config);
     }
 
-    // 7. Community landing page redirect: /:slug → /c/:slug
+    // 7. Community landing page: /:slug
     // Single-segment paths that aren't known app routes are assumed to be community slugs.
-    // The /c/:slug route in the Expo app handles lookup and rendering.
+    // For bots: return OG HTML with community logo and name.
+    // For humans: redirect to /c/:slug in the Expo app.
     const segments = pathname.split("/").filter(Boolean);
     if (segments.length === 1) {
       const slug = segments[0];
-      // Only redirect if it looks like a slug (lowercase, digits, hyphens) and isn't a known app route
+      // Only handle if it looks like a slug (lowercase, digits, hyphens) and isn't a known app route
       if (/^[a-z0-9][a-z0-9-]*$/.test(slug) && !KNOWN_APP_ROUTES.has(slug)) {
+        if (isBot(userAgent)) {
+          try {
+            const data = await fetchCommunityData(slug, null, convexSiteUrl);
+
+            if (!data) {
+              return new Response(generateCommunityErrorHtml(slug, config), {
+                status: 200,
+                headers: { "Content-Type": "text/html; charset=utf-8" },
+              });
+            }
+
+            return new Response(generateCommunityOgHtml(data, slug, config), {
+              status: 200,
+              headers: { "Content-Type": "text/html; charset=utf-8" },
+            });
+          } catch (error) {
+            console.error(`Error fetching community preview for ${slug}:`, error);
+            return new Response(generateCommunityErrorHtml(slug, config), {
+              status: 200,
+              headers: { "Content-Type": "text/html; charset=utf-8" },
+            });
+          }
+        }
+
+        // Redirect humans to /c/:slug
         const redirectUrl = new URL(`/c/${slug}${url.search}`, url.origin);
         return Response.redirect(redirectUrl.toString(), 302);
       }
