@@ -7,6 +7,19 @@
  * - Add follow-up entries (notes, calls, texts, etc.)
  * - Snooze members
  * - Update attendance records
+ *
+ * ## Meeting Status Quirks
+ *
+ * The meetings schema defines 4 statuses: "scheduled", "confirmed", "completed", "cancelled".
+ * In practice:
+ * - "scheduled" — the only status ever set (default on creation)
+ * - "cancelled" — set by leaders to cancel a meeting
+ * - "completed" — defined but NEVER set by any code path or UI
+ * - "confirmed" — defined but NEVER used anywhere
+ *
+ * Because "completed" is never set, attendance queries must use **past non-cancelled
+ * meetings** (scheduledAt < now AND status !== "cancelled") instead of filtering by
+ * status === "completed". See tech debt issue for cleanup.
  */
 
 import { v, ConvexError } from "convex/values";
@@ -346,11 +359,13 @@ export const internalGetGroupConfig = internalQuery({
   handler: async (ctx, args) => {
     const group = await ctx.db.get(args.groupId);
 
+    // Past non-cancelled meetings (see "Meeting Status Quirks" at top of file)
     const meetings = await ctx.db
       .query("meetings")
-      .withIndex("by_group_status", (q) =>
-        q.eq("groupId", args.groupId).eq("status", "completed")
+      .withIndex("by_group_scheduledAt", (q) =>
+        q.eq("groupId", args.groupId).lt("scheduledAt", Date.now())
       )
+      .filter((q) => q.neq(q.field("status"), "cancelled"))
       .order("desc")
       .take(20);
 
@@ -571,12 +586,15 @@ export const internalCrossGroupAttendance = internalQuery({
       let allGroupsAttended = 0;
 
       for (const membership of allMemberships) {
+        // Past non-cancelled meetings in window (see "Meeting Status Quirks" at top of file)
         const meetings = await ctx.db
           .query("meetings")
-          .withIndex("by_group_status", (q) =>
-            q.eq("groupId", membership.groupId).eq("status", "completed")
+          .withIndex("by_group_scheduledAt", (q) =>
+            q.eq("groupId", membership.groupId)
+              .gte("scheduledAt", sixtyDaysAgo)
+              .lt("scheduledAt", currentTime)
           )
-          .filter((q) => q.gte(q.field("scheduledAt"), sixtyDaysAgo))
+          .filter((q) => q.neq(q.field("status"), "cancelled"))
           .order("desc")
           .take(10);
 
@@ -621,8 +639,9 @@ export const list = query({
     sortDirection: v.optional(v.string()),
     statusFilter: v.optional(v.string()),
     assigneeFilter: v.optional(v.id("users")),
-    attendanceMax: v.optional(v.number()),
-    attendanceMin: v.optional(v.number()),
+    scoreField: v.optional(v.string()),   // e.g. "score1", "score2"
+    scoreMin: v.optional(v.number()),
+    scoreMax: v.optional(v.number()),
     paginationOpts: paginationOptsValidator,
   },
   handler: async (ctx, args) => {
@@ -658,15 +677,16 @@ export const list = query({
       .order(direction);
 
     // Apply optional filters
+    const scoreFilterField = (args.scoreField ?? "score1") as "score1" | "score2" | "score3" | "score4";
     const hasFilters = args.statusFilter || args.assigneeFilter ||
-                       args.attendanceMax !== undefined || args.attendanceMin !== undefined;
+                       args.scoreMax !== undefined || args.scoreMin !== undefined;
     if (hasFilters) {
       q = q.filter((fq) => {
         const conds: any[] = [];
         if (args.statusFilter) conds.push(fq.eq(fq.field("status"), args.statusFilter));
         if (args.assigneeFilter) conds.push(fq.eq(fq.field("assigneeId"), args.assigneeFilter));
-        if (args.attendanceMax !== undefined) conds.push(fq.lt(fq.field("attendanceScore"), args.attendanceMax));
-        if (args.attendanceMin !== undefined) conds.push(fq.gt(fq.field("attendanceScore"), args.attendanceMin));
+        if (args.scoreMax !== undefined) conds.push(fq.lt(fq.field(scoreFilterField), args.scoreMax));
+        if (args.scoreMin !== undefined) conds.push(fq.gt(fq.field(scoreFilterField), args.scoreMin));
         return conds.length === 1 ? conds[0] : fq.and(...(conds as [any, any, ...any[]]));
       });
     }
@@ -708,8 +728,9 @@ export const search = query({
     searchText: v.string(),
     statusFilter: v.optional(v.string()),
     assigneeFilter: v.optional(v.id("users")),
-    attendanceMax: v.optional(v.number()),
-    attendanceMin: v.optional(v.number()),
+    scoreField: v.optional(v.string()),
+    scoreMin: v.optional(v.number()),
+    scoreMax: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     await requireAuth(ctx, args.token);
@@ -723,13 +744,14 @@ export const search = query({
       });
 
     // Range filters via .filter()
-    if (args.attendanceMax !== undefined || args.attendanceMin !== undefined) {
+    const scoreFilterField = (args.scoreField ?? "score1") as "score1" | "score2" | "score3" | "score4";
+    if (args.scoreMax !== undefined || args.scoreMin !== undefined) {
       results = results.filter((fq) => {
         const conds: any[] = [];
-        if (args.attendanceMax !== undefined)
-          conds.push(fq.lt(fq.field("attendanceScore"), args.attendanceMax));
-        if (args.attendanceMin !== undefined)
-          conds.push(fq.gt(fq.field("attendanceScore"), args.attendanceMin));
+        if (args.scoreMax !== undefined)
+          conds.push(fq.lt(fq.field(scoreFilterField), args.scoreMax));
+        if (args.scoreMin !== undefined)
+          conds.push(fq.gt(fq.field(scoreFilterField), args.scoreMin));
         return conds.length === 1 ? conds[0] : fq.and(...(conds as [any, any, ...any[]]));
       });
     }
@@ -831,12 +853,15 @@ export const history = query({
     const DAY_MS = 24 * 60 * 60 * 1000;
     const sixtyDaysAgo = currentTime - 60 * DAY_MS;
     const attendanceCutoff = Math.max(member.joinedAt, sixtyDaysAgo);
+    // Past non-cancelled meetings (see "Meeting Status Quirks" at top of file)
     const meetings = await ctx.db
       .query("meetings")
-      .withIndex("by_group_status", (q) =>
-        q.eq("groupId", args.groupId).eq("status", "completed")
+      .withIndex("by_group_scheduledAt", (q) =>
+        q.eq("groupId", args.groupId)
+          .gte("scheduledAt", attendanceCutoff)
+          .lt("scheduledAt", currentTime)
       )
-      .filter((q) => q.gte(q.field("scheduledAt"), attendanceCutoff))
+      .filter((q) => q.neq(q.field("status"), "cancelled"))
       .order("desc")
       .take(20);
 
@@ -976,12 +1001,15 @@ export const history = query({
         }
       }
 
+      // Past non-cancelled meetings (see "Meeting Status Quirks" at top of file)
       const otherMeetings = await ctx.db
         .query("meetings")
-        .withIndex("by_group_status", (q) =>
-          q.eq("groupId", otherMember.groupId).eq("status", "completed")
+        .withIndex("by_group_scheduledAt", (q) =>
+          q.eq("groupId", otherMember.groupId)
+            .gte("scheduledAt", sixtyDaysAgo)
+            .lt("scheduledAt", currentTime)
         )
-        .filter((q) => q.gte(q.field("scheduledAt"), sixtyDaysAgo))
+        .filter((q) => q.neq(q.field("status"), "cancelled"))
         .order("desc")
         .take(10);
 

@@ -335,6 +335,7 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
   const [subtitleVars, setSubtitleVars] = useState<string[]>([]);
   const [hasScoreChanges, setHasScoreChanges] = useState(false);
   const [savingScores, setSavingScores] = useState(false);
+  const [showSavedMessage, setShowSavedMessage] = useState(false);
 
   // Inline variable picker state
   const [addVariableTarget, setAddVariableTarget] = useState<number | null>(null);
@@ -526,6 +527,8 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
             },
       });
       setHasScoreChanges(false);
+      setShowSavedMessage(true);
+      setTimeout(() => setShowSavedMessage(false), 8000);
     } catch (err) {
       console.error("[updateFollowupScoreConfig] failed:", err);
     } finally {
@@ -637,19 +640,21 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
           <Ionicons name="close" size={18} color="#6B7280" />
         </TouchableOpacity>
       </View>
-      {Array.from(variablesByCategory.entries()).map(([category, variables]) => (
-        <View key={category}>
-          <Text style={styles.categoryHeader}>
-            {category.charAt(0).toUpperCase() + category.slice(1)}
-          </Text>
-          {variables.map((v) => (
-            <Pressable key={v.id} style={styles.pickerRow} onPress={() => onSelect(v.id)}>
-              <Text style={styles.pickerLabel}>{v.label}</Text>
-              <Text style={styles.pickerDesc}>{v.description}</Text>
-            </Pressable>
-          ))}
-        </View>
-      ))}
+      <ScrollView style={styles.inlinePickerScroll} nestedScrollEnabled bounces={false}>
+        {Array.from(variablesByCategory.entries()).map(([category, variables]) => (
+          <View key={category}>
+            <Text style={styles.categoryHeader}>
+              {category.charAt(0).toUpperCase() + category.slice(1)}
+            </Text>
+            {variables.map((v) => (
+              <Pressable key={v.id} style={styles.pickerRow} onPress={() => onSelect(v.id)}>
+                <Text style={styles.pickerLabel}>{v.label}</Text>
+                <Text style={styles.pickerDesc}>{v.description}</Text>
+              </Pressable>
+            ))}
+          </View>
+        ))}
+      </ScrollView>
     </View>
   );
 
@@ -1028,6 +1033,11 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
                   <Text style={styles.saveButtonText}>Save Scores & Alerts</Text>
                 )}
               </TouchableOpacity>
+            )}
+            {showSavedMessage && (
+              <Text style={styles.savedMessage}>
+                Saved! Scores are recomputing in the background — this may take a few minutes for large groups.
+              </Text>
             )}
           </View>
         )}
@@ -1533,6 +1543,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "600" as const,
   },
+  savedMessage: {
+    fontSize: 12,
+    color: "#6B7280",
+    marginTop: 8,
+    fontStyle: "italic" as const,
+  },
 
   // Scores section
   scoreCard: {
@@ -1675,7 +1691,6 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     padding: 8,
     maxHeight: 260,
-    overflow: "hidden",
   },
   inlinePickerScroll: {
     flexGrow: 0,
