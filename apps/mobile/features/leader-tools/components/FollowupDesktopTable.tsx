@@ -666,7 +666,14 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
     } catch (err) {
       console.error("[setAssignee] failed:", err);
       // Revert optimistic update on failure
-      setOptimistic((prev) => { const next = { ...prev }; delete next[memberId]?.assigneeId; return next; });
+      setOptimistic((prev) => {
+        const next = { ...prev };
+        if (next[memberId]) {
+          delete next[memberId].assigneeId;
+          if (Object.keys(next[memberId]).length === 0) delete next[memberId];
+        }
+        return next;
+      });
     }
   };
 
@@ -682,7 +689,14 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
       });
     } catch (err) {
       console.error("[setStatus] failed:", err);
-      setOptimistic((prev) => { const next = { ...prev }; delete next[memberId]?.status; return next; });
+      setOptimistic((prev) => {
+        const next = { ...prev };
+        if (next[memberId]) {
+          delete next[memberId].status;
+          if (Object.keys(next[memberId]).length === 0) delete next[memberId];
+        }
+        return next;
+      });
     }
   };
 

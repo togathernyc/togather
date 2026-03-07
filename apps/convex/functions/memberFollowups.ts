@@ -1226,37 +1226,16 @@ export const updateAttendance = mutation({
         recordedById: userId,
         recordedAt: timestamp,
       });
-
-      // Recompute scores after attendance change
-      const groupMemberExisting = await ctx.db
-        .query("groupMembers")
-        .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
-        .filter((q) => q.eq(q.field("userId"), args.targetUserId))
-        .filter((q) => q.eq(q.field("leftAt"), undefined))
-        .first();
-      if (groupMemberExisting) {
-        await ctx.scheduler.runAfter(
-          0,
-          internal.functions.followupScoreComputation.computeSingleMemberScore,
-          { groupId: args.groupId, groupMemberId: groupMemberExisting._id }
-        );
-      }
-
-      return {
+    } else {
+      // Create new attendance record
+      await ctx.db.insert("meetingAttendances", {
         meetingId: args.meetingId,
-        odUserId: args.targetUserId,
+        userId: args.targetUserId,
         status: args.status,
-      };
+        recordedById: userId,
+        recordedAt: timestamp,
+      });
     }
-
-    // Create new attendance record
-    await ctx.db.insert("meetingAttendances", {
-      meetingId: args.meetingId,
-      userId: args.targetUserId,
-      status: args.status,
-      recordedById: userId,
-      recordedAt: timestamp,
-    });
 
     // Recompute scores after attendance change
     const groupMember = await ctx.db
