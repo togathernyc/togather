@@ -369,34 +369,6 @@ export const internalGetGroupConfig = internalQuery({
 });
 
 /**
- * Fetch a page of active members using cursor-based pagination.
- * Avoids Convex's 8192 array length limit on return values.
- */
-export const internalGetMemberPage = internalQuery({
-  args: {
-    groupId: v.id("groups"),
-    paginationOpts: paginationOptsValidator,
-  },
-  handler: async (ctx, args) => {
-    const result = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
-      .filter((q) => q.eq(q.field("leftAt"), undefined))
-      .paginate(args.paginationOpts);
-
-    return {
-      members: result.page.map((m) => ({
-        _id: m._id,
-        userId: m.userId,
-        joinedAt: m.joinedAt,
-      })),
-      isDone: result.isDone,
-      continueCursor: result.continueCursor,
-    };
-  },
-});
-
-/**
  * Score a batch of members against meeting attendance and followup data.
  * Each batch should be ~200 members to stay within Convex's per-query read limits.
  * Read budget per batch of 200: ~8,420 (1 group + 200 users + 4000 attendance + 4000 followups).

@@ -22,6 +22,7 @@ import { FollowupDetailContent } from "./FollowupDetailScreen";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { FollowupSettingsPanel } from "./FollowupSettingsPanel";
 import type { CustomFieldDef } from "./ColumnPickerModal";
+import { getScoreValue } from "./FollowupScreen";
 
 // ============================================================================
 // Types
@@ -122,15 +123,6 @@ type DropdownPosition = {
 // ============================================================================
 // Helpers
 // ============================================================================
-
-function getScoreValue(member: FollowupMember, scoreId: string): number {
-  const idx = member.scoreIds.indexOf(scoreId);
-  if (idx === 0) return member.score1;
-  if (idx === 1) return member.score2;
-  if (idx === 2) return member.score3 ?? 0;
-  if (idx === 3) return member.score4 ?? 0;
-  return 0;
-}
 
 function getScoreColor(value: number): string {
   if (value >= 70) return "#4CAF50";
@@ -341,14 +333,15 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
       { key: "phone", label: "Phone", defaultWidth: 140, sortable: false },
     ];
 
-    // Score columns
+    // Score columns (only score1 and score2 have backend indexes for sorting)
     scoreConfig.forEach((sc, i) => {
+      const isSortable = i < 2;
       allAvailable.push({
         key: `score${i + 1}`,
         label: sc.name,
         defaultWidth: 100,
-        sortable: true,
-        serverSortKey: `score${i + 1}`,
+        sortable: isSortable,
+        serverSortKey: isSortable ? `score${i + 1}` : undefined,
       });
     });
 

@@ -96,7 +96,7 @@ export const SUBTITLE_VARIABLE_MAP = new Map(
  * Get the score value for a given score config entry from a member doc.
  * Maps scoreConfig[i].id → score1, score2, score3, score4.
  */
-function getScoreValue(member: FollowupMember, scoreId: string): number {
+export function getScoreValue(member: FollowupMember, scoreId: string): number {
   const idx = member.scoreIds.indexOf(scoreId);
   if (idx === 0) return member.score1;
   if (idx === 1) return member.score2;
