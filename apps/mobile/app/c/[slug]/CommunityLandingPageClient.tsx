@@ -204,7 +204,7 @@ export default function CommunityLandingPageClient() {
               onPress={() => {
                 if (Platform.OS === "web") {
                   window.open(
-                    "https://apps.apple.com/app/togather-community/id6738880626",
+                    "https://apps.apple.com/us/app/togather-life-in-community/id6756286011",
                     "_blank"
                   );
                 }
@@ -218,14 +218,14 @@ export default function CommunityLandingPageClient() {
               onPress={() => {
                 if (Platform.OS === "web") {
                   window.open(
-                    "https://play.google.com/store/apps/details?id=com.togather.app",
+                    `${DOMAIN_CONFIG.appUrl}/android`,
                     "_blank"
                   );
                 }
               }}
             >
-              <Ionicons name="logo-google-playstore" size={20} color="#fff" />
-              <Text style={styles.appStoreButtonText}>Google Play</Text>
+              <Ionicons name="logo-android" size={20} color="#fff" />
+              <Text style={styles.appStoreButtonText}>Android APK</Text>
             </TouchableOpacity>
           </View>
         </View>
