@@ -105,7 +105,7 @@ export default function CommunityLandingPageClient() {
         return {
           slot: field.slot || undefined,
           label: field.label,
-          value: customFieldValues[key] ?? (field.type === "boolean" ? false : ""),
+          value: customFieldValues[key] ?? (field.type === "boolean" ? false : field.type === "number" ? undefined : ""),
         };
       });
 
