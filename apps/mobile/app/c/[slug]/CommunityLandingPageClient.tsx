@@ -9,7 +9,6 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   TextInput,
-  Switch,
   Platform,
   KeyboardAvoidingView,
 } from "react-native";
@@ -85,6 +84,7 @@ export default function CommunityLandingPageClient() {
 
     // Validate required custom fields
     for (const field of data.formFields || []) {
+      if (field.type === "section_header" || field.type === "subtitle") continue;
       if (field.required) {
         const key = field.slot || field.label;
         const value = customFieldValues[key];
@@ -108,6 +108,7 @@ export default function CommunityLandingPageClient() {
       // Build custom fields array — only include fields the user actually filled in
       const customFields = (data.formFields || [])
         .filter((field) => {
+          if (field.type === "section_header" || field.type === "subtitle") return false;
           const key = field.slot || field.label;
           const rawValue = customFieldValues[key];
 
@@ -398,19 +399,35 @@ function DynamicField({
   onChange: (value: any) => void;
 }) {
   switch (field.type) {
+    case "section_header":
+      return (
+        <View style={styles.sectionHeaderField}>
+          <Text style={styles.sectionHeaderText}>{field.label}</Text>
+        </View>
+      );
+
+    case "subtitle":
+      return (
+        <View style={styles.subtitleField}>
+          <Text style={styles.subtitleText}>{field.label}</Text>
+        </View>
+      );
+
     case "boolean":
       return (
-        <View style={styles.booleanField}>
-          <Switch
-            value={!!value}
-            onValueChange={onChange}
-            trackColor={{ false: "#ddd", true: "#4CAF50" }}
-          />
+        <TouchableOpacity
+          style={styles.booleanField}
+          onPress={() => onChange(!value)}
+          activeOpacity={0.7}
+        >
+          <View style={[styles.checkbox, !!value && styles.checkboxChecked]}>
+            {!!value && <Ionicons name="checkmark" size={16} color="#fff" />}
+          </View>
           <Text style={styles.booleanLabel}>
             {field.label}
             {field.required && <Text style={styles.required}> *</Text>}
           </Text>
-        </View>
+        </TouchableOpacity>
       );
 
     case "number":
@@ -600,12 +617,26 @@ const styles = StyleSheet.create({
     backgroundColor: "#fafafa",
   },
 
-  // Boolean field
+  // Boolean field (checkbox)
   booleanField: {
     flexDirection: "row",
     alignItems: "center",
     marginBottom: 16,
     gap: 12,
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: "#ccc",
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#fff",
+  },
+  checkboxChecked: {
+    backgroundColor: "#4CAF50",
+    borderColor: "#4CAF50",
   },
   booleanLabel: {
     fontSize: 16,
@@ -638,6 +669,28 @@ const styles = StyleSheet.create({
   dropdownOptionTextSelected: {
     color: "#2E7D32",
     fontWeight: "600",
+  },
+
+  // Section header & subtitle (decorative fields)
+  sectionHeaderField: {
+    marginTop: 24,
+    marginBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "#eee",
+    paddingBottom: 8,
+  },
+  sectionHeaderText: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#333",
+  },
+  subtitleField: {
+    marginBottom: 12,
+  },
+  subtitleText: {
+    fontSize: 14,
+    color: "#666",
+    lineHeight: 20,
   },
 
   // Error

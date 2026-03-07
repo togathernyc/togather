@@ -39,7 +39,11 @@ const FIELD_TYPES = [
   { value: "number", label: "Number" },
   { value: "boolean", label: "Checkbox" },
   { value: "dropdown", label: "Dropdown" },
+  { value: "section_header", label: "Section Header" },
+  { value: "subtitle", label: "Subtitle" },
 ];
+
+const DECORATIVE_TYPES = new Set(["section_header", "subtitle"]);
 
 const OPERATORS = [
   { value: "equals", label: "Equals" },
@@ -159,6 +163,19 @@ export function LandingPageContent() {
   }, [config, followupCustomFields]);
 
   const markDirty = useCallback(() => setIsDirty(true), []);
+
+  const moveField = useCallback((index: number, direction: -1 | 1) => {
+    setFormFields((prev) => {
+      const sorted = [...prev].sort((a, b) => a.order - b.order);
+      const targetIdx = index + direction;
+      if (targetIdx < 0 || targetIdx >= sorted.length) return prev;
+      const tempOrder = sorted[index].order;
+      sorted[index] = { ...sorted[index], order: sorted[targetIdx].order };
+      sorted[targetIdx] = { ...sorted[targetIdx], order: tempOrder };
+      return sorted;
+    });
+    markDirty();
+  }, [markDirty]);
 
   const handleSave = async () => {
     try {
@@ -350,18 +367,60 @@ export function LandingPageContent() {
         {formFields.length === 0 ? (
           <Text style={styles.emptyText}>No custom fields configured</Text>
         ) : (
-          [...formFields]
-            .sort((a, b) => a.order - b.order)
-            .map((field) => {
+          (() => {
+            const sorted = [...formFields].sort((a, b) => a.order - b.order);
+            return sorted.map((field, sortedIndex) => {
               const originalIndex = formFields.indexOf(field);
+              const isDecorative = DECORATIVE_TYPES.has(field.type);
               return (
                 <View key={field.slot || field.label || originalIndex} style={styles.listItem}>
+                  <View style={styles.reorderButtons}>
+                    <TouchableOpacity
+                      onPress={() => moveField(sortedIndex, -1)}
+                      disabled={sortedIndex === 0}
+                      style={styles.iconButton}
+                    >
+                      <Ionicons
+                        name="chevron-up"
+                        size={18}
+                        color={sortedIndex === 0 ? "#ccc" : "#666"}
+                      />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => moveField(sortedIndex, 1)}
+                      disabled={sortedIndex === sorted.length - 1}
+                      style={styles.iconButton}
+                    >
+                      <Ionicons
+                        name="chevron-down"
+                        size={18}
+                        color={sortedIndex === sorted.length - 1 ? "#ccc" : "#666"}
+                      />
+                    </TouchableOpacity>
+                  </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.listItemTitle}>{field.label}</Text>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                      {isDecorative && (
+                        <Ionicons
+                          name={field.type === "section_header" ? "remove-outline" : "information-circle-outline"}
+                          size={16}
+                          color="#999"
+                        />
+                      )}
+                      <Text style={[
+                        styles.listItemTitle,
+                        field.type === "section_header" && { fontWeight: "700" },
+                        field.type === "subtitle" && { fontStyle: "italic", color: "#666" },
+                      ]}>
+                        {field.label}
+                      </Text>
+                    </View>
                     <Text style={styles.listItemSubtitle}>
-                      {field.type}
-                      {field.slot ? ` · ${field.slot}` : " · notes only"}
-                      {field.required ? " · required" : ""}
+                      {field.type === "section_header" ? "section header" :
+                       field.type === "subtitle" ? "subtitle" :
+                       field.type}
+                      {!isDecorative && (field.slot ? ` · ${field.slot}` : " · notes only")}
+                      {!isDecorative && field.required ? " · required" : ""}
                     </Text>
                   </View>
                   <TouchableOpacity
@@ -384,7 +443,8 @@ export function LandingPageContent() {
                   </TouchableOpacity>
                 </View>
               );
-            })
+            });
+          })()
         )}
       </View>
 
@@ -557,9 +617,21 @@ function FieldEditorModal({
     }
   }, [visible, field]);
 
+  const isDecorative = DECORATIVE_TYPES.has(type);
+
   const handleSave = () => {
     if (!label.trim()) {
       Alert.alert("Error", "Label is required");
+      return;
+    }
+
+    if (isDecorative) {
+      onSave({
+        label: label.trim(),
+        type,
+        required: false,
+        order: field?.order ?? 0,
+      });
       return;
     }
 
@@ -642,50 +714,52 @@ function FieldEditorModal({
               </View>
             </View>
 
-            <View style={styles.field}>
-              <Text style={styles.fieldLabel}>Custom Field Slot</Text>
-              <Text style={styles.fieldHint}>
-                Maps to a follow-up column. Leave empty for notes-only.
-              </Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                style={{ marginTop: 8 }}
-              >
-                <View style={modalStyles.chipContainer}>
-                  {availableSlots
-                    .filter((s) => {
-                      if (!s.value) return true; // "No slot" always shows
-                      if (type === "text" || type === "dropdown")
-                        return s.value.startsWith("customText");
-                      if (type === "number") return s.value.startsWith("customNum");
-                      if (type === "boolean") return s.value.startsWith("customBool");
-                      return false;
-                    })
-                    .map((s) => (
-                      <TouchableOpacity
-                        key={s.value}
-                        style={[
-                          modalStyles.chip,
-                          slot === s.value && modalStyles.chipSelected,
-                        ]}
-                        onPress={() => setSlot(s.value)}
-                      >
-                        <Text
+            {!isDecorative && (
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>Custom Field Slot</Text>
+                <Text style={styles.fieldHint}>
+                  Maps to a follow-up column. Leave empty for notes-only.
+                </Text>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  style={{ marginTop: 8 }}
+                >
+                  <View style={modalStyles.chipContainer}>
+                    {availableSlots
+                      .filter((s) => {
+                        if (!s.value) return true; // "No slot" always shows
+                        if (type === "text" || type === "dropdown")
+                          return s.value.startsWith("customText");
+                        if (type === "number") return s.value.startsWith("customNum");
+                        if (type === "boolean") return s.value.startsWith("customBool");
+                        return false;
+                      })
+                      .map((s) => (
+                        <TouchableOpacity
+                          key={s.value}
                           style={[
-                            modalStyles.chipText,
-                            slot === s.value && modalStyles.chipTextSelected,
+                            modalStyles.chip,
+                            slot === s.value && modalStyles.chipSelected,
                           ]}
+                          onPress={() => setSlot(s.value)}
                         >
-                          {s.label}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                </View>
-              </ScrollView>
-            </View>
+                          <Text
+                            style={[
+                              modalStyles.chipText,
+                              slot === s.value && modalStyles.chipTextSelected,
+                            ]}
+                          >
+                            {s.label}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                  </View>
+                </ScrollView>
+              </View>
+            )}
 
-            {type === "dropdown" && (
+            {!isDecorative && type === "dropdown" && (
               <View style={styles.field}>
                 <Text style={styles.fieldLabel}>Options (comma-separated)</Text>
                 <TextInput
@@ -697,10 +771,12 @@ function FieldEditorModal({
               </View>
             )}
 
-            <View style={styles.row}>
-              <Text style={styles.rowLabel}>Required</Text>
-              <Switch value={required} onValueChange={setRequired} />
-            </View>
+            {!isDecorative && (
+              <View style={styles.row}>
+                <Text style={styles.rowLabel}>Required</Text>
+                <Switch value={required} onValueChange={setRequired} />
+              </View>
+            )}
           </ScrollView>
 
           <TouchableOpacity style={modalStyles.saveButton} onPress={handleSave}>
@@ -1013,6 +1089,10 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: "#f5f5f5",
+  },
+  reorderButtons: {
+    flexDirection: "column",
+    marginRight: 4,
   },
   listItemTitle: {
     fontSize: 15,
