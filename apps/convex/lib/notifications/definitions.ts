@@ -137,15 +137,6 @@ interface BotGenericMessageData {
   senderId?: string;
 }
 
-// Follow-up Assignment Types
-interface FollowupAssignedData {
-  memberName: string;
-  groupName: string;
-  groupId: string;
-  groupMemberId: string;
-  communityId?: string;
-}
-
 // Test Types
 interface TestNotificationData {
   title: string;
@@ -589,28 +580,6 @@ export const botGenericMessage: NotificationDefinition<BotGenericMessageData> =
     },
     defaultChannels: ['chat'],
   };
-
-// ============================================================================
-// Follow-up Assignment Definitions
-// ============================================================================
-
-export const followupAssigned: NotificationDefinition<FollowupAssignedData> = {
-  type: 'followup_assigned',
-  description: 'Sent when a leader is assigned to follow up with a member',
-  formatters: {
-    push: (ctx) => ({
-      title: 'New follow-up assignment',
-      body: `You've been assigned to follow up with ${ctx.data.memberName} in ${ctx.data.groupName}`,
-      data: {
-        type: 'followup_assigned',
-        groupId: ctx.data.groupId,
-        groupMemberId: ctx.data.groupMemberId,
-        communityId: ctx.data.communityId,
-      },
-    }),
-  },
-  defaultChannels: ['push'],
-};
 
 // ============================================================================
 // Test Definitions
