@@ -552,7 +552,6 @@ export const internalScoreBatch = internalQuery({
  */
 export const internalCrossGroupAttendance = internalQuery({
   args: {
-    groupId: v.id("groups"),
     userIds: v.array(v.id("users")),
   },
   handler: async (ctx, args) => {
@@ -571,12 +570,13 @@ export const internalCrossGroupAttendance = internalQuery({
       let allGroupsAttended = 0;
 
       for (const membership of allMemberships) {
+        const attendanceCutoff = Math.max(membership.joinedAt, sixtyDaysAgo);
         const meetings = await ctx.db
           .query("meetings")
           .withIndex("by_group_status", (q) =>
             q.eq("groupId", membership.groupId).eq("status", "completed")
           )
-          .filter((q) => q.gte(q.field("scheduledAt"), sixtyDaysAgo))
+          .filter((q) => q.gte(q.field("scheduledAt"), attendanceCutoff))
           .order("desc")
           .take(10);
 

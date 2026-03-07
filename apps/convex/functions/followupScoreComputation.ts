@@ -295,7 +295,7 @@ export const computeGroupScores = internalAction({
           const batch = userIds.slice(i, i + CROSS_BATCH);
           const batchResults: Record<string, number> = await ctx.runQuery(
             internal.functions.memberFollowups.internalCrossGroupAttendance,
-            { groupId: args.groupId, userIds: batch }
+            { userIds: batch }
           );
           Object.assign(crossGroupAttendanceMap, batchResults);
         }
@@ -371,7 +371,7 @@ export const computeSingleMemberScore = internalAction({
     if (groupDoc) {
       crossGroupAttendanceMap = await ctx.runQuery(
         internal.functions.memberFollowups.internalCrossGroupAttendance,
-        { groupId: args.groupId, userIds: [memberData.userId] }
+        { userIds: [memberData.userId] }
       );
     }
 
