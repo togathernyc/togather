@@ -182,6 +182,24 @@ const DEFAULT_OG_IMAGE = "";
 // Note: /android path handling is environment-aware (see isLandingPagePath)
 const LANDING_PAGE_PATHS = ["/", "/download", "/legal", "/legal/privacy", "/legal/terms", "/contribute", "/issue"];
 
+// Known single-segment app routes that should NOT be redirected to /c/:slug.
+// These come from Expo Router route groups: (tabs), (auth), (user), (landing), and root-level routes.
+const KNOWN_APP_ROUTES = new Set([
+  // (tabs)
+  "admin", "chat", "groups", "profile", "search",
+  // (auth)
+  "claim-account", "confirm-identity", "join-flow", "new-user-profile",
+  "register-phone", "reset-password", "select-community", "signin",
+  "signup", "user-type", "verify-email", "welcome",
+  // (user)
+  "create-event", "create-group", "dinner-party-search", "edit-profile",
+  "group-events", "leader-tools", "redirect", "request-group", "settings",
+  // (landing)
+  "demo", "get-started", "nearme", "our-story", "support",
+  // root
+  "inbox", "ui-test", "planning-center",
+]);
+
 // Static asset extensions that should go to the landing page (when at root level)
 const LANDING_PAGE_ASSET_EXTENSIONS = [
   ".css",
@@ -1223,7 +1241,20 @@ export default {
       return passToApp(request, config);
     }
 
-    // 7. All other paths - pass through to origin
+    // 7. Community landing page redirect: /:slug → /c/:slug
+    // Single-segment paths that aren't known app routes are assumed to be community slugs.
+    // The /c/:slug route in the Expo app handles lookup and rendering.
+    const segments = pathname.split("/").filter(Boolean);
+    if (segments.length === 1) {
+      const slug = segments[0];
+      // Only redirect if it looks like a slug (lowercase, digits, hyphens) and isn't a known app route
+      if (/^[a-z0-9][a-z0-9-]*$/.test(slug) && !KNOWN_APP_ROUTES.has(slug)) {
+        const redirectUrl = new URL(`/c/${slug}${url.search}`, url.origin);
+        return Response.redirect(redirectUrl.toString(), 302);
+      }
+    }
+
+    // 8. All other paths - pass through to origin
     return passToApp(request, config);
   },
 };
