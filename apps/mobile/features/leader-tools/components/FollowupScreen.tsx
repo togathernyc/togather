@@ -392,10 +392,10 @@ export function FollowupScreen() {
             <Ionicons name="settings-outline" size={22} color="#666" />
           </TouchableOpacity>
         </View>
-        {/* Sort toggle row */}
+        {/* Sort toggle row — only first 2 scores have server-side indexes */}
         <View style={styles.sortToggleContainer}>
           <View style={styles.sortToggle}>
-            {scoreConfig.map((sc) => (
+            {scoreConfig.slice(0, 2).map((sc) => (
               <TouchableOpacity
                 key={sc.id}
                 style={[

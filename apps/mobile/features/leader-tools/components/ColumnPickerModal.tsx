@@ -94,7 +94,7 @@ export function ColumnPickerModal({
   const [newFieldOptions, setNewFieldOptions] = useState<string[]>([]);
   const [showAddField, setShowAddField] = useState(false);
 
-  // Reset local state when modal opens
+  // Reset local state when modal opens or when initial values change
   React.useEffect(() => {
     if (visible) {
       // Build the full order from config or default
@@ -115,7 +115,7 @@ export function ColumnPickerModal({
       setEditingFieldIdx(null);
       setShowAddField(false);
     }
-  }, [visible]);
+  }, [visible, initialOrder, initialHidden, initialCustomFields, columns]);
 
   const usedSlots = useMemo(
     () => new Set(fields.map((f) => f.slot)),

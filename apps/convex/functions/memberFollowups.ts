@@ -671,15 +671,18 @@ export const search = query({
 
 /**
  * Get total member count for a group.
+ * Uses a streaming count to avoid loading all documents into memory.
  */
 export const count = query({
   args: { groupId: v.id("groups") },
   handler: async (ctx, args) => {
-    const all = await ctx.db
+    let count = 0;
+    for await (const _doc of ctx.db
       .query("memberFollowupScores")
-      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
-      .collect();
-    return all.length;
+      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))) {
+      count++;
+    }
+    return count;
   },
 });
 
