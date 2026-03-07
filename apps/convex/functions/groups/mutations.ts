@@ -12,6 +12,7 @@ import { now, generateShortId } from "../../lib/utils";
 import { groupRoleValidator } from "../../lib/validators";
 import { requireAuth } from "../../lib/auth";
 import { validateScoreConfig, type ScoreConfig } from "../followupScoring";
+import { VALID_CUSTOM_SLOTS } from "../../lib/followupConstants";
 import { isCommunityAdmin, requireCommunityAdmin } from "../../lib/permissions";
 import { isActiveLeader, isActiveMembership } from "../../lib/helpers";
 import {
@@ -875,12 +876,6 @@ export const updateFollowupScoreConfig = mutation({
  * Save follow-up column configuration (column order, visibility, custom fields).
  * Pass undefined to clear the config.
  */
-const VALID_CUSTOM_SLOTS = new Set([
-  "customText1","customText2","customText3","customText4","customText5",
-  "customNum1","customNum2","customNum3","customNum4","customNum5",
-  "customBool1","customBool2","customBool3","customBool4","customBool5",
-]);
-
 const SLOT_PREFIX_TYPE: Record<string, string[]> = {
   customText: ["text", "dropdown"],
   customNum: ["number"],

@@ -13,7 +13,6 @@
 
 import { v } from "convex/values";
 import {
-  action,
   internalAction,
   internalMutation,
   internalQuery,
@@ -443,7 +442,7 @@ export const dailyRefreshAllScores = internalAction({
  * One-time backfill for existing groups.
  * Usage: npx convex run functions/followupScoreComputation:backfillAllGroups
  */
-export const backfillAllGroups = action({
+export const backfillAllGroups = internalAction({
   args: {},
   handler: async (ctx): Promise<{ scheduled: number }> => {
     const groupIds: Id<"groups">[] = await ctx.runQuery(
@@ -506,7 +505,7 @@ export const backfillSearchText = internalMutation({
  * Backfill searchText for all groups.
  * Usage: npx convex run functions/followupScoreComputation:backfillSearchTextForAllGroups
  */
-export const backfillSearchTextForAllGroups = action({
+export const backfillSearchTextForAllGroups = internalAction({
   args: {},
   handler: async (ctx): Promise<{ scheduled: number }> => {
     const groupIds: Id<"groups">[] = await ctx.runQuery(

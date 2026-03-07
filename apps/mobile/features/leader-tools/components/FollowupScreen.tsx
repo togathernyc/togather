@@ -112,8 +112,7 @@ export function FollowupScreen() {
   const router = useRouter();
   const { primaryColor } = useCommunityTheme();
 
-  // Sort state — maps to server-side index
-  // "score1" and "score2" use server indexes; "__weighted__" uses client-side
+  // Sort state — maps to server-side index (score1 or score2)
   const [sortField, setSortField] = useState<string | null>(null);
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
 
@@ -136,15 +135,12 @@ export function FollowupScreen() {
 
   // Map sortField to server sort key
   const serverSortBy = useMemo(() => {
-    if (!sortField || sortField === "__weighted__") return "score1";
+    if (!sortField) return "score1";
     const idx = scoreConfig.findIndex((s) => s.id === sortField);
     if (idx === 0) return "score1";
     if (idx === 1) return "score2";
     return "score1";
   }, [sortField, scoreConfig]);
-
-  // For weighted sort, we use score1 index and re-sort client-side
-  const serverSortDirection = sortField === "__weighted__" ? "desc" : sortDirection;
 
   // Paginated member list from pre-computed scores
   const {
@@ -158,39 +154,14 @@ export function FollowupScreen() {
       ? {
           groupId: group_id as Id<"groups">,
           sortBy: serverSortBy,
-          sortDirection: serverSortDirection,
+          sortDirection: sortDirection,
         }
       : "skip",
     { initialNumItems: 50 }
   );
 
-  // Apply client-side weighted sort if needed
-  const members = useMemo(() => {
-    if (!rawMembers) return undefined;
-
-    if (sortField !== "__weighted__") {
-      return rawMembers as unknown as FollowupMember[];
-    }
-
-    // Weighted sort: alert count (desc) then average score
-    const sorted = [...rawMembers] as unknown as FollowupMember[];
-    sorted.sort((a, b) => {
-      const aAlerts = a.alerts?.length ?? 0;
-      const bAlerts = b.alerts?.length ?? 0;
-      if (aAlerts !== bAlerts) {
-        return sortDirection === "desc" ? bAlerts - aAlerts : aAlerts - bAlerts;
-      }
-      // Tiebreaker: average of all configured scores
-      const aAvg = scoreConfig.length > 0
-        ? scoreConfig.reduce((sum, sc) => sum + getScoreValue(a, sc.id), 0) / scoreConfig.length
-        : 0;
-      const bAvg = scoreConfig.length > 0
-        ? scoreConfig.reduce((sum, sc) => sum + getScoreValue(b, sc.id), 0) / scoreConfig.length
-        : 0;
-      return sortDirection === "desc" ? aAvg - bAvg : bAvg - aAvg;
-    });
-    return sorted;
-  }, [rawMembers, sortField, sortDirection, scoreConfig]);
+  // Cast rawMembers to expected type
+  const members = rawMembers as unknown as FollowupMember[] | undefined;
 
   // Fetch group info for header
   const groupData = useQuery(
@@ -218,7 +189,7 @@ export function FollowupScreen() {
       setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
     } else {
       setSortField(field);
-      setSortDirection(field === "__weighted__" ? "desc" : "asc");
+      setSortDirection("asc");
     }
   };
 
@@ -424,33 +395,6 @@ export function FollowupScreen() {
         {/* Sort toggle row */}
         <View style={styles.sortToggleContainer}>
           <View style={styles.sortToggle}>
-            {scoreConfig.length > 1 && (
-              <TouchableOpacity
-                key="__weighted__"
-                style={[
-                  styles.sortOption,
-                  sortField === "__weighted__" && styles.sortOptionActive,
-                ]}
-                onPress={() => handleSortPress("__weighted__")}
-              >
-                <Text
-                  style={[
-                    styles.sortOptionText,
-                    sortField === "__weighted__" && styles.sortOptionTextActive,
-                  ]}
-                >
-                  Weighted
-                </Text>
-                {sortField === "__weighted__" && (
-                  <Ionicons
-                    name={sortDirection === "asc" ? "arrow-up" : "arrow-down"}
-                    size={12}
-                    color={primaryColor}
-                    style={styles.sortArrow}
-                  />
-                )}
-              </TouchableOpacity>
-            )}
             {scoreConfig.map((sc) => (
               <TouchableOpacity
                 key={sc.id}

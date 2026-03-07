@@ -25,6 +25,7 @@ import {
   type ScoreConfig,
   type PcoServingData,
 } from "./followupScoring";
+import { VALID_CUSTOM_SLOTS } from "../lib/followupConstants";
 
 // ============================================================================
 // Types and Constants
@@ -1468,12 +1469,6 @@ export const setConnectionPoint = mutation({
  * Set or clear a custom field value on a member's followup score doc.
  * Validates that the slot name is valid and the value type matches the slot prefix.
  */
-const VALID_CUSTOM_SLOTS = new Set([
-  "customText1","customText2","customText3","customText4","customText5",
-  "customNum1","customNum2","customNum3","customNum4","customNum5",
-  "customBool1","customBool2","customBool3","customBool4","customBool5",
-]);
-
 export const setCustomField = mutation({
   args: {
     token: v.string(),
