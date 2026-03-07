@@ -209,8 +209,13 @@ function parseQuerySyntax(
   // Supports range: "attendance:>20 attendance:<80" sets both min and max.
   // Only one score column at a time — filters for a different column are ignored.
   // Note: Only strict < and > are supported (not <= or >=) to match server behavior.
+  const reservedKeywords = new Set(["status", "assignee"]);
   freeText = freeText.replace(/(\w+):[<>](\d+)/gi, (match, name, num) => {
     const lowerName = name.toLowerCase();
+    // Skip reserved keywords to avoid consuming tokens intended for other filters
+    if (reservedKeywords.has(lowerName)) {
+      return match;
+    }
     const idx = scoreConfig.findIndex((sc) =>
       sc.name.toLowerCase().startsWith(lowerName)
     );
