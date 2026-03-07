@@ -123,8 +123,7 @@ export const internalUpsertScoreBatch = internalMutation({
         avatarUrl: score.avatarUrl,
         email: score.email,
         phone: score.phone,
-        searchText: [score.firstName, score.lastName, score.email, score.phone, score.phone?.replace(/^\+\d{1,3}/, "")]
-          .filter(Boolean).join(" "),
+        searchText: score.searchText,
         latestNote: score.latestNote,
         latestNoteAt: score.latestNoteAt,
         memberSubtitleValue: score.memberSubtitleValue,
