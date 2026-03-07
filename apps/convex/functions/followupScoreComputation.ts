@@ -279,23 +279,40 @@ export const computeGroupScores = internalAction({
         continue;
       }
 
-      // Step 3: Score the batch using existing internalScoreBatch
+      // Step 3: Pre-compute cross-group attendance (only for groups with custom scoring)
       const memberBatch = page.members.map((m) => ({
         _id: m._id,
         userId: m.userId,
         joinedAt: m.joinedAt,
       }));
 
+      let crossGroupAttendanceMap: Record<string, number> | undefined;
+      if (groupDoc) {
+        crossGroupAttendanceMap = {};
+        const CROSS_BATCH = 20;
+        const userIds = page.members.map((m) => m.userId);
+        for (let i = 0; i < userIds.length; i += CROSS_BATCH) {
+          const batch = userIds.slice(i, i + CROSS_BATCH);
+          const batchResults: Record<string, number> = await ctx.runQuery(
+            internal.functions.memberFollowups.internalCrossGroupAttendance,
+            { groupId: args.groupId, userIds: batch }
+          );
+          Object.assign(crossGroupAttendanceMap, batchResults);
+        }
+      }
+
+      // Step 4: Score the batch using existing internalScoreBatch
       const scoredResults: any[] = await ctx.runQuery(
         internal.functions.memberFollowups.internalScoreBatch,
         {
           groupId: args.groupId,
           members: memberBatch,
           meetings: config.meetings,
+          crossGroupAttendanceMap,
         }
       );
 
-      // Step 4: Transform and upsert
+      // Step 5: Transform and upsert
       // Build a lookup map from memberId to member data for denormalized fields
       const memberMap = new Map(page.members.map((m) => [m._id.toString(), m]));
 
@@ -349,6 +366,15 @@ export const computeSingleMemberScore = internalAction({
 
     if (!memberData) return;
 
+    // Pre-compute cross-group attendance for this member (if custom scoring)
+    let crossGroupAttendanceMap: Record<string, number> | undefined;
+    if (groupDoc) {
+      crossGroupAttendanceMap = await ctx.runQuery(
+        internal.functions.memberFollowups.internalCrossGroupAttendance,
+        { groupId: args.groupId, userIds: [memberData.userId] }
+      );
+    }
+
     // Score the single member
     const scoredResults = await ctx.runQuery(
       internal.functions.memberFollowups.internalScoreBatch,
@@ -360,6 +386,7 @@ export const computeSingleMemberScore = internalAction({
           joinedAt: memberData.joinedAt,
         }],
         meetings: config.meetings,
+        crossGroupAttendanceMap,
       }
     );
 

@@ -389,6 +389,7 @@ export const internalScoreBatch = internalQuery({
         scheduledAt: v.number(),
       })
     ),
+    crossGroupAttendanceMap: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
     const currentTime = now();
@@ -467,48 +468,10 @@ export const internalScoreBatch = internalQuery({
           otherGroupAttendance: 0,
         });
 
-        // Cross-group attendance: find all other groups this user is in
-        let crossGroupAttendancePct: number | undefined;
-        if (useCustomScoring) {
-          const sixtyDaysAgo = currentTime - 60 * 24 * 60 * 60 * 1000;
-          const allMemberships = await ctx.db
-            .query("groupMembers")
-            .withIndex("by_user", (q) => q.eq("userId", member.userId))
-            .filter((q) => q.eq(q.field("leftAt"), undefined))
-            .collect();
-
-          let allGroupsTotal = memberMeetings.length;
-          let allGroupsAttended = meetingData.filter((m) => m.wasPresent).length;
-
-          for (const otherMember of allMemberships) {
-            if (otherMember.groupId.toString() === args.groupId.toString()) continue;
-            const otherMeetings = await ctx.db
-              .query("meetings")
-              .withIndex("by_group_status", (q) =>
-                q.eq("groupId", otherMember.groupId).eq("status", "completed")
-              )
-              .filter((q) => q.gte(q.field("scheduledAt"), sixtyDaysAgo))
-              .order("desc")
-              .take(10);
-
-            const otherAttendances = await Promise.all(
-              otherMeetings.map((m) =>
-                ctx.db
-                  .query("meetingAttendances")
-                  .withIndex("by_meeting_user", (q) =>
-                    q.eq("meetingId", m._id).eq("userId", member.userId)
-                  )
-                  .first()
-              )
-            );
-
-            allGroupsTotal += otherMeetings.length;
-            allGroupsAttended += otherAttendances.filter((a) => a?.status === 1).length;
-          }
-
-          crossGroupAttendancePct =
-            allGroupsTotal > 0 ? Math.round((allGroupsAttended / allGroupsTotal) * 100) : 0;
-        }
+        // Cross-group attendance: use pre-computed map (computed in action layer)
+        const crossGroupAttendancePct = useCustomScoring
+          ? (args.crossGroupAttendanceMap?.[member.userId.toString()] as number | undefined)
+          : undefined;
 
         // Compute configurable scores
         let memberScores: Record<string, number>;
@@ -579,6 +542,64 @@ export const internalScoreBatch = internalQuery({
     return results.filter(
       (r): r is NonNullable<(typeof results)[number]> => r !== null
     );
+  },
+});
+
+/**
+ * Compute cross-group attendance percentages for a batch of users.
+ * Processes ~20 users at a time to stay within Convex read limits.
+ * Returns a map of userId (string) -> attendance percentage (0-100).
+ */
+export const internalCrossGroupAttendance = internalQuery({
+  args: {
+    groupId: v.id("groups"),
+    userIds: v.array(v.id("users")),
+  },
+  handler: async (ctx, args) => {
+    const currentTime = now();
+    const sixtyDaysAgo = currentTime - 60 * 24 * 60 * 60 * 1000;
+    const results: Record<string, number> = {};
+
+    for (const userId of args.userIds) {
+      const allMemberships = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .collect();
+
+      let allGroupsTotal = 0;
+      let allGroupsAttended = 0;
+
+      for (const membership of allMemberships) {
+        const meetings = await ctx.db
+          .query("meetings")
+          .withIndex("by_group_status", (q) =>
+            q.eq("groupId", membership.groupId).eq("status", "completed")
+          )
+          .filter((q) => q.gte(q.field("scheduledAt"), sixtyDaysAgo))
+          .order("desc")
+          .take(10);
+
+        const attendances = await Promise.all(
+          meetings.map((m) =>
+            ctx.db
+              .query("meetingAttendances")
+              .withIndex("by_meeting_user", (q) =>
+                q.eq("meetingId", m._id).eq("userId", userId)
+              )
+              .first()
+          )
+        );
+
+        allGroupsTotal += meetings.length;
+        allGroupsAttended += attendances.filter((a) => a?.status === 1).length;
+      }
+
+      results[userId.toString()] =
+        allGroupsTotal > 0 ? Math.round((allGroupsAttended / allGroupsTotal) * 100) : 0;
+    }
+
+    return results;
   },
 });
 
