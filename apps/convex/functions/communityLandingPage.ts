@@ -607,6 +607,7 @@ export const saveConfig = mutation({
         slot: v.optional(v.string()),
         label: v.string(),
         type: v.string(),
+        placeholder: v.optional(v.string()),
         options: v.optional(v.array(v.string())),
         required: v.boolean(),
         order: v.number(),
