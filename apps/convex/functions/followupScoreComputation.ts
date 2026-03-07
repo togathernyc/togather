@@ -272,6 +272,11 @@ export const computeGroupScores = internalAction({
     let cursor: string | undefined = undefined;
     let isDone = false;
 
+    // Pre-compute whether we need cross-group attendance (depends only on scoreConfig)
+    const usesCrossGroup = scoreConfig.scores.some((s) =>
+      s.variables.some((v) => v.variableId === "attendance_all_groups_pct")
+    ) || scoreConfig.alerts?.some((a) => a.variableId === "attendance_all_groups_pct");
+
     while (!isDone) {
       const page: {
         members: Array<{
@@ -305,9 +310,6 @@ export const computeGroupScores = internalAction({
       }));
 
       let crossGroupAttendanceMap: Record<string, number> | undefined;
-      const usesCrossGroup = scoreConfig.scores.some((s) =>
-        s.variables.some((v) => v.variableId === "attendance_all_groups_pct")
-      ) || scoreConfig.alerts?.some((a) => a.variableId === "attendance_all_groups_pct");
       if (usesCrossGroup) {
         crossGroupAttendanceMap = {};
         const CROSS_BATCH = 10;

@@ -206,13 +206,20 @@ function parseQuerySyntax(
 
   // Extract <columnName>:<N or <columnName>:>N — match against score config names
   // e.g. "attendance:>50", "service:<30", "attend:>50" (prefix match)
+  // Only the first score filter is applied; subsequent score filters on different
+  // columns are ignored to avoid impossible filter conditions (e.g. score2 > 50 AND score2 < 30).
   freeText = freeText.replace(/(\w+):[<>]=?(\d+)/gi, (match, name, num) => {
     const lowerName = name.toLowerCase();
     const idx = scoreConfig.findIndex((sc) =>
       sc.name.toLowerCase().startsWith(lowerName)
     );
     if (idx !== -1) {
-      filters.scoreField = `score${idx + 1}`;
+      const matchedField = `score${idx + 1}`;
+      // If we already have a score filter for a different field, ignore this one
+      if (filters.scoreField && filters.scoreField !== matchedField) {
+        return match; // Leave in search text; only one score column filter is supported
+      }
+      filters.scoreField = matchedField;
       if (match.includes("<")) filters.scoreMax = Number(num);
       else filters.scoreMin = Number(num);
       return "";
