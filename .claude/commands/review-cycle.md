@@ -323,7 +323,7 @@ For EACH unresolved thread or actionable comment:
    - Compare the current code against the issue described in the comment
    - If the issue is already resolved (Autofix pushed a commit), **skip straight to section 4.5 (resolve thread)** — do not commit
    - Check git log for recent Autofix commits: `git log --oneline -5 --author="cursor"`
-3. **If bugbot_review_round >= 3 and severity is Low:** **skip straight to section 4.5 (resolve thread without fixing)** — do not commit
+3. **If bugbot_review_round > 3 and severity is Low:** **skip straight to section 4.5 (resolve thread without fixing)** — do not commit
 4. **Make the fix** - Edit the file to address the concern
 5. **Verify the fix doesn't break anything:**
    ```bash
