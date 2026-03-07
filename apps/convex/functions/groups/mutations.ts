@@ -4,7 +4,7 @@
  * Write operations for groups (create, update, join, leave, etc.)
  */
 
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 import { mutation, internalMutation } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import { Doc, Id } from "../../_generated/dataModel";
@@ -12,6 +12,7 @@ import { now, generateShortId } from "../../lib/utils";
 import { groupRoleValidator } from "../../lib/validators";
 import { requireAuth } from "../../lib/auth";
 import { validateScoreConfig, type ScoreConfig } from "../followupScoring";
+import { VALID_CUSTOM_SLOTS } from "../../lib/followupConstants";
 import { isCommunityAdmin, requireCommunityAdmin } from "../../lib/permissions";
 import { isActiveLeader, isActiveMembership } from "../../lib/helpers";
 import {
@@ -500,6 +501,13 @@ export const join = mutation({
           internal.functions.pcoServices.rotation.checkAndSyncUserToAutoChannels,
           { userId, groupId: args.groupId }
         );
+
+        // Create followup score doc for reactivated member
+        await ctx.scheduler.runAfter(
+          0,
+          internal.functions.followupScoreComputation.computeSingleMemberScore,
+          { groupId: args.groupId, groupMemberId: existing._id }
+        );
       }
       return existing._id;
     }
@@ -522,6 +530,13 @@ export const join = mutation({
       2000,
       internal.functions.pcoServices.rotation.checkAndSyncUserToAutoChannels,
       { userId, groupId: args.groupId }
+    );
+
+    // Create followup score doc for new member
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.followupScoreComputation.computeSingleMemberScore,
+      { groupId: args.groupId, groupMemberId: membershipId }
     );
 
     return membershipId;
@@ -559,6 +574,13 @@ export const leave = mutation({
     await ctx.db.patch(membership._id, {
       leftAt: now(),
     });
+
+    // Delete followup score doc for departing member
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.followupScoreComputation.deleteScoreDoc,
+      { groupMemberId: membership._id }
+    );
 
     // Sync channel memberships after leave (transactional - removes from all group channels)
     await syncUserChannelMembershipsLogic(ctx, userId, args.groupId);
@@ -857,6 +879,79 @@ export const updateFollowupScoreConfig = mutation({
 
     await ctx.db.patch(args.groupId, {
       followupScoreConfig: args.followupScoreConfig,
+      updatedAt: now(),
+    });
+
+    // Recompute all scores for this group since the scoring formula changed
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.followupScoreComputation.computeGroupScores,
+      { groupId: args.groupId }
+    );
+
+    return { success: true };
+  },
+});
+
+/**
+ * Save follow-up column configuration (column order, visibility, custom fields).
+ * Pass undefined to clear the config.
+ */
+const SLOT_PREFIX_TYPE: Record<string, string[]> = {
+  customText: ["text", "dropdown"],
+  customNum: ["number"],
+  customBool: ["boolean"],
+};
+
+export const saveFollowupColumnConfig = mutation({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+    followupColumnConfig: v.optional(v.object({
+      columnOrder: v.array(v.string()),
+      hiddenColumns: v.array(v.string()),
+      customFields: v.array(v.object({
+        slot: v.string(),
+        name: v.string(),
+        type: v.string(),
+        options: v.optional(v.array(v.string())),
+      })),
+    })),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    await requireGroupLeaderOrCommunityAdmin(
+      ctx,
+      args.groupId,
+      userId,
+      "update follow-up column configuration"
+    );
+
+    // Validate if config provided
+    if (args.followupColumnConfig) {
+      const usedSlots = new Set<string>();
+      for (const field of args.followupColumnConfig.customFields) {
+        // Validate slot name
+        if (!VALID_CUSTOM_SLOTS.has(field.slot)) {
+          throw new ConvexError(`Invalid slot name: ${field.slot}`);
+        }
+        // Validate no duplicate slots
+        if (usedSlots.has(field.slot)) {
+          throw new ConvexError(`Duplicate slot: ${field.slot}`);
+        }
+        usedSlots.add(field.slot);
+        // Validate type matches slot prefix
+        const prefix = field.slot.replace(/\d+$/, "");
+        const allowedTypes = SLOT_PREFIX_TYPE[prefix];
+        if (!allowedTypes || !allowedTypes.includes(field.type)) {
+          throw new ConvexError(`Slot ${field.slot} does not support type "${field.type}"`);
+        }
+      }
+    }
+
+    await ctx.db.patch(args.groupId, {
+      followupColumnConfig: args.followupColumnConfig,
       updatedAt: now(),
     });
 

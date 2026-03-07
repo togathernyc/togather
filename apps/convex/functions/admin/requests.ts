@@ -237,6 +237,13 @@ export const reviewPendingRequest = mutation({
 
       console.log(`[reviewPendingRequest] Channel membership sync complete for user ${request.userId}`);
 
+      // Create/update followup score for the approved member
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.followupScoreComputation.computeSingleMemberScore,
+        { groupId: request.groupId, groupMemberId: args.membershipId }
+      );
+
       // Check if this is a returning member (had a previous membership before this join request)
       // When a new member creates a join request, joinedAt, leftAt, and requestedAt are all set
       // to the same timestamp. When a returning member creates a join request, their original

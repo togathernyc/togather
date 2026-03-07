@@ -10,8 +10,10 @@
  */
 
 import { v, ConvexError } from "convex/values";
-import { query, mutation } from "../_generated/server";
+import { query, mutation, internalQuery } from "../_generated/server";
+import { paginationOptsValidator } from "convex/server";
 import { Doc, Id } from "../_generated/dataModel";
+import { internal } from "../_generated/api";
 import { now, getMediaUrl } from "../lib/utils";
 import { requireAuth } from "../lib/auth";
 import {
@@ -23,6 +25,7 @@ import {
   type ScoreConfig,
   type PcoServingData,
 } from "./followupScoring";
+import { VALID_CUSTOM_SLOTS } from "../lib/followupConstants";
 
 // ============================================================================
 // Types and Constants
@@ -331,54 +334,18 @@ function calculateFollowupPriority(input: ScoringInput): {
 }
 
 // ============================================================================
-// Queries
+// Internal Queries (for batched data access)
 // ============================================================================
 
 /**
- * Get ranked list of members needing follow-up
- *
- * Returns { members, scoreConfig } where scoreConfig describes the active scores.
- * When the group has no custom followupScoreConfig, uses the default
- * Attendance + Connection scores (exact backward compat behavior).
+ * Fetch group config, recent meetings, and score settings.
+ * Lightweight query — no member data (members fetched separately via pagination).
  */
-export const list = query({
-  args: {
-    groupId: v.id("groups"),
-    sortBy: v.optional(sortByValidator),
-    sortDirection: v.optional(v.union(v.literal("asc"), v.literal("desc"))),
-  },
+export const internalGetGroupConfig = internalQuery({
+  args: { groupId: v.id("groups") },
   handler: async (ctx, args) => {
-    const sortDirection = args.sortDirection || "asc";
-    const currentTime = now();
-
-    // Fetch group to read followupScoreConfig
     const group = await ctx.db.get(args.groupId);
-    const scoreConfig: ScoreConfig = group?.followupScoreConfig ?? DEFAULT_SCORE_CONFIG;
-    const useCustomScoring = !!group?.followupScoreConfig;
 
-    // Default sortBy to the first score in the config
-    const sortBy = args.sortBy || scoreConfig.scores[0]?.id || "default_connection";
-
-    // Get ALL active members (excluding leaders) — no artificial limit
-    const members = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
-      .filter((q) => q.eq(q.field("leftAt"), undefined))
-      .collect();
-
-    const toolDisplayName = (group as any)?.toolDisplayNames?.followup || "Follow-up";
-    const memberSubtitle = group?.followupScoreConfig?.memberSubtitle || "";
-
-    if (members.length === 0) {
-      return {
-        members: [],
-        scoreConfig: scoreConfig.scores.map((s) => ({ id: s.id, name: s.name })),
-        toolDisplayName,
-        memberSubtitle,
-      };
-    }
-
-    // Get the last 20 meetings for attendance score
     const meetings = await ctx.db
       .query("meetings")
       .withIndex("by_group_status", (q) =>
@@ -387,83 +354,49 @@ export const list = query({
       .order("desc")
       .take(20);
 
-    // Batch fetch all attendances for meetings in parallel (max 20 queries)
-    const attendancesByMeeting = await Promise.all(
-      meetings.map((meeting) =>
-        ctx.db
-          .query("meetingAttendances")
-          .withIndex("by_meeting", (q) => q.eq("meetingId", meeting._id))
-          .collect()
-      )
-    );
+    const scoreConfig: ScoreConfig = group?.followupScoreConfig ?? DEFAULT_SCORE_CONFIG;
 
-    // Create attendance map: userId -> meetingId -> status
-    const attendanceMap = new Map<string, Map<string, number>>();
-    for (let i = 0; i < meetings.length; i++) {
-      const meeting = meetings[i];
-      const attendances = attendancesByMeeting[i];
-      for (const a of attendances) {
-        const userIdStr = a.userId.toString();
-        if (!attendanceMap.has(userIdStr)) {
-          attendanceMap.set(userIdStr, new Map());
-        }
-        attendanceMap.get(userIdStr)!.set(meeting._id.toString(), a.status);
-      }
-    }
+    return {
+      meetings: meetings.map((m) => ({
+        _id: m._id,
+        scheduledAt: m.scheduledAt,
+      })),
+      scoreConfigScores: scoreConfig.scores.map((s) => ({ id: s.id, name: s.name })),
+      toolDisplayName: (group as any)?.toolDisplayNames?.followup || "Follow-up",
+      memberSubtitle: (group?.followupScoreConfig as any)?.memberSubtitle || "",
+    };
+  },
+});
 
-    // Get member IDs for batch queries
-    const memberIds = members.map((m) => m._id);
+/**
+ * Score a batch of members against meeting attendance and followup data.
+ * Each batch should be ~200 members to stay within Convex's per-query read limits.
+ * Read budget per batch of 200: ~8,420 (1 group + 200 users + 4000 attendance + 4000 followups).
+ */
+export const internalScoreBatch = internalQuery({
+  args: {
+    groupId: v.id("groups"),
+    members: v.array(
+      v.object({
+        _id: v.id("groupMembers"),
+        userId: v.id("users"),
+        joinedAt: v.number(),
+      })
+    ),
+    meetings: v.array(
+      v.object({
+        _id: v.id("meetings"),
+        scheduledAt: v.number(),
+      })
+    ),
+  },
+  handler: async (ctx, args) => {
+    const currentTime = now();
+    const group = await ctx.db.get(args.groupId);
+    const scoreConfig: ScoreConfig = group?.followupScoreConfig ?? DEFAULT_SCORE_CONFIG;
+    const useCustomScoring = !!group?.followupScoreConfig;
 
-    // Batch fetch followups for all members in parallel
-    const followupResults = await Promise.all(
-      memberIds.map((memberId) =>
-        ctx.db
-          .query("memberFollowups")
-          .withIndex("by_groupMember_createdAt", (q) => q.eq("groupMemberId", memberId))
-          .order("desc")
-          .take(20)
-      )
-    );
-
-    // Build snooze map and followups map from batch results
-    const snoozeMap = new Map<string, number>();
-    const followupsMap = new Map<string, FollowupAction[]>();
-
-    for (let i = 0; i < memberIds.length; i++) {
-      const memberId = memberIds[i];
-      const memberIdStr = memberId.toString();
-      const followups = followupResults[i];
-
-      // Find active snooze (most recent snooze entry that's still active)
-      for (const f of followups) {
-        if (f.type === "snooze" && f.snoozeUntil && f.snoozeUntil > currentTime) {
-          snoozeMap.set(memberIdStr, f.snoozeUntil);
-          break;
-        }
-      }
-
-      // Build followup actions
-      followupsMap.set(
-        memberIdStr,
-        followups.map((f) => ({
-          type: f.type,
-          createdAt: f.createdAt,
-        }))
-      );
-    }
-
-    // Batch fetch all users for members
-    const userIds = Array.from(new Set(members.map((m) => m.userId)));
-    const users = await Promise.all(
-      userIds.map((id) => ctx.db.get(id) as Promise<Doc<"users"> | null>)
-    );
-    const userMap = new Map<string, Doc<"users">>(
-      users
-        .filter((u): u is Doc<"users"> => u !== null)
-        .map((u) => [u._id.toString(), u])
-    );
-
-    // Build PCO serving map from group doc (written by getServingCounts action)
+    // Build PCO serving map from group doc
     const pcoServingMap = new Map<string, PcoServingData>();
     if (group?.pcoServingCounts?.counts) {
       for (const { userId, count } of group.pcoServingCounts.counts) {
@@ -471,139 +404,291 @@ export const list = query({
       }
     }
 
-    // Calculate scores for each member
-    const scoredMembers = members.map((member) => {
-      const user = userMap.get(member.userId.toString());
-      if (!user) return null;
+    const results = await Promise.all(
+      args.members.map(async (member) => {
+        const user = await ctx.db.get(member.userId);
+        if (!user) return null;
 
-      const userAttendance = attendanceMap.get(member.userId.toString()) || new Map();
+        // Targeted attendance lookups using by_meeting_user index (1 read per meeting)
+        const attendanceResults = await Promise.all(
+          args.meetings.map((meeting) =>
+            ctx.db
+              .query("meetingAttendances")
+              .withIndex("by_meeting_user", (q) =>
+                q.eq("meetingId", meeting._id).eq("userId", member.userId)
+              )
+              .first()
+          )
+        );
 
-      // Filter meetings to only those after the member joined
-      const memberMeetings = meetings.filter(
-        (m) => m.scheduledAt >= member.joinedAt
-      );
+        // Filter meetings to only those after member joined
+        const memberMeetings = args.meetings.filter(
+          (m) => m.scheduledAt >= member.joinedAt
+        );
 
-      const meetingData: MeetingAttendanceData[] = memberMeetings.map((m) => ({
-        meetingId: m._id,
-        wasPresent: userAttendance.get(m._id.toString()) === 1,
-        scheduledAt: m.scheduledAt,
-      }));
+        const meetingData: MeetingAttendanceData[] = memberMeetings.map((m) => {
+          const idx = args.meetings.findIndex((mt) => mt._id === m._id);
+          return {
+            meetingId: m._id,
+            wasPresent: attendanceResults[idx]?.status === 1,
+            scheduledAt: m.scheduledAt,
+          };
+        });
 
-      const followupData = followupsMap.get(member._id.toString()) || [];
-      const snoozedUntil = snoozeMap.get(member._id.toString());
-      const isSnoozed = !!snoozedUntil;
+        // Fetch followups for this member
+        const followups = await ctx.db
+          .query("memberFollowups")
+          .withIndex("by_groupMember_createdAt", (q) =>
+            q.eq("groupMemberId", member._id)
+          )
+          .order("desc")
+          .take(20);
 
-      // Always compute the legacy scores (used for backward compat fields + connection formula parts)
-      const legacyScores = calculateFollowupPriority({
-        meetings: meetingData,
-        followups: followupData,
-        isSnoozed,
-        otherGroupAttendance: 0,
-      });
+        const followupData: FollowupAction[] = followups.map((f) => ({
+          type: f.type,
+          createdAt: f.createdAt,
+        }));
 
-      // Compute configurable scores
-      let memberScores: Record<string, number>;
+        // Check for active snooze
+        let snoozedUntil: number | null = null;
+        for (const f of followups) {
+          if (f.type === "snooze" && f.snoozeUntil && f.snoozeUntil > currentTime) {
+            snoozedUntil = f.snoozeUntil;
+            break;
+          }
+        }
+        const isSnoozed = !!snoozedUntil;
 
-      let triggeredAlerts: string[] = [];
+        // Compute legacy scores
+        const legacyScores = calculateFollowupPriority({
+          meetings: meetingData,
+          followups: followupData,
+          isSnoozed,
+          otherGroupAttendance: 0,
+        });
 
-      if (!useCustomScoring) {
-        // No custom config — map defaults to legacy functions for exact backward compat
-        memberScores = {
-          default_attendance: legacyScores.attendanceScore,
-          default_connection: legacyScores.connectionScore,
+        // Compute configurable scores
+        let memberScores: Record<string, number>;
+        let triggeredAlerts: string[] = [];
+
+        if (!useCustomScoring) {
+          memberScores = {
+            default_attendance: legacyScores.attendanceScore,
+            default_connection: legacyScores.connectionScore,
+          };
+        } else {
+          const connectionParts = computeConnectionParts(
+            meetingData, followupData, isSnoozed, currentTime
+          );
+          const pcoServing = pcoServingMap.get(member.userId.toString());
+          const rawValues = extractRawValues(
+            meetingData, followupData, isSnoozed, currentTime, connectionParts, pcoServing,
+            undefined
+          );
+          memberScores = calculateAllScores(scoreConfig, rawValues);
+          if (scoreConfig.alerts?.length) {
+            triggeredAlerts = evaluateAlerts(scoreConfig.alerts, rawValues);
+          }
+        }
+
+        // Get last attendance date
+        let lastAttendedAt: number | null = null;
+        for (const meeting of memberMeetings) {
+          const idx = args.meetings.findIndex((mt) => mt._id === meeting._id);
+          if (attendanceResults[idx]?.status === 1) {
+            lastAttendedAt = meeting.scheduledAt;
+            break;
+          }
+        }
+
+        // Extract latest note for denormalization
+        const latestNoteEntry = followups.find(f => f.type === "note" && f.content);
+        const latestNoteContent = latestNoteEntry?.content?.slice(0, 200) ?? null;
+        const latestNoteAt = latestNoteEntry?.createdAt ?? null;
+
+        return {
+          memberId: member._id,
+          odUserId: member.userId,
+          firstName: user.firstName || "",
+          lastName: user.lastName || "",
+          email: user.email,
+          phone: user.phone,
+          profileImage: getMediaUrl(user.profilePhoto),
+          followupScore: legacyScores.followupScore,
+          attendanceScore: legacyScores.attendanceScore,
+          connectionScore: legacyScores.connectionScore,
+          scores: memberScores,
+          missedMeetings: legacyScores.missedMeetings,
+          consecutiveMissed: legacyScores.consecutiveMissed,
+          lastAttendedAt,
+          lastFollowupAt: followupData[0]?.createdAt || null,
+          snoozedUntil,
+          scoreFactors: legacyScores.scoreFactors,
+          triggeredAlerts,
+          pcoServingCount:
+            pcoServingMap.get(member.userId.toString())?.servicesPast2Months ?? 0,
+          latestNoteContent,
+          latestNoteAt,
         };
-      } else {
-        // Custom config — use the configurable scoring engine
-        // Compute connection formula parts for the pre-computed variables
-        const connectionParts = computeConnectionParts(
-          meetingData, followupData, isSnoozed, currentTime
-        );
-        const pcoServing = pcoServingMap.get(member.userId.toString());
-        const rawValues = extractRawValues(
-          meetingData, followupData, isSnoozed, currentTime, connectionParts, pcoServing,
-          undefined // crossGroupAttendancePct not computed in list view (too expensive per-member)
-        );
-        memberScores = calculateAllScores(scoreConfig, rawValues);
+      })
+    );
 
-        // Evaluate alert thresholds
-        if (scoreConfig.alerts?.length) {
-          triggeredAlerts = evaluateAlerts(scoreConfig.alerts, rawValues);
-        }
-      }
+    return results.filter(
+      (r): r is NonNullable<(typeof results)[number]> => r !== null
+    );
+  },
+});
 
-      // Get last attendance date
-      let lastAttendedAt: number | null = null;
-      for (const meeting of memberMeetings) {
-        if (userAttendance.get(meeting._id.toString()) === 1) {
-          lastAttendedAt = meeting.scheduledAt;
-          break;
-        }
-      }
+// ============================================================================
+// Queries & Actions
+// ============================================================================
 
-      return {
-        memberId: member._id,
-        odUserId: member.userId,
-        firstName: user.firstName || "",
-        lastName: user.lastName || "",
-        email: user.email,
-        phone: user.phone,
-        profileImage: getMediaUrl(user.profilePhoto),
-        // Legacy fields (kept for backward compat)
-        followupScore: legacyScores.followupScore,
-        attendanceScore: legacyScores.attendanceScore,
-        connectionScore: legacyScores.connectionScore,
-        // Configurable scores
-        scores: memberScores,
-        missedMeetings: legacyScores.missedMeetings,
-        consecutiveMissed: legacyScores.consecutiveMissed,
-        lastAttendedAt,
-        lastFollowupAt: followupData[0]?.createdAt || null,
-        snoozedUntil: snoozedUntil || null,
-        scoreFactors: legacyScores.scoreFactors,
-        triggeredAlerts,
-        pcoServingCount: pcoServingMap.get(member.userId.toString())?.servicesPast2Months ?? 0,
-      };
-    });
+/**
+ * Get paginated list of members needing follow-up.
+ *
+ * Reads from pre-computed `memberFollowupScores` table — zero joins,
+ * zero computation at read time. Supports server-side sorting via indexes.
+ */
+export const list = query({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+    sortBy: v.optional(v.string()),
+    sortDirection: v.optional(v.string()),
+    statusFilter: v.optional(v.string()),
+    assigneeFilter: v.optional(v.id("users")),
+    attendanceMax: v.optional(v.number()),
+    attendanceMin: v.optional(v.number()),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    await requireAuth(ctx, args.token);
+    const direction = args.sortDirection === "asc" ? "asc" : "desc";
 
-    // Filter out nulls and sort
-    const validMembers = scoredMembers.filter((m) => m !== null) as NonNullable<
-      (typeof scoredMembers)[number]
-    >[];
+    // Map sortBy to the correct index
+    const indexMap: Record<string, string> = {
+      score1: "by_group_score1",
+      score2: "by_group_score2",
+      firstName: "by_group_firstName",
+      lastName: "by_group_lastName",
+      addedAt: "by_group_addedAt",
+      lastAttendedAt: "by_group_lastAttendedAt",
+      lastFollowupAt: "by_group_lastFollowupAt",
+      status: "by_group_status",
+      assignee: "by_group_assignee",
+      customText1: "by_group_customText1",
+      customText2: "by_group_customText2",
+      customText3: "by_group_customText3",
+      customNum1: "by_group_customNum1",
+      customNum2: "by_group_customNum2",
+      customNum3: "by_group_customNum3",
+      customBool1: "by_group_customBool1",
+      customBool2: "by_group_customBool2",
+      customBool3: "by_group_customBool3",
+    };
+    const indexName = indexMap[args.sortBy ?? "score1"] ?? "by_group_score1";
 
-    validMembers.sort((a, b) => {
-      let aScore: number;
-      let bScore: number;
+    let q = ctx.db
+      .query("memberFollowupScores")
+      .withIndex(indexName as any, (fq: any) => fq.eq("groupId", args.groupId))
+      .order(direction);
 
-      if (sortBy === "__weighted__") {
-        // Primary: alert count (more alerts = needs more attention)
-        const aAlerts = a.triggeredAlerts?.length ?? 0;
-        const bAlerts = b.triggeredAlerts?.length ?? 0;
-        if (aAlerts !== bAlerts) {
-          const alertDiff = aAlerts - bAlerts;
-          // desc: most alerts first; asc: fewest alerts first
-          return sortDirection === "desc" ? -alertDiff : alertDiff;
-        }
-        // Tiebreaker: weighted average across all configured scores
-        const scoreIds = scoreConfig.scores.map((s) => s.id);
-        const aSum = scoreIds.reduce((sum, id) => sum + (a.scores[id] ?? 0), 0);
-        const bSum = scoreIds.reduce((sum, id) => sum + (b.scores[id] ?? 0), 0);
-        aScore = scoreIds.length > 0 ? aSum / scoreIds.length : 0;
-        bScore = scoreIds.length > 0 ? bSum / scoreIds.length : 0;
-      } else {
-        aScore = a.scores[sortBy] ?? 0;
-        bScore = b.scores[sortBy] ?? 0;
-      }
+    // Apply optional filters
+    const hasFilters = args.statusFilter || args.assigneeFilter ||
+                       args.attendanceMax !== undefined || args.attendanceMin !== undefined;
+    if (hasFilters) {
+      q = q.filter((fq) => {
+        const conds: any[] = [];
+        if (args.statusFilter) conds.push(fq.eq(fq.field("status"), args.statusFilter));
+        if (args.assigneeFilter) conds.push(fq.eq(fq.field("assigneeId"), args.assigneeFilter));
+        if (args.attendanceMax !== undefined) conds.push(fq.lt(fq.field("attendanceScore"), args.attendanceMax));
+        if (args.attendanceMin !== undefined) conds.push(fq.gt(fq.field("attendanceScore"), args.attendanceMin));
+        return conds.length === 1 ? conds[0] : fq.and(...(conds as [any, any, ...any[]]));
+      });
+    }
 
-      const diff = aScore - bScore;
-      return sortDirection === "desc" ? -diff : diff;
-    });
+    return q.paginate(args.paginationOpts);
+  },
+});
+
+/**
+ * Get followup config for a group (called once, not per-page).
+ * Returns score config, display name, and member subtitle settings.
+ */
+export const getFollowupConfig = query({
+  args: { token: v.string(), groupId: v.id("groups") },
+  handler: async (ctx, args) => {
+    await requireAuth(ctx, args.token);
+    const group = await ctx.db.get(args.groupId);
+    if (!group) return null;
+
+    const scoreConfig: ScoreConfig = group.followupScoreConfig ?? DEFAULT_SCORE_CONFIG;
 
     return {
-      members: validMembers,
-      scoreConfig: scoreConfig.scores.map((s) => ({ id: s.id, name: s.name })),
-      toolDisplayName,
-      memberSubtitle,
+      scoreConfigScores: scoreConfig.scores.map((s) => ({ id: s.id, name: s.name })),
+      toolDisplayName: (group as any)?.toolDisplayNames?.followup || "Follow-up",
+      memberSubtitle: (group?.followupScoreConfig as any)?.memberSubtitle || "",
+      followupColumnConfig: group.followupColumnConfig ?? null,
     };
+  },
+});
+
+/**
+ * Search members by name/email/phone using full-text search index.
+ * Returns up to 200 results ordered by relevance.
+ */
+export const search = query({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+    searchText: v.string(),
+    statusFilter: v.optional(v.string()),
+    assigneeFilter: v.optional(v.id("users")),
+    attendanceMax: v.optional(v.number()),
+    attendanceMin: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    await requireAuth(ctx, args.token);
+    let results = ctx.db
+      .query("memberFollowupScores")
+      .withSearchIndex("search_followup", (q) => {
+        let sq = q.search("searchText", args.searchText).eq("groupId", args.groupId);
+        if (args.statusFilter) sq = sq.eq("status", args.statusFilter);
+        if (args.assigneeFilter) sq = sq.eq("assigneeId", args.assigneeFilter);
+        return sq;
+      });
+
+    // Range filters via .filter()
+    if (args.attendanceMax !== undefined || args.attendanceMin !== undefined) {
+      results = results.filter((fq) => {
+        const conds: any[] = [];
+        if (args.attendanceMax !== undefined)
+          conds.push(fq.lt(fq.field("attendanceScore"), args.attendanceMax));
+        if (args.attendanceMin !== undefined)
+          conds.push(fq.gt(fq.field("attendanceScore"), args.attendanceMin));
+        return conds.length === 1 ? conds[0] : fq.and(...(conds as [any, any, ...any[]]));
+      });
+    }
+
+    return await results.take(200);
+  },
+});
+
+/**
+ * Get total member count for a group.
+ * Uses a streaming count to avoid loading all documents into memory.
+ */
+export const count = query({
+  args: { token: v.string(), groupId: v.id("groups") },
+  handler: async (ctx, args) => {
+    await requireAuth(ctx, args.token);
+    let count = 0;
+    for await (const _doc of ctx.db
+      .query("memberFollowupScores")
+      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))) {
+      count++;
+    }
+    return count;
   },
 });
 
@@ -995,6 +1080,13 @@ export const add = mutation({
 
     const createdByUser = await ctx.db.get(userId);
 
+    // Trigger score recomputation for this member
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.followupScoreComputation.computeSingleMemberScore,
+      { groupId: args.groupId, groupMemberId: args.memberId }
+    );
+
     return {
       id: followupId,
       type: args.type as "note" | "call" | "text" | "followed_up",
@@ -1075,6 +1167,13 @@ export const snooze = mutation({
 
     const createdByUser = await ctx.db.get(userId);
 
+    // Trigger score recomputation for this member
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.followupScoreComputation.computeSingleMemberScore,
+      { groupId: args.groupId, groupMemberId: args.memberId }
+    );
+
     return {
       id: followupId,
       type: "snooze" as const,
@@ -1127,22 +1226,31 @@ export const updateAttendance = mutation({
         recordedById: userId,
         recordedAt: timestamp,
       });
-
-      return {
+    } else {
+      // Create new attendance record
+      await ctx.db.insert("meetingAttendances", {
         meetingId: args.meetingId,
-        odUserId: args.targetUserId,
+        userId: args.targetUserId,
         status: args.status,
-      };
+        recordedById: userId,
+        recordedAt: timestamp,
+      });
     }
 
-    // Create new attendance record
-    await ctx.db.insert("meetingAttendances", {
-      meetingId: args.meetingId,
-      userId: args.targetUserId,
-      status: args.status,
-      recordedById: userId,
-      recordedAt: timestamp,
-    });
+    // Recompute scores after attendance change
+    const groupMember = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+      .filter((q) => q.eq(q.field("userId"), args.targetUserId))
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .first();
+    if (groupMember) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.followupScoreComputation.computeSingleMemberScore,
+        { groupId: args.groupId, groupMemberId: groupMember._id }
+      );
+    }
 
     return {
       meetingId: args.meetingId,
@@ -1193,6 +1301,13 @@ export const unsnooze = mutation({
       content: `${activeSnooze.content} (cancelled early)`,
     });
 
+    // Trigger score recomputation for this member
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.followupScoreComputation.computeSingleMemberScore,
+      { groupId: args.groupId, groupMemberId: args.memberId }
+    );
+
     return { success: true };
   },
 });
@@ -1217,7 +1332,167 @@ export const deleteFollowup = mutation({
       throw new ConvexError("You can only delete your own follow-up entries");
     }
 
+    const groupMember = await ctx.db.get(followup.groupMemberId);
+
     await ctx.db.delete(args.followupId);
+
+    // Trigger score recomputation for this member
+    if (groupMember) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.followupScoreComputation.computeSingleMemberScore,
+        { groupId: groupMember.groupId, groupMemberId: followup.groupMemberId }
+      );
+    }
+
+    return { success: true };
+  },
+});
+
+// ============================================================================
+// Manual Field Mutations (Phase 2 — desktop spreadsheet)
+// ============================================================================
+
+/**
+ * Helper: verify caller is leader/admin of the group and return the score doc.
+ */
+async function requireLeaderAndGetScoreDoc(
+  ctx: any,
+  token: string,
+  groupId: Id<"groups">,
+  groupMemberId: Id<"groupMembers">,
+) {
+  const userId = await requireAuth(ctx, token);
+
+  // Verify caller is leader/admin
+  const callerMembership = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_group_user", (q: any) =>
+      q.eq("groupId", groupId).eq("userId", userId)
+    )
+    .first();
+
+  if (!callerMembership || (callerMembership.role !== "leader" && callerMembership.role !== "admin")) {
+    throw new ConvexError("Only leaders and admins can update this field");
+  }
+
+  // Find score doc
+  const scoreDoc = await ctx.db
+    .query("memberFollowupScores")
+    .withIndex("by_groupMember", (q: any) => q.eq("groupMemberId", groupMemberId))
+    .first();
+
+  if (!scoreDoc) {
+    throw new ConvexError("Member score record not found");
+  }
+
+  return scoreDoc;
+}
+
+/**
+ * Set or clear the assignee for a member's followup score doc.
+ */
+export const setAssignee = mutation({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+    groupMemberId: v.id("groupMembers"),
+    assigneeId: v.optional(v.id("users")),
+  },
+  handler: async (ctx, args) => {
+    const scoreDoc = await requireLeaderAndGetScoreDoc(
+      ctx, args.token, args.groupId, args.groupMemberId
+    );
+    await ctx.db.patch(scoreDoc._id, {
+      assigneeId: args.assigneeId,
+      updatedAt: Date.now(),
+    });
+    return { success: true };
+  },
+});
+
+/**
+ * Set or clear the status for a member's followup score doc.
+ */
+export const setStatus = mutation({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+    groupMemberId: v.id("groupMembers"),
+    status: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const scoreDoc = await requireLeaderAndGetScoreDoc(
+      ctx, args.token, args.groupId, args.groupMemberId
+    );
+    await ctx.db.patch(scoreDoc._id, {
+      status: args.status,
+      updatedAt: Date.now(),
+    });
+    return { success: true };
+  },
+});
+
+/**
+ * Set or clear the connection point for a member's followup score doc.
+ */
+export const setConnectionPoint = mutation({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+    groupMemberId: v.id("groupMembers"),
+    connectionPoint: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const scoreDoc = await requireLeaderAndGetScoreDoc(
+      ctx, args.token, args.groupId, args.groupMemberId
+    );
+    await ctx.db.patch(scoreDoc._id, {
+      connectionPoint: args.connectionPoint,
+      updatedAt: Date.now(),
+    });
+    return { success: true };
+  },
+});
+
+/**
+ * Set or clear a custom field value on a member's followup score doc.
+ * Validates that the slot name is valid and the value type matches the slot prefix.
+ */
+export const setCustomField = mutation({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+    groupMemberId: v.id("groupMembers"),
+    slot: v.string(),
+    value: v.optional(v.any()),
+  },
+  handler: async (ctx, args) => {
+    if (!VALID_CUSTOM_SLOTS.has(args.slot)) {
+      throw new ConvexError(`Invalid custom field slot: ${args.slot}`);
+    }
+
+    // Validate value type matches slot prefix
+    if (args.value !== undefined && args.value !== null) {
+      if (args.slot.startsWith("customText") && typeof args.value !== "string") {
+        throw new ConvexError(`Slot ${args.slot} requires a string value`);
+      }
+      if (args.slot.startsWith("customNum") && typeof args.value !== "number") {
+        throw new ConvexError(`Slot ${args.slot} requires a number value`);
+      }
+      if (args.slot.startsWith("customBool") && typeof args.value !== "boolean") {
+        throw new ConvexError(`Slot ${args.slot} requires a boolean value`);
+      }
+    }
+
+    const scoreDoc = await requireLeaderAndGetScoreDoc(
+      ctx, args.token, args.groupId, args.groupMemberId
+    );
+
+    await ctx.db.patch(scoreDoc._id, {
+      [args.slot]: args.value ?? undefined,
+      updatedAt: Date.now(),
+    });
     return { success: true };
   },
 });

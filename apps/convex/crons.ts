@@ -142,4 +142,16 @@ crons.hourly(
   internal.functions.slackServiceBot.actions.checkAndNag
 );
 
+// =============================================================================
+// FOLLOWUP SCORE REFRESH
+// =============================================================================
+// Runs daily at 7:00 UTC (2:00 AM EST) to refresh time-decay scores.
+// Follow-up recency scores decay daily, so we recompute all groups once per day.
+
+crons.daily(
+  "followup-score-refresh",
+  { hourUTC: 7, minuteUTC: 0 },
+  internal.functions.followupScoreComputation.dailyRefreshAllScores
+);
+
 export default crons;

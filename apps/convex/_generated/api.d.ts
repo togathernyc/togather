@@ -34,6 +34,7 @@ import type * as functions_auth_tokens from "../functions/auth/tokens.js";
 import type * as functions_authInternal from "../functions/authInternal.js";
 import type * as functions_communities from "../functions/communities.js";
 import type * as functions_communityWideEvents from "../functions/communityWideEvents.js";
+import type * as functions_followupScoreComputation from "../functions/followupScoreComputation.js";
 import type * as functions_followupScoring from "../functions/followupScoring.js";
 import type * as functions_groupBots from "../functions/groupBots.js";
 import type * as functions_groupCreationRequests from "../functions/groupCreationRequests.js";
@@ -170,6 +171,7 @@ declare const fullApi: ApiFromModules<{
   "functions/authInternal": typeof functions_authInternal;
   "functions/communities": typeof functions_communities;
   "functions/communityWideEvents": typeof functions_communityWideEvents;
+  "functions/followupScoreComputation": typeof functions_followupScoreComputation;
   "functions/followupScoring": typeof functions_followupScoring;
   "functions/groupBots": typeof functions_groupBots;
   "functions/groupCreationRequests": typeof functions_groupCreationRequests;
