@@ -274,7 +274,11 @@ export const computeGroupScores = internalAction({
         { groupId: args.groupId, cursor, limit: BATCH_SIZE }
       );
 
-      if (page.members.length === 0) break;
+      if (page.members.length === 0) {
+        isDone = page.isDone;
+        cursor = page.continueCursor;
+        continue;
+      }
 
       // Step 3: Score the batch using existing internalScoreBatch
       const memberBatch = page.members.map((m) => ({

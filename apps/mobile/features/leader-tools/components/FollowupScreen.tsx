@@ -133,14 +133,25 @@ export function FollowupScreen() {
     }
   }, [scoreConfig, sortField]);
 
-  // Map sortField to server sort key
+  // Map sortField to server sort key.
+  // Only score1 and score2 have server-side indexes; score3+ use client-side sorting.
+  const isClientSideSort = useMemo(() => {
+    if (sortField === "__weighted__") return true;
+    const idx = scoreConfig.findIndex((s) => s.id === sortField);
+    return idx >= 2; // score3, score4 have no server index
+  }, [sortField, scoreConfig]);
+
   const serverSortBy = useMemo(() => {
     if (!sortField) return "score1";
     const idx = scoreConfig.findIndex((s) => s.id === sortField);
     if (idx === 0) return "score1";
     if (idx === 1) return "score2";
+    // score3+ have no server-side index — fetch by score1 and re-sort client-side
     return "score1";
   }, [sortField, scoreConfig]);
+
+  // For client-side sorts (weighted, score3+), use a fixed server direction and re-sort locally
+  const serverSortDirection = isClientSideSort ? "desc" : sortDirection;
 
   // Paginated member list from pre-computed scores
   const {
@@ -154,14 +165,50 @@ export function FollowupScreen() {
       ? {
           groupId: group_id as Id<"groups">,
           sortBy: serverSortBy,
-          sortDirection: sortDirection,
+          sortDirection: serverSortDirection,
         }
       : "skip",
     { initialNumItems: 50 }
   );
 
-  // Cast rawMembers to expected type
-  const members = rawMembers as unknown as FollowupMember[] | undefined;
+  // Apply client-side sort for weighted, score3, and score4 (no server indexes for these)
+  const members = useMemo(() => {
+    if (!rawMembers) return undefined;
+
+    if (!isClientSideSort) {
+      return rawMembers as unknown as FollowupMember[];
+    }
+
+    const sorted = [...rawMembers] as unknown as FollowupMember[];
+
+    if (sortField === "__weighted__") {
+      // Weighted sort: alert count (desc) then average score
+      sorted.sort((a, b) => {
+        const aAlerts = a.alerts?.length ?? 0;
+        const bAlerts = b.alerts?.length ?? 0;
+        if (aAlerts !== bAlerts) {
+          return sortDirection === "desc" ? bAlerts - aAlerts : aAlerts - bAlerts;
+        }
+        // Tiebreaker: average of all configured scores
+        const aAvg = scoreConfig.length > 0
+          ? scoreConfig.reduce((sum, sc) => sum + getScoreValue(a, sc.id), 0) / scoreConfig.length
+          : 0;
+        const bAvg = scoreConfig.length > 0
+          ? scoreConfig.reduce((sum, sc) => sum + getScoreValue(b, sc.id), 0) / scoreConfig.length
+          : 0;
+        return sortDirection === "desc" ? aAvg - bAvg : bAvg - aAvg;
+      });
+    } else if (sortField) {
+      // Client-side sort by a specific score (score3, score4 — no server index)
+      sorted.sort((a, b) => {
+        const aVal = getScoreValue(a, sortField);
+        const bVal = getScoreValue(b, sortField);
+        return sortDirection === "asc" ? aVal - bVal : bVal - aVal;
+      });
+    }
+
+    return sorted;
+  }, [rawMembers, sortField, sortDirection, scoreConfig, isClientSideSort]);
 
   // Fetch group info for header
   const groupData = useQuery(

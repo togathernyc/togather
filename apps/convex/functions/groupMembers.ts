@@ -392,6 +392,13 @@ export const add = mutation({
         { userId: args.userId, groupId: args.groupId }
       );
 
+      // Create followup score doc for reactivated member
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.followupScoreComputation.computeSingleMemberScore,
+        { groupId: args.groupId, groupMemberId: existingMember._id }
+      );
+
       // userToAdd was already fetched and validated above
       return {
         id: existingMember._id,
@@ -438,6 +445,13 @@ export const add = mutation({
       2000,
       internal.functions.pcoServices.rotation.checkAndSyncUserToAutoChannels,
       { userId: args.userId, groupId: args.groupId }
+    );
+
+    // Create followup score doc for new member
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.followupScoreComputation.computeSingleMemberScore,
+      { groupId: args.groupId, groupMemberId: memberId }
     );
 
     return {

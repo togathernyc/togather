@@ -1227,6 +1227,21 @@ export const updateAttendance = mutation({
         recordedAt: timestamp,
       });
 
+      // Recompute scores after attendance change
+      const groupMemberExisting = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+        .filter((q) => q.eq(q.field("userId"), args.targetUserId))
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .first();
+      if (groupMemberExisting) {
+        await ctx.scheduler.runAfter(
+          0,
+          internal.functions.followupScoreComputation.computeSingleMemberScore,
+          { groupId: args.groupId, groupMemberId: groupMemberExisting._id }
+        );
+      }
+
       return {
         meetingId: args.meetingId,
         odUserId: args.targetUserId,
@@ -1242,6 +1257,21 @@ export const updateAttendance = mutation({
       recordedById: userId,
       recordedAt: timestamp,
     });
+
+    // Recompute scores after attendance change
+    const groupMember = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+      .filter((q) => q.eq(q.field("userId"), args.targetUserId))
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .first();
+    if (groupMember) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.followupScoreComputation.computeSingleMemberScore,
+        { groupId: args.groupId, groupMemberId: groupMember._id }
+      );
+    }
 
     return {
       meetingId: args.meetingId,

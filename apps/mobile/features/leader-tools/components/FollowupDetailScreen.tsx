@@ -68,6 +68,22 @@ export function FollowupDetailContent({
     currentStatus: number;
     groupId?: string;
   } | null>(null);
+  const [isAddingFollowup, setIsAddingFollowup] = useState(false);
+  const [isSnoozing, setIsSnoozing] = useState(false);
+  const [isUpdatingAttendance, setIsUpdatingAttendance] = useState(false);
+
+  // Reset local state when switching between members (desktop side-sheet reuses component)
+  useEffect(() => {
+    setNoteText("");
+    setSnoozeNote("");
+    setShowSnoozeModal(false);
+    setShowImageModal(false);
+    setEditingMeeting(null);
+    setNotesSectionY(0);
+    setIsAddingFollowup(false);
+    setIsSnoozing(false);
+    setIsUpdatingAttendance(false);
+  }, [memberId]);
 
   const group_id = groupId;
   const member_id = memberId;
@@ -141,6 +157,7 @@ export function FollowupDetailContent({
   // Mutation wrapper objects for backward compatibility
   const addFollowupMutation = {
     mutate: async (args: { groupId: string; memberId: string; type: string; content?: string }) => {
+      setIsAddingFollowup(true);
       try {
         await addFollowup({
           groupId: args.groupId as Id<"groups">,
@@ -152,13 +169,16 @@ export function FollowupDetailContent({
         // Convex auto-updates reactive queries
       } catch (err: any) {
         Alert.alert("Error", err.message || "Failed to add follow-up");
+      } finally {
+        setIsAddingFollowup(false);
       }
     },
-    isPending: false,
+    isPending: isAddingFollowup,
   };
 
   const snoozeMutation = {
     mutate: async (args: { groupId: string; memberId: string; duration: SnoozeDuration; note?: string }) => {
+      setIsSnoozing(true);
       try {
         await snoozeMember({
           groupId: args.groupId as Id<"groups">,
@@ -171,13 +191,16 @@ export function FollowupDetailContent({
         Alert.alert("Success", "Member has been snoozed");
       } catch (err: any) {
         Alert.alert("Error", err.message || "Failed to snooze member");
+      } finally {
+        setIsSnoozing(false);
       }
     },
-    isPending: false,
+    isPending: isSnoozing,
   };
 
   const updateAttendanceMutation = {
     mutate: async (args: { groupId: string; meetingId: string; targetUserId: string; status: number }) => {
+      setIsUpdatingAttendance(true);
       try {
         await updateAttendance({
           groupId: args.groupId as Id<"groups">,
@@ -188,9 +211,11 @@ export function FollowupDetailContent({
         setEditingMeeting(null);
       } catch (err: any) {
         Alert.alert("Error", err.message || "Failed to update attendance");
+      } finally {
+        setIsUpdatingAttendance(false);
       }
     },
-    isPending: false,
+    isPending: isUpdatingAttendance,
   };
 
   const handleBack = () => {

@@ -501,6 +501,13 @@ export const join = mutation({
           internal.functions.pcoServices.rotation.checkAndSyncUserToAutoChannels,
           { userId, groupId: args.groupId }
         );
+
+        // Create followup score doc for reactivated member
+        await ctx.scheduler.runAfter(
+          0,
+          internal.functions.followupScoreComputation.computeSingleMemberScore,
+          { groupId: args.groupId, groupMemberId: existing._id }
+        );
       }
       return existing._id;
     }
@@ -523,6 +530,13 @@ export const join = mutation({
       2000,
       internal.functions.pcoServices.rotation.checkAndSyncUserToAutoChannels,
       { userId, groupId: args.groupId }
+    );
+
+    // Create followup score doc for new member
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.followupScoreComputation.computeSingleMemberScore,
+      { groupId: args.groupId, groupMemberId: membershipId }
     );
 
     return membershipId;
@@ -560,6 +574,13 @@ export const leave = mutation({
     await ctx.db.patch(membership._id, {
       leftAt: now(),
     });
+
+    // Delete followup score doc for departing member
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.followupScoreComputation.deleteScoreDoc,
+      { groupMemberId: membership._id }
+    );
 
     // Sync channel memberships after leave (transactional - removes from all group channels)
     await syncUserChannelMembershipsLogic(ctx, userId, args.groupId);

@@ -333,15 +333,16 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
       { key: "phone", label: "Phone", defaultWidth: 140, sortable: false },
     ];
 
-    // Score columns (only score1 and score2 have backend indexes for sorting)
+    // Score columns — only score1 and score2 have server-side indexes;
+    // score3+ are still sortable but use client-side sorting (no serverSortKey).
     scoreConfig.forEach((sc, i) => {
-      const isSortable = i < 2;
+      const key = `score${i + 1}`;
       allAvailable.push({
-        key: `score${i + 1}`,
+        key,
         label: sc.name,
         defaultWidth: 100,
-        sortable: isSortable,
-        serverSortKey: isSortable ? `score${i + 1}` : undefined,
+        sortable: true,
+        serverSortKey: key in SERVER_SORT_KEYS ? key : undefined,
       });
     });
 
@@ -427,7 +428,9 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
 
   const getColWidth = (col: ColumnDef) => colWidths[col.key] ?? col.defaultWidth;
 
-  // Server sort key
+  // Server sort key — score3+ have no server index, use client-side sorting
+  const isClientSideSort = !(sortField in SERVER_SORT_KEYS);
+
   const serverSortBy = useMemo(() => {
     if (sortField in SERVER_SORT_KEYS) return SERVER_SORT_KEYS[sortField];
     return "score1";
@@ -455,7 +458,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
       ? {
           groupId: groupId as Id<"groups">,
           sortBy: serverSortBy,
-          sortDirection: sortDirection,
+          sortDirection: isClientSideSort ? "desc" : sortDirection,
           ...listFilterArgs,
         }
       : "skip",
@@ -483,11 +486,30 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
     groupId ? { groupId: groupId as Id<"groups"> } : "skip"
   );
 
-  // Merge: use search results when text search active, otherwise paginated
-  const members = (hasTextSearch
-    ? (searchResults ?? [])
-    : (rawMembers ?? [])
-  ) as unknown as FollowupMember[];
+  // Merge: use search results when text search active, otherwise paginated.
+  // Apply client-side sorting for score3+ (no server index).
+  const members = useMemo(() => {
+    const raw = (hasTextSearch
+      ? (searchResults ?? [])
+      : (rawMembers ?? [])
+    ) as unknown as FollowupMember[];
+
+    if (!isClientSideSort || raw.length === 0) return raw;
+
+    // Client-side sort by the score column (e.g. score3, score4)
+    // sortField is like "score3" — find the scoreConfig entry for it
+    const scoreIdx = parseInt(sortField.replace("score", ""), 10) - 1;
+    const scoreId = scoreConfig[scoreIdx]?.id;
+    if (!scoreId) return raw;
+
+    const sorted = [...raw];
+    sorted.sort((a, b) => {
+      const aVal = getScoreValue(a, scoreId);
+      const bVal = getScoreValue(b, scoreId);
+      return sortDirection === "asc" ? aVal - bVal : bVal - aVal;
+    });
+    return sorted;
+  }, [hasTextSearch, searchResults, rawMembers, isClientSideSort, sortField, sortDirection, scoreConfig]);
 
   // Clear optimistic overrides once server data catches up
   useEffect(() => {
@@ -532,11 +554,11 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
   // ── Handlers ──
 
   const handleSort = (colKey: string, serverKey?: string) => {
-    if (!serverKey) return;
-    if (sortField === serverKey) {
+    const effectiveKey = serverKey || colKey;
+    if (sortField === effectiveKey) {
       setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
     } else {
-      setSortField(serverKey);
+      setSortField(effectiveKey);
       setSortDirection("asc");
     }
   };
@@ -691,6 +713,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
   // Open dropdown at fixed position from cell rect
   const openDropdownAtCell = useCallback((e: any, memberId: string, type: "assignee" | "status") => {
     if (Platform.OS !== "web") return;
+    setCustomDropdownFor(null);  // Close any open custom dropdown
     const target = e.currentTarget ?? e.target;
     const rect = target?.getBoundingClientRect?.();
     if (rect) {
@@ -854,10 +877,13 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
         return (
           <TouchableOpacity
             style={s.notesCell}
+            data-notes="true"
             onPress={() => {
               setShowSettingsPanel(false);
               setSelectedMemberId(item.groupMemberId);
-              setScrollToNotes(true);
+              // Reset first so re-clicking the same member's notes triggers the effect again
+              setScrollToNotes(false);
+              requestAnimationFrame(() => setScrollToNotes(true));
             }}
           >
             <Text style={s.cellText} numberOfLines={2}>
@@ -1182,13 +1208,13 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
                           <Text
                             style={[
                               s.headerText,
-                              sortField === col.serverSortKey && s.headerTextActive,
+                              (sortField === col.serverSortKey || sortField === col.key) && s.headerTextActive,
                             ]}
                             numberOfLines={1}
                           >
                             {col.label}
                           </Text>
-                          {col.sortable && sortField === col.serverSortKey && (
+                          {col.sortable && (sortField === col.serverSortKey || sortField === col.key) && (
                             <Ionicons
                               name={sortDirection === "asc" ? "arrow-up" : "arrow-down"}
                               size={12}
@@ -1236,8 +1262,9 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
                         hoveredRowId === item._id && s.dataRowHovered,
                       ]}
                       onPress={(e: any) => {
-                        // Don't open side sheet when clicking checkbox
+                        // Don't open side sheet when clicking checkbox or notes cell
                         if (e.target?.closest?.("[data-checkbox]")) return;
+                        if (e.target?.closest?.("[data-notes]")) return;
                         setShowSettingsPanel(false);
                         setSelectedMemberId(item.groupMemberId);
                         setScrollToNotes(false);

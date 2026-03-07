@@ -6,6 +6,7 @@
 
 import { v } from "convex/values";
 import { query, mutation } from "../../_generated/server";
+import { internal } from "../../_generated/api";
 import { Id, Doc } from "../../_generated/dataModel";
 import { now } from "../../lib/utils";
 import { requireAuth, getOptionalAuth } from "../../lib/auth";
@@ -104,22 +105,40 @@ export const markAttendance = mutation({
       )
       .first();
 
+    let resultId: Id<"meetingAttendances">;
     if (existing) {
       await ctx.db.patch(existing._id, {
         status: args.status,
         recordedById,
         recordedAt: timestamp,
       });
-      return existing._id;
+      resultId = existing._id;
+    } else {
+      resultId = await ctx.db.insert("meetingAttendances", {
+        meetingId: args.meetingId,
+        userId: args.userId,
+        status: args.status,
+        recordedById,
+        recordedAt: timestamp,
+      });
     }
 
-    return await ctx.db.insert("meetingAttendances", {
-      meetingId: args.meetingId,
-      userId: args.userId,
-      status: args.status,
-      recordedById,
-      recordedAt: timestamp,
-    });
+    // Recompute followup scores after attendance change
+    const groupMember = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group", (q) => q.eq("groupId", meeting.groupId))
+      .filter((q) => q.eq(q.field("userId"), args.userId))
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .first();
+    if (groupMember) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.followupScoreComputation.computeSingleMemberScore,
+        { groupId: meeting.groupId, groupMemberId: groupMember._id }
+      );
+    }
+
+    return resultId;
   },
 });
 
@@ -417,6 +436,7 @@ export const selfReportAttendance = mutation({
       )
       .first();
 
+    let resultId: Id<"meetingAttendances">;
     if (existing) {
       // Update existing record
       await ctx.db.patch(existing._id, {
@@ -424,17 +444,34 @@ export const selfReportAttendance = mutation({
         recordedAt: timestamp,
         recordedById: userId, // Self-reported
       });
-      return existing._id;
+      resultId = existing._id;
+    } else {
+      // Create new attendance record
+      resultId = await ctx.db.insert("meetingAttendances", {
+        meetingId: args.meetingId,
+        userId,
+        status: args.status,
+        recordedAt: timestamp,
+        recordedById: userId, // Self-reported
+      });
     }
 
-    // Create new attendance record
-    return await ctx.db.insert("meetingAttendances", {
-      meetingId: args.meetingId,
-      userId,
-      status: args.status,
-      recordedAt: timestamp,
-      recordedById: userId, // Self-reported
-    });
+    // Recompute followup scores after attendance change
+    const groupMember = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group", (q) => q.eq("groupId", meeting.groupId))
+      .filter((q) => q.eq(q.field("userId"), userId))
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .first();
+    if (groupMember) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.followupScoreComputation.computeSingleMemberScore,
+        { groupId: meeting.groupId, groupMemberId: groupMember._id }
+      );
+    }
+
+    return resultId;
   },
 });
 
@@ -482,6 +519,7 @@ export const confirmAttendanceWithToken = mutation({
       )
       .first();
 
+    let resultId: Id<"meetingAttendances">;
     if (existing) {
       // Update existing record
       await ctx.db.patch(existing._id, {
@@ -489,17 +527,37 @@ export const confirmAttendanceWithToken = mutation({
         recordedAt: timestamp,
         recordedById: tokenRecord.userId, // Self-reported via token
       });
-      return existing._id;
+      resultId = existing._id;
+    } else {
+      // Create new attendance record
+      resultId = await ctx.db.insert("meetingAttendances", {
+        meetingId: tokenRecord.meetingId,
+        userId: tokenRecord.userId,
+        status: args.status,
+        recordedAt: timestamp,
+        recordedById: tokenRecord.userId, // Self-reported via token
+      });
     }
 
-    // Create new attendance record
-    return await ctx.db.insert("meetingAttendances", {
-      meetingId: tokenRecord.meetingId,
-      userId: tokenRecord.userId,
-      status: args.status,
-      recordedAt: timestamp,
-      recordedById: tokenRecord.userId, // Self-reported via token
-    });
+    // Recompute followup scores after attendance change
+    const meeting = await ctx.db.get(tokenRecord.meetingId);
+    if (meeting) {
+      const groupMember = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group", (q) => q.eq("groupId", meeting.groupId))
+        .filter((q) => q.eq(q.field("userId"), tokenRecord.userId))
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .first();
+      if (groupMember) {
+        await ctx.scheduler.runAfter(
+          0,
+          internal.functions.followupScoreComputation.computeSingleMemberScore,
+          { groupId: meeting.groupId, groupMemberId: groupMember._id }
+        );
+      }
+    }
+
+    return resultId;
   },
 });
 
