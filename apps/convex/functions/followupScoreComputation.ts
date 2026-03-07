@@ -583,8 +583,3 @@ export const backfillSearchTextForAllGroups = internalAction({
   },
 });
 
-// ============================================================================
-// Debug: Trace scoring for a specific user (temporary)
-// ============================================================================
-
-

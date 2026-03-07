@@ -592,7 +592,7 @@ export const internalCrossGroupAttendance = internalQuery({
           .withIndex("by_group_scheduledAt", (q) =>
             q.eq("groupId", membership.groupId)
               .gte("scheduledAt", sixtyDaysAgo)
-              .lt("scheduledAt", Date.now())
+              .lt("scheduledAt", currentTime)
           )
           .filter((q) => q.neq(q.field("status"), "cancelled"))
           .order("desc")
