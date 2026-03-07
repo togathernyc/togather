@@ -204,10 +204,22 @@ For each failing check:
    git commit -m "fix: resolve CI failures
 
    Co-Authored-By: Claude <noreply@anthropic.com>"
+   ```
+
+4. **Wait for Bugbot Autofix before pushing:**
+   
+   Before pushing, check if Autofix is running:
+   ```bash
+   gh pr view <PR_NUMBER> --json statusCheckRollup \
+     --jq '.statusCheckRollup[] | select(.name == "Cursor Bugbot Autofix") | {status: .status}'
+   ```
+   If `IN_PROGRESS`, poll every 30 seconds until complete, then pull and push:
+   ```bash
+   git pull --rebase origin $BRANCH
    git push
    ```
 
-4. **Wait for CI to re-run (poll every 30 seconds)**
+5. **Wait for CI to re-run (poll every 30 seconds)**
 
 ---
 
