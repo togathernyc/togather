@@ -502,9 +502,11 @@ function evaluateCondition(
     case "equals":
       return String(fieldValue) === condition.value;
     case "not_equals":
+      if (condition.value === undefined || condition.value === "") return false;
       return String(fieldValue) !== condition.value;
     case "contains":
-      return String(fieldValue).toLowerCase().includes((condition.value || "").toLowerCase());
+      if (condition.value === undefined || condition.value === "") return false;
+      return String(fieldValue).toLowerCase().includes(condition.value.toLowerCase());
     case "is_true":
       return fieldValue === true;
     case "is_false":

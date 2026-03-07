@@ -12,8 +12,8 @@ export function CommunityRedirect() {
 
   useEffect(() => {
     if (slug) {
-      // Redirect to the Expo-served community landing page
-      window.location.href = `/c/${slug}`
+      // Replace history entry to avoid back-button redirect loop
+      window.location.replace(`/c/${slug}`)
     }
   }, [slug])
 
