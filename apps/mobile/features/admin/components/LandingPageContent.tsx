@@ -66,6 +66,7 @@ type FormField = {
   slot?: string;
   label: string;
   type: string;
+  placeholder?: string;
   options?: string[];
   required: boolean;
   order: number;
@@ -606,6 +607,7 @@ function FieldEditorModal({
   const [slot, setSlot] = useState("");
   const [required, setRequired] = useState(false);
   const [options, setOptions] = useState("");
+  const [placeholder, setPlaceholder] = useState("");
 
   useEffect(() => {
     if (visible) {
@@ -614,6 +616,7 @@ function FieldEditorModal({
       setSlot(field?.slot || "");
       setRequired(field?.required || false);
       setOptions(field?.options?.join(", ") || "");
+      setPlaceholder(field?.placeholder || "");
     }
   }, [visible, field]);
 
@@ -642,6 +645,7 @@ function FieldEditorModal({
       slot: resolvedSlot,
       label: label.trim(),
       type,
+      placeholder: placeholder.trim() || undefined,
       required,
       order: field?.order ?? 0,
       options:
@@ -675,6 +679,21 @@ function FieldEditorModal({
                 placeholder="e.g., Neighborhood"
               />
             </View>
+
+            {!isDecorative && (
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>Placeholder Text</Text>
+                <Text style={styles.fieldHint}>
+                  Hint text shown inside the field when empty
+                </Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={placeholder}
+                  onChangeText={setPlaceholder}
+                  placeholder="e.g., Enter your neighborhood"
+                />
+              </View>
+            )}
 
             <View style={styles.field}>
               <Text style={styles.fieldLabel}>Type</Text>

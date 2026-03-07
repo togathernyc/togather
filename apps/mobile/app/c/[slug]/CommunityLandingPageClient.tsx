@@ -24,6 +24,7 @@ type FormField = {
   slot?: string;
   label: string;
   type: string;
+  placeholder?: string;
   options?: string[];
   required: boolean;
   order: number;
@@ -285,6 +286,7 @@ export default function CommunityLandingPageClient() {
                   value={firstName}
                   onChangeText={setFirstName}
                   placeholder="First name"
+                  placeholderTextColor="#aaa"
                   autoCapitalize="words"
                   autoComplete="given-name"
                 />
@@ -298,6 +300,7 @@ export default function CommunityLandingPageClient() {
                   value={lastName}
                   onChangeText={setLastName}
                   placeholder="Last name"
+                  placeholderTextColor="#aaa"
                   autoCapitalize="words"
                   autoComplete="family-name"
                 />
@@ -313,6 +316,7 @@ export default function CommunityLandingPageClient() {
                 value={phone}
                 onChangeText={setPhone}
                 placeholder="(555) 555-5555"
+                placeholderTextColor="#aaa"
                 keyboardType="phone-pad"
                 autoComplete="tel"
               />
@@ -325,6 +329,7 @@ export default function CommunityLandingPageClient() {
                 value={email}
                 onChangeText={setEmail}
                 placeholder="email@example.com"
+                placeholderTextColor="#aaa"
                 keyboardType="email-address"
                 autoCapitalize="none"
                 autoComplete="email"
@@ -445,7 +450,8 @@ function DynamicField({
               onChange(isNaN(num) ? undefined : num);
             }}
             keyboardType="numeric"
-            placeholder={field.label}
+            placeholder={field.placeholder}
+            placeholderTextColor="#aaa"
           />
         </View>
       );
@@ -493,7 +499,8 @@ function DynamicField({
             style={styles.textInput}
             value={value || ""}
             onChangeText={onChange}
-            placeholder={field.label}
+            placeholder={field.placeholder}
+            placeholderTextColor="#aaa"
           />
         </View>
       );
