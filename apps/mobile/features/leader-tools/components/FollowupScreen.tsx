@@ -6,18 +6,19 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   FlatList,
-  RefreshControl,
   Image,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { UserRoute } from "@components/guards/UserRoute";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useQuery, useAuthenticatedAction, api } from "@services/api/convex";
+import { useQuery, usePaginatedQuery, api } from "@services/api/convex";
 import { Id } from "@services/api/convex";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { DragHandle } from "@components/ui/DragHandle";
+import { useIsDesktopWeb } from "@hooks/useIsDesktopWeb";
+import { FollowupDesktopTable } from "./FollowupDesktopTable";
 
 type SortDirection = "asc" | "desc";
 
@@ -27,38 +28,41 @@ type ScoreConfigEntry = {
 };
 
 type FollowupMember = {
-  memberId: string;
+  _id: string;
+  groupMemberId: string;
   userId: string;
   firstName: string;
   lastName: string;
-  email: string | null;
-  phone: string | null;
-  profileImage: string | null;
-  followupScore: number;
+  avatarUrl: string | null;
+  score1: number;
+  score2: number;
+  score3?: number;
+  score4?: number;
+  scoreIds: string[];
+  alerts: string[];
+  isSnoozed: boolean;
+  snoozedUntil?: number;
   attendanceScore: number;
   connectionScore: number;
-  scores: Record<string, number>;
-  pcoServingCount: number;
+  followupScore: number;
   missedMeetings: number;
   consecutiveMissed: number;
-  lastAttendedAt: string | null;
-  lastFollowupAt: string | null;
-  snoozedUntil: string | null;
-  scoreFactors: {
+  lastAttendedAt?: number;
+  lastFollowupAt?: number;
+  scoreFactors?: {
     recencyWeight: number;
     streakPenalty: number;
     dropoffDetected: boolean;
     activeInOtherGroups: boolean;
     otherGroupMeetingsAttended: number;
   };
-  triggeredAlerts?: string[];
 };
 
 // Subtitle variable options for member cards (pick up to 2)
 type SubtitleVariable = {
   id: string;
   label: string;
-  render: (item: FollowupMember, formatDate: (d: string | null) => string) => string;
+  render: (item: FollowupMember, formatDate: (d: number | undefined) => string) => string;
 };
 
 export const SUBTITLE_VARIABLES: SubtitleVariable[] = [
@@ -82,50 +86,46 @@ export const SUBTITLE_VARIABLES: SubtitleVariable[] = [
     label: "Last follow-up",
     render: (item, formatDate) => `Follow-up: ${formatDate(item.lastFollowupAt)}`,
   },
-  {
-    id: "times_served",
-    label: "Times served",
-    render: (item) => `${item.pcoServingCount} served`,
-  },
 ];
 
 export const SUBTITLE_VARIABLE_MAP = new Map(
   SUBTITLE_VARIABLES.map((v) => [v.id, v])
 );
 
+/**
+ * Get the score value for a given score config entry from a member doc.
+ * Maps scoreConfig[i].id → score1, score2, score3, score4.
+ */
+function getScoreValue(member: FollowupMember, scoreId: string): number {
+  const idx = member.scoreIds.indexOf(scoreId);
+  if (idx === 0) return member.score1;
+  if (idx === 1) return member.score2;
+  if (idx === 2) return member.score3 ?? 0;
+  if (idx === 3) return member.score4 ?? 0;
+  return 0;
+}
+
 export function FollowupScreen() {
   const { group_id } = useLocalSearchParams<{ group_id: string }>();
+  const isDesktop = useIsDesktopWeb();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { primaryColor } = useCommunityTheme();
+
+  // Sort state — maps to server-side index
+  // "score1" and "score2" use server indexes; "__weighted__" uses client-side
   const [sortField, setSortField] = useState<string | null>(null);
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
 
-  // Handle sort option press - toggle direction if same field, otherwise switch field
-  const handleSortPress = (field: string) => {
-    if (field === sortField) {
-      setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
-    } else {
-      setSortField(field);
-      // Weighted defaults to descending (most alerts first), others to ascending
-      setSortDirection(field === "__weighted__" ? "desc" : "asc");
-    }
-  };
-
-  // Fetch follow-up list using Convex
-  const rawData = useQuery(
-    api.functions.memberFollowups.list,
-    group_id
-      ? {
-          groupId: group_id as Id<"groups">,
-          ...(sortField ? { sortBy: sortField } : {}),
-          sortDirection,
-        }
-      : "skip"
+  // Config query (called once, not per-page)
+  const config = useQuery(
+    api.functions.memberFollowups.getFollowupConfig,
+    group_id ? { groupId: group_id as Id<"groups"> } : "skip"
   );
 
-  // Extract score config from response
-  const scoreConfig: ScoreConfigEntry[] = rawData?.scoreConfig ?? [];
+  const scoreConfig: ScoreConfigEntry[] = config?.scoreConfigScores ?? [];
+  const toolDisplayName = config?.toolDisplayName ?? "Follow-up";
+  const memberSubtitle = config?.memberSubtitle ?? "";
 
   // Initialize sortField from the first score in config once available
   useEffect(() => {
@@ -134,61 +134,63 @@ export function FollowupScreen() {
     }
   }, [scoreConfig, sortField]);
 
-  // Fetch PCO serving counts on demand (like the run sheet)
-  const [servingCounts, setServingCounts] = useState<Record<string, number>>({});
-  const fetchServingCounts = useAuthenticatedAction(
-    api.functions.pcoServices.servingHistory.getServingCounts
+  // Map sortField to server sort key
+  const serverSortBy = useMemo(() => {
+    if (!sortField || sortField === "__weighted__") return "score1";
+    const idx = scoreConfig.findIndex((s) => s.id === sortField);
+    if (idx === 0) return "score1";
+    if (idx === 1) return "score2";
+    return "score1";
+  }, [sortField, scoreConfig]);
+
+  // For weighted sort, we use score1 index and re-sort client-side
+  const serverSortDirection = sortField === "__weighted__" ? "desc" : sortDirection;
+
+  // Paginated member list from pre-computed scores
+  const {
+    results: rawMembers,
+    status: paginationStatus,
+    loadMore,
+    isLoading,
+  } = usePaginatedQuery(
+    api.functions.memberFollowups.list,
+    group_id
+      ? {
+          groupId: group_id as Id<"groups">,
+          sortBy: serverSortBy,
+          sortDirection: serverSortDirection,
+        }
+      : "skip",
+    { initialNumItems: 50 }
   );
-  useEffect(() => {
-    if (group_id) {
-      fetchServingCounts({ groupId: group_id as Id<"groups"> })
-        .then((counts) => {
-          console.log("[FollowupScreen] PCO serving counts:", counts);
-          setServingCounts(counts);
-        })
-        .catch((e) => {
-          console.warn("[FollowupScreen] Failed to fetch PCO serving counts:", e);
-        });
-    }
-  }, [group_id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const isLoading = rawData === undefined;
-  const isFetching = false;
-  const error: Error | null = null;
-  const isRefetching = false;
-  const refetch = () => {};
-
-  // Transform data and merge PCO serving counts
+  // Apply client-side weighted sort if needed
   const members = useMemo(() => {
-    if (!rawData?.members) return undefined;
-    return rawData.members.map((m: any) => {
-      // Backend returns odUserId containing the Convex Id<"users">
-      const convexUserId: string = m.odUserId;
-      return {
-      memberId: m.memberId,
-      userId: convexUserId,
-      firstName: m.firstName,
-      lastName: m.lastName,
-      email: m.email,
-      phone: m.phone,
-      profileImage: m.profileImage,
-      followupScore: m.followupScore,
-      attendanceScore: m.attendanceScore,
-      connectionScore: m.connectionScore,
-      scores: m.scores || {},
-      pcoServingCount: m.pcoServingCount ?? servingCounts[convexUserId] ?? 0,
-      missedMeetings: m.missedMeetings,
-      consecutiveMissed: m.consecutiveMissed,
-      lastAttendedAt: m.lastAttendedAt ? new Date(m.lastAttendedAt).toISOString() : null,
-      lastFollowupAt: m.lastFollowupAt ? new Date(m.lastFollowupAt).toISOString() : null,
-      snoozedUntil: m.snoozedUntil ? new Date(m.snoozedUntil).toISOString() : null,
-      scoreFactors: m.scoreFactors,
-      triggeredAlerts: m.triggeredAlerts,
-    };
-    });
-  }, [rawData, servingCounts]);
+    if (!rawMembers) return undefined;
 
-  const showFullLoading = isLoading && !members;
+    if (sortField !== "__weighted__") {
+      return rawMembers as unknown as FollowupMember[];
+    }
+
+    // Weighted sort: alert count (desc) then average score
+    const sorted = [...rawMembers] as unknown as FollowupMember[];
+    sorted.sort((a, b) => {
+      const aAlerts = a.alerts?.length ?? 0;
+      const bAlerts = b.alerts?.length ?? 0;
+      if (aAlerts !== bAlerts) {
+        return sortDirection === "desc" ? bAlerts - aAlerts : aAlerts - bAlerts;
+      }
+      // Tiebreaker: average of all configured scores
+      const aAvg = scoreConfig.length > 0
+        ? scoreConfig.reduce((sum, sc) => sum + getScoreValue(a, sc.id), 0) / scoreConfig.length
+        : 0;
+      const bAvg = scoreConfig.length > 0
+        ? scoreConfig.reduce((sum, sc) => sum + getScoreValue(b, sc.id), 0) / scoreConfig.length
+        : 0;
+      return sortDirection === "desc" ? aAvg - bAvg : bAvg - aAvg;
+    });
+    return sorted;
+  }, [rawMembers, sortField, sortDirection, scoreConfig]);
 
   // Fetch group info for header
   const groupData = useQuery(
@@ -201,9 +203,24 @@ export function FollowupScreen() {
     return { name: groupData.name };
   }, [groupData]);
 
-  // Custom display name and member subtitle from list query
-  const toolDisplayName = rawData?.toolDisplayName ?? "Follow-up";
-  const memberSubtitle = rawData?.memberSubtitle ?? "";
+  // Desktop: render spreadsheet table with side sheet
+  if (isDesktop) {
+    return (
+      <UserRoute>
+        <FollowupDesktopTable groupId={group_id || ""} />
+      </UserRoute>
+    );
+  }
+
+  // Handle sort option press
+  const handleSortPress = (field: string) => {
+    if (field === sortField) {
+      setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
+    } else {
+      setSortField(field);
+      setSortDirection(field === "__weighted__" ? "desc" : "asc");
+    }
+  };
 
   const handleBack = () => {
     if (router.canGoBack()) {
@@ -221,15 +238,14 @@ export function FollowupScreen() {
     router.push(`/(user)/leader-tools/${group_id}/tool-settings/followup`);
   };
 
-  const formatDate = (dateString: string | null) => {
-    if (!dateString) return "Never";
-    const date = new Date(dateString);
+  const formatDate = (timestamp: number | undefined) => {
+    if (!timestamp) return "Never";
+    const date = new Date(timestamp);
     return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   };
 
   const getMemberSubtitleLines = (item: FollowupMember): string[] => {
     if (!memberSubtitle) {
-      // Default: missed count and last attended
       return [
         `${item.missedMeetings} missed`,
         `Last: ${formatDate(item.lastAttendedAt)}`,
@@ -238,9 +254,9 @@ export function FollowupScreen() {
     const varIds = memberSubtitle.split(",").filter(Boolean);
     if (varIds.length === 0) return [];
     return varIds
-      .map((id) => SUBTITLE_VARIABLE_MAP.get(id))
-      .filter((v): v is SubtitleVariable => v !== undefined)
-      .map((v) => v.render(item, formatDate));
+      .map((id: string) => SUBTITLE_VARIABLE_MAP.get(id))
+      .filter((v: SubtitleVariable | undefined): v is SubtitleVariable => v !== undefined)
+      .map((v: SubtitleVariable) => v.render(item, formatDate));
   };
 
   const getScoreStyle = (value: number) => {
@@ -250,9 +266,8 @@ export function FollowupScreen() {
   };
 
   const renderMember = ({ item }: { item: FollowupMember }) => {
-    const isSnoozed = item.snoozedUntil && new Date(item.snoozedUntil) > new Date();
-
-    const hasAlerts = (item.triggeredAlerts?.length ?? 0) > 0;
+    const isSnoozed = item.isSnoozed && !!item.snoozedUntil && item.snoozedUntil > Date.now();
+    const hasAlerts = (item.alerts?.length ?? 0) > 0;
 
     return (
       <TouchableOpacity
@@ -261,13 +276,13 @@ export function FollowupScreen() {
           isSnoozed && styles.memberCardSnoozed,
           hasAlerts && styles.memberCardAlert,
         ]}
-        onPress={() => handleMemberPress(item.memberId)}
+        onPress={() => handleMemberPress(item.groupMemberId)}
         activeOpacity={0.7}
       >
         <View style={styles.memberInfo}>
-          {item.profileImage ? (
+          {item.avatarUrl ? (
             <Image
-              source={{ uri: item.profileImage }}
+              source={{ uri: item.avatarUrl }}
               style={styles.avatarImage}
             />
           ) : (
@@ -283,12 +298,12 @@ export function FollowupScreen() {
               <Text style={styles.memberName}>
                 {item.firstName} {item.lastName}
               </Text>
-              {item.scoreFactors.dropoffDetected && (
+              {item.scoreFactors?.dropoffDetected && (
                 <View style={styles.dropoffBadge}>
                   <Text style={styles.dropoffBadgeText}>Drop-off</Text>
                 </View>
               )}
-              {item.scoreFactors.activeInOtherGroups && (
+              {item.scoreFactors?.activeInOtherGroups && (
                 <View style={styles.activeElsewhereBadge}>
                   <Text style={styles.activeElsewhereBadgeText}>Active elsewhere</Text>
                 </View>
@@ -301,7 +316,7 @@ export function FollowupScreen() {
                   </Text>
                 </View>
               )}
-              {item.triggeredAlerts?.map((label: string, i: number) => (
+              {item.alerts?.map((label: string, i: number) => (
                 <View key={i} style={styles.alertBadge}>
                   <Ionicons name="warning" size={12} color="#B45309" />
                   <Text style={styles.alertBadgeText}>{label}</Text>
@@ -319,7 +334,7 @@ export function FollowupScreen() {
         {/* Dynamic score circles from scoreConfig */}
         <View style={styles.scoreContainer}>
           {scoreConfig.map((sc) => {
-            const value = item.scores[sc.id] ?? 0;
+            const value = getScoreValue(item, sc.id);
             const style = getScoreStyle(value);
             return (
               <View key={sc.id} style={styles.scoreItem}>
@@ -338,7 +353,7 @@ export function FollowupScreen() {
   };
 
   const renderContent = () => {
-    if (showFullLoading) {
+    if (isLoading && (!members || members.length === 0)) {
       return (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={primaryColor} />
@@ -347,34 +362,24 @@ export function FollowupScreen() {
       );
     }
 
-    if (error) {
-      const err = error as Error;
-      return (
-        <View style={styles.errorContainer}>
-          <Ionicons name="alert-circle-outline" size={48} color="#e74c3c" />
-          <Text style={styles.errorText}>
-            {err.message || "Failed to load follow-up data"}
-          </Text>
-          <TouchableOpacity style={styles.retryButton} onPress={() => refetch()}>
-            <Text style={styles.retryButtonText}>Retry</Text>
-          </TouchableOpacity>
-        </View>
-      );
-    }
-
     return (
       <FlatList
         data={members}
-        keyExtractor={(item) => item.memberId}
+        keyExtractor={(item) => item._id || item.groupMemberId}
         renderItem={renderMember}
         contentContainerStyle={styles.listContent}
-        refreshControl={
-          <RefreshControl
-            refreshing={isRefetching}
-            onRefresh={refetch}
-            colors={[primaryColor]}
-            tintColor={primaryColor}
-          />
+        onEndReached={() => {
+          if (paginationStatus === "CanLoadMore") {
+            loadMore(50);
+          }
+        }}
+        onEndReachedThreshold={0.5}
+        ListFooterComponent={
+          paginationStatus === "LoadingMore" ? (
+            <View style={styles.footerLoading}>
+              <ActivityIndicator size="small" color={primaryColor} />
+            </View>
+          ) : null
         }
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
@@ -418,9 +423,6 @@ export function FollowupScreen() {
         </View>
         {/* Sort toggle row */}
         <View style={styles.sortToggleContainer}>
-          {isFetching && !isLoading && (
-            <ActivityIndicator size="small" color={primaryColor} style={styles.sortLoading} />
-          )}
           <View style={styles.sortToggle}>
             {scoreConfig.length > 1 && (
               <TouchableOpacity
@@ -500,29 +502,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#666",
   },
-  errorContainer: {
-    flex: 1,
-    justifyContent: "center",
+  footerLoading: {
+    paddingVertical: 20,
     alignItems: "center",
-    padding: 20,
-  },
-  errorText: {
-    fontSize: 16,
-    color: "#666",
-    marginTop: 12,
-    marginBottom: 20,
-    textAlign: "center",
-  },
-  retryButton: {
-    backgroundColor: DEFAULT_PRIMARY_COLOR,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
-  },
-  retryButtonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
   },
   header: {
     padding: 16,
@@ -561,9 +543,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 8,
     marginTop: 12,
-  },
-  sortLoading: {
-    marginRight: 4,
   },
   sortToggle: {
     flexDirection: "row",

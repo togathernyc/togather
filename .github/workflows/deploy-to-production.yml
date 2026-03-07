@@ -151,6 +151,12 @@ jobs:
       - name: Deploy to Convex
         run: npx convex deploy
 
+      - name: Run followup score backfill
+        run: |
+          echo "Running followup score backfill to populate new denormalized fields..."
+          npx convex run functions/followupScoreComputation:backfillAllGroups
+          echo "Backfill scheduled for all groups (idempotent, can be removed after first deploy)"
+
   # Build and submit mobile native app
   deploy-mobile-native:
     name: Build Mobile Native

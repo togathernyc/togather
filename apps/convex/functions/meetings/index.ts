@@ -357,6 +357,15 @@ export const update = mutation({
     // Apply updates
     await ctx.db.patch(meetingId, cleanedUpdates);
 
+    // Trigger followup score recomputation when meeting is completed
+    if (updates.status === "completed" && meeting.status !== "completed") {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.followupScoreComputation.computeGroupScores,
+        { groupId: meeting.groupId }
+      );
+    }
+
     // Send event update notification if significant changes were made
     if (changes.length > 0 && meeting.status === "scheduled") {
       await ctx.scheduler.runAfter(

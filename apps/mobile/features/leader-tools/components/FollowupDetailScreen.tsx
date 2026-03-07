@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useRef, useEffect } from "react";
 import {
   View,
   Text,
@@ -34,11 +34,21 @@ const SNOOZE_OPTIONS: { value: SnoozeDuration; label: string }[] = [
   { value: "3_months", label: "3 months" },
 ];
 
-export function FollowupDetailScreen() {
-  const { group_id, member_id } = useLocalSearchParams<{
-    group_id: string;
-    member_id: string;
-  }>();
+/**
+ * Reusable detail content component — used by both the full-screen route
+ * and the desktop side sheet panel.
+ */
+export function FollowupDetailContent({
+  groupId,
+  memberId,
+  onClose,
+  scrollToNotes,
+}: {
+  groupId: string;
+  memberId: string;
+  onClose?: () => void;
+  scrollToNotes?: boolean;
+}) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user } = useAuth();
@@ -49,13 +59,18 @@ export function FollowupDetailScreen() {
   const [showSnoozeModal, setShowSnoozeModal] = useState(false);
   const [snoozeNote, setSnoozeNote] = useState("");
   const [showImageModal, setShowImageModal] = useState(false);
+  const scrollViewRef = useRef<ScrollView>(null);
+  const [notesSectionY, setNotesSectionY] = useState(0);
   const [editingMeeting, setEditingMeeting] = useState<{
     meetingId: string;
     title: string;
     date: string;
     currentStatus: number;
-    groupId?: string; // for cross-group attendance edits
+    groupId?: string;
   } | null>(null);
+
+  const group_id = groupId;
+  const member_id = memberId;
 
   // Fetch member history using Convex
   const historyData = useQuery(
@@ -179,7 +194,9 @@ export function FollowupDetailScreen() {
   };
 
   const handleBack = () => {
-    if (router.canGoBack()) {
+    if (onClose) {
+      onClose();
+    } else if (router.canGoBack()) {
       router.back();
     } else {
       router.push(`/(user)/leader-tools/${group_id}/followup`);
@@ -357,55 +374,58 @@ export function FollowupDetailScreen() {
     }
   };
 
+  // Auto-scroll to the notes section when opened from the desktop table notes cell
+  useEffect(() => {
+    if (scrollToNotes && history && notesSectionY > 0) {
+      const timer = setTimeout(() => {
+        scrollViewRef.current?.scrollTo({ y: notesSectionY, animated: true });
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [scrollToNotes, history, notesSectionY]);
+
 
   if (isLoading) {
     return (
-      <UserRoute>
-        <View style={styles.container}>
-          <DragHandle />
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={primaryColor} />
-            <Text style={styles.loadingText}>Loading member details...</Text>
-          </View>
+      <View style={styles.container}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={primaryColor} />
+          <Text style={styles.loadingText}>Loading member details...</Text>
         </View>
-      </UserRoute>
+      </View>
     );
   }
 
   if (!history) {
     return (
-      <UserRoute>
-        <View style={styles.container}>
-          <DragHandle />
-          <View style={styles.errorContainer}>
-            <Ionicons name="alert-circle-outline" size={48} color="#e74c3c" />
-            <Text style={styles.errorText}>
-              Failed to load member details
-            </Text>
-            <TouchableOpacity style={styles.retryButton} onPress={() => refetch()}>
-              <Text style={styles.retryButtonText}>Retry</Text>
-            </TouchableOpacity>
-          </View>
+      <View style={styles.container}>
+        <View style={styles.errorContainer}>
+          <Ionicons name="alert-circle-outline" size={48} color="#e74c3c" />
+          <Text style={styles.errorText}>
+            Failed to load member details
+          </Text>
+          <TouchableOpacity style={styles.retryButton} onPress={() => refetch()}>
+            <Text style={styles.retryButtonText}>Retry</Text>
+          </TouchableOpacity>
         </View>
-      </UserRoute>
+      </View>
     );
   }
 
   const { member, attendanceHistory, followups } = history;
 
   return (
-    <UserRoute>
-      <DragHandle />
+    <>
       {/* Header */}
-      <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
+      <View style={[styles.header, !onClose && { paddingTop: insets.top + 16 }]}>
         <TouchableOpacity style={styles.backButton} onPress={handleBack}>
-          <Ionicons name="arrow-back" size={24} color="#333" />
+          <Ionicons name={onClose ? "close" : "arrow-back"} size={24} color="#333" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>{history?.toolDisplayName ?? "Follow-up"}</Text>
         <View style={styles.headerSpacer} />
       </View>
 
-      <ScrollView style={styles.content}>
+      <ScrollView ref={scrollViewRef} style={styles.content}>
         {/* Profile Section */}
         <View style={styles.profileSection}>
           <TouchableOpacity
@@ -747,7 +767,7 @@ export function FollowupDetailScreen() {
         )}
 
         {/* Add Note */}
-        <View style={styles.section}>
+        <View style={styles.section} onLayout={(e) => setNotesSectionY(e.nativeEvent.layout.y)}>
           <Text style={styles.sectionTitle}>Add Note</Text>
           <TextInput
             style={styles.noteInput}
@@ -945,6 +965,23 @@ export function FollowupDetailScreen() {
           </View>
         </Pressable>
       </Modal>
+    </>
+  );
+}
+
+/**
+ * Full-screen route wrapper — adds UserRoute guard and DragHandle.
+ */
+export function FollowupDetailScreen() {
+  const { group_id, member_id } = useLocalSearchParams<{
+    group_id: string;
+    member_id: string;
+  }>();
+
+  return (
+    <UserRoute>
+      <DragHandle />
+      <FollowupDetailContent groupId={group_id || ""} memberId={member_id || ""} />
     </UserRoute>
   );
 }

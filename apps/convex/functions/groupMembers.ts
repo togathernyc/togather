@@ -511,6 +511,13 @@ export const remove = mutation({
       leftAt: now(),
     });
 
+    // Delete followup score doc for this member
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.followupScoreComputation.deleteScoreDoc,
+      { groupMemberId: member._id }
+    );
+
     // Sync channel memberships (transactional - prevents race conditions)
     await syncUserChannelMembershipsLogic(ctx, args.userId, args.groupId);
 

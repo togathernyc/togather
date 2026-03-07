@@ -259,6 +259,18 @@ export default defineSchema({
       }))),
     })),
 
+    // Follow-up column configuration (column order, visibility, custom fields)
+    followupColumnConfig: v.optional(v.object({
+      columnOrder: v.array(v.string()),
+      hiddenColumns: v.array(v.string()),
+      customFields: v.array(v.object({
+        slot: v.string(),        // e.g. "customText1", "customBool2"
+        name: v.string(),        // display label
+        type: v.string(),        // "text" | "number" | "boolean" | "dropdown"
+        options: v.optional(v.array(v.string())),
+      })),
+    })),
+
     // PCO serving counts — written by the getServingCounts action,
     // read by the follow-up scoring query. Lightweight alternative to a cache table.
     pcoServingCounts: v.optional(v.object({
@@ -713,6 +725,124 @@ export default defineSchema({
     .index("by_groupMember_createdAt", ["groupMemberId", "createdAt"])
     .index("by_createdBy", ["createdById"])
     .index("by_snoozeUntil", ["snoozeUntil"]),
+
+  // =============================================================================
+  // MEMBER FOLLOWUP SCORES (pre-computed for paginated list reads)
+  // =============================================================================
+  // Single source of truth for the followup screen. Pre-computed scores + manual
+  // leader fields in one doc per group member. The `list` query reads this table
+  // directly — zero joins, zero computation at read time.
+  //
+  // Separate from groupMembers to isolate reactivity: only the followup screen
+  // subscribes to these docs. Score updates from cron/events don't trigger
+  // re-renders in member lists, search, chat, etc.
+
+  memberFollowupScores: defineTable({
+    groupId: v.id("groups"),
+    groupMemberId: v.id("groupMembers"),
+    userId: v.id("users"),
+
+    // ── Denormalized display info (zero-join reads) ──
+    firstName: v.string(),
+    lastName: v.optional(v.string()),
+    avatarUrl: v.optional(v.string()),
+    memberSubtitleValue: v.optional(v.string()),
+
+    // ── Computed score columns (auto-updated by events + cron) ──
+    // Mapped from ScoreConfig: scores[0] → score1, scores[1] → score2, etc.
+    score1: v.number(),
+    score2: v.number(),
+    score3: v.optional(v.number()),
+    score4: v.optional(v.number()),
+
+    // Alert labels (pre-evaluated from score config thresholds)
+    alerts: v.array(v.string()),
+
+    // Snooze state
+    isSnoozed: v.boolean(),
+    snoozedUntil: v.optional(v.number()),
+
+    // Raw variable values (for detail view breakdown, avoids recompute)
+    rawValues: v.optional(v.any()),
+
+    // Legacy scores (for backward compatibility with detail view)
+    attendanceScore: v.number(),
+    connectionScore: v.number(),
+    followupScore: v.number(),
+    missedMeetings: v.number(),
+    consecutiveMissed: v.number(),
+    lastAttendedAt: v.optional(v.number()),
+    lastFollowupAt: v.optional(v.number()),
+    scoreFactors: v.optional(v.any()),
+
+    // Score IDs mapping (which scoreConfig.scores[i].id maps to score1, score2, etc.)
+    scoreIds: v.array(v.string()),
+
+    // ── Additional denormalized display info ──
+    email: v.optional(v.string()),
+    phone: v.optional(v.string()),
+    latestNote: v.optional(v.string()),
+    latestNoteAt: v.optional(v.number()),
+
+    // ── Manual leader fields (Phase 2 — set via mutations) ──
+    status: v.optional(v.string()),
+    assigneeId: v.optional(v.id("users")),
+    connectionPoint: v.optional(v.string()),
+
+    // ── Custom field slots (configurable columns) ──
+    customText1: v.optional(v.string()),
+    customText2: v.optional(v.string()),
+    customText3: v.optional(v.string()),
+    customText4: v.optional(v.string()),
+    customText5: v.optional(v.string()),
+    customNum1: v.optional(v.number()),
+    customNum2: v.optional(v.number()),
+    customNum3: v.optional(v.number()),
+    customNum4: v.optional(v.number()),
+    customNum5: v.optional(v.number()),
+    customBool1: v.optional(v.boolean()),
+    customBool2: v.optional(v.boolean()),
+    customBool3: v.optional(v.boolean()),
+    customBool4: v.optional(v.boolean()),
+    customBool5: v.optional(v.boolean()),
+
+    // ── Denormalized search field (firstName + lastName + email + phone) ──
+    searchText: v.optional(v.string()),
+
+    // ── Timestamps ──
+    updatedAt: v.number(),
+    addedAt: v.optional(v.number()),
+  })
+    // Sort indexes — score columns
+    .index("by_group_score1", ["groupId", "score1"])
+    .index("by_group_score2", ["groupId", "score2"])
+    // Sort indexes — display columns
+    .index("by_group_firstName", ["groupId", "firstName"])
+    .index("by_group_lastName", ["groupId", "lastName"])
+    .index("by_group_addedAt", ["groupId", "addedAt"])
+    .index("by_group_lastAttendedAt", ["groupId", "lastAttendedAt"])
+    .index("by_group_lastFollowupAt", ["groupId", "lastFollowupAt"])
+    // Sort indexes — manual fields (Phase 2)
+    .index("by_group_status", ["groupId", "status"])
+    .index("by_group_assignee", ["groupId", "assigneeId"])
+    // Sort indexes — custom fields (first 3 of each type for server-side sorting)
+    .index("by_group_customText1", ["groupId", "customText1"])
+    .index("by_group_customText2", ["groupId", "customText2"])
+    .index("by_group_customText3", ["groupId", "customText3"])
+    .index("by_group_customNum1", ["groupId", "customNum1"])
+    .index("by_group_customNum2", ["groupId", "customNum2"])
+    .index("by_group_customNum3", ["groupId", "customNum3"])
+    .index("by_group_customBool1", ["groupId", "customBool1"])
+    .index("by_group_customBool2", ["groupId", "customBool2"])
+    .index("by_group_customBool3", ["groupId", "customBool3"])
+    // Lookup indexes
+    .index("by_groupMember", ["groupMemberId"])
+    .index("by_group", ["groupId"])
+    // Full-text search
+    .searchIndex("search_followup", {
+      searchField: "searchText",
+      filterFields: ["groupId", "status", "assigneeId"],
+    }),
 
   // =============================================================================
   // COMMUNITY INTEGRATIONS
