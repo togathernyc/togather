@@ -246,7 +246,7 @@ export function useStoredAuthToken(): string | null {
 }
 
 // Re-export hooks from convex/react for use in wrapper implementations
-import { useQuery as useConvexQuery, useMutation as useConvexMutation, useAction as useConvexAction } from 'convex/react';
+import { useQuery as useConvexQuery, useMutation as useConvexMutation, useAction as useConvexAction, usePaginatedQuery as useConvexPaginatedQuery } from 'convex/react';
 
 /**
  * Authenticated query hook
@@ -357,6 +357,46 @@ export function useAuthenticatedAction<
     },
     [action]
   );
+}
+
+/**
+ * Authenticated paginated query hook
+ *
+ * Wraps usePaginatedQuery and automatically adds the auth token from AsyncStorage.
+ * If no token is available, the query is skipped.
+ *
+ * @param queryFn - The Convex paginated query function reference
+ * @param args - The query arguments (without token)
+ * @param options - Pagination options (e.g., initialNumItems)
+ * @returns Paginated query result with results, status, loadMore, and isLoading
+ *
+ * @example
+ * ```tsx
+ * const { results, loadMore, status, isLoading } = useAuthenticatedPaginatedQuery(
+ *   api.functions.memberFollowups.list,
+ *   { groupId: "xxx" },
+ *   { initialNumItems: 50 }
+ * );
+ * ```
+ */
+export function useAuthenticatedPaginatedQuery<
+  Query extends FunctionReference<'query'>,
+>(
+  queryFn: Query,
+  args: Omit<FunctionArgs<Query>, 'token' | 'paginationOpts'> | 'skip',
+  options: { initialNumItems: number }
+) {
+  const token = useStoredAuthToken();
+
+  // If args is 'skip' or no token, skip the query
+  const shouldSkip = args === 'skip' || !token;
+
+  // Compute args once - always call the hook unconditionally to satisfy rules of hooks
+  const queryArgs = shouldSkip
+    ? ('skip' as const)
+    : { ...(args as object), token };
+
+  return useConvexPaginatedQuery(queryFn, queryArgs as any, options);
 }
 
 /**

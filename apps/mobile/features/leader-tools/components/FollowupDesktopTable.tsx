@@ -12,7 +12,7 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { useQuery, usePaginatedQuery, useAuthenticatedQuery, useAuthenticatedMutation, api } from "@services/api/convex";
+import { useQuery, useAuthenticatedQuery, useAuthenticatedPaginatedQuery, useAuthenticatedMutation, api } from "@services/api/convex";
 import { Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
@@ -281,7 +281,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
   const [customDropdownFor, setCustomDropdownFor] = useState<{ memberId: string; slot: string } | null>(null);
 
   // Config query
-  const config = useQuery(
+  const config = useAuthenticatedQuery(
     api.functions.memberFollowups.getFollowupConfig,
     groupId ? { groupId: groupId as Id<"groups"> } : "skip"
   );
@@ -449,7 +449,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
     status: paginationStatus,
     loadMore,
     isLoading,
-  } = usePaginatedQuery(
+  } = useAuthenticatedPaginatedQuery(
     api.functions.memberFollowups.list,
     !hasTextSearch && groupId
       ? {
@@ -463,7 +463,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
   );
 
   // Text search query — used when there IS text search
-  const searchResults = useQuery(
+  const searchResults = useAuthenticatedQuery(
     api.functions.memberFollowups.search,
     hasTextSearch && groupId
       ? {
@@ -478,7 +478,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
   );
 
   // Total member count
-  const totalCount = useQuery(
+  const totalCount = useAuthenticatedQuery(
     api.functions.memberFollowups.count,
     groupId ? { groupId: groupId as Id<"groups"> } : "skip"
   );

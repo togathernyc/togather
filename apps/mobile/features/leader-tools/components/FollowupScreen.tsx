@@ -12,7 +12,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { UserRoute } from "@components/guards/UserRoute";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useQuery, usePaginatedQuery, api } from "@services/api/convex";
+import { useQuery, useAuthenticatedQuery, useAuthenticatedPaginatedQuery, api } from "@services/api/convex";
 import { Id } from "@services/api/convex";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
@@ -117,7 +117,7 @@ export function FollowupScreen() {
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
 
   // Config query (called once, not per-page)
-  const config = useQuery(
+  const config = useAuthenticatedQuery(
     api.functions.memberFollowups.getFollowupConfig,
     group_id ? { groupId: group_id as Id<"groups"> } : "skip"
   );
@@ -148,7 +148,7 @@ export function FollowupScreen() {
     status: paginationStatus,
     loadMore,
     isLoading,
-  } = usePaginatedQuery(
+  } = useAuthenticatedPaginatedQuery(
     api.functions.memberFollowups.list,
     group_id
       ? {

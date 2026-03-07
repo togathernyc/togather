@@ -121,7 +121,7 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
 
   // ── Data queries ──
 
-  const config = useQuery(
+  const config = useAuthenticatedQuery(
     api.functions.memberFollowups.getFollowupConfig,
     groupId ? { groupId: groupId as Id<"groups"> } : "skip"
   );

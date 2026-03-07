@@ -551,6 +551,7 @@ export const internalScoreBatch = internalQuery({
  */
 export const list = query({
   args: {
+    token: v.string(),
     groupId: v.id("groups"),
     sortBy: v.optional(v.string()),
     sortDirection: v.optional(v.string()),
@@ -561,6 +562,7 @@ export const list = query({
     paginationOpts: paginationOptsValidator,
   },
   handler: async (ctx, args) => {
+    await requireAuth(ctx, args.token);
     const direction = args.sortDirection === "asc" ? "asc" : "desc";
 
     // Map sortBy to the correct index
@@ -614,8 +616,9 @@ export const list = query({
  * Returns score config, display name, and member subtitle settings.
  */
 export const getFollowupConfig = query({
-  args: { groupId: v.id("groups") },
+  args: { token: v.string(), groupId: v.id("groups") },
   handler: async (ctx, args) => {
+    await requireAuth(ctx, args.token);
     const group = await ctx.db.get(args.groupId);
     if (!group) return null;
 
@@ -636,6 +639,7 @@ export const getFollowupConfig = query({
  */
 export const search = query({
   args: {
+    token: v.string(),
     groupId: v.id("groups"),
     searchText: v.string(),
     statusFilter: v.optional(v.string()),
@@ -644,6 +648,7 @@ export const search = query({
     attendanceMin: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    await requireAuth(ctx, args.token);
     let results = ctx.db
       .query("memberFollowupScores")
       .withSearchIndex("search_followup", (q) => {
@@ -674,8 +679,9 @@ export const search = query({
  * Uses a streaming count to avoid loading all documents into memory.
  */
 export const count = query({
-  args: { groupId: v.id("groups") },
+  args: { token: v.string(), groupId: v.id("groups") },
   handler: async (ctx, args) => {
+    await requireAuth(ctx, args.token);
     let count = 0;
     for await (const _doc of ctx.db
       .query("memberFollowupScores")
