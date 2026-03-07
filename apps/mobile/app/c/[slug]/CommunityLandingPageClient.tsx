@@ -99,13 +99,22 @@ export default function CommunityLandingPageClient() {
     setSubmitError(null);
 
     try {
-      // Build custom fields array
+      // Build custom fields array — filter out empty optional fields
       const customFields = (data.formFields || []).map((field) => {
         const key = field.slot || field.label;
+        const rawValue = customFieldValues[key];
+        let value: string | number | boolean;
+        if (field.type === "boolean") {
+          value = rawValue ?? false;
+        } else if (field.type === "number") {
+          value = rawValue !== undefined && rawValue !== "" ? Number(rawValue) : 0;
+        } else {
+          value = rawValue ?? "";
+        }
         return {
           slot: field.slot || undefined,
           label: field.label,
-          value: customFieldValues[key] ?? (field.type === "boolean" ? false : field.type === "number" ? undefined : ""),
+          value,
         };
       });
 
