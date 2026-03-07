@@ -308,6 +308,7 @@ export const setCustomFieldsAndNotes = internalMutation({
         slot: v.optional(v.string()),
         label: v.string(),
         value: v.any(),
+        includeInNotes: v.optional(v.boolean()),
       })
     ),
     generateNoteSummary: v.boolean(),
@@ -419,6 +420,9 @@ export const setCustomFieldsAndNotes = internalMutation({
 
       const lines = [`Landing Page Submission (${dateStr})`];
       for (const field of args.customFields) {
+        // Skip fields where includeInNotes is explicitly false
+        if (field.includeInNotes === false) continue;
+
         const displayValue =
           typeof field.value === "boolean"
             ? field.value ? "Yes" : "No"
@@ -488,7 +492,7 @@ function evaluateCondition(
     operator: string;
     value?: string;
   },
-  customFields: Array<{ slot?: string; label: string; value: any }>
+  customFields: Array<{ slot?: string; label: string; value: any; includeInNotes?: boolean }>
 ): boolean {
   const field = customFields.find(
     (f) => f.slot === condition.field || f.label === condition.field

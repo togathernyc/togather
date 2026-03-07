@@ -32,6 +32,7 @@ export const submitForm = action({
           slot: v.optional(v.string()),
           label: v.string(),
           value: v.any(),
+          includeInNotes: v.optional(v.boolean()),
         })
       )
     ),

@@ -105,24 +105,42 @@ export default function CommunityLandingPageClient() {
     setSubmitError(null);
 
     try {
-      // Build custom fields array — filter out empty optional fields
-      const customFields = (data.formFields || []).map((field) => {
-        const key = field.slot || field.label;
-        const rawValue = customFieldValues[key];
-        let value: string | number | boolean;
-        if (field.type === "boolean") {
-          value = rawValue ?? false;
-        } else if (field.type === "number") {
-          value = rawValue !== undefined && rawValue !== "" ? Number(rawValue) : 0;
-        } else {
-          value = rawValue ?? "";
-        }
-        return {
-          slot: field.slot || undefined,
-          label: field.label,
-          value,
-        };
-      });
+      // Build custom fields array — only include fields the user actually filled in
+      const customFields = (data.formFields || [])
+        .filter((field) => {
+          const key = field.slot || field.label;
+          const rawValue = customFieldValues[key];
+
+          // Always include required fields (they've been validated above)
+          if (field.required) return true;
+
+          // For optional fields, only include if user provided a non-default value
+          if (field.type === "boolean") {
+            return rawValue === true;
+          } else if (field.type === "number") {
+            return rawValue !== undefined && rawValue !== "" && rawValue !== 0;
+          } else {
+            return rawValue !== undefined && rawValue !== null && rawValue !== "";
+          }
+        })
+        .map((field) => {
+          const key = field.slot || field.label;
+          const rawValue = customFieldValues[key];
+          let value: string | number | boolean;
+          if (field.type === "boolean") {
+            value = rawValue ?? false;
+          } else if (field.type === "number") {
+            value = rawValue !== undefined && rawValue !== "" ? Number(rawValue) : 0;
+          } else {
+            value = rawValue ?? "";
+          }
+          return {
+            slot: field.slot || undefined,
+            label: field.label,
+            value,
+            includeInNotes: field.includeInNotes ?? true,
+          };
+        });
 
       await submitFormAction({
         slug,
