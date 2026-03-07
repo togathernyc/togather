@@ -208,7 +208,8 @@ function parseQuerySyntax(
   // e.g. "attendance:>50", "service:<30", "attend:>50" (prefix match)
   // Supports range: "attendance:>20 attendance:<80" sets both min and max.
   // Only one score column at a time — filters for a different column are ignored.
-  freeText = freeText.replace(/(\w+):[<>]=?(\d+)/gi, (match, name, num) => {
+  // Note: Only strict < and > are supported (not <= or >=) to match server behavior.
+  freeText = freeText.replace(/(\w+):[<>](\d+)/gi, (match, name, num) => {
     const lowerName = name.toLowerCase();
     const idx = scoreConfig.findIndex((sc) =>
       sc.name.toLowerCase().startsWith(lowerName)
