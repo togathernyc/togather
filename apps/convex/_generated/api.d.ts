@@ -33,6 +33,8 @@ import type * as functions_auth_registration from "../functions/auth/registratio
 import type * as functions_auth_tokens from "../functions/auth/tokens.js";
 import type * as functions_authInternal from "../functions/authInternal.js";
 import type * as functions_communities from "../functions/communities.js";
+import type * as functions_communityLandingPage from "../functions/communityLandingPage.js";
+import type * as functions_communityLandingPageActions from "../functions/communityLandingPageActions.js";
 import type * as functions_communityWideEvents from "../functions/communityWideEvents.js";
 import type * as functions_followupScoreComputation from "../functions/followupScoreComputation.js";
 import type * as functions_followupScoring from "../functions/followupScoring.js";
@@ -171,6 +173,8 @@ declare const fullApi: ApiFromModules<{
   "functions/auth/tokens": typeof functions_auth_tokens;
   "functions/authInternal": typeof functions_authInternal;
   "functions/communities": typeof functions_communities;
+  "functions/communityLandingPage": typeof functions_communityLandingPage;
+  "functions/communityLandingPageActions": typeof functions_communityLandingPageActions;
   "functions/communityWideEvents": typeof functions_communityWideEvents;
   "functions/followupScoreComputation": typeof functions_followupScoreComputation;
   "functions/followupScoring": typeof functions_followupScoring;
