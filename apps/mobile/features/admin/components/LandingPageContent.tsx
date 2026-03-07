@@ -57,6 +57,7 @@ const BUILT_IN_FIELDS = [
   { label: "Email", type: "email", required: false },
 ];
 
+
 type FormField = {
   slot?: string;
   label: string;
@@ -344,6 +345,7 @@ export function LandingPageContent() {
             <Ionicons name="lock-closed" size={16} color="#999" style={{ padding: 8 }} />
           </View>
         ))}
+
 
         {formFields.length === 0 ? (
           <Text style={styles.emptyText}>No custom fields configured</Text>
