@@ -178,15 +178,22 @@ type ParsedFilters = {
   searchText: string;
   statusFilter?: string;
   assigneeFilter?: string;
-  attendanceMax?: number;
-  attendanceMin?: number;
+  scoreField?: string;   // e.g. "score1", "score2"
+  scoreMin?: number;
+  scoreMax?: number;
 };
 
 type LeaderInfo = { firstName: string; lastName: string; profilePhoto?: string };
 
+/**
+ * Parse search bar query syntax.
+ * Supports: status:green, assignee:john, <scoreName>:>50, <scoreName>:<30
+ * Score names are matched dynamically from the group's score config.
+ */
 function parseQuerySyntax(
   query: string,
   leaderMap: Map<string, LeaderInfo>,
+  scoreConfig: ScoreConfigEntry[],
 ): ParsedFilters {
   const filters: Omit<ParsedFilters, "searchText"> = {};
   let freeText = query;
@@ -197,11 +204,20 @@ function parseQuerySyntax(
     return "";
   });
 
-  // Extract attendance:<N or attendance:>N
-  freeText = freeText.replace(/attendance:[<>]=?(\d+)/gi, (match, num) => {
-    if (match.includes("<")) filters.attendanceMax = Number(num);
-    else filters.attendanceMin = Number(num);
-    return "";
+  // Extract <columnName>:<N or <columnName>:>N — match against score config names
+  // e.g. "attendance:>50", "service:<30", "attend:>50" (prefix match)
+  freeText = freeText.replace(/(\w+):[<>]=?(\d+)/gi, (match, name, num) => {
+    const lowerName = name.toLowerCase();
+    const idx = scoreConfig.findIndex((sc) =>
+      sc.name.toLowerCase().startsWith(lowerName)
+    );
+    if (idx !== -1) {
+      filters.scoreField = `score${idx + 1}`;
+      if (match.includes("<")) filters.scoreMax = Number(num);
+      else filters.scoreMin = Number(num);
+      return "";
+    }
+    return match; // Not a score column — leave in search text
   });
 
   // Extract assignee:name — resolve to userId from leaderMap
@@ -309,12 +325,12 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
 
   // Parse search query
   const parsedQuery = useMemo(
-    () => parseQuerySyntax(debouncedSearch, leaderMap),
-    [debouncedSearch, leaderMap],
+    () => parseQuerySyntax(debouncedSearch, leaderMap, scoreConfig),
+    [debouncedSearch, leaderMap, scoreConfig],
   );
   const hasTextSearch = !!parsedQuery.searchText;
   const hasAnyFilter = !!parsedQuery.statusFilter || !!parsedQuery.assigneeFilter ||
-    parsedQuery.attendanceMax !== undefined || parsedQuery.attendanceMin !== undefined;
+    parsedQuery.scoreMin !== undefined || parsedQuery.scoreMax !== undefined;
 
   // Build columns dynamically based on score config + column config
   const columns: ColumnDef[] = useMemo(() => {
@@ -441,8 +457,9 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
     const args: any = {};
     if (parsedQuery.statusFilter) args.statusFilter = parsedQuery.statusFilter;
     if (parsedQuery.assigneeFilter) args.assigneeFilter = parsedQuery.assigneeFilter as Id<"users">;
-    if (parsedQuery.attendanceMax !== undefined) args.attendanceMax = parsedQuery.attendanceMax;
-    if (parsedQuery.attendanceMin !== undefined) args.attendanceMin = parsedQuery.attendanceMin;
+    if (parsedQuery.scoreField) args.scoreField = parsedQuery.scoreField;
+    if (parsedQuery.scoreMax !== undefined) args.scoreMax = parsedQuery.scoreMax;
+    if (parsedQuery.scoreMin !== undefined) args.scoreMin = parsedQuery.scoreMin;
     return args;
   }, [parsedQuery]);
 
@@ -474,8 +491,9 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
           searchText: parsedQuery.searchText,
           ...(parsedQuery.statusFilter ? { statusFilter: parsedQuery.statusFilter } : {}),
           ...(parsedQuery.assigneeFilter ? { assigneeFilter: parsedQuery.assigneeFilter as Id<"users"> } : {}),
-          ...(parsedQuery.attendanceMax !== undefined ? { attendanceMax: parsedQuery.attendanceMax } : {}),
-          ...(parsedQuery.attendanceMin !== undefined ? { attendanceMin: parsedQuery.attendanceMin } : {}),
+          ...(parsedQuery.scoreField ? { scoreField: parsedQuery.scoreField } : {}),
+          ...(parsedQuery.scoreMax !== undefined ? { scoreMax: parsedQuery.scoreMax } : {}),
+          ...(parsedQuery.scoreMin !== undefined ? { scoreMin: parsedQuery.scoreMin } : {}),
         }
       : "skip"
   );
@@ -1140,7 +1158,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
           <Ionicons name="search" size={16} color="#9CA3AF" />
           <TextInput
             style={s.searchInput}
-            placeholder='Search... (e.g., status:green attendance:<50)'
+            placeholder={`Search... (e.g., status:green ${scoreConfig[0]?.name?.toLowerCase() ?? "score"}:>50)`}
             placeholderTextColor="#9CA3AF"
             value={searchQuery}
             onChangeText={setSearchQuery}

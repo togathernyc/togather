@@ -249,8 +249,26 @@ export const computeGroupScores = internalAction({
     );
     const scoreConfig: ScoreConfig = groupDoc ?? DEFAULT_SCORE_CONFIG;
 
+    // Step 1b: Refresh PCO serving data if the score config uses it
+    const usesPco = scoreConfig.scores.some((s) =>
+      s.variables.some((v) => v.variableId === "pco_services_past_2mo")
+    );
+    if (usesPco) {
+      try {
+        await ctx.runAction(
+          internal.functions.pcoServices.servingHistory.internalRefreshPcoServing,
+          { groupId: args.groupId }
+        );
+      } catch (e) {
+        // PCO fetch failed — continue with stale cached data
+        console.log(`[computeGroupScores] PCO refresh failed for group ${args.groupId}, using cached data: ${e}`);
+      }
+    }
+
     // Step 2: Paginate through all members
-    const BATCH_SIZE = 200;
+    // Batch size 100 keeps internalScoreBatch under ~2,200 reads (limit: 4,096).
+    // Formula: 1 + N*(M+2) where M=meetings(~20). At N=100: 2,201 reads.
+    const BATCH_SIZE = 100;
     let cursor: string | undefined = undefined;
     let isDone = false;
 
@@ -279,7 +297,7 @@ export const computeGroupScores = internalAction({
         continue;
       }
 
-      // Step 3: Pre-compute cross-group attendance (only for groups with custom scoring)
+      // Step 3: Pre-compute cross-group attendance (only when score config uses it)
       const memberBatch = page.members.map((m) => ({
         _id: m._id,
         userId: m.userId,
@@ -287,9 +305,12 @@ export const computeGroupScores = internalAction({
       }));
 
       let crossGroupAttendanceMap: Record<string, number> | undefined;
-      if (groupDoc) {
+      const usesCrossGroup = scoreConfig.scores.some((s) =>
+        s.variables.some((v) => v.variableId === "attendance_all_groups_pct")
+      ) || scoreConfig.alerts?.some((a) => a.variableId === "attendance_all_groups_pct");
+      if (usesCrossGroup) {
         crossGroupAttendanceMap = {};
-        const CROSS_BATCH = 20;
+        const CROSS_BATCH = 10;
         const userIds = page.members.map((m) => m.userId);
         for (let i = 0; i < userIds.length; i += CROSS_BATCH) {
           const batch = userIds.slice(i, i + CROSS_BATCH);
@@ -366,9 +387,12 @@ export const computeSingleMemberScore = internalAction({
 
     if (!memberData) return;
 
-    // Pre-compute cross-group attendance for this member (if custom scoring)
+    // Pre-compute cross-group attendance (only when score config uses it)
     let crossGroupAttendanceMap: Record<string, number> | undefined;
-    if (groupDoc) {
+    const usesCrossGroup = scoreConfig.scores.some((s) =>
+      s.variables.some((v) => v.variableId === "attendance_all_groups_pct")
+    ) || scoreConfig.alerts?.some((a) => a.variableId === "attendance_all_groups_pct");
+    if (usesCrossGroup) {
       crossGroupAttendanceMap = await ctx.runQuery(
         internal.functions.memberFollowups.internalCrossGroupAttendance,
         { groupId: args.groupId, userIds: [memberData.userId] }
@@ -451,10 +475,11 @@ export const dailyRefreshAllScores = internalAction({
       {}
     );
 
-    // Stagger: schedule each group 100ms apart to avoid thundering herd
+    // Stagger: schedule each group 3s apart to respect PCO rate limits
+    // (groups with pco_services_past_2mo make ~10-30 API calls each)
     for (let i = 0; i < groupIds.length; i++) {
       await ctx.scheduler.runAfter(
-        i * 100, // 100ms stagger
+        i * 3000,
         internal.functions.followupScoreComputation.computeGroupScores,
         { groupId: groupIds[i] }
       );
@@ -482,7 +507,7 @@ export const backfillAllGroups = internalAction({
 
     for (let i = 0; i < groupIds.length; i++) {
       await ctx.scheduler.runAfter(
-        i * 200,
+        i * 3000,
         internal.functions.followupScoreComputation.computeGroupScores,
         { groupId: groupIds[i] }
       );
@@ -557,3 +582,9 @@ export const backfillSearchTextForAllGroups = internalAction({
     return { scheduled: groupIds.length };
   },
 });
+
+// ============================================================================
+// Debug: Trace scoring for a specific user (temporary)
+// ============================================================================
+
+
