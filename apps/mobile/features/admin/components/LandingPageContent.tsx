@@ -24,6 +24,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useLandingPageConfig } from "../hooks/useLandingPageConfig";
 import { DOMAIN_CONFIG } from "@togather/shared";
 import * as Clipboard from "expo-clipboard";
+import type { Id } from "@services/api/convex";
 
 // Available custom field slots
 const TEXT_SLOTS = ["customText1", "customText2", "customText3", "customText4", "customText5"];
@@ -70,6 +71,7 @@ type AutomationRule = {
   action: {
     type: string;
     assigneePhone?: string;
+    assigneeUserId?: Id<"users">;
   };
 };
 
@@ -116,6 +118,7 @@ export function LandingPageContent() {
           action: {
             type: r.action.type,
             assigneePhone: r.action.assigneePhone,
+            assigneeUserId: r.action.assigneeUserId,
           },
         }))
       );
@@ -301,7 +304,7 @@ export function LandingPageContent() {
         {formFields.length === 0 ? (
           <Text style={styles.emptyText}>No custom fields configured</Text>
         ) : (
-          formFields
+          [...formFields]
             .sort((a, b) => a.order - b.order)
             .map((field, index) => (
               <View key={field.slot || field.label || index} style={styles.listItem}>
@@ -704,6 +707,7 @@ function RuleEditorModal({
       action: {
         type: "set_assignee",
         assigneePhone: assigneePhone || undefined,
+        assigneeUserId: rule?.action.assigneeUserId,
       },
     });
   };

@@ -298,7 +298,7 @@ export default function CommunityLandingPageClient() {
             </View>
 
             {/* Dynamic custom fields */}
-            {(data.formFields || [])
+            {[...(data.formFields || [])]
               .sort((a, b) => a.order - b.order)
               .map((field, index) => (
                 <DynamicField

@@ -11,7 +11,6 @@ import { v } from "convex/values";
 import { action } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
-import { generateTokens } from "../lib/auth";
 
 /**
  * Submit the landing page form.
@@ -21,7 +20,6 @@ import { generateTokens } from "../lib/auth";
  * 3. Set custom field values on announcement group follow-up record
  * 4. Generate notes summary (if enabled)
  * 5. Run automation rules
- * 6. Return auth tokens
  */
 export const submitForm = action({
   args: {
@@ -42,9 +40,6 @@ export const submitForm = action({
   },
   returns: v.object({
     success: v.boolean(),
-    access_token: v.string(),
-    refresh_token: v.string(),
-    expires_in: v.number(),
     user: v.object({
       id: v.string(),
       firstName: v.string(),
@@ -98,14 +93,8 @@ export const submitForm = action({
       );
     }
 
-    // 5. Generate tokens
-    const tokens = await generateTokens(userId, community._id as string);
-
     return {
       success: true,
-      access_token: tokens.accessToken,
-      refresh_token: tokens.refreshToken,
-      expires_in: tokens.expiresIn,
       user: {
         id: userId,
         firstName: args.firstName,
