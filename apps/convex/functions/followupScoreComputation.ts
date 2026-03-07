@@ -272,7 +272,7 @@ export const computeGroupScores = internalAction({
     let cursor: string | undefined = undefined;
     let isDone = false;
 
-    // Pre-compute whether we need cross-group attendance (depends only on scoreConfig)
+    // Pre-compute whether cross-group attendance is needed (depends only on scoreConfig)
     const usesCrossGroup = scoreConfig.scores.some((s) =>
       s.variables.some((v) => v.variableId === "attendance_all_groups_pct")
     ) || scoreConfig.alerts?.some((a) => a.variableId === "attendance_all_groups_pct");
