@@ -18,7 +18,7 @@ runs:
         # Uses multiline delimiter syntax for safety (handles values with special chars)
         printf '%s' "$SECRETS_JSON" | jq -r '
           to_entries[]
-          | select(.value != "" and .key != "github_token")
+          | select(.value != "" and (.key | ascii_downcase) != "github_token")
           | @text "\(.key)<<__GH_ENV_DELIM__\n\(.value)\n__GH_ENV_DELIM__"
         ' >> $GITHUB_ENV
 

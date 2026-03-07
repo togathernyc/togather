@@ -220,16 +220,17 @@ sync_environment() {
   if [ -n "$R2_URL" ]; then
     if [ "$DRY_RUN" = true ]; then
       echo "  [dry-run] Would set IMAGE_CDN_URL (alias for R2_PUBLIC_URL)"
+      synced=$((synced + 1))
     else
       echo -n "  Setting IMAGE_CDN_URL (alias for R2_PUBLIC_URL)..."
       if printf '%s' "$R2_URL" | gh secret set "IMAGE_CDN_URL" --env "$env" --repo "$REPO" --body -; then
         echo " done"
+        synced=$((synced + 1))
       else
         echo " FAILED"
         failed=$((failed + 1))
       fi
     fi
-    synced=$((synced + 1))
   fi
 
   echo ""
