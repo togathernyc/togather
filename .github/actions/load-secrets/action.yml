@@ -3,7 +3,7 @@ description: "Exports GitHub secrets as environment variables for downstream ste
 
 inputs:
   secrets-json:
-    description: "JSON object of all secrets (pass ${{ toJSON(secrets) }})"
+    description: "JSON object of all secrets - pass toJSON(secrets) from the calling workflow"
     required: true
 
 runs:
