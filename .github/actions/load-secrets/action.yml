@@ -16,9 +16,13 @@ runs:
       run: |
         # Parse the secrets JSON and export each key-value pair to GITHUB_ENV
         # Uses multiline delimiter syntax for safety (handles values with special chars)
+        # Excludes admin-level secrets that should never be exposed to deployment workflows:
+        # - github_token: automatic GitHub token
+        # - op_service_account_token: 1Password service account (only for sync-secrets workflow)
+        # - gh_admin_token: GitHub PAT with repo admin scope (only for sync-secrets workflow)
         printf '%s' "$SECRETS_JSON" | jq -r '
           to_entries[]
-          | select(.value != "" and (.key | ascii_downcase) != "github_token")
+          | select(.value != "" and ((.key | ascii_downcase) | IN("github_token", "op_service_account_token", "gh_admin_token") | not))
           | @text "\(.key)<<__GH_ENV_DELIM__\n\(.value)\n__GH_ENV_DELIM__"
         ' >> $GITHUB_ENV
 
