@@ -407,7 +407,7 @@ export const setCustomFieldsAndNotes = internalMutation({
         const displayValue =
           typeof field.value === "boolean"
             ? field.value ? "Yes" : "No"
-            : String(field.value || "");
+            : String(field.value ?? "");
         if (displayValue) {
           lines.push(`${field.label}: ${displayValue}`);
         }
