@@ -428,13 +428,18 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
 
   const getColWidth = (col: ColumnDef) => colWidths[col.key] ?? col.defaultWidth;
 
+  // Look up the current sort column to determine if it's server-sortable
+  const sortColumn = useMemo(
+    () => columns.find((c) => c.key === sortField),
+    [columns, sortField]
+  );
+
   // Server sort key — score3+ have no server index, use client-side sorting
-  const isClientSideSort = !(sortField in SERVER_SORT_KEYS);
+  const isClientSideSort = !sortColumn?.serverSortKey;
 
   const serverSortBy = useMemo(() => {
-    if (sortField in SERVER_SORT_KEYS) return SERVER_SORT_KEYS[sortField];
-    return "score1";
-  }, [sortField]);
+    return sortColumn?.serverSortKey ?? "score1";
+  }, [sortColumn]);
 
   // Build filter args for list query (structured filters only, no text search)
   const listFilterArgs = useMemo(() => {
@@ -553,12 +558,11 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
 
   // ── Handlers ──
 
-  const handleSort = (colKey: string, serverKey?: string) => {
-    const effectiveKey = serverKey || colKey;
-    if (sortField === effectiveKey) {
+  const handleSort = (colKey: string) => {
+    if (sortField === colKey) {
       setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
     } else {
-      setSortField(effectiveKey);
+      setSortField(colKey);
       setSortDirection("asc");
     }
   };
@@ -1216,19 +1220,19 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
                       ) : (
                         <TouchableOpacity
                           style={s.headerCellInner}
-                          onPress={() => col.sortable && handleSort(col.key, col.serverSortKey)}
+                          onPress={() => col.sortable && handleSort(col.key)}
                           disabled={!col.sortable}
                         >
                           <Text
                             style={[
                               s.headerText,
-                              (sortField === col.serverSortKey || sortField === col.key) && s.headerTextActive,
+                              sortField === col.key && s.headerTextActive,
                             ]}
                             numberOfLines={1}
                           >
                             {col.label}
                           </Text>
-                          {col.sortable && (sortField === col.serverSortKey || sortField === col.key) && (
+                          {col.sortable && sortField === col.key && (
                             <Ionicons
                               name={sortDirection === "asc" ? "arrow-up" : "arrow-down"}
                               size={12}

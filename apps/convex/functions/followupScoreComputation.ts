@@ -470,20 +470,28 @@ export const backfillAllGroups = internalAction({
 // ============================================================================
 
 /**
- * Recompute only the `searchText` field for all memberFollowupScores in a group.
+ * Recompute only the `searchText` field for memberFollowupScores in a group.
  * Does NOT recompute scores — just patches searchText from existing denormalized fields.
- * Processes in batches of 100 to stay within Convex mutation limits.
+ * Processes in batches of 100 using cursor-based pagination to stay within Convex mutation limits.
  */
 export const backfillSearchText = internalMutation({
-  args: { groupId: v.id("groups") },
+  args: {
+    groupId: v.id("groups"),
+    cursor: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
-    const docs = await ctx.db
+    const BATCH_SIZE = 100;
+
+    const result = await ctx.db
       .query("memberFollowupScores")
       .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
-      .collect();
+      .paginate({
+        numItems: BATCH_SIZE,
+        cursor: args.cursor ?? null,
+      });
 
     let patched = 0;
-    for (const doc of docs) {
+    for (const doc of result.page) {
       const searchText = [
         doc.firstName,
         doc.lastName,
@@ -499,8 +507,16 @@ export const backfillSearchText = internalMutation({
     }
 
     console.log(
-      `[backfillSearchText] group=${args.groupId} patched=${patched}`
+      `[backfillSearchText] group=${args.groupId} patched=${patched} isDone=${result.isDone}`
     );
+
+    if (!result.isDone) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.followupScoreComputation.backfillSearchText,
+        { groupId: args.groupId, cursor: result.continueCursor }
+      );
+    }
   },
 });
 
