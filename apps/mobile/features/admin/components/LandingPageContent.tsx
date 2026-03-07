@@ -306,36 +306,39 @@ export function LandingPageContent() {
         ) : (
           [...formFields]
             .sort((a, b) => a.order - b.order)
-            .map((field, index) => (
-              <View key={field.slot || field.label || index} style={styles.listItem}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.listItemTitle}>{field.label}</Text>
-                  <Text style={styles.listItemSubtitle}>
-                    {field.type}
-                    {field.slot ? ` · ${field.slot}` : " · notes only"}
-                    {field.required ? " · required" : ""}
-                  </Text>
+            .map((field) => {
+              const originalIndex = formFields.indexOf(field);
+              return (
+                <View key={field.slot || field.label || originalIndex} style={styles.listItem}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.listItemTitle}>{field.label}</Text>
+                    <Text style={styles.listItemSubtitle}>
+                      {field.type}
+                      {field.slot ? ` · ${field.slot}` : " · notes only"}
+                      {field.required ? " · required" : ""}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setEditingFieldIndex(originalIndex);
+                      setShowFieldModal(true);
+                    }}
+                    style={styles.iconButton}
+                  >
+                    <Ionicons name="pencil" size={18} color="#666" />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setFormFields((prev) => prev.filter((_, i) => i !== originalIndex));
+                      markDirty();
+                    }}
+                    style={styles.iconButton}
+                  >
+                    <Ionicons name="trash-outline" size={18} color="#dc2626" />
+                  </TouchableOpacity>
                 </View>
-                <TouchableOpacity
-                  onPress={() => {
-                    setEditingFieldIndex(index);
-                    setShowFieldModal(true);
-                  }}
-                  style={styles.iconButton}
-                >
-                  <Ionicons name="pencil" size={18} color="#666" />
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => {
-                    setFormFields((prev) => prev.filter((_, i) => i !== index));
-                    markDirty();
-                  }}
-                  style={styles.iconButton}
-                >
-                  <Ionicons name="trash-outline" size={18} color="#dc2626" />
-                </TouchableOpacity>
-              </View>
-            ))
+              );
+            })
         )}
       </View>
 

@@ -80,18 +80,17 @@ export const submitForm = action({
     );
 
     // 4. Set custom field values + notes + automation
-    if (args.customFields && args.customFields.length > 0) {
-      await ctx.runMutation(
-        internal.functions.communityLandingPage.setCustomFieldsAndNotes,
-        {
-          communityId: community._id as Id<"communities">,
-          userId: userId as Id<"users">,
-          customFields: args.customFields,
-          generateNoteSummary: landingPage.generateNoteSummary ?? true,
-          automationRules: landingPage.automationRules,
-        }
-      );
-    }
+    // Always call even without custom fields — ensures followup record, notes, and automation rules run
+    await ctx.runMutation(
+      internal.functions.communityLandingPage.setCustomFieldsAndNotes,
+      {
+        communityId: community._id as Id<"communities">,
+        userId: userId as Id<"users">,
+        customFields: args.customFields ?? [],
+        generateNoteSummary: landingPage.generateNoteSummary ?? true,
+        automationRules: landingPage.automationRules,
+      }
+    );
 
     return {
       success: true,
