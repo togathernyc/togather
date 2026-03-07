@@ -52,11 +52,10 @@ jobs:
       - name: Run Slack bot tests
         run: cd apps/convex && pnpm test __tests__/slackServiceBot.test.ts
 
-      - name: Load secrets from 1Password
+      - name: Load secrets
         uses: ./.github/actions/load-secrets
         with:
-          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          environment: production
+          secrets-json: ${{ toJSON(secrets) }}
 
       - name: Sync secrets to Convex
         run: |

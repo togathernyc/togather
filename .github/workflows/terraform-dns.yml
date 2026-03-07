@@ -1,6 +1,6 @@
 name: Terraform DNS
 
-# Uses CLOUDFLARE_API_TOKEN from 1Password (production environment)
+# Uses CLOUDFLARE_API_TOKEN from GitHub environment secrets (production)
 # Token requires Zone:DNS:Edit and Zone:Zone:Read permissions
 
 on:
@@ -30,11 +30,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Load secrets from 1Password
+      - name: Load secrets
         uses: ./.github/actions/load-secrets
         with:
-          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          environment: production
+          secrets-json: ${{ toJSON(secrets) }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
