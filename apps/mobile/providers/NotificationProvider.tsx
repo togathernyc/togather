@@ -371,10 +371,10 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
         break;
       }
       case 'followup_assigned': {
-        // Navigate to the member's follow-up card
+        // Navigate to the member's follow-up card via top-level route
         const groupMemberId = (data.groupMemberId || nestedData?.groupMemberId) as string;
         if (groupId && groupMemberId) {
-          router.push(`/(user)/leader-tools/${groupId}/followup/${groupMemberId}` as any);
+          router.push(`/followup/${groupId}/${groupMemberId}` as any);
         }
         break;
       }
