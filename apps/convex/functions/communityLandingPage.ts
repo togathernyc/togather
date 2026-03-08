@@ -18,6 +18,7 @@ import { VALID_CUSTOM_SLOTS } from "../lib/followupConstants";
 import { normalizePhone, buildSearchText, now } from "../lib/utils";
 import { syncUserChannelMembershipsLogic } from "./sync/memberships";
 import { checkRateLimit } from "../lib/rateLimit";
+import { evaluateCondition } from "../lib/automationRules";
 
 // ============================================================================
 // Public Queries (no auth required)
@@ -361,7 +362,10 @@ export const setCustomFieldsAndNotes = internalMutation({
       .filter((q) => q.eq(q.field("isAnnouncementGroup"), true))
       .first();
 
-    if (!announcementGroup) return;
+    if (!announcementGroup) {
+      console.warn("[Automation] No announcement group found for community", args.communityId);
+      return;
+    }
 
     // Find group membership
     const groupMember = await ctx.db
@@ -371,7 +375,10 @@ export const setCustomFieldsAndNotes = internalMutation({
       )
       .first();
 
-    if (!groupMember) return;
+    if (!groupMember) {
+      console.warn("[Automation] No group membership found", { userId: args.userId, groupId: announcementGroup._id });
+      return;
+    }
 
     // Find or create memberFollowupScores record
     let scoreDoc = await ctx.db
@@ -415,7 +422,10 @@ export const setCustomFieldsAndNotes = internalMutation({
       scoreDoc = await ctx.db.get(scoreDocId);
     }
 
-    if (!scoreDoc) return;
+    if (!scoreDoc) {
+      console.warn("[Automation] Could not create/find followup score doc for member", groupMember._id);
+      return;
+    }
 
     // Set custom field values for fields with slots
     const customFieldUpdates: Record<string, any> = {};
@@ -475,6 +485,12 @@ export const setCustomFieldsAndNotes = internalMutation({
       if (!rule.isEnabled) continue;
 
       const conditionMet = evaluateCondition(rule.condition, args.customFields);
+      console.log("[Automation] Rule evaluated", {
+        rule: rule.name,
+        field: rule.condition.field,
+        operator: rule.condition.operator,
+        conditionMet,
+      });
 
       if (conditionMet && rule.action.type === "set_assignee") {
         let assigneeId = rule.action.assigneeUserId;
@@ -488,6 +504,12 @@ export const setCustomFieldsAndNotes = internalMutation({
             .first();
           if (assignee) {
             assigneeId = assignee._id;
+          } else {
+            console.warn("[Automation] Assignee not found for phone", {
+              rule: rule.name,
+              phone: rule.action.assigneePhone,
+              normalized,
+            });
           }
         }
 
@@ -496,6 +518,8 @@ export const setCustomFieldsAndNotes = internalMutation({
             assigneeId,
             updatedAt: timestamp,
           });
+
+          console.log("[Automation] Assignee set", { rule: rule.name, assigneeId });
 
           // Notify the assignee about the auto-assignment
           await ctx.scheduler.runAfter(0, internal.functions.notifications.senders.notifyFollowupAssigned, {
@@ -511,43 +535,6 @@ export const setCustomFieldsAndNotes = internalMutation({
     }
   },
 });
-
-/**
- * Evaluate a condition against submitted custom field values.
- */
-function evaluateCondition(
-  condition: {
-    field: string;
-    operator: string;
-    value?: string;
-  },
-  customFields: Array<{ slot?: string; label: string; value: any; includeInNotes?: boolean }>
-): boolean {
-  const field = customFields.find(
-    (f) => f.slot === condition.field || f.label === condition.field
-  );
-
-  if (!field) return false;
-
-  const fieldValue = field.value;
-
-  switch (condition.operator) {
-    case "equals":
-      return String(fieldValue) === condition.value;
-    case "not_equals":
-      if (condition.value === undefined || condition.value === "") return false;
-      return String(fieldValue) !== condition.value;
-    case "contains":
-      if (condition.value === undefined || condition.value === "") return false;
-      return String(fieldValue).toLowerCase().includes(condition.value.toLowerCase());
-    case "is_true":
-      return fieldValue === true;
-    case "is_false":
-      return fieldValue === false || fieldValue === undefined || fieldValue === null;
-    default:
-      return false;
-  }
-}
 
 // ============================================================================
 // Admin Queries (auth required)
