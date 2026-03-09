@@ -70,6 +70,11 @@ They need:
 - Depending on what the user is asking, use the relevant keys from the relevant environment (dev, staging, prod)
 - Typically you will only make dev or staging related changes, double check if any action you take will affect production
 
+### Agent Backend Selection
+- Before any backend-affecting command, ask: "Which backend should I use: togather-agent-1 or togather-agent-2?"
+- Do not proceed until the user answers.
+- Use `pnpm dev:backend --backend=<choice>` only.
+
 ### Test-Driven Development
 
 - **Write tests first** - Create failing tests before implementing features

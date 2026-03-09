@@ -16,6 +16,14 @@ pnpm dev
 
 ---
 
+## Agent Backend Selection Policy
+
+- Allowed backend names: `togather-agent-1`, `togather-agent-2`.
+- Required launcher command: `pnpm dev:backend --backend=<choice>`.
+- Startup fails fast if `CONVEX_DEPLOYMENT` or `EXPO_PUBLIC_CONVEX_URL` conflicts with the selected backend mapping.
+
+---
+
 ## Environment Overview
 
 | Environment | Use Case |

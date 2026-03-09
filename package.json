@@ -6,6 +6,9 @@
   "description": "Togather monorepo - Backend API and cross-platform mobile app. Note: Uses React 18.3.1 (web) and React 19.1.0 (mobile) - see docs/architecture/decisions/ADR-004-dual-react-versions.md",
   "scripts": {
     "dev": "node scripts/dev.js",
+    "dev:backend": "node scripts/dev-backend.js",
+    "dev:agent1": "node scripts/dev-backend.js --backend=togather-agent-1",
+    "dev:agent2": "node scripts/dev-backend.js --backend=togather-agent-2",
     "dev:mobile": "node scripts/dev.js --mobile",
     "dev:convex": "node scripts/dev.js --convex",
     "dev:agent": "node scripts/agent-dev.js",
