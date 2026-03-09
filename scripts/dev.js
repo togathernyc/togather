@@ -8,11 +8,130 @@
  *   pnpm dev --mobile     # Run only Expo (if Convex is already running)
  *   pnpm dev --convex     # Run only Convex dev
  *   pnpm dev --agent=N    # Use worker N's Metro port (19000+N) for parallel development
+ *   pnpm dev --backend=<name> # Explicit backend selection (required in Cursor agent mode)
  */
 
 const { spawn, execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+
+const ALLOWED_BACKENDS_PATH = path.join(__dirname, '..', 'config', 'allowed-backends.json');
+let allowedBackendsCache = null;
+
+function loadAllowedBackends() {
+  if (allowedBackendsCache) {
+    return allowedBackendsCache;
+  }
+
+  if (!fs.existsSync(ALLOWED_BACKENDS_PATH)) {
+    console.error('❌ Missing backend config: config/allowed-backends.json');
+    process.exit(1);
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(ALLOWED_BACKENDS_PATH, 'utf-8'));
+  } catch (error) {
+    console.error(`❌ Failed to parse backend config: ${error.message}`);
+    process.exit(1);
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    console.error('❌ Backend config must be an object keyed by backend name.');
+    process.exit(1);
+  }
+
+  allowedBackendsCache = parsed;
+  return allowedBackendsCache;
+}
+
+function getAllowedBackendNames() {
+  return Object.keys(loadAllowedBackends());
+}
+
+function parseBackendFromArgs() {
+  for (let i = 0; i < process.argv.length; i += 1) {
+    const arg = process.argv[i];
+    if (arg.startsWith('--backend=')) {
+      return arg.split('=')[1].trim();
+    }
+    if (arg === '--backend') {
+      const next = process.argv[i + 1];
+      return next ? next.trim() : '';
+    }
+  }
+  return null;
+}
+
+function getSelectedBackend() {
+  return parseBackendFromArgs() || process.env.BACKEND_AGENT || null;
+}
+
+function isAgentCloudContext() {
+  return (
+    process.env.CURSOR_AGENT === '1' ||
+    process.env.CURSOR_AGENT === 'true' ||
+    Boolean(process.env.CLOUD_AGENT_INJECTED_SECRET_NAMES) ||
+    Boolean(process.env.CLOUD_AGENT_ALL_SECRET_NAMES)
+  );
+}
+
+function formatAllowedBackends() {
+  return getAllowedBackendNames().map(name => `   - ${name}`).join('\n');
+}
+
+function enforceAgentBackendSelection(env) {
+  if (!isAgentCloudContext()) {
+    return null;
+  }
+
+  const selectedBackend = getSelectedBackend();
+  const allowedBackends = loadAllowedBackends();
+  const selectedConfig = selectedBackend ? allowedBackends[selectedBackend] : null;
+
+  if (!selectedBackend) {
+    console.error('');
+    console.error('❌ Explicit backend selection is required in Cursor agent mode.');
+    console.error('');
+    console.error('Allowed backends:');
+    console.error(formatAllowedBackends());
+    console.error('');
+    console.error('Ask the user: "Which backend should I use: togather-agent-1 or togather-agent-2?"');
+    console.error('Then rerun: pnpm dev:backend --backend=<choice>');
+    console.error('');
+    process.exit(1);
+  }
+
+  if (!selectedConfig) {
+    console.error('');
+    console.error(`❌ Unknown backend "${selectedBackend}" in agent mode.`);
+    console.error('');
+    console.error('Allowed backends:');
+    console.error(formatAllowedBackends());
+    console.error('');
+    process.exit(1);
+  }
+
+  if (
+    env.EXPO_PUBLIC_CONVEX_URL &&
+    env.EXPO_PUBLIC_CONVEX_URL !== selectedConfig.EXPO_PUBLIC_CONVEX_URL
+  ) {
+    console.error('');
+    console.error(`❌ EXPO_PUBLIC_CONVEX_URL mismatch for backend "${selectedBackend}".`);
+    console.error(`   Expected: ${selectedConfig.EXPO_PUBLIC_CONVEX_URL}`);
+    console.error(`   Actual:   ${env.EXPO_PUBLIC_CONVEX_URL}`);
+    console.error('');
+    console.error(`Run: pnpm dev:backend --backend=${selectedBackend}`);
+    console.error('');
+    process.exit(1);
+  }
+
+  env.BACKEND_AGENT = selectedBackend;
+  env.CONVEX_DEPLOYMENT = selectedConfig.CONVEX_DEPLOYMENT;
+  env.EXPO_PUBLIC_CONVEX_URL = selectedConfig.EXPO_PUBLIC_CONVEX_URL;
+  console.log(`🔒 Backend locked: ${selectedBackend}`);
+  return selectedBackend;
+}
 
 /**
  * Check if dependencies need to be installed by comparing lockfile hash
@@ -311,6 +430,11 @@ function startConcurrently(names, colors, commands, env) {
 }
 
 function main() {
+  const env = { ...process.env };
+
+  // Enforce explicit backend selection in Cursor agent/cloud environments.
+  enforceAgentBackendSelection(env);
+
   // Ensure dependencies are up to date
   ensureDependencies();
 
@@ -321,8 +445,7 @@ function main() {
   // Get agent number and port
   const agentNum = getAgentNumber();
   const metroPort = getMetroPort(agentNum);
-
-  const env = { ...process.env };
+  const inAgentCloud = isAgentCloudContext();
 
   // Show agent info if using parallel development
   if (agentNum > 0) {
@@ -361,8 +484,17 @@ function main() {
   }
 
   // For mobile-only or full dev mode, we need the Convex URL
-  // Automatically derive it from .env.local if not already set
+  // Only non-agent local dev may derive it from .env.local
   if (!env.EXPO_PUBLIC_CONVEX_URL) {
+    if (inAgentCloud) {
+      console.error('');
+      console.error('❌ Missing EXPO_PUBLIC_CONVEX_URL for selected backend in agent mode.');
+      console.error('   Run with explicit backend selection:');
+      console.error('   pnpm dev:backend --backend=<togather-agent-1|togather-agent-2>');
+      console.error('');
+      process.exit(1);
+    }
+
     const convexUrl = getConvexUrlFromEnvLocal();
     if (convexUrl) {
       env.EXPO_PUBLIC_CONVEX_URL = convexUrl;

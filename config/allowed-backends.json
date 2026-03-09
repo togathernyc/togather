@@ -1,0 +1,10 @@
+{
+  "togather-agent-1": {
+    "CONVEX_DEPLOYMENT": "dev:togather-agent-1",
+    "EXPO_PUBLIC_CONVEX_URL": "https://togather-agent-1.convex.cloud"
+  },
+  "togather-agent-2": {
+    "CONVEX_DEPLOYMENT": "dev:togather-agent-2",
+    "EXPO_PUBLIC_CONVEX_URL": "https://togather-agent-2.convex.cloud"
+  }
+}
