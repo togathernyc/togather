@@ -53,7 +53,7 @@ export function sanitizeV2Item(item: ServicePlanItemV2): ServicePlanItemV2 {
   if (item.pcoItemField !== undefined) s.pcoItemField = item.pcoItemField;
   if (item.preserveSections !== undefined) s.preserveSections = item.preserveSections;
   if (item.aiInstructions !== undefined) s.aiInstructions = item.aiInstructions;
-  return s as ServicePlanItemV2;
+  return s as unknown as ServicePlanItemV2;
 }
 
 /** PCO team info for dropdowns. */
