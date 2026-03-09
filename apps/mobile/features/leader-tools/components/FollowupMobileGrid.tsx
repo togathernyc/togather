@@ -82,10 +82,11 @@ type GridColumn = {
   getValue: (member: FollowupMember) => string | number;
 };
 
-const PINNED_COL_WIDTH = 190;
 const MIN_DATA_COL_WIDTH = 94;
 const SWIPE_THRESHOLD = 50;
 const MIN_COLUMNS_PER_PAGE = 4;
+const MIN_PINNED_COL_WIDTH = 126;
+const MAX_PINNED_COL_WIDTH = 152;
 
 const STATUS_OPTIONS: Array<{ value?: string; label: string }> = [
   { value: "green", label: "Green" },
@@ -485,7 +486,11 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     return [...scoreColumns, ...extraColumns];
   }, [scoreConfig, leaderMap]);
 
-  const availableDataWidth = Math.max(MIN_DATA_COL_WIDTH, width - PINNED_COL_WIDTH - 42);
+  const pinnedColumnWidth = useMemo(
+    () => Math.max(MIN_PINNED_COL_WIDTH, Math.min(MAX_PINNED_COL_WIDTH, Math.floor(width * 0.33))),
+    [width]
+  );
+  const availableDataWidth = Math.max(MIN_DATA_COL_WIDTH, width - pinnedColumnWidth - 36);
   const columnsPerPage = Math.max(
     MIN_COLUMNS_PER_PAGE,
     Math.floor(availableDataWidth / MIN_DATA_COL_WIDTH)
@@ -759,7 +764,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
         activeOpacity={0.8}
         onPress={() => handleMemberPress(item.groupMemberId)}
       >
-        <View style={[styles.pinnedCell, { width: PINNED_COL_WIDTH }]}>
+        <View style={[styles.pinnedCell, { width: pinnedColumnWidth }]}>
           {item.avatarUrl ? (
             <Image source={{ uri: item.avatarUrl }} style={styles.avatarImage} />
           ) : (
@@ -929,7 +934,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
         </View>
 
         <View style={styles.headerRow}>
-          <View style={[styles.pinnedHeaderCell, { width: PINNED_COL_WIDTH }]}>
+          <View style={[styles.pinnedHeaderCell, { width: pinnedColumnWidth }]}>
             <Text style={styles.pinnedHeaderText}>Member</Text>
           </View>
           <View style={styles.headerDataCells}>{visibleColumns.map(renderColumnHeader)}</View>
@@ -1200,7 +1205,7 @@ const styles = StyleSheet.create({
     borderRightWidth: 1,
     borderRightColor: "#E5E7EB",
     justifyContent: "center",
-    paddingHorizontal: 12,
+    paddingHorizontal: 8,
     height: 40,
     backgroundColor: "#F9FAFB",
   },
@@ -1258,21 +1263,21 @@ const styles = StyleSheet.create({
   pinnedCell: {
     borderRightWidth: 1,
     borderRightColor: "#E5E7EB",
-    paddingHorizontal: 10,
-    paddingVertical: 9,
+    paddingHorizontal: 7,
+    paddingVertical: 8,
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 6,
   },
   avatarImage: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
   },
   avatarFallback: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     backgroundColor: DEFAULT_PRIMARY_COLOR,
     alignItems: "center",
     justifyContent: "center",
@@ -1280,7 +1285,7 @@ const styles = StyleSheet.create({
   avatarFallbackText: {
     color: "#FFF",
     fontWeight: "700",
-    fontSize: 13,
+    fontSize: 11,
   },
   memberTextWrap: {
     flex: 1,
@@ -1292,7 +1297,7 @@ const styles = StyleSheet.create({
   },
   memberSubtitle: {
     marginTop: 2,
-    fontSize: 11,
+    fontSize: 10,
     color: "#6B7280",
   },
   rowDataCells: {
