@@ -639,9 +639,12 @@ export const list = query({
     sortDirection: v.optional(v.string()),
     statusFilter: v.optional(v.string()),
     assigneeFilter: v.optional(v.id("users")),
+    excludedAssigneeFilters: v.optional(v.array(v.id("users"))),
     scoreField: v.optional(v.string()),   // e.g. "score1", "score2"
     scoreMin: v.optional(v.number()),
     scoreMax: v.optional(v.number()),
+    addedAtMin: v.optional(v.number()),
+    addedAtMax: v.optional(v.number()),
     // Keep pagination optional for legacy clients that still call this
     // query via a non-paginated code path.
     paginationOpts: v.optional(paginationOptsValidator),
@@ -681,15 +684,28 @@ export const list = query({
 
     // Apply optional filters
     const scoreFilterField = (args.scoreField ?? "score1") as "score1" | "score2" | "score3" | "score4";
-    const hasFilters = args.statusFilter || args.assigneeFilter ||
-                       args.scoreMax !== undefined || args.scoreMin !== undefined;
+    const hasFilters =
+      args.statusFilter ||
+      args.assigneeFilter ||
+      (args.excludedAssigneeFilters && args.excludedAssigneeFilters.length > 0) ||
+      args.scoreMax !== undefined ||
+      args.scoreMin !== undefined ||
+      args.addedAtMin !== undefined ||
+      args.addedAtMax !== undefined;
     if (hasFilters) {
       q = q.filter((fq) => {
         const conds: any[] = [];
         if (args.statusFilter) conds.push(fq.eq(fq.field("status"), args.statusFilter));
         if (args.assigneeFilter) conds.push(fq.eq(fq.field("assigneeId"), args.assigneeFilter));
+        if (args.excludedAssigneeFilters?.length) {
+          for (const excludedAssigneeId of args.excludedAssigneeFilters) {
+            conds.push(fq.neq(fq.field("assigneeId"), excludedAssigneeId));
+          }
+        }
         if (args.scoreMax !== undefined) conds.push(fq.lt(fq.field(scoreFilterField), args.scoreMax));
         if (args.scoreMin !== undefined) conds.push(fq.gt(fq.field(scoreFilterField), args.scoreMin));
+        if (args.addedAtMax !== undefined) conds.push(fq.lte(fq.field("addedAt"), args.addedAtMax));
+        if (args.addedAtMin !== undefined) conds.push(fq.gte(fq.field("addedAt"), args.addedAtMin));
         return conds.length === 1 ? conds[0] : fq.and(...(conds as [any, any, ...any[]]));
       });
     }
@@ -746,9 +762,12 @@ export const search = query({
     searchText: v.string(),
     statusFilter: v.optional(v.string()),
     assigneeFilter: v.optional(v.id("users")),
+    excludedAssigneeFilters: v.optional(v.array(v.id("users"))),
     scoreField: v.optional(v.string()),
     scoreMin: v.optional(v.number()),
     scoreMax: v.optional(v.number()),
+    addedAtMin: v.optional(v.number()),
+    addedAtMax: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     await requireAuth(ctx, args.token);
@@ -770,6 +789,24 @@ export const search = query({
           conds.push(fq.lt(fq.field(scoreFilterField), args.scoreMax));
         if (args.scoreMin !== undefined)
           conds.push(fq.gt(fq.field(scoreFilterField), args.scoreMin));
+        return conds.length === 1 ? conds[0] : fq.and(...(conds as [any, any, ...any[]]));
+      });
+    }
+
+    if (
+      (args.excludedAssigneeFilters && args.excludedAssigneeFilters.length > 0) ||
+      args.addedAtMin !== undefined ||
+      args.addedAtMax !== undefined
+    ) {
+      results = results.filter((fq) => {
+        const conds: any[] = [];
+        if (args.excludedAssigneeFilters?.length) {
+          for (const excludedAssigneeId of args.excludedAssigneeFilters) {
+            conds.push(fq.neq(fq.field("assigneeId"), excludedAssigneeId));
+          }
+        }
+        if (args.addedAtMax !== undefined) conds.push(fq.lte(fq.field("addedAt"), args.addedAtMax));
+        if (args.addedAtMin !== undefined) conds.push(fq.gte(fq.field("addedAt"), args.addedAtMin));
         return conds.length === 1 ? conds[0] : fq.and(...(conds as [any, any, ...any[]]));
       });
     }

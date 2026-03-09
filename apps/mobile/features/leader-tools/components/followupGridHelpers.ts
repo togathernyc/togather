@@ -32,6 +32,22 @@ export type FollowupSearchSuggestion = {
   helperText: string;
 };
 
+export function getDateAddedRangeArgs(
+  dateAddedFilter?: ParsedFollowupFilters["dateAddedFilter"]
+): { addedAtMin?: number; addedAtMax?: number } {
+  if (!dateAddedFilter) return {};
+  if (dateAddedFilter.operator === "eq") {
+    return {
+      addedAtMin: dateAddedFilter.start,
+      addedAtMax: dateAddedFilter.end,
+    };
+  }
+  if (dateAddedFilter.operator === "lt") {
+    return { addedAtMax: dateAddedFilter.start - 1 };
+  }
+  return { addedAtMin: dateAddedFilter.end + 1 };
+}
+
 function parseShortDate(rawDate: string): { start: number; end: number } | null {
   const parts = rawDate.trim().split("/");
   if (parts.length !== 3) return null;

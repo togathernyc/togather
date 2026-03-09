@@ -36,6 +36,7 @@ import {
 import {
   applyFollowupSuggestion,
   applyParsedFollowupFilters,
+  getDateAddedRangeArgs,
   getFollowupQueryHelperText,
   getFollowupSearchSuggestions,
   parseFollowupQuerySyntax,
@@ -289,11 +290,17 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
 
   const listFilterArgs = useMemo(() => {
     const filters: Record<string, unknown> = {};
+    const dateRangeArgs = getDateAddedRangeArgs(parsedQuery.dateAddedFilter);
     if (parsedQuery.statusFilter) filters.statusFilter = parsedQuery.statusFilter;
     if (parsedQuery.assigneeFilter) filters.assigneeFilter = parsedQuery.assigneeFilter as Id<"users">;
+    if (parsedQuery.excludedAssigneeFilters.length > 0) {
+      filters.excludedAssigneeFilters = parsedQuery.excludedAssigneeFilters as Id<"users">[];
+    }
     if (parsedQuery.scoreField) filters.scoreField = parsedQuery.scoreField;
     if (parsedQuery.scoreMax !== undefined) filters.scoreMax = parsedQuery.scoreMax;
     if (parsedQuery.scoreMin !== undefined) filters.scoreMin = parsedQuery.scoreMin;
+    if (dateRangeArgs.addedAtMin !== undefined) filters.addedAtMin = dateRangeArgs.addedAtMin;
+    if (dateRangeArgs.addedAtMax !== undefined) filters.addedAtMax = dateRangeArgs.addedAtMax;
     return filters;
   }, [parsedQuery]);
 
@@ -329,9 +336,13 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
           ...(parsedQuery.assigneeFilter
             ? { assigneeFilter: parsedQuery.assigneeFilter as Id<"users"> }
             : {}),
+          ...(parsedQuery.excludedAssigneeFilters.length > 0
+            ? { excludedAssigneeFilters: parsedQuery.excludedAssigneeFilters as Id<"users">[] }
+            : {}),
           ...(parsedQuery.scoreField ? { scoreField: parsedQuery.scoreField } : {}),
           ...(parsedQuery.scoreMax !== undefined ? { scoreMax: parsedQuery.scoreMax } : {}),
           ...(parsedQuery.scoreMin !== undefined ? { scoreMin: parsedQuery.scoreMin } : {}),
+          ...getDateAddedRangeArgs(parsedQuery.dateAddedFilter),
         }
       : "skip"
   );

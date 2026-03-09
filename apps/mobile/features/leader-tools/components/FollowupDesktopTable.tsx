@@ -26,6 +26,7 @@ import { getScoreValue } from "./followupShared";
 import {
   applyFollowupSuggestion,
   applyParsedFollowupFilters,
+  getDateAddedRangeArgs,
   getFollowupQueryHelperText,
   getFollowupSearchSuggestions,
   parseFollowupQuerySyntax,
@@ -416,11 +417,17 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
   // Build filter args for list query (structured filters only, no text search)
   const listFilterArgs = useMemo(() => {
     const args: any = {};
+    const dateRangeArgs = getDateAddedRangeArgs(parsedQuery.dateAddedFilter);
     if (parsedQuery.statusFilter) args.statusFilter = parsedQuery.statusFilter;
     if (parsedQuery.assigneeFilter) args.assigneeFilter = parsedQuery.assigneeFilter as Id<"users">;
+    if (parsedQuery.excludedAssigneeFilters.length > 0) {
+      args.excludedAssigneeFilters = parsedQuery.excludedAssigneeFilters as Id<"users">[];
+    }
     if (parsedQuery.scoreField) args.scoreField = parsedQuery.scoreField;
     if (parsedQuery.scoreMax !== undefined) args.scoreMax = parsedQuery.scoreMax;
     if (parsedQuery.scoreMin !== undefined) args.scoreMin = parsedQuery.scoreMin;
+    if (dateRangeArgs.addedAtMin !== undefined) args.addedAtMin = dateRangeArgs.addedAtMin;
+    if (dateRangeArgs.addedAtMax !== undefined) args.addedAtMax = dateRangeArgs.addedAtMax;
     return args;
   }, [parsedQuery]);
 
@@ -452,9 +459,13 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
           searchText: parsedQuery.searchText,
           ...(parsedQuery.statusFilter ? { statusFilter: parsedQuery.statusFilter } : {}),
           ...(parsedQuery.assigneeFilter ? { assigneeFilter: parsedQuery.assigneeFilter as Id<"users"> } : {}),
+          ...(parsedQuery.excludedAssigneeFilters.length > 0
+            ? { excludedAssigneeFilters: parsedQuery.excludedAssigneeFilters as Id<"users">[] }
+            : {}),
           ...(parsedQuery.scoreField ? { scoreField: parsedQuery.scoreField } : {}),
           ...(parsedQuery.scoreMax !== undefined ? { scoreMax: parsedQuery.scoreMax } : {}),
           ...(parsedQuery.scoreMin !== undefined ? { scoreMin: parsedQuery.scoreMin } : {}),
+          ...getDateAddedRangeArgs(parsedQuery.dateAddedFilter),
         }
       : "skip"
   );

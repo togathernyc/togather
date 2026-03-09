@@ -2,6 +2,7 @@ import {
   applyParsedFollowupFilters,
   applyFollowupSuggestion,
   chunkIntoPages,
+  getDateAddedRangeArgs,
   getFollowupQueryHelperText,
   getFollowupSearchSuggestions,
   parseFollowupQuerySyntax,
@@ -127,6 +128,27 @@ describe("applyParsedFollowupFilters", () => {
     const filtered = applyParsedFollowupFilters(baseMembers, parsed);
     expect(filtered).toHaveLength(1);
     expect(filtered[0].addedAt).toBe(baseMembers[1].addedAt);
+  });
+});
+
+describe("getDateAddedRangeArgs", () => {
+  it("maps eq operator to day bounds", () => {
+    const range = getDateAddedRangeArgs({
+      operator: "eq",
+      start: 100,
+      end: 199,
+      raw: "12/14/25",
+    });
+    expect(range).toEqual({ addedAtMin: 100, addedAtMax: 199 });
+  });
+
+  it("maps lt and gt operators to exclusive bounds", () => {
+    expect(
+      getDateAddedRangeArgs({ operator: "lt", start: 300, end: 399, raw: "12/14/25" })
+    ).toEqual({ addedAtMax: 299 });
+    expect(
+      getDateAddedRangeArgs({ operator: "gt", start: 300, end: 399, raw: "12/14/25" })
+    ).toEqual({ addedAtMin: 400 });
   });
 });
 
