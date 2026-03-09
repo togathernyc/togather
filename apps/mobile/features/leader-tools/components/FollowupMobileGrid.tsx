@@ -81,6 +81,7 @@ type GridColumn = {
   kind: "score" | "status" | "text";
   getValue: (member: FollowupMember) => string | number;
 };
+const EMPTY_GRID_COLUMNS: GridColumn[] = [];
 
 const MIN_DATA_COL_WIDTH = 94;
 const SWIPE_THRESHOLD = 50;
@@ -189,6 +190,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     () => scoreConfigScores ?? [],
     [scoreConfigScores]
   );
+  const isConfigLoaded = config !== undefined;
   const toolDisplayName =
     typeof config?.toolDisplayName === "string" ? config.toolDisplayName : "Follow-up";
   const memberSubtitle =
@@ -215,6 +217,8 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
 
   useEffect(() => {
     if (!sortField.startsWith("score")) return;
+    // Don't override the default score sort while config is still loading.
+    if (!isConfigLoaded) return;
     const scoreIndex = Number.parseInt(sortField.replace("score", ""), 10) - 1;
     if (scoreConfig.length === 0) {
       setSortField("firstName");
@@ -223,7 +227,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     if (scoreIndex < 0 || scoreIndex >= scoreConfig.length) {
       setSortField("score1");
     }
-  }, [scoreConfig, sortField]);
+  }, [isConfigLoaded, scoreConfig, sortField]);
 
   const parsedQuery = useMemo(
     () => parseFollowupQuerySyntax(debouncedSearch, leaderMap, scoreConfig),
@@ -506,13 +510,40 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     );
   }, [columnPages.length]);
 
-  const visibleColumns = columnPages[columnPageIndex] ?? [];
+  const visibleColumns = useMemo(
+    () => columnPages[columnPageIndex] ?? EMPTY_GRID_COLUMNS,
+    [columnPages, columnPageIndex]
+  );
   const visibleColumnWidth = Math.max(
     36,
     Math.floor(availableDataWidth / Math.max(MIN_COLUMNS_PER_PAGE, visibleColumns.length || 1))
   );
   const canPageLeft = columnPageIndex > 0;
   const canPageRight = columnPageIndex < columnPages.length - 1;
+  const visibleColumnKeys = useMemo(
+    () => visibleColumns.map((column) => column.key).join("|"),
+    [visibleColumns]
+  );
+  const flatListExtraData = useMemo(
+    () =>
+      [
+        columnPageIndex,
+        visibleColumnWidth,
+        pinnedColumnWidth,
+        visibleColumnKeys,
+        editSheet?.memberId ?? "",
+        editSheet?.type ?? "",
+        isUpdatingField ? "1" : "0",
+      ].join(":"),
+    [
+      columnPageIndex,
+      visibleColumnWidth,
+      pinnedColumnWidth,
+      visibleColumnKeys,
+      editSheet,
+      isUpdatingField,
+    ]
+  );
 
   const goToPreviousPage = useCallback(() => {
     setColumnPageIndex((currentPage) => Math.max(0, currentPage - 1));
@@ -942,6 +973,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
 
         <FlatList
           data={displayMembers}
+          extraData={flatListExtraData}
           keyExtractor={(item) => item._id || item.groupMemberId}
           renderItem={renderMemberRow}
           onEndReached={() => {
