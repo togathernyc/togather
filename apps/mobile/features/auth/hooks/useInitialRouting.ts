@@ -77,14 +77,16 @@ export function useInitialRouting() {
       return;
     }
 
-    // Don't redirect if we're already on the target page (chat/inbox or signin)
+    // Don't redirect if we're already on the target page (chat/inbox, signin, or profile)
     // This prevents infinite loops when index redirects to chat and UserRoute redirects back
     if (
       currentPathname === "/(tabs)/chat" ||
       currentPathname === "/chat" ||
       currentPathname.includes("/chat") ||
       currentPathname === "/(auth)/signin" ||
-      currentPathname.includes("/signin")
+      currentPathname.includes("/signin") ||
+      currentPathname === "/(tabs)/profile" ||
+      currentPathname.includes("/profile")
     ) {
       console.log("📄 Index: Already on target page, skipping redirect");
       hasRedirectedRef.current = true;
@@ -143,7 +145,7 @@ export function useInitialRouting() {
     return () => clearTimeout(timeoutId);
     // Use pathname inside effect, don't add to dependencies to prevent loops
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoading, isAuthenticated, community, params.slug, forceShow, router]);
+  }, [isLoading, isAuthenticated, community, params.slug, forceShow, router, user]);
 
   return {
     isLoading,
