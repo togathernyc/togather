@@ -40,6 +40,24 @@ Standard dev commands are in root `package.json` and documented in `README.md` a
 - **Mobile tests** use Jest with `jest-expo` preset. The custom `run-tests.js` script in `apps/mobile` handles test execution. Tests run without requiring Convex or any external services.
 - **Convex tests** use Vitest with `convex-test` for local function testing without a live deployment.
 
+### Starting the full dev environment
+
+Before running `pnpm dev`, ensure these files exist:
+1. `.env.local` in repo root with `CONVEX_DEPLOYMENT=dev:<slug>` (derived from the `CONVEX_DEPLOYMENT` env secret)
+2. `apps/mobile/.env` with `EXPO_PUBLIC_CONVEX_URL=https://<slug>.convex.cloud`
+
+Quick bootstrap when `CONVEX_DEPLOYMENT` secret is available:
+```bash
+echo "CONVEX_DEPLOYMENT=${CONVEX_DEPLOYMENT}" > .env.local
+echo "EXPO_PUBLIC_CONVEX_URL=https://${CONVEX_DEPLOYMENT#*:}.convex.cloud" >> .env.local
+echo "EXPO_PUBLIC_CONVEX_URL=https://${CONVEX_DEPLOYMENT#*:}.convex.cloud" > apps/mobile/.env
+npx convex dev --once
+npx convex env set "JWT_SECRET=${JWT_SECRET}"
+npx convex env set APP_ENV=development
+npx convex env set DEBUG=true
+npx convex run functions/seed:seedDemoData
+```
+
 ### Multi-agent Convex isolation
 
 Each concurrent agent **must** use its own Convex deployment to avoid overwriting each other's backend functions and data. The `CONVEX_DEPLOYMENT` secret determines which cloud deployment an agent syncs to. Two agents sharing the same deployment will conflict -- the last `npx convex dev --once` wins.
