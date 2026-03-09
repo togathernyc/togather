@@ -117,6 +117,7 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
 
   // Accordion state — all collapsed by default
   const [displayNameOpen, setDisplayNameOpen] = useState(false);
+  const [dataOpen, setDataOpen] = useState(false);
   const [columnsOpen, setColumnsOpen] = useState(false);
   const [scoresOpen, setScoresOpen] = useState(false);
   const [alertsOpen, setAlertsOpen] = useState(false);
@@ -149,10 +150,15 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
   const updateScoreConfig = useAuthenticatedMutation(
     api.functions.groups.mutations.updateFollowupScoreConfig
   );
+  const refreshFollowupScoresMut = useAuthenticatedMutation(
+    api.functions.groups.mutations.refreshFollowupScores
+  );
 
   // ── Display Name state ──
 
   const [toolDisplayName, setToolDisplayName] = useState("");
+  const [isRefreshingScores, setIsRefreshingScores] = useState(false);
+  const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const names = (groupData as any)?.toolDisplayNames as Record<string, string> | undefined;
@@ -170,6 +176,22 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
       console.error("[updateToolDisplayName] failed:", err);
     }
   }, [groupId, toolDisplayName, updateDisplayNameMut]);
+
+  const handleRefreshFollowupScores = useCallback(async () => {
+    setIsRefreshingScores(true);
+    setRefreshMessage(null);
+    try {
+      await refreshFollowupScoresMut({
+        groupId: groupId as Id<"groups">,
+      });
+      setRefreshMessage("Refresh started. Scores and denormalized fields are updating now.");
+    } catch (err) {
+      console.error("[refreshFollowupScores] failed:", err);
+      setRefreshMessage("Could not start refresh. Please try again.");
+    } finally {
+      setIsRefreshingScores(false);
+    }
+  }, [groupId, refreshFollowupScoresMut]);
 
   // ── Columns state ──
 
@@ -206,6 +228,7 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
       { key: "status", label: "Status" },
       { key: "lastAttendedAt", label: "Last Attended" },
       { key: "lastFollowupAt", label: "Last Follow-up" },
+      { key: "lastActiveAt", label: "Date Active" },
       { key: "alerts", label: "Alerts" },
     );
     for (const cf of customFields) {
@@ -693,6 +716,28 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
         )}
 
         {/* ── Section 2: Columns ── */}
+        {renderSectionHeader("Data", dataOpen, () => setDataOpen((p) => !p))}
+        {dataOpen && (
+          <View style={styles.sectionBody}>
+            <TouchableOpacity
+              onPress={handleRefreshFollowupScores}
+              style={[styles.saveButton, { backgroundColor: themeColor }, isRefreshingScores && styles.btnDisabled]}
+              disabled={isRefreshingScores}
+            >
+              {isRefreshingScores ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={styles.saveButtonText}>Refresh Follow-up Table Now</Text>
+              )}
+            </TouchableOpacity>
+            <Text style={styles.hintText}>
+              Rebuilds this group's denormalized follow-up rows immediately.
+            </Text>
+            {refreshMessage && <Text style={styles.hintText}>{refreshMessage}</Text>}
+          </View>
+        )}
+
+        {/* ── Section 3: Columns ── */}
         {renderSectionHeader("Columns", columnsOpen, () => setColumnsOpen((p) => !p))}
         {columnsOpen && (
           <View style={styles.sectionBody}>
@@ -905,7 +950,7 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
           </View>
         )}
 
-        {/* ── Section 3: Scores ── */}
+        {/* ── Section 4: Scores ── */}
         {renderSectionHeader("Scores", scoresOpen, () => setScoresOpen((p) => !p))}
         {scoresOpen && (
           <View style={styles.sectionBody}>
@@ -1043,7 +1088,7 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
           </View>
         )}
 
-        {/* ── Section 4: Alerts ── */}
+        {/* ── Section 5: Alerts ── */}
         {renderSectionHeader("Alerts", alertsOpen, () => setAlertsOpen((p) => !p))}
         {alertsOpen && (
           <View style={styles.sectionBody}>
@@ -1157,7 +1202,7 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
           </View>
         )}
 
-        {/* ── Section 5: Member Card Subtitle ── */}
+        {/* ── Section 6: Member Card Subtitle ── */}
         {renderSectionHeader(
           "Member Card Subtitle",
           subtitleOpen,

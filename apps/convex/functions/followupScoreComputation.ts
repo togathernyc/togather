@@ -78,6 +78,7 @@ export const getMembersForScoring = internalQuery({
           phone: user?.phone,
           zipCode: user?.zipCode,
           dateOfBirth: user?.dateOfBirth,
+          lastActiveAt: user?.lastLogin,
         };
       })
     );
@@ -146,6 +147,7 @@ export const internalUpsertScoreBatch = internalMutation({
         consecutiveMissed: score.consecutiveMissed,
         lastAttendedAt: score.lastAttendedAt,
         lastFollowupAt: score.lastFollowupAt,
+        lastActiveAt: score.lastActiveAt,
         scoreFactors: score.scoreFactors,
         scoreIds: score.scoreIds,
         updatedAt: Date.now(),
@@ -229,6 +231,7 @@ function transformScoredMember(
     consecutiveMissed: scoredResult.consecutiveMissed,
     lastAttendedAt: scoredResult.lastAttendedAt ?? undefined,
     lastFollowupAt: scoredResult.lastFollowupAt ?? undefined,
+    lastActiveAt: member.lastActiveAt,
     scoreFactors: scoredResult.scoreFactors,
     scoreIds,
     addedAt: member.joinedAt,
@@ -296,6 +299,7 @@ export const computeGroupScores = internalAction({
           phone: string | undefined;
           zipCode: string | undefined;
           dateOfBirth: number | undefined;
+          lastActiveAt: number | undefined;
         }>;
         isDone: boolean;
         continueCursor: string;
@@ -456,6 +460,7 @@ export const getSingleMemberForScoring = internalQuery({
       phone: user?.phone,
       zipCode: user?.zipCode,
       dateOfBirth: user?.dateOfBirth,
+      lastActiveAt: user?.lastLogin,
     };
   },
 });

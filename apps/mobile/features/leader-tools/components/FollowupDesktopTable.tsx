@@ -23,17 +23,22 @@ import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { FollowupSettingsPanel } from "./FollowupSettingsPanel";
 import type { CustomFieldDef } from "./ColumnPickerModal";
 import { getScoreValue } from "./followupShared";
+import {
+  applyFollowupSuggestion,
+  applyParsedFollowupFilters,
+  getDateAddedRangeArgs,
+  getFollowupQueryHelperText,
+  getFollowupSearchSuggestions,
+  parseFollowupQuerySyntax,
+  type LeaderInfo,
+  type ScoreConfigEntry,
+} from "./followupGridHelpers";
 
 // ============================================================================
 // Types
 // ============================================================================
 
 type SortDirection = "asc" | "desc";
-
-type ScoreConfigEntry = {
-  id: string;
-  name: string;
-};
 
 type FollowupMember = {
   _id: string;
@@ -63,6 +68,7 @@ type FollowupMember = {
   consecutiveMissed: number;
   lastAttendedAt?: number;
   lastFollowupAt?: number;
+  lastActiveAt?: number;
   addedAt?: number;
   status?: string;
   assigneeId?: string;
@@ -92,6 +98,7 @@ const SERVER_SORT_KEYS: Record<string, string> = {
   addedAt: "addedAt",
   lastAttendedAt: "lastAttendedAt",
   lastFollowupAt: "lastFollowupAt",
+  lastActiveAt: "lastActiveAt",
   status: "status",
   assignee: "assignee",
   customText1: "customText1",
@@ -173,83 +180,6 @@ const STORAGE_PREFIX = "followup-col-widths-";
 const MIN_COL_WIDTH = 60;
 
 // ============================================================================
-// Query Parser
-// ============================================================================
-
-type ParsedFilters = {
-  searchText: string;
-  statusFilter?: string;
-  assigneeFilter?: string;
-  scoreField?: string;   // e.g. "score1", "score2"
-  scoreMin?: number;
-  scoreMax?: number;
-};
-
-type LeaderInfo = { firstName: string; lastName: string; profilePhoto?: string };
-
-/**
- * Parse search bar query syntax.
- * Supports: status:green, assignee:john, <scoreName>:>50, <scoreName>:<30
- * Score names are matched dynamically from the group's score config.
- */
-function parseQuerySyntax(
-  query: string,
-  leaderMap: Map<string, LeaderInfo>,
-  scoreConfig: ScoreConfigEntry[],
-): ParsedFilters {
-  const filters: Omit<ParsedFilters, "searchText"> = {};
-  let freeText = query;
-
-  // Extract status:value
-  freeText = freeText.replace(/status:(\w+)/gi, (_, v) => {
-    filters.statusFilter = v.toLowerCase();
-    return "";
-  });
-
-  // Extract <columnName>:<N or <columnName>:>N — match against score config names
-  // e.g. "attendance:>50", "service:<30", "attend:>50" (prefix match)
-  // Supports range: "attendance:>20 attendance:<80" sets both min and max.
-  // Only one score column at a time — filters for a different column are ignored.
-  // Note: Only strict < and > are supported (not <= or >=) to match server behavior.
-  const reservedKeywords = new Set(["status", "assignee"]);
-  freeText = freeText.replace(/(\w+):[<>](\d+)/gi, (match, name, num) => {
-    const lowerName = name.toLowerCase();
-    // Skip reserved keywords to avoid consuming tokens intended for other filters
-    if (reservedKeywords.has(lowerName)) {
-      return match;
-    }
-    const idx = scoreConfig.findIndex((sc) =>
-      sc.name.toLowerCase().startsWith(lowerName)
-    );
-    if (idx !== -1) {
-      const matchedField = `score${idx + 1}`;
-      // If we already have a score filter for a different column, ignore this one
-      if (filters.scoreField && filters.scoreField !== matchedField) {
-        return match; // Leave in search text; only one score column filter is supported
-      }
-      filters.scoreField = matchedField;
-      if (match.includes("<")) filters.scoreMax = Number(num);
-      else filters.scoreMin = Number(num);
-      return "";
-    }
-    return match; // Not a score column — leave in search text
-  });
-
-  // Extract assignee:name — resolve to userId from leaderMap
-  freeText = freeText.replace(/assignee:(\w+)/gi, (_, name) => {
-    for (const [id, leader] of leaderMap.entries()) {
-      if (leader.firstName.toLowerCase().startsWith(name.toLowerCase())) {
-        filters.assigneeFilter = id;
-        break;
-      }
-    }
-    return "";
-  });
-
-  return { searchText: freeText.trim(), ...filters };
-}
-
-// ============================================================================
 // Debounce hook
 // ============================================================================
 
@@ -278,6 +208,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
 
   // Search state
   const [searchQuery, setSearchQuery] = useState("");
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
   const debouncedSearch = useDebounce(searchQuery, 300);
 
   // Side sheet
@@ -340,12 +271,25 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
 
   // Parse search query
   const parsedQuery = useMemo(
-    () => parseQuerySyntax(debouncedSearch, leaderMap, scoreConfig),
+    () => parseFollowupQuerySyntax(debouncedSearch, leaderMap, scoreConfig),
     [debouncedSearch, leaderMap, scoreConfig],
   );
   const hasTextSearch = !!parsedQuery.searchText;
   const hasAnyFilter = !!parsedQuery.statusFilter || !!parsedQuery.assigneeFilter ||
-    parsedQuery.scoreMin !== undefined || parsedQuery.scoreMax !== undefined;
+    parsedQuery.scoreMin !== undefined ||
+    parsedQuery.scoreMax !== undefined ||
+    parsedQuery.excludedAssigneeFilters.length > 0 ||
+    !!parsedQuery.dateAddedFilter;
+  const searchSuggestions = useMemo(
+    () => getFollowupSearchSuggestions(searchQuery, scoreConfig),
+    [searchQuery, scoreConfig]
+  );
+  const searchHelperText = useMemo(
+    () => getFollowupQueryHelperText(searchQuery, scoreConfig),
+    [searchQuery, scoreConfig]
+  );
+  const showSearchSuggestions =
+    isSearchFocused && searchQuery.trim().length > 0 && searchSuggestions.length > 0;
 
   // Build columns dynamically based on score config + column config
   const columns: ColumnDef[] = useMemo(() => {
@@ -385,6 +329,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
       { key: "status", label: "Status", defaultWidth: 100, sortable: true, serverSortKey: "status" },
       { key: "lastAttendedAt", label: "Last Attended", defaultWidth: 120, sortable: true, serverSortKey: "lastAttendedAt" },
       { key: "lastFollowupAt", label: "Last Follow-up", defaultWidth: 120, sortable: true, serverSortKey: "lastFollowupAt" },
+      { key: "lastActiveAt", label: "Date Active", defaultWidth: 120, sortable: true, serverSortKey: "lastActiveAt" },
       { key: "alerts", label: "Alerts", defaultWidth: 120, sortable: false },
     );
 
@@ -472,11 +417,17 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
   // Build filter args for list query (structured filters only, no text search)
   const listFilterArgs = useMemo(() => {
     const args: any = {};
+    const dateRangeArgs = getDateAddedRangeArgs(parsedQuery.dateAddedFilter);
     if (parsedQuery.statusFilter) args.statusFilter = parsedQuery.statusFilter;
     if (parsedQuery.assigneeFilter) args.assigneeFilter = parsedQuery.assigneeFilter as Id<"users">;
+    if (parsedQuery.excludedAssigneeFilters.length > 0) {
+      args.excludedAssigneeFilters = parsedQuery.excludedAssigneeFilters as Id<"users">[];
+    }
     if (parsedQuery.scoreField) args.scoreField = parsedQuery.scoreField;
     if (parsedQuery.scoreMax !== undefined) args.scoreMax = parsedQuery.scoreMax;
     if (parsedQuery.scoreMin !== undefined) args.scoreMin = parsedQuery.scoreMin;
+    if (dateRangeArgs.addedAtMin !== undefined) args.addedAtMin = dateRangeArgs.addedAtMin;
+    if (dateRangeArgs.addedAtMax !== undefined) args.addedAtMax = dateRangeArgs.addedAtMax;
     return args;
   }, [parsedQuery]);
 
@@ -508,9 +459,13 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
           searchText: parsedQuery.searchText,
           ...(parsedQuery.statusFilter ? { statusFilter: parsedQuery.statusFilter } : {}),
           ...(parsedQuery.assigneeFilter ? { assigneeFilter: parsedQuery.assigneeFilter as Id<"users"> } : {}),
+          ...(parsedQuery.excludedAssigneeFilters.length > 0
+            ? { excludedAssigneeFilters: parsedQuery.excludedAssigneeFilters as Id<"users">[] }
+            : {}),
           ...(parsedQuery.scoreField ? { scoreField: parsedQuery.scoreField } : {}),
           ...(parsedQuery.scoreMax !== undefined ? { scoreMax: parsedQuery.scoreMax } : {}),
           ...(parsedQuery.scoreMin !== undefined ? { scoreMin: parsedQuery.scoreMin } : {}),
+          ...getDateAddedRangeArgs(parsedQuery.dateAddedFilter),
         }
       : "skip"
   );
@@ -528,23 +483,33 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
       ? (searchResults ?? [])
       : (rawMembers ?? [])
     ) as unknown as FollowupMember[];
+    const filtered = applyParsedFollowupFilters(raw, parsedQuery);
 
-    if (!isClientSideSort || raw.length === 0) return raw;
+    if (!isClientSideSort || filtered.length === 0) return filtered;
 
     // Client-side sort by the score column (e.g. score3, score4)
     // sortField is like "score3" — find the scoreConfig entry for it
     const scoreIdx = parseInt(sortField.replace("score", ""), 10) - 1;
     const scoreId = scoreConfig[scoreIdx]?.id;
-    if (!scoreId) return raw;
+    if (!scoreId) return filtered;
 
-    const sorted = [...raw];
+    const sorted = [...filtered];
     sorted.sort((a, b) => {
       const aVal = getScoreValue(a, scoreId);
       const bVal = getScoreValue(b, scoreId);
       return sortDirection === "asc" ? aVal - bVal : bVal - aVal;
     });
     return sorted;
-  }, [hasTextSearch, searchResults, rawMembers, isClientSideSort, sortField, sortDirection, scoreConfig]);
+  }, [
+    hasTextSearch,
+    searchResults,
+    rawMembers,
+    isClientSideSort,
+    sortField,
+    sortDirection,
+    scoreConfig,
+    parsedQuery,
+  ]);
 
   // Clear optimistic overrides once server data catches up
   useEffect(() => {
@@ -917,6 +882,9 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
       case "lastFollowupAt":
         return <Text style={s.cellText}>{formatShortDate(item.lastFollowupAt)}</Text>;
 
+      case "lastActiveAt":
+        return <Text style={s.cellText}>{formatShortDate(item.lastActiveAt)}</Text>;
+
       case "alerts":
         return (
           <View style={s.alertsCell}>
@@ -1177,25 +1145,47 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
 
       {/* Search bar */}
       <View style={s.searchBar}>
-        <View style={s.searchInputContainer}>
-          <Ionicons name="search" size={16} color="#9CA3AF" />
-          <TextInput
-            style={s.searchInput}
-            placeholder={`Search... (e.g., status:green ${scoreConfig[0]?.name?.toLowerCase() ?? "score"}:>50)`}
-            placeholderTextColor="#9CA3AF"
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-          />
-          {searchQuery !== "" && (
-            <TouchableOpacity onPress={() => setSearchQuery("")}>
-              <Ionicons name="close-circle" size={16} color="#9CA3AF" />
-            </TouchableOpacity>
+        <View style={s.searchInputStack}>
+          <View style={s.searchInputContainer}>
+            <Ionicons name="search" size={16} color="#9CA3AF" />
+            <TextInput
+              style={s.searchInput}
+              placeholder={`Search... (e.g., -assignee:bob, date added:<12/14/25, ${scoreConfig[0]?.name?.toLowerCase() ?? "score"}:>50)`}
+              placeholderTextColor="#9CA3AF"
+              value={searchQuery}
+              onFocus={() => setIsSearchFocused(true)}
+              onBlur={() => setTimeout(() => setIsSearchFocused(false), 120)}
+              onChangeText={setSearchQuery}
+            />
+            {searchQuery !== "" && (
+              <TouchableOpacity onPress={() => setSearchQuery("")}>
+                <Ionicons name="close-circle" size={16} color="#9CA3AF" />
+              </TouchableOpacity>
+            )}
+          </View>
+          {searchHelperText && <Text style={s.searchHelperText}>{searchHelperText}</Text>}
+          {showSearchSuggestions && (
+            <View style={s.searchSuggestionBox}>
+              {searchSuggestions.map((suggestion) => (
+                <TouchableOpacity
+                  key={suggestion.id}
+                  style={s.searchSuggestionRow}
+                  onPress={() => {
+                    setSearchQuery(applyFollowupSuggestion(searchQuery, suggestion.insertText));
+                    setIsSearchFocused(false);
+                  }}
+                >
+                  <Text style={s.searchSuggestionLabel}>{suggestion.label}</Text>
+                  <Text style={s.searchSuggestionHelp}>{suggestion.helperText}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
           )}
         </View>
         <Text style={s.memberCount}>
           {hasTextSearch
             ? `${members.length} result${members.length !== 1 ? "s" : ""}`
-            : `${totalCount ?? "\u2014"} members`}
+            : `${totalCount ?? "\u2014"} members${hasAnyFilter ? " (filtered)" : ""}`}
         </Text>
       </View>
 
@@ -1560,7 +1550,7 @@ const s = StyleSheet.create({
   // Search bar
   searchBar: {
     flexDirection: "row" as const,
-    alignItems: "center" as const,
+    alignItems: "flex-start" as const,
     paddingHorizontal: 16,
     paddingVertical: 8,
     backgroundColor: "#F9FAFB",
@@ -1569,7 +1559,6 @@ const s = StyleSheet.create({
     gap: 12,
   },
   searchInputContainer: {
-    flex: 1,
     flexDirection: "row" as const,
     alignItems: "center" as const,
     backgroundColor: "#fff",
@@ -1579,6 +1568,10 @@ const s = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     gap: 8,
+  },
+  searchInputStack: {
+    flex: 1,
+    gap: 6,
   },
   searchInput: {
     flex: 1,
@@ -1590,6 +1583,34 @@ const s = StyleSheet.create({
     fontSize: 13,
     color: "#6B7280",
     fontWeight: "500" as const,
+    paddingTop: 8,
+  },
+  searchHelperText: {
+    fontSize: 11,
+    color: "#6B7280",
+  },
+  searchSuggestionBox: {
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    borderRadius: 8,
+    overflow: "hidden",
+  },
+  searchSuggestionRow: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F3F4F6",
+  },
+  searchSuggestionLabel: {
+    fontSize: 12,
+    color: "#111827",
+    fontWeight: "600" as const,
+  },
+  searchSuggestionHelp: {
+    fontSize: 11,
+    color: "#6B7280",
+    marginTop: 2,
   },
 
   mainArea: {

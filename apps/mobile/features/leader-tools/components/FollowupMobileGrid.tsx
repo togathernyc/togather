@@ -34,6 +34,11 @@ import {
   normalizeSubtitleVariableIds,
 } from "./followupShared";
 import {
+  applyFollowupSuggestion,
+  applyParsedFollowupFilters,
+  getDateAddedRangeArgs,
+  getFollowupQueryHelperText,
+  getFollowupSearchSuggestions,
   parseFollowupQuerySyntax,
   type LeaderInfo,
   type ScoreConfigEntry,
@@ -61,6 +66,7 @@ type FollowupMember = {
   consecutiveMissed: number;
   lastAttendedAt?: number;
   lastFollowupAt?: number;
+  lastActiveAt?: number;
   status?: string;
   assigneeId?: string;
   addedAt?: number;
@@ -121,6 +127,7 @@ const SERVER_SORTABLE_FIELDS = new Set([
   "addedAt",
   "lastAttendedAt",
   "lastFollowupAt",
+  "lastActiveAt",
   "status",
   "assignee",
 ]);
@@ -185,6 +192,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
   const [sortField, setSortField] = useState("score1");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [searchQuery, setSearchQuery] = useState("");
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
   const [editSheet, setEditSheet] = useState<{
     type: "assignee" | "status";
     memberId: string;
@@ -266,15 +274,33 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     !!parsedQuery.statusFilter ||
     !!parsedQuery.assigneeFilter ||
     parsedQuery.scoreMax !== undefined ||
-    parsedQuery.scoreMin !== undefined;
+    parsedQuery.scoreMin !== undefined ||
+    parsedQuery.excludedAssigneeFilters.length > 0 ||
+    !!parsedQuery.dateAddedFilter;
+  const searchSuggestions = useMemo(
+    () => getFollowupSearchSuggestions(searchQuery, scoreConfig),
+    [searchQuery, scoreConfig]
+  );
+  const searchHelperText = useMemo(
+    () => getFollowupQueryHelperText(searchQuery, scoreConfig),
+    [searchQuery, scoreConfig]
+  );
+  const showSearchSuggestions =
+    isSearchFocused && searchQuery.trim().length > 0 && searchSuggestions.length > 0;
 
   const listFilterArgs = useMemo(() => {
     const filters: Record<string, unknown> = {};
+    const dateRangeArgs = getDateAddedRangeArgs(parsedQuery.dateAddedFilter);
     if (parsedQuery.statusFilter) filters.statusFilter = parsedQuery.statusFilter;
     if (parsedQuery.assigneeFilter) filters.assigneeFilter = parsedQuery.assigneeFilter as Id<"users">;
+    if (parsedQuery.excludedAssigneeFilters.length > 0) {
+      filters.excludedAssigneeFilters = parsedQuery.excludedAssigneeFilters as Id<"users">[];
+    }
     if (parsedQuery.scoreField) filters.scoreField = parsedQuery.scoreField;
     if (parsedQuery.scoreMax !== undefined) filters.scoreMax = parsedQuery.scoreMax;
     if (parsedQuery.scoreMin !== undefined) filters.scoreMin = parsedQuery.scoreMin;
+    if (dateRangeArgs.addedAtMin !== undefined) filters.addedAtMin = dateRangeArgs.addedAtMin;
+    if (dateRangeArgs.addedAtMax !== undefined) filters.addedAtMax = dateRangeArgs.addedAtMax;
     return filters;
   }, [parsedQuery]);
 
@@ -310,9 +336,13 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
           ...(parsedQuery.assigneeFilter
             ? { assigneeFilter: parsedQuery.assigneeFilter as Id<"users"> }
             : {}),
+          ...(parsedQuery.excludedAssigneeFilters.length > 0
+            ? { excludedAssigneeFilters: parsedQuery.excludedAssigneeFilters as Id<"users">[] }
+            : {}),
           ...(parsedQuery.scoreField ? { scoreField: parsedQuery.scoreField } : {}),
           ...(parsedQuery.scoreMax !== undefined ? { scoreMax: parsedQuery.scoreMax } : {}),
           ...(parsedQuery.scoreMin !== undefined ? { scoreMin: parsedQuery.scoreMin } : {}),
+          ...getDateAddedRangeArgs(parsedQuery.dateAddedFilter),
         }
       : "skip"
   );
@@ -357,6 +387,8 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
           return member.lastAttendedAt ?? 0;
         case "lastFollowupAt":
           return member.lastFollowupAt ?? 0;
+        case "lastActiveAt":
+          return member.lastActiveAt ?? 0;
         default:
           if (field.startsWith("customBool")) {
             return (member as Record<string, unknown>)[field] ? 1 : 0;
@@ -370,9 +402,10 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
   const members = useMemo(() => {
     const source = (hasTextSearch ? searchResults ?? [] : rawMembers ?? []) as FollowupMember[];
     if (source.length === 0) return [];
-    if (!hasTextSearch && !isClientSideSort) return source;
+    const filtered = applyParsedFollowupFilters(source, parsedQuery);
+    if (!hasTextSearch && !isClientSideSort) return filtered;
 
-    const sorted = [...source];
+    const sorted = [...filtered];
     sorted.sort((a, b) =>
       compareSortValues(
         getSortFieldValue(a, sortField),
@@ -386,6 +419,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     searchResults,
     rawMembers,
     isClientSideSort,
+    parsedQuery,
     sortField,
     sortDirection,
     getSortFieldValue,
@@ -587,6 +621,14 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
         kind: "text",
         getValue: (member) => formatDate(member.lastFollowupAt, "\u2014"),
       },
+      {
+        key: "lastActiveAt",
+        label: "Date Active",
+        width: 118,
+        sortable: true,
+        kind: "text",
+        getValue: (member) => formatDate(member.lastActiveAt, "\u2014"),
+      },
     ];
 
     const customColumns: GridColumn[] = customFields.map((field) => ({
@@ -756,11 +798,25 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
         leader ? `assignee:${leader.firstName}` : `assignee:${parsedQuery.assigneeFilter}`
       );
     }
+    if (parsedQuery.excludedAssigneeFilters.length > 0) {
+      for (const assigneeId of parsedQuery.excludedAssigneeFilters) {
+        const leader = leaderMap.get(assigneeId);
+        badges.push(leader ? `-assignee:${leader.firstName}` : `-assignee:${assigneeId}`);
+      }
+    }
     if (parsedQuery.scoreField) {
       const scoreIndex = Number.parseInt(parsedQuery.scoreField.replace("score", ""), 10) - 1;
       const scoreLabel = scoreConfig[scoreIndex]?.name ?? parsedQuery.scoreField;
       if (parsedQuery.scoreMin !== undefined) badges.push(`${scoreLabel}:>${parsedQuery.scoreMin}`);
       if (parsedQuery.scoreMax !== undefined) badges.push(`${scoreLabel}:<${parsedQuery.scoreMax}`);
+    }
+    if (parsedQuery.dateAddedFilter) {
+      const op = parsedQuery.dateAddedFilter.operator === "eq"
+        ? ""
+        : parsedQuery.dateAddedFilter.operator === "lt"
+          ? "<"
+          : ">";
+      badges.push(`date added:${op}${parsedQuery.dateAddedFilter.raw}`);
     }
     if (parsedQuery.searchText) badges.push(`text:"${parsedQuery.searchText}"`);
     return badges;
@@ -1068,7 +1124,9 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
             value={searchQuery}
             onChangeText={setSearchQuery}
             style={styles.searchInput}
-            placeholder="Search, status:green, assignee:john, attendance:>50"
+            onFocus={() => setIsSearchFocused(true)}
+            onBlur={() => setTimeout(() => setIsSearchFocused(false), 120)}
+            placeholder="Search, -assignee:bob, date added:<12/14/25"
             placeholderTextColor="#9CA3AF"
             testID="followup-mobile-search"
           />
@@ -1078,6 +1136,24 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
             </TouchableOpacity>
           )}
         </View>
+        {searchHelperText && <Text style={styles.searchHelperText}>{searchHelperText}</Text>}
+        {showSearchSuggestions && (
+          <View style={styles.searchSuggestionBox}>
+            {searchSuggestions.map((suggestion) => (
+              <TouchableOpacity
+                key={suggestion.id}
+                style={styles.searchSuggestionRow}
+                onPress={() => {
+                  setSearchQuery(applyFollowupSuggestion(searchQuery, suggestion.insertText));
+                  setIsSearchFocused(false);
+                }}
+              >
+                <Text style={styles.searchSuggestionLabel}>{suggestion.label}</Text>
+                <Text style={styles.searchSuggestionHelp}>{suggestion.helperText}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
 
         {activeFilterBadges.length > 0 && (
           <ScrollView
@@ -1330,6 +1406,35 @@ const styles = StyleSheet.create({
   },
   clearSearchButton: {
     marginLeft: 6,
+  },
+  searchHelperText: {
+    marginTop: 6,
+    fontSize: 11,
+    color: "#6B7280",
+  },
+  searchSuggestionBox: {
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    borderRadius: 8,
+    backgroundColor: "#FFF",
+    overflow: "hidden",
+  },
+  searchSuggestionRow: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F3F4F6",
+  },
+  searchSuggestionLabel: {
+    fontSize: 12,
+    color: "#111827",
+    fontWeight: "600",
+  },
+  searchSuggestionHelp: {
+    marginTop: 2,
+    fontSize: 11,
+    color: "#6B7280",
   },
   sortOptionsContainer: {
     marginTop: 10,
