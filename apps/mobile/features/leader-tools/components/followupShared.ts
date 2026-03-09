@@ -47,6 +47,19 @@ export const SUBTITLE_VARIABLE_MAP = new Map(
   SUBTITLE_VARIABLES.map((variable) => [variable.id, variable])
 );
 
+export function normalizeSubtitleVariableIds(rawValue?: string): string[] {
+  if (!rawValue) return [];
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const rawId of rawValue.split(",")) {
+    const id = rawId.trim();
+    if (!id || seen.has(id) || !SUBTITLE_VARIABLE_MAP.has(id)) continue;
+    seen.add(id);
+    normalized.push(id);
+  }
+  return normalized;
+}
+
 /**
  * Map dynamic follow-up score ids to fixed score slots.
  */

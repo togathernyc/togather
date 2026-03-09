@@ -223,9 +223,18 @@ export function LandingPageContent() {
     return available;
   };
 
+  const getCommunityLandingLink = (slug: string) => {
+    const domainConfig = DOMAIN_CONFIG as typeof DOMAIN_CONFIG & {
+      communityLandingUrl?: (communitySlug: string) => string;
+    };
+    return domainConfig.communityLandingUrl
+      ? domainConfig.communityLandingUrl(slug)
+      : `${DOMAIN_CONFIG.landingUrl}/c/${slug}`;
+  };
+
   const handleCopyLink = async () => {
     if (communitySlug) {
-      const url = DOMAIN_CONFIG.communityLandingUrl(communitySlug);
+      const url = getCommunityLandingLink(communitySlug);
       await Clipboard.setStringAsync(url);
       Alert.alert("Copied", "Landing page link copied to clipboard.");
     }
@@ -264,7 +273,7 @@ export function LandingPageContent() {
         {communitySlug && (
           <TouchableOpacity style={styles.linkRow} onPress={handleCopyLink}>
             <Text style={styles.linkText}>
-              {DOMAIN_CONFIG.communityLandingUrl(communitySlug)}
+              {getCommunityLandingLink(communitySlug)}
             </Text>
             <Ionicons name="copy-outline" size={18} color="#666" />
           </TouchableOpacity>

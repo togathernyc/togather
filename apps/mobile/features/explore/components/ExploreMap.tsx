@@ -157,7 +157,7 @@ export function ExploreMap({
   mapboxToken,
 }: ExploreMapProps) {
   const mapContainer = useRef<HTMLDivElement | null>(null);
-  const map = useRef<mapboxgl.Map | null>(null);
+  const map = useRef<any>(null);
   const loadedImagesRef = useRef<Set<string>>(new Set());
   const groupsMapRef = useRef<Map<number, Group>>(new Map());
   const groupsRef = useRef<Group[]>(groups);

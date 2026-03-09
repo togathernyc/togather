@@ -12,7 +12,10 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
-import { SUBTITLE_VARIABLES, SUBTITLE_VARIABLE_MAP } from "./FollowupScreen";
+import {
+  SUBTITLE_VARIABLES,
+  normalizeSubtitleVariableIds,
+} from "./followupShared";
 import {
   useAuthenticatedQuery,
   useAuthenticatedMutation,
@@ -109,11 +112,7 @@ export function FollowupScoreSettings({ groupId }: Props) {
       setScores(groupData.followupScoreConfig.scores);
     }
     const savedSubtitle = groupData?.followupScoreConfig?.memberSubtitle ?? "";
-    setSubtitleVars(
-      savedSubtitle
-        ? savedSubtitle.split(",").filter((id) => SUBTITLE_VARIABLE_MAP.has(id))
-        : []
-    );
+    setSubtitleVars(normalizeSubtitleVariableIds(savedSubtitle));
     setAlerts(groupData?.followupScoreConfig?.alerts ?? []);
   }, [groupData?.followupScoreConfig]);
 
