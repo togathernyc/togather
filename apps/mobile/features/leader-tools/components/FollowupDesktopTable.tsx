@@ -22,7 +22,7 @@ import { FollowupDetailContent } from "./FollowupDetailScreen";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { FollowupSettingsPanel } from "./FollowupSettingsPanel";
 import type { CustomFieldDef } from "./ColumnPickerModal";
-import { getScoreValue } from "./FollowupScreen";
+import { getScoreValue } from "./followupShared";
 
 // ============================================================================
 // Types
