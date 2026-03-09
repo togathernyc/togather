@@ -133,6 +133,8 @@ const SERVER_SORTABLE_FIELDS = new Set([
   "assignee",
 ]);
 
+const HIDE_ON_MOBILE_COLUMNS = new Set(["firstName", "lastName"]);
+
 function useDebounce<T>(value: T, delay: number): T {
   const [debouncedValue, setDebouncedValue] = useState(value);
   useEffect(() => {
@@ -430,6 +432,19 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     getSortFieldValue,
   ]);
 
+  const isSearchLoading = hasTextSearch && searchResults === undefined;
+  const lastMembersRef = useRef<FollowupMember[]>([]);
+  const membersToShow = useMemo(() => {
+    if (members.length > 0) {
+      lastMembersRef.current = members;
+      return members;
+    }
+    if (isSearchLoading || (!hasTextSearch && isLoading)) {
+      return lastMembersRef.current.length > 0 ? lastMembersRef.current : [];
+    }
+    return [];
+  }, [members, isSearchLoading, isLoading, hasTextSearch]);
+
   // Keep inline edits responsive while server updates stream in.
   const displayMembers = useMemo(() => {
     const source = membersToShow;
@@ -487,8 +502,6 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       setLocalOverrides(next);
     }
   }, [members, localOverrides]);
-
-  const HIDE_ON_MOBILE_COLUMNS = new Set(["firstName", "lastName"]);
 
   const dataColumns: GridColumn[] = useMemo(() => {
     const scoreColumns: GridColumn[] = scoreConfig.map((score, index) => ({
@@ -880,7 +893,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
         setIsUpdatingField(false);
       }
     },
-    [setCustomFieldMut, groupId, editSheet?.type]
+    [setCustomFieldMut, groupId]
   );
 
   const handleCustomTextSubmit = useCallback(() => {
@@ -995,20 +1008,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     }
   };
 
-  const isSearchLoading = hasTextSearch && searchResults === undefined;
   const isInitialLoading = (!hasTextSearch && isLoading && members.length === 0) || isSearchLoading;
-
-  const lastMembersRef = useRef<FollowupMember[]>([]);
-  const membersToShow = useMemo(() => {
-    if (members.length > 0) {
-      lastMembersRef.current = members;
-      return members;
-    }
-    if (isSearchLoading || (!hasTextSearch && isLoading)) {
-      return lastMembersRef.current.length > 0 ? lastMembersRef.current : [];
-    }
-    return [];
-  }, [members, isSearchLoading, isLoading, hasTextSearch]);
 
   const renderColumnHeader = (column: GridColumn) => {
     const isActiveSort = sortField === column.key;
@@ -1072,7 +1072,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
         <TouchableOpacity
           onPress={() => {
             const raw = (member as Record<string, unknown>)[cf.slot];
-            handleCustomFieldSave(member.groupMemberId, cf.slot, !Boolean(raw));
+            handleCustomFieldSave(member.groupMemberId, cf.slot, !raw);
           }}
           disabled={isUpdatingField}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
