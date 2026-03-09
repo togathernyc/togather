@@ -344,6 +344,8 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
           return member.firstName ?? "";
         case "lastName":
           return member.lastName ?? "";
+        case "addedAt":
+          return member.addedAt ?? 0;
         case "status":
           return member.status ?? "";
         case "assignee": {
