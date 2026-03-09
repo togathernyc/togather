@@ -2209,6 +2209,185 @@ describe("getChannelMembers", () => {
     expect(result.members).toHaveLength(1);
     expect(result.members[0].userId).toBe(userId);
   });
+
+  test("paginates members with cursor-based loading", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, communityId, groupId, accessToken } = await seedTestData(t);
+
+    const channelId = await t.run(async (ctx) => {
+      const now = Date.now();
+      const chId = await ctx.db.insert("chatChannels", {
+        groupId,
+        slug: "paged-members",
+        channelType: "main",
+        name: "Paged Members",
+        createdById: userId,
+        createdAt: now,
+        updatedAt: now,
+        isArchived: false,
+        memberCount: 5,
+      });
+
+      const makeUser = async (firstName: string, phone: string) => {
+        const createdUserId = await ctx.db.insert("users", {
+          firstName,
+          lastName: "Member",
+          phone,
+          phoneVerified: true,
+          activeCommunityId: communityId,
+          searchText: `${firstName} Member ${phone}`,
+          createdAt: now,
+          updatedAt: now,
+        });
+        return createdUserId;
+      };
+
+      const secondUserId = await makeUser("Second", "+15555550111");
+      const thirdUserId = await makeUser("Third", "+15555550112");
+      const fourthUserId = await makeUser("Fourth", "+15555550113");
+      const fifthUserId = await makeUser("Fifth", "+15555550114");
+
+      await ctx.db.insert("chatChannelMembers", {
+        channelId: chId,
+        userId,
+        role: "member",
+        joinedAt: now,
+        isMuted: false,
+      });
+      await ctx.db.insert("chatChannelMembers", {
+        channelId: chId,
+        userId: secondUserId,
+        role: "member",
+        joinedAt: now + 1,
+        isMuted: false,
+      });
+      await ctx.db.insert("chatChannelMembers", {
+        channelId: chId,
+        userId: thirdUserId,
+        role: "member",
+        joinedAt: now + 2,
+        isMuted: false,
+      });
+      await ctx.db.insert("chatChannelMembers", {
+        channelId: chId,
+        userId: fourthUserId,
+        role: "member",
+        joinedAt: now + 3,
+        isMuted: false,
+      });
+      await ctx.db.insert("chatChannelMembers", {
+        channelId: chId,
+        userId: fifthUserId,
+        role: "member",
+        joinedAt: now + 4,
+        isMuted: false,
+      });
+
+      return chId;
+    });
+
+    const firstPage = await t.query(api.functions.messaging.channels.getChannelMembers, {
+      token: accessToken,
+      channelId,
+      limit: 2,
+    });
+
+    expect(firstPage.members).toHaveLength(2);
+    expect(firstPage.totalCount).toBe(5);
+    expect(firstPage.nextCursor).toBeTruthy();
+
+    const secondPage = await t.query(api.functions.messaging.channels.getChannelMembers, {
+      token: accessToken,
+      channelId,
+      limit: 2,
+      cursor: firstPage.nextCursor || undefined,
+    });
+
+    expect(secondPage.members.length).toBeGreaterThan(0);
+  });
+
+  test("searches channel members via backend index", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, communityId, groupId, accessToken } = await seedTestData(t);
+
+    const channelId = await t.run(async (ctx) => {
+      const now = Date.now();
+      await ctx.db.patch(userId, {
+        searchText: "Test User 15555550001",
+      });
+
+      const chId = await ctx.db.insert("chatChannels", {
+        groupId,
+        slug: "search-members",
+        channelType: "main",
+        name: "Search Members",
+        createdById: userId,
+        createdAt: now,
+        updatedAt: now,
+        isArchived: false,
+        memberCount: 3,
+      });
+
+      const matchingUserId = await ctx.db.insert("users", {
+        firstName: "Beth",
+        lastName: "Carson",
+        email: "beth@example.com",
+        phone: "+15555550333",
+        phoneVerified: true,
+        activeCommunityId: communityId,
+        searchText: "Beth Carson beth@example.com 15555550333",
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const nonMatchingUserId = await ctx.db.insert("users", {
+        firstName: "Alex",
+        lastName: "Runner",
+        email: "alex@example.com",
+        phone: "+15555550444",
+        phoneVerified: true,
+        activeCommunityId: communityId,
+        searchText: "Alex Runner alex@example.com 15555550444",
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      await ctx.db.insert("chatChannelMembers", {
+        channelId: chId,
+        userId,
+        role: "member",
+        joinedAt: now,
+        isMuted: false,
+      });
+      await ctx.db.insert("chatChannelMembers", {
+        channelId: chId,
+        userId: matchingUserId,
+        role: "member",
+        joinedAt: now + 1,
+        isMuted: false,
+      });
+      await ctx.db.insert("chatChannelMembers", {
+        channelId: chId,
+        userId: nonMatchingUserId,
+        role: "member",
+        joinedAt: now + 2,
+        isMuted: false,
+      });
+
+      return chId;
+    });
+
+    const result = await t.query(api.functions.messaging.channels.getChannelMembers, {
+      token: accessToken,
+      channelId,
+      search: "beth",
+      limit: 10,
+    });
+
+    expect(result.totalCount).toBe(1);
+    expect(result.members).toHaveLength(1);
+    expect(result.members[0].displayName.toLowerCase()).toContain("beth");
+  });
 });
 
 // ============================================================================

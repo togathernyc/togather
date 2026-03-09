@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState } from "react";
 import {
   View,
   Text,
@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
-  ScrollView,
 } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { UserRoute } from "@components/guards/UserRoute";
@@ -17,7 +16,6 @@ import type { Id } from "@services/api/convex";
 import { Members } from "./Members";
 import { useMembersPage } from "../hooks/useMembersPage";
 import { useMemberActions } from "../hooks/useMemberActions";
-import { useGroupMembers } from "../hooks";
 import { useAuth } from "@providers/AuthProvider";
 import { MemberSearch, CommunityMember } from "@components/ui";
 import { formatError } from "@/utils/error-handling";
@@ -41,13 +39,6 @@ export function MembersScreen() {
 
   // State for showing/hiding the add member section
   const [showAddMember, setShowAddMember] = useState(false);
-
-  // Get existing member IDs to exclude from search
-  const { members } = useGroupMembers(group_id || "", {});
-  const existingMemberIds = useMemo(
-    () => members.map((m: any) => m.user?._id || m._id).filter(Boolean),
-    [members]
-  );
 
   // State for tracking add member loading
   const [isAddingMember, setIsAddingMember] = useState(false);
@@ -150,7 +141,7 @@ export function MembersScreen() {
         <View style={styles.addMemberContainer}>
           <MemberSearch
             onSelect={handleAddMember}
-            excludeUserIds={existingMemberIds}
+            excludeGroupMembersOfGroupId={group_id || ""}
             isDisabled={isAddingMember}
             placeholder="Search by name, email, or phone..."
             maxResults={5}

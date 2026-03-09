@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -43,13 +43,21 @@ interface Channel {
   isShared?: boolean;
 }
 
+const PAGE_SIZE = 50;
+const SEARCH_DEBOUNCE_MS = 350;
+
 export function Members({ groupId, onMemberAction, canManageMembers = false }: MembersProps) {
   const { user } = useAuth();
   const { primaryColor } = useCommunityTheme();
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
   const [selectedMember, setSelectedMember] = useState<any>(null);
   const [showActionsModal, setShowActionsModal] = useState(false);
+  const [cursor, setCursor] = useState<string | undefined>(undefined);
+  const [accumulatedSyncedMembers, setAccumulatedSyncedMembers] = useState<ChannelMember[]>([]);
+  const [isFetchingNextPage, setIsFetchingNextPage] = useState(false);
+  const processedPageKeyRef = useRef<string | null>(null);
 
   // Fetch all channels for this group
   const channels = useAuthenticatedQuery(
@@ -78,13 +86,56 @@ export function Members({ groupId, onMemberAction, canManageMembers = false }: M
     [visibleChannels, activeChannelId]
   );
 
-  // Fetch channel members for selected channel
+  // Debounce member search before sending to backend.
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery.trim());
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timeout);
+  }, [searchQuery]);
+
+  const backendSearchQuery = debouncedSearchQuery.length >= 2 ? debouncedSearchQuery : "";
+
+  // Reset pagination when channel or backend search query changes.
+  useEffect(() => {
+    setCursor(undefined);
+    setAccumulatedSyncedMembers([]);
+    setIsFetchingNextPage(false);
+    processedPageKeyRef.current = null;
+  }, [activeChannelId, backendSearchQuery]);
+
+  // Fetch paginated channel members for the selected channel.
   const membersData = useAuthenticatedQuery(
-    api.functions.messaging.channels.getChannelMembers,
+    api.functions.messaging.channels.getChannelMembers as any,
     activeChannelId
-      ? { channelId: activeChannelId as Id<"chatChannels"> }
+      ? ({
+          channelId: activeChannelId as Id<"chatChannels">,
+          limit: PAGE_SIZE,
+          cursor,
+          search: backendSearchQuery || undefined,
+        } as any)
       : "skip"
   );
+
+  // Apply page results to accumulated member state.
+  const pageRequestKey = `${activeChannelId ?? "none"}::${backendSearchQuery}::${cursor ?? "root"}`;
+  useEffect(() => {
+    if (!membersData || !activeChannelId) return;
+    if (processedPageKeyRef.current === pageRequestKey) return;
+    processedPageKeyRef.current = pageRequestKey;
+
+    const pageMembers = (membersData.members ?? []) as ChannelMember[];
+    if (cursor) {
+      setAccumulatedSyncedMembers((prev) => {
+        const seen = new Set(prev.map((member) => member.userId));
+        const nextPageMembers = pageMembers.filter((member) => !seen.has(member.userId));
+        return [...prev, ...nextPageMembers];
+      });
+    } else {
+      setAccumulatedSyncedMembers(pageMembers);
+    }
+    setIsFetchingNextPage(false);
+  }, [membersData, activeChannelId, cursor, pageRequestKey]);
 
   // Fetch Leaders channel members to determine group role.
   // Leaders channel membership is always in sync with group leadership,
@@ -121,37 +172,25 @@ export function Members({ groupId, onMemberAction, canManageMembers = false }: M
 
   // Build unified list: synced members + unsynced PCO people
   const unifiedList = useMemo((): ListItem[] => {
-    const syncedItems: ListItem[] = (membersData?.members || []).map((m: any) => ({
+    const syncedItems: ListItem[] = accumulatedSyncedMembers.map((m: ChannelMember) => ({
       type: "synced" as const,
-      data: m as ChannelMember,
+      data: m,
     }));
-    const unsyncedItems: ListItem[] = unsyncedPeople.map((p: UnsyncedPerson) => ({
-      type: "unsynced" as const,
-      data: p,
-    }));
+    const unsyncedItems: ListItem[] =
+      backendSearchQuery.length === 0
+        ? unsyncedPeople.map((p: UnsyncedPerson) => ({
+            type: "unsynced" as const,
+            data: p,
+          }))
+        : [];
     return [...syncedItems, ...unsyncedItems];
-  }, [membersData?.members, unsyncedPeople]);
-
-  // Apply search filter
-  const filteredList = useMemo(() => {
-    if (!searchQuery.trim()) return unifiedList;
-    const q = searchQuery.toLowerCase().trim();
-    return unifiedList.filter((item: ListItem) => {
-      if (item.type === "synced") {
-        const displayName = item.data.displayName || "";
-        return displayName.toLowerCase().includes(q);
-      } else {
-        const pcoName = item.data.pcoName || "";
-        return pcoName.toLowerCase().includes(q);
-      }
-    });
-  }, [unifiedList, searchQuery]);
+  }, [accumulatedSyncedMembers, unsyncedPeople, backendSearchQuery.length]);
 
   const totalMemberCount = useMemo(() => {
-    const syncedCount = membersData?.totalCount ?? 0;
-    const unsyncedCount = unsyncedPeople.length;
+    const syncedCount = membersData?.totalCount ?? accumulatedSyncedMembers.length;
+    const unsyncedCount = backendSearchQuery.length === 0 ? unsyncedPeople.length : 0;
     return syncedCount + unsyncedCount;
-  }, [membersData?.totalCount, unsyncedPeople.length]);
+  }, [membersData?.totalCount, accumulatedSyncedMembers.length, unsyncedPeople.length, backendSearchQuery.length]);
 
   const handleMemberPress = useCallback((member: ChannelMember) => {
     if (!member) return;
@@ -181,6 +220,16 @@ export function Members({ groupId, onMemberAction, canManageMembers = false }: M
     setShowActionsModal(false);
     setSelectedMember(null);
   };
+
+  const hasNextPage = !!membersData?.nextCursor;
+
+  const handleLoadMore = useCallback(() => {
+    if (!hasNextPage || isFetchingNextPage || !membersData?.nextCursor) {
+      return;
+    }
+    setIsFetchingNextPage(true);
+    setCursor(membersData.nextCursor);
+  }, [hasNextPage, isFetchingNextPage, membersData?.nextCursor]);
 
   const renderListItem = useCallback(
     ({ item }: { item: ListItem }) => {
@@ -233,7 +282,8 @@ export function Members({ groupId, onMemberAction, canManageMembers = false }: M
     );
   }
 
-  const isLoadingMembers = !membersData && !!activeChannelId;
+  const isLoadingMembers =
+    !membersData && !!activeChannelId && accumulatedSyncedMembers.length === 0;
 
   return (
     <View style={styles.container}>
@@ -332,7 +382,7 @@ export function Members({ groupId, onMemberAction, canManageMembers = false }: M
         </View>
       ) : (
         <FlatList
-          data={filteredList}
+          data={unifiedList}
           renderItem={renderListItem}
           keyExtractor={(item: ListItem) =>
             item.type === "synced"
@@ -341,10 +391,20 @@ export function Members({ groupId, onMemberAction, canManageMembers = false }: M
           }
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
+          onEndReached={handleLoadMore}
+          onEndReachedThreshold={0.35}
+          ListFooterComponent={
+            isFetchingNextPage ? (
+              <View style={styles.paginationLoader}>
+                <ActivityIndicator size="small" />
+                <Text style={styles.paginationLoaderText}>Loading more members...</Text>
+              </View>
+            ) : null
+          }
           ListEmptyComponent={
             <View style={styles.emptyState}>
               <Text style={styles.emptyStateText}>
-                {searchQuery
+                {backendSearchQuery
                   ? "No members found matching your search"
                   : "No members in this channel"}
               </Text>
@@ -579,6 +639,17 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 10,
     fontSize: 16,
+    color: "#666",
+  },
+  paginationLoader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 12,
+    gap: 8,
+  },
+  paginationLoaderText: {
+    fontSize: 13,
     color: "#666",
   },
   emptyState: {

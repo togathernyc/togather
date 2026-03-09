@@ -46,6 +46,8 @@ export interface MemberSearchOptions {
   search?: string;
   excludeUserIds?: Id<"users">[];
   groupId?: Id<"groups">;
+  /** Exclude users who are already active members of this group */
+  excludeGroupId?: Id<"groups">;
   limit?: number;
   /** Include admin-only fields (isPrimaryAdmin, role, lastLogin) */
   includeAdminFields?: boolean;
@@ -170,6 +172,7 @@ export async function searchCommunityMembersInternal(
     search,
     excludeUserIds = [],
     groupId,
+    excludeGroupId,
     limit = 50,
     includeAdminFields = false,
   } = options;
@@ -253,6 +256,25 @@ export async function searchCommunityMembersInternal(
     targetUserIds = new Set(groupMemberships.map((gm) => gm.userId));
   }
 
+  // If excluding an entire group's active members, collect those user IDs once.
+  let excludedGroupUserIds: Set<Id<"users">> | null = null;
+  if (excludeGroupId) {
+    const groupMemberships = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group", (q) => q.eq("groupId", excludeGroupId))
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("leftAt"), undefined),
+          q.or(
+            q.eq(q.field("requestStatus"), undefined),
+            q.eq(q.field("requestStatus"), "accepted")
+          )
+        )
+      )
+      .collect();
+    excludedGroupUserIds = new Set(groupMemberships.map((gm) => gm.userId));
+  }
+
   // Check which users are active members of this community
   const membershipPromises = Array.from(allMatchingUsers.values()).map((user) =>
     ctx.db
@@ -280,6 +302,9 @@ export async function searchCommunityMembersInternal(
 
     // Skip if in exclude list
     if (excludeIds.has(user._id)) continue;
+
+    // Skip if this user is already an active member of the excluded group
+    if (excludedGroupUserIds?.has(user._id)) continue;
 
     // Skip if filtering by group and user is not in that group
     if (targetUserIds && !targetUserIds.has(user._id)) continue;

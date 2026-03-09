@@ -10,7 +10,6 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import MembersPage from "../../../app/(user)/leader-tools/[group_id]/members";
 import { useAuth } from "@providers/AuthProvider";
-import { useGroupMembers } from "@features/leader-tools/hooks";
 
 // Create mock functions that can be controlled per test
 const mockGetGroupQuery = jest.fn();
@@ -121,10 +120,6 @@ jest.mock("@features/leader-tools/components/Members", () => {
   };
 });
 
-jest.mock("@features/leader-tools/hooks", () => ({
-  useGroupMembers: jest.fn(),
-}));
-
 // Mock useMembersPage - this will be controlled per test
 const mockUseMembersPage = jest.fn();
 jest.mock("@features/leader-tools/hooks/useMembersPage", () => ({
@@ -142,7 +137,6 @@ const mockUseRouter = useRouter as jest.MockedFunction<typeof useRouter>;
 const mockUseLocalSearchParams = useLocalSearchParams as jest.MockedFunction<
   typeof useLocalSearchParams
 >;
-const mockUseGroupMembers = useGroupMembers as jest.MockedFunction<typeof useGroupMembers>;
 
 // Mock insets for SafeAreaProvider
 const mockInsets = {
@@ -213,20 +207,6 @@ describe("MembersPage", () => {
       }),
     });
 
-    // Mock useGroupMembers hook used by Members component
-    mockUseGroupMembers.mockReturnValue({
-      members: [],
-      isLoading: false,
-      error: null,
-      isError: false,
-      isSuccess: true,
-      hasNextPage: false,
-      fetchNextPage: jest.fn(),
-      refetch: jest.fn(),
-      isRefetching: false,
-      isFetchingNextPage: false,
-      data: undefined,
-    } as any);
   });
 
   afterEach(() => {
