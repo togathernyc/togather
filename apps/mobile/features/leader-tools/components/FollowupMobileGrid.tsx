@@ -663,6 +663,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
   const handleAssignChange = async (assigneeId?: string) => {
     if (!editSheet || !activeEditMember) return;
     const memberId = editSheet.memberId;
+    const previousAssigneeOverride = localOverrides[memberId]?.assigneeId;
 
     setIsUpdatingField(true);
     setLocalOverrides((prev) => ({
@@ -680,6 +681,22 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       });
       setEditSheet(null);
     } catch (error) {
+      // Roll back optimistic assignee override on mutation failure.
+      setLocalOverrides((prev) => {
+        const existing = prev[memberId] ?? {};
+        const restored = { ...existing };
+        if (previousAssigneeOverride === undefined) {
+          delete restored.assigneeId;
+        } else {
+          restored.assigneeId = previousAssigneeOverride;
+        }
+        if (Object.keys(restored).length === 0) {
+          const next = { ...prev };
+          delete next[memberId];
+          return next;
+        }
+        return { ...prev, [memberId]: restored };
+      });
       console.error("[FollowupMobileGrid] Failed to set assignee:", error);
       Alert.alert("Could not update assignee", "Please try again.");
     } finally {
@@ -690,6 +707,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
   const handleStatusChange = async (status?: string) => {
     if (!editSheet || !activeEditMember) return;
     const memberId = editSheet.memberId;
+    const previousStatusOverride = localOverrides[memberId]?.status;
 
     setIsUpdatingField(true);
     setLocalOverrides((prev) => ({
@@ -707,6 +725,22 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       });
       setEditSheet(null);
     } catch (error) {
+      // Roll back optimistic status override on mutation failure.
+      setLocalOverrides((prev) => {
+        const existing = prev[memberId] ?? {};
+        const restored = { ...existing };
+        if (previousStatusOverride === undefined) {
+          delete restored.status;
+        } else {
+          restored.status = previousStatusOverride;
+        }
+        if (Object.keys(restored).length === 0) {
+          const next = { ...prev };
+          delete next[memberId];
+          return next;
+        }
+        return { ...prev, [memberId]: restored };
+      });
       console.error("[FollowupMobileGrid] Failed to set status:", error);
       Alert.alert("Could not update status", "Please try again.");
     } finally {
