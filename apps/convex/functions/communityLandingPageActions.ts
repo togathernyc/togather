@@ -84,6 +84,14 @@ export const submitForm = action({
 
     const { community, landingPage } = result;
 
+    // Enforce required fields from landing page config
+    if (landingPage.requireZipCode && !args.zipCode?.trim()) {
+      throw new Error("ZIP code is required");
+    }
+    if (landingPage.requireBirthday && !args.dateOfBirth?.trim()) {
+      throw new Error("Birthday is required");
+    }
+
     // 2. Find or create user by phone
     const userId: string = await ctx.runMutation(
       internal.functions.communityLandingPage.findOrCreateUser,

@@ -113,6 +113,11 @@ export default function CommunityLandingPageClient() {
       return { valid: false, error: "Please enter a valid date" };
     }
 
+    // Birthday must not be in the future
+    if (date > new Date()) {
+      return { valid: false, error: "Birthday cannot be in the future" };
+    }
+
     // Convert to YYYY-MM-DD for backend
     const isoDate = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
     return { valid: true, isoDate };

@@ -909,7 +909,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
         return <Text style={s.cellText}>{item.zipCode ?? ""}</Text>;
 
       case "dateOfBirth":
-        return <Text style={s.cellText}>{item.dateOfBirth ? new Date(item.dateOfBirth).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : ""}</Text>;
+        return <Text style={s.cellText}>{item.dateOfBirth ? new Date(item.dateOfBirth).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }) : ""}</Text>;
 
       case "lastAttendedAt":
         return <Text style={s.cellText}>{formatShortDate(item.lastAttendedAt)}</Text>;
