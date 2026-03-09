@@ -55,6 +55,18 @@ describe("parseFollowupQuerySyntax", () => {
     expect(parsed.scoreMax).toBeUndefined();
     expect(parsed.searchText).toContain("connection:<40");
   });
+
+  it("keeps unknown assignee tokens in free text", () => {
+    const parsed = parseFollowupQuerySyntax(
+      "assignee:unknown status:green",
+      leaders,
+      scoreConfig
+    );
+
+    expect(parsed.statusFilter).toBe("green");
+    expect(parsed.assigneeFilter).toBeUndefined();
+    expect(parsed.searchText).toBe("assignee:unknown");
+  });
 });
 
 describe("chunkIntoPages", () => {

@@ -68,14 +68,16 @@ export function parseFollowupQuerySyntax(
     return "";
   });
 
-  freeText = freeText.replace(/assignee:(\w+)/gi, (_, assigneeName) => {
+  freeText = freeText.replace(/assignee:(\w+)/gi, (match, assigneeName) => {
+    let matchedAssignee = false;
     for (const [id, leader] of leaderMap.entries()) {
       if (leader.firstName.toLowerCase().startsWith(assigneeName.toLowerCase())) {
         filters.assigneeFilter = id;
+        matchedAssignee = true;
         break;
       }
     }
-    return "";
+    return matchedAssignee ? "" : match;
   });
 
   return { searchText: freeText.trim(), ...filters };
