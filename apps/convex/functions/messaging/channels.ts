@@ -16,6 +16,7 @@ import { generateChannelSlug, getChannelSlug } from "../../lib/slugs";
 import { internal } from "../../_generated/api";
 import { syncUserChannelMembershipsLogic } from "../sync/memberships";
 import { updateChannelMemberCount } from "./helpers";
+import { matchesSearchTerms, parseSearchTerms } from "../../lib/memberSearch";
 
 // ============================================================================
 // Helper Functions
@@ -395,10 +396,12 @@ export const getChannelMembers = query({
     channelId: v.id("chatChannels"),
     limit: v.optional(v.number()),
     cursor: v.optional(v.string()),
+    search: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
     const limit = Math.min(args.limit || 100, 500); // Default 100, max 500
+    const searchTerms = parseSearchTerms(args.search || "");
 
     // Verify user has access to the channel
     const channel = await ctx.db.get(args.channelId);
@@ -445,8 +448,103 @@ export const getChannelMembers = query({
       }
     }
 
-    // Build the query
-    let query = ctx.db
+    if (searchTerms.length > 0) {
+      // Search path: use users full-text index first, then intersect with channel membership.
+      // This avoids loading all channel members in memory just to search.
+      const userMap = new Map<Id<"users">, Doc<"users">>();
+      const searchTakeLimit = Math.min(Math.max(limit * 6, 80), 300);
+
+      for (const term of searchTerms) {
+        if (!term) continue;
+        const users = await ctx.db
+          .query("users")
+          .withSearchIndex("search_users", (q) => q.search("searchText", term))
+          .take(searchTakeLimit);
+
+        for (const user of users) {
+          if (!userMap.has(user._id)) {
+            userMap.set(user._id, user);
+          }
+        }
+      }
+
+      if (userMap.size === 0) {
+        return { members: [], nextCursor: null, totalCount: 0 };
+      }
+
+      const candidateUsers = Array.from(userMap.values());
+      const channelMemberships = await Promise.all(
+        candidateUsers.map((user) =>
+          ctx.db
+            .query("chatChannelMembers")
+            .withIndex("by_channel_user", (q) =>
+              q.eq("channelId", args.channelId).eq("userId", user._id)
+            )
+            .filter((q) => q.eq(q.field("leftAt"), undefined))
+            .first()
+        )
+      );
+
+      const matchedMembers: Array<{
+        member: NonNullable<(typeof channelMemberships)[number]>;
+        user: Doc<"users">;
+      }> = [];
+
+      for (let i = 0; i < candidateUsers.length; i++) {
+        const user = candidateUsers[i];
+        const member = channelMemberships[i];
+        if (!member) continue;
+
+        if (
+          !matchesSearchTerms(
+            {
+              firstName: user.firstName || "",
+              lastName: user.lastName || "",
+              email: user.email || "",
+              phone: user.phone || "",
+            },
+            searchTerms
+          )
+        ) {
+          continue;
+        }
+
+        matchedMembers.push({ member, user });
+      }
+
+      matchedMembers.sort((a, b) => {
+        const aName = getDisplayName(a.user.firstName, a.user.lastName) || a.member.displayName || "";
+        const bName = getDisplayName(b.user.firstName, b.user.lastName) || b.member.displayName || "";
+        return aName.localeCompare(bName);
+      });
+
+      const cursorIndex = args.cursor ? parseInt(args.cursor, 10) : 0;
+      const page = matchedMembers.slice(cursorIndex, cursorIndex + limit);
+      const nextCursor =
+        cursorIndex + limit < matchedMembers.length
+          ? String(cursorIndex + limit)
+          : null;
+
+      return {
+        members: page.map(({ member, user }) => ({
+          id: member._id,
+          userId: member.userId,
+          displayName:
+            getDisplayName(user.firstName, user.lastName) ||
+            member.displayName ||
+            "Unknown",
+          profilePhoto: member.profilePhoto || getMediaUrl(user.profilePhoto) || undefined,
+          role: member.role,
+          syncSource: member.syncSource,
+          syncMetadata: member.syncMetadata,
+        })),
+        nextCursor,
+        totalCount: matchedMembers.length,
+      };
+    }
+
+    // Browse path: channel-native pagination without loading all members.
+    const query = ctx.db
       .query("chatChannelMembers")
       .withIndex("by_channel", (q) => q.eq("channelId", args.channelId))
       .filter((q) => q.eq(q.field("leftAt"), undefined));
@@ -480,7 +578,7 @@ export const getChannelMembers = query({
     // Return member data with pagination info
     return {
       members: enrichedMembers,
-      nextCursor: result.isDone ? null : JSON.stringify(result.continueCursor),
+      nextCursor: hasMore ? JSON.stringify(result.continueCursor) : null,
       // Note: totalCount is expensive for large channels, use channel.memberCount instead
       totalCount: channel.memberCount || 0,
     };

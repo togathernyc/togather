@@ -39,6 +39,8 @@ export interface UseMemberSearchOptions {
   excludeUserIds?: (number | string)[];
   /** Filter to specific group */
   groupId?: string;
+  /** Exclude active members of this group from results (server-side) */
+  excludeGroupMembersOfGroupId?: string;
   /** Minimum characters before search triggers (default: 2) */
   minSearchLength?: number;
   /** Whether search is enabled */
@@ -111,6 +113,7 @@ export function useMemberSearch(
     pageSize = 20,
     excludeUserIds = [],
     groupId,
+    excludeGroupMembersOfGroupId,
     minSearchLength = 2,
     enabled = true,
     includeSelf = false,
@@ -143,7 +146,7 @@ export function useMemberSearch(
     }
     setCurrentPage(1);
     setAllMembers([]);
-  }, [debouncedQuery, groupId]);
+  }, [debouncedQuery, groupId, excludeGroupMembersOfGroupId]);
 
   // Determine if we should fetch - requires a valid search term
   const shouldFetch =
@@ -156,16 +159,19 @@ export function useMemberSearch(
   // Use the non-admin search endpoint (works for all authenticated users)
   // Convex query: api.functions.groupSearch.searchCommunityMembers
   const queryData = useQuery(
-    api.functions.groupSearch.searchCommunityMembers,
+    api.functions.groupSearch.searchCommunityMembers as any,
     shouldFetch
       ? {
           token: token as string,
           communityId: community?.id as Id<"communities">,
           search: debouncedQuery.trim(),
           excludeUserIds: excludeUserIds.map((id) => String(id) as Id<"users">),
+          excludeGroupId: excludeGroupMembersOfGroupId
+            ? (String(excludeGroupMembersOfGroupId) as Id<"groups">)
+            : undefined,
           limit: pageSize,
           includeSelf,
-        }
+        } as any
       : "skip"
   );
 

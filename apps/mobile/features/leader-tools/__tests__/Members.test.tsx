@@ -4,8 +4,10 @@ import {
   screen,
   fireEvent,
   waitFor,
+  act,
 } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { FlatList } from "react-native";
 import { Members } from "@features/leader-tools/components/Members";
 import { useAuth } from "@providers/AuthProvider";
 import { useAuthenticatedQuery } from "@services/api/convex";
@@ -198,6 +200,20 @@ describe("Members", () => {
     });
   });
 
+  it("requests paginated members from backend", async () => {
+    renderComponent();
+
+    await waitFor(() => {
+      expect(mockUseAuthenticatedQuery).toHaveBeenCalledWith(
+        "getChannelMembers",
+        expect.objectContaining({
+          channelId: "channel-1",
+          limit: 50,
+        })
+      );
+    });
+  });
+
   it("loads channel members even when AuthProvider token is null", async () => {
     mockUseAuth.mockReturnValue({
       user: mockUser,
@@ -263,7 +279,8 @@ describe("Members", () => {
     });
   });
 
-  it("handles search input", async () => {
+  it("uses backend member search after debounce", async () => {
+    jest.useFakeTimers();
     renderComponent();
 
     await waitFor(() => {
@@ -273,8 +290,74 @@ describe("Members", () => {
     const searchInput = screen.getByPlaceholderText("Search members...");
     fireEvent.changeText(searchInput, "John");
 
+    act(() => {
+      jest.advanceTimersByTime(400);
+    });
+
     await waitFor(() => {
-      expect(searchInput.props.value || searchInput.props.defaultValue).toBe("John");
+      expect(mockUseAuthenticatedQuery).toHaveBeenCalledWith(
+        "getChannelMembers",
+        expect.objectContaining({
+          channelId: "channel-1",
+          search: "John",
+        })
+      );
+    });
+
+    jest.useRealTimers();
+  });
+
+  it("loads additional members on scroll", async () => {
+    mockUseAuthenticatedQuery.mockImplementation((queryFn: any, args: any) => {
+      if (args === "skip") return undefined;
+      if (queryFn === "listGroupChannels") return mockChannels as any;
+      if (queryFn === "getAutoChannelConfigByChannel") return undefined;
+      if (queryFn === "getChannelMembers") {
+        if (args?.channelId === "channel-2") {
+          return { members: [], totalCount: 0, nextCursor: null } as any;
+        }
+
+        if (args?.cursor === "next-cursor-1") {
+          return {
+            members: [
+              ...mockChannelMembers.members,
+              {
+                id: "member-3",
+                userId: "user-3",
+                displayName: "New Person",
+                profilePhoto: null,
+                role: "member",
+                syncSource: null,
+                syncMetadata: null,
+              },
+            ],
+            totalCount: 3,
+            nextCursor: null,
+          } as any;
+        }
+
+        return {
+          ...mockChannelMembers,
+          totalCount: 3,
+          nextCursor: "next-cursor-1",
+        } as any;
+      }
+      return undefined;
+    });
+
+    const rendered = renderComponent();
+
+    await waitFor(() => {
+      expect(screen.getByText("Jane Smith")).toBeTruthy();
+    });
+
+    const list = rendered.UNSAFE_getByType(FlatList);
+    act(() => {
+      list.props.onEndReached?.();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("New Person")).toBeTruthy();
     });
   });
 
