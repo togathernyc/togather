@@ -572,6 +572,15 @@ export const updateRole = mutation({
       .withIndex("by_group_user", (q) =>
         q.eq("groupId", args.groupId).eq("userId", updatedBy)
       )
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("leftAt"), undefined),
+          q.or(
+            q.eq(q.field("requestStatus"), undefined),
+            q.eq(q.field("requestStatus"), "accepted")
+          )
+        )
+      )
       .first();
 
     const isGroupLeaderOrAdminRole = isActiveLeader(leaderMembership);
@@ -588,6 +597,15 @@ export const updateRole = mutation({
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
         q.eq("groupId", args.groupId).eq("userId", args.userId)
+      )
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("leftAt"), undefined),
+          q.or(
+            q.eq(q.field("requestStatus"), undefined),
+            q.eq(q.field("requestStatus"), "accepted")
+          )
+        )
       )
       .first();
 

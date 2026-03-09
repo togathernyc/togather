@@ -409,6 +409,72 @@ describe("Group Member Permissions - groupMembers.updateRole", () => {
     vi.useRealTimers();
   });
 
+  test("succeeds when leader has historical inactive membership row", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const setup = await seedTestData(t);
+
+    // Simulate leave/rejoin: old membership inactive, newer membership active.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(setup.leaderMembershipId, {
+        leftAt: Date.now() - 60_000,
+      });
+      await ctx.db.insert("groupMembers", {
+        groupId: setup.groupId,
+        userId: setup.leaderId,
+        role: GROUP_ROLES.leader,
+        joinedAt: Date.now(),
+        notificationsEnabled: true,
+      });
+    });
+
+    const result = await t.mutation(api.functions.groupMembers.updateRole, {
+      token: setup.leaderToken,
+      groupId: setup.groupId,
+      userId: setup.memberId,
+      role: "leader",
+    });
+
+    expect(result).toBeDefined();
+    expect(result.role).toBe("leader");
+
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    vi.useRealTimers();
+  });
+
+  test("succeeds when target member has historical inactive membership row", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const setup = await seedTestData(t);
+
+    // Simulate leave/rejoin for the target member.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(setup.memberMembershipId, {
+        leftAt: Date.now() - 60_000,
+      });
+      await ctx.db.insert("groupMembers", {
+        groupId: setup.groupId,
+        userId: setup.memberId,
+        role: GROUP_ROLES.member,
+        joinedAt: Date.now(),
+        notificationsEnabled: true,
+      });
+    });
+
+    const result = await t.mutation(api.functions.groupMembers.updateRole, {
+      token: setup.leaderToken,
+      groupId: setup.groupId,
+      userId: setup.memberId,
+      role: "leader",
+    });
+
+    expect(result).toBeDefined();
+    expect(result.role).toBe("leader");
+
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    vi.useRealTimers();
+  });
+
   test("throws when former leader tries to update roles", async () => {
     const t = convexTest(schema, modules);
     const setup = await seedTestData(t);

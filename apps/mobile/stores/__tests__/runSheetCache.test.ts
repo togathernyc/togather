@@ -39,6 +39,24 @@ describe("runSheetCache", () => {
       expect(useRunSheetCache.getState().getRunSheet("g1", "st1")).toBeNull();
     });
 
+    it("returns expired data via stale getter", () => {
+      useRunSheetCache
+        .getState()
+        .setRunSheet("g1", "st1", { title: "Old but useful" });
+
+      const sheets = { ...useRunSheetCache.getState().sheets };
+      sheets["g1:st1"] = {
+        ...sheets["g1:st1"],
+        timestamp: Date.now() - 12 * 60 * 60 * 1000, // 12 hours ago
+      };
+      useRunSheetCache.setState({ sheets });
+
+      expect(useRunSheetCache.getState().getRunSheet("g1", "st1")).toBeNull();
+      expect(
+        useRunSheetCache.getState().getRunSheetStale("g1", "st1")
+      ).toEqual({ title: "Old but useful" });
+    });
+
     it("supports different service types for same group", () => {
       useRunSheetCache
         .getState()
@@ -119,6 +137,24 @@ describe("runSheetCache", () => {
       useRunSheetCache.setState({ serviceTypes });
 
       expect(useRunSheetCache.getState().getServiceTypes("g1")).toBeNull();
+    });
+
+    it("returns expired service types via stale getter", () => {
+      useRunSheetCache
+        .getState()
+        .setServiceTypes("g1", [{ id: "st1", name: "Old type" }]);
+
+      const serviceTypes = { ...useRunSheetCache.getState().serviceTypes };
+      serviceTypes["g1"] = {
+        ...serviceTypes["g1"],
+        timestamp: Date.now() - 12 * 60 * 60 * 1000,
+      };
+      useRunSheetCache.setState({ serviceTypes });
+
+      expect(useRunSheetCache.getState().getServiceTypes("g1")).toBeNull();
+      expect(useRunSheetCache.getState().getServiceTypesStale("g1")).toEqual([
+        { id: "st1", name: "Old type" },
+      ]);
     });
 
     it("supports multiple groups", () => {

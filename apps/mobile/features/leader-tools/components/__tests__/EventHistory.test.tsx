@@ -54,13 +54,13 @@ function getDateInCurrentMonth(day: number): number {
 }
 
 function getPastDateInCurrentMonth(): number {
-  // Use the 1st of the month (always in the past unless it's the 1st)
-  return getDateInCurrentMonth(1);
+  // Use a relative timestamp to guarantee "past" regardless of day/time.
+  return Date.now() - 60 * 60 * 1000;
 }
 
 function getFutureDateInCurrentMonth(): number {
-  // Use the 28th (safe for all months)
-  return getDateInCurrentMonth(28);
+  // Use a relative timestamp to guarantee "future" regardless of day/time.
+  return Date.now() + 60 * 60 * 1000;
 }
 
 // Get current month (1-indexed) for date pattern matching

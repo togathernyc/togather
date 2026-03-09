@@ -11,6 +11,7 @@ import type { Id, Doc } from "../../_generated/dataModel";
 import { requireAuth, requireAuthFromToken } from "../../lib/auth";
 import { getDisplayName, getMediaUrl } from "../../lib/utils";
 import { isAutoChannel, isCustomChannel, isLeaderRole } from "../../lib/helpers";
+import { isCommunityAdmin } from "../../lib/permissions";
 import { generateChannelSlug, getChannelSlug } from "../../lib/slugs";
 import { internal } from "../../_generated/api";
 import { syncUserChannelMembershipsLogic } from "../sync/memberships";
@@ -415,8 +416,9 @@ export const getChannelMembers = query({
       .first();
 
     if (!membership) {
-      // If not a channel member, check if user is a group leader/admin
-      // Group leaders can view members of any channel in their group
+      // If not a channel member, check elevated permissions:
+      // - group leaders/admins can view members of any channel in their group
+      // - community admins can manage/view members across all groups in community
       const groupMembership = await ctx.db
         .query("groupMembers")
         .withIndex("by_group_user", (q) =>
@@ -433,7 +435,12 @@ export const getChannelMembers = query({
         )
         .first();
 
-      if (!groupMembership) {
+      const group = await ctx.db.get(channel.groupId);
+      const isCommAdmin = group
+        ? await isCommunityAdmin(ctx, group.communityId, userId)
+        : false;
+
+      if (!groupMembership && !isCommAdmin) {
         return { members: [], nextCursor: null, totalCount: 0 };
       }
     }
@@ -450,18 +457,29 @@ export const getChannelMembers = query({
     const hasMore = result.page.length > limit;
     const members = hasMore ? result.page.slice(0, limit) : result.page;
 
+    // Enrich member data with fresh user info (denormalized displayName may be stale/missing)
+    const enrichedMembers = await Promise.all(
+      members.map(async (member) => {
+        const user = await ctx.db.get(member.userId);
+        const freshDisplayName = user
+          ? getDisplayName(user.firstName, user.lastName)
+          : member.displayName;
+
+        return {
+          id: member._id,
+          userId: member.userId,
+          displayName: freshDisplayName || member.displayName || "Unknown",
+          profilePhoto: member.profilePhoto || (user ? getMediaUrl(user.profilePhoto) : undefined),
+          role: member.role,
+          syncSource: member.syncSource,
+          syncMetadata: member.syncMetadata,
+        };
+      })
+    );
+
     // Return member data with pagination info
     return {
-      members: members.map((member) => ({
-        id: member._id,
-        userId: member.userId,
-        displayName: member.displayName || "Unknown",
-        profilePhoto: member.profilePhoto,
-        role: member.role,
-        // Include sync metadata for PCO-synced members
-        syncSource: member.syncSource,
-        syncMetadata: member.syncMetadata,
-      })),
+      members: enrichedMembers,
       nextCursor: result.isDone ? null : JSON.stringify(result.continueCursor),
       // Note: totalCount is expensive for large channels, use channel.memberCount instead
       totalCount: channel.memberCount || 0,
@@ -498,7 +516,15 @@ export const listGroupChannels = query({
     // 1. Authenticate user
     const userId = await requireAuth(ctx, args.token);
 
-    // 2. Verify user is group member
+    // 2. Verify user has group/community access
+    const group = await ctx.db.get(args.groupId);
+    if (!group) {
+      return [];
+    }
+
+    const isCommAdmin = await isCommunityAdmin(ctx, group.communityId, userId);
+
+    // Group membership still gates non-admin access.
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
@@ -507,14 +533,12 @@ export const listGroupChannels = query({
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
 
-    if (!groupMembership) {
+    if (!groupMembership && !isCommAdmin) {
       return [];
     }
 
-    const userIsLeaderOrAdmin = isLeaderRole(groupMembership.role);
-
+    const userIsLeaderOrAdmin = isCommAdmin || isLeaderRole(groupMembership?.role);
     // 2b. Get group to fetch pinned channel slugs
-    const group = await ctx.db.get(args.groupId);
     const pinnedChannelSlugs: string[] = group?.pinnedChannelSlugs ?? [];
 
     // 3. Query all channels for group

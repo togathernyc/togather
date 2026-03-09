@@ -27,7 +27,6 @@ import {
   FlatList,
   ActivityIndicator,
   Alert,
-  Image,
   Modal,
   KeyboardAvoidingView,
   Platform,
@@ -44,34 +43,11 @@ import { MemberSearch } from "@components/ui/MemberSearch";
 import type { CommunityMember } from "@/types/community";
 import { AutoChannelSettings } from "@features/channels";
 
-// Types for channel member
-interface ChannelMember {
-  id: string;
-  userId: Id<"users">;
-  displayName: string;
-  profilePhoto?: string;
-  role: string;
-  syncSource?: string;
-  syncMetadata?: {
-    serviceTypeName?: string;
-    teamName?: string;
-    position?: string;
-    serviceDate?: number;
-    serviceName?: string;
-  };
-}
-
-// Type for unsynced PCO people
-interface UnsyncedPerson {
-  pcoPersonId: string;
-  pcoName: string;
-  pcoPhone?: string;
-  pcoEmail?: string;
-  serviceTypeName?: string;
-  teamName?: string;
-  position?: string;
-  reason: string;
-}
+import { ChannelMember, UnsyncedPerson } from "@/utils/channel-members";
+import {
+  SyncedMemberRowContent,
+  UnsyncedPersonRowContent,
+} from "@/components/ui/ChannelMemberRows";
 
 // Unified list item type
 type ListItem =
@@ -385,24 +361,6 @@ export default function ChannelMembersScreen() {
     [token, channelData, groupId, removeGroupMutation, router]
   );
 
-  // Helper to format debug reason text
-  const getDebugReasonText = useCallback((reason: string, person: UnsyncedPerson) => {
-    switch (reason) {
-      case "not_in_group":
-        return "In community but not in this group";
-      case "not_in_community":
-        return "Not in this community";
-      case "no_contact_info":
-        return "No contact info in PCO";
-      case "phone_mismatch":
-        return `Phone ${person.pcoPhone || "unknown"} not found`;
-      case "email_mismatch":
-        return `Email ${person.pcoEmail || "unknown"} not found`;
-      default:
-        return "Unknown issue";
-    }
-  }, []);
-
   // Render unified list item (synced or unsynced)
   const renderListItem = useCallback(
     ({ item }: { item: ListItem }) => {
@@ -411,144 +369,47 @@ export default function ChannelMembersScreen() {
         const isOwner = member.role === "owner";
         const isCurrentUser = member.userId === user?.id;
         const isRemoving = removingMemberId === member.userId;
-        const isPcoSynced = member.syncSource === "pco_services";
-        const initials =
-          member.displayName
-            .split(" ")
-            .map((n) => n[0])
-            .join("")
-            .toUpperCase()
-            .slice(0, 2) || "?";
+        const showRemoveButton =
+          canManage && isCustomChannel && (!isSharedChannel || isPrimaryGroup) && !(isOwner && isCurrentUser);
 
         return (
           <View style={styles.memberItem}>
-            {/* Avatar */}
-            <View style={styles.memberAvatar}>
-              {member.profilePhoto ? (
-                <Image source={{ uri: member.profilePhoto }} style={styles.avatarImage} />
-              ) : (
-                <View style={[styles.avatarPlaceholder, { backgroundColor: primaryColor }]}>
-                  <Text style={styles.avatarInitials}>{initials}</Text>
-                </View>
-              )}
-            </View>
-
-            {/* Name and badges */}
-            <View style={styles.memberInfo}>
-              <View style={styles.memberNameRow}>
-                <Text style={styles.memberName} numberOfLines={1}>
-                  {member.displayName}
-                </Text>
-                {isCurrentUser && <Text style={styles.youBadge}>(you)</Text>}
-              </View>
-              {isOwner && (
-                <View style={[styles.ownerBadge, { backgroundColor: `${primaryColor}20` }]}>
-                  <Text style={[styles.ownerBadgeText, { color: primaryColor }]}>Owner</Text>
-                </View>
-              )}
-              {/* PCO sync metadata - team and position */}
-              {isPcoSynced && member.syncMetadata && (
-                <View style={styles.syncMetadataRow}>
-                  {member.syncMetadata.teamName && (
-                    <View style={styles.syncBadge}>
-                      <Ionicons name="people" size={10} color="#2196F3" />
-                      <Text style={styles.syncBadgeText}>
-                        {member.syncMetadata.serviceTypeName
-                          ? `${member.syncMetadata.serviceTypeName} > ${member.syncMetadata.teamName}`
-                          : member.syncMetadata.teamName}
-                      </Text>
-                    </View>
-                  )}
-                  {member.syncMetadata.position && (
-                    <View style={[styles.syncBadge, { backgroundColor: "#FF980020" }]}>
-                      <Ionicons name="musical-notes" size={10} color="#FF9800" />
-                      <Text style={[styles.syncBadgeText, { color: "#FF9800" }]}>{member.syncMetadata.position}</Text>
-                    </View>
-                  )}
-                </View>
-              )}
-            </View>
-
-            {/* Remove button (only show if can manage, is primary group for shared channels, and not removing self as owner) */}
-            {canManage && isCustomChannel && (!isSharedChannel || isPrimaryGroup) && !(isOwner && isCurrentUser) && (
-              <TouchableOpacity
-                style={styles.removeButton}
-                onPress={() => handleRemoveMember(member)}
-                disabled={isRemoving}
-              >
-                {isRemoving ? (
-                  <ActivityIndicator size="small" color="#FF3B30" />
-                ) : (
-                  <Ionicons name="remove-circle-outline" size={24} color="#FF3B30" />
-                )}
-              </TouchableOpacity>
-            )}
+            <SyncedMemberRowContent
+              member={member}
+              primaryColor={primaryColor}
+              isCurrentUser={isCurrentUser}
+              rightContent={
+                showRemoveButton ? (
+                  <TouchableOpacity
+                    style={styles.removeButton}
+                    onPress={() => handleRemoveMember(member)}
+                    disabled={isRemoving}
+                  >
+                    {isRemoving ? (
+                      <ActivityIndicator size="small" color="#FF3B30" />
+                    ) : (
+                      <Ionicons name="remove-circle-outline" size={24} color="#FF3B30" />
+                    )}
+                  </TouchableOpacity>
+                ) : undefined
+              }
+            />
           </View>
         );
       } else {
-        // Unsynced person
         const person = item.data;
-        const initials =
-          person.pcoName
-            .split(" ")
-            .map((n) => n[0])
-            .join("")
-            .toUpperCase()
-            .slice(0, 2) || "?";
 
         return (
           <View
             style={[styles.memberItem, styles.unsyncedMemberItem]}
             testID={`unsynced-member-${person.pcoPersonId}`}
           >
-            {/* Avatar with warning indicator */}
-            <View style={styles.memberAvatar}>
-              <View style={[styles.avatarPlaceholder, styles.unsyncedAvatarPlaceholder]}>
-                <Text style={[styles.avatarInitials, styles.unsyncedAvatarInitials]}>{initials}</Text>
-              </View>
-            </View>
-
-            {/* Name and badges */}
-            <View style={styles.memberInfo}>
-              <View style={styles.memberNameRow}>
-                <Text style={styles.memberName} numberOfLines={1}>
-                  {person.pcoName}
-                </Text>
-                <Ionicons name="warning" size={14} color="#B25000" style={{ marginLeft: 4 }} />
-              </View>
-
-              {/* Team and position chips */}
-              {(person.teamName || person.position) && (
-                <View style={styles.syncMetadataRow}>
-                  {person.teamName && (
-                    <View style={styles.syncBadge}>
-                      <Ionicons name="people" size={10} color="#2196F3" />
-                      <Text style={styles.syncBadgeText}>
-                        {person.serviceTypeName
-                          ? `${person.serviceTypeName} > ${person.teamName}`
-                          : person.teamName}
-                      </Text>
-                    </View>
-                  )}
-                  {person.position && (
-                    <View style={[styles.syncBadge, { backgroundColor: "#FF980020" }]}>
-                      <Ionicons name="musical-notes" size={10} color="#FF9800" />
-                      <Text style={[styles.syncBadgeText, { color: "#FF9800" }]}>{person.position}</Text>
-                    </View>
-                  )}
-                </View>
-              )}
-
-              {/* Debug reason text */}
-              <Text style={styles.unsyncedReasonText}>
-                {getDebugReasonText(person.reason, person)}
-              </Text>
-            </View>
+            <UnsyncedPersonRowContent person={person} />
           </View>
         );
       }
     },
-    [canManage, isCustomChannel, user, removingMemberId, primaryColor, handleRemoveMember, getDebugReasonText]
+    [canManage, isCustomChannel, isSharedChannel, isPrimaryGroup, user, removingMemberId, primaryColor, handleRemoveMember]
   );
 
   // Loading state

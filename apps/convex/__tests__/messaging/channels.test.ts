@@ -130,6 +130,38 @@ async function createLeaderUser(
   return { userId, accessToken };
 }
 
+async function createCommunityAdminUser(
+  t: ReturnType<typeof convexTest>,
+  communityId: Id<"communities">
+): Promise<{ userId: Id<"users">; accessToken: string }> {
+  const userId = await t.run(async (ctx) => {
+    const createdAt = Date.now();
+    const adminId = await ctx.db.insert("users", {
+      firstName: "Community",
+      lastName: "Admin",
+      phone: "+15555550003",
+      phoneVerified: true,
+      activeCommunityId: communityId,
+      createdAt,
+      updatedAt: createdAt,
+    });
+
+    await ctx.db.insert("userCommunities", {
+      userId: adminId,
+      communityId,
+      roles: 3, // Community admin
+      status: 1, // Active
+      createdAt,
+      updatedAt: createdAt,
+    });
+
+    return adminId;
+  });
+
+  const { accessToken } = await generateTokens(userId);
+  return { userId, accessToken };
+}
+
 // ============================================================================
 // Channel Creation Tests
 // ============================================================================
@@ -2045,6 +2077,63 @@ describe("listGroupChannels", () => {
     expect(leadersChannel).toBeUndefined();
   });
 
+  test("allows community admins (non-group-members) to list group channels", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId } = await seedTestData(t);
+    const { userId: leaderId } = await createLeaderUser(t, communityId, groupId);
+    const { accessToken: adminToken } = await createCommunityAdminUser(t, communityId);
+
+    await t.run(async (ctx) => {
+      const now = Date.now();
+
+      const mainId = await ctx.db.insert("chatChannels", {
+        groupId,
+        slug: "general",
+        channelType: "main",
+        name: "General",
+        createdById: leaderId,
+        createdAt: now,
+        updatedAt: now,
+        isArchived: false,
+        memberCount: 1,
+      });
+      await ctx.db.insert("chatChannelMembers", {
+        channelId: mainId,
+        userId: leaderId,
+        role: "admin",
+        joinedAt: now,
+        isMuted: false,
+      });
+
+      const leadersId = await ctx.db.insert("chatChannels", {
+        groupId,
+        slug: "leaders",
+        channelType: "leaders",
+        name: "Leaders",
+        createdById: leaderId,
+        createdAt: now,
+        updatedAt: now,
+        isArchived: false,
+        memberCount: 1,
+      });
+      await ctx.db.insert("chatChannelMembers", {
+        channelId: leadersId,
+        userId: leaderId,
+        role: "admin",
+        joinedAt: now,
+        isMuted: false,
+      });
+    });
+
+    const channels = await t.query(api.functions.messaging.channels.listGroupChannels, {
+      token: adminToken,
+      groupId,
+    });
+
+    expect(channels.some((c) => c.channelType === "main")).toBe(true);
+    expect(channels.some((c) => c.channelType === "leaders")).toBe(true);
+  });
+
   test("excludes archived channels by default", async () => {
     const t = convexTest(schema, modules);
     const { communityId, groupId } = await seedTestData(t);
@@ -2074,6 +2163,51 @@ describe("listGroupChannels", () => {
 
     const archivedChannel = channels.find((c) => c.slug === "archived-channel");
     expect(archivedChannel).toBeUndefined();
+  });
+});
+
+// ============================================================================
+// getChannelMembers Query Tests
+// ============================================================================
+
+describe("getChannelMembers", () => {
+  test("allows community admins (non-group-members) to view channel members", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, communityId, groupId } = await seedTestData(t);
+    const { userId: leaderId } = await createLeaderUser(t, communityId, groupId);
+    const { accessToken: adminToken } = await createCommunityAdminUser(t, communityId);
+
+    const channelId = await t.run(async (ctx) => {
+      const now = Date.now();
+      const chId = await ctx.db.insert("chatChannels", {
+        groupId,
+        slug: "general",
+        channelType: "main",
+        name: "General",
+        createdById: leaderId,
+        createdAt: now,
+        updatedAt: now,
+        isArchived: false,
+        memberCount: 1,
+      });
+      await ctx.db.insert("chatChannelMembers", {
+        channelId: chId,
+        userId,
+        role: "member",
+        joinedAt: now,
+        isMuted: false,
+      });
+      return chId;
+    });
+
+    const result = await t.query(api.functions.messaging.channels.getChannelMembers, {
+      token: adminToken,
+      channelId,
+    });
+
+    expect(result.totalCount).toBe(1);
+    expect(result.members).toHaveLength(1);
+    expect(result.members[0].userId).toBe(userId);
   });
 });
 

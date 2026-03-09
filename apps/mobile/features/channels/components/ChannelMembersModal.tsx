@@ -19,7 +19,6 @@ import {
   TouchableOpacity,
   FlatList,
   ActivityIndicator,
-  Image,
   Modal,
   Pressable,
   Alert,
@@ -32,34 +31,11 @@ import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useQuery, useAction, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 
-// Types for channel member
-interface ChannelMember {
-  id: string;
-  userId: Id<"users">;
-  displayName: string;
-  profilePhoto?: string;
-  role: string;
-  syncSource?: string;
-  syncMetadata?: {
-    serviceTypeName?: string;
-    teamName?: string;
-    position?: string;
-    serviceDate?: number;
-    serviceName?: string;
-  };
-}
-
-// Type for unsynced PCO people
-interface UnsyncedPerson {
-  pcoPersonId: string;
-  pcoName: string;
-  pcoPhone?: string;
-  pcoEmail?: string;
-  serviceTypeName?: string;
-  teamName?: string;
-  position?: string;
-  reason: string;
-}
+import { ChannelMember, UnsyncedPerson } from "@/utils/channel-members";
+import {
+  SyncedMemberRowContent,
+  UnsyncedPersonRowContent,
+} from "@/components/ui/ChannelMemberRows";
 
 // Unified list item type
 type ListItem =
@@ -180,24 +156,6 @@ export const ChannelMembersModal = memo(function ChannelMembersModal({
     return items;
   }, [membersData, unsyncedPeople]);
 
-  // Helper to format debug reason text (must be defined before renderItem uses it)
-  const getDebugReasonText = useCallback((reason: string, person: UnsyncedPerson) => {
-    switch (reason) {
-      case "not_in_group":
-        return "In community but not in this group";
-      case "not_in_community":
-        return "Not in this community";
-      case "no_contact_info":
-        return "No contact info in PCO";
-      case "phone_mismatch":
-        return `Phone ${person.pcoPhone || "unknown"} not found`;
-      case "email_mismatch":
-        return `Email ${person.pcoEmail || "unknown"} not found`;
-      default:
-        return "Unknown issue";
-    }
-  }, []);
-
   // Render member item - memoized to prevent FlatList re-renders
   const renderItem = useCallback(
     ({ item }: { item: ListItem }) => {
@@ -213,155 +171,29 @@ export const ChannelMembersModal = memo(function ChannelMembersModal({
 
       if (item.type === "unsynced") {
         const person = item.data;
-        const initials =
-          person.pcoName
-            .split(" ")
-            .map((n) => n[0])
-            .join("")
-            .toUpperCase()
-            .slice(0, 2) || "?";
 
         return (
           <View style={[styles.memberItem, styles.unsyncedItem]}>
-            {/* Avatar */}
-            <View style={styles.memberAvatar}>
-              <View style={[styles.avatarPlaceholder, styles.unsyncedAvatar]}>
-                <Text style={[styles.avatarInitials, styles.unsyncedInitials]}>
-                  {initials}
-                </Text>
-              </View>
-            </View>
-
-            {/* Name and badges */}
-            <View style={styles.memberInfo}>
-              <View style={styles.memberNameRow}>
-                <Text style={styles.memberName} numberOfLines={1}>
-                  {person.pcoName}
-                </Text>
-                <Ionicons
-                  name="warning"
-                  size={14}
-                  color="#B25000"
-                  style={{ marginLeft: 4 }}
-                />
-              </View>
-              <View style={styles.badgeRow}>
-                {person.teamName && (
-                  <View style={styles.syncBadge}>
-                    <Ionicons name="people" size={10} color="#2196F3" />
-                    <Text style={styles.syncBadgeText}>
-                      {person.serviceTypeName
-                        ? `${person.serviceTypeName} > ${person.teamName}`
-                        : person.teamName}
-                    </Text>
-                  </View>
-                )}
-                {person.position && (
-                  <View style={[styles.syncBadge, styles.positionBadge]}>
-                    <Ionicons name="musical-notes" size={10} color="#FF9800" />
-                    <Text style={[styles.syncBadgeText, styles.positionBadgeText]}>
-                      {person.position}
-                    </Text>
-                  </View>
-                )}
-              </View>
-              {/* Show reason */}
-              <Text style={styles.unsyncedReason}>
-                {getDebugReasonText(person.reason, person)}
-              </Text>
-            </View>
+            <UnsyncedPersonRowContent person={person} />
           </View>
         );
       }
 
       // Synced member
       const member = item.data;
-      const isOwner = member.role === "owner";
-      const isAdmin = member.role === "admin";
       const isCurrentUser = member.userId === user?.id;
-      const isPcoSynced = member.syncSource === "pco_services";
-      const initials =
-        member.displayName
-          .split(" ")
-          .map((n) => n[0])
-          .join("")
-          .toUpperCase()
-          .slice(0, 2) || "?";
 
       return (
         <View style={styles.memberItem}>
-          {/* Avatar */}
-          <View style={styles.memberAvatar}>
-            {member.profilePhoto ? (
-              <Image
-                source={{ uri: member.profilePhoto }}
-                style={styles.avatarImage}
-              />
-            ) : (
-              <View
-                style={[styles.avatarPlaceholder, { backgroundColor: primaryColor }]}
-              >
-                <Text style={styles.avatarInitials}>{initials}</Text>
-              </View>
-            )}
-          </View>
-
-          {/* Name and badges */}
-          <View style={styles.memberInfo}>
-            <View style={styles.memberNameRow}>
-              <Text style={styles.memberName} numberOfLines={1}>
-                {member.displayName}
-              </Text>
-              {isCurrentUser && <Text style={styles.youBadge}>(you)</Text>}
-            </View>
-            <View style={styles.badgeRow}>
-              {isOwner && (
-                <View
-                  style={[styles.roleBadge, { backgroundColor: `${primaryColor}20` }]}
-                >
-                  <Text style={[styles.roleBadgeText, { color: primaryColor }]}>
-                    Owner
-                  </Text>
-                </View>
-              )}
-              {isAdmin && !isOwner && (
-                <View
-                  style={[styles.roleBadge, { backgroundColor: `${primaryColor}20` }]}
-                >
-                  <Text style={[styles.roleBadgeText, { color: primaryColor }]}>
-                    Admin
-                  </Text>
-                </View>
-              )}
-              {/* PCO sync metadata - team and position */}
-              {isPcoSynced && member.syncMetadata && (
-                <>
-                  {member.syncMetadata.teamName && (
-                    <View style={styles.syncBadge}>
-                      <Ionicons name="people" size={10} color="#2196F3" />
-                      <Text style={styles.syncBadgeText}>
-                        {member.syncMetadata.serviceTypeName
-                          ? `${member.syncMetadata.serviceTypeName} > ${member.syncMetadata.teamName}`
-                          : member.syncMetadata.teamName}
-                      </Text>
-                    </View>
-                  )}
-                  {member.syncMetadata.position && (
-                    <View style={[styles.syncBadge, styles.positionBadge]}>
-                      <Ionicons name="musical-notes" size={10} color="#FF9800" />
-                      <Text style={[styles.syncBadgeText, styles.positionBadgeText]}>
-                        {member.syncMetadata.position}
-                      </Text>
-                    </View>
-                  )}
-                </>
-              )}
-            </View>
-          </View>
+          <SyncedMemberRowContent
+            member={member}
+            primaryColor={primaryColor}
+            isCurrentUser={isCurrentUser}
+          />
         </View>
       );
     },
-    [user?.id, primaryColor, getDebugReasonText]
+    [user?.id, primaryColor]
   );
 
   const keyExtractor = useCallback((item: ListItem, index: number) => {
