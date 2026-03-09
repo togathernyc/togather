@@ -54,7 +54,7 @@ const OPERATORS = [
 ];
 
 // Built-in fields that are always included on the form (non-editable)
-const BUILT_IN_FIELDS = [
+const FIXED_BUILT_IN_FIELDS = [
   { label: "First Name", type: "text", required: true },
   { label: "Last Name", type: "text", required: true },
   { label: "Phone", type: "phone", required: true },
@@ -100,6 +100,8 @@ export function LandingPageContent() {
   const [submitButtonText, setSubmitButtonText] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [generateNoteSummary, setGenerateNoteSummary] = useState(true);
+  const [requireZipCode, setRequireZipCode] = useState(false);
+  const [requireBirthday, setRequireBirthday] = useState(false);
 
   // Form fields state
   const [formFields, setFormFields] = useState<FormField[]>([]);
@@ -125,6 +127,8 @@ export function LandingPageContent() {
       setSubmitButtonText(config.submitButtonText || "");
       setSuccessMessage(config.successMessage || "");
       setGenerateNoteSummary(config.generateNoteSummary ?? true);
+      setRequireZipCode(config.requireZipCode ?? false);
+      setRequireBirthday(config.requireBirthday ?? false);
 
       // Merge landing page fields with follow-up custom fields (two-way sync)
       const landingFields: FormField[] = config.formFields || [];
@@ -147,7 +151,11 @@ export function LandingPageContent() {
           includeInNotes: true,
         }));
 
-      setFormFields([...landingFields, ...followupOnly]);
+      // Normalize orders on load to fix gaps/duplicates from previous edits
+      const merged = [...landingFields, ...followupOnly]
+        .sort((a, b) => a.order - b.order)
+        .map((f, i) => ({ ...f, order: i }));
+      setFormFields(merged);
 
       setAutomationRules(
         (config.automationRules || []).map((r: any) => ({
@@ -170,10 +178,12 @@ export function LandingPageContent() {
       const sorted = [...prev].sort((a, b) => a.order - b.order);
       const targetIdx = index + direction;
       if (targetIdx < 0 || targetIdx >= sorted.length) return prev;
-      const tempOrder = sorted[index].order;
-      sorted[index] = { ...sorted[index], order: sorted[targetIdx].order };
-      sorted[targetIdx] = { ...sorted[targetIdx], order: tempOrder };
-      return sorted;
+      // Swap positions in the array (not order values — avoids no-op when orders are equal)
+      const temp = sorted[index];
+      sorted[index] = sorted[targetIdx];
+      sorted[targetIdx] = temp;
+      // Reassign sequential orders to prevent gaps and duplicates
+      return sorted.map((field, i) => ({ ...field, order: i }));
     });
     markDirty();
   }, [markDirty]);
@@ -187,6 +197,8 @@ export function LandingPageContent() {
         submitButtonText: submitButtonText || undefined,
         successMessage: successMessage || undefined,
         generateNoteSummary,
+        requireZipCode,
+        requireBirthday,
         formFields,
         automationRules,
       });
@@ -351,8 +363,8 @@ export function LandingPageContent() {
           Built-in fields are always included. Add custom fields below.
         </Text>
 
-        {/* Built-in fields (always included, non-editable) */}
-        {BUILT_IN_FIELDS.map((field) => (
+        {/* Fixed built-in fields (always included, non-editable) */}
+        {FIXED_BUILT_IN_FIELDS.map((field) => (
           <View key={field.label} style={[styles.listItem, { opacity: 0.5 }]}>
             <View style={{ flex: 1 }}>
               <Text style={styles.listItemTitle}>{field.label}</Text>
@@ -363,6 +375,34 @@ export function LandingPageContent() {
             <Ionicons name="lock-closed" size={16} color="#999" style={{ padding: 8 }} />
           </View>
         ))}
+
+        {/* Configurable built-in fields (ZIP Code, Birthday) */}
+        <View style={styles.listItem}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.listItemTitle}>ZIP Code</Text>
+            <Text style={styles.listItemSubtitle}>
+              text{requireZipCode ? " · required" : " · optional"}
+            </Text>
+          </View>
+          <Switch
+            value={requireZipCode}
+            onValueChange={(val) => { setRequireZipCode(val); markDirty(); }}
+            trackColor={{ false: "#ddd", true: "#4CAF50" }}
+          />
+        </View>
+        <View style={styles.listItem}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.listItemTitle}>Birthday</Text>
+            <Text style={styles.listItemSubtitle}>
+              date{requireBirthday ? " · required" : " · optional"}
+            </Text>
+          </View>
+          <Switch
+            value={requireBirthday}
+            onValueChange={(val) => { setRequireBirthday(val); markDirty(); }}
+            trackColor={{ false: "#ddd", true: "#4CAF50" }}
+          />
+        </View>
 
 
         {formFields.length === 0 ? (
@@ -435,7 +475,13 @@ export function LandingPageContent() {
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={() => {
-                      setFormFields((prev) => prev.filter((_, i) => i !== originalIndex));
+                      setFormFields((prev) => {
+                        const filtered = prev.filter((_, i) => i !== originalIndex);
+                        // Renormalize orders to prevent gaps that cause duplicates on add
+                        return [...filtered]
+                          .sort((a, b) => a.order - b.order)
+                          .map((f, i) => ({ ...f, order: i }));
+                      });
                       markDirty();
                     }}
                     style={styles.iconButton}

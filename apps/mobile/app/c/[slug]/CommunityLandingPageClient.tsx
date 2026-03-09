@@ -19,6 +19,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { AppImage } from "@components/ui";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { DOMAIN_CONFIG } from "@togather/shared";
+import { validateZipCode, normalizeZipCode } from "@features/groups/utils/geocodeLocation";
 
 type FormField = {
   slot?: string;
@@ -50,6 +51,8 @@ export default function CommunityLandingPageClient() {
   const [lastName, setLastName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
+  const [zipCode, setZipCode] = useState("");
+  const [dateOfBirth, setDateOfBirth] = useState("");
   const [customFieldValues, setCustomFieldValues] = useState<
     Record<string, any>
   >({});
@@ -66,6 +69,55 @@ export default function CommunityLandingPageClient() {
     setCustomFieldValues((prev) => ({ ...prev, [fieldKey]: value }));
   };
 
+  // Format birthday input as MM/DD/YYYY with auto-slashes
+  const handleBirthdayChange = (text: string) => {
+    const cleaned = text.replace(/\D/g, "");
+    let formatted = "";
+    if (cleaned.length > 0) {
+      formatted = cleaned.substring(0, 2);
+    }
+    if (cleaned.length > 2) {
+      formatted += "/" + cleaned.substring(2, 4);
+    }
+    if (cleaned.length > 4) {
+      formatted += "/" + cleaned.substring(4, 8);
+    }
+    setDateOfBirth(formatted);
+  };
+
+  // Validate birthday string (MM/DD/YYYY) and return ISO date or error
+  const validateBirthday = (dateStr: string): { valid: boolean; isoDate?: string; error?: string } => {
+    if (!dateStr.trim()) return { valid: true }; // optional field
+
+    const parts = dateStr.split("/");
+    if (parts.length !== 3 || parts[2].length !== 4) {
+      return { valid: false, error: "Please enter a valid date (MM/DD/YYYY)" };
+    }
+
+    const [month, day, year] = parts.map(Number);
+    if (!month || !day || !year) {
+      return { valid: false, error: "Please enter a valid date (MM/DD/YYYY)" };
+    }
+    if (month < 1 || month > 12) {
+      return { valid: false, error: "Month must be between 1 and 12" };
+    }
+    if (day < 1 || day > 31) {
+      return { valid: false, error: "Day must be between 1 and 31" };
+    }
+    if (year < 1900 || year > new Date().getFullYear()) {
+      return { valid: false, error: "Please enter a valid year" };
+    }
+
+    const date = new Date(year, month - 1, day);
+    if (date.getMonth() !== month - 1 || date.getDate() !== day) {
+      return { valid: false, error: "Please enter a valid date" };
+    }
+
+    // Convert to YYYY-MM-DD for backend
+    const isoDate = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    return { valid: true, isoDate };
+  };
+
   const handleSubmit = async () => {
     if (!slug || !data) return;
 
@@ -80,6 +132,30 @@ export default function CommunityLandingPageClient() {
     }
     if (!phone.trim()) {
       setSubmitError("Phone number is required");
+      return;
+    }
+
+    // Validate ZIP code
+    if (data.requireZipCode && !zipCode.trim()) {
+      setSubmitError("ZIP code is required");
+      return;
+    }
+    if (zipCode.trim()) {
+      const zipResult = validateZipCode(zipCode.trim());
+      if (!zipResult.isValid) {
+        setSubmitError(zipResult.error || "Please enter a valid ZIP code");
+        return;
+      }
+    }
+
+    // Validate birthday
+    if (data.requireBirthday && !dateOfBirth.trim()) {
+      setSubmitError("Birthday is required");
+      return;
+    }
+    const birthdayResult = validateBirthday(dateOfBirth);
+    if (!birthdayResult.valid) {
+      setSubmitError(birthdayResult.error || "Please enter a valid birthday");
       return;
     }
 
@@ -144,12 +220,16 @@ export default function CommunityLandingPageClient() {
           };
         });
 
+      const normalizedZip = normalizeZipCode(zipCode.trim());
+
       await submitFormAction({
         slug,
         firstName: firstName.trim(),
         lastName: lastName.trim(),
         phone: phone.trim(),
         email: email.trim() || undefined,
+        zipCode: normalizedZip || undefined,
+        dateOfBirth: birthdayResult.isoDate || undefined,
         customFields,
       });
 
@@ -334,6 +414,38 @@ export default function CommunityLandingPageClient() {
                 autoCapitalize="none"
                 autoComplete="email"
               />
+            </View>
+
+            <View style={styles.fieldRow}>
+              <View style={styles.fieldHalf}>
+                <Text style={styles.fieldLabel}>
+                  ZIP Code{data.requireZipCode ? <Text style={styles.required}> *</Text> : null}
+                </Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={zipCode}
+                  onChangeText={setZipCode}
+                  placeholder="10001"
+                  placeholderTextColor="#aaa"
+                  keyboardType="number-pad"
+                  autoComplete="postal-code"
+                  maxLength={10}
+                />
+              </View>
+              <View style={styles.fieldHalf}>
+                <Text style={styles.fieldLabel}>
+                  Birthday{data.requireBirthday ? <Text style={styles.required}> *</Text> : null}
+                </Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={dateOfBirth}
+                  onChangeText={handleBirthdayChange}
+                  placeholder="MM/DD/YYYY"
+                  placeholderTextColor="#aaa"
+                  keyboardType="number-pad"
+                  maxLength={10}
+                />
+              </View>
             </View>
 
             {/* Dynamic custom fields */}

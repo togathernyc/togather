@@ -26,6 +26,8 @@ export const submitForm = action({
     lastName: v.string(),
     phone: v.string(),
     email: v.optional(v.string()),
+    zipCode: v.optional(v.string()),
+    dateOfBirth: v.optional(v.string()),
     customFields: v.optional(
       v.array(
         v.object({
@@ -90,6 +92,8 @@ export const submitForm = action({
         firstName: trimmedFirstName,
         lastName: trimmedLastName,
         email: args.email,
+        zipCode: args.zipCode,
+        dateOfBirth: args.dateOfBirth,
       }
     );
 
@@ -110,6 +114,8 @@ export const submitForm = action({
         communityId: community._id as Id<"communities">,
         userId: userId as Id<"users">,
         customFields: args.customFields ?? [],
+        zipCode: args.zipCode,
+        dateOfBirth: args.dateOfBirth,
         generateNoteSummary: landingPage.generateNoteSummary ?? true,
         automationRules: landingPage.automationRules,
       }

@@ -18,6 +18,7 @@ import { VALID_CUSTOM_SLOTS } from "../lib/followupConstants";
 import { normalizePhone, buildSearchText, now } from "../lib/utils";
 import { syncUserChannelMembershipsLogic } from "./sync/memberships";
 import { checkRateLimit } from "../lib/rateLimit";
+import { parseDateOptional } from "../lib/validation";
 
 // ============================================================================
 // Public Queries (no auth required)
@@ -64,6 +65,8 @@ export const getBySlug = query({
         description: landingPage.description,
         submitButtonText: landingPage.submitButtonText,
         successMessage: landingPage.successMessage,
+        requireZipCode: landingPage.requireZipCode ?? false,
+        requireBirthday: landingPage.requireBirthday ?? false,
         formFields: landingPage.formFields,
       };
     } catch (e: any) {
@@ -136,10 +139,13 @@ export const findOrCreateUser = internalMutation({
     firstName: v.string(),
     lastName: v.string(),
     email: v.optional(v.string()),
+    zipCode: v.optional(v.string()),
+    dateOfBirth: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const normalizedPhone = normalizePhone(args.phone);
     const timestamp = now();
+    const dobTimestamp = parseDateOptional(args.dateOfBirth, "dateOfBirth");
 
     // Check if user exists
     const existing = await ctx.db
@@ -148,11 +154,13 @@ export const findOrCreateUser = internalMutation({
       .first();
 
     if (existing) {
-      // Update name/email if user doesn't have them yet
+      // Update name/email/zipCode/dateOfBirth if user doesn't have them yet
       const updates: Record<string, any> = {};
       if (!existing.firstName && args.firstName) updates.firstName = args.firstName;
       if (!existing.lastName && args.lastName) updates.lastName = args.lastName;
       if (!existing.email && args.email) updates.email = args.email.toLowerCase();
+      if (!existing.zipCode && args.zipCode) updates.zipCode = args.zipCode;
+      if (!existing.dateOfBirth && dobTimestamp) updates.dateOfBirth = dobTimestamp;
       if (Object.keys(updates).length > 0) {
         updates.updatedAt = timestamp;
         updates.searchText = buildSearchText({
@@ -175,6 +183,8 @@ export const findOrCreateUser = internalMutation({
       firstName: args.firstName,
       lastName: args.lastName,
       email: normalizedEmail,
+      zipCode: args.zipCode || undefined,
+      dateOfBirth: dobTimestamp,
       searchText: buildSearchText({
         firstName: args.firstName,
         lastName: args.lastName,
@@ -332,6 +342,8 @@ export const setCustomFieldsAndNotes = internalMutation({
         includeInNotes: v.optional(v.boolean()),
       })
     ),
+    zipCode: v.optional(v.string()),
+    dateOfBirth: v.optional(v.string()),
     generateNoteSummary: v.boolean(),
     automationRules: v.array(
       v.object({
@@ -440,6 +452,12 @@ export const setCustomFieldsAndNotes = internalMutation({
       });
 
       const lines = [`Landing Page Submission (${dateStr})`];
+      if (args.zipCode) {
+        lines.push(`ZIP Code: ${args.zipCode}`);
+      }
+      if (args.dateOfBirth) {
+        lines.push(`Birthday: ${args.dateOfBirth}`);
+      }
       for (const field of args.customFields) {
         // Skip fields where includeInNotes is explicitly false
         if (field.includeInNotes === false) continue;
@@ -611,6 +629,8 @@ export const saveConfig = mutation({
     submitButtonText: v.optional(v.string()),
     successMessage: v.optional(v.string()),
     generateNoteSummary: v.optional(v.boolean()),
+    requireZipCode: v.optional(v.boolean()),
+    requireBirthday: v.optional(v.boolean()),
     formFields: v.array(
       v.object({
         slot: v.optional(v.string()),
@@ -694,6 +714,8 @@ export const saveConfig = mutation({
       submitButtonText: args.submitButtonText,
       successMessage: args.successMessage,
       generateNoteSummary: args.generateNoteSummary,
+      requireZipCode: args.requireZipCode,
+      requireBirthday: args.requireBirthday,
       formFields: args.formFields,
       automationRules: args.automationRules,
       updatedAt: timestamp,

@@ -95,6 +95,7 @@ export default defineSchema({
     associatedEmails: v.optional(v.array(v.string())), // Was: Json @default("[]")
     externalIds: v.optional(v.any()), // Was: Json @default("{}")
     timezone: v.optional(v.string()),
+    zipCode: v.optional(v.string()),
     activeCommunityId: v.optional(v.id("communities")),
     pushNotificationsEnabled: v.optional(v.boolean()),
     emailNotificationsEnabled: v.optional(v.boolean()),
@@ -1504,6 +1505,9 @@ export default defineSchema({
     submitButtonText: v.optional(v.string()),
     successMessage: v.optional(v.string()),
     generateNoteSummary: v.optional(v.boolean()),
+    // Built-in field requirements (configurable per community)
+    requireZipCode: v.optional(v.boolean()),
+    requireBirthday: v.optional(v.boolean()),
     // Form fields — maps to followup custom field slots
     formFields: v.array(v.object({
       slot: v.optional(v.string()),  // "customText1", "customBool3", etc. If null, field only appears in notes summary

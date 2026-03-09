@@ -40,6 +40,8 @@ export function useLandingPageConfig() {
       submitButtonText?: string;
       successMessage?: string;
       generateNoteSummary?: boolean;
+      requireZipCode?: boolean;
+      requireBirthday?: boolean;
       formFields: Array<{
         slot?: string;
         label: string;
