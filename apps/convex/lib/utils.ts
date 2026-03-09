@@ -82,6 +82,26 @@ export function normalizePhone(phone: string): string {
 }
 
 // ============================================================================
+// JSON-Safe String Helpers
+// ============================================================================
+
+/**
+ * Slice a string for JSON-safe serialization without cutting UTF-16 surrogate pairs.
+ * JavaScript's slice() can split emoji/supplementary chars (stored as surrogate pairs),
+ * leaving a lone high surrogate. When JSON-serialized, that produces invalid JSON
+ * ("unexpected end of hex escape") because \uD800-\uDBFF must be followed by \uDC00-\uDFFF.
+ */
+export function safeSliceForJson(str: string, maxLen: number): string {
+  if (!str || str.length <= maxLen) return str;
+  let sliced = str.slice(0, maxLen);
+  const lastCode = sliced.charCodeAt(sliced.length - 1);
+  if (lastCode >= 0xd800 && lastCode <= 0xdbff) {
+    sliced = sliced.slice(0, -1);
+  }
+  return sliced;
+}
+
+// ============================================================================
 // User Search Helpers
 // ============================================================================
 

@@ -27,7 +27,7 @@ import { query, mutation, internalQuery, internalMutation } from "../_generated/
 import { paginationOptsValidator } from "convex/server";
 import { Doc, Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
-import { now, getMediaUrl, normalizePhone, isValidPhone, buildSearchText } from "../lib/utils";
+import { now, getMediaUrl, normalizePhone, isValidPhone, buildSearchText, safeSliceForJson } from "../lib/utils";
 import { requireAuth } from "../lib/auth";
 import { parseDateOptional } from "../lib/validation";
 import { isCommunityAdmin } from "../lib/permissions";
@@ -527,7 +527,9 @@ export const internalScoreBatch = internalQuery({
 
         // Extract latest note for denormalization
         const latestNoteEntry = followups.find(f => f.type === "note" && f.content);
-        const latestNoteContent = latestNoteEntry?.content?.slice(0, 200) ?? null;
+        const latestNoteContent = latestNoteEntry?.content
+          ? safeSliceForJson(latestNoteEntry.content, 200)
+          : null;
         const latestNoteAt = latestNoteEntry?.createdAt ?? null;
 
         return {
