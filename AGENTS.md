@@ -39,3 +39,15 @@ Standard dev commands are in root `package.json` and documented in `README.md` a
 - **Web app** (`apps/web`) is a standalone Vite + React + Tailwind landing page with no Convex dependency. It can always be started independently.
 - **Mobile tests** use Jest with `jest-expo` preset. The custom `run-tests.js` script in `apps/mobile` handles test execution. Tests run without requiring Convex or any external services.
 - **Convex tests** use Vitest with `convex-test` for local function testing without a live deployment.
+
+### Multi-agent Convex isolation
+
+Each concurrent agent **must** use its own Convex deployment to avoid overwriting each other's backend functions and data. The `CONVEX_DEPLOYMENT` secret determines which cloud deployment an agent syncs to. Two agents sharing the same deployment will conflict -- the last `npx convex dev --once` wins.
+
+To set up a new agent's Convex deployment:
+1. Set `CONVEX_DEPLOYMENT` and `JWT_SECRET` environment secrets for the agent
+2. Run `npx convex dev --once` to push schema + functions
+3. Set `JWT_SECRET` on the Convex deployment: `npx convex env set "JWT_SECRET=$JWT_SECRET"`
+4. Set dev flags: `npx convex env set APP_ENV=development && npx convex env set DEBUG=true`
+5. Seed test data: `npx convex run functions/seed:seedDemoData`
+6. Test credentials: phone `2025550123`, OTP code `000000`
