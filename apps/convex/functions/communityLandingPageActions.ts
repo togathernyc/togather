@@ -92,6 +92,14 @@ export const submitForm = action({
       throw new Error("Birthday is required");
     }
 
+    // Server-side format validation for optional fields (when provided)
+    if (args.zipCode?.trim()) {
+      const zip = args.zipCode.trim();
+      if (!/^\d{5}(-\d{4})?$/.test(zip)) {
+        throw new Error("Please enter a valid ZIP code");
+      }
+    }
+
     // 2. Find or create user by phone
     const userId: string = await ctx.runMutation(
       internal.functions.communityLandingPage.findOrCreateUser,
