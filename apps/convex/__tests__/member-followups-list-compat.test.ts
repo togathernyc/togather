@@ -115,4 +115,119 @@ describe("memberFollowups.list compatibility", () => {
     expect(Array.isArray(legacyResult.scoreConfig)).toBe(true);
     expect(legacyResult.toolDisplayName).toBe("Follow-up");
   });
+
+  test("supports sorting by lastActiveAt", async () => {
+    const t = convexTest(schema, modules);
+    const timestamp = Date.now();
+
+    const { groupId, token } = await t.run(async (ctx) => {
+      const communityId = await ctx.db.insert("communities", {
+        name: "Followup Last Active Community",
+        slug: "followup-last-active-community",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+
+      const groupTypeId = await ctx.db.insert("groupTypes", {
+        communityId,
+        name: "Small Group",
+        slug: "small-group-last-active",
+        isActive: true,
+        createdAt: timestamp,
+        displayOrder: 1,
+      });
+
+      const groupId = await ctx.db.insert("groups", {
+        communityId,
+        groupTypeId,
+        name: "Last Active Group",
+        isArchived: false,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+
+      const firstUserId = await ctx.db.insert("users", {
+        firstName: "Older",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      const secondUserId = await ctx.db.insert("users", {
+        firstName: "Newer",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+
+      const firstGroupMemberId = await ctx.db.insert("groupMembers", {
+        groupId,
+        userId: firstUserId,
+        role: "member",
+        joinedAt: timestamp,
+        notificationsEnabled: true,
+      });
+      const secondGroupMemberId = await ctx.db.insert("groupMembers", {
+        groupId,
+        userId: secondUserId,
+        role: "member",
+        joinedAt: timestamp + 1,
+        notificationsEnabled: true,
+      });
+
+      await ctx.db.insert("memberFollowupScores", {
+        groupId,
+        groupMemberId: firstGroupMemberId,
+        userId: firstUserId,
+        firstName: "Older",
+        score1: 10,
+        score2: 20,
+        alerts: [],
+        isSnoozed: false,
+        attendanceScore: 10,
+        connectionScore: 20,
+        followupScore: 15,
+        missedMeetings: 1,
+        consecutiveMissed: 1,
+        scoreIds: ["default_attendance", "default_connection"],
+        updatedAt: timestamp,
+        addedAt: timestamp,
+        lastActiveAt: timestamp - 10_000,
+        searchText: "older",
+      });
+      await ctx.db.insert("memberFollowupScores", {
+        groupId,
+        groupMemberId: secondGroupMemberId,
+        userId: secondUserId,
+        firstName: "Newer",
+        score1: 30,
+        score2: 40,
+        alerts: [],
+        isSnoozed: false,
+        attendanceScore: 30,
+        connectionScore: 40,
+        followupScore: 35,
+        missedMeetings: 1,
+        consecutiveMissed: 1,
+        scoreIds: ["default_attendance", "default_connection"],
+        updatedAt: timestamp,
+        addedAt: timestamp,
+        lastActiveAt: timestamp + 10_000,
+        searchText: "newer",
+      });
+
+      const { accessToken } = await generateTokens(firstUserId.toString());
+      return { groupId, token: accessToken };
+    });
+
+    const result = await t.query(api.functions.memberFollowups.list, {
+      token,
+      groupId,
+      sortBy: "lastActiveAt",
+      sortDirection: "desc",
+      paginationOpts: { cursor: null, numItems: 20 },
+    });
+
+    const pageResult = result as any;
+    expect(pageResult.page).toHaveLength(2);
+    expect(pageResult.page[0].firstName).toBe("Newer");
+    expect(pageResult.page[1].firstName).toBe("Older");
+  });
 });

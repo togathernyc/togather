@@ -894,6 +894,35 @@ export const updateFollowupScoreConfig = mutation({
 });
 
 /**
+ * Manually refresh the follow-up denormalized table for a group.
+ * Useful when leaders want an immediate recomputation instead of waiting for cron/event updates.
+ */
+export const refreshFollowupScores = mutation({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    await requireGroupLeaderOrCommunityAdmin(
+      ctx,
+      args.groupId,
+      userId,
+      "refresh follow-up scores"
+    );
+
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.followupScoreComputation.computeGroupScores,
+      { groupId: args.groupId }
+    );
+
+    return { success: true };
+  },
+});
+
+/**
  * Save follow-up column configuration (column order, visibility, custom fields).
  * Pass undefined to clear the config.
  */

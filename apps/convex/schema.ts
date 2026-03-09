@@ -774,6 +774,7 @@ export default defineSchema({
     consecutiveMissed: v.number(),
     lastAttendedAt: v.optional(v.number()),
     lastFollowupAt: v.optional(v.number()),
+    lastActiveAt: v.optional(v.number()),
     scoreFactors: v.optional(v.any()),
 
     // Score IDs mapping (which scoreConfig.scores[i].id maps to score1, score2, etc.)
@@ -830,6 +831,7 @@ export default defineSchema({
     .index("by_group_addedAt", ["groupId", "addedAt"])
     .index("by_group_lastAttendedAt", ["groupId", "lastAttendedAt"])
     .index("by_group_lastFollowupAt", ["groupId", "lastFollowupAt"])
+    .index("by_group_lastActiveAt", ["groupId", "lastActiveAt"])
     // Sort indexes — manual fields (Phase 2)
     .index("by_group_status", ["groupId", "status"])
     .index("by_group_assignee", ["groupId", "assigneeId"])

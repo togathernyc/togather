@@ -659,6 +659,7 @@ export const list = query({
       addedAt: "by_group_addedAt",
       lastAttendedAt: "by_group_lastAttendedAt",
       lastFollowupAt: "by_group_lastFollowupAt",
+      lastActiveAt: "by_group_lastActiveAt",
       status: "by_group_status",
       assignee: "by_group_assignee",
       customText1: "by_group_customText1",
