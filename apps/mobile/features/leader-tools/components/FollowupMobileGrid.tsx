@@ -1,9 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Image,
+  Modal,
   PanResponder,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -19,6 +22,7 @@ import {
   api,
   Id,
   useAuthenticatedPaginatedQuery,
+  useAuthenticatedMutation,
   useAuthenticatedQuery,
   useQuery,
 } from "@services/api/convex";
@@ -81,7 +85,14 @@ type GridColumn = {
 const PINNED_COL_WIDTH = 190;
 const MIN_DATA_COL_WIDTH = 94;
 const SWIPE_THRESHOLD = 50;
-const MIN_COLUMNS_PER_PAGE = 3;
+const MIN_COLUMNS_PER_PAGE = 4;
+
+const STATUS_OPTIONS: Array<{ value?: string; label: string }> = [
+  { value: "green", label: "Green" },
+  { value: "orange", label: "Orange" },
+  { value: "red", label: "Red" },
+  { value: undefined, label: "Clear status" },
+];
 
 const SERVER_SORTABLE_FIELDS = new Set([
   "score1",
@@ -157,6 +168,14 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [searchQuery, setSearchQuery] = useState("");
   const [columnPageIndex, setColumnPageIndex] = useState(0);
+  const [editSheet, setEditSheet] = useState<{
+    type: "assignee" | "status";
+    memberId: string;
+  } | null>(null);
+  const [isUpdatingField, setIsUpdatingField] = useState(false);
+  const [localOverrides, setLocalOverrides] = useState<
+    Record<string, { assigneeId?: string | null; status?: string | null }>
+  >({});
 
   const debouncedSearch = useDebounce(searchQuery, 300);
 
@@ -269,6 +288,8 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     api.functions.memberFollowups.count,
     groupId ? { groupId: groupId as Id<"groups"> } : "skip"
   );
+  const setAssigneeMut = useAuthenticatedMutation(api.functions.memberFollowups.setAssignee);
+  const setStatusMut = useAuthenticatedMutation(api.functions.memberFollowups.setStatus);
 
   const groupData = useQuery(
     api.functions.groups.index.getById,
@@ -329,6 +350,63 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     sortDirection,
     getSortFieldValue,
   ]);
+
+  // Keep inline edits responsive while server updates stream in.
+  const displayMembers = useMemo(() => {
+    if (Object.keys(localOverrides).length === 0) return members;
+    return members.map((member) => {
+      const override = localOverrides[member.groupMemberId];
+      if (!override) return member;
+      return {
+        ...member,
+        assigneeId:
+          override.assigneeId !== undefined
+            ? override.assigneeId ?? undefined
+            : member.assigneeId,
+        status: override.status !== undefined ? override.status ?? undefined : member.status,
+      };
+    });
+  }, [members, localOverrides]);
+
+  useEffect(() => {
+    if (Object.keys(localOverrides).length === 0) return;
+    const memberMap = new Map(members.map((member) => [member.groupMemberId, member]));
+    const next: typeof localOverrides = {};
+    let changed = false;
+
+    for (const [memberId, override] of Object.entries(localOverrides)) {
+      const serverMember = memberMap.get(memberId);
+      if (!serverMember) {
+        next[memberId] = override;
+        continue;
+      }
+      const pending: typeof override = {};
+      if (override.assigneeId !== undefined) {
+        const serverAssignee = serverMember.assigneeId ?? null;
+        if (serverAssignee !== (override.assigneeId ?? null)) {
+          pending.assigneeId = override.assigneeId;
+        } else {
+          changed = true;
+        }
+      }
+      if (override.status !== undefined) {
+        const serverStatus = serverMember.status ?? null;
+        if (serverStatus !== (override.status ?? null)) {
+          pending.status = override.status;
+        } else {
+          changed = true;
+        }
+      }
+      if (Object.keys(pending).length > 0) {
+        next[memberId] = pending;
+      } else {
+        changed = true;
+      }
+    }
+    if (changed) {
+      setLocalOverrides(next);
+    }
+  }, [members, localOverrides]);
 
   const dataColumns: GridColumn[] = useMemo(() => {
     const scoreColumns: GridColumn[] = scoreConfig.map((score, index) => ({
@@ -525,6 +603,81 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     return badges;
   }, [parsedQuery, leaderMap, scoreConfig]);
 
+  const leaderOptions = useMemo(() => {
+    const leaderRows = (leaders ?? []) as LeaderRecord[];
+    return leaderRows
+      .map((leader) => ({
+        id: leader.userId?.toString?.() ?? leader._id?.toString?.() ?? "",
+        firstName: leader.firstName ?? "",
+        lastName: leader.lastName ?? "",
+      }))
+      .filter((leader) => leader.id.length > 0);
+  }, [leaders]);
+
+  const activeEditMember = useMemo(() => {
+    if (!editSheet) return null;
+    return displayMembers.find((member) => member.groupMemberId === editSheet.memberId) ?? null;
+  }, [editSheet, displayMembers]);
+
+  const closeEditSheet = () => {
+    if (isUpdatingField) return;
+    setEditSheet(null);
+  };
+
+  const handleAssignChange = async (assigneeId?: string) => {
+    if (!editSheet || !activeEditMember) return;
+    const memberId = editSheet.memberId;
+
+    setIsUpdatingField(true);
+    setLocalOverrides((prev) => ({
+      ...prev,
+      [memberId]: {
+        ...prev[memberId],
+        assigneeId: assigneeId ?? null,
+      },
+    }));
+    try {
+      await setAssigneeMut({
+        groupId: groupId as Id<"groups">,
+        groupMemberId: memberId as Id<"groupMembers">,
+        assigneeId: assigneeId ? (assigneeId as Id<"users">) : undefined,
+      });
+      setEditSheet(null);
+    } catch (error) {
+      console.error("[FollowupMobileGrid] Failed to set assignee:", error);
+      Alert.alert("Could not update assignee", "Please try again.");
+    } finally {
+      setIsUpdatingField(false);
+    }
+  };
+
+  const handleStatusChange = async (status?: string) => {
+    if (!editSheet || !activeEditMember) return;
+    const memberId = editSheet.memberId;
+
+    setIsUpdatingField(true);
+    setLocalOverrides((prev) => ({
+      ...prev,
+      [memberId]: {
+        ...prev[memberId],
+        status: status ?? null,
+      },
+    }));
+    try {
+      await setStatusMut({
+        groupId: groupId as Id<"groups">,
+        groupMemberId: memberId as Id<"groupMembers">,
+        status: status ?? undefined,
+      });
+      setEditSheet(null);
+    } catch (error) {
+      console.error("[FollowupMobileGrid] Failed to set status:", error);
+      Alert.alert("Could not update status", "Please try again.");
+    } finally {
+      setIsUpdatingField(false);
+    }
+  };
+
   const isSearchLoading = hasTextSearch && searchResults === undefined;
   const isInitialLoading = (!hasTextSearch && isLoading && members.length === 0) || isSearchLoading;
 
@@ -626,14 +779,36 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
         </View>
 
         <View style={styles.rowDataCells}>
-          {visibleColumns.map((column) => (
-            <View
-              key={`${item.groupMemberId}-${column.key}`}
-              style={[styles.dataCell, { width: visibleColumnWidth }]}
-            >
-              {renderDataCell(item, column)}
-            </View>
-          ))}
+          {visibleColumns.map((column) => {
+            const isEditable = column.key === "assignee" || column.key === "status";
+            if (!isEditable) {
+              return (
+                <View
+                  key={`${item.groupMemberId}-${column.key}`}
+                  style={[styles.dataCell, { width: visibleColumnWidth }]}
+                >
+                  {renderDataCell(item, column)}
+                </View>
+              );
+            }
+
+            return (
+              <TouchableOpacity
+                key={`${item.groupMemberId}-${column.key}`}
+                style={[styles.dataCell, styles.editableCell, { width: visibleColumnWidth }]}
+                activeOpacity={0.7}
+                onPress={() => {
+                  setEditSheet({
+                    type: column.key === "assignee" ? "assignee" : "status",
+                    memberId: item.groupMemberId,
+                  });
+                }}
+              >
+                {renderDataCell(item, column)}
+                <Ionicons name="chevron-down" size={11} color="#6B7280" style={styles.editIcon} />
+              </TouchableOpacity>
+            );
+          })}
         </View>
       </TouchableOpacity>
     );
@@ -761,7 +936,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
         </View>
 
         <FlatList
-          data={members}
+          data={displayMembers}
           keyExtractor={(item) => item._id || item.groupMemberId}
           renderItem={renderMemberRow}
           onEndReached={() => {
@@ -791,6 +966,71 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
           contentContainerStyle={styles.listContent}
         />
       </View>
+
+      <Modal
+        visible={!!editSheet}
+        transparent
+        animationType="fade"
+        onRequestClose={closeEditSheet}
+      >
+        <Pressable style={styles.modalBackdrop} onPress={closeEditSheet}>
+          <Pressable style={styles.editSheetCard} onPress={() => undefined}>
+            <Text style={styles.editSheetTitle}>
+              {editSheet?.type === "assignee" ? "Update assignee" : "Update status"}
+            </Text>
+            <Text style={styles.editSheetSubtitle}>
+              {activeEditMember
+                ? `${activeEditMember.firstName} ${activeEditMember.lastName}`
+                : "Member"}
+            </Text>
+
+            {editSheet?.type === "assignee" ? (
+              <ScrollView style={styles.optionList}>
+                {leaderOptions.map((leader) => {
+                  const isSelected = activeEditMember?.assigneeId === leader.id;
+                  return (
+                    <TouchableOpacity
+                      key={leader.id}
+                      style={[styles.optionRow, isSelected && styles.optionRowSelected]}
+                      onPress={() => handleAssignChange(leader.id)}
+                      disabled={isUpdatingField}
+                    >
+                      <Text style={styles.optionText}>
+                        {leader.firstName} {leader.lastName}
+                      </Text>
+                      {isSelected && <Ionicons name="checkmark" size={16} color={primaryColor} />}
+                    </TouchableOpacity>
+                  );
+                })}
+                <TouchableOpacity
+                  style={styles.optionRow}
+                  onPress={() => handleAssignChange(undefined)}
+                  disabled={isUpdatingField}
+                >
+                  <Text style={styles.optionText}>Clear assignee</Text>
+                </TouchableOpacity>
+              </ScrollView>
+            ) : (
+              <View style={styles.optionList}>
+                {STATUS_OPTIONS.map((option) => {
+                  const isSelected = (activeEditMember?.status ?? undefined) === option.value;
+                  return (
+                    <TouchableOpacity
+                      key={option.label}
+                      style={[styles.optionRow, isSelected && styles.optionRowSelected]}
+                      onPress={() => handleStatusChange(option.value)}
+                      disabled={isUpdatingField}
+                    >
+                      <Text style={styles.optionText}>{option.label}</Text>
+                      {isSelected && <Ionicons name="checkmark" size={16} color={primaryColor} />}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -1067,6 +1307,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 6,
   },
+  editableCell: {
+    flexDirection: "row",
+    gap: 2,
+  },
+  editIcon: {
+    marginLeft: 2,
+  },
   dataCellText: {
     fontSize: 12,
     color: "#374151",
@@ -1112,5 +1359,54 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "#6B7280",
     textAlign: "center",
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.28)",
+    justifyContent: "center",
+    paddingHorizontal: 20,
+  },
+  editSheetCard: {
+    backgroundColor: "#FFF",
+    borderRadius: 14,
+    maxHeight: "74%",
+    paddingVertical: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  editSheetTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#111827",
+    paddingHorizontal: 16,
+  },
+  editSheetSubtitle: {
+    marginTop: 2,
+    marginBottom: 8,
+    fontSize: 13,
+    color: "#6B7280",
+    paddingHorizontal: 16,
+  },
+  optionList: {
+    maxHeight: 360,
+  },
+  optionRow: {
+    minHeight: 42,
+    paddingHorizontal: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderTopWidth: 1,
+    borderTopColor: "#F3F4F6",
+  },
+  optionRowSelected: {
+    backgroundColor: "#EEF6FF",
+  },
+  optionText: {
+    fontSize: 14,
+    color: "#111827",
   },
 });
