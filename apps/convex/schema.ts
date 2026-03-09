@@ -272,6 +272,18 @@ export default defineSchema({
       })),
     })),
 
+    // Follow-up refresh status (for manual/automated denormalized table rebuilds)
+    followupRefreshState: v.optional(v.object({
+      status: v.string(), // "running" | "idle" | "failed"
+      runId: v.string(),
+      startedAt: v.number(),
+      completedAt: v.optional(v.number()),
+      failedAt: v.optional(v.number()),
+      error: v.optional(v.string()),
+      requestedById: v.optional(v.id("users")),
+      trigger: v.optional(v.string()), // "manual" | "score_config_update" | "scheduled"
+    })),
+
     // PCO serving counts — written by the getServingCounts action,
     // read by the follow-up scoring query. Lightweight alternative to a cache table.
     pcoServingCounts: v.optional(v.object({

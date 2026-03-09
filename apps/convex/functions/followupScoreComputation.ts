@@ -53,6 +53,15 @@ export const getMembersForScoring = internalQuery({
     limit: v.number(),
   },
   handler: async (ctx, args) => {
+    const group = await ctx.db.get(args.groupId);
+    if (!group) {
+      return {
+        members: [],
+        isDone: true,
+        continueCursor: "",
+      };
+    }
+
     const query = ctx.db
       .query("groupMembers")
       .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
@@ -66,7 +75,15 @@ export const getMembersForScoring = internalQuery({
     // Fetch user data for denormalization
     const membersWithUsers = await Promise.all(
       result.page.map(async (member) => {
-        const user = await ctx.db.get(member.userId);
+        const [user, communityMembership] = await Promise.all([
+          ctx.db.get(member.userId),
+          ctx.db
+            .query("userCommunities")
+            .withIndex("by_user_community", (q) =>
+              q.eq("userId", member.userId).eq("communityId", group.communityId)
+            )
+            .first(),
+        ]);
         return {
           _id: member._id,
           userId: member.userId,
@@ -78,7 +95,9 @@ export const getMembersForScoring = internalQuery({
           phone: user?.phone,
           zipCode: user?.zipCode,
           dateOfBirth: user?.dateOfBirth,
-          lastActiveAt: user?.lastLogin,
+          // Community-scoped activity is tracked on userCommunities.lastLogin.
+          // Fall back to users.lastLogin for older records.
+          lastActiveAt: communityMembership?.lastLogin ?? user?.lastLogin,
         };
       })
     );
@@ -243,130 +262,164 @@ function transformScoredMember(
  * Orchestrates: fetch config → paginate members → batch score → upsert.
  */
 export const computeGroupScores = internalAction({
-  args: { groupId: v.id("groups") },
+  args: {
+    groupId: v.id("groups"),
+    runId: v.optional(v.string()),
+    requestedById: v.optional(v.id("users")),
+    trigger: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
-    // Step 1: Get group config (meetings, score config)
-    const config = await ctx.runQuery(
-      internal.functions.memberFollowups.internalGetGroupConfig,
-      { groupId: args.groupId }
-    );
+    const runId = args.runId ?? `auto_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-    // Get full score config for score ID mapping
-    const groupDoc = await ctx.runQuery(
-      internal.functions.followupScoreComputation.getGroupScoreConfig,
-      { groupId: args.groupId }
-    );
-    const scoreConfig: ScoreConfig = groupDoc ?? DEFAULT_SCORE_CONFIG;
-
-    // Step 1b: Refresh PCO serving data if the score config uses it
-    const usesPco = scoreConfig.scores.some((s) =>
-      s.variables.some((v) => v.variableId === "pco_services_past_2mo")
-    );
-    if (usesPco) {
-      try {
-        await ctx.runAction(
-          internal.functions.pcoServices.servingHistory.internalRefreshPcoServing,
-          { groupId: args.groupId }
-        );
-      } catch (e) {
-        // PCO fetch failed — continue with stale cached data
-        console.log(`[computeGroupScores] PCO refresh failed for group ${args.groupId}, using cached data: ${e}`);
+    await ctx.runMutation(
+      internal.functions.followupScoreComputation.setFollowupRefreshRunning,
+      {
+        groupId: args.groupId,
+        runId,
+        requestedById: args.requestedById,
+        trigger: args.trigger,
       }
-    }
+    );
 
-    // Step 2: Paginate through all members
-    // Batch size 100 keeps internalScoreBatch under ~2,200 reads (limit: 4,096).
-    // Formula: 1 + N*(M+2) where M=meetings(~20). At N=100: 2,201 reads.
-    const BATCH_SIZE = 100;
-    let cursor: string | undefined = undefined;
-    let isDone = false;
-
-    // Pre-compute whether cross-group attendance is needed (depends only on scoreConfig)
-    const usesCrossGroup = scoreConfig.scores.some((s) =>
-      s.variables.some((v) => v.variableId === "attendance_all_groups_pct")
-    ) || scoreConfig.alerts?.some((a) => a.variableId === "attendance_all_groups_pct");
-
-    while (!isDone) {
-      const page: {
-        members: Array<{
-          _id: Id<"groupMembers">;
-          userId: Id<"users">;
-          joinedAt: number;
-          firstName: string;
-          lastName: string;
-          avatarUrl: string | undefined;
-          email: string | undefined;
-          phone: string | undefined;
-          zipCode: string | undefined;
-          dateOfBirth: number | undefined;
-          lastActiveAt: number | undefined;
-        }>;
-        isDone: boolean;
-        continueCursor: string;
-      } = await ctx.runQuery(
-        internal.functions.followupScoreComputation.getMembersForScoring,
-        { groupId: args.groupId, cursor, limit: BATCH_SIZE }
+    try {
+      // Step 1: Get group config (meetings, score config)
+      const config = await ctx.runQuery(
+        internal.functions.memberFollowups.internalGetGroupConfig,
+        { groupId: args.groupId }
       );
 
-      if (page.members.length === 0) {
+      // Get full score config for score ID mapping
+      const groupDoc = await ctx.runQuery(
+        internal.functions.followupScoreComputation.getGroupScoreConfig,
+        { groupId: args.groupId }
+      );
+      const scoreConfig: ScoreConfig = groupDoc ?? DEFAULT_SCORE_CONFIG;
+
+      // Step 1b: Refresh PCO serving data if the score config uses it
+      const usesPco = scoreConfig.scores.some((s) =>
+        s.variables.some((v) => v.variableId === "pco_services_past_2mo")
+      );
+      if (usesPco) {
+        try {
+          await ctx.runAction(
+            internal.functions.pcoServices.servingHistory.internalRefreshPcoServing,
+            { groupId: args.groupId }
+          );
+        } catch (e) {
+          // PCO fetch failed — continue with stale cached data
+          console.log(`[computeGroupScores] PCO refresh failed for group ${args.groupId}, using cached data: ${e}`);
+        }
+      }
+
+      // Step 2: Paginate through all members
+      // Batch size 100 keeps internalScoreBatch under ~2,200 reads (limit: 4,096).
+      // Formula: 1 + N*(M+2) where M=meetings(~20). At N=100: 2,201 reads.
+      const BATCH_SIZE = 100;
+      let cursor: string | undefined = undefined;
+      let isDone = false;
+
+      // Pre-compute whether cross-group attendance is needed (depends only on scoreConfig)
+      const usesCrossGroup = scoreConfig.scores.some((s) =>
+        s.variables.some((v) => v.variableId === "attendance_all_groups_pct")
+      ) || scoreConfig.alerts?.some((a) => a.variableId === "attendance_all_groups_pct");
+
+      while (!isDone) {
+        const page: {
+          members: Array<{
+            _id: Id<"groupMembers">;
+            userId: Id<"users">;
+            joinedAt: number;
+            firstName: string;
+            lastName: string;
+            avatarUrl: string | undefined;
+            email: string | undefined;
+            phone: string | undefined;
+            zipCode: string | undefined;
+            dateOfBirth: number | undefined;
+            lastActiveAt: number | undefined;
+          }>;
+          isDone: boolean;
+          continueCursor: string;
+        } = await ctx.runQuery(
+          internal.functions.followupScoreComputation.getMembersForScoring,
+          { groupId: args.groupId, cursor, limit: BATCH_SIZE }
+        );
+
+        if (page.members.length === 0) {
+          isDone = page.isDone;
+          cursor = page.continueCursor;
+          continue;
+        }
+
+        // Step 3: Pre-compute cross-group attendance (only when score config uses it)
+        const memberBatch = page.members.map((m) => ({
+          _id: m._id,
+          userId: m.userId,
+          joinedAt: m.joinedAt,
+        }));
+
+        let crossGroupAttendanceMap: Record<string, number> | undefined;
+        if (usesCrossGroup) {
+          crossGroupAttendanceMap = {};
+          const CROSS_BATCH = 10;
+          const userIds = page.members.map((m) => m.userId);
+          for (let i = 0; i < userIds.length; i += CROSS_BATCH) {
+            const batch = userIds.slice(i, i + CROSS_BATCH);
+            const batchResults: Record<string, number> = await ctx.runQuery(
+              internal.functions.memberFollowups.internalCrossGroupAttendance,
+              { groupId: args.groupId, userIds: batch }
+            );
+            Object.assign(crossGroupAttendanceMap, batchResults);
+          }
+        }
+
+        // Step 4: Score the batch using existing internalScoreBatch
+        const scoredResults: any[] = await ctx.runQuery(
+          internal.functions.memberFollowups.internalScoreBatch,
+          {
+            groupId: args.groupId,
+            members: memberBatch,
+            meetings: config.meetings,
+            crossGroupAttendanceMap,
+          }
+        );
+
+        // Step 5: Transform and upsert
+        // Build a lookup map from memberId to member data for denormalized fields
+        const memberMap = new Map(page.members.map((m) => [m._id.toString(), m]));
+
+        const scoreDocs = scoredResults.map((result: any) => {
+          const member = memberMap.get(result.memberId.toString());
+          return transformScoredMember(
+            member || { firstName: result.firstName, lastName: result.lastName, avatarUrl: result.profileImage, joinedAt: 0 },
+            result,
+            scoreConfig,
+          );
+        });
+
+        await ctx.runMutation(
+          internal.functions.followupScoreComputation.internalUpsertScoreBatch,
+          { groupId: args.groupId, scores: scoreDocs }
+        );
+
         isDone = page.isDone;
         cursor = page.continueCursor;
-        continue;
       }
-
-      // Step 3: Pre-compute cross-group attendance (only when score config uses it)
-      const memberBatch = page.members.map((m) => ({
-        _id: m._id,
-        userId: m.userId,
-        joinedAt: m.joinedAt,
-      }));
-
-      let crossGroupAttendanceMap: Record<string, number> | undefined;
-      if (usesCrossGroup) {
-        crossGroupAttendanceMap = {};
-        const CROSS_BATCH = 10;
-        const userIds = page.members.map((m) => m.userId);
-        for (let i = 0; i < userIds.length; i += CROSS_BATCH) {
-          const batch = userIds.slice(i, i + CROSS_BATCH);
-          const batchResults: Record<string, number> = await ctx.runQuery(
-            internal.functions.memberFollowups.internalCrossGroupAttendance,
-            { groupId: args.groupId, userIds: batch }
-          );
-          Object.assign(crossGroupAttendanceMap, batchResults);
-        }
-      }
-
-      // Step 4: Score the batch using existing internalScoreBatch
-      const scoredResults: any[] = await ctx.runQuery(
-        internal.functions.memberFollowups.internalScoreBatch,
-        {
-          groupId: args.groupId,
-          members: memberBatch,
-          meetings: config.meetings,
-          crossGroupAttendanceMap,
-        }
-      );
-
-      // Step 5: Transform and upsert
-      // Build a lookup map from memberId to member data for denormalized fields
-      const memberMap = new Map(page.members.map((m) => [m._id.toString(), m]));
-
-      const scoreDocs = scoredResults.map((result: any) => {
-        const member = memberMap.get(result.memberId.toString());
-        return transformScoredMember(
-          member || { firstName: result.firstName, lastName: result.lastName, avatarUrl: result.profileImage, joinedAt: 0 },
-          result,
-          scoreConfig,
-        );
-      });
 
       await ctx.runMutation(
-        internal.functions.followupScoreComputation.internalUpsertScoreBatch,
-        { groupId: args.groupId, scores: scoreDocs }
+        internal.functions.followupScoreComputation.setFollowupRefreshCompleted,
+        { groupId: args.groupId, runId }
       );
-
-      isDone = page.isDone;
-      cursor = page.continueCursor;
+    } catch (error) {
+      await ctx.runMutation(
+        internal.functions.followupScoreComputation.setFollowupRefreshFailed,
+        {
+          groupId: args.groupId,
+          runId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+      throw error;
     }
   },
 });
@@ -448,7 +501,19 @@ export const getSingleMemberForScoring = internalQuery({
     const member = await ctx.db.get(args.groupMemberId);
     if (!member || member.leftAt) return null;
 
-    const user = await ctx.db.get(member.userId);
+    const group = await ctx.db.get(member.groupId);
+    const [user, communityMembership] = await Promise.all([
+      ctx.db.get(member.userId),
+      group
+        ? ctx.db
+            .query("userCommunities")
+            .withIndex("by_user_community", (q) =>
+              q.eq("userId", member.userId).eq("communityId", group.communityId)
+            )
+            .first()
+        : Promise.resolve(null),
+    ]);
+
     return {
       _id: member._id,
       userId: member.userId,
@@ -460,7 +525,7 @@ export const getSingleMemberForScoring = internalQuery({
       phone: user?.phone,
       zipCode: user?.zipCode,
       dateOfBirth: user?.dateOfBirth,
-      lastActiveAt: user?.lastLogin,
+      lastActiveAt: communityMembership?.lastLogin ?? user?.lastLogin,
     };
   },
 });
@@ -473,6 +538,87 @@ export const getGroupScoreConfig = internalQuery({
   handler: async (ctx, args) => {
     const group = await ctx.db.get(args.groupId);
     return group?.followupScoreConfig ?? null;
+  },
+});
+
+/**
+ * Mark a follow-up refresh run as running for a group.
+ */
+export const setFollowupRefreshRunning = internalMutation({
+  args: {
+    groupId: v.id("groups"),
+    runId: v.string(),
+    requestedById: v.optional(v.id("users")),
+    trigger: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const nowTs = Date.now();
+    await ctx.db.patch(args.groupId, {
+      followupRefreshState: {
+        status: "running",
+        runId: args.runId,
+        startedAt: nowTs,
+        requestedById: args.requestedById,
+        trigger: args.trigger ?? "scheduled",
+      },
+      updatedAt: nowTs,
+    });
+  },
+});
+
+/**
+ * Mark a follow-up refresh run as completed.
+ * Only updates state if this run is still the active run.
+ */
+export const setFollowupRefreshCompleted = internalMutation({
+  args: {
+    groupId: v.id("groups"),
+    runId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const group = await ctx.db.get(args.groupId);
+    const current = group?.followupRefreshState;
+    if (!group || !current || current.runId !== args.runId) return;
+
+    const nowTs = Date.now();
+    await ctx.db.patch(args.groupId, {
+      followupRefreshState: {
+        ...current,
+        status: "idle",
+        completedAt: nowTs,
+        failedAt: undefined,
+        error: undefined,
+      },
+      updatedAt: nowTs,
+    });
+  },
+});
+
+/**
+ * Mark a follow-up refresh run as failed.
+ * Only updates state if this run is still the active run.
+ */
+export const setFollowupRefreshFailed = internalMutation({
+  args: {
+    groupId: v.id("groups"),
+    runId: v.string(),
+    error: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const group = await ctx.db.get(args.groupId);
+    const current = group?.followupRefreshState;
+    if (!group || !current || current.runId !== args.runId) return;
+
+    const nowTs = Date.now();
+    await ctx.db.patch(args.groupId, {
+      followupRefreshState: {
+        ...current,
+        status: "failed",
+        failedAt: nowTs,
+        error: args.error.slice(0, 300),
+      },
+      updatedAt: nowTs,
+    });
   },
 });
 
