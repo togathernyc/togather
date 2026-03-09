@@ -17,6 +17,7 @@ import { useRouter } from 'expo-router';
 import { ImageViewerManager } from '@/providers/ImageViewerProvider';
 import type { RsvpOption } from '../types';
 import { handleImageLongPress, handleEventLongPress } from '../utils/imageActions';
+import { getRsvpStatsForOption, hasPrefetchedRsvpOptions } from '../utils/rsvpStats';
 import { DEFAULT_PRIMARY_COLOR } from '@utils/styles';
 import type { PrefetchedEventData } from '../context/ChatPrefetchContext';
 
@@ -50,7 +51,7 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
 
   // Skip network fetch only when prefetched data includes RSVP options.
   // This protects against partial prefetched payloads that would hide RSVP rows.
-  const shouldSkipQuery = !!prefetchedData && Object.prototype.hasOwnProperty.call(prefetchedData, 'rsvpOptions');
+  const shouldSkipQuery = hasPrefetchedRsvpOptions(prefetchedData);
 
   // Fetch event by short ID using Convex (skip if prefetched)
   const fetchedEventData = useQuery(
@@ -170,20 +171,12 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
 
   // Calculate RSVP counts and percentages
   const getRsvpStats = (optionId: number): { users: RsvpUser[]; count: number; percentage: number } => {
-    if (!rsvpData?.rsvps) {
-      return { users: [], count: 0, percentage: 0 };
-    }
-
-    const optionData = rsvpData.rsvps.find((item) => item.option.id === optionId);
-    if (!optionData) {
-      return { users: [], count: 0, percentage: 0 };
-    }
-
-    const totalResponses = rsvpData.total ?? rsvpData.rsvps.reduce((sum, opt) => sum + (opt.count ?? opt.users.length), 0);
-    const count = optionData.count ?? optionData.users.length;
-    const percentage = totalResponses > 0 ? (count / totalResponses) * 100 : 0;
-
-    return { users: optionData.users as RsvpUser[], count, percentage };
+    const stats = getRsvpStatsForOption(rsvpData, optionId);
+    return {
+      users: stats.users as RsvpUser[],
+      count: stats.count,
+      percentage: stats.percentage,
+    };
   };
 
   // Avatar stack component
