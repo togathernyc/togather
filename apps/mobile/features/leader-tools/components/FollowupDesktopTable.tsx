@@ -21,6 +21,7 @@ import { Avatar } from "@/components/ui/Avatar";
 import { FollowupDetailContent } from "./FollowupDetailScreen";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { FollowupSettingsPanel } from "./FollowupSettingsPanel";
+import { FollowupCsvImportModal } from "./FollowupCsvImportModal";
 import type { CustomFieldDef } from "./ColumnPickerModal";
 import { getScoreValue } from "./followupShared";
 
@@ -307,6 +308,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
 
   // Settings panel state
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
+  const [showCsvImportModal, setShowCsvImportModal] = useState(false);
 
   // Custom field dropdown state
   const [customDropdownFor, setCustomDropdownFor] = useState<{ memberId: string; slot: string } | null>(null);
@@ -1170,6 +1172,17 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
           <Text style={s.headerTitle}>{toolDisplayName}</Text>
           <Text style={s.headerSubtitle}>{groupData?.name || "Group"}</Text>
         </View>
+        <TouchableOpacity
+          style={s.importButton}
+          onPress={() => {
+            setSelectedMemberId(null);
+            setShowSettingsPanel(false);
+            setShowCsvImportModal(true);
+          }}
+        >
+          <Ionicons name="cloud-upload-outline" size={16} color="#2563EB" />
+          <Text style={s.importButtonText}>Import CSV</Text>
+        </TouchableOpacity>
         <TouchableOpacity style={s.settingsButton} onPress={handleSettingsPress}>
           <Ionicons name="settings-outline" size={22} color="#666" />
         </TouchableOpacity>
@@ -1515,6 +1528,16 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
         isLoading={isRemoving}
         destructive
       />
+
+      <FollowupCsvImportModal
+        visible={showCsvImportModal}
+        groupId={groupId}
+        onClose={() => setShowCsvImportModal(false)}
+        onImported={() => {
+          setShowCsvImportModal(false);
+          setSelectedIds(new Set());
+        }}
+      />
     </View>
   );
 }
@@ -1555,6 +1578,23 @@ const s = StyleSheet.create({
   },
   settingsButton: {
     padding: 6,
+  },
+  importButton: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 4,
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+    backgroundColor: "#EFF6FF",
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    marginRight: 8,
+  },
+  importButtonText: {
+    fontSize: 12,
+    fontWeight: "600" as const,
+    color: "#2563EB",
   },
 
   // Search bar
