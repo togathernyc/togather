@@ -896,7 +896,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     [setCustomFieldMut, groupId]
   );
 
-  const handleCustomTextSubmit = useCallback(() => {
+  const handleCustomTextSubmit = useCallback(async () => {
     if (!editSheet || !editSheet.customField) return;
     const cf = editSheet.customField;
     let value: string | number | undefined;
@@ -906,15 +906,15 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     } else {
       value = customFieldInput.trim() || undefined;
     }
-    handleCustomFieldSave(editSheet.memberId, cf.slot, value);
+    await handleCustomFieldSave(editSheet.memberId, cf.slot, value);
     setEditSheet(null);
     setCustomFieldInput("");
   }, [editSheet, customFieldInput, handleCustomFieldSave]);
 
   const handleCustomDropdownSelect = useCallback(
-    (value: string | undefined) => {
+    async (value: string | undefined) => {
       if (!editSheet || !editSheet.customField) return;
-      handleCustomFieldSave(editSheet.memberId, editSheet.customField.slot, value ?? undefined);
+      await handleCustomFieldSave(editSheet.memberId, editSheet.customField.slot, value ?? undefined);
       setEditSheet(null);
     },
     [editSheet, handleCustomFieldSave]
@@ -1070,9 +1070,9 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       const cf = column.customField;
       return (
         <TouchableOpacity
-          onPress={() => {
+          onPress={async () => {
             const raw = (member as Record<string, unknown>)[cf.slot];
-            handleCustomFieldSave(member.groupMemberId, cf.slot, !raw);
+            await handleCustomFieldSave(member.groupMemberId, cf.slot, !raw);
           }}
           disabled={isUpdatingField}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -1879,6 +1879,7 @@ const styles = StyleSheet.create({
   },
   row: {
     flexDirection: "row",
+    minHeight: 56,
     borderBottomWidth: 1,
     borderBottomColor: "#F3F4F6",
     backgroundColor: "#FFF",
