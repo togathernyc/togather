@@ -81,6 +81,7 @@ type GridColumn = {
 const PINNED_COL_WIDTH = 190;
 const MIN_DATA_COL_WIDTH = 94;
 const SWIPE_THRESHOLD = 50;
+const MIN_COLUMNS_PER_PAGE = 3;
 
 const SERVER_SORTABLE_FIELDS = new Set([
   "score1",
@@ -407,7 +408,10 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
   }, [scoreConfig, leaderMap]);
 
   const availableDataWidth = Math.max(MIN_DATA_COL_WIDTH, width - PINNED_COL_WIDTH - 42);
-  const columnsPerPage = Math.max(1, Math.floor(availableDataWidth / MIN_DATA_COL_WIDTH));
+  const columnsPerPage = Math.max(
+    MIN_COLUMNS_PER_PAGE,
+    Math.floor(availableDataWidth / MIN_DATA_COL_WIDTH)
+  );
   const columnPages = useMemo(
     () => chunkIntoPages(dataColumns, columnsPerPage),
     [dataColumns, columnsPerPage]
@@ -420,6 +424,10 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
   }, [columnPages.length]);
 
   const visibleColumns = columnPages[columnPageIndex] ?? [];
+  const visibleColumnWidth = Math.max(
+    36,
+    Math.floor(availableDataWidth / Math.max(MIN_COLUMNS_PER_PAGE, visibleColumns.length || 1))
+  );
   const canPageLeft = columnPageIndex > 0;
   const canPageRight = columnPageIndex < columnPages.length - 1;
 
@@ -525,13 +533,16 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     return (
       <TouchableOpacity
         key={column.key}
-        style={[styles.headerCell, { width: column.width }]}
+        style={[styles.headerCell, { width: visibleColumnWidth }]}
         disabled={!column.sortable}
         onPress={() => {
           if (column.sortable) handleSortPress(column.key);
         }}
       >
-        <Text style={[styles.headerCellText, !column.sortable && styles.headerCellTextMuted]}>
+        <Text
+          numberOfLines={1}
+          style={[styles.headerCellText, !column.sortable && styles.headerCellTextMuted]}
+        >
           {column.label}
         </Text>
         {isActiveSort && (
@@ -616,7 +627,10 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
 
         <View style={styles.rowDataCells}>
           {visibleColumns.map((column) => (
-            <View key={`${item.groupMemberId}-${column.key}`} style={[styles.dataCell, { width: column.width }]}>
+            <View
+              key={`${item.groupMemberId}-${column.key}`}
+              style={[styles.dataCell, { width: visibleColumnWidth }]}
+            >
               {renderDataCell(item, column)}
             </View>
           ))}
