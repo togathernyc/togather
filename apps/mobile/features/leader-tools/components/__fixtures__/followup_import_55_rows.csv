@@ -1,0 +1,59 @@
+First Name,Last Name,Phone Number,Email,ZIP,DOB,Notes,Neighborhood,Volunteer Level,Wants Prayer,Contact Preference
+Demo,Existing,2025550123,demo.existing+csv1@example.com,10001,1991-02-14,Existing member update from CSV import,Downtown,3,yes,Text
+Alex,Carson,2025551001,alex.carson@example.com,10002,1992-03-01,New member from CSV,North,1,no,Email
+Bailey,Diaz,2025551002,bailey.diaz@example.com,10003,1990-09-10,Interested in volunteering,South,2,yes,Call
+Casey,Evans,2025551003,casey.evans@example.com,10004,1988-11-20,Needs follow-up this week,West,4,true,Text
+Drew,Foster,2025551004,drew.foster@example.com,10005,1995-05-15,Attended last event,East,2,false,Email
+Elliot,Garcia,2025551005,elliot.garcia@example.com,10006,1993-12-30,Prefers evening calls,North,5,yes,Call
+Finley,Hart,2025551006,finley.hart@example.com,10007,1987-06-05,Shared prayer request,South,3,no,Text
+Gray,Irwin,2025551007,gray.irwin@example.com,10008,1999-01-18,Newly joined community,Central,1,yes,Email
+Hayden,James,2025551008,hayden.james@example.com,10009,1985-10-08,Needs welcome text,North,2,no,Text
+Indigo,Kelly,2025551009,indigo.kelly@example.com,10010,1994-07-22,Asked for call back,South,4,yes,Call
+Jordan,Lopez,2025551010,jordan.lopez@example.com,10011,1991-04-12,Potential small group leader,West,5,true,Email
+Kai,Moore,2025551011,kai.moore@example.com,10012,1996-08-17,Needs transportation support,East,2,false,Text
+Logan,Nash,2025551012,logan.nash@example.com,10013,1993-03-03,Follow up on attendance,North,3,yes,Call
+Morgan,Owens,2025551013,morgan.owens@example.com,10014,1990-02-02,Wants to serve monthly,South,4,no,Email
+Noel,Price,2025551014,noel.price@example.com,10015,1989-12-12,Requested prayer team contact,West,1,yes,Text
+Oakley,Quinn,2025551015,oakley.quinn@example.com,10016,1997-11-07,Attending with family,East,2,no,Email
+Parker,Reed,2025551016,parker.reed@example.com,10017,1992-06-16,Asked about next steps,North,3,yes,Call
+Quincy,Stone,2025551017,quincy.stone@example.com,10018,1986-09-09,Would like weekly updates,South,4,no,Text
+Reese,Turner,2025551018,reese.turner@example.com,10019,1998-01-25,Needs childcare info,West,1,yes,Email
+Sage,Underwood,2025551019,sage.underwood@example.com,10020,1991-05-05,Follow-up after intro night,East,2,no,Call
+Taylor,Vasquez,2025551020,taylor.vasquez@example.com,10021,1995-04-14,Interested in serving kids ministry,North,3,yes,Text
+Urban,Walker,2025551021,urban.walker@example.com,10022,1984-08-08,Missed two meetings,South,2,no,Email
+Vale,Xiong,2025551022,vale.xiong@example.com,10023,1990-01-01,Needs reminder before events,West,4,yes,Call
+Wren,Young,2025551023,wren.young@example.com,10024,1999-03-11,Shared updated email,East,3,no,Text
+Xan,Zimmer,2025551024,xan.zimmer@example.com,10025,1994-10-10,Open to leadership training,North,5,yes,Email
+Arden,Brooks,2025551025,arden.brooks@example.com,10026,1992-02-19,Asked for Bible study resources,South,1,no,Call
+Blair,Cruz,2025551026,blair.cruz@example.com,10027,1988-12-24,Needs prayer follow-up,Central,2,yes,Text
+Campbell,Doyle,2025551027,campbell.doyle@example.com,10028,1996-06-28,Interested in mentorship,North,3,no,Email
+Devon,Ellis,2025551028,devon.ellis@example.com,10029,1993-09-13,Would like to host group,South,4,yes,Call
+Emery,Flynn,2025551029,emery.flynn@example.com,10030,1987-07-07,Needs accessibility accommodations,West,1,no,Text
+Frankie,Gibson,2025551030,frankie.gibson@example.com,10031,1991-01-09,Prefers text check-ins,East,2,yes,Email
+Greer,Holland,2025551031,greer.holland@example.com,10032,1998-04-23,Confirmed upcoming attendance,North,3,no,Call
+Harper,Ingram,2025551032,harper.ingram@example.com,10033,1985-11-29,Needs discipleship follow-up,South,4,yes,Text
+Jules,King,2025551033,jules.king@example.com,10034,1990-05-26,Interested in worship team,West,5,no,Email
+Kendall,Lane,2025551034,kendall.lane@example.com,10035,1997-08-31,Requested community calendar,East,1,yes,Call
+Lane,Mitchell,2025551035,lane.mitchell@example.com,10036,1993-02-27,Needs reminder call,North,2,no,Text
+Milan,Norris,2025551036,milan.norris@example.com,10037,1989-06-06,Wants to join serve rotation,South,3,yes,Email
+Nico,Ortiz,2025551037,nico.ortiz@example.com,10038,1994-12-18,Follow-up after first visit,West,2,no,Call
+Onyx,Perez,2025551038,onyx.perez@example.com,10039,1992-03-30,Potential volunteer coach,East,4,yes,Text
+Peyton,Ross,2025551039,peyton.ross@example.com,10040,1996-10-02,Asked for prayer,North,1,no,Email
+River,Shaw,2025551040,river.shaw@example.com,10041,1986-01-15,Needs app onboarding support,South,2,yes,Call
+Sawyer,Tate,2025551041,sawyer.tate@example.com,10042,1995-09-27,Great first impression,West,3,no,Text
+Skyler,Upton,2025551042,skyler.upton@example.com,10043,1991-07-19,Needs ride coordination,East,2,yes,Email
+Tristan,Valdez,2025551043,tristan.valdez@example.com,10044,1988-04-04,Missed follow-up last week,North,4,no,Call
+Uma,Wright,2025551044,uma.wright@example.com,10045,1999-11-11,Interested in prayer team,South,5,yes,Text
+Vaughn,Xu,2025551045,vaughn.xu@example.com,10046,1992-01-21,Prefers email communication,West,3,no,Email
+Whitney,Yates,2025551046,whitney.yates@example.com,10047,1990-03-17,Wants to attend orientation,East,1,yes,Call
+Zion,Adams,2025551047,zion.adams@example.com,10048,1998-08-08,Needs childcare follow-up,North,2,no,Text
+Row,DuplicateA,2025551048,row.duplicatea@example.com,10049,1993-09-09,First duplicate instance,South,2,yes,Email
+Row,DuplicateB,2025551048,row.duplicateb@example.com,10050,1994-10-10,Second duplicate instance,South,2,yes,Email
+Missing,Phone,,missing.phone@example.com,10051,1992-05-05,Missing phone row,West,1,no,Call
+Invalid,Phone,not-a-phone,invalid.phone@example.com,10052,1991-07-07,Invalid phone format,East,3,yes,Text
+,MissingFirstName,2025551049,missing.firstname@example.com,10053,1990-06-06,Missing first name,North,2,no,Email
+Custom,BadNumber,2025551050,custom.badnumber@example.com,10054,1993-03-03,Invalid custom number should be ignored,South,not-a-number,yes,Call
+Custom,BadBoolean,2025551051,custom.badboolean@example.com,10055,1994-04-04,Invalid custom boolean should be ignored,West,3,maybe,Text
+Custom,BadDropdown,2025551052,custom.baddropdown@example.com,10056,1995-05-05,Invalid dropdown option should be ignored,East,2,yes,Pigeon
+Dupe,SecondSetA,2025551053,dupe.seconda@example.com,10057,1996-06-06,Another duplicate pair first,North,1,no,Email
+Dupe,SecondSetB,2025551053,dupe.secondb@example.com,10058,1997-07-07,Another duplicate pair second,North,1,no,Email

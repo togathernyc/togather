@@ -23,12 +23,15 @@
  */
 
 import { v, ConvexError } from "convex/values";
-import { query, mutation, internalQuery } from "../_generated/server";
+import { query, mutation, internalQuery, internalMutation } from "../_generated/server";
 import { paginationOptsValidator } from "convex/server";
 import { Doc, Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
-import { now, getMediaUrl } from "../lib/utils";
+import { now, getMediaUrl, normalizePhone, isValidPhone, buildSearchText } from "../lib/utils";
 import { requireAuth } from "../lib/auth";
+import { parseDateOptional } from "../lib/validation";
+import { isCommunityAdmin } from "../lib/permissions";
+import { syncUserChannelMembershipsLogic } from "./sync/memberships";
 import {
   DEFAULT_SCORE_CONFIG,
   extractRawValues,
@@ -1194,6 +1197,729 @@ export const history = query({
 // ============================================================================
 // Mutations
 // ============================================================================
+
+const csvImportRowValidator = v.object({
+  rowNumber: v.number(),
+  firstName: v.optional(v.string()),
+  lastName: v.optional(v.string()),
+  phone: v.optional(v.string()),
+  email: v.optional(v.string()),
+  zipCode: v.optional(v.string()),
+  dateOfBirth: v.optional(v.string()),
+  notes: v.optional(v.string()),
+  customFieldValues: v.optional(v.record(v.string(), v.string())),
+});
+
+const CSV_IMPORT_NOTE_TAG = "[csv import]";
+const MAX_CSV_IMPORT_ROWS = 500;
+
+type CsvImportRow = {
+  rowNumber: number;
+  firstName?: string;
+  lastName?: string;
+  phone?: string;
+  email?: string;
+  zipCode?: string;
+  dateOfBirth?: string;
+  notes?: string;
+  customFieldValues?: Record<string, string>;
+};
+
+type CsvImportAction = "none" | "create" | "update" | "add" | "reactivate" | "append";
+
+type CsvImportRowReport = {
+  rowNumber: number;
+  phone?: string;
+  status: "ready" | "skipped";
+  reasons: string[];
+  actions: {
+    user: CsvImportAction;
+    profileUpdates: string[];
+    community: CsvImportAction;
+    group: CsvImportAction;
+    followup: CsvImportAction;
+    notes: CsvImportAction;
+      customFields: CsvImportAction;
+  };
+};
+
+type PreparedCsvImportRow = {
+  row: CsvImportRow;
+  normalizedPhone: string;
+  parsedDateOfBirth?: number;
+  parsedCustomFieldValues: Record<string, string | number | boolean>;
+  existingUser: Doc<"users"> | null;
+  rowReport: CsvImportRowReport;
+};
+
+const FATAL_CSV_IMPORT_REASONS = new Set([
+  "missing_phone",
+  "invalid_phone",
+  "missing_first_name",
+  "duplicate_phone_in_csv",
+]);
+
+function hasFatalCsvImportReason(reasons: string[]): boolean {
+  return reasons.some((reason) => FATAL_CSV_IMPORT_REASONS.has(reason));
+}
+
+function sanitizeCsvValue(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function getNormalizedRow(row: CsvImportRow): CsvImportRow {
+  const normalizedCustomValues = Object.fromEntries(
+    Object.entries(row.customFieldValues ?? {})
+      .map(([slot, value]) => [slot, sanitizeCsvValue(value)])
+      .filter(([, value]) => value !== undefined)
+  ) as Record<string, string>;
+
+  return {
+    rowNumber: row.rowNumber,
+    firstName: sanitizeCsvValue(row.firstName),
+    lastName: sanitizeCsvValue(row.lastName),
+    phone: sanitizeCsvValue(row.phone),
+    email: sanitizeCsvValue(row.email),
+    zipCode: sanitizeCsvValue(row.zipCode),
+    dateOfBirth: sanitizeCsvValue(row.dateOfBirth),
+    notes: sanitizeCsvValue(row.notes),
+    customFieldValues: Object.keys(normalizedCustomValues).length > 0
+      ? normalizedCustomValues
+      : undefined,
+  };
+}
+
+function parseCsvBoolean(value: string): boolean | undefined {
+  const normalized = value.trim().toLowerCase();
+  if (["true", "1", "yes", "y"].includes(normalized)) return true;
+  if (["false", "0", "no", "n"].includes(normalized)) return false;
+  return undefined;
+}
+
+function parseCsvCustomFieldValues(
+  row: CsvImportRow,
+  customFieldDefsBySlot: Map<string, { type: string; options?: string[] }>
+): {
+  parsedValues: Record<string, string | number | boolean>;
+  reasons: string[];
+} {
+  const parsedValues: Record<string, string | number | boolean> = {};
+  const reasons: string[] = [];
+
+  for (const [slot, rawValue] of Object.entries(row.customFieldValues ?? {})) {
+    if (!VALID_CUSTOM_SLOTS.has(slot)) {
+      reasons.push("unknown_custom_field_slot_ignored");
+      continue;
+    }
+    const definition = customFieldDefsBySlot.get(slot);
+    if (!definition) {
+      reasons.push("unknown_custom_field_slot_ignored");
+      continue;
+    }
+    const value = sanitizeCsvValue(rawValue);
+    if (!value) continue;
+
+    if (definition.type === "number") {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) {
+        parsedValues[slot] = parsed;
+      } else {
+        reasons.push("invalid_custom_number_ignored");
+      }
+      continue;
+    }
+
+    if (definition.type === "boolean") {
+      const parsed = parseCsvBoolean(value);
+      if (parsed === undefined) {
+        reasons.push("invalid_custom_boolean_ignored");
+      } else {
+        parsedValues[slot] = parsed;
+      }
+      continue;
+    }
+
+    if (definition.type === "dropdown") {
+      const options = definition.options ?? [];
+      if (options.length === 0) {
+        parsedValues[slot] = value;
+        continue;
+      }
+      const matchedOption = options.find(
+        (option) => option.trim().toLowerCase() === value.trim().toLowerCase()
+      );
+      if (matchedOption) {
+        parsedValues[slot] = matchedOption;
+      } else {
+        reasons.push("invalid_custom_dropdown_option_ignored");
+      }
+      continue;
+    }
+
+    parsedValues[slot] = value;
+  }
+
+  return {
+    parsedValues,
+    reasons: Array.from(new Set(reasons)),
+  };
+}
+
+async function requireImportAccess(
+  ctx: any,
+  token: string,
+  groupId: Id<"groups">
+): Promise<{ group: Doc<"groups">; userId: Id<"users"> }> {
+  const userId = await requireAuth(ctx, token);
+  const group = await ctx.db.get(groupId);
+  if (!group) {
+    throw new ConvexError("Group not found");
+  }
+
+  const membership = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_group_user", (q: any) =>
+      q.eq("groupId", groupId).eq("userId", userId)
+    )
+    .first();
+
+  const isLeaderOrAdmin =
+    !!membership && !membership.leftAt && (membership.role === "leader" || membership.role === "admin");
+  const isCommAdmin = await isCommunityAdmin(ctx, group.communityId, userId);
+  if (!isLeaderOrAdmin && !isCommAdmin) {
+    throw new ConvexError("Only group leaders or community admins can import CSV members");
+  }
+
+  return { group, userId };
+}
+
+function getUserProfileUpdates(
+  existingUser: Doc<"users">,
+  row: CsvImportRow,
+  parsedDateOfBirth: number | undefined
+): {
+  updates: Partial<Doc<"users">>;
+  updatedFields: string[];
+} {
+  const updates: Partial<Doc<"users">> = {};
+  const updatedFields: string[] = [];
+
+  if (row.firstName && row.firstName !== existingUser.firstName) {
+    updates.firstName = row.firstName;
+    updatedFields.push("firstName");
+  }
+  if (row.lastName && row.lastName !== existingUser.lastName) {
+    updates.lastName = row.lastName;
+    updatedFields.push("lastName");
+  }
+  if (row.email) {
+    const normalizedEmail = row.email.toLowerCase();
+    if (normalizedEmail !== existingUser.email) {
+      updates.email = normalizedEmail;
+      updatedFields.push("email");
+    }
+  }
+  if (row.zipCode && row.zipCode !== existingUser.zipCode) {
+    updates.zipCode = row.zipCode;
+    updatedFields.push("zipCode");
+  }
+  if (
+    parsedDateOfBirth !== undefined &&
+    parsedDateOfBirth !== existingUser.dateOfBirth
+  ) {
+    updates.dateOfBirth = parsedDateOfBirth;
+    updatedFields.push("dateOfBirth");
+  }
+
+  if (updatedFields.length > 0) {
+    updates.updatedAt = now();
+    updates.searchText = buildSearchText({
+      firstName: (updates.firstName as string | undefined) ?? existingUser.firstName,
+      lastName: (updates.lastName as string | undefined) ?? existingUser.lastName,
+      email: (updates.email as string | undefined) ?? existingUser.email,
+      phone: existingUser.phone,
+    });
+  }
+
+  return { updates, updatedFields };
+}
+
+async function getExistingCsvImportNote(
+  ctx: any,
+  groupMemberId: Id<"groupMembers">
+): Promise<Doc<"memberFollowups"> | null> {
+  const followups = await ctx.db
+    .query("memberFollowups")
+    .withIndex("by_groupMember_createdAt", (q: any) => q.eq("groupMemberId", groupMemberId))
+    .order("desc")
+    .take(100);
+  return (
+    followups.find(
+      (f: Doc<"memberFollowups">) =>
+        f.type === "note" &&
+        typeof f.content === "string" &&
+        f.content.startsWith(CSV_IMPORT_NOTE_TAG)
+    ) ?? null
+  );
+}
+
+async function analyzeCsvImportRows(
+  ctx: any,
+  group: Doc<"groups">,
+  rows: CsvImportRow[]
+): Promise<{
+  rowReports: CsvImportRowReport[];
+  preparedRows: PreparedCsvImportRow[];
+}> {
+  const customFieldDefs = ((group.followupColumnConfig as any)?.customFields ?? []) as Array<{
+    slot: string;
+    type: string;
+    options?: string[];
+  }>;
+  const customFieldDefsBySlot = new Map(
+    customFieldDefs.map((field) => [
+      field.slot,
+      {
+        type: field.type,
+        options: field.options,
+      },
+    ])
+  );
+
+  const normalizedRows = rows.map(getNormalizedRow);
+
+  const base = normalizedRows.map((row) => {
+    const reasons: string[] = [];
+    if (!row.phone) reasons.push("missing_phone");
+    if (row.phone && !isValidPhone(row.phone)) reasons.push("invalid_phone");
+    if (!row.firstName) reasons.push("missing_first_name");
+
+    let parsedDateOfBirth: number | undefined;
+    if (row.dateOfBirth) {
+      try {
+        parsedDateOfBirth = parseDateOptional(row.dateOfBirth, "dateOfBirth");
+      } catch {
+        reasons.push("invalid_date_of_birth_ignored");
+      }
+    }
+
+    const { parsedValues: parsedCustomFieldValues, reasons: customFieldReasons } =
+      parseCsvCustomFieldValues(row, customFieldDefsBySlot);
+    reasons.push(...customFieldReasons);
+
+    const normalizedPhone = row.phone && isValidPhone(row.phone)
+      ? normalizePhone(row.phone)
+      : undefined;
+
+    return {
+      row,
+      reasons,
+      normalizedPhone,
+      parsedDateOfBirth,
+      parsedCustomFieldValues,
+    };
+  });
+
+  const phoneCounts = new Map<string, number>();
+  for (const row of base) {
+    if (!row.normalizedPhone || hasFatalCsvImportReason(row.reasons)) continue;
+    phoneCounts.set(row.normalizedPhone, (phoneCounts.get(row.normalizedPhone) ?? 0) + 1);
+  }
+
+  for (const row of base) {
+    if (!row.normalizedPhone || hasFatalCsvImportReason(row.reasons)) continue;
+    if ((phoneCounts.get(row.normalizedPhone) ?? 0) > 1) {
+      row.reasons.push("duplicate_phone_in_csv");
+    }
+  }
+
+  const uniquePhones = Array.from(
+    new Set(
+      base
+        .filter((r) => !hasFatalCsvImportReason(r.reasons) && r.normalizedPhone)
+        .map((r) => r.normalizedPhone!) // safe by filter
+    )
+  );
+
+  const usersByPhone = new Map<string, Doc<"users"> | null>();
+  for (const phone of uniquePhones) {
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_phone", (q: any) => q.eq("phone", phone))
+      .first();
+    usersByPhone.set(phone, user ?? null);
+  }
+
+  const rowReports: CsvImportRowReport[] = [];
+  const preparedRows: PreparedCsvImportRow[] = [];
+
+  for (const item of base) {
+    const uniqueReasons = Array.from(new Set(item.reasons));
+    const status: "ready" | "skipped" = hasFatalCsvImportReason(uniqueReasons)
+      ? "skipped"
+      : "ready";
+
+    const report: CsvImportRowReport = {
+      rowNumber: item.row.rowNumber,
+      phone: item.normalizedPhone,
+      status,
+      reasons: uniqueReasons,
+      actions: {
+        user: "none",
+        profileUpdates: [],
+        community: "none",
+        group: "none",
+        followup: "none",
+        notes: "none",
+        customFields: "none",
+      },
+    };
+
+    if (status === "skipped" || !item.normalizedPhone) {
+      rowReports.push(report);
+      continue;
+    }
+
+    const existingUser = usersByPhone.get(item.normalizedPhone) ?? null;
+    report.actions.user = existingUser ? "none" : "create";
+
+    let communityMembership: Doc<"userCommunities"> | null = null;
+    let groupMembership: Doc<"groupMembers"> | null = null;
+
+    if (existingUser) {
+      const { updatedFields } = getUserProfileUpdates(existingUser, item.row, item.parsedDateOfBirth);
+      report.actions.profileUpdates = updatedFields;
+      if (updatedFields.length > 0) {
+        report.actions.user = "update";
+      }
+
+      communityMembership = await ctx.db
+        .query("userCommunities")
+        .withIndex("by_user_community", (q: any) =>
+          q.eq("userId", existingUser._id).eq("communityId", group.communityId)
+        )
+        .first();
+
+      groupMembership = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q: any) =>
+          q.eq("groupId", group._id).eq("userId", existingUser._id)
+        )
+        .first();
+    }
+
+    if (!existingUser || !communityMembership) {
+      report.actions.community = "add";
+    } else if (communityMembership.status !== 1) {
+      report.actions.community = "reactivate";
+    }
+
+    if (!existingUser || !groupMembership) {
+      report.actions.group = "add";
+    } else if (groupMembership.leftAt) {
+      report.actions.group = "reactivate";
+    }
+
+    if (report.actions.group !== "none") {
+      report.actions.followup = "create";
+    } else if (groupMembership) {
+      const scoreDoc = await ctx.db
+        .query("memberFollowupScores")
+        .withIndex("by_groupMember", (q: any) => q.eq("groupMemberId", groupMembership._id))
+        .first();
+      if (!scoreDoc) {
+        report.actions.followup = "create";
+      }
+    }
+
+    if (item.row.notes) {
+      if (groupMembership) {
+        const existingCsvNote = await getExistingCsvImportNote(ctx, groupMembership._id);
+        report.actions.notes = existingCsvNote ? "append" : "create";
+      } else {
+        report.actions.notes = "create";
+      }
+    }
+    if (Object.keys(item.parsedCustomFieldValues).length > 0) {
+      report.actions.customFields = "update";
+    }
+
+    rowReports.push(report);
+    preparedRows.push({
+      row: item.row,
+      normalizedPhone: item.normalizedPhone,
+      parsedDateOfBirth: item.parsedDateOfBirth,
+      parsedCustomFieldValues: item.parsedCustomFieldValues,
+      existingUser,
+      rowReport: report,
+    });
+  }
+
+  return { rowReports, preparedRows };
+}
+
+function buildCsvImportSummary(rowReports: CsvImportRowReport[]) {
+  const summary = {
+    totalRows: rowReports.length,
+    readyRows: rowReports.filter((r) => r.status === "ready").length,
+    skippedRows: rowReports.filter((r) => r.status === "skipped").length,
+    duplicateRows: rowReports.filter((r) => r.reasons.includes("duplicate_phone_in_csv")).length,
+    invalidPhoneRows: rowReports.filter((r) => r.reasons.includes("invalid_phone") || r.reasons.includes("missing_phone")).length,
+    missingFirstNameRows: rowReports.filter((r) => r.reasons.includes("missing_first_name")).length,
+    usersToCreate: rowReports.filter((r) => r.actions.user === "create").length,
+    usersToUpdate: rowReports.filter((r) => r.actions.user === "update").length,
+    communityAdds: rowReports.filter((r) => r.actions.community === "add").length,
+    communityReactivations: rowReports.filter((r) => r.actions.community === "reactivate").length,
+    groupAdds: rowReports.filter((r) => r.actions.group === "add").length,
+    groupReactivations: rowReports.filter((r) => r.actions.group === "reactivate").length,
+    followupCreates: rowReports.filter((r) => r.actions.followup === "create").length,
+    notesCreates: rowReports.filter((r) => r.actions.notes === "create").length,
+    notesAppends: rowReports.filter((r) => r.actions.notes === "append").length,
+    customFieldUpdates: rowReports.filter((r) => r.actions.customFields === "update").length,
+  };
+  return summary;
+}
+
+export const applyCsvImportCustomFieldPatch = internalMutation({
+  args: {
+    groupMemberId: v.id("groupMembers"),
+    customFieldValues: v.record(v.string(), v.union(v.string(), v.number(), v.boolean())),
+    retryCount: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const validPatch = Object.fromEntries(
+      Object.entries(args.customFieldValues).filter(([slot]) => VALID_CUSTOM_SLOTS.has(slot))
+    );
+    if (Object.keys(validPatch).length === 0) {
+      return { applied: false };
+    }
+
+    const scoreDoc = await ctx.db
+      .query("memberFollowupScores")
+      .withIndex("by_groupMember", (q) => q.eq("groupMemberId", args.groupMemberId))
+      .first();
+
+    if (scoreDoc) {
+      await ctx.db.patch(scoreDoc._id, {
+        ...validPatch,
+        updatedAt: now(),
+      });
+      return { applied: true };
+    }
+
+    const retryCount = args.retryCount ?? 0;
+    if (retryCount < 5) {
+      await ctx.scheduler.runAfter(
+        1000,
+        internal.functions.memberFollowups.applyCsvImportCustomFieldPatch,
+        {
+          groupMemberId: args.groupMemberId,
+          customFieldValues: validPatch,
+          retryCount: retryCount + 1,
+        }
+      );
+    }
+    return { applied: false, retried: retryCount < 5 };
+  },
+});
+
+export const previewCsvImport = mutation({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+    rows: v.array(csvImportRowValidator),
+  },
+  handler: async (ctx, args) => {
+    if (args.rows.length === 0) {
+      throw new ConvexError("CSV import is empty");
+    }
+    if (args.rows.length > MAX_CSV_IMPORT_ROWS) {
+      throw new ConvexError(`CSV import is limited to ${MAX_CSV_IMPORT_ROWS} rows`);
+    }
+
+    const { group } = await requireImportAccess(ctx, args.token, args.groupId);
+    const { rowReports } = await analyzeCsvImportRows(ctx, group, args.rows);
+
+    return {
+      summary: buildCsvImportSummary(rowReports),
+      rows: rowReports,
+    };
+  },
+});
+
+export const applyCsvImport = mutation({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+    rows: v.array(csvImportRowValidator),
+  },
+  handler: async (ctx, args) => {
+    if (args.rows.length === 0) {
+      throw new ConvexError("CSV import is empty");
+    }
+    if (args.rows.length > MAX_CSV_IMPORT_ROWS) {
+      throw new ConvexError(`CSV import is limited to ${MAX_CSV_IMPORT_ROWS} rows`);
+    }
+
+    const { group, userId: importedById } = await requireImportAccess(ctx, args.token, args.groupId);
+    const { rowReports, preparedRows } = await analyzeCsvImportRows(ctx, group, args.rows);
+    const timestamp = now();
+
+    for (const prepared of preparedRows) {
+      if (prepared.rowReport.status !== "ready") continue;
+
+      const row = prepared.row;
+      const normalizedEmail = row.email?.toLowerCase();
+
+      let userId: Id<"users">;
+      if (prepared.existingUser) {
+        userId = prepared.existingUser._id;
+        const { updates } = getUserProfileUpdates(prepared.existingUser, row, prepared.parsedDateOfBirth);
+        if (Object.keys(updates).length > 0) {
+          await ctx.db.patch(userId, updates);
+        }
+      } else {
+        userId = await ctx.db.insert("users", {
+          firstName: row.firstName,
+          lastName: row.lastName,
+          phone: prepared.normalizedPhone,
+          phoneVerified: false,
+          email: normalizedEmail,
+          zipCode: row.zipCode,
+          dateOfBirth: prepared.parsedDateOfBirth,
+          searchText: buildSearchText({
+            firstName: row.firstName,
+            lastName: row.lastName,
+            email: normalizedEmail,
+            phone: prepared.normalizedPhone,
+          }),
+          isActive: true,
+          isStaff: false,
+          isSuperuser: false,
+          dateJoined: timestamp,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        });
+      }
+
+      const existingCommunityMembership = await ctx.db
+        .query("userCommunities")
+        .withIndex("by_user_community", (q: any) =>
+          q.eq("userId", userId).eq("communityId", group.communityId)
+        )
+        .first();
+
+      if (!existingCommunityMembership) {
+        await ctx.db.insert("userCommunities", {
+          userId,
+          communityId: group.communityId,
+          roles: 1,
+          status: 1,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        });
+      } else if (existingCommunityMembership.status !== 1) {
+        await ctx.db.patch(existingCommunityMembership._id, {
+          status: 1,
+          updatedAt: timestamp,
+        });
+      }
+
+      const existingGroupMembership = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q: any) =>
+          q.eq("groupId", group._id).eq("userId", userId)
+        )
+        .first();
+
+      let groupMemberId: Id<"groupMembers">;
+      let needsChannelSync = false;
+      if (!existingGroupMembership) {
+        groupMemberId = await ctx.db.insert("groupMembers", {
+          groupId: group._id,
+          userId,
+          role: "member",
+          joinedAt: timestamp,
+          notificationsEnabled: true,
+        });
+        needsChannelSync = true;
+      } else if (existingGroupMembership.leftAt) {
+        await ctx.db.patch(existingGroupMembership._id, {
+          leftAt: undefined,
+          role: "member",
+          joinedAt: timestamp,
+          notificationsEnabled: true,
+        });
+        groupMemberId = existingGroupMembership._id;
+        needsChannelSync = true;
+      } else {
+        groupMemberId = existingGroupMembership._id;
+      }
+
+      if (needsChannelSync) {
+        await syncUserChannelMembershipsLogic(ctx, userId, group._id);
+      }
+
+      if (row.notes) {
+        const noteLine = `${new Date(timestamp).toISOString()} - ${row.notes}`;
+        const existingCsvNote = await getExistingCsvImportNote(ctx, groupMemberId);
+        if (existingCsvNote) {
+          const previousContent = existingCsvNote.content ?? CSV_IMPORT_NOTE_TAG;
+          const nextContent = `${previousContent}\n${noteLine}`;
+          await ctx.db.patch(existingCsvNote._id, {
+            content: nextContent,
+            createdAt: timestamp,
+            createdById: importedById,
+          });
+        } else {
+          await ctx.db.insert("memberFollowups", {
+            groupMemberId,
+            createdById: importedById,
+            type: "note",
+            content: `${CSV_IMPORT_NOTE_TAG}\n${noteLine}`,
+            createdAt: timestamp,
+          });
+        }
+      }
+
+      if (Object.keys(prepared.parsedCustomFieldValues).length > 0) {
+        const scoreDoc = await ctx.db
+          .query("memberFollowupScores")
+          .withIndex("by_groupMember", (q: any) => q.eq("groupMemberId", groupMemberId))
+          .first();
+
+        if (scoreDoc) {
+          await ctx.db.patch(scoreDoc._id, {
+            ...prepared.parsedCustomFieldValues,
+            updatedAt: timestamp,
+          });
+        } else {
+          await ctx.scheduler.runAfter(
+            1000,
+            internal.functions.memberFollowups.applyCsvImportCustomFieldPatch,
+            {
+              groupMemberId,
+              customFieldValues: prepared.parsedCustomFieldValues,
+            }
+          );
+        }
+      }
+
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.followupScoreComputation.computeSingleMemberScore,
+        { groupId: group._id, groupMemberId }
+      );
+    }
+
+    return {
+      summary: buildCsvImportSummary(rowReports),
+      rows: rowReports,
+    };
+  },
+});
 
 /**
  * Add a follow-up entry (note, call, text, or followed_up)
