@@ -191,6 +191,8 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
       { key: "lastName", label: "Last Name" },
       { key: "email", label: "Email" },
       { key: "phone", label: "Phone" },
+      { key: "zipCode", label: "ZIP Code" },
+      { key: "dateOfBirth", label: "Birthday" },
     ];
     scoreConfigScores.forEach((sc: { id: string; name: string }, i: number) => {
       cols.push({ key: `score${i + 1}`, label: sc.name });

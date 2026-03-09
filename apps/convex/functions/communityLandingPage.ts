@@ -405,6 +405,8 @@ export const setCustomFieldsAndNotes = internalMutation({
         avatarUrl: user?.profilePhoto,
         email: user?.email,
         phone: user?.phone,
+        zipCode: user?.zipCode,
+        dateOfBirth: user?.dateOfBirth,
         score1: 0,
         score2: 0,
         alerts: [],
@@ -428,6 +430,14 @@ export const setCustomFieldsAndNotes = internalMutation({
     }
 
     if (!scoreDoc) return;
+
+    // Update denormalized zipCode/dateOfBirth on existing score docs
+    const scoreUpdates: Record<string, any> = {};
+    if (!scoreDoc.zipCode && user?.zipCode) scoreUpdates.zipCode = user.zipCode;
+    if (!scoreDoc.dateOfBirth && user?.dateOfBirth) scoreUpdates.dateOfBirth = user.dateOfBirth;
+    if (Object.keys(scoreUpdates).length > 0) {
+      await ctx.db.patch(scoreDoc._id, scoreUpdates);
+    }
 
     // Set custom field values for fields with slots
     const customFieldUpdates: Record<string, any> = {};

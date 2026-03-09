@@ -782,6 +782,8 @@ export default defineSchema({
     // ── Additional denormalized display info ──
     email: v.optional(v.string()),
     phone: v.optional(v.string()),
+    zipCode: v.optional(v.string()),
+    dateOfBirth: v.optional(v.number()), // Unix timestamp ms (date only)
     latestNote: v.optional(v.string()),
     latestNoteAt: v.optional(v.number()),
 

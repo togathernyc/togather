@@ -76,6 +76,8 @@ export const getMembersForScoring = internalQuery({
           avatarUrl: getMediaUrl(user?.profilePhoto),
           email: user?.email,
           phone: user?.phone,
+          zipCode: user?.zipCode,
+          dateOfBirth: user?.dateOfBirth,
         };
       })
     );
@@ -123,6 +125,8 @@ export const internalUpsertScoreBatch = internalMutation({
         avatarUrl: score.avatarUrl,
         email: score.email,
         phone: score.phone,
+        zipCode: score.zipCode,
+        dateOfBirth: score.dateOfBirth,
         searchText: score.searchText,
         latestNote: score.latestNote,
         latestNoteAt: score.latestNoteAt,
@@ -203,6 +207,8 @@ function transformScoredMember(
     avatarUrl: member.avatarUrl,
     email: scoredResult.email ?? undefined,
     phone: scoredResult.phone ?? undefined,
+    zipCode: member.zipCode,
+    dateOfBirth: member.dateOfBirth,
     searchText: [member.firstName, member.lastName, scoredResult.email, scoredResult.phone, scoredResult.phone?.replace(/^\+\d{1,3}/, "")]
       .filter(Boolean).join(" "),
     latestNote: scoredResult.latestNoteContent ?? undefined,
@@ -288,6 +294,8 @@ export const computeGroupScores = internalAction({
           avatarUrl: string | undefined;
           email: string | undefined;
           phone: string | undefined;
+          zipCode: string | undefined;
+          dateOfBirth: number | undefined;
         }>;
         isDone: boolean;
         continueCursor: string;
@@ -446,6 +454,8 @@ export const getSingleMemberForScoring = internalQuery({
       avatarUrl: getMediaUrl(user?.profilePhoto),
       email: user?.email,
       phone: user?.phone,
+      zipCode: user?.zipCode,
+      dateOfBirth: user?.dateOfBirth,
     };
   },
 });

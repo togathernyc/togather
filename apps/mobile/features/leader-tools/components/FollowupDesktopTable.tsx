@@ -44,6 +44,8 @@ type FollowupMember = {
   avatarUrl: string | null;
   email?: string;
   phone?: string;
+  zipCode?: string;
+  dateOfBirth?: number;
   latestNote?: string;
   latestNoteAt?: number;
   score1: number;
@@ -360,6 +362,8 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
       { key: "lastName", label: "Last Name", defaultWidth: 120, sortable: true, serverSortKey: "lastName" },
       { key: "email", label: "Email", defaultWidth: 180, sortable: false },
       { key: "phone", label: "Phone", defaultWidth: 140, sortable: false },
+      { key: "zipCode", label: "ZIP Code", defaultWidth: 100, sortable: false },
+      { key: "dateOfBirth", label: "Birthday", defaultWidth: 110, sortable: false },
     ];
 
     // Score columns — only score1 and score2 have server-side indexes;
@@ -900,6 +904,12 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
 
       case "phone":
         return <Text style={s.cellText}>{item.phone ?? ""}</Text>;
+
+      case "zipCode":
+        return <Text style={s.cellText}>{item.zipCode ?? ""}</Text>;
+
+      case "dateOfBirth":
+        return <Text style={s.cellText}>{item.dateOfBirth ? new Date(item.dateOfBirth).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : ""}</Text>;
 
       case "lastAttendedAt":
         return <Text style={s.cellText}>{formatShortDate(item.lastAttendedAt)}</Text>;
