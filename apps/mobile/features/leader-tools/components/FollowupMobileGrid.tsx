@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -105,12 +105,13 @@ type GridColumn = {
   label: string;
   width: number;
   sortable: boolean;
-  kind: "score" | "status" | "text" | "boolean";
-  editable?: "assignee" | "status";
+  kind: "score" | "status" | "text" | "boolean" | "dropdown" | "number";
+  editable?: "assignee" | "status" | "custom";
+  customField?: CustomFieldDef;
   getValue: (member: FollowupMember) => string | number | boolean;
 };
-const MEMBER_COL_WIDTH = 188;
-const SELECT_COL_WIDTH = 44;
+const MEMBER_COL_WIDTH = 140;
+const SELECT_COL_WIDTH = 40;
 
 const STATUS_OPTIONS: Array<{ value?: string; label: string }> = [
   { value: "green", label: "Green" },
@@ -194,9 +195,12 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const [editSheet, setEditSheet] = useState<{
-    type: "assignee" | "status";
+    type: "assignee" | "status" | "customText" | "customDropdown";
     memberId: string;
+    customField?: CustomFieldDef;
+    initialValue?: string;
   } | null>(null);
+  const [customFieldInput, setCustomFieldInput] = useState("");
   const [isUpdatingField, setIsUpdatingField] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showRemoveModal, setShowRemoveModal] = useState(false);
@@ -205,7 +209,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     Record<string, { assigneeId?: string | null; status?: string | null }>
   >({});
 
-  const debouncedSearch = useDebounce(searchQuery, 300);
+  const debouncedSearch = useDebounce(searchQuery, 450);
 
   const config = useAuthenticatedQuery(
     api.functions.memberFollowups.getFollowupConfig,
@@ -353,6 +357,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
   );
   const setAssigneeMut = useAuthenticatedMutation(api.functions.memberFollowups.setAssignee);
   const setStatusMut = useAuthenticatedMutation(api.functions.memberFollowups.setStatus);
+  const setCustomFieldMut = useAuthenticatedMutation(api.functions.memberFollowups.setCustomField);
   const removeGroupMember = useAuthenticatedMutation(api.functions.groupMembers.remove);
   const removeCommunityMember = useAuthenticatedMutation(api.functions.communities.removeMember);
 
@@ -427,8 +432,9 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
 
   // Keep inline edits responsive while server updates stream in.
   const displayMembers = useMemo(() => {
-    if (Object.keys(localOverrides).length === 0) return members;
-    return members.map((member) => {
+    const source = membersToShow;
+    if (Object.keys(localOverrides).length === 0) return source;
+    return source.map((member) => {
       const override = localOverrides[member.groupMemberId];
       if (!override) return member;
       return {
@@ -440,7 +446,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
         status: override.status !== undefined ? override.status ?? undefined : member.status,
       };
     });
-  }, [members, localOverrides]);
+  }, [membersToShow, localOverrides]);
 
   useEffect(() => {
     if (Object.keys(localOverrides).length === 0) return;
@@ -482,11 +488,13 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     }
   }, [members, localOverrides]);
 
+  const HIDE_ON_MOBILE_COLUMNS = new Set(["firstName", "lastName"]);
+
   const dataColumns: GridColumn[] = useMemo(() => {
     const scoreColumns: GridColumn[] = scoreConfig.map((score, index) => ({
       key: `score${index + 1}`,
       label: score.name,
-      width: 102,
+      width: 72,
       sortable: true,
       kind: "score",
       getValue: (member) => getScoreValue(member, score.id),
@@ -496,7 +504,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       {
         key: "addedAt",
         label: "Date Added",
-        width: 110,
+        width: 88,
         sortable: true,
         kind: "text",
         getValue: (member) => formatDate(member.addedAt, "\u2014"),
@@ -504,7 +512,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       {
         key: "firstName",
         label: "First Name",
-        width: 140,
+        width: 100,
         sortable: true,
         kind: "text",
         getValue: (member) => member.firstName ?? "",
@@ -512,7 +520,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       {
         key: "lastName",
         label: "Last Name",
-        width: 140,
+        width: 100,
         sortable: true,
         kind: "text",
         getValue: (member) => member.lastName ?? "",
@@ -520,7 +528,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       {
         key: "email",
         label: "Email",
-        width: 188,
+        width: 140,
         sortable: false,
         kind: "text",
         getValue: (member) => member.email ?? "",
@@ -528,7 +536,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       {
         key: "phone",
         label: "Phone",
-        width: 132,
+        width: 100,
         sortable: false,
         kind: "text",
         getValue: (member) => member.phone ?? "",
@@ -536,7 +544,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       {
         key: "zipCode",
         label: "ZIP Code",
-        width: 96,
+        width: 72,
         sortable: false,
         kind: "text",
         getValue: (member) => member.zipCode ?? "",
@@ -544,7 +552,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       {
         key: "dateOfBirth",
         label: "Birthday",
-        width: 116,
+        width: 88,
         sortable: false,
         kind: "text",
         getValue: (member) => formatDate(member.dateOfBirth, "\u2014"),
@@ -553,7 +561,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       {
         key: "status",
         label: "Status",
-        width: 104,
+        width: 80,
         sortable: true,
         kind: "status",
         editable: "status",
@@ -562,7 +570,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       {
         key: "assignee",
         label: "Assignee",
-        width: 146,
+        width: 110,
         sortable: true,
         kind: "text",
         editable: "assignee",
@@ -576,7 +584,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       {
         key: "alerts",
         label: "Alerts",
-        width: 98,
+        width: 64,
         sortable: false,
         kind: "text",
         getValue: (member) => String(member.alerts?.length ?? 0),
@@ -584,7 +592,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       {
         key: "notes",
         label: "Notes",
-        width: 220,
+        width: 160,
         sortable: false,
         kind: "text",
         getValue: (member) => member.latestNote ?? "",
@@ -592,7 +600,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       {
         key: "missedMeetings",
         label: "Missed",
-        width: 88,
+        width: 64,
         sortable: false,
         kind: "text",
         getValue: (member) => String(member.missedMeetings ?? 0),
@@ -600,7 +608,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       {
         key: "consecutiveMissed",
         label: "Streak",
-        width: 84,
+        width: 56,
         sortable: false,
         kind: "text",
         getValue: (member) => String(member.consecutiveMissed ?? 0),
@@ -608,7 +616,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       {
         key: "lastAttendedAt",
         label: "Last Attended",
-        width: 118,
+        width: 92,
         sortable: true,
         kind: "text",
         getValue: (member) => formatDate(member.lastAttendedAt, "\u2014"),
@@ -616,7 +624,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       {
         key: "lastFollowupAt",
         label: "Last Follow-up",
-        width: 122,
+        width: 96,
         sortable: true,
         kind: "text",
         getValue: (member) => formatDate(member.lastFollowupAt, "\u2014"),
@@ -624,7 +632,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       {
         key: "lastActiveAt",
         label: "Date Active",
-        width: 118,
+        width: 92,
         sortable: true,
         kind: "text",
         getValue: (member) => formatDate(member.lastActiveAt, "\u2014"),
@@ -634,9 +642,18 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     const customColumns: GridColumn[] = customFields.map((field) => ({
       key: field.slot,
       label: field.name,
-      width: field.type === "boolean" ? 104 : 148,
+      width: field.type === "boolean" ? 72 : field.type === "dropdown" ? 100 : 120,
       sortable: SERVER_SORTABLE_FIELDS.has(field.slot),
-      kind: field.type === "boolean" ? "boolean" : "text",
+      kind:
+        field.type === "boolean"
+          ? "boolean"
+          : field.type === "dropdown"
+            ? "dropdown"
+            : field.type === "number"
+              ? "number"
+              : "text",
+      editable: "custom",
+      customField: field,
       getValue: (member) => {
         const raw = (member as Record<string, unknown>)[field.slot];
         if (field.type === "boolean") return Boolean(raw);
@@ -658,14 +675,16 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       ordered = allAvailable;
     }
 
-    return ordered.filter((column) => !hidden.has(column.key));
+    return ordered
+      .filter((column) => !hidden.has(column.key))
+      .filter((column) => !HIDE_ON_MOBILE_COLUMNS.has(column.key));
   }, [scoreConfig, leaderMap, customFields, columnConfig]);
 
   const dataColumnsWidth = useMemo(
     () => dataColumns.reduce((sum, column) => sum + column.width, 0),
     [dataColumns]
   );
-  const tableWidth = MEMBER_COL_WIDTH + SELECT_COL_WIDTH + dataColumnsWidth;
+  const pinnedWidth = SELECT_COL_WIDTH + MEMBER_COL_WIDTH;
   const flatListExtraData = useMemo(
     () =>
       [
@@ -841,7 +860,52 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
   const closeEditSheet = () => {
     if (isUpdatingField) return;
     setEditSheet(null);
+    setCustomFieldInput("");
   };
+
+  const handleCustomFieldSave = useCallback(
+    async (memberId: string, slot: string, value: string | number | boolean | undefined) => {
+      setIsUpdatingField(true);
+      try {
+        await setCustomFieldMut({
+          groupId: groupId as Id<"groups">,
+          groupMemberId: memberId as Id<"groupMembers">,
+          slot,
+          value: value ?? undefined,
+        });
+      } catch (err) {
+        console.error("[FollowupMobileGrid] setCustomField failed:", err);
+        Alert.alert("Could not update field", "Please try again.");
+      } finally {
+        setIsUpdatingField(false);
+      }
+    },
+    [setCustomFieldMut, groupId, editSheet?.type]
+  );
+
+  const handleCustomTextSubmit = useCallback(() => {
+    if (!editSheet || !editSheet.customField) return;
+    const cf = editSheet.customField;
+    let value: string | number | undefined;
+    if (cf.type === "number") {
+      const num = customFieldInput.trim() ? Number(customFieldInput) : undefined;
+      value = num !== undefined && !Number.isNaN(num) ? num : undefined;
+    } else {
+      value = customFieldInput.trim() || undefined;
+    }
+    handleCustomFieldSave(editSheet.memberId, cf.slot, value);
+    setEditSheet(null);
+    setCustomFieldInput("");
+  }, [editSheet, customFieldInput, handleCustomFieldSave]);
+
+  const handleCustomDropdownSelect = useCallback(
+    (value: string | undefined) => {
+      if (!editSheet || !editSheet.customField) return;
+      handleCustomFieldSave(editSheet.memberId, editSheet.customField.slot, value ?? undefined);
+      setEditSheet(null);
+    },
+    [editSheet, handleCustomFieldSave]
+  );
 
   const handleAssignChange = async (assigneeId?: string) => {
     if (!editSheet || !activeEditMember) return;
@@ -934,6 +998,18 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
   const isSearchLoading = hasTextSearch && searchResults === undefined;
   const isInitialLoading = (!hasTextSearch && isLoading && members.length === 0) || isSearchLoading;
 
+  const lastMembersRef = useRef<FollowupMember[]>([]);
+  const membersToShow = useMemo(() => {
+    if (members.length > 0) {
+      lastMembersRef.current = members;
+      return members;
+    }
+    if (isSearchLoading || (!hasTextSearch && isLoading)) {
+      return lastMembersRef.current.length > 0 ? lastMembersRef.current : [];
+    }
+    return [];
+  }, [members, isSearchLoading, isLoading, hasTextSearch]);
+
   const renderColumnHeader = (column: GridColumn) => {
     const isActiveSort = sortField === column.key;
     return (
@@ -990,6 +1066,26 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       );
     }
 
+    if (column.kind === "boolean" && column.editable === "custom" && column.customField) {
+      const cf = column.customField;
+      return (
+        <TouchableOpacity
+          onPress={() => {
+            const raw = (member as Record<string, unknown>)[cf.slot];
+            handleCustomFieldSave(member.groupMemberId, cf.slot, !Boolean(raw));
+          }}
+          disabled={isUpdatingField}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Ionicons
+            name={value ? "checkbox" : "square-outline"}
+            size={18}
+            color={value ? primaryColor : "#9CA3AF"}
+          />
+        </TouchableOpacity>
+      );
+    }
+
     if (column.kind === "boolean") {
       return (
         <Ionicons
@@ -1000,6 +1096,36 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       );
     }
 
+    if (
+      (column.kind === "text" || column.kind === "dropdown" || column.kind === "number") &&
+      column.editable === "custom" &&
+      column.customField
+    ) {
+      const cf = column.customField;
+      const displayVal = String(value);
+      const isDropdown = cf.type === "dropdown";
+      return (
+        <TouchableOpacity
+          style={styles.editableCell}
+          activeOpacity={0.7}
+          onPress={() => {
+            setEditSheet({
+              type: isDropdown ? "customDropdown" : "customText",
+              memberId: member.groupMemberId,
+              customField: cf,
+              initialValue: displayVal,
+            });
+            setCustomFieldInput(displayVal);
+          }}
+        >
+          <Text style={[styles.dataCellText, !displayVal && styles.dataCellPlaceholder]} numberOfLines={1}>
+            {displayVal || (isDropdown ? "Select…" : "Tap to add")}
+          </Text>
+          <Ionicons name="chevron-down" size={11} color="#6B7280" style={styles.editIcon} />
+        </TouchableOpacity>
+      );
+    }
+
     return (
       <Text style={styles.dataCellText} numberOfLines={1}>
         {String(value)}
@@ -1007,7 +1133,29 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     );
   };
 
-  const renderMemberRow = ({ item }: { item: FollowupMember }) => {
+  const syncingScrollRef = useRef(false);
+  const leftListRef = useRef<FlatList>(null);
+  const rightListRef = useRef<FlatList>(null);
+
+  const handleScrollSync = useCallback(
+    (source: "left" | "right") =>
+      ({ nativeEvent }: { nativeEvent: { contentOffset: { y: number } } }) => {
+        if (syncingScrollRef.current) return;
+        const y = nativeEvent.contentOffset.y;
+        syncingScrollRef.current = true;
+        if (source === "left") {
+          rightListRef.current?.scrollToOffset({ offset: y, animated: false });
+        } else {
+          leftListRef.current?.scrollToOffset({ offset: y, animated: false });
+        }
+        requestAnimationFrame(() => {
+          syncingScrollRef.current = false;
+        });
+      },
+    []
+  );
+
+  const renderMemberRowLeft = ({ item }: { item: FollowupMember }) => {
     const subtitleLine = getMemberSubtitleLines(item)[0] ?? "No recent follow-up details";
     const hasAlerts = (item.alerts?.length ?? 0) > 0;
     const isSnoozed = item.isSnoozed && !!item.snoozedUntil && item.snoozedUntil > Date.now();
@@ -1056,7 +1204,24 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
             </Text>
           </View>
         </TouchableOpacity>
+      </View>
+    );
+  };
 
+  const renderMemberRowRight = ({ item }: { item: FollowupMember }) => {
+    const hasAlerts = (item.alerts?.length ?? 0) > 0;
+    const isSnoozed = item.isSnoozed && !!item.snoozedUntil && item.snoozedUntil > Date.now();
+    const isSelected = selectedIds.has(item.groupMemberId);
+
+    return (
+      <View
+        style={[
+          styles.row,
+          hasAlerts && styles.rowAlert,
+          isSnoozed && styles.rowSnoozed,
+          isSelected && styles.rowSelected,
+        ]}
+      >
         <View style={styles.rowDataCells}>
           {dataColumns.map((column) => {
             const isEditable = column.editable === "assignee" || column.editable === "status";
@@ -1170,9 +1335,12 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
         )}
 
         <Text style={styles.resultMeta}>
-          Showing {members.length}
+          Showing {displayMembers.length}
           {typeof totalCount === "number" ? ` of ${totalCount}` : ""}
           {hasStructuredFilters || hasTextSearch ? " (filtered)" : ""}
+          {(isSearchLoading || (!hasTextSearch && isLoading)) && displayMembers.length > 0
+            ? " …"
+            : ""}
         </Text>
       </View>
 
@@ -1195,8 +1363,8 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
           </View>
         )}
 
-        <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={styles.gridScrollContent}>
-          <View style={[styles.tableContainer, { width: tableWidth }]}>
+        <View style={styles.pinnedGridWrapper}>
+          <View style={[styles.pinnedLeft, { width: pinnedWidth }]}>
             <View style={styles.headerRow}>
               <TouchableOpacity
                 style={[styles.selectHeaderCell, { width: SELECT_COL_WIDTH }]}
@@ -1217,15 +1385,16 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
               <View style={[styles.memberHeaderCell, { width: MEMBER_COL_WIDTH }]}>
                 <Text style={styles.memberHeaderText}>Member</Text>
               </View>
-              <View style={styles.headerDataCells}>{dataColumns.map(renderColumnHeader)}</View>
             </View>
-
             <FlatList
+              ref={leftListRef}
               data={displayMembers}
               style={styles.tableList}
               extraData={flatListExtraData}
               keyExtractor={(item) => item._id || item.groupMemberId}
-              renderItem={renderMemberRow}
+              renderItem={renderMemberRowLeft}
+              onScroll={handleScrollSync("left")}
+              scrollEventThrottle={16}
               onEndReached={() => {
                 if (!hasTextSearch && paginationStatus === "CanLoadMore") {
                   loadMore(50);
@@ -1253,7 +1422,38 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
               contentContainerStyle={styles.listContent}
             />
           </View>
-        </ScrollView>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator
+            style={styles.scrollableRight}
+            contentContainerStyle={styles.gridScrollContent}
+          >
+            <View style={[styles.tableContainer, { width: dataColumnsWidth }]}>
+              <View style={styles.headerRow}>
+                <View style={styles.headerDataCells}>{dataColumns.map(renderColumnHeader)}</View>
+              </View>
+              <FlatList
+                ref={rightListRef}
+                data={displayMembers}
+                style={styles.tableList}
+                extraData={flatListExtraData}
+                keyExtractor={(item) => item._id || item.groupMemberId}
+                renderItem={renderMemberRowRight}
+                onScroll={handleScrollSync("right")}
+                scrollEventThrottle={16}
+                ListFooterComponent={
+                  !hasTextSearch && paginationStatus === "LoadingMore" ? (
+                    <View style={styles.footerLoading}>
+                      <ActivityIndicator size="small" color={primaryColor} />
+                    </View>
+                  ) : null
+                }
+                ListEmptyComponent={null}
+                contentContainerStyle={styles.listContent}
+              />
+            </View>
+          </ScrollView>
+        </View>
       </View>
 
       <Modal
@@ -1265,7 +1465,15 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
         <Pressable style={styles.modalBackdrop} onPress={closeEditSheet}>
           <Pressable style={styles.editSheetCard} onPress={() => undefined}>
             <Text style={styles.editSheetTitle}>
-              {editSheet?.type === "assignee" ? "Update assignee" : "Update status"}
+              {editSheet?.type === "assignee"
+                ? "Update assignee"
+                : editSheet?.type === "status"
+                  ? "Update status"
+                  : editSheet?.type === "customText"
+                    ? `Edit ${editSheet.customField?.name ?? "field"}`
+                    : editSheet?.type === "customDropdown"
+                      ? `Select ${editSheet.customField?.name ?? "option"}`
+                      : "Edit"}
             </Text>
             <Text style={styles.editSheetSubtitle}>
               {activeEditMember
@@ -1273,7 +1481,55 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
                 : "Member"}
             </Text>
 
-            {editSheet?.type === "assignee" ? (
+            {editSheet?.type === "customText" ? (
+              <View style={styles.customFieldEditRow}>
+                <TextInput
+                  style={styles.customFieldInput}
+                  value={customFieldInput}
+                  onChangeText={setCustomFieldInput}
+                  placeholder={`Enter ${editSheet.customField?.name ?? "value"}...`}
+                  placeholderTextColor="#9CA3AF"
+                  autoFocus
+                  onSubmitEditing={handleCustomTextSubmit}
+                  returnKeyType="done"
+                  keyboardType={editSheet.customField?.type === "number" ? "numeric" : "default"}
+                />
+                <TouchableOpacity
+                  style={[styles.customFieldSaveButton, { backgroundColor: primaryColor }]}
+                  onPress={handleCustomTextSubmit}
+                  disabled={isUpdatingField}
+                >
+                  <Text style={styles.customFieldSaveButtonText}>Save</Text>
+                </TouchableOpacity>
+              </View>
+            ) : editSheet?.type === "customDropdown" ? (
+              <ScrollView style={styles.optionList}>
+                {(editSheet.customField?.options ?? []).map((opt) => (
+                  <TouchableOpacity
+                    key={opt}
+                    style={[
+                      styles.optionRow,
+                      (activeEditMember as Record<string, unknown>)?.[editSheet!.customField!.slot] === opt &&
+                        styles.optionRowSelected,
+                    ]}
+                    onPress={() => handleCustomDropdownSelect(opt)}
+                    disabled={isUpdatingField}
+                  >
+                    <Text style={styles.optionText}>{opt}</Text>
+                    {(activeEditMember as Record<string, unknown>)?.[editSheet!.customField!.slot] === opt && (
+                      <Ionicons name="checkmark" size={16} color={primaryColor} />
+                    )}
+                  </TouchableOpacity>
+                ))}
+                <TouchableOpacity
+                  style={styles.optionRow}
+                  onPress={() => handleCustomDropdownSelect(undefined)}
+                  disabled={isUpdatingField}
+                >
+                  <Text style={styles.optionText}>Clear</Text>
+                </TouchableOpacity>
+              </ScrollView>
+            ) : editSheet?.type === "assignee" ? (
               <ScrollView style={styles.optionList}>
                 {leaderOptions.map((leader) => {
                   const isSelected = activeEditMember?.assigneeId === leader.id;
@@ -1493,6 +1749,22 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingTop: 8,
   },
+  pinnedGridWrapper: {
+    flex: 1,
+    flexDirection: "row",
+  },
+  pinnedLeft: {
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    borderRightWidth: 0,
+    borderTopLeftRadius: 12,
+    borderBottomLeftRadius: 12,
+    overflow: "hidden",
+    backgroundColor: "#FFF",
+  },
+  scrollableRight: {
+    flex: 1,
+  },
   gridScrollContent: {
     paddingHorizontal: 10,
     paddingBottom: 12,
@@ -1500,7 +1772,8 @@ const styles = StyleSheet.create({
   tableContainer: {
     borderWidth: 1,
     borderColor: "#E5E7EB",
-    borderRadius: 12,
+    borderTopRightRadius: 12,
+    borderBottomRightRadius: 12,
     overflow: "hidden",
     backgroundColor: "#FFF",
   },
@@ -1687,6 +1960,36 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#374151",
     fontWeight: "500",
+  },
+  dataCellPlaceholder: {
+    color: "#9CA3AF",
+  },
+  customFieldEditRow: {
+    flexDirection: "row",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    gap: 10,
+  },
+  customFieldInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: "#111827",
+  },
+  customFieldSaveButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    justifyContent: "center",
+  },
+  customFieldSaveButtonText: {
+    color: "#FFF",
+    fontSize: 14,
+    fontWeight: "600",
   },
   scorePill: {
     borderWidth: 1,
