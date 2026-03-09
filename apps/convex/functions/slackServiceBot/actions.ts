@@ -245,6 +245,13 @@ export const createWeeklyThreads = internalAction({
         continue;
       }
 
+      // Skip thread creation in dev mode to prevent dev deployments from
+      // posting to the real Slack channel alongside the production deployment
+      if (config.devMode && !args.force) {
+        console.log("[SlackServiceBot] Skipping thread creation — devMode is enabled");
+        continue;
+      }
+
       // Only run on the configured day at the configured hour (unless forced)
       if (
         !args.force &&
@@ -769,6 +776,13 @@ export const checkAndNag = internalAction({
 
     for (const config of allConfigs) {
       if (!config.enabled) continue;
+
+      // Skip nag checks in dev mode to prevent dev deployments from
+      // posting to the real Slack channel alongside the production deployment
+      if (config.devMode) {
+        console.log("[SlackServiceBot] Skipping nag check — devMode is enabled");
+        continue;
+      }
 
       // Check if a nag is due right now based on this config's schedule
       const nagDue = config.nagSchedule.find(

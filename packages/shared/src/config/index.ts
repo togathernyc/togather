@@ -19,6 +19,7 @@ export interface DomainConfig {
   eventShareUrl(shortId: string): string;
   groupShareUrl(shortId: string): string;
   communityUrl(subdomain: string): string;
+  communityLandingUrl(slug: string): string;
   attendanceConfirmationUrl(token: string): string;
   eventLinkRegex(): RegExp;
   eventLinkRegexSingle(): RegExp;

@@ -181,7 +181,7 @@ export const NAG_SCHEDULE: NagSchedule[] = [
 /** Day and hour (ET) to create weekly threads */
 export const THREAD_CREATION = {
   dayOfWeek: 2, // Tuesday
-  hourET: 9, // 9 AM ET
+  hourET: 10, // 10 AM ET
 };
 
 // ============================================================================

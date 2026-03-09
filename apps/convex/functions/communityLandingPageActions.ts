@@ -26,6 +26,8 @@ export const submitForm = action({
     lastName: v.string(),
     phone: v.string(),
     email: v.optional(v.string()),
+    zipCode: v.optional(v.string()),
+    dateOfBirth: v.optional(v.string()),
     customFields: v.optional(
       v.array(
         v.object({
@@ -82,6 +84,22 @@ export const submitForm = action({
 
     const { community, landingPage } = result;
 
+    // Enforce required fields from landing page config
+    if (landingPage.requireZipCode && !args.zipCode?.trim()) {
+      throw new Error("ZIP code is required");
+    }
+    if (landingPage.requireBirthday && !args.dateOfBirth?.trim()) {
+      throw new Error("Birthday is required");
+    }
+
+    // Server-side format validation for optional fields (when provided)
+    if (args.zipCode?.trim()) {
+      const zip = args.zipCode.trim();
+      if (!/^\d{5}(-\d{4})?$/.test(zip)) {
+        throw new Error("Please enter a valid ZIP code");
+      }
+    }
+
     // 2. Find or create user by phone
     const userId: string = await ctx.runMutation(
       internal.functions.communityLandingPage.findOrCreateUser,
@@ -90,6 +108,8 @@ export const submitForm = action({
         firstName: trimmedFirstName,
         lastName: trimmedLastName,
         email: args.email,
+        zipCode: args.zipCode,
+        dateOfBirth: args.dateOfBirth,
       }
     );
 
@@ -110,6 +130,8 @@ export const submitForm = action({
         communityId: community._id as Id<"communities">,
         userId: userId as Id<"users">,
         customFields: args.customFields ?? [],
+        zipCode: args.zipCode,
+        dateOfBirth: args.dateOfBirth,
         generateNoteSummary: landingPage.generateNoteSummary ?? true,
         automationRules: landingPage.automationRules,
       }
