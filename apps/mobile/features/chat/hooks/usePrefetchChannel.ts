@@ -22,6 +22,7 @@ import {
   type PrefetchedThreadReply,
   type PrefetchedReaction,
 } from '../context/ChatPrefetchContext';
+import type { RsvpOption } from '../types';
 import { fetchLinkPreviewBatch, type LinkPreviewData } from './useLinkPreview';
 import { extractEventShortIds, extractToolShortIds, extractFirstExternalUrl } from '../utils/eventLinkUtils';
 
@@ -192,6 +193,7 @@ async function fetchEventDataBatch(
           locationOverride: data.locationOverride as string | undefined,
           meetingType: data.meetingType as number | undefined,
           rsvpEnabled: data.rsvpEnabled as boolean | undefined,
+          rsvpOptions: data.rsvpOptions as RsvpOption[] | undefined,
           groupName: data.groupName as string | undefined,
           communityName: data.communityName as string | undefined,
           hasAccess: data.hasAccess as boolean | undefined,

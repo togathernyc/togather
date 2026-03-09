@@ -48,8 +48,9 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
   const [loadingOptionId, setLoadingOptionId] = useState<number | null>(null);
   const { token } = useAuth();
 
-  // Skip network fetch if we have prefetched data
-  const shouldSkipQuery = !!prefetchedData;
+  // Skip network fetch only when prefetched data includes RSVP options.
+  // This protects against partial prefetched payloads that would hide RSVP rows.
+  const shouldSkipQuery = !!prefetchedData && Object.prototype.hasOwnProperty.call(prefetchedData, 'rsvpOptions');
 
   // Fetch event by short ID using Convex (skip if prefetched)
   const fetchedEventData = useQuery(
@@ -57,9 +58,9 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
     shouldSkipQuery ? "skip" : (token ? { shortId, token } : { shortId })
   );
 
-  // Use prefetched data or fetched data
-  const eventData = prefetchedData ?? fetchedEventData;
-  const isLoading = !prefetchedData && fetchedEventData === undefined;
+  // Prefer prefetched data only when it's complete enough for card rendering.
+  const eventData = shouldSkipQuery ? prefetchedData : fetchedEventData;
+  const isLoading = !shouldSkipQuery && fetchedEventData === undefined;
   const error = eventData === null;
 
   // Normalize the event data to a common structure
@@ -178,8 +179,8 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
       return { users: [], count: 0, percentage: 0 };
     }
 
-    const totalResponses = rsvpData.total || rsvpData.rsvps.reduce((sum, opt) => sum + opt.users.length, 0);
-    const count = optionData.users.length;
+    const totalResponses = rsvpData.total ?? rsvpData.rsvps.reduce((sum, opt) => sum + (opt.count ?? opt.users.length), 0);
+    const count = optionData.count ?? optionData.users.length;
     const percentage = totalResponses > 0 ? (count / totalResponses) * 100 : 0;
 
     return { users: optionData.users as RsvpUser[], count, percentage };
