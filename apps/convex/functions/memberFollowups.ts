@@ -642,7 +642,9 @@ export const list = query({
     scoreField: v.optional(v.string()),   // e.g. "score1", "score2"
     scoreMin: v.optional(v.number()),
     scoreMax: v.optional(v.number()),
-    paginationOpts: paginationOptsValidator,
+    // Keep pagination optional for legacy clients that still call this
+    // query via a non-paginated code path.
+    paginationOpts: v.optional(paginationOptsValidator),
   },
   handler: async (ctx, args) => {
     await requireAuth(ctx, args.token);
@@ -691,7 +693,22 @@ export const list = query({
       });
     }
 
-    return q.paginate(args.paginationOpts);
+    const paginatedResult = await q.paginate(
+      args.paginationOpts ?? { cursor: null, numItems: 50 }
+    );
+
+    if (!args.paginationOpts) {
+      const group = await ctx.db.get(args.groupId);
+      const scoreConfig: ScoreConfig = group?.followupScoreConfig ?? DEFAULT_SCORE_CONFIG;
+      return {
+        members: paginatedResult.page,
+        scoreConfig: scoreConfig.scores.map((s) => ({ id: s.id, name: s.name })),
+        toolDisplayName: (group as any)?.toolDisplayNames?.followup || "Follow-up",
+        memberSubtitle: (group?.followupScoreConfig as any)?.memberSubtitle || "",
+      };
+    }
+
+    return paginatedResult;
   },
 });
 
