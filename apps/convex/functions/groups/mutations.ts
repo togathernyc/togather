@@ -886,7 +886,7 @@ export const updateFollowupScoreConfig = mutation({
     await ctx.scheduler.runAfter(
       0,
       internal.functions.followupScoreComputation.computeGroupScores,
-      { groupId: args.groupId }
+      { groupId: args.groupId, trigger: "score_config_update" }
     );
 
     return { success: true };
@@ -905,20 +905,43 @@ export const refreshFollowupScores = mutation({
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
 
-    await requireGroupLeaderOrCommunityAdmin(
+    const { group } = await requireGroupLeaderOrCommunityAdmin(
       ctx,
       args.groupId,
       userId,
       "refresh follow-up scores"
     );
 
+    if (group.followupRefreshState?.status === "running") {
+      return {
+        success: true,
+        alreadyRunning: true,
+        runId: group.followupRefreshState.runId,
+        startedAt: group.followupRefreshState.startedAt,
+      };
+    }
+
+    const startedAt = now();
+    const runId = `manual_${startedAt}_${Math.random().toString(36).slice(2, 8)}`;
+
+    await ctx.db.patch(args.groupId, {
+      followupRefreshState: {
+        status: "running",
+        runId,
+        startedAt,
+        requestedById: userId,
+        trigger: "manual",
+      },
+      updatedAt: startedAt,
+    });
+
     await ctx.scheduler.runAfter(
       0,
       internal.functions.followupScoreComputation.computeGroupScores,
-      { groupId: args.groupId }
+      { groupId: args.groupId, runId, requestedById: userId, trigger: "manual" }
     );
 
-    return { success: true };
+    return { success: true, alreadyRunning: false, runId, startedAt };
   },
 });
 

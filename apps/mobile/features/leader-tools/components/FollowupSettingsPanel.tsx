@@ -18,6 +18,11 @@ import {
   normalizeSubtitleVariableIds,
 } from "./followupShared";
 import {
+  formatFollowupRefreshTimestamp,
+  getFollowupRefreshButtonLabel,
+  type FollowupRefreshStateSnapshot,
+} from "./followupRefreshState";
+import {
   useAuthenticatedQuery,
   useAuthenticatedMutation,
   useQuery,
@@ -181,10 +186,14 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
     setIsRefreshingScores(true);
     setRefreshMessage(null);
     try {
-      await refreshFollowupScoresMut({
+      const result = await refreshFollowupScoresMut({
         groupId: groupId as Id<"groups">,
       });
-      setRefreshMessage("Refresh started. Scores and denormalized fields are updating now.");
+      if ((result as any)?.alreadyRunning) {
+        setRefreshMessage("Refresh already in progress.");
+      } else {
+        setRefreshMessage("Refresh started. Scores and denormalized fields are updating now.");
+      }
     } catch (err) {
       console.error("[refreshFollowupScores] failed:", err);
       setRefreshMessage("Could not start refresh. Please try again.");
@@ -197,6 +206,10 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
 
   const scoreConfigScores = config?.scoreConfigScores ?? [];
   const columnConfig = config?.followupColumnConfig ?? null;
+  const refreshState = (config as any)?.followupRefreshState as FollowupRefreshStateSnapshot;
+  const refreshInProgress = refreshState?.status === "running";
+  const refreshStartedLabel = formatFollowupRefreshTimestamp(refreshState?.startedAt);
+  const refreshCompletedLabel = formatFollowupRefreshTimestamp(refreshState?.completedAt);
   const initialCustomFields: CustomFieldDef[] = (columnConfig?.customFields ?? []) as CustomFieldDef[];
 
   const [columnOrder, setColumnOrder] = useState<string[]>([]);
@@ -721,11 +734,20 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
           <View style={styles.sectionBody}>
             <TouchableOpacity
               onPress={handleRefreshFollowupScores}
-              style={[styles.saveButton, { backgroundColor: themeColor }, isRefreshingScores && styles.btnDisabled]}
-              disabled={isRefreshingScores}
+              style={[
+                styles.saveButton,
+                { backgroundColor: themeColor },
+                (isRefreshingScores || refreshInProgress) && styles.btnDisabled,
+              ]}
+              disabled={isRefreshingScores || refreshInProgress}
             >
-              {isRefreshingScores ? (
-                <ActivityIndicator size="small" color="#fff" />
+              {isRefreshingScores || refreshInProgress ? (
+                <View style={styles.refreshButtonBusy}>
+                  <ActivityIndicator size="small" color="#fff" />
+                  <Text style={styles.saveButtonText}>
+                    {getFollowupRefreshButtonLabel(isRefreshingScores, refreshInProgress)}
+                  </Text>
+                </View>
               ) : (
                 <Text style={styles.saveButtonText}>Refresh Follow-up Table Now</Text>
               )}
@@ -734,6 +756,21 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
               Rebuilds this group's denormalized follow-up rows immediately.
             </Text>
             {refreshMessage && <Text style={styles.hintText}>{refreshMessage}</Text>}
+            {refreshInProgress && (
+              <Text style={styles.hintText}>
+                {refreshStartedLabel
+                  ? `A refresh is currently underway (started ${refreshStartedLabel}).`
+                  : "A refresh is currently underway."}
+              </Text>
+            )}
+            {refreshState?.status === "idle" && refreshCompletedLabel && (
+              <Text style={styles.hintText}>Last refresh completed {refreshCompletedLabel}.</Text>
+            )}
+            {refreshState?.status === "failed" && (
+              <Text style={styles.hintError}>
+                Refresh failed{refreshState.error ? `: ${refreshState.error}` : "."}
+              </Text>
+            )}
           </View>
         )}
 
@@ -1588,6 +1625,16 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 13,
     fontWeight: "600" as const,
+  },
+  refreshButtonBusy: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  hintError: {
+    fontSize: 11,
+    color: "#B91C1C",
+    lineHeight: 15,
   },
   savedMessage: {
     fontSize: 12,

@@ -750,6 +750,7 @@ export const getFollowupConfig = query({
       toolDisplayName: (group as any)?.toolDisplayNames?.followup || "Follow-up",
       memberSubtitle: (group?.followupScoreConfig as any)?.memberSubtitle || "",
       followupColumnConfig: group.followupColumnConfig ?? null,
+      followupRefreshState: group.followupRefreshState ?? null,
     };
   },
 });
