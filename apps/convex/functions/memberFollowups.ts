@@ -1197,6 +1197,17 @@ type PreparedCsvImportRow = {
   rowReport: CsvImportRowReport;
 };
 
+const FATAL_CSV_IMPORT_REASONS = new Set([
+  "missing_phone",
+  "invalid_phone",
+  "missing_first_name",
+  "duplicate_phone_in_csv",
+]);
+
+function hasFatalCsvImportReason(reasons: string[]): boolean {
+  return reasons.some((reason) => FATAL_CSV_IMPORT_REASONS.has(reason));
+}
+
 function sanitizeCsvValue(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   const trimmed = value.trim();
@@ -1458,12 +1469,12 @@ async function analyzeCsvImportRows(
 
   const phoneCounts = new Map<string, number>();
   for (const row of base) {
-    if (!row.normalizedPhone || row.reasons.length > 0) continue;
+    if (!row.normalizedPhone || hasFatalCsvImportReason(row.reasons)) continue;
     phoneCounts.set(row.normalizedPhone, (phoneCounts.get(row.normalizedPhone) ?? 0) + 1);
   }
 
   for (const row of base) {
-    if (!row.normalizedPhone || row.reasons.length > 0) continue;
+    if (!row.normalizedPhone || hasFatalCsvImportReason(row.reasons)) continue;
     if ((phoneCounts.get(row.normalizedPhone) ?? 0) > 1) {
       row.reasons.push("duplicate_phone_in_csv");
     }
@@ -1472,7 +1483,7 @@ async function analyzeCsvImportRows(
   const uniquePhones = Array.from(
     new Set(
       base
-        .filter((r) => r.reasons.length === 0 && r.normalizedPhone)
+        .filter((r) => !hasFatalCsvImportReason(r.reasons) && r.normalizedPhone)
         .map((r) => r.normalizedPhone!) // safe by filter
     )
   );
@@ -1491,12 +1502,7 @@ async function analyzeCsvImportRows(
 
   for (const item of base) {
     const uniqueReasons = Array.from(new Set(item.reasons));
-    const status: "ready" | "skipped" = uniqueReasons.some((r) =>
-      r === "missing_phone" ||
-      r === "invalid_phone" ||
-      r === "missing_first_name" ||
-      r === "duplicate_phone_in_csv"
-    )
+    const status: "ready" | "skipped" = hasFatalCsvImportReason(uniqueReasons)
       ? "skipped"
       : "ready";
 

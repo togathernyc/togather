@@ -1,5 +1,5 @@
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import schema from "../schema";
 import { modules } from "../test.setup";
 import { api } from "../_generated/api";
@@ -7,6 +7,14 @@ import type { Id } from "../_generated/dataModel";
 import { generateTokens } from "../lib/auth";
 
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
+
+beforeEach(() => {
+  vi.useFakeTimers();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 type SeededContext = {
   leaderId: Id<"users">;
@@ -209,6 +217,7 @@ describe("follow-up CSV import", () => {
         },
       ],
     });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
 
     const updatedScore = await t.run(async (ctx) =>
       ctx.db
@@ -221,5 +230,61 @@ describe("follow-up CSV import", () => {
     expect(updatedScore?.customNum1).toBe(7);
     expect(updatedScore?.customBool1).toBe(true);
     expect(updatedScore?.customText2).toBe("Email");
+  });
+
+  test("non-fatal warnings still lookup existing user by phone", async () => {
+    const t = convexTest(schema, modules);
+    const { leaderId, communityId, groupId } = await seedGroupWithLeader(t);
+    const token = (await generateTokens(leaderId, communityId)).accessToken;
+
+    await t.run(async (ctx) => {
+      const timestamp = Date.now();
+      const existingUserId = await ctx.db.insert("users", {
+        firstName: "Jamie",
+        lastName: "Original",
+        phone: "+12025550222",
+        isActive: true,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+
+      await ctx.db.insert("userCommunities", {
+        userId: existingUserId,
+        communityId,
+        roles: 1,
+        status: 1,
+        createdAt: timestamp,
+      });
+
+      await ctx.db.insert("groupMembers", {
+        groupId,
+        userId: existingUserId,
+        role: "member",
+        joinedAt: timestamp,
+        notificationsEnabled: true,
+      });
+    });
+
+    const preview = await t.mutation(api.functions.memberFollowups.previewCsvImport, {
+      token,
+      groupId,
+      rows: [
+        {
+          rowNumber: 2,
+          firstName: "Jamie",
+          lastName: "Updated",
+          phone: "(202) 555-0222",
+          customFieldValues: {
+            customNum1: "not-a-number",
+          },
+        },
+      ],
+    });
+
+    expect(preview.summary.usersToCreate).toBe(0);
+    expect(preview.summary.usersToUpdate).toBe(1);
+    expect(preview.rows[0].status).toBe("ready");
+    expect(preview.rows[0].actions.user).toBe("update");
+    expect(preview.rows[0].reasons).toContain("invalid_custom_number_ignored");
   });
 });
