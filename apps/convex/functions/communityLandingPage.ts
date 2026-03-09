@@ -145,7 +145,7 @@ export const findOrCreateUser = internalMutation({
   handler: async (ctx, args) => {
     const normalizedPhone = normalizePhone(args.phone);
     const timestamp = now();
-    const dobTimestamp = parseDateOptional(args.dateOfBirth, "dateOfBirth");
+    const dobTimestamp = parseDateOptional(args.dateOfBirth || undefined, "dateOfBirth");
 
     // Check if user exists
     const existing = await ctx.db
