@@ -172,6 +172,10 @@ describe("search suggestions", () => {
   it("returns contextual helper text", () => {
     expect(getFollowupQueryHelperText("date added:", scoreConfig)).toContain("Date filters");
   });
+
+  it("returns null helper text for empty query", () => {
+    expect(getFollowupQueryHelperText("", scoreConfig)).toBeNull();
+  });
 });
 
 describe("chunkIntoPages", () => {

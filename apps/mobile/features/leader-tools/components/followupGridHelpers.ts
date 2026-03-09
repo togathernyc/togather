@@ -300,7 +300,9 @@ export function getFollowupQueryHelperText(
   scoreConfig: ScoreConfigEntry[]
 ): string | null {
   const lower = query.toLowerCase();
-  const fragment = lower.trim().split(/\s+/).pop() ?? "";
+  const trimmed = lower.trim();
+  if (!trimmed) return null;
+  const fragment = trimmed.split(/\s+/).pop() ?? "";
 
   if (
     lower.includes("assignee:") ||
@@ -321,7 +323,7 @@ export function getFollowupQueryHelperText(
   if (
     scoreConfig.some((score) => {
       const key = score.name.toLowerCase();
-      return lower.includes(`${key}:`) || key.startsWith(fragment);
+      return lower.includes(`${key}:`) || (fragment.length > 0 && key.startsWith(fragment));
     })
   ) {
     return "Score filters support > and < operators, for example attendance:>50.";
