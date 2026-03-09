@@ -14,8 +14,10 @@ const state = {
   serviceTypes: {},
   setRunSheet: noop,
   getRunSheet: noopNull,
+  getRunSheetStale: noopNull,
   setServiceTypes: noop,
   getServiceTypes: noopNull,
+  getServiceTypesStale: noopNull,
   clearAll: noop,
 };
 

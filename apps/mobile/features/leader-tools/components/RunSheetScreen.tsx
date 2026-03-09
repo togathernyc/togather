@@ -440,9 +440,11 @@ export function RunSheetScreen({
   const [isStale, setIsStale] = useState(false);
   const {
     setRunSheet: cacheRunSheet,
-    getRunSheet: getCachedRunSheet,
+    getRunSheet: getFreshCachedRunSheet,
+    getRunSheetStale: getStaleCachedRunSheet,
     setServiceTypes: cacheServiceTypes,
-    getServiceTypes: getCachedServiceTypes,
+    getServiceTypes: getFreshCachedServiceTypes,
+    getServiceTypesStale: getStaleCachedServiceTypes,
   } = useRunSheetCache();
 
   // Type for group data with runSheetConfig
@@ -546,8 +548,10 @@ export function RunSheetScreen({
       }
     } catch (err) {
       console.error("Error fetching service types:", err);
-      // Try cache fallback on error
-      const cachedTypes = getCachedServiceTypes(group_id);
+      // Try cache fallback on error (fresh first, then stale/expired)
+      const cachedTypes =
+        getFreshCachedServiceTypes(group_id) ??
+        getStaleCachedServiceTypes(group_id);
       if (cachedTypes && cachedTypes.length > 0) {
         setServiceTypes(cachedTypes);
         setIsStale(true);
@@ -555,12 +559,26 @@ export function RunSheetScreen({
         setError(err instanceof Error ? err.message : "Failed to load service types");
       }
     }
-  }, [group_id, getAvailableServiceTypes, cacheServiceTypes, getCachedServiceTypes]);
+  }, [
+    group_id,
+    getAvailableServiceTypes,
+    cacheServiceTypes,
+    getFreshCachedServiceTypes,
+    getStaleCachedServiceTypes,
+  ]);
 
   // Apply default service type once both serviceTypes and groupData are available
   useEffect(() => {
     if (hasAppliedDefault || serviceTypes.length === 0) return;
-    if (groupData === undefined) return;
+
+    // Offline-friendly fallback: if group query hasn't resolved yet, still select
+    // the first service type so cached run sheet data can load.
+    if (groupData === undefined) {
+      if (!selectedServiceTypeId) {
+        setSelectedServiceTypeId(serviceTypes[0].id);
+      }
+      return;
+    }
 
     const groupConfig = groupData as { runSheetConfig?: { defaultServiceTypeIds?: string[] } } | null;
     const defaultIds = groupConfig?.runSheetConfig?.defaultServiceTypeIds;
@@ -574,9 +592,11 @@ export function RunSheetScreen({
       }
     }
 
-    setSelectedServiceTypeId(serviceTypes[0].id);
+    if (!selectedServiceTypeId || !serviceTypes.some((t: ServiceType) => t.id === selectedServiceTypeId)) {
+      setSelectedServiceTypeId(serviceTypes[0].id);
+    }
     setHasAppliedDefault(true);
-  }, [serviceTypes, groupData, hasAppliedDefault]);
+  }, [serviceTypes, groupData, hasAppliedDefault, selectedServiceTypeId]);
 
   // Fetch run sheet for selected service type (with offline cache fallback)
   const fetchRunSheet = useCallback(async (options?: { isRefresh?: boolean }) => {
@@ -589,7 +609,8 @@ export function RunSheetScreen({
     // Show cached data immediately on initial/service-type-switch loads.
     // Skip during pull-to-refresh to avoid stale banner flashing since
     // cache already matches the currently displayed data.
-    const cached = getCachedRunSheet(group_id, selectedServiceTypeId);
+    const freshCached = getFreshCachedRunSheet(group_id, selectedServiceTypeId);
+    const cached = freshCached ?? getStaleCachedRunSheet(group_id, selectedServiceTypeId);
     if (cached && !options?.isRefresh) {
       setRunSheet(cached);
       setIsStale(true);
@@ -616,7 +637,9 @@ export function RunSheetScreen({
         setIsStale(true);
       } else {
         // Check cache one more time as last resort
-        const fallback = getCachedRunSheet(group_id, selectedServiceTypeId);
+        const fallback =
+          getFreshCachedRunSheet(group_id, selectedServiceTypeId) ??
+          getStaleCachedRunSheet(group_id, selectedServiceTypeId);
         if (fallback) {
           setRunSheet(fallback);
           setIsStale(true);
@@ -628,7 +651,14 @@ export function RunSheetScreen({
       setLoading(false);
       setRefreshing(false);
     }
-  }, [group_id, selectedServiceTypeId, getRunSheet, getCachedRunSheet, cacheRunSheet]);
+  }, [
+    group_id,
+    selectedServiceTypeId,
+    getRunSheet,
+    getFreshCachedRunSheet,
+    getStaleCachedRunSheet,
+    cacheRunSheet,
+  ]);
 
   // Initial load (skip in external mode)
   useEffect(() => {

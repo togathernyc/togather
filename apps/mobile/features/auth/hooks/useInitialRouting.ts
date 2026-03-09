@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from "react";
 import { useRouter, usePathname, useLocalSearchParams } from "expo-router";
 import { Platform } from "react-native";
 import { useAuth } from "@providers/AuthProvider";
+import { getInitialRouteTarget } from "./initialRouteTarget";
 
 /**
  * Hook to handle initial routing based on authentication state
@@ -96,58 +97,50 @@ export function useInitialRouting() {
       return;
     }
 
-    // Determine target path based on auth state
-    let targetPath: string | null = null;
+    const targetPath = getInitialRouteTarget({
+      isAuthenticated,
+      hasCommunity: !!community,
+      hasSlugParam: !!params.slug,
+      hasUserProfile: !!user,
+    });
 
-    if (isAuthenticated) {
-      // Only redirect if community is selected
-      if (community || params.slug) {
-        targetPath = "/(tabs)/chat";
-        console.log(
-          "📄 Index: Authenticated with community, redirecting to",
-          targetPath
-        );
-      } else {
-        // If authenticated but no community, redirect to signin (will show community search)
-        targetPath = "/(auth)/signin";
-        console.log(
-          "📄 Index: Authenticated but no community, redirecting to signin"
-        );
-      }
-    } else {
-      // Not authenticated, redirect to signin
-      targetPath = "/(auth)/signin";
-      console.log("📄 Index: Not authenticated, redirecting to signin");
-    }
-
-    if (targetPath) {
+    if (targetPath === "/(tabs)/chat") {
       console.log(
-        "📄 Index: Setting redirect flags and scheduling redirect to",
+        "📄 Index: Authenticated with community, redirecting to",
         targetPath
       );
-      redirectingRef.current = true;
-      hasRedirectedRef.current = true; // Set BEFORE redirect to prevent loops
-
-      // Use setTimeout to defer redirect to next event loop tick
-      // This prevents the redirect from causing an immediate re-render loop
-      const timeoutId = setTimeout(() => {
-        try {
-          console.log("📄 Index: Executing redirect to", targetPath);
-          // Use router.replace for both web and native to ensure Expo Router paths work correctly
-          // window.location.href doesn't work with Expo Router route groups like (auth)
-          router.replace(targetPath!);
-        } catch (error) {
-          console.error("📄 Index: Redirect error:", error);
-          hasRedirectedRef.current = false; // Reset on error so we can retry
-        } finally {
-          redirectingRef.current = false;
-        }
-      }, 50); // Small delay to prevent immediate re-render loop
-
-      return () => clearTimeout(timeoutId);
+    } else if (isAuthenticated && targetPath === "/(tabs)/profile") {
+      console.log(
+        "📄 Index: Authenticated without profile/community (offline-safe), redirecting to profile"
+      );
     } else {
-      console.log("📄 Index: No target path determined");
+      console.log("📄 Index: Redirecting to signin");
     }
+
+    console.log(
+      "📄 Index: Setting redirect flags and scheduling redirect to",
+      targetPath
+    );
+    redirectingRef.current = true;
+    hasRedirectedRef.current = true; // Set BEFORE redirect to prevent loops
+
+    // Use setTimeout to defer redirect to next event loop tick
+    // This prevents the redirect from causing an immediate re-render loop
+    const timeoutId = setTimeout(() => {
+      try {
+        console.log("📄 Index: Executing redirect to", targetPath);
+        // Use router.replace for both web and native to ensure Expo Router paths work correctly
+        // window.location.href doesn't work with Expo Router route groups like (auth)
+        router.replace(targetPath);
+      } catch (error) {
+        console.error("📄 Index: Redirect error:", error);
+        hasRedirectedRef.current = false; // Reset on error so we can retry
+      } finally {
+        redirectingRef.current = false;
+      }
+    }, 50); // Small delay to prevent immediate re-render loop
+
+    return () => clearTimeout(timeoutId);
     // Use pathname inside effect, don't add to dependencies to prevent loops
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoading, isAuthenticated, community, params.slug, forceShow, router]);

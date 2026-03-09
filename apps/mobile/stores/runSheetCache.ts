@@ -31,9 +31,15 @@ interface RunSheetCacheState {
   sheets: Record<string, CachedSheet>; // key: `${groupId}:${serviceTypeId}`
   serviceTypes: Record<string, CachedServiceTypes>; // key: groupId
   setRunSheet: (groupId: string, serviceTypeId: string, data: any) => void;
+  /** Returns only non-expired cache entries (preferred for online rendering). */
   getRunSheet: (groupId: string, serviceTypeId: string) => any | null;
+  /** Returns cached entry regardless of age (offline fallback). */
+  getRunSheetStale: (groupId: string, serviceTypeId: string) => any | null;
   setServiceTypes: (groupId: string, types: any[]) => void;
+  /** Returns only non-expired cache entries (preferred for online rendering). */
   getServiceTypes: (groupId: string) => any[] | null;
+  /** Returns cached entry regardless of age (offline fallback). */
+  getServiceTypesStale: (groupId: string) => any[] | null;
   clearAll: () => void;
 }
 
@@ -78,6 +84,11 @@ export const useRunSheetCache = create<RunSheetCacheState>()(
         return cached.data;
       },
 
+      getRunSheetStale: (groupId: string, serviceTypeId: string) => {
+        const key = `${groupId}:${serviceTypeId}`;
+        return get().sheets[key]?.data ?? null;
+      },
+
       setServiceTypes: (groupId: string, types: any[]) => {
         set((state) => ({
           serviceTypes: {
@@ -95,6 +106,10 @@ export const useRunSheetCache = create<RunSheetCacheState>()(
         if (!cached) return null;
         if (Date.now() - cached.timestamp > CACHE_EXPIRY_MS) return null;
         return cached.data;
+      },
+
+      getServiceTypesStale: (groupId: string) => {
+        return get().serviceTypes[groupId]?.data ?? null;
       },
 
       clearAll: () => {

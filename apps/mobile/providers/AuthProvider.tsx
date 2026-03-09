@@ -40,6 +40,29 @@ const LEGACY_STORAGE_KEYS = [
   "newCommunityId",
 ];
 
+const NETWORK_ERROR_KEYWORDS = [
+  "network request failed",
+  "failed to fetch",
+  "network",
+  "timeout",
+  "econnrefused",
+  "etimedout",
+  "socket",
+  "websocket",
+  "offline",
+  "unreachable",
+];
+
+const INVALID_AUTH_ERROR_KEYWORDS = [
+  "not authenticated",
+  "invalid token",
+  "token expired",
+  "unauthorized",
+  "forbidden",
+  "permission denied",
+  "jwt",
+];
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -48,6 +71,11 @@ interface AuthTokens {
   accessToken: string;
   refreshToken?: string;
   userId: string;
+}
+
+interface NetConnectivitySnapshot {
+  isConnected: boolean | null;
+  isInternetReachable: boolean | null;
 }
 
 interface AuthContextType {
@@ -61,6 +89,44 @@ interface AuthContextType {
   setCommunity: (community: Community) => Promise<void>;
   clearCommunity: () => Promise<void>;
   signIn: (userId: string, tokens?: { accessToken?: string; refreshToken?: string }) => Promise<void>;
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+/**
+ * Classify profile-fetch failures into "network" vs "not_found".
+ *
+ * This is intentionally conservative: unknown failures are treated as
+ * network errors so we preserve existing sessions instead of logging users
+ * out during transient/offline conditions.
+ */
+export function classifyProfileFetchError(
+  error: unknown,
+  netState: NetConnectivitySnapshot | null
+): "network_error" | "not_found" {
+  const isOffline =
+    !!netState &&
+    (netState.isConnected === false || netState.isInternetReachable === false);
+  if (isOffline) {
+    return "network_error";
+  }
+
+  const errorMsg = getErrorMessage(error).toLowerCase();
+  if (NETWORK_ERROR_KEYWORDS.some((keyword) => errorMsg.includes(keyword))) {
+    return "network_error";
+  }
+
+  if (INVALID_AUTH_ERROR_KEYWORDS.some((keyword) => errorMsg.includes(keyword))) {
+    return "not_found";
+  }
+
+  // Unknown errors should not force logout; preserve session and retry later.
+  return "network_error";
 }
 
 // ============================================================================
@@ -286,35 +352,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return { status: "success", user: profileData, community: communityData };
     } catch (error) {
       console.error("🔐 AuthProvider: Failed to fetch user profile:", error);
-
-      // Detect network errors vs server errors
-      const errorMsg = String(error);
-      const isNetworkError =
-        errorMsg.includes("Network request failed") ||
-        errorMsg.includes("Failed to fetch") ||
-        errorMsg.includes("network") ||
-        errorMsg.includes("timeout") ||
-        errorMsg.includes("ECONNREFUSED") ||
-        errorMsg.includes("ETIMEDOUT");
-
-      if (isNetworkError) {
-        // Check NetInfo imperatively to confirm network is actually down
-        // (AuthProvider is above ConnectionProvider, so no hook available)
-        try {
-          const netState = await NetInfo.fetch();
-          if (!netState.isConnected || netState.isInternetReachable === false) {
-            return { status: "network_error" };
-          }
-          // Device is connected but error contained network-like keywords
-          // This is likely a server error, not a network issue — treat as not_found
-          return { status: "not_found" };
-        } catch {
-          // If NetInfo itself fails, assume network error
-          return { status: "network_error" };
-        }
-      }
-
-      return { status: "not_found" };
+      const netState = await NetInfo.fetch().catch(() => null);
+      const classification = classifyProfileFetchError(
+        error,
+        netState
+          ? {
+              isConnected: netState.isConnected,
+              isInternetReachable: netState.isInternetReachable,
+            }
+          : null
+      );
+      return { status: classification };
     }
   }, []);
 
@@ -798,16 +846,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       } catch (error) {
         console.error("🔐 AuthProvider: Failed to initialize auth:", error);
-        // Check if this is a network error — don't clear tokens for network failures
-        const errMsg = String(error);
-        const isNetErr =
-          errMsg.includes("Network request failed") ||
-          errMsg.includes("Failed to fetch") ||
-          errMsg.includes("network") ||
-          errMsg.includes("timeout") ||
-          errMsg.includes("ECONNREFUSED") ||
-          errMsg.includes("ETIMEDOUT");
-        if (isNetErr) {
+        const netState = await NetInfo.fetch().catch(() => null);
+        const classification = classifyProfileFetchError(
+          error,
+          netState
+            ? {
+                isConnected: netState.isConnected,
+                isInternetReachable: netState.isInternetReachable,
+              }
+            : null
+        );
+        if (classification === "network_error") {
           console.log("🔐 AuthProvider: Network error during init catch, keeping tokens");
           // Try to restore from cache
           const cached = await loadCachedProfile();
