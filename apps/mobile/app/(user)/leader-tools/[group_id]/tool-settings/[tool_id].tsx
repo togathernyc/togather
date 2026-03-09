@@ -1,10 +1,11 @@
-import { Stack, useLocalSearchParams } from "expo-router";
+import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { View, Text, StyleSheet } from "react-native";
 import { RunSheetToolSettings } from "@features/leader-tools/components/RunSheetToolSettings";
-import { FollowupScoreSettings } from "@features/leader-tools/components/FollowupScoreSettings";
+import { FollowupSettingsPanel } from "@features/leader-tools/components/FollowupSettingsPanel";
 import type { Id } from "@services/api/convex";
 
 export default function ToolSettingsScreen() {
+  const router = useRouter();
   const { group_id, tool_id } = useLocalSearchParams<{
     group_id: string;
     tool_id: string;
@@ -16,7 +17,18 @@ export default function ToolSettingsScreen() {
       case "runsheet":
         return <RunSheetToolSettings groupId={group_id as Id<"groups">} />;
       case "followup":
-        return <FollowupScoreSettings groupId={group_id as Id<"groups">} />;
+        return (
+          <FollowupSettingsPanel
+            groupId={group_id}
+            onClose={() => {
+              if (router.canGoBack()) {
+                router.back();
+              } else {
+                router.replace(`/(user)/leader-tools/${group_id}/followup`);
+              }
+            }}
+          />
+        );
       case "communication":
         return (
           <View style={styles.container}>
@@ -42,7 +54,7 @@ export default function ToolSettingsScreen() {
       case "runsheet":
         return "Run Sheet Settings";
       case "followup":
-        return "Follow-up Score Settings";
+        return "Follow-up Settings";
       case "communication":
         return "Communication Settings";
       default:
@@ -55,7 +67,7 @@ export default function ToolSettingsScreen() {
       <Stack.Screen
         options={{
           title: getToolTitle(),
-          headerShown: true,
+          headerShown: tool_id !== "followup",
         }}
       />
       {renderToolSettings()}

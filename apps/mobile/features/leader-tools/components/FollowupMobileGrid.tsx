@@ -5,7 +5,6 @@ import {
   FlatList,
   Image,
   Modal,
-  PanResponder,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,11 +12,11 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-  useWindowDimensions,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import {
   api,
   Id,
@@ -32,13 +31,14 @@ import {
   SUBTITLE_VARIABLE_MAP,
   type SubtitleVariable,
   getScoreValue,
+  normalizeSubtitleVariableIds,
 } from "./followupShared";
 import {
-  chunkIntoPages,
   parseFollowupQuerySyntax,
   type LeaderInfo,
   type ScoreConfigEntry,
 } from "./followupGridHelpers";
+import type { CustomFieldDef } from "./ColumnPickerModal";
 
 type SortDirection = "asc" | "desc";
 
@@ -63,6 +63,27 @@ type FollowupMember = {
   lastFollowupAt?: number;
   status?: string;
   assigneeId?: string;
+  addedAt?: number;
+  email?: string;
+  phone?: string;
+  zipCode?: string;
+  dateOfBirth?: number;
+  latestNote?: string;
+  customText1?: string;
+  customText2?: string;
+  customText3?: string;
+  customText4?: string;
+  customText5?: string;
+  customNum1?: number;
+  customNum2?: number;
+  customNum3?: number;
+  customNum4?: number;
+  customNum5?: number;
+  customBool1?: boolean;
+  customBool2?: boolean;
+  customBool3?: boolean;
+  customBool4?: boolean;
+  customBool5?: boolean;
 };
 
 type LeaderRecord = {
@@ -78,16 +99,12 @@ type GridColumn = {
   label: string;
   width: number;
   sortable: boolean;
-  kind: "score" | "status" | "text";
-  getValue: (member: FollowupMember) => string | number;
+  kind: "score" | "status" | "text" | "boolean";
+  editable?: "assignee" | "status";
+  getValue: (member: FollowupMember) => string | number | boolean;
 };
-const EMPTY_GRID_COLUMNS: GridColumn[] = [];
-
-const MIN_DATA_COL_WIDTH = 94;
-const SWIPE_THRESHOLD = 50;
-const MIN_COLUMNS_PER_PAGE = 4;
-const MIN_PINNED_COL_WIDTH = 126;
-const MAX_PINNED_COL_WIDTH = 152;
+const MEMBER_COL_WIDTH = 188;
+const SELECT_COL_WIDTH = 44;
 
 const STATUS_OPTIONS: Array<{ value?: string; label: string }> = [
   { value: "green", label: "Green" },
@@ -163,18 +180,19 @@ function compareSortValues(
 export function FollowupMobileGrid({ groupId }: { groupId: string }) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
   const { primaryColor } = useCommunityTheme();
 
   const [sortField, setSortField] = useState("score1");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [searchQuery, setSearchQuery] = useState("");
-  const [columnPageIndex, setColumnPageIndex] = useState(0);
   const [editSheet, setEditSheet] = useState<{
     type: "assignee" | "status";
     memberId: string;
   } | null>(null);
   const [isUpdatingField, setIsUpdatingField] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showRemoveModal, setShowRemoveModal] = useState(false);
+  const [isRemoving, setIsRemoving] = useState(false);
   const [localOverrides, setLocalOverrides] = useState<
     Record<string, { assigneeId?: string | null; status?: string | null }>
   >({});
@@ -193,8 +211,18 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
   const isConfigLoaded = config !== undefined;
   const toolDisplayName =
     typeof config?.toolDisplayName === "string" ? config.toolDisplayName : "Follow-up";
-  const memberSubtitle =
-    typeof config?.memberSubtitle === "string" ? config.memberSubtitle : "";
+  const memberSubtitleIds = useMemo(
+    () =>
+      normalizeSubtitleVariableIds(
+        typeof config?.memberSubtitle === "string" ? config.memberSubtitle : ""
+      ),
+    [config?.memberSubtitle]
+  );
+  const columnConfig = config?.followupColumnConfig ?? null;
+  const customFields = useMemo<CustomFieldDef[]>(
+    () => ((columnConfig?.customFields ?? []) as CustomFieldDef[]),
+    [columnConfig?.customFields]
+  );
 
   const leaders = useAuthenticatedQuery(
     api.functions.groups.members.getLeaders,
@@ -295,6 +323,8 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
   );
   const setAssigneeMut = useAuthenticatedMutation(api.functions.memberFollowups.setAssignee);
   const setStatusMut = useAuthenticatedMutation(api.functions.memberFollowups.setStatus);
+  const removeGroupMember = useAuthenticatedMutation(api.functions.groupMembers.remove);
+  const removeCommunityMember = useAuthenticatedMutation(api.functions.communities.removeMember);
 
   const groupData = useQuery(
     api.functions.groups.index.getById,
@@ -314,6 +344,8 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
           return member.firstName ?? "";
         case "lastName":
           return member.lastName ?? "";
+        case "addedAt":
+          return member.addedAt ?? 0;
         case "status":
           return member.status ?? "";
         case "assignee": {
@@ -326,7 +358,10 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
         case "lastFollowupAt":
           return member.lastFollowupAt ?? 0;
         default:
-          return 0;
+          if (field.startsWith("customBool")) {
+            return (member as Record<string, unknown>)[field] ? 1 : 0;
+          }
+          return (member as Record<string, unknown>)[field] as string | number | undefined | null ?? "";
       }
     },
     [scoreConfig, leaderMap]
@@ -417,27 +452,86 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     const scoreColumns: GridColumn[] = scoreConfig.map((score, index) => ({
       key: `score${index + 1}`,
       label: score.name,
-      width: 94,
+      width: 102,
       sortable: true,
       kind: "score",
       getValue: (member) => getScoreValue(member, score.id),
     }));
 
-    const extraColumns: GridColumn[] = [
+    const baseColumns: GridColumn[] = [
+      {
+        key: "addedAt",
+        label: "Date Added",
+        width: 110,
+        sortable: true,
+        kind: "text",
+        getValue: (member) => formatDate(member.addedAt, "\u2014"),
+      },
+      {
+        key: "firstName",
+        label: "First Name",
+        width: 140,
+        sortable: true,
+        kind: "text",
+        getValue: (member) => member.firstName ?? "",
+      },
+      {
+        key: "lastName",
+        label: "Last Name",
+        width: 140,
+        sortable: true,
+        kind: "text",
+        getValue: (member) => member.lastName ?? "",
+      },
+      {
+        key: "email",
+        label: "Email",
+        width: 188,
+        sortable: false,
+        kind: "text",
+        getValue: (member) => member.email ?? "",
+      },
+      {
+        key: "phone",
+        label: "Phone",
+        width: 132,
+        sortable: false,
+        kind: "text",
+        getValue: (member) => member.phone ?? "",
+      },
+      {
+        key: "zipCode",
+        label: "ZIP Code",
+        width: 96,
+        sortable: false,
+        kind: "text",
+        getValue: (member) => member.zipCode ?? "",
+      },
+      {
+        key: "dateOfBirth",
+        label: "Birthday",
+        width: 116,
+        sortable: false,
+        kind: "text",
+        getValue: (member) => formatDate(member.dateOfBirth, "\u2014"),
+      },
+      ...scoreColumns,
       {
         key: "status",
         label: "Status",
-        width: 96,
+        width: 104,
         sortable: true,
         kind: "status",
+        editable: "status",
         getValue: (member) => member.status ?? "none",
       },
       {
         key: "assignee",
         label: "Assignee",
-        width: 124,
+        width: 146,
         sortable: true,
         kind: "text",
+        editable: "assignee",
         getValue: (member) => {
           if (!member.assigneeId) return "Unassigned";
           const leader = leaderMap.get(member.assigneeId);
@@ -448,15 +542,23 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       {
         key: "alerts",
         label: "Alerts",
-        width: 92,
+        width: 98,
         sortable: false,
         kind: "text",
         getValue: (member) => String(member.alerts?.length ?? 0),
       },
       {
+        key: "notes",
+        label: "Notes",
+        width: 220,
+        sortable: false,
+        kind: "text",
+        getValue: (member) => member.latestNote ?? "",
+      },
+      {
         key: "missedMeetings",
         label: "Missed",
-        width: 86,
+        width: 88,
         sortable: false,
         kind: "text",
         getValue: (member) => String(member.missedMeetings ?? 0),
@@ -472,7 +574,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       {
         key: "lastAttendedAt",
         label: "Last Attended",
-        width: 112,
+        width: 118,
         sortable: true,
         kind: "text",
         getValue: (member) => formatDate(member.lastAttendedAt, "\u2014"),
@@ -480,93 +582,67 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       {
         key: "lastFollowupAt",
         label: "Last Follow-up",
-        width: 116,
+        width: 122,
         sortable: true,
         kind: "text",
         getValue: (member) => formatDate(member.lastFollowupAt, "\u2014"),
       },
     ];
 
-    return [...scoreColumns, ...extraColumns];
-  }, [scoreConfig, leaderMap]);
+    const customColumns: GridColumn[] = customFields.map((field) => ({
+      key: field.slot,
+      label: field.name,
+      width: field.type === "boolean" ? 104 : 148,
+      sortable: SERVER_SORTABLE_FIELDS.has(field.slot),
+      kind: field.type === "boolean" ? "boolean" : "text",
+      getValue: (member) => {
+        const raw = (member as Record<string, unknown>)[field.slot];
+        if (field.type === "boolean") return Boolean(raw);
+        return (raw as string | number | undefined) ?? "";
+      },
+    }));
 
-  const pinnedColumnWidth = useMemo(
-    () => Math.max(MIN_PINNED_COL_WIDTH, Math.min(MAX_PINNED_COL_WIDTH, Math.floor(width * 0.33))),
-    [width]
-  );
-  const availableDataWidth = Math.max(MIN_DATA_COL_WIDTH, width - pinnedColumnWidth - 36);
-  const columnsPerPage = Math.max(
-    MIN_COLUMNS_PER_PAGE,
-    Math.floor(availableDataWidth / MIN_DATA_COL_WIDTH)
-  );
-  const columnPages = useMemo(
-    () => chunkIntoPages(dataColumns, columnsPerPage),
-    [dataColumns, columnsPerPage]
-  );
+    const allAvailable = [...baseColumns, ...customColumns];
+    const byKey = new Map(allAvailable.map((column) => [column.key, column]));
+    const savedOrder = columnConfig?.columnOrder ?? [];
+    const hidden = new Set(columnConfig?.hiddenColumns ?? []);
 
-  useEffect(() => {
-    setColumnPageIndex((currentPage) =>
-      Math.max(0, Math.min(currentPage, columnPages.length - 1))
-    );
-  }, [columnPages.length]);
+    let ordered: GridColumn[];
+    if (savedOrder.length > 0) {
+      const listed = savedOrder.map((key) => byKey.get(key)).filter(Boolean) as GridColumn[];
+      const listedSet = new Set(listed.map((column) => column.key));
+      ordered = [...listed, ...allAvailable.filter((column) => !listedSet.has(column.key))];
+    } else {
+      ordered = allAvailable;
+    }
 
-  const visibleColumns = useMemo(
-    () => columnPages[columnPageIndex] ?? EMPTY_GRID_COLUMNS,
-    [columnPages, columnPageIndex]
+    return ordered.filter((column) => !hidden.has(column.key));
+  }, [scoreConfig, leaderMap, customFields, columnConfig]);
+
+  const dataColumnsWidth = useMemo(
+    () => dataColumns.reduce((sum, column) => sum + column.width, 0),
+    [dataColumns]
   );
-  const visibleColumnWidth = Math.max(
-    36,
-    Math.floor(availableDataWidth / Math.max(MIN_COLUMNS_PER_PAGE, visibleColumns.length || 1))
-  );
-  const canPageLeft = columnPageIndex > 0;
-  const canPageRight = columnPageIndex < columnPages.length - 1;
-  const visibleColumnKeys = useMemo(
-    () => visibleColumns.map((column) => column.key).join("|"),
-    [visibleColumns]
-  );
+  const tableWidth = MEMBER_COL_WIDTH + SELECT_COL_WIDTH + dataColumnsWidth;
   const flatListExtraData = useMemo(
     () =>
       [
-        columnPageIndex,
-        visibleColumnWidth,
-        pinnedColumnWidth,
-        visibleColumnKeys,
+        sortField,
+        sortDirection,
+        dataColumns.map((column) => column.key).join("|"),
         editSheet?.memberId ?? "",
         editSheet?.type ?? "",
         isUpdatingField ? "1" : "0",
+        [...selectedIds].join(","),
       ].join(":"),
     [
-      columnPageIndex,
-      visibleColumnWidth,
-      pinnedColumnWidth,
-      visibleColumnKeys,
+      sortField,
+      sortDirection,
+      dataColumns,
       editSheet,
       isUpdatingField,
+      selectedIds,
     ]
-  );
-
-  const goToPreviousPage = useCallback(() => {
-    setColumnPageIndex((currentPage) => Math.max(0, currentPage - 1));
-  }, []);
-
-  const goToNextPage = useCallback(() => {
-    setColumnPageIndex((currentPage) => Math.min(columnPages.length - 1, currentPage + 1));
-  }, [columnPages.length]);
-
-  const gridPanResponder = useMemo(
-    () =>
-      PanResponder.create({
-        onMoveShouldSetPanResponder: (_, gesture) =>
-          Math.abs(gesture.dx) > 12 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
-        onPanResponderRelease: (_, gesture) => {
-          if (gesture.dx <= -SWIPE_THRESHOLD) {
-            goToNextPage();
-          } else if (gesture.dx >= SWIPE_THRESHOLD) {
-            goToPreviousPage();
-          }
-        },
-      }),
-    [goToNextPage, goToPreviousPage]
   );
 
   const handleSortPress = (field: string) => {
@@ -594,31 +670,82 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     router.push(`/(user)/leader-tools/${groupId}/tool-settings/followup`);
   };
 
+  const handleToggleSelect = useCallback((memberId: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(memberId)) {
+        next.delete(memberId);
+      } else {
+        next.add(memberId);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleSelectAll = useCallback(() => {
+    if (members.length > 0 && selectedIds.size === members.length) {
+      setSelectedIds(new Set());
+      return;
+    }
+    setSelectedIds(new Set(members.map((member) => member.groupMemberId)));
+  }, [members, selectedIds.size]);
+
+  useEffect(() => {
+    if (selectedIds.size === 0) return;
+    const memberIds = new Set(members.map((member) => member.groupMemberId));
+    const next = new Set([...selectedIds].filter((id) => memberIds.has(id)));
+    if (next.size !== selectedIds.size) {
+      setSelectedIds(next);
+    }
+  }, [members, selectedIds]);
+
+  const handleBulkRemove = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    setIsRemoving(true);
+    try {
+      const selectedMembers = members.filter((member) => selectedIds.has(member.groupMemberId));
+      const isAnnouncement = !!groupData?.isAnnouncementGroup;
+      const results = await Promise.allSettled(
+        selectedMembers.map((member) => {
+          if (isAnnouncement) {
+            return removeCommunityMember({
+              communityId: groupData!.communityId,
+              targetUserId: member.userId as Id<"users">,
+            });
+          }
+          return removeGroupMember({
+            groupId: groupId as Id<"groups">,
+            userId: member.userId as Id<"users">,
+          });
+        })
+      );
+      const failed = results.filter((result) => result.status === "rejected").length;
+      const success = results.length - failed;
+      if (failed > 0) {
+        Alert.alert("Partial failure", `${success} removed, ${failed} failed.`);
+      }
+    } catch (error) {
+      console.error("[FollowupMobileGrid] Failed to remove selected members:", error);
+      Alert.alert("Could not remove members", "Please try again.");
+    } finally {
+      setIsRemoving(false);
+      setShowRemoveModal(false);
+      setSelectedIds(new Set());
+    }
+  }, [selectedIds, members, groupData, removeCommunityMember, removeGroupMember, groupId]);
+
   const getMemberSubtitleLines = (member: FollowupMember): string[] => {
-    if (!memberSubtitle) {
+    if (memberSubtitleIds.length === 0) {
       return [
         `${member.missedMeetings} missed`,
         `Last: ${formatDate(member.lastAttendedAt, "Never")}`,
       ];
     }
-    const variableIds: string[] = memberSubtitle.split(",").filter(Boolean);
-    if (variableIds.length === 0) return [];
-    return variableIds
+    return memberSubtitleIds
       .map((id) => SUBTITLE_VARIABLE_MAP.get(id))
       .filter((value): value is SubtitleVariable => value !== undefined)
       .map((variable) => variable.render(member, (value) => formatDate(value, "Never")));
   };
-
-  const sortOptions = useMemo(
-    () => [
-      ...scoreConfig.map((score, index) => ({ key: `score${index + 1}`, label: score.name })),
-      { key: "firstName", label: "First" },
-      { key: "status", label: "Status" },
-      { key: "lastAttendedAt", label: "Last attended" },
-      { key: "assignee", label: "Assignee" },
-    ],
-    [scoreConfig]
-  );
 
   const activeFilterBadges = useMemo(() => {
     const badges: string[] = [];
@@ -756,7 +883,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     return (
       <TouchableOpacity
         key={column.key}
-        style={[styles.headerCell, { width: visibleColumnWidth }]}
+        style={[styles.headerCell, { width: column.width }]}
         disabled={!column.sortable}
         onPress={() => {
           if (column.sortable) handleSortPress(column.key);
@@ -807,6 +934,16 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       );
     }
 
+    if (column.kind === "boolean") {
+      return (
+        <Ionicons
+          name={value ? "checkbox" : "square-outline"}
+          size={16}
+          color={value ? primaryColor : "#9CA3AF"}
+        />
+      );
+    }
+
     return (
       <Text style={styles.dataCellText} numberOfLines={1}>
         {String(value)}
@@ -818,18 +955,34 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     const subtitleLine = getMemberSubtitleLines(item)[0] ?? "No recent follow-up details";
     const hasAlerts = (item.alerts?.length ?? 0) > 0;
     const isSnoozed = item.isSnoozed && !!item.snoozedUntil && item.snoozedUntil > Date.now();
+    const isSelected = selectedIds.has(item.groupMemberId);
 
     return (
-      <TouchableOpacity
+      <View
         style={[
           styles.row,
           hasAlerts && styles.rowAlert,
           isSnoozed && styles.rowSnoozed,
+          isSelected && styles.rowSelected,
         ]}
-        activeOpacity={0.8}
-        onPress={() => handleMemberPress(item.groupMemberId)}
       >
-        <View style={[styles.pinnedCell, { width: pinnedColumnWidth }]}>
+        <TouchableOpacity
+          style={[styles.selectCell, { width: SELECT_COL_WIDTH }]}
+          activeOpacity={0.7}
+          onPress={() => handleToggleSelect(item.groupMemberId)}
+        >
+          <Ionicons
+            name={isSelected ? "checkbox" : "square-outline"}
+            size={18}
+            color={isSelected ? primaryColor : "#9CA3AF"}
+          />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.memberCell, { width: MEMBER_COL_WIDTH }]}
+          activeOpacity={0.8}
+          onPress={() => handleMemberPress(item.groupMemberId)}
+        >
           {item.avatarUrl ? (
             <Image source={{ uri: item.avatarUrl }} style={styles.avatarImage} />
           ) : (
@@ -846,16 +999,16 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
               {subtitleLine}
             </Text>
           </View>
-        </View>
+        </TouchableOpacity>
 
         <View style={styles.rowDataCells}>
-          {visibleColumns.map((column) => {
-            const isEditable = column.key === "assignee" || column.key === "status";
+          {dataColumns.map((column) => {
+            const isEditable = column.editable === "assignee" || column.editable === "status";
             if (!isEditable) {
               return (
                 <View
                   key={`${item.groupMemberId}-${column.key}`}
-                  style={[styles.dataCell, { width: visibleColumnWidth }]}
+                  style={[styles.dataCell, { width: column.width }]}
                 >
                   {renderDataCell(item, column)}
                 </View>
@@ -865,11 +1018,11 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
             return (
               <TouchableOpacity
                 key={`${item.groupMemberId}-${column.key}`}
-                style={[styles.dataCell, styles.editableCell, { width: visibleColumnWidth }]}
+                style={[styles.dataCell, styles.editableCell, { width: column.width }]}
                 activeOpacity={0.7}
                 onPress={() => {
                   setEditSheet({
-                    type: column.key === "assignee" ? "assignee" : "status",
+                    type: column.editable === "assignee" ? "assignee" : "status",
                     memberId: item.groupMemberId,
                   });
                 }}
@@ -880,7 +1033,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
             );
           })}
         </View>
-      </TouchableOpacity>
+      </View>
     );
   };
 
@@ -926,34 +1079,6 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
           )}
         </View>
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.sortOptionsContainer}
-        >
-          {sortOptions.map((option) => {
-            const isActive = sortField === option.key;
-            return (
-              <TouchableOpacity
-                key={option.key}
-                style={[styles.sortChip, isActive && styles.sortChipActive]}
-                onPress={() => handleSortPress(option.key)}
-              >
-                <Text style={[styles.sortChipText, isActive && styles.sortChipTextActive]}>
-                  {option.label}
-                </Text>
-                {isActive && (
-                  <Ionicons
-                    name={sortDirection === "asc" ? "arrow-up" : "arrow-down"}
-                    size={11}
-                    color={primaryColor}
-                  />
-                )}
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-
         {activeFilterBadges.length > 0 && (
           <ScrollView
             horizontal
@@ -975,67 +1100,84 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
         </Text>
       </View>
 
-      <View style={styles.gridContainer} {...gridPanResponder.panHandlers}>
-        <View style={styles.gridPagerRow}>
-          <TouchableOpacity
-            style={[styles.pageButton, !canPageLeft && styles.pageButtonDisabled]}
-            onPress={goToPreviousPage}
-            disabled={!canPageLeft}
-          >
-            <Ionicons name="chevron-back" size={16} color={canPageLeft ? "#444" : "#BBB"} />
-          </TouchableOpacity>
-
-          <Text style={styles.pageIndicator}>
-            Columns {columnPageIndex + 1}/{columnPages.length}
-          </Text>
-
-          <TouchableOpacity
-            style={[styles.pageButton, !canPageRight && styles.pageButtonDisabled]}
-            onPress={goToNextPage}
-            disabled={!canPageRight}
-          >
-            <Ionicons name="chevron-forward" size={16} color={canPageRight ? "#444" : "#BBB"} />
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.headerRow}>
-          <View style={[styles.pinnedHeaderCell, { width: pinnedColumnWidth }]}>
-            <Text style={styles.pinnedHeaderText}>Member</Text>
-          </View>
-          <View style={styles.headerDataCells}>{visibleColumns.map(renderColumnHeader)}</View>
-        </View>
-
-        <FlatList
-          data={displayMembers}
-          extraData={flatListExtraData}
-          keyExtractor={(item) => item._id || item.groupMemberId}
-          renderItem={renderMemberRow}
-          onEndReached={() => {
-            if (!hasTextSearch && paginationStatus === "CanLoadMore") {
-              loadMore(50);
-            }
-          }}
-          onEndReachedThreshold={0.5}
-          ListFooterComponent={
-            !hasTextSearch && paginationStatus === "LoadingMore" ? (
-              <View style={styles.footerLoading}>
-                <ActivityIndicator size="small" color={primaryColor} />
-              </View>
-            ) : null
-          }
-          ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <Ionicons name="search-outline" size={42} color="#9CA3AF" />
-              <Text style={styles.emptyTitle}>No matches</Text>
-              <Text style={styles.emptyText}>
-                {hasTextSearch || hasStructuredFilters
-                  ? "No members match your search and filters."
-                  : "No members need follow-up right now."}
-              </Text>
+      <View style={styles.gridContainer}>
+        {selectedIds.size > 0 && (
+          <View style={styles.actionBar}>
+            <View style={styles.actionBarLeft}>
+              <Text style={styles.actionBarCount}>{selectedIds.size} selected</Text>
+              <TouchableOpacity onPress={() => setSelectedIds(new Set())}>
+                <Text style={styles.actionBarDeselect}>Deselect all</Text>
+              </TouchableOpacity>
             </View>
-          }
-          contentContainerStyle={styles.listContent}
-        />
+            <TouchableOpacity
+              style={styles.actionBarRemoveButton}
+              onPress={() => setShowRemoveModal(true)}
+            >
+              <Ionicons name="trash-outline" size={14} color="#fff" />
+              <Text style={styles.actionBarRemoveText}>Remove from group</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={styles.gridScrollContent}>
+          <View style={[styles.tableContainer, { width: tableWidth }]}>
+            <View style={styles.headerRow}>
+              <TouchableOpacity
+                style={[styles.selectHeaderCell, { width: SELECT_COL_WIDTH }]}
+                onPress={handleSelectAll}
+              >
+                <Ionicons
+                  name={
+                    members.length > 0 && selectedIds.size === members.length
+                      ? "checkbox"
+                      : selectedIds.size > 0
+                        ? "remove-outline"
+                        : "square-outline"
+                  }
+                  size={18}
+                  color={selectedIds.size > 0 ? primaryColor : "#9CA3AF"}
+                />
+              </TouchableOpacity>
+              <View style={[styles.memberHeaderCell, { width: MEMBER_COL_WIDTH }]}>
+                <Text style={styles.memberHeaderText}>Member</Text>
+              </View>
+              <View style={styles.headerDataCells}>{dataColumns.map(renderColumnHeader)}</View>
+            </View>
+
+            <FlatList
+              data={displayMembers}
+              style={styles.tableList}
+              extraData={flatListExtraData}
+              keyExtractor={(item) => item._id || item.groupMemberId}
+              renderItem={renderMemberRow}
+              onEndReached={() => {
+                if (!hasTextSearch && paginationStatus === "CanLoadMore") {
+                  loadMore(50);
+                }
+              }}
+              onEndReachedThreshold={0.5}
+              ListFooterComponent={
+                !hasTextSearch && paginationStatus === "LoadingMore" ? (
+                  <View style={styles.footerLoading}>
+                    <ActivityIndicator size="small" color={primaryColor} />
+                  </View>
+                ) : null
+              }
+              ListEmptyComponent={
+                <View style={styles.emptyContainer}>
+                  <Ionicons name="search-outline" size={42} color="#9CA3AF" />
+                  <Text style={styles.emptyTitle}>No matches</Text>
+                  <Text style={styles.emptyText}>
+                    {hasTextSearch || hasStructuredFilters
+                      ? "No members match your search and filters."
+                      : "No members need follow-up right now."}
+                  </Text>
+                </View>
+              }
+              contentContainerStyle={styles.listContent}
+            />
+          </View>
+        </ScrollView>
       </View>
 
       <Modal
@@ -1102,6 +1244,21 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
           </Pressable>
         </Pressable>
       </Modal>
+
+      <ConfirmModal
+        visible={showRemoveModal}
+        title={`Remove ${selectedIds.size} member${selectedIds.size !== 1 ? "s" : ""}?`}
+        message={
+          groupData?.isAnnouncementGroup
+            ? `This is the announcements group. Removing ${selectedIds.size} member${selectedIds.size !== 1 ? "s" : ""} will remove them from the entire community, including all groups.`
+            : `Are you sure you want to remove ${selectedIds.size} member${selectedIds.size !== 1 ? "s" : ""} from this group?`
+        }
+        onConfirm={handleBulkRemove}
+        onCancel={() => setShowRemoveModal(false)}
+        confirmText="Remove"
+        isLoading={isRemoving}
+        destructive
+      />
     </View>
   );
 }
@@ -1229,53 +1386,85 @@ const styles = StyleSheet.create({
   },
   gridContainer: {
     flex: 1,
+    paddingTop: 8,
+  },
+  gridScrollContent: {
     paddingHorizontal: 10,
-    paddingTop: 10,
+    paddingBottom: 12,
   },
-  gridPagerRow: {
-    marginBottom: 8,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
-  },
-  pageButton: {
-    height: 28,
-    width: 28,
-    borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#FFF",
+  tableContainer: {
     borderWidth: 1,
     borderColor: "#E5E7EB",
+    borderRadius: 12,
+    overflow: "hidden",
+    backgroundColor: "#FFF",
   },
-  pageButtonDisabled: {
-    backgroundColor: "#F4F4F5",
+  tableList: {
+    maxHeight: "100%",
   },
-  pageIndicator: {
+  actionBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    marginHorizontal: 10,
+    marginBottom: 8,
+    backgroundColor: "#EBF5FF",
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+    borderRadius: 8,
+  },
+  actionBarLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  actionBarCount: {
     fontSize: 12,
-    fontWeight: "600",
-    color: "#4B5563",
+    color: "#1E40AF",
+    fontWeight: "700",
+  },
+  actionBarDeselect: {
+    fontSize: 12,
+    color: "#2563EB",
+    textDecorationLine: "underline",
+  },
+  actionBarRemoveButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#DC2626",
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  actionBarRemoveText: {
+    color: "#FFF",
+    fontSize: 12,
+    fontWeight: "700",
   },
   headerRow: {
     flexDirection: "row",
-    borderTopLeftRadius: 12,
-    borderTopRightRadius: 12,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderBottomWidth: 0,
-    backgroundColor: "#FFF",
+    borderBottomWidth: 1,
+    borderBottomColor: "#E5E7EB",
+    backgroundColor: "#F9FAFB",
   },
-  pinnedHeaderCell: {
+  selectHeaderCell: {
+    height: 40,
+    borderRightWidth: 1,
+    borderRightColor: "#E5E7EB",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  memberHeaderCell: {
     borderRightWidth: 1,
     borderRightColor: "#E5E7EB",
     justifyContent: "center",
     paddingHorizontal: 8,
     height: 40,
-    backgroundColor: "#F9FAFB",
   },
-  pinnedHeaderText: {
+  memberHeaderText: {
     fontSize: 12,
     fontWeight: "700",
     color: "#374151",
@@ -1284,7 +1473,6 @@ const styles = StyleSheet.create({
   },
   headerDataCells: {
     flexDirection: "row",
-    flex: 1,
     backgroundColor: "#F9FAFB",
   },
   headerCell: {
@@ -1307,10 +1495,7 @@ const styles = StyleSheet.create({
     marginLeft: 4,
   },
   listContent: {
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderBottomLeftRadius: 12,
-    borderBottomRightRadius: 12,
+    borderBottomWidth: 0,
     backgroundColor: "#FFF",
     paddingBottom: 88,
   },
@@ -1326,7 +1511,16 @@ const styles = StyleSheet.create({
   rowSnoozed: {
     opacity: 0.66,
   },
-  pinnedCell: {
+  rowSelected: {
+    backgroundColor: "#EFF6FF",
+  },
+  selectCell: {
+    borderRightWidth: 1,
+    borderRightColor: "#E5E7EB",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  memberCell: {
     borderRightWidth: 1,
     borderRightColor: "#E5E7EB",
     paddingHorizontal: 7,
@@ -1368,7 +1562,6 @@ const styles = StyleSheet.create({
   },
   rowDataCells: {
     flexDirection: "row",
-    flex: 1,
   },
   dataCell: {
     minHeight: 48,

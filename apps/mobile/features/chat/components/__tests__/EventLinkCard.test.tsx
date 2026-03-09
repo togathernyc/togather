@@ -83,7 +83,7 @@ function mockQueries({
     profileImage: null,
   }));
 
-  mockUseQuery.mockImplementation((queryName: string, args: unknown) => {
+  mockUseQuery.mockImplementation((queryName: unknown, args: unknown) => {
     if (queryName === api.functions.meetings.index.getByShortId) {
       if (args === 'skip') return undefined;
       return eventData;
