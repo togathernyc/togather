@@ -215,6 +215,9 @@ e2e/
 playwright.config.ts
 playwright-report/
 test-results/
+!playwright.config.ts
+!tests/e2e/
+!tests/e2e/**
 
 # Export files
 exports/*.csv

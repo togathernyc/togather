@@ -21,6 +21,7 @@ import React, {
 } from 'react';
 import type { Id } from '@services/api/convex';
 import type { LinkPreviewData } from '../hooks/useLinkPreview';
+import type { RsvpOption } from '../types';
 
 // ============================================================================
 // Types
@@ -38,6 +39,7 @@ export interface PrefetchedEventData {
   locationOverride?: string;
   meetingType?: number;
   rsvpEnabled?: boolean;
+  rsvpOptions?: RsvpOption[];
   groupName?: string;
   communityName?: string;
   hasAccess?: boolean;
