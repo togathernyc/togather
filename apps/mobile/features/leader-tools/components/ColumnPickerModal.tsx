@@ -567,6 +567,7 @@ const styles = StyleSheet.create({
   },
   typePickerRow: {
     flexDirection: "row" as const,
+    flexWrap: "wrap" as const,
     gap: 6,
   },
   typeOption: {

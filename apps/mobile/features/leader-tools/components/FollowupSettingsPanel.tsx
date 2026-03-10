@@ -89,12 +89,13 @@ const DEFAULT_SCORES: ScoreDefinition[] = [
 const SLOT_CANDIDATES: Record<string, string[]> = {
   text: ["customText1", "customText2", "customText3", "customText4", "customText5"],
   dropdown: ["customText1", "customText2", "customText3", "customText4", "customText5"],
+  multiselect: ["customText1", "customText2", "customText3", "customText4", "customText5"],
   number: ["customNum1", "customNum2", "customNum3", "customNum4", "customNum5"],
   boolean: ["customBool1", "customBool2", "customBool3", "customBool4", "customBool5"],
 };
 
 const SLOT_CAPACITIES: Record<string, { label: string; total: number; types: string[] }> = {
-  text: { label: "Text/Dropdown", total: 5, types: ["text", "dropdown"] },
+  text: { label: "Text/Dropdown/Multi", total: 5, types: ["text", "dropdown", "multiselect"] },
   number: { label: "Number", total: 5, types: ["number"] },
   boolean: { label: "Checkbox", total: 5, types: ["boolean"] },
 };
@@ -108,6 +109,7 @@ const FIELD_TYPES = [
   { value: "number", label: "Number" },
   { value: "boolean", label: "Checkbox" },
   { value: "dropdown", label: "Dropdown" },
+  { value: "multiselect", label: "Multi-Select" },
 ] as const;
 
 const SYSTEM_COLUMNS = new Set(["checkbox", "rowNum"]);
@@ -310,7 +312,7 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
       slot,
       name: newFieldName.trim(),
       type: newFieldType,
-      ...(newFieldType === "dropdown" && newFieldOptions.length > 0
+      ...((newFieldType === "dropdown" || newFieldType === "multiselect") && newFieldOptions.length > 0
         ? { options: newFieldOptions.filter((o) => o.trim()) }
         : {}),
     };
@@ -847,7 +849,7 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
                   <View style={styles.typeBadge}>
                     <Text style={styles.typeBadgeText}>{field.type}</Text>
                   </View>
-                  {field.type === "dropdown" && field.options && (
+                  {(field.type === "dropdown" || field.type === "multiselect") && field.options && (
                     <Text style={styles.fieldOptions} numberOfLines={1}>
                       ({field.options.join(", ")})
                     </Text>
@@ -902,8 +904,8 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
                   })}
                 </View>
 
-                {/* Dropdown options editor */}
-                {newFieldType === "dropdown" && (
+                {/* Dropdown / Multi-Select options editor */}
+                {(newFieldType === "dropdown" || newFieldType === "multiselect") && (
                   <View style={styles.optionsEditor}>
                     <Text style={styles.optionsLabel}>Options:</Text>
                     {newFieldOptions.map((opt, i) => (
@@ -916,7 +918,7 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
                           value={opt}
                           onChangeText={(text) => {
                             const next = [...newFieldOptions];
-                            next[i] = text;
+                            next[i] = text.replace(/;/g, "");
                             setNewFieldOptions(next);
                           }}
                           placeholder={`Option ${i + 1}`}
