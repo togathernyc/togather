@@ -208,7 +208,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
   const [showRemoveModal, setShowRemoveModal] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
   const [localOverrides, setLocalOverrides] = useState<
-    Record<string, { assigneeId?: string | null; status?: string | null }>
+    Record<string, { assigneeId?: string | null; status?: string | null; [key: string]: string | number | boolean | null | undefined }>
   >({});
 
   const debouncedSearch = useDebounce(searchQuery, 450);
@@ -452,7 +452,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     return source.map((member) => {
       const override = localOverrides[member.groupMemberId];
       if (!override) return member;
-      return {
+      const result: FollowupMember = {
         ...member,
         assigneeId:
           override.assigneeId !== undefined
@@ -460,6 +460,13 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
             : member.assigneeId,
         status: override.status !== undefined ? override.status ?? undefined : member.status,
       };
+      // Apply custom field overrides
+      for (const [key, val] of Object.entries(override)) {
+        if (key.startsWith("custom")) {
+          (result as Record<string, unknown>)[key] = val ?? undefined;
+        }
+      }
+      return result;
     });
   }, [membersToShow, localOverrides]);
 
@@ -490,6 +497,17 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
           pending.status = override.status;
         } else {
           changed = true;
+        }
+      }
+      // Handle custom field overrides
+      for (const [key, val] of Object.entries(override)) {
+        if (key.startsWith("custom") && val !== undefined) {
+          const serverVal = (serverMember as Record<string, unknown>)[key] ?? null;
+          if (serverVal !== (val ?? null)) {
+            pending[key] = val;
+          } else {
+            changed = true;
+          }
         }
       }
       if (Object.keys(pending).length > 0) {
@@ -925,17 +943,46 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
   const handleMultiselectToggle = useCallback(
     async (option: string) => {
       if (!editSheet || !editSheet.customField || !activeEditMember) return;
-      const currentVal = (activeEditMember as Record<string, unknown>)[editSheet.customField.slot];
+      const slot = editSheet.customField.slot;
+      const memberId = editSheet.memberId;
+      const currentVal = (activeEditMember as Record<string, unknown>)[slot];
       const selectedValues = currentVal ? String(currentVal).split("; ").filter(Boolean) : [];
       const isChecked = selectedValues.includes(option);
       const newValues = isChecked
         ? selectedValues.filter((v) => v !== option)
         : [...selectedValues, option];
       const newValue = newValues.length > 0 ? newValues.join("; ") : undefined;
-      await handleCustomFieldSave(editSheet.memberId, editSheet.customField.slot, newValue);
+      // Optimistic update for immediate UI feedback on rapid toggles
+      setLocalOverrides((prev) => ({
+        ...prev,
+        [memberId]: { ...prev[memberId], [slot]: newValue ?? null },
+      }));
+      setIsUpdatingField(true);
+      try {
+        await setCustomFieldMut({
+          groupId: groupId as Id<"groups">,
+          groupMemberId: memberId as Id<"groupMembers">,
+          slot,
+          value: newValue ?? undefined,
+        });
+      } catch (err) {
+        console.error("[FollowupMobileGrid] multiselect toggle failed:", err);
+        // Rollback optimistic update on failure
+        setLocalOverrides((prev) => {
+          const next = { ...prev };
+          if (next[memberId]) {
+            delete next[memberId][slot];
+            if (Object.keys(next[memberId]).length === 0) delete next[memberId];
+          }
+          return next;
+        });
+        Alert.alert("Could not update field", "Please try again.");
+      } finally {
+        setIsUpdatingField(false);
+      }
       // Don't close sheet — allow multiple toggles
     },
-    [editSheet, activeEditMember, handleCustomFieldSave]
+    [editSheet, activeEditMember, setCustomFieldMut, groupId]
   );
 
   const handleMultiselectClear = useCallback(async () => {
