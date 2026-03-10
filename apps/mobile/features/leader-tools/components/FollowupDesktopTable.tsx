@@ -726,24 +726,29 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
     }
   };
 
-  const handleMultiSelectToggle = async (memberId: string, slot: string, _currentRawValue: string | undefined | null, toggledOption: string) => {
-    // Compute the new value inside the functional updater to avoid stale closure issues
-    // when multiple toggles fire before React re-renders.
-    let newValue: string | undefined;
+  const handleMultiSelectToggle = async (memberId: string, slot: string, rawServerValue: string | undefined | null, toggledOption: string) => {
+    // Track values for rollback - set synchronously within setOptimistic
+    let previousValue: string | null = null;
+    let newValue: string | null = null;
+
+    // Optimistic update WITHOUT closing dropdown
+    // Compute value from current optimistic state (via prev) to avoid stale closure issues
     setOptimistic((prev) => {
-      // Read the latest optimistic value for this slot, falling back to the server value
-      const serverMember = members.find((m) => m.groupMemberId === memberId);
-      const prevOptimistic = (prev[memberId] as Record<string, any>)?.[slot];
-      const currentVal = prevOptimistic !== undefined
-        ? (prevOptimistic ?? "")
-        : ((serverMember as any)?.[slot] ?? "");
-      const selectedValues = currentVal ? String(currentVal).split("; ").filter(Boolean) : [];
+      const existingOptimistic = (prev[memberId] as Record<string, any> | undefined)?.[slot];
+      const currentValue = existingOptimistic !== undefined
+        ? String(existingOptimistic ?? "")
+        : String(rawServerValue ?? "");
+
+      previousValue = currentValue || null;
+
+      const selectedValues = currentValue ? currentValue.split("; ").filter(Boolean) : [];
       const isSelected = selectedValues.includes(toggledOption);
       const newValues = isSelected
-        ? selectedValues.filter((v: string) => v !== toggledOption)
+        ? selectedValues.filter((v) => v !== toggledOption)
         : [...selectedValues, toggledOption];
-      newValue = newValues.length > 0 ? newValues.join("; ") : undefined;
-      return { ...prev, [memberId]: { ...prev[memberId], [slot]: newValue ?? null } };
+      newValue = newValues.length > 0 ? newValues.join("; ") : null;
+
+      return { ...prev, [memberId]: { ...prev[memberId], [slot]: newValue } };
     });
 
     try {
@@ -751,15 +756,23 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
         groupId: groupId as Id<"groups">,
         groupMemberId: memberId as Id<"groupMembers">,
         slot,
-        value: newValue ?? undefined,
+        value: newValue || undefined,
       });
     } catch (err) {
       console.error("[setCustomField multiselect] failed:", err);
-      // On failure, revert to the server's current value rather than deleting the slot,
-      // so we don't wipe other in-flight optimistic updates.
-      const serverMember = members.find((m) => m.groupMemberId === memberId);
-      const serverVal = (serverMember as any)?.[slot] ?? null;
-      setOptimistic((prev) => ({ ...prev, [memberId]: { ...prev[memberId], [slot]: serverVal } }));
+      // Restore to previous value instead of deleting slot to preserve other in-flight toggles
+      setOptimistic((prev) => {
+        const next = { ...prev };
+        if (previousValue) {
+          next[memberId] = { ...next[memberId], [slot]: previousValue };
+        } else {
+          if (next[memberId]) {
+            delete (next[memberId] as any)[slot];
+            if (Object.keys(next[memberId]).length === 0) delete next[memberId];
+          }
+        }
+        return next;
+      });
     }
   };
 
