@@ -443,4 +443,136 @@ describe("follow-up CSV import", () => {
 
     expect(preview.rows[0].actions.customFields).toBe("update");
   });
+
+  test("preview parses added date, status, assignee, and connection point with row-level warnings", async () => {
+    const t = convexTest(schema, modules);
+    const { leaderId, communityId, groupId } = await seedGroupWithLeader(t);
+    const token = (await generateTokens(leaderId, communityId)).accessToken;
+
+    await t.run(async (ctx) => {
+      const timestamp = Date.now();
+      const rachelId = await ctx.db.insert("users", {
+        firstName: "Rachel",
+        lastName: "Leader",
+        phone: "+12025550170",
+        isActive: true,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      await ctx.db.insert("groupMembers", {
+        groupId,
+        userId: rachelId,
+        role: "leader",
+        joinedAt: timestamp,
+        notificationsEnabled: true,
+      });
+    });
+
+    const preview = await t.mutation(api.functions.memberFollowups.previewCsvImport, {
+      token,
+      groupId,
+      rows: [
+        {
+          rowNumber: 2,
+          firstName: "Jordan",
+          phone: "(202) 555-0155",
+          addedAt: "1/4/2026",
+          status: "Orange",
+          assignee: "Rachel",
+          connectionPoint: "Team, Dinner Party",
+        },
+        {
+          rowNumber: 3,
+          firstName: "Bad Data",
+          phone: "(202) 555-0156",
+          addedAt: "not-a-date",
+          status: "Blue",
+          assignee: "Unknown Person",
+        },
+      ],
+    });
+
+    expect(preview.summary.readyRows).toBe(2);
+    expect(preview.rows[0].status).toBe("ready");
+    expect(preview.rows[0].reasons).not.toContain("invalid_added_at_ignored");
+    expect(preview.rows[1].reasons).toContain("invalid_added_at_ignored");
+    expect(preview.rows[1].reasons).toContain("invalid_status_ignored");
+    expect(preview.rows[1].reasons).toContain("unknown_assignee_ignored");
+  });
+
+  test("apply imports status, assignee, connection point, and uses added date for new member", async () => {
+    const t = convexTest(schema, modules);
+    const { leaderId, communityId, groupId } = await seedGroupWithLeader(t);
+    const token = (await generateTokens(leaderId, communityId)).accessToken;
+
+    const setup = await t.run(async (ctx) => {
+      const timestamp = Date.now();
+      const mikeId = await ctx.db.insert("users", {
+        firstName: "Mike",
+        lastName: "Leader",
+        phone: "+12025550180",
+        isActive: true,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      await ctx.db.insert("groupMembers", {
+        groupId,
+        userId: mikeId,
+        role: "leader",
+        joinedAt: timestamp,
+        notificationsEnabled: true,
+      });
+
+      return { mikeId };
+    });
+
+    await t.mutation(api.functions.memberFollowups.applyCsvImport, {
+      token,
+      groupId,
+      rows: [
+        {
+          rowNumber: 2,
+          firstName: "Casey",
+          lastName: "Imported",
+          phone: "(202) 555-0188",
+          addedAt: "1/4/2026",
+          status: "Green",
+          assignee: "Mike",
+          connectionPoint: "Team, Dinner Party",
+          notes: "Reached out and connected",
+        },
+      ],
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const result = await t.run(async (ctx) => {
+      const importedUser = await ctx.db
+        .query("users")
+        .withIndex("by_phone", (q) => q.eq("phone", "+12025550188"))
+        .first();
+      if (!importedUser) return null;
+
+      const groupMember = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q) => q.eq("groupId", groupId).eq("userId", importedUser._id))
+        .first();
+      if (!groupMember) return null;
+
+      const scoreDoc = await ctx.db
+        .query("memberFollowupScores")
+        .withIndex("by_groupMember", (q) => q.eq("groupMemberId", groupMember._id))
+        .first();
+
+      return {
+        groupMember,
+        scoreDoc,
+      };
+    });
+
+    expect(result).not.toBeNull();
+    expect(result?.groupMember.joinedAt).toBe(new Date("1/4/2026").getTime());
+    expect(result?.scoreDoc?.status).toBe("green");
+    expect(result?.scoreDoc?.assigneeId).toBe(setup.mikeId);
+    expect(result?.scoreDoc?.connectionPoint).toBe("Team, Dinner Party");
+  });
 });

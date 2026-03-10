@@ -8,6 +8,7 @@ import {
 describe("getDefaultCsvImportMapping", () => {
   it("auto-maps common header aliases", () => {
     const mapping = getDefaultCsvImportMapping([
+      "Column 1",
       "First Name",
       "Last Name",
       "Phone Number",
@@ -15,9 +16,13 @@ describe("getDefaultCsvImportMapping", () => {
       "ZIP",
       "DOB",
       "Notes",
+      "Assignee",
+      "Status",
+      "Connection Point",
     ]);
 
     expect(mapping).toEqual({
+      addedAt: "Column 1",
       firstName: "First Name",
       lastName: "Last Name",
       phone: "Phone Number",
@@ -25,6 +30,9 @@ describe("getDefaultCsvImportMapping", () => {
       zipCode: "ZIP",
       dateOfBirth: "DOB",
       notes: "Notes",
+      assignee: "Assignee",
+      status: "Status",
+      connectionPoint: "Connection Point",
     });
   });
 
@@ -34,6 +42,10 @@ describe("getDefaultCsvImportMapping", () => {
     expect(mapping.phone).toBeNull();
     expect(mapping.email).toBeNull();
     expect(mapping.notes).toBeNull();
+    expect(mapping.status).toBeNull();
+    expect(mapping.assignee).toBeNull();
+    expect(mapping.connectionPoint).toBeNull();
+    expect(mapping.addedAt).toBeNull();
   });
 });
 
@@ -73,6 +85,7 @@ describe("getDefaultCustomFieldMapping", () => {
 
 describe("buildCsvImportRowsPayload", () => {
   const mapping: CsvImportMapping = {
+    addedAt: "Added Date",
     firstName: "First Name",
     lastName: "Last Name",
     phone: "Phone",
@@ -80,33 +93,55 @@ describe("buildCsvImportRowsPayload", () => {
     zipCode: "ZIP",
     dateOfBirth: null,
     notes: "Notes",
+    assignee: "Assignee",
+    status: "Status",
+    connectionPoint: "Connection Point",
   };
 
   it("builds canonical rows from selected mapped fields", () => {
     const rows = buildCsvImportRowsPayload(
       [
         {
+          "Added Date": "1/4/2026",
           "First Name": " Ada ",
           "Last Name": "Lovelace",
           Phone: "(202) 555-0111",
           Email: "Ada@Example.com",
           ZIP: "10001",
           Notes: "new guest",
+          Assignee: "Rachel",
+          Status: "Orange",
+          "Connection Point": "Dinner Party",
         },
       ],
       mapping,
-      new Set(["firstName", "lastName", "phone", "email", "zipCode", "notes"])
+      new Set([
+        "addedAt",
+        "firstName",
+        "lastName",
+        "phone",
+        "email",
+        "zipCode",
+        "notes",
+        "assignee",
+        "status",
+        "connectionPoint",
+      ])
     );
 
     expect(rows).toEqual([
       {
         rowNumber: 2,
+        addedAt: "1/4/2026",
         firstName: "Ada",
         lastName: "Lovelace",
         phone: "(202) 555-0111",
         email: "Ada@Example.com",
         zipCode: "10001",
         notes: "new guest",
+        assignee: "Rachel",
+        status: "Orange",
+        connectionPoint: "Dinner Party",
       },
     ]);
   });
