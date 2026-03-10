@@ -7,6 +7,7 @@ import {
   TextInput,
   ScrollView,
   ActivityIndicator,
+  Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { CustomModal } from "@/components/ui/Modal";
@@ -154,13 +155,21 @@ export function ColumnPickerModal({
     if (!newFieldName.trim()) return;
     const slot = getNextAvailableSlot(newFieldType, usedSlots);
     if (!slot) return;
+    const isSelectType = newFieldType === "dropdown" || newFieldType === "multiselect";
+    const normalizedOptions = newFieldOptions
+      .filter((o) => o.trim())
+      .map((o) => o.replace(/;/g, ""));
+    if (isSelectType && normalizedOptions.length === 0) {
+      Alert.alert("Missing options", "Add at least one option for dropdown and multi-select fields.");
+      return;
+    }
 
     const newField: CustomFieldDef = {
       slot,
       name: newFieldName.trim(),
       type: newFieldType,
-      ...((newFieldType === "dropdown" || newFieldType === "multiselect") && newFieldOptions.length > 0
-        ? { options: newFieldOptions.filter((o) => o.trim()).map((o) => o.replace(/;/g, "")) }
+      ...(isSelectType
+        ? { options: normalizedOptions }
         : {}),
     };
 

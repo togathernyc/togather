@@ -148,6 +148,14 @@ const SERVER_SORTABLE_FIELDS = new Set([
 
 const HIDE_ON_MOBILE_COLUMNS = new Set(["firstName", "lastName"]);
 
+function parseMultiSelectValues(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  return raw
+    .split(";")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
 function useDebounce<T>(value: T, delay: number): T {
   const [debouncedValue, setDebouncedValue] = useState(value);
   useEffect(() => {
@@ -542,6 +550,40 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       return result;
     });
   }, [membersToShow, localOverrides]);
+
+  const selectOptionsBySlot = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const field of customFields) {
+      if (field.type !== "multiselect" && field.type !== "dropdown") continue;
+      const configuredOptions = field.options?.filter(Boolean) ?? [];
+      if (configuredOptions.length > 0) {
+        map.set(field.slot, configuredOptions);
+        continue;
+      }
+      const inferredOptions =
+        field.type === "multiselect"
+          ? Array.from(
+              new Set(
+                displayMembers.flatMap((member) =>
+                  parseMultiSelectValues(
+                    String((member as Record<string, unknown>)[field.slot] ?? "")
+                  )
+                )
+              )
+            )
+          : Array.from(
+              new Set(
+                displayMembers
+                  .map((member) =>
+                    String((member as Record<string, unknown>)[field.slot] ?? "").trim()
+                  )
+                  .filter(Boolean)
+              )
+            );
+      map.set(field.slot, inferredOptions);
+    }
+    return map;
+  }, [customFields, displayMembers]);
 
   useEffect(() => {
     if (Object.keys(localOverrides).length === 0) return;
@@ -1092,15 +1134,12 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
 
         previousValue = currentValue || null;
 
-        const selectedValues = currentValue
-          ? currentValue.split("; ").filter(Boolean)
-          : [];
+        const selectedValues = parseMultiSelectValues(currentValue);
         const isChecked = selectedValues.includes(option);
         const newValues = isChecked
           ? selectedValues.filter((v) => v !== option)
           : [...selectedValues, option];
         newValue = newValues.length > 0 ? newValues.join("; ") : null;
-
         return { ...prev, [memberId]: { ...prev[memberId], [slot]: newValue } };
       });
       setIsUpdatingField(true);
@@ -1385,14 +1424,16 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     ) {
       const cf = column.customField;
       const rawValue = String(value ?? "");
-      const selectedValues = rawValue
-        ? rawValue.split("; ").filter(Boolean)
-        : [];
+      const options = selectOptionsBySlot.get(cf.slot) ?? [];
+      const hasOptions = options.length > 0;
+      const selectedValues = parseMultiSelectValues(rawValue);
       return (
         <TouchableOpacity
           style={styles.editableCell}
           activeOpacity={0.7}
+          disabled={!hasOptions}
           onPress={() => {
+            if (!hasOptions) return;
             setEditSheet({
               type: "customMultiselect",
               memberId: member.groupMemberId,
@@ -1421,15 +1462,17 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
               style={[styles.dataCellText, styles.dataCellPlaceholder]}
               numberOfLines={1}
             >
-              Select…
+              {hasOptions ? "Select…" : "No options configured"}
             </Text>
           )}
-          <Ionicons
-            name="chevron-down"
-            size={11}
-            color="#6B7280"
-            style={styles.editIcon}
-          />
+          {hasOptions && (
+            <Ionicons
+              name="chevron-down"
+              size={11}
+              color="#6B7280"
+              style={styles.editIcon}
+            />
+          )}
         </TouchableOpacity>
       );
     }
@@ -1444,11 +1487,17 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       const cf = column.customField;
       const displayVal = String(value);
       const isDropdown = cf.type === "dropdown";
+      const dropdownOptions = isDropdown
+        ? (selectOptionsBySlot.get(cf.slot) ?? [])
+        : [];
+      const hasDropdownOptions = !isDropdown || dropdownOptions.length > 0;
       return (
         <TouchableOpacity
           style={styles.editableCell}
           activeOpacity={0.7}
+          disabled={!hasDropdownOptions}
           onPress={() => {
+            if (!hasDropdownOptions) return;
             setEditSheet({
               type: isDropdown ? "customDropdown" : "customText",
               memberId: member.groupMemberId,
@@ -1465,14 +1514,18 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
             ]}
             numberOfLines={1}
           >
-            {displayVal || (isDropdown ? "Select…" : "Tap to add")}
+            {displayVal || (isDropdown
+              ? (hasDropdownOptions ? "Select…" : "No options configured")
+              : "Tap to add")}
           </Text>
-          <Ionicons
-            name="chevron-down"
-            size={11}
-            color="#6B7280"
-            style={styles.editIcon}
-          />
+          {hasDropdownOptions && (
+            <Ionicons
+              name="chevron-down"
+              size={11}
+              color="#6B7280"
+              style={styles.editIcon}
+            />
+          )}
         </TouchableOpacity>
       );
     }
@@ -1915,77 +1968,107 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
               </View>
             ) : editSheet?.type === "customDropdown" ? (
               <ScrollView style={styles.optionList}>
-                {(editSheet.customField?.options ?? []).map((opt) => (
+                {(selectOptionsBySlot.get(editSheet.customField?.slot ?? "") ?? []).length > 0 ? (
+                  <>
+                    {(selectOptionsBySlot.get(editSheet.customField?.slot ?? "") ?? []).map((opt) => (
+                      <TouchableOpacity
+                        key={opt}
+                        style={[
+                          styles.optionRow,
+                          (activeEditMember as Record<string, unknown>)?.[
+                            editSheet!.customField!.slot
+                          ] === opt && styles.optionRowSelected,
+                        ]}
+                        onPress={() => handleCustomDropdownSelect(opt)}
+                        disabled={isUpdatingField}
+                      >
+                        <Text style={styles.optionText}>{opt}</Text>
+                        {(activeEditMember as Record<string, unknown>)?.[
+                          editSheet!.customField!.slot
+                        ] === opt && (
+                          <Ionicons
+                            name="checkmark"
+                            size={16}
+                            color={primaryColor}
+                          />
+                        )}
+                      </TouchableOpacity>
+                    ))}
+                  </>
+                ) : (
+                  <View style={styles.optionRow}>
+                    <Text style={styles.optionText}>No options configured</Text>
+                  </View>
+                )}
+                {String(
+                  (activeEditMember as Record<string, unknown>)?.[
+                    editSheet!.customField!.slot
+                  ] ?? ""
+                ).trim().length > 0 && (
                   <TouchableOpacity
-                    key={opt}
-                    style={[
-                      styles.optionRow,
-                      (activeEditMember as Record<string, unknown>)?.[
-                        editSheet!.customField!.slot
-                      ] === opt && styles.optionRowSelected,
-                    ]}
-                    onPress={() => handleCustomDropdownSelect(opt)}
+                    style={styles.optionRow}
+                    onPress={() => handleCustomDropdownSelect(undefined)}
                     disabled={isUpdatingField}
                   >
-                    <Text style={styles.optionText}>{opt}</Text>
-                    {(activeEditMember as Record<string, unknown>)?.[
-                      editSheet!.customField!.slot
-                    ] === opt && (
-                      <Ionicons
-                        name="checkmark"
-                        size={16}
-                        color={primaryColor}
-                      />
-                    )}
+                    <Text style={styles.optionText}>Clear</Text>
                   </TouchableOpacity>
-                ))}
-                <TouchableOpacity
-                  style={styles.optionRow}
-                  onPress={() => handleCustomDropdownSelect(undefined)}
-                  disabled={isUpdatingField}
-                >
-                  <Text style={styles.optionText}>Clear</Text>
-                </TouchableOpacity>
+                )}
               </ScrollView>
             ) : editSheet?.type === "customMultiselect" ? (
               <ScrollView style={styles.optionList}>
-                {(editSheet.customField?.options ?? []).map((opt) => {
-                  const currentVal = (
-                    activeEditMember as Record<string, unknown>
-                  )?.[editSheet!.customField!.slot];
-                  const selectedValues = currentVal
-                    ? String(currentVal).split("; ").filter(Boolean)
-                    : [];
-                  const isChecked = selectedValues.includes(opt);
-                  return (
-                    <TouchableOpacity
-                      key={opt}
-                      style={[
-                        styles.optionRow,
-                        isChecked && styles.optionRowSelected,
-                      ]}
-                      onPress={() => handleMultiselectToggle(opt)}
-                      disabled={isUpdatingField}
-                    >
-                      <View style={styles.multiselectOptionRow}>
-                        <Ionicons
-                          name={isChecked ? "checkbox" : "square-outline"}
-                          size={20}
-                          color={isChecked ? primaryColor : "#9CA3AF"}
-                          style={styles.multiselectCheckboxIcon}
-                        />
-                        <Text style={styles.optionText}>{opt}</Text>
-                      </View>
-                    </TouchableOpacity>
-                  );
-                })}
-                <TouchableOpacity
-                  style={styles.optionRow}
-                  onPress={handleMultiselectClear}
-                  disabled={isUpdatingField}
-                >
-                  <Text style={styles.optionText}>Clear all</Text>
-                </TouchableOpacity>
+                {(selectOptionsBySlot.get(editSheet.customField?.slot ?? "") ?? []).length > 0 ? (
+                  <>
+                    {(selectOptionsBySlot.get(editSheet.customField?.slot ?? "") ?? []).map((opt) => {
+                      const currentVal = (
+                        activeEditMember as Record<string, unknown>
+                      )?.[editSheet!.customField!.slot];
+                      const selectedValues = parseMultiSelectValues(
+                        currentVal ? String(currentVal) : ""
+                      );
+                      const isChecked = selectedValues.includes(opt);
+                      return (
+                        <TouchableOpacity
+                          key={opt}
+                          style={[
+                            styles.optionRow,
+                            isChecked && styles.optionRowSelected,
+                          ]}
+                          onPress={() => handleMultiselectToggle(opt)}
+                          disabled={isUpdatingField}
+                        >
+                          <View style={styles.multiselectOptionRow}>
+                            <Ionicons
+                              name={isChecked ? "checkbox" : "square-outline"}
+                              size={20}
+                              color={isChecked ? primaryColor : "#9CA3AF"}
+                              style={styles.multiselectCheckboxIcon}
+                            />
+                            <Text style={styles.optionText}>{opt}</Text>
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </>
+                ) : (
+                  <View style={styles.optionRow}>
+                    <Text style={styles.optionText}>No options configured</Text>
+                  </View>
+                )}
+                {parseMultiSelectValues(
+                  String(
+                    (activeEditMember as Record<string, unknown>)?.[
+                      editSheet!.customField!.slot
+                    ] ?? ""
+                  )
+                ).length > 0 && (
+                  <TouchableOpacity
+                    style={styles.optionRow}
+                    onPress={handleMultiselectClear}
+                    disabled={isUpdatingField}
+                  >
+                    <Text style={styles.optionText}>Clear all</Text>
+                  </TouchableOpacity>
+                )}
               </ScrollView>
             ) : editSheet?.type === "assignee" ? (
               <ScrollView style={styles.optionList}>

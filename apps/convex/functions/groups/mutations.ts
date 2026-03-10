@@ -999,6 +999,15 @@ export const saveFollowupColumnConfig = mutation({
         if (!allowedTypes || !allowedTypes.includes(field.type)) {
           throw new ConvexError(`Slot ${field.slot} does not support type "${field.type}"`);
         }
+        if (field.type === "dropdown" || field.type === "multiselect") {
+          const options = field.options?.map((opt) => opt.trim()).filter(Boolean) ?? [];
+          if (options.length === 0) {
+            throw new ConvexError(`Field "${field.name}" requires at least one option`);
+          }
+          if (options.some((opt) => opt.includes(";"))) {
+            throw new ConvexError(`Field "${field.name}" options cannot contain semicolons`);
+          }
+        }
       }
     }
 

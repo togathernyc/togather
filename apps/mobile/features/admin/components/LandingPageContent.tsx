@@ -701,6 +701,19 @@ function FieldEditorModal({
       return;
     }
 
+    const parsedOptions =
+      type === "dropdown" || type === "multiselect"
+        ? options
+            .split(",")
+            .map((o) => o.trim())
+            .filter(Boolean)
+        : undefined;
+
+    if ((type === "dropdown" || type === "multiselect") && (!parsedOptions || parsedOptions.length === 0)) {
+      Alert.alert("Error", "Add at least one option for dropdown and multi-select fields.");
+      return;
+    }
+
     // Auto-select a slot based on type if not explicitly chosen
     const resolvedSlot = slot || undefined;
 
@@ -711,10 +724,7 @@ function FieldEditorModal({
       placeholder: placeholder.trim() || undefined,
       required,
       order: field?.order ?? 0,
-      options:
-        type === "dropdown" || type === "multiselect"
-          ? options.split(",").map((o) => o.trim()).filter(Boolean)
-          : undefined,
+      options: parsedOptions,
       includeInNotes: true,
     });
   };
