@@ -1589,7 +1589,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
       {/* Custom field dropdown portal */}
       {dropdownPos && customDropdownFor && (() => {
         const cf = customFields.find((f) => f.slot === customDropdownFor.slot);
-        const member = members.find((m) => m.groupMemberId === customDropdownFor.memberId);
+        const member = displayMembers.find((m) => m.groupMemberId === customDropdownFor.memberId);
         if (!cf || !member) return null;
 
         if (cf.type === "multiselect") {
