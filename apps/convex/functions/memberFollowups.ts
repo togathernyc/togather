@@ -1216,6 +1216,152 @@ const csvImportRowValidator = v.object({
 const CSV_IMPORT_NOTE_TAG = "[csv import]";
 const MAX_CSV_IMPORT_ROWS = 500;
 
+/**
+ * Shared helper that creates or updates a user and ensures they have
+ * active community and group memberships. Used by both CSV import and quick-add.
+ */
+async function ensureUserAndMembership(
+  ctx: any,
+  prepared: PreparedCsvImportRow,
+  group: Doc<"groups">,
+  timestamp: number
+): Promise<{
+  userId: Id<"users">;
+  groupMemberId: Id<"groupMembers">;
+  createdUser: boolean;
+}> {
+  const normalizedEmail = prepared.row.email?.toLowerCase();
+
+  let userId: Id<"users">;
+  let createdUser = false;
+  if (prepared.existingUser) {
+    userId = prepared.existingUser._id;
+    const { updates } = getUserProfileUpdates(prepared.existingUser, prepared.row, prepared.parsedDateOfBirth);
+    if (Object.keys(updates).length > 0) {
+      await ctx.db.patch(userId, updates);
+    }
+  } else {
+    createdUser = true;
+    userId = await ctx.db.insert("users", {
+      firstName: prepared.row.firstName,
+      lastName: prepared.row.lastName,
+      phone: prepared.normalizedPhone,
+      phoneVerified: false,
+      email: normalizedEmail,
+      zipCode: prepared.row.zipCode,
+      dateOfBirth: prepared.parsedDateOfBirth,
+      searchText: buildSearchText({
+        firstName: prepared.row.firstName,
+        lastName: prepared.row.lastName,
+        email: normalizedEmail,
+        phone: prepared.normalizedPhone,
+      }),
+      isActive: true,
+      isStaff: false,
+      isSuperuser: false,
+      dateJoined: timestamp,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+  }
+
+  const existingCommunityMembership = await ctx.db
+    .query("userCommunities")
+    .withIndex("by_user_community", (q: any) =>
+      q.eq("userId", userId).eq("communityId", group.communityId)
+    )
+    .first();
+
+  if (!existingCommunityMembership) {
+    await ctx.db.insert("userCommunities", {
+      userId,
+      communityId: group.communityId,
+      roles: 1,
+      status: 1,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+  } else if (existingCommunityMembership.status !== 1) {
+    await ctx.db.patch(existingCommunityMembership._id, {
+      status: 1,
+      updatedAt: timestamp,
+    });
+  }
+
+  const existingGroupMembership = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_group_user", (q: any) =>
+      q.eq("groupId", group._id).eq("userId", userId)
+    )
+    .first();
+
+  let groupMemberId: Id<"groupMembers">;
+  let needsChannelSync = false;
+  if (!existingGroupMembership) {
+    groupMemberId = await ctx.db.insert("groupMembers", {
+      groupId: group._id,
+      userId,
+      role: "member",
+      joinedAt: timestamp,
+      notificationsEnabled: true,
+    });
+    needsChannelSync = true;
+  } else if (existingGroupMembership.leftAt) {
+    await ctx.db.patch(existingGroupMembership._id, {
+      leftAt: undefined,
+      role: "member",
+      joinedAt: timestamp,
+      notificationsEnabled: true,
+    });
+    groupMemberId = existingGroupMembership._id;
+    needsChannelSync = true;
+  } else {
+    groupMemberId = existingGroupMembership._id;
+  }
+
+  if (needsChannelSync) {
+    await syncUserChannelMembershipsLogic(ctx, userId, group._id);
+  }
+
+  return { userId, groupMemberId, createdUser };
+}
+
+/**
+ * Apply custom field values to the member's score document, with a scheduler
+ * fallback if the score document doesn't exist yet.
+ */
+async function applyCustomFieldValues(
+  ctx: any,
+  groupMemberId: Id<"groupMembers">,
+  customFieldValues: Record<string, string | number | boolean>,
+  timestamp: number
+): Promise<void> {
+  if (Object.keys(customFieldValues).length === 0) {
+    return;
+  }
+
+  const scoreDoc = await ctx.db
+    .query("memberFollowupScores")
+    .withIndex("by_groupMember", (q: any) => q.eq("groupMemberId", groupMemberId))
+    .first();
+
+  if (scoreDoc) {
+    await ctx.db.patch(scoreDoc._id, {
+      ...customFieldValues,
+      updatedAt: timestamp,
+    });
+  } else {
+    await ctx.scheduler.runAfter(
+      1000,
+      internal.functions.memberFollowups.applyCsvImportCustomFieldPatch,
+      {
+        groupMemberId,
+        customFieldValues,
+      }
+    );
+  }
+}
+
 type CsvImportRow = {
   rowNumber: number;
   firstName?: string;
@@ -1856,100 +2002,10 @@ export const applyCsvImport = mutation({
     for (const prepared of preparedRows) {
       if (prepared.rowReport.status !== "ready") continue;
 
-      const row = prepared.row;
-      const normalizedEmail = row.email?.toLowerCase();
+      const { groupMemberId } = await ensureUserAndMembership(ctx, prepared, group, timestamp);
 
-      let userId: Id<"users">;
-      if (prepared.existingUser) {
-        userId = prepared.existingUser._id;
-        const { updates } = getUserProfileUpdates(prepared.existingUser, row, prepared.parsedDateOfBirth);
-        if (Object.keys(updates).length > 0) {
-          await ctx.db.patch(userId, updates);
-        }
-      } else {
-        userId = await ctx.db.insert("users", {
-          firstName: row.firstName,
-          lastName: row.lastName,
-          phone: prepared.normalizedPhone,
-          phoneVerified: false,
-          email: normalizedEmail,
-          zipCode: row.zipCode,
-          dateOfBirth: prepared.parsedDateOfBirth,
-          searchText: buildSearchText({
-            firstName: row.firstName,
-            lastName: row.lastName,
-            email: normalizedEmail,
-            phone: prepared.normalizedPhone,
-          }),
-          isActive: true,
-          isStaff: false,
-          isSuperuser: false,
-          dateJoined: timestamp,
-          createdAt: timestamp,
-          updatedAt: timestamp,
-        });
-      }
-
-      const existingCommunityMembership = await ctx.db
-        .query("userCommunities")
-        .withIndex("by_user_community", (q: any) =>
-          q.eq("userId", userId).eq("communityId", group.communityId)
-        )
-        .first();
-
-      if (!existingCommunityMembership) {
-        await ctx.db.insert("userCommunities", {
-          userId,
-          communityId: group.communityId,
-          roles: 1,
-          status: 1,
-          createdAt: timestamp,
-          updatedAt: timestamp,
-        });
-      } else if (existingCommunityMembership.status !== 1) {
-        await ctx.db.patch(existingCommunityMembership._id, {
-          status: 1,
-          updatedAt: timestamp,
-        });
-      }
-
-      const existingGroupMembership = await ctx.db
-        .query("groupMembers")
-        .withIndex("by_group_user", (q: any) =>
-          q.eq("groupId", group._id).eq("userId", userId)
-        )
-        .first();
-
-      let groupMemberId: Id<"groupMembers">;
-      let needsChannelSync = false;
-      if (!existingGroupMembership) {
-        groupMemberId = await ctx.db.insert("groupMembers", {
-          groupId: group._id,
-          userId,
-          role: "member",
-          joinedAt: timestamp,
-          notificationsEnabled: true,
-        });
-        needsChannelSync = true;
-      } else if (existingGroupMembership.leftAt) {
-        await ctx.db.patch(existingGroupMembership._id, {
-          leftAt: undefined,
-          role: "member",
-          joinedAt: timestamp,
-          notificationsEnabled: true,
-        });
-        groupMemberId = existingGroupMembership._id;
-        needsChannelSync = true;
-      } else {
-        groupMemberId = existingGroupMembership._id;
-      }
-
-      if (needsChannelSync) {
-        await syncUserChannelMembershipsLogic(ctx, userId, group._id);
-      }
-
-      if (row.notes) {
-        const noteLine = `${new Date(timestamp).toISOString()} - ${row.notes}`;
+      if (prepared.row.notes) {
+        const noteLine = `${new Date(timestamp).toISOString()} - ${prepared.row.notes}`;
         const existingCsvNote = await getExistingCsvImportNote(ctx, groupMemberId);
         if (existingCsvNote) {
           const previousContent = existingCsvNote.content ?? CSV_IMPORT_NOTE_TAG;
@@ -1970,28 +2026,7 @@ export const applyCsvImport = mutation({
         }
       }
 
-      if (Object.keys(prepared.parsedCustomFieldValues).length > 0) {
-        const scoreDoc = await ctx.db
-          .query("memberFollowupScores")
-          .withIndex("by_groupMember", (q: any) => q.eq("groupMemberId", groupMemberId))
-          .first();
-
-        if (scoreDoc) {
-          await ctx.db.patch(scoreDoc._id, {
-            ...prepared.parsedCustomFieldValues,
-            updatedAt: timestamp,
-          });
-        } else {
-          await ctx.scheduler.runAfter(
-            1000,
-            internal.functions.memberFollowups.applyCsvImportCustomFieldPatch,
-            {
-              groupMemberId,
-              customFieldValues: prepared.parsedCustomFieldValues,
-            }
-          );
-        }
-      }
+      await applyCustomFieldValues(ctx, groupMemberId, prepared.parsedCustomFieldValues, timestamp);
 
       await ctx.scheduler.runAfter(
         0,
@@ -2068,99 +2103,9 @@ export const quickAddRow = mutation({
       throw new ConvexError(`Could not add member: ${reason}`);
     }
 
-    const normalizedEmail = prepared.row.email?.toLowerCase();
     const timestamp = now();
 
-    let userId: Id<"users">;
-    let createdUser = false;
-    if (prepared.existingUser) {
-      userId = prepared.existingUser._id;
-      const { updates } = getUserProfileUpdates(prepared.existingUser, prepared.row, prepared.parsedDateOfBirth);
-      if (Object.keys(updates).length > 0) {
-        await ctx.db.patch(userId, updates);
-      }
-    } else {
-      createdUser = true;
-      userId = await ctx.db.insert("users", {
-        firstName: prepared.row.firstName,
-        lastName: prepared.row.lastName,
-        phone: prepared.normalizedPhone,
-        phoneVerified: false,
-        email: normalizedEmail,
-        zipCode: prepared.row.zipCode,
-        dateOfBirth: prepared.parsedDateOfBirth,
-        searchText: buildSearchText({
-          firstName: prepared.row.firstName,
-          lastName: prepared.row.lastName,
-          email: normalizedEmail,
-          phone: prepared.normalizedPhone,
-        }),
-        isActive: true,
-        isStaff: false,
-        isSuperuser: false,
-        dateJoined: timestamp,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      });
-    }
-
-    const existingCommunityMembership = await ctx.db
-      .query("userCommunities")
-      .withIndex("by_user_community", (q: any) =>
-        q.eq("userId", userId).eq("communityId", group.communityId)
-      )
-      .first();
-
-    if (!existingCommunityMembership) {
-      await ctx.db.insert("userCommunities", {
-        userId,
-        communityId: group.communityId,
-        roles: 1,
-        status: 1,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      });
-    } else if (existingCommunityMembership.status !== 1) {
-      await ctx.db.patch(existingCommunityMembership._id, {
-        status: 1,
-        updatedAt: timestamp,
-      });
-    }
-
-    const existingGroupMembership = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group_user", (q: any) =>
-        q.eq("groupId", group._id).eq("userId", userId)
-      )
-      .first();
-
-    let groupMemberId: Id<"groupMembers">;
-    let needsChannelSync = false;
-    if (!existingGroupMembership) {
-      groupMemberId = await ctx.db.insert("groupMembers", {
-        groupId: group._id,
-        userId,
-        role: "member",
-        joinedAt: timestamp,
-        notificationsEnabled: true,
-      });
-      needsChannelSync = true;
-    } else if (existingGroupMembership.leftAt) {
-      await ctx.db.patch(existingGroupMembership._id, {
-        leftAt: undefined,
-        role: "member",
-        joinedAt: timestamp,
-        notificationsEnabled: true,
-      });
-      groupMemberId = existingGroupMembership._id;
-      needsChannelSync = true;
-    } else {
-      groupMemberId = existingGroupMembership._id;
-    }
-
-    if (needsChannelSync) {
-      await syncUserChannelMembershipsLogic(ctx, userId, group._id);
-    }
+    const { userId, groupMemberId, createdUser } = await ensureUserAndMembership(ctx, prepared, group, timestamp);
 
     if (prepared.row.notes) {
       await ctx.db.insert("memberFollowups", {
@@ -2172,28 +2117,7 @@ export const quickAddRow = mutation({
       });
     }
 
-    if (Object.keys(prepared.parsedCustomFieldValues).length > 0) {
-      const scoreDoc = await ctx.db
-        .query("memberFollowupScores")
-        .withIndex("by_groupMember", (q: any) => q.eq("groupMemberId", groupMemberId))
-        .first();
-
-      if (scoreDoc) {
-        await ctx.db.patch(scoreDoc._id, {
-          ...prepared.parsedCustomFieldValues,
-          updatedAt: timestamp,
-        });
-      } else {
-        await ctx.scheduler.runAfter(
-          1000,
-          internal.functions.memberFollowups.applyCsvImportCustomFieldPatch,
-          {
-            groupMemberId,
-            customFieldValues: prepared.parsedCustomFieldValues,
-          }
-        );
-      }
-    }
+    await applyCustomFieldValues(ctx, groupMemberId, prepared.parsedCustomFieldValues, timestamp);
 
     await ctx.scheduler.runAfter(
       0,
