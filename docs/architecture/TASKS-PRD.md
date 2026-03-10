@@ -1,7 +1,7 @@
 # Tasks Feature PRD (Leaders)
 
 **Date:** 2026-03-10  
-**Status:** Proposed (discussion draft)  
+**Status:** Proposed (decision-locked draft)  
 **Owner:** Product + Mobile + Convex
 
 ## 1) Problem Statement
@@ -29,6 +29,7 @@ This creates duplication in data models, UI patterns, and automation logic. We n
 6. Support indexable tags (e.g., `prayer_request`, `praise_report`).
 7. Support contextual links to a target member or target group.
 8. Remove redundant systems over time (`task reminder` reminder-as-message flow and `reach out` request workflow).
+9. Add a top-level **Tasks** tab (left of Inbox) as the home for task workflows.
 
 ## 3) Non-Goals (V1)
 
@@ -117,6 +118,19 @@ Task reminder configuration can optionally post a **rendered task card** message
 - New chat message type in V1 should reference `taskId`.
 - Mention behavior/notifications remain configurable by delivery settings.
 
+### 5.9 Top-Level Tasks Home
+
+- Add a primary app tab `Tasks` positioned immediately **left of Inbox**.
+- This tab is the canonical “all task-related things” surface for leaders.
+- It must aggregate a leader's tasks across sources:
+  - bot-generated tasks,
+  - reach-out-origin tasks,
+  - manual tasks,
+  - (later) optional follow-up-origin tasks.
+- Default view in this tab: `My Tasks` across all groups.
+- Secondary view in this tab: `Claimable` (unassigned group-level tasks visible to the leader in groups they lead).
+- Must include source badges (e.g., `BOT`, `REACH OUT`, `MANUAL`) and group context labels.
+
 ## 6) Technical Design (Proposed)
 
 ### 6.1 New Tables
@@ -185,12 +199,36 @@ Important existing gap to close during migration:
 
 ## 7) UX / Navigation (Proposed)
 
-### 7.1 Placement
+### 7.1 App-Level Tab Placement
 
-- Add `tasks` tool to leader toolbar (`attendance/followup/events/bots/...` set).
-- Route proposal: `/leader-tools/[group_id]/tasks`
+- Add a new app tab: `Tasks`, rendered immediately left of `Inbox`.
+- Route proposal: `/tasks` (tab root).
+- This route is mobile-first and acts as the global task aggregator.
+- Visibility:
+  - leaders/admins: full task experience,
+  - non-leaders: hidden tab in V1 (keeps scope aligned to leader-only requirement).
 
-### 7.2 Page Structure
+### 7.2 Tasks Tab Structure (`/tasks`)
+
+- Segments:
+  - `My Tasks` (assigned to current leader across all groups)
+  - `Claimable` (unassigned group-level tasks)
+  - optional quick filter chips: source, group, status, tag
+- Each row/card includes:
+  - task title + source badge,
+  - group name,
+  - assignee/claim state,
+  - quick actions (done/snooze/cancel/claim as permitted),
+  - target context pill (member/group when set).
+- Tap-through from task row opens task detail/action sheet.
+
+### 7.3 Group Workspace (Leader Tools)
+
+- Keep group-specific route for deep management: `/leader-tools/[group_id]/tasks`.
+- This screen is optimized for full-group workload balancing (all group tasks, assignment controls, parent/child bulk operations).
+- Add `tasks` to leader toolbar tool definitions.
+
+### 7.4 Page Structure (Group Task Workspace)
 
 - Header metrics: open, snoozed, overdue (if due dates used), unassigned.
 - Tabs/segments:
@@ -199,10 +237,19 @@ Important existing gap to close during migration:
 - Collapsible parent rows for sub-task stacks.
 - Inline quick actions (done/snooze/cancel/assign).
 
-### 7.3 Reach Out Member Experience
+### 7.5 Reach Out Member Experience
 
 - Member “Reach Out” entry remains as UX entry point in V1, but backend writes a task instead of `reachOutRequests`.
-- Optional member-visible status text can be retained later, but leader workflow source of truth is task state.
+- Keep a minimal member-visible status lifecycle (`submitted`, `in_progress`, `resolved`) to avoid UX regression.
+
+### 7.6 Mobile-First + Responsive Web Behavior
+
+- Primary design target is native mobile UX.
+- Web must still be reactive and polished:
+  - narrow widths: single-column list/cards (mobile parity),
+  - medium+ widths: split view (list on left, detail panel on right) when practical,
+  - table-like dense mode only for larger desktop widths.
+- Interaction model should remain touch-friendly first (large tap targets, sticky quick actions), with hover/keyboard enhancements on web only.
 
 ## 8) Migration & Redundancy Removal Plan
 
@@ -265,21 +312,22 @@ After backfill and confidence window:
 - UX churn for leaders used to reach-out cards and follow-up flows.
 - Ordering/hierarchy edge cases (especially if strict linked list is required).
 
-## 13) Open Questions (Need Product Decision)
+## 13) Decision Log (Locked for V1)
 
-1. **Follow-up boundary:** Do we want Tasks to fully replace follow-up action logging long-term, or keep follow-up as a scoring/history subsystem?
-2. **Group-level completion semantics:** Can any leader complete a group-level task, or only assignee/creator once claimed?
-3. **Tag governance:** free-form tags only, or curated per-community dictionary with admin controls?
-4. **Ordering strictness:** Is numeric ranking sufficient, or do we need explicit linked-list adjacency guarantees in V1?
-5. **Member visibility:** Should members see status updates for reach-out-origin tasks after submission?
-6. **Snooze presets:** confirm V1 presets (1 week only vs 1 day/3 days/1 week/custom).
-7. **Target context cardinality:** can a task target both member and group simultaneously, or exactly one target type?
+1. **Follow-up boundary:** Keep follow-up as scoring/history subsystem in V1; Tasks do not replace follow-up scoring.
+2. **Group-level completion semantics:** Any leader/admin may claim and complete unassigned group-level tasks; person-level tasks are completed by assignee or admin.
+3. **Tag governance:** Hybrid model in V1: free-form creation with normalized tags + suggested dictionary from usage.
+4. **Ordering strictness:** Numeric `orderKey` ranking in V1; no strict linked-list adjacency guarantees.
+5. **Member visibility:** Keep minimal member-visible status for reach-out-origin tasks (`submitted`, `in_progress`, `resolved`).
+6. **Snooze presets:** V1 presets are `1 day`, `3 days`, and `1 week` (default).
+7. **Target context cardinality:** Exactly one primary target in V1 (`none` or `member` or `group`).
 
 ## 14) Proposed V1 Scope Lock
 
 Ship V1 with:
 
 - leader-only task page,
+- top-level `Tasks` tab positioned left of `Inbox`,
 - manual + task-reminder + reach-out task creation,
 - assignment/claim,
 - done/snooze/cancel,
