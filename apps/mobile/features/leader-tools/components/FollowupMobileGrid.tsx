@@ -987,9 +987,34 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
 
   const handleMultiselectClear = useCallback(async () => {
     if (!editSheet || !editSheet.customField) return;
-    await handleCustomFieldSave(editSheet.memberId, editSheet.customField.slot, undefined);
+    const { memberId } = editSheet;
+    const { slot } = editSheet.customField;
+    // Optimistic clear
+    setLocalOverrides((prev) => ({
+      ...prev,
+      [memberId]: { ...prev[memberId], [slot]: null },
+    }));
     setEditSheet(null);
-  }, [editSheet, handleCustomFieldSave]);
+    try {
+      await setCustomFieldMut({
+        groupId: groupId as Id<"groups">,
+        groupMemberId: memberId as Id<"groupMembers">,
+        slot,
+        value: undefined,
+      });
+    } catch (err) {
+      console.error("[FollowupMobileGrid] multiselect clear failed:", err);
+      setLocalOverrides((prev) => {
+        const next = { ...prev };
+        if (next[memberId]) {
+          delete next[memberId][slot];
+          if (Object.keys(next[memberId]).length === 0) delete next[memberId];
+        }
+        return next;
+      });
+      Alert.alert("Could not update field", "Please try again.");
+    }
+  }, [editSheet, setCustomFieldMut, groupId]);
 
   const handleAssignChange = async (assigneeId?: string) => {
     if (!editSheet || !activeEditMember) return;
