@@ -1,17 +1,5 @@
 import type { CustomFieldDef } from "./ColumnPickerModal";
 
-export type QuickAddFieldState = {
-  firstName: string;
-  phone: string;
-  lastName: string;
-  email: string;
-  zipCode: string;
-  dateOfBirth: string;
-  notes: string;
-  status?: string;
-  assigneeId?: string;
-};
-
 export function validateQuickAddRequiredFields(firstName: string, phone: string): string[] {
   const missing: string[] = [];
   if (!firstName.trim()) missing.push("first name");

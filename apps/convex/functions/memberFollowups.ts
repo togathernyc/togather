@@ -2198,10 +2198,16 @@ export const quickAddRow = mutation({
     await ctx.scheduler.runAfter(
       0,
       internal.functions.followupScoreComputation.computeSingleMemberScore,
-      { groupId: group._id, groupMemberId }
+      {
+        groupId: group._id,
+        groupMemberId,
+        status: normalizedStatus || undefined,
+        assigneeId: args.assigneeId,
+      }
     );
 
     if (normalizedStatus || args.assigneeId) {
+      // Patch serves as fallback (if action races) and triggers notification
       await ctx.scheduler.runAfter(
         500,
         internal.functions.memberFollowups.applyQuickAddFollowupPatch,
