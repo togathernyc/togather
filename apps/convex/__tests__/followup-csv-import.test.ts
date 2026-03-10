@@ -589,7 +589,6 @@ describe("follow-up CSV import", () => {
     expect(result?.scoreDoc?.assigneeId).toBe(setup.mikeId);
     expect(result?.scoreDoc?.customText4).toBe("Team; Dinner Party");
   });
-
   test("quick add creates user + memberships and sets follow-up fields", async () => {
     const t = convexTest(schema, modules);
     const { leaderId, communityId, groupId } = await seedGroupWithLeader(t);
