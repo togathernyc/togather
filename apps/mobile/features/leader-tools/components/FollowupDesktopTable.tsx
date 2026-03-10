@@ -518,9 +518,25 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
     parsedQuery,
   ]);
 
+  // Merge optimistic overrides for consistent UI display
+  const displayMembers = useMemo(() => {
+    if (Object.keys(optimistic).length === 0) return members;
+    return members.map((member) => {
+      const opt = optimistic[member.groupMemberId];
+      if (!opt) return member;
+      const overrides: any = {};
+      if (opt.assigneeId !== undefined) overrides.assigneeId = opt.assigneeId ?? undefined;
+      if (opt.status !== undefined) overrides.status = opt.status ?? undefined;
+      for (const [key, val] of Object.entries(opt)) {
+        if (key.startsWith("custom")) overrides[key] = val ?? undefined;
+      }
+      return { ...member, ...overrides };
+    });
+  }, [members, optimistic]);
+
   const selectOptionsBySlot = useMemo(
-    () => buildSelectOptionsBySlot(customFields, members as unknown as Record<string, unknown>[]),
-    [customFields, members]
+    () => buildSelectOptionsBySlot(customFields, displayMembers as unknown as Record<string, unknown>[]),
+    [customFields, displayMembers]
   );
 
   // Clear optimistic overrides once server data catches up
