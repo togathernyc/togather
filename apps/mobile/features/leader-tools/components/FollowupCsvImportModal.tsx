@@ -81,7 +81,6 @@ const FIELD_ORDER: Array<{ key: CsvImportField; label: string; required?: boolea
   { key: "notes", label: "Notes" },
   { key: "assignee", label: "Assignee" },
   { key: "status", label: "Status" },
-  { key: "connectionPoint", label: "Connection Point" },
 ];
 
 function isRequiredField(field: CsvImportField) {
@@ -119,7 +118,6 @@ export function FollowupCsvImportModal({ visible, groupId, onClose, onImported }
     notes: null,
     assignee: null,
     status: null,
-    connectionPoint: null,
   });
   const [customFieldMapping, setCustomFieldMapping] = useState<Record<string, string | null>>({});
   const [selectedFields, setSelectedFields] = useState<Set<CsvImportField>>(
@@ -152,7 +150,6 @@ export function FollowupCsvImportModal({ visible, groupId, onClose, onImported }
         notes: null,
         assignee: null,
         status: null,
-        connectionPoint: null,
       });
       setCustomFieldMapping({});
     }

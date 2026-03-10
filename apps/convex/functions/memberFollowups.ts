@@ -1213,7 +1213,6 @@ const csvImportRowValidator = v.object({
   notes: v.optional(v.string()),
   assignee: v.optional(v.string()),
   status: v.optional(v.string()),
-  connectionPoint: v.optional(v.string()),
   customFieldValues: v.optional(v.record(v.string(), v.string())),
 });
 
@@ -1232,7 +1231,6 @@ type CsvImportRow = {
   notes?: string;
   assignee?: string;
   status?: string;
-  connectionPoint?: string;
   customFieldValues?: Record<string, string>;
 };
 
@@ -1261,7 +1259,6 @@ type PreparedCsvImportRow = {
   parsedDateOfBirth?: number;
   parsedStatus?: "green" | "orange" | "red";
   parsedAssigneeId?: Id<"users">;
-  parsedConnectionPoint?: string;
   parsedCustomFieldValues: Record<string, string | number | boolean>;
   existingUser: Doc<"users"> | null;
   rowReport: CsvImportRowReport;
@@ -1303,7 +1300,6 @@ function getNormalizedRow(row: CsvImportRow): CsvImportRow {
     notes: sanitizeCsvValue(row.notes),
     assignee: sanitizeCsvValue(row.assignee),
     status: sanitizeCsvValue(row.status),
-    connectionPoint: sanitizeCsvValue(row.connectionPoint),
     customFieldValues: Object.keys(normalizedCustomValues).length > 0
       ? normalizedCustomValues
       : undefined,
@@ -1323,19 +1319,6 @@ function parseCsvStatus(value: string): "green" | "orange" | "red" | undefined {
   if (["orange", "amber", "yellow", "o", "y"].includes(normalized)) return "orange";
   if (["red", "r"].includes(normalized)) return "red";
   return undefined;
-}
-
-function normalizeConnectionPoint(value: string): string | undefined {
-  const parts = value
-    .split(/[,;]+/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-  if (parts.length === 0) return undefined;
-
-  const deduped = Array.from(
-    new Map(parts.map((part) => [part.toLowerCase(), part])).values()
-  );
-  return deduped.join(", ");
 }
 
 function normalizeAssigneeName(value: string): string {
@@ -1543,7 +1526,7 @@ function parseCsvCustomFieldValues(
         parsedValues[slot] = value;
         continue;
       }
-      const parts = value.split(";").map((p) => p.trim()).filter(Boolean);
+      const parts = value.split(/[;,]+/).map((p) => p.trim()).filter(Boolean);
       const validParts: string[] = [];
       for (const part of parts) {
         const matchedOption = options.find(
@@ -1735,10 +1718,6 @@ async function analyzeCsvImportRows(
       reasons.push(assigneeReason);
     }
 
-    const parsedConnectionPoint = row.connectionPoint
-      ? normalizeConnectionPoint(row.connectionPoint)
-      : undefined;
-
     const { parsedValues: parsedCustomFieldValues, reasons: customFieldReasons } =
       parseCsvCustomFieldValues(row, customFieldDefsBySlot);
     reasons.push(...customFieldReasons);
@@ -1755,7 +1734,6 @@ async function analyzeCsvImportRows(
       parsedDateOfBirth,
       parsedStatus,
       parsedAssigneeId,
-      parsedConnectionPoint,
       parsedCustomFieldValues,
     };
   });
@@ -1892,7 +1870,6 @@ async function analyzeCsvImportRows(
       parsedDateOfBirth: item.parsedDateOfBirth,
       parsedStatus: item.parsedStatus,
       parsedAssigneeId: item.parsedAssigneeId,
-      parsedConnectionPoint: item.parsedConnectionPoint,
       parsedCustomFieldValues: item.parsedCustomFieldValues,
       existingUser,
       rowReport: report,
@@ -1929,7 +1906,6 @@ export const applyCsvImportScorePatch = internalMutation({
     groupMemberId: v.id("groupMembers"),
     status: v.optional(v.string()),
     assigneeId: v.optional(v.id("users")),
-    connectionPoint: v.optional(v.string()),
     customFieldValues: v.optional(v.record(v.string(), v.union(v.string(), v.number(), v.boolean()))),
     retryCount: v.optional(v.number()),
   },
@@ -1940,7 +1916,6 @@ export const applyCsvImportScorePatch = internalMutation({
     const metadataPatch: Record<string, string | Id<"users">> = {};
     if (args.status) metadataPatch.status = args.status;
     if (args.assigneeId) metadataPatch.assigneeId = args.assigneeId;
-    if (args.connectionPoint) metadataPatch.connectionPoint = args.connectionPoint;
 
     const fullPatch = {
       ...metadataPatch,
@@ -1972,7 +1947,6 @@ export const applyCsvImportScorePatch = internalMutation({
           groupMemberId: args.groupMemberId,
           status: args.status,
           assigneeId: args.assigneeId,
-          connectionPoint: args.connectionPoint,
           customFieldValues: validCustomPatch,
           retryCount: retryCount + 1,
         }
@@ -2151,9 +2125,6 @@ export const applyCsvImport = mutation({
       if (prepared.parsedAssigneeId) {
         scorePatch.assigneeId = prepared.parsedAssigneeId;
       }
-      if (prepared.parsedConnectionPoint) {
-        scorePatch.connectionPoint = prepared.parsedConnectionPoint;
-      }
 
       if (Object.keys(scorePatch).length > 0) {
         const scoreDoc = await ctx.db
@@ -2174,7 +2145,6 @@ export const applyCsvImport = mutation({
               groupMemberId,
               status: prepared.parsedStatus,
               assigneeId: prepared.parsedAssigneeId,
-              connectionPoint: prepared.parsedConnectionPoint,
               customFieldValues: Object.keys(prepared.parsedCustomFieldValues).length > 0
                 ? prepared.parsedCustomFieldValues
                 : undefined,

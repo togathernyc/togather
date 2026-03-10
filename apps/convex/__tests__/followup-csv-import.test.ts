@@ -91,6 +91,12 @@ async function seedGroupWithLeader(
                   type: "multiselect",
                   options: ["Music", "Sports", "Art", "Tech"],
                 },
+                {
+                  slot: "customText4",
+                  name: "Connection Point",
+                  type: "multiselect",
+                  options: ["Team", "Dinner Party", "Foundations", "Lobby", "Salvation"],
+                },
               ],
             },
           }
@@ -444,7 +450,7 @@ describe("follow-up CSV import", () => {
     expect(preview.rows[0].actions.customFields).toBe("update");
   });
 
-  test("preview parses added date, status, assignee, and connection point with row-level warnings", async () => {
+  test("preview parses added date/status/assignee and custom multiselect connection point", async () => {
     const t = convexTest(schema, modules);
     const { leaderId, communityId, groupId } = await seedGroupWithLeader(t);
     const token = (await generateTokens(leaderId, communityId)).accessToken;
@@ -479,7 +485,9 @@ describe("follow-up CSV import", () => {
           addedAt: "1/4/2026",
           status: "Orange",
           assignee: "Rachel",
-          connectionPoint: "Team, Dinner Party",
+          customFieldValues: {
+            customText4: "Team, Dinner Party",
+          },
         },
         {
           rowNumber: 3,
@@ -488,6 +496,9 @@ describe("follow-up CSV import", () => {
           addedAt: "not-a-date",
           status: "Blue",
           assignee: "Unknown Person",
+          customFieldValues: {
+            customText4: "Unknown Source, Team",
+          },
         },
       ],
     });
@@ -498,9 +509,10 @@ describe("follow-up CSV import", () => {
     expect(preview.rows[1].reasons).toContain("invalid_added_at_ignored");
     expect(preview.rows[1].reasons).toContain("invalid_status_ignored");
     expect(preview.rows[1].reasons).toContain("unknown_assignee_ignored");
+    expect(preview.rows[1].reasons).toContain("invalid_custom_multiselect_option_ignored");
   });
 
-  test("apply imports status, assignee, connection point, and uses added date for new member", async () => {
+  test("apply imports status, assignee, and custom multiselect connection point using added date", async () => {
     const t = convexTest(schema, modules);
     const { leaderId, communityId, groupId } = await seedGroupWithLeader(t);
     const token = (await generateTokens(leaderId, communityId)).accessToken;
@@ -538,7 +550,9 @@ describe("follow-up CSV import", () => {
           addedAt: "1/4/2026",
           status: "Green",
           assignee: "Mike",
-          connectionPoint: "Team, Dinner Party",
+          customFieldValues: {
+            customText4: "Team, Dinner Party",
+          },
           notes: "Reached out and connected",
         },
       ],
@@ -573,6 +587,6 @@ describe("follow-up CSV import", () => {
     expect(result?.groupMember.joinedAt).toBe(new Date("1/4/2026").getTime());
     expect(result?.scoreDoc?.status).toBe("green");
     expect(result?.scoreDoc?.assigneeId).toBe(setup.mikeId);
-    expect(result?.scoreDoc?.connectionPoint).toBe("Team, Dinner Party");
+    expect(result?.scoreDoc?.customText4).toBe("Team; Dinner Party");
   });
 });

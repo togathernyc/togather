@@ -18,7 +18,6 @@ describe("getDefaultCsvImportMapping", () => {
       "Notes",
       "Assignee",
       "Status",
-      "Connection Point",
     ]);
 
     expect(mapping).toEqual({
@@ -32,7 +31,6 @@ describe("getDefaultCsvImportMapping", () => {
       notes: "Notes",
       assignee: "Assignee",
       status: "Status",
-      connectionPoint: "Connection Point",
     });
   });
 
@@ -44,7 +42,6 @@ describe("getDefaultCsvImportMapping", () => {
     expect(mapping.notes).toBeNull();
     expect(mapping.status).toBeNull();
     expect(mapping.assignee).toBeNull();
-    expect(mapping.connectionPoint).toBeNull();
     expect(mapping.addedAt).toBeNull();
   });
 });
@@ -95,7 +92,6 @@ describe("buildCsvImportRowsPayload", () => {
     notes: "Notes",
     assignee: "Assignee",
     status: "Status",
-    connectionPoint: "Connection Point",
   };
 
   it("builds canonical rows from selected mapped fields", () => {
@@ -111,7 +107,6 @@ describe("buildCsvImportRowsPayload", () => {
           Notes: "new guest",
           Assignee: "Rachel",
           Status: "Orange",
-          "Connection Point": "Dinner Party",
         },
       ],
       mapping,
@@ -125,7 +120,6 @@ describe("buildCsvImportRowsPayload", () => {
         "notes",
         "assignee",
         "status",
-        "connectionPoint",
       ])
     );
 
@@ -141,7 +135,6 @@ describe("buildCsvImportRowsPayload", () => {
         notes: "new guest",
         assignee: "Rachel",
         status: "Orange",
-        connectionPoint: "Dinner Party",
       },
     ]);
   });
@@ -179,6 +172,7 @@ describe("buildCsvImportRowsPayload", () => {
           Neighborhood: "South",
           "Volunteer Level": "2",
           "Wants Prayer": "yes",
+          "Connection Point": "Team, Dinner Party",
         },
       ],
       mapping,
@@ -187,8 +181,9 @@ describe("buildCsvImportRowsPayload", () => {
         customText1: "Neighborhood",
         customNum1: "Volunteer Level",
         customBool1: "Wants Prayer",
+        customText3: "Connection Point",
       },
-      new Set(["customText1", "customNum1", "customBool1"])
+      new Set(["customText1", "customNum1", "customBool1", "customText3"])
     );
 
     expect(rows).toEqual([
@@ -200,6 +195,7 @@ describe("buildCsvImportRowsPayload", () => {
           customText1: "South",
           customNum1: "2",
           customBool1: "yes",
+          customText3: "Team, Dinner Party",
         },
       },
     ]);

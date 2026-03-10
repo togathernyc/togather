@@ -8,8 +8,7 @@ export type CsvImportField =
   | "dateOfBirth"
   | "notes"
   | "assignee"
-  | "status"
-  | "connectionPoint";
+  | "status";
 
 export type CsvImportMapping = Record<CsvImportField, string | null>;
 
@@ -34,7 +33,6 @@ export type CsvImportRowPayload = {
   notes?: string;
   assignee?: string;
   status?: string;
-  connectionPoint?: string;
   customFieldValues?: Record<string, string>;
 };
 
@@ -58,7 +56,6 @@ const FIELD_ALIASES: Record<CsvImportField, string[]> = {
   notes: ["notes", "note", "comment", "comments"],
   assignee: ["assignee", "owner", "assigned to", "follow-up owner", "followup owner"],
   status: ["status", "follow-up status", "followup status"],
-  connectionPoint: ["connection point", "connection points", "connection", "touchpoint", "touch point"],
 };
 
 function normalizeHeader(header: string): string {
@@ -80,7 +77,6 @@ const STANDARD_FIELDS: CsvImportField[] = [
   "notes",
   "assignee",
   "status",
-  "connectionPoint",
 ];
 
 export function getDefaultCsvImportMapping(headers: string[]): CsvImportMapping {
@@ -100,7 +96,6 @@ export function getDefaultCsvImportMapping(headers: string[]): CsvImportMapping 
     notes: null,
     assignee: null,
     status: null,
-    connectionPoint: null,
   };
 
   const usedHeaders = new Set<string>();
