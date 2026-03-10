@@ -1925,18 +1925,31 @@ export const applyQuickAddFollowupPatch = internalMutation({
       .first();
 
     if (scoreDoc) {
-      await ctx.db.patch(scoreDoc._id, {
-        ...patch,
-        updatedAt: now(),
-      });
-      if (args.assigneeId) {
+      // Only patch fields that haven't been modified by another user since quick-add.
+      // If current value is undefined, we set it. If it differs from what we want to set,
+      // another user changed it and we should not overwrite their change.
+      const safePatch: Record<string, unknown> = {};
+      if (args.status !== undefined && scoreDoc.status === undefined) {
+        safePatch.status = args.status;
+      }
+      if (args.assigneeId !== undefined && scoreDoc.assigneeId === undefined) {
+        safePatch.assigneeId = args.assigneeId;
+      }
+      if (Object.keys(safePatch).length > 0) {
+        await ctx.db.patch(scoreDoc._id, {
+          ...safePatch,
+          updatedAt: now(),
+        });
+      }
+      // Send notification if assigneeId was requested and is now set (either by us or atomically by computeSingleMemberScore)
+      if (args.assigneeId && (safePatch.assigneeId || scoreDoc.assigneeId === args.assigneeId)) {
         await ctx.scheduler.runAfter(0, internal.functions.notifications.senders.notifyFollowupAssigned, {
           assigneeId: args.assigneeId,
           groupId: args.groupId,
           groupMemberId: args.groupMemberId,
         });
       }
-      return { applied: true };
+      return { applied: Object.keys(safePatch).length > 0 };
     }
 
     const retryCount = args.retryCount ?? 0;
