@@ -45,20 +45,60 @@ interface ColumnPickerModalProps {
 // ============================================================================
 
 const SLOT_CANDIDATES: Record<string, string[]> = {
-  text: ["customText1", "customText2", "customText3", "customText4", "customText5"],
-  dropdown: ["customText1", "customText2", "customText3", "customText4", "customText5"],
-  multiselect: ["customText1", "customText2", "customText3", "customText4", "customText5"],
-  number: ["customNum1", "customNum2", "customNum3", "customNum4", "customNum5"],
-  boolean: ["customBool1", "customBool2", "customBool3", "customBool4", "customBool5"],
+  text: [
+    "customText1",
+    "customText2",
+    "customText3",
+    "customText4",
+    "customText5",
+  ],
+  dropdown: [
+    "customText1",
+    "customText2",
+    "customText3",
+    "customText4",
+    "customText5",
+  ],
+  multiselect: [
+    "customText1",
+    "customText2",
+    "customText3",
+    "customText4",
+    "customText5",
+  ],
+  number: [
+    "customNum1",
+    "customNum2",
+    "customNum3",
+    "customNum4",
+    "customNum5",
+  ],
+  boolean: [
+    "customBool1",
+    "customBool2",
+    "customBool3",
+    "customBool4",
+    "customBool5",
+  ],
 };
 
-const SLOT_CAPACITIES: Record<string, { label: string; total: number; types: string[] }> = {
-  text: { label: "Text/Dropdown/Multi", total: 5, types: ["text", "dropdown", "multiselect"] },
+const SLOT_CAPACITIES: Record<
+  string,
+  { label: string; total: number; types: string[] }
+> = {
+  text: {
+    label: "Text/Dropdown/Multi",
+    total: 5,
+    types: ["text", "dropdown", "multiselect"],
+  },
   number: { label: "Number", total: 5, types: ["number"] },
   boolean: { label: "Checkbox", total: 5, types: ["boolean"] },
 };
 
-function getNextAvailableSlot(type: string, usedSlots: Set<string>): string | null {
+function getNextAvailableSlot(
+  type: string,
+  usedSlots: Set<string>,
+): string | null {
   return (SLOT_CANDIDATES[type] ?? []).find((s) => !usedSlots.has(s)) ?? null;
 }
 
@@ -93,7 +133,9 @@ export function ColumnPickerModal({
   const [fields, setFields] = useState<CustomFieldDef[]>([]);
   const [editingFieldIdx, setEditingFieldIdx] = useState<number | null>(null);
   const [newFieldName, setNewFieldName] = useState("");
-  const [newFieldType, setNewFieldType] = useState<"text" | "number" | "boolean" | "dropdown" | "multiselect">("text");
+  const [newFieldType, setNewFieldType] = useState<
+    "text" | "number" | "boolean" | "dropdown" | "multiselect"
+  >("text");
   const [newFieldOptions, setNewFieldOptions] = useState<string[]>([]);
   const [showAddField, setShowAddField] = useState(false);
 
@@ -101,7 +143,9 @@ export function ColumnPickerModal({
   React.useEffect(() => {
     if (visible) {
       // Build the full order from config or default
-      const allKeys = columns.map((c) => c.key).filter((k) => !SYSTEM_COLUMNS.has(k));
+      const allKeys = columns
+        .map((c) => c.key)
+        .filter((k) => !SYSTEM_COLUMNS.has(k));
       if (initialOrder.length > 0) {
         // Start with config order, append any new columns at end
         const orderSet = new Set(initialOrder);
@@ -120,10 +164,7 @@ export function ColumnPickerModal({
     }
   }, [visible, initialOrder, initialHidden, initialCustomFields, columns]);
 
-  const usedSlots = useMemo(
-    () => new Set(fields.map((f) => f.slot)),
-    [fields]
-  );
+  const usedSlots = useMemo(() => new Set(fields.map((f) => f.slot)), [fields]);
 
   // Column label lookup (including custom fields)
   const labelMap = useMemo(() => {
@@ -155,12 +196,16 @@ export function ColumnPickerModal({
     if (!newFieldName.trim()) return;
     const slot = getNextAvailableSlot(newFieldType, usedSlots);
     if (!slot) return;
-    const isSelectType = newFieldType === "dropdown" || newFieldType === "multiselect";
+    const isSelectType =
+      newFieldType === "dropdown" || newFieldType === "multiselect";
     const normalizedOptions = newFieldOptions
-      .filter((o) => o.trim())
-      .map((o) => o.replace(/;/g, ""));
+      .map((o) => o.trim().replace(/;/g, ""))
+      .filter(Boolean);
     if (isSelectType && normalizedOptions.length === 0) {
-      Alert.alert("Missing options", "Add at least one option for dropdown and multi-select fields.");
+      Alert.alert(
+        "Missing options",
+        "Add at least one option for dropdown and multi-select fields.",
+      );
       return;
     }
 
@@ -168,9 +213,7 @@ export function ColumnPickerModal({
       slot,
       name: newFieldName.trim(),
       type: newFieldType,
-      ...(isSelectType
-        ? { options: normalizedOptions }
-        : {}),
+      ...(isSelectType ? { options: normalizedOptions } : {}),
     };
 
     setFields((prev) => [...prev, newField]);
@@ -205,7 +248,11 @@ export function ColumnPickerModal({
 
   // Capacity indicators
   const capacityInfo = useMemo(() => {
-    const slotsByPrefix: Record<string, number> = { text: 0, number: 0, boolean: 0 };
+    const slotsByPrefix: Record<string, number> = {
+      text: 0,
+      number: 0,
+      boolean: 0,
+    };
     for (const f of fields) {
       if (f.slot.startsWith("customText")) slotsByPrefix.text++;
       else if (f.slot.startsWith("customNum")) slotsByPrefix.number++;
@@ -258,7 +305,12 @@ export function ColumnPickerModal({
                     />
                   </TouchableOpacity>
                 </View>
-                <Text style={[styles.columnLabel, isHidden && styles.columnLabelHidden]}>
+                <Text
+                  style={[
+                    styles.columnLabel,
+                    isHidden && styles.columnLabelHidden,
+                  ]}
+                >
                   {label}
                 </Text>
                 <TouchableOpacity
@@ -296,16 +348,27 @@ export function ColumnPickerModal({
           <View key={field.slot} style={styles.fieldRow}>
             <View style={styles.fieldInfo}>
               <Text style={styles.fieldName}>{field.name}</Text>
-              <View style={[styles.typeBadge, styles[`typeBadge_${field.type}` as keyof typeof styles] as any]}>
+              <View
+                style={[
+                  styles.typeBadge,
+                  styles[
+                    `typeBadge_${field.type}` as keyof typeof styles
+                  ] as any,
+                ]}
+              >
                 <Text style={styles.typeBadgeText}>{field.type}</Text>
               </View>
-              {(field.type === "dropdown" || field.type === "multiselect") && field.options && (
-                <Text style={styles.fieldOptions} numberOfLines={1}>
-                  ({field.options.join(", ")})
-                </Text>
-              )}
+              {(field.type === "dropdown" || field.type === "multiselect") &&
+                field.options && (
+                  <Text style={styles.fieldOptions} numberOfLines={1}>
+                    ({field.options.join(", ")})
+                  </Text>
+                )}
             </View>
-            <TouchableOpacity onPress={() => handleDeleteField(idx)} style={styles.deleteBtn}>
+            <TouchableOpacity
+              onPress={() => handleDeleteField(idx)}
+              style={styles.deleteBtn}
+            >
               <Ionicons name="trash-outline" size={16} color="#EF4444" />
             </TouchableOpacity>
           </View>
@@ -351,7 +414,8 @@ export function ColumnPickerModal({
             </View>
 
             {/* Dropdown / Multi-Select options editor */}
-            {(newFieldType === "dropdown" || newFieldType === "multiselect") && (
+            {(newFieldType === "dropdown" ||
+              newFieldType === "multiselect") && (
               <View style={styles.optionsEditor}>
                 <Text style={styles.optionsLabel}>Options:</Text>
                 {newFieldOptions.map((opt, i) => (
@@ -367,7 +431,11 @@ export function ColumnPickerModal({
                       placeholder={`Option ${i + 1}`}
                     />
                     <TouchableOpacity
-                      onPress={() => setNewFieldOptions(newFieldOptions.filter((_, j) => j !== i))}
+                      onPress={() =>
+                        setNewFieldOptions(
+                          newFieldOptions.filter((_, j) => j !== i),
+                        )
+                      }
                       style={styles.optionDeleteBtn}
                     >
                       <Ionicons name="close-circle" size={18} color="#9CA3AF" />
@@ -400,7 +468,8 @@ export function ColumnPickerModal({
                 onPress={handleAddField}
                 style={[
                   styles.confirmFieldBtn,
-                  (!newFieldName.trim() || !canAddType(newFieldType)) && styles.btnDisabled,
+                  (!newFieldName.trim() || !canAddType(newFieldType)) &&
+                    styles.btnDisabled,
                 ]}
                 disabled={!newFieldName.trim() || !canAddType(newFieldType)}
               >
@@ -420,7 +489,11 @@ export function ColumnPickerModal({
 
         {/* Footer */}
         <View style={styles.footer}>
-          <TouchableOpacity onPress={onClose} style={styles.footerCancelBtn} disabled={isSaving}>
+          <TouchableOpacity
+            onPress={onClose}
+            style={styles.footerCancelBtn}
+            disabled={isSaving}
+          >
             <Text style={styles.footerCancelText}>Cancel</Text>
           </TouchableOpacity>
           <TouchableOpacity
