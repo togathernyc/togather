@@ -130,5 +130,53 @@ describe("follow-up multiselect validation", () => {
       })
     ).rejects.toThrow(/requires at least one option/i);
   });
+
+  test("allows saving when legacy invalid select field already exists", async () => {
+    const t = convexTest(schema, modules);
+    const { adminId, communityId, groupId } = await seedAdminAndGroup(t);
+    const token = (await generateTokens(adminId, communityId)).accessToken;
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(groupId, {
+        followupColumnConfig: {
+          columnOrder: [],
+          hiddenColumns: [],
+          customFields: [
+            {
+              slot: "customText1",
+              name: "Legacy Dropdown",
+              type: "dropdown",
+              options: [],
+            },
+          ],
+        },
+      });
+    });
+
+    await expect(
+      t.mutation(api.functions.groups.mutations.saveFollowupColumnConfig, {
+        token,
+        groupId,
+        followupColumnConfig: {
+          columnOrder: [],
+          hiddenColumns: [],
+          customFields: [
+            {
+              slot: "customText1",
+              name: "Legacy Dropdown",
+              type: "dropdown",
+              options: [],
+            },
+            {
+              slot: "customText2",
+              name: "Needs Follow-up Mode",
+              type: "multiselect",
+              options: ["Call", "Text", "In-Person"],
+            },
+          ],
+        },
+      })
+    ).resolves.toEqual({ success: true });
+  });
 });
 

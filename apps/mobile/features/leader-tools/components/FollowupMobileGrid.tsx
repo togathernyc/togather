@@ -40,6 +40,11 @@ import {
   normalizeSubtitleVariableIds,
 } from "./followupShared";
 import {
+  buildSelectOptionsBySlot,
+  parseMultiSelectValues,
+  toggleMultiSelectValue,
+} from "./followupSelectFields";
+import {
   applyFollowupSuggestion,
   applyParsedFollowupFilters,
   getDateAddedRangeArgs,
@@ -147,14 +152,6 @@ const SERVER_SORTABLE_FIELDS = new Set([
 ]);
 
 const HIDE_ON_MOBILE_COLUMNS = new Set(["firstName", "lastName"]);
-
-function parseMultiSelectValues(raw: string | null | undefined): string[] {
-  if (!raw) return [];
-  return raw
-    .split(";")
-    .map((value) => value.trim())
-    .filter(Boolean);
-}
 
 function useDebounce<T>(value: T, delay: number): T {
   const [debouncedValue, setDebouncedValue] = useState(value);
@@ -551,39 +548,10 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     });
   }, [membersToShow, localOverrides]);
 
-  const selectOptionsBySlot = useMemo(() => {
-    const map = new Map<string, string[]>();
-    for (const field of customFields) {
-      if (field.type !== "multiselect" && field.type !== "dropdown") continue;
-      const configuredOptions = field.options?.filter(Boolean) ?? [];
-      if (configuredOptions.length > 0) {
-        map.set(field.slot, configuredOptions);
-        continue;
-      }
-      const inferredOptions =
-        field.type === "multiselect"
-          ? Array.from(
-              new Set(
-                displayMembers.flatMap((member) =>
-                  parseMultiSelectValues(
-                    String((member as Record<string, unknown>)[field.slot] ?? "")
-                  )
-                )
-              )
-            )
-          : Array.from(
-              new Set(
-                displayMembers
-                  .map((member) =>
-                    String((member as Record<string, unknown>)[field.slot] ?? "").trim()
-                  )
-                  .filter(Boolean)
-              )
-            );
-      map.set(field.slot, inferredOptions);
-    }
-    return map;
-  }, [customFields, displayMembers]);
+  const selectOptionsBySlot = useMemo(
+    () => buildSelectOptionsBySlot(customFields, displayMembers as unknown as Record<string, unknown>[]),
+    [customFields, displayMembers]
+  );
 
   useEffect(() => {
     if (Object.keys(localOverrides).length === 0) return;
@@ -1134,12 +1102,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
 
         previousValue = currentValue || null;
 
-        const selectedValues = parseMultiSelectValues(currentValue);
-        const isChecked = selectedValues.includes(option);
-        const newValues = isChecked
-          ? selectedValues.filter((v) => v !== option)
-          : [...selectedValues, option];
-        newValue = newValues.length > 0 ? newValues.join("; ") : null;
+        newValue = toggleMultiSelectValue(currentValue, option) ?? null;
         return { ...prev, [memberId]: { ...prev[memberId], [slot]: newValue } };
       });
       setIsUpdatingField(true);

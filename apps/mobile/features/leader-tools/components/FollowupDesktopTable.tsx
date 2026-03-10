@@ -25,6 +25,11 @@ import { FollowupCsvImportModal } from "./FollowupCsvImportModal";
 import type { CustomFieldDef } from "./ColumnPickerModal";
 import { getScoreValue } from "./followupShared";
 import {
+  buildSelectOptionsBySlot,
+  parseMultiSelectValues,
+  toggleMultiSelectValue,
+} from "./followupSelectFields";
+import {
   applyFollowupSuggestion,
   applyParsedFollowupFilters,
   getDateAddedRangeArgs,
@@ -179,14 +184,6 @@ const STATUS_OPTIONS = [
 
 const STORAGE_PREFIX = "followup-col-widths-";
 const MIN_COL_WIDTH = 60;
-
-function parseMultiSelectValues(raw: string | null | undefined): string[] {
-  if (!raw) return [];
-  return raw
-    .split(";")
-    .map((value) => value.trim())
-    .filter(Boolean);
-}
 
 // ============================================================================
 // Debounce hook
@@ -521,39 +518,10 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
     parsedQuery,
   ]);
 
-  const selectOptionsBySlot = useMemo(() => {
-    const map = new Map<string, string[]>();
-    for (const field of customFields) {
-      if (field.type !== "multiselect" && field.type !== "dropdown") continue;
-      const configuredOptions = field.options?.filter(Boolean) ?? [];
-      if (configuredOptions.length > 0) {
-        map.set(field.slot, configuredOptions);
-        continue;
-      }
-      const inferredOptions =
-        field.type === "multiselect"
-          ? Array.from(
-              new Set(
-                members.flatMap((member) =>
-                  parseMultiSelectValues(
-                    String((member as Record<string, unknown>)[field.slot] ?? "")
-                  )
-                )
-              )
-            )
-          : Array.from(
-              new Set(
-                members
-                  .map((member) =>
-                    String((member as Record<string, unknown>)[field.slot] ?? "").trim()
-                  )
-                  .filter(Boolean)
-              )
-            );
-      map.set(field.slot, inferredOptions);
-    }
-    return map;
-  }, [customFields, members]);
+  const selectOptionsBySlot = useMemo(
+    () => buildSelectOptionsBySlot(customFields, members as unknown as Record<string, unknown>[]),
+    [customFields, members]
+  );
 
   // Clear optimistic overrides once server data catches up
   useEffect(() => {
@@ -783,12 +751,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
 
       previousValue = currentValue || null;
 
-      const selectedValues = parseMultiSelectValues(currentValue);
-      const isSelected = selectedValues.includes(toggledOption);
-      const newValues = isSelected
-        ? selectedValues.filter((v) => v !== toggledOption)
-        : [...selectedValues, toggledOption];
-      newValue = newValues.length > 0 ? newValues.join("; ") : null;
+      newValue = toggleMultiSelectValue(currentValue, toggledOption) ?? null;
       return { ...prev, [memberId]: { ...prev[memberId], [slot]: newValue } };
     });
 

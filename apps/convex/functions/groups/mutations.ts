@@ -973,7 +973,7 @@ export const saveFollowupColumnConfig = mutation({
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
 
-    await requireGroupLeaderOrCommunityAdmin(
+    const { group } = await requireGroupLeaderOrCommunityAdmin(
       ctx,
       args.groupId,
       userId,
@@ -982,6 +982,12 @@ export const saveFollowupColumnConfig = mutation({
 
     // Validate if config provided
     if (args.followupColumnConfig) {
+      const existingFieldsBySlot = new Map(
+        ((group.followupColumnConfig as any)?.customFields ?? []).map((field: any) => [
+          field.slot,
+          field,
+        ])
+      );
       const usedSlots = new Set<string>();
       for (const field of args.followupColumnConfig.customFields) {
         // Validate slot name
@@ -1002,7 +1008,17 @@ export const saveFollowupColumnConfig = mutation({
         if (field.type === "dropdown" || field.type === "multiselect") {
           const options = field.options?.map((opt) => opt.trim()).filter(Boolean) ?? [];
           if (options.length === 0) {
-            throw new ConvexError(`Field "${field.name}" requires at least one option`);
+            const existingField = existingFieldsBySlot.get(field.slot) as
+              | { type?: string; options?: string[] }
+              | undefined;
+            const existingOptions = existingField?.options?.map((opt) => opt.trim()).filter(Boolean) ?? [];
+            const isLegacyInvalidField =
+              !!existingField &&
+              existingField.type === field.type &&
+              existingOptions.length === 0;
+            if (!isLegacyInvalidField) {
+              throw new ConvexError(`Field "${field.name}" requires at least one option`);
+            }
           }
           if (options.some((opt) => opt.includes(";"))) {
             throw new ConvexError(`Field "${field.name}" options cannot contain semicolons`);
