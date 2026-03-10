@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Pressable,
   Platform,
+  Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
@@ -89,12 +90,13 @@ const DEFAULT_SCORES: ScoreDefinition[] = [
 const SLOT_CANDIDATES: Record<string, string[]> = {
   text: ["customText1", "customText2", "customText3", "customText4", "customText5"],
   dropdown: ["customText1", "customText2", "customText3", "customText4", "customText5"],
+  multiselect: ["customText1", "customText2", "customText3", "customText4", "customText5"],
   number: ["customNum1", "customNum2", "customNum3", "customNum4", "customNum5"],
   boolean: ["customBool1", "customBool2", "customBool3", "customBool4", "customBool5"],
 };
 
 const SLOT_CAPACITIES: Record<string, { label: string; total: number; types: string[] }> = {
-  text: { label: "Text/Dropdown", total: 5, types: ["text", "dropdown"] },
+  text: { label: "Text/Dropdown/Multi", total: 5, types: ["text", "dropdown", "multiselect"] },
   number: { label: "Number", total: 5, types: ["number"] },
   boolean: { label: "Checkbox", total: 5, types: ["boolean"] },
 };
@@ -108,9 +110,16 @@ const FIELD_TYPES = [
   { value: "number", label: "Number" },
   { value: "boolean", label: "Checkbox" },
   { value: "dropdown", label: "Dropdown" },
+  { value: "multiselect", label: "Multi-Select" },
 ] as const;
 
 const SYSTEM_COLUMNS = new Set(["checkbox", "rowNum"]);
+
+function normalizeSelectFieldOptions(options: string[]): string[] {
+  return options
+    .map((option) => option.trim().replace(/;/g, ""))
+    .filter(Boolean);
+}
 
 // ============================================================================
 // Component
@@ -217,9 +226,36 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
   const [customFields, setCustomFields] = useState<CustomFieldDef[]>([]);
   const [showAddField, setShowAddField] = useState(false);
   const [newFieldName, setNewFieldName] = useState("");
-  const [newFieldType, setNewFieldType] = useState<"text" | "number" | "boolean" | "dropdown">("text");
+  const [newFieldType, setNewFieldType] = useState<"text" | "number" | "boolean" | "dropdown" | "multiselect">("text");
   const [newFieldOptions, setNewFieldOptions] = useState<string[]>([]);
   const [isSavingColumns, setIsSavingColumns] = useState(false);
+  const lastAppliedConfigSignatureRef = useRef<string | null>(null);
+
+  const serverColumnKeys = useMemo(() => {
+    const keys = [
+      "addedAt",
+      "firstName",
+      "lastName",
+      "email",
+      "phone",
+      "zipCode",
+      "dateOfBirth",
+    ];
+    scoreConfigScores.forEach((_, i) => {
+      keys.push(`score${i + 1}`);
+    });
+    keys.push(
+      "assignee",
+      "notes",
+      "status",
+      "lastAttendedAt",
+      "lastFollowupAt",
+      "lastActiveAt",
+      "alerts",
+    );
+    initialCustomFields.forEach((field) => keys.push(field.slot));
+    return keys;
+  }, [scoreConfigScores, initialCustomFields]);
 
   // Build allColumnsForPicker from config data
   const allColumnsForPicker = useMemo(() => {
@@ -250,10 +286,16 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
     return cols;
   }, [scoreConfigScores, customFields]);
 
-  // Initialize column state from config
+  const configSignature = useMemo(
+    () => JSON.stringify(columnConfig ?? { columnOrder: [], hiddenColumns: [], customFields: [] }),
+    [columnConfig]
+  );
+
+  // Initialize column state from config. Only resync when server config actually changes.
   useEffect(() => {
     if (!config) return;
-    const allKeys = allColumnsForPicker.map((c) => c.key).filter((k) => !SYSTEM_COLUMNS.has(k));
+    if (lastAppliedConfigSignatureRef.current === configSignature) return;
+    const allKeys = serverColumnKeys.filter((k) => !SYSTEM_COLUMNS.has(k));
     const savedOrder = columnConfig?.columnOrder ?? [];
     if (savedOrder.length > 0) {
       const orderSet = new Set(savedOrder);
@@ -266,8 +308,14 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
       setColumnOrder(allKeys);
     }
     setHiddenColumns(new Set(columnConfig?.hiddenColumns ?? []));
-    setCustomFields([...initialCustomFields]);
-  }, [config]);
+    setCustomFields(
+      initialCustomFields.map((field) => ({
+        ...field,
+        ...(field.options ? { options: [...field.options] } : {}),
+      }))
+    );
+    lastAppliedConfigSignatureRef.current = configSignature;
+  }, [config, configSignature, serverColumnKeys, columnConfig, initialCustomFields]);
 
   const usedSlots = useMemo(
     () => new Set(customFields.map((f) => f.slot)),
@@ -302,16 +350,28 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
   }, []);
 
   const handleAddField = useCallback(() => {
-    if (!newFieldName.trim()) return;
+    if (!newFieldName.trim()) {
+      Alert.alert("Missing name", "Enter a field name before adding.");
+      return;
+    }
     const slot = getNextAvailableSlot(newFieldType, usedSlots);
-    if (!slot) return;
+    if (!slot) {
+      Alert.alert("No slots available", "No available slots for this field type.");
+      return;
+    }
+    const isSelectType = newFieldType === "dropdown" || newFieldType === "multiselect";
+    const normalizedOptions = normalizeSelectFieldOptions(newFieldOptions);
+    if (isSelectType && normalizedOptions.length === 0) {
+      Alert.alert("Missing options", "Add at least one option for dropdown or multi-select.");
+      return;
+    }
 
     const newField: CustomFieldDef = {
       slot,
       name: newFieldName.trim(),
       type: newFieldType,
-      ...(newFieldType === "dropdown" && newFieldOptions.length > 0
-        ? { options: newFieldOptions.filter((o) => o.trim()) }
+      ...(isSelectType
+        ? { options: normalizedOptions }
         : {}),
     };
 
@@ -340,6 +400,18 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
     (type: string): boolean => getNextAvailableSlot(type, usedSlots) !== null,
     [usedSlots]
   );
+  const isNewFieldSelectType = newFieldType === "dropdown" || newFieldType === "multiselect";
+  const normalizedNewFieldOptions = useMemo(
+    () => normalizeSelectFieldOptions(newFieldOptions),
+    [newFieldOptions]
+  );
+  const canSubmitNewField = useMemo(
+    () =>
+      !!newFieldName.trim()
+      && canAddType(newFieldType)
+      && (!isNewFieldSelectType || normalizedNewFieldOptions.length > 0),
+    [newFieldName, canAddType, newFieldType, isNewFieldSelectType, normalizedNewFieldOptions]
+  );
 
   const capacityInfo = useMemo(() => {
     const slotsByPrefix: Record<string, number> = { text: 0, number: 0, boolean: 0 };
@@ -352,6 +424,10 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
   }, [customFields]);
 
   const handleSaveColumns = useCallback(async () => {
+    if (showAddField) {
+      Alert.alert("Finish adding field", "Click Add Field or Cancel before saving columns.");
+      return;
+    }
     setIsSavingColumns(true);
     try {
       await saveColumnConfigMut({
@@ -362,12 +438,24 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
           customFields,
         },
       });
+      Alert.alert("Columns saved", "Follow-up columns were saved.");
     } catch (err) {
       console.error("[saveFollowupColumnConfig] failed:", err);
+      Alert.alert(
+        "Could not save columns",
+        err instanceof Error ? err.message : "Please try again."
+      );
     } finally {
       setIsSavingColumns(false);
     }
-  }, [groupId, columnOrder, hiddenColumns, customFields, saveColumnConfigMut]);
+  }, [
+    groupId,
+    columnOrder,
+    hiddenColumns,
+    customFields,
+    saveColumnConfigMut,
+    showAddField,
+  ]);
 
   // ── Scores state ──
 
@@ -847,7 +935,7 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
                   <View style={styles.typeBadge}>
                     <Text style={styles.typeBadgeText}>{field.type}</Text>
                   </View>
-                  {field.type === "dropdown" && field.options && (
+                  {(field.type === "dropdown" || field.type === "multiselect") && field.options && (
                     <Text style={styles.fieldOptions} numberOfLines={1}>
                       ({field.options.join(", ")})
                     </Text>
@@ -902,8 +990,8 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
                   })}
                 </View>
 
-                {/* Dropdown options editor */}
-                {newFieldType === "dropdown" && (
+                {/* Dropdown / multiselect options editor */}
+                {(newFieldType === "dropdown" || newFieldType === "multiselect") && (
                   <View style={styles.optionsEditor}>
                     <Text style={styles.optionsLabel}>Options:</Text>
                     {newFieldOptions.map((opt, i) => (
@@ -916,7 +1004,7 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
                           value={opt}
                           onChangeText={(text) => {
                             const next = [...newFieldOptions];
-                            next[i] = text;
+                            next[i] = text.replace(/;/g, "");
                             setNewFieldOptions(next);
                           }}
                           placeholder={`Option ${i + 1}`}
@@ -957,9 +1045,9 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
                     style={[
                       styles.confirmFieldBtn,
                       { backgroundColor: themeColor },
-                      (!newFieldName.trim() || !canAddType(newFieldType)) && styles.btnDisabled,
+                      !canSubmitNewField && styles.btnDisabled,
                     ]}
-                    disabled={!newFieldName.trim() || !canAddType(newFieldType)}
+                    disabled={!canSubmitNewField}
                   >
                     <Text style={styles.confirmFieldText}>Add Field</Text>
                   </TouchableOpacity>
@@ -975,8 +1063,12 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
             {/* Save columns button */}
             <TouchableOpacity
               onPress={handleSaveColumns}
-              style={[styles.saveButton, { backgroundColor: themeColor }, isSavingColumns && styles.btnDisabled]}
-              disabled={isSavingColumns}
+              style={[
+                styles.saveButton,
+                { backgroundColor: themeColor },
+                (isSavingColumns || showAddField) && styles.btnDisabled,
+              ]}
+              disabled={isSavingColumns || showAddField}
             >
               {isSavingColumns ? (
                 <ActivityIndicator size="small" color="#fff" />

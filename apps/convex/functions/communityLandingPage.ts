@@ -697,6 +697,15 @@ export const saveConfig = mutation({
           throw new Error(`Slot ${field.slot} does not support type "${field.type}"`);
         }
       }
+      if (field.type === "dropdown" || field.type === "multiselect") {
+        const options = field.options?.map((opt) => opt.trim()).filter(Boolean) ?? [];
+        if (options.length === 0) {
+          throw new Error(`Field "${field.label}" requires at least one option`);
+        }
+        if (options.some((opt) => opt.includes(";"))) {
+          throw new Error(`Field "${field.label}" options cannot contain semicolons`);
+        }
+      }
     }
 
     // Check for duplicate slots
@@ -765,7 +774,7 @@ export const saveConfig = mutation({
             slot: f.slot!,
             name: f.label,
             type: f.type,
-            ...(f.options ? { options: f.options } : {}),
+            ...((f.options?.length ?? 0) > 0 ? { options: f.options } : {}),
           })),
       ];
 
