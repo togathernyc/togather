@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -105,7 +111,14 @@ type GridColumn = {
   label: string;
   width: number;
   sortable: boolean;
-  kind: "score" | "status" | "text" | "boolean" | "dropdown" | "multiselect" | "number";
+  kind:
+    | "score"
+    | "status"
+    | "text"
+    | "boolean"
+    | "dropdown"
+    | "multiselect"
+    | "number";
   editable?: "assignee" | "status" | "custom";
   customField?: CustomFieldDef;
   getValue: (member: FollowupMember) => string | number | boolean;
@@ -178,13 +191,16 @@ function formatDate(timestamp?: number, emptyText = "Never"): string {
 function compareSortValues(
   a: string | number,
   b: string | number,
-  direction: SortDirection
+  direction: SortDirection,
 ): number {
   const multiplier = direction === "asc" ? 1 : -1;
   if (typeof a === "number" && typeof b === "number") {
     return (a - b) * multiplier;
   }
-  return String(a).localeCompare(String(b), undefined, { sensitivity: "base" }) * multiplier;
+  return (
+    String(a).localeCompare(String(b), undefined, { sensitivity: "base" }) *
+    multiplier
+  );
 }
 
 export function FollowupMobileGrid({ groupId }: { groupId: string }) {
@@ -197,7 +213,12 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const [editSheet, setEditSheet] = useState<{
-    type: "assignee" | "status" | "customText" | "customDropdown" | "customMultiselect";
+    type:
+      | "assignee"
+      | "status"
+      | "customText"
+      | "customDropdown"
+      | "customMultiselect";
     memberId: string;
     customField?: CustomFieldDef;
     initialValue?: string;
@@ -208,39 +229,48 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
   const [showRemoveModal, setShowRemoveModal] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
   const [localOverrides, setLocalOverrides] = useState<
-    Record<string, { assigneeId?: string | null; status?: string | null; [key: string]: string | number | boolean | null | undefined }>
+    Record<
+      string,
+      {
+        assigneeId?: string | null;
+        status?: string | null;
+        [key: string]: string | number | boolean | null | undefined;
+      }
+    >
   >({});
 
   const debouncedSearch = useDebounce(searchQuery, 450);
 
   const config = useAuthenticatedQuery(
     api.functions.memberFollowups.getFollowupConfig,
-    groupId ? { groupId: groupId as Id<"groups"> } : "skip"
+    groupId ? { groupId: groupId as Id<"groups"> } : "skip",
   );
   const scoreConfigScores = config?.scoreConfigScores;
   const scoreConfig = useMemo<ScoreConfigEntry[]>(
     () => scoreConfigScores ?? [],
-    [scoreConfigScores]
+    [scoreConfigScores],
   );
   const isConfigLoaded = config !== undefined;
   const toolDisplayName =
-    typeof config?.toolDisplayName === "string" ? config.toolDisplayName : "Follow-up";
+    typeof config?.toolDisplayName === "string"
+      ? config.toolDisplayName
+      : "Follow-up";
   const memberSubtitleIds = useMemo(
     () =>
       normalizeSubtitleVariableIds(
-        typeof config?.memberSubtitle === "string" ? config.memberSubtitle : ""
+        typeof config?.memberSubtitle === "string" ? config.memberSubtitle : "",
       ),
-    [config?.memberSubtitle]
+    [config?.memberSubtitle],
   );
   const columnConfig = config?.followupColumnConfig ?? null;
   const customFields = useMemo<CustomFieldDef[]>(
-    () => ((columnConfig?.customFields ?? []) as CustomFieldDef[]),
-    [columnConfig?.customFields]
+    () => (columnConfig?.customFields ?? []) as CustomFieldDef[],
+    [columnConfig?.customFields],
   );
 
   const leaders = useAuthenticatedQuery(
     api.functions.groups.members.getLeaders,
-    groupId ? { groupId: groupId as Id<"groups"> } : "skip"
+    groupId ? { groupId: groupId as Id<"groups"> } : "skip",
   );
   const leaderMap = useMemo(() => {
     if (!leaders) return new Map<string, LeaderInfo>();
@@ -253,7 +283,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
           lastName: leader.lastName ?? "",
           profilePhoto: leader.profilePhoto,
         },
-      ])
+      ]),
     );
   }, [leaders]);
 
@@ -273,7 +303,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
 
   const parsedQuery = useMemo(
     () => parseFollowupQuerySyntax(debouncedSearch, leaderMap, scoreConfig),
-    [debouncedSearch, leaderMap, scoreConfig]
+    [debouncedSearch, leaderMap, scoreConfig],
   );
   const hasTextSearch = parsedQuery.searchText.length > 0;
   const hasStructuredFilters =
@@ -285,33 +315,44 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     !!parsedQuery.dateAddedFilter;
   const searchSuggestions = useMemo(
     () => getFollowupSearchSuggestions(searchQuery, scoreConfig),
-    [searchQuery, scoreConfig]
+    [searchQuery, scoreConfig],
   );
   const searchHelperText = useMemo(
     () => getFollowupQueryHelperText(searchQuery, scoreConfig),
-    [searchQuery, scoreConfig]
+    [searchQuery, scoreConfig],
   );
   const showSearchSuggestions =
-    isSearchFocused && searchQuery.trim().length > 0 && searchSuggestions.length > 0;
+    isSearchFocused &&
+    searchQuery.trim().length > 0 &&
+    searchSuggestions.length > 0;
 
   const listFilterArgs = useMemo(() => {
     const filters: Record<string, unknown> = {};
     const dateRangeArgs = getDateAddedRangeArgs(parsedQuery.dateAddedFilter);
-    if (parsedQuery.statusFilter) filters.statusFilter = parsedQuery.statusFilter;
-    if (parsedQuery.assigneeFilter) filters.assigneeFilter = parsedQuery.assigneeFilter as Id<"users">;
+    if (parsedQuery.statusFilter)
+      filters.statusFilter = parsedQuery.statusFilter;
+    if (parsedQuery.assigneeFilter)
+      filters.assigneeFilter = parsedQuery.assigneeFilter as Id<"users">;
     if (parsedQuery.excludedAssigneeFilters.length > 0) {
-      filters.excludedAssigneeFilters = parsedQuery.excludedAssigneeFilters as Id<"users">[];
+      filters.excludedAssigneeFilters =
+        parsedQuery.excludedAssigneeFilters as Id<"users">[];
     }
     if (parsedQuery.scoreField) filters.scoreField = parsedQuery.scoreField;
-    if (parsedQuery.scoreMax !== undefined) filters.scoreMax = parsedQuery.scoreMax;
-    if (parsedQuery.scoreMin !== undefined) filters.scoreMin = parsedQuery.scoreMin;
-    if (dateRangeArgs.addedAtMin !== undefined) filters.addedAtMin = dateRangeArgs.addedAtMin;
-    if (dateRangeArgs.addedAtMax !== undefined) filters.addedAtMax = dateRangeArgs.addedAtMax;
+    if (parsedQuery.scoreMax !== undefined)
+      filters.scoreMax = parsedQuery.scoreMax;
+    if (parsedQuery.scoreMin !== undefined)
+      filters.scoreMin = parsedQuery.scoreMin;
+    if (dateRangeArgs.addedAtMin !== undefined)
+      filters.addedAtMin = dateRangeArgs.addedAtMin;
+    if (dateRangeArgs.addedAtMax !== undefined)
+      filters.addedAtMax = dateRangeArgs.addedAtMax;
     return filters;
   }, [parsedQuery]);
 
   const isClientSideSort = !SERVER_SORTABLE_FIELDS.has(sortField);
-  const serverSortBy = SERVER_SORTABLE_FIELDS.has(sortField) ? sortField : "score1";
+  const serverSortBy = SERVER_SORTABLE_FIELDS.has(sortField)
+    ? sortField
+    : "score1";
   const serverSortDirection = isClientSideSort ? "desc" : sortDirection;
 
   const {
@@ -329,7 +370,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
           ...listFilterArgs,
         }
       : "skip",
-    { initialNumItems: 50 }
+    { initialNumItems: 50 },
   );
 
   const searchResults = useAuthenticatedQuery(
@@ -338,34 +379,55 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       ? {
           groupId: groupId as Id<"groups">,
           searchText: parsedQuery.searchText,
-          ...(parsedQuery.statusFilter ? { statusFilter: parsedQuery.statusFilter } : {}),
+          ...(parsedQuery.statusFilter
+            ? { statusFilter: parsedQuery.statusFilter }
+            : {}),
           ...(parsedQuery.assigneeFilter
             ? { assigneeFilter: parsedQuery.assigneeFilter as Id<"users"> }
             : {}),
           ...(parsedQuery.excludedAssigneeFilters.length > 0
-            ? { excludedAssigneeFilters: parsedQuery.excludedAssigneeFilters as Id<"users">[] }
+            ? {
+                excludedAssigneeFilters:
+                  parsedQuery.excludedAssigneeFilters as Id<"users">[],
+              }
             : {}),
-          ...(parsedQuery.scoreField ? { scoreField: parsedQuery.scoreField } : {}),
-          ...(parsedQuery.scoreMax !== undefined ? { scoreMax: parsedQuery.scoreMax } : {}),
-          ...(parsedQuery.scoreMin !== undefined ? { scoreMin: parsedQuery.scoreMin } : {}),
+          ...(parsedQuery.scoreField
+            ? { scoreField: parsedQuery.scoreField }
+            : {}),
+          ...(parsedQuery.scoreMax !== undefined
+            ? { scoreMax: parsedQuery.scoreMax }
+            : {}),
+          ...(parsedQuery.scoreMin !== undefined
+            ? { scoreMin: parsedQuery.scoreMin }
+            : {}),
           ...getDateAddedRangeArgs(parsedQuery.dateAddedFilter),
         }
-      : "skip"
+      : "skip",
   );
 
   const totalCount = useAuthenticatedQuery(
     api.functions.memberFollowups.count,
-    groupId ? { groupId: groupId as Id<"groups"> } : "skip"
+    groupId ? { groupId: groupId as Id<"groups"> } : "skip",
   );
-  const setAssigneeMut = useAuthenticatedMutation(api.functions.memberFollowups.setAssignee);
-  const setStatusMut = useAuthenticatedMutation(api.functions.memberFollowups.setStatus);
-  const setCustomFieldMut = useAuthenticatedMutation(api.functions.memberFollowups.setCustomField);
-  const removeGroupMember = useAuthenticatedMutation(api.functions.groupMembers.remove);
-  const removeCommunityMember = useAuthenticatedMutation(api.functions.communities.removeMember);
+  const setAssigneeMut = useAuthenticatedMutation(
+    api.functions.memberFollowups.setAssignee,
+  );
+  const setStatusMut = useAuthenticatedMutation(
+    api.functions.memberFollowups.setStatus,
+  );
+  const setCustomFieldMut = useAuthenticatedMutation(
+    api.functions.memberFollowups.setCustomField,
+  );
+  const removeGroupMember = useAuthenticatedMutation(
+    api.functions.groupMembers.remove,
+  );
+  const removeCommunityMember = useAuthenticatedMutation(
+    api.functions.communities.removeMember,
+  );
 
   const groupData = useQuery(
     api.functions.groups.index.getById,
-    groupId ? { groupId: groupId as Id<"groups"> } : "skip"
+    groupId ? { groupId: groupId as Id<"groups"> } : "skip",
   );
 
   const getSortFieldValue = useCallback(
@@ -400,14 +462,22 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
           if (field.startsWith("customBool")) {
             return (member as Record<string, unknown>)[field] ? 1 : 0;
           }
-          return (member as Record<string, unknown>)[field] as string | number | undefined | null ?? "";
+          return (
+            ((member as Record<string, unknown>)[field] as
+              | string
+              | number
+              | undefined
+              | null) ?? ""
+          );
       }
     },
-    [scoreConfig, leaderMap]
+    [scoreConfig, leaderMap],
   );
 
   const members = useMemo(() => {
-    const source = (hasTextSearch ? searchResults ?? [] : rawMembers ?? []) as FollowupMember[];
+    const source = (
+      hasTextSearch ? (searchResults ?? []) : (rawMembers ?? [])
+    ) as FollowupMember[];
     if (source.length === 0) return [];
     const filtered = applyParsedFollowupFilters(source, parsedQuery);
     if (!hasTextSearch && !isClientSideSort) return filtered;
@@ -417,8 +487,8 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       compareSortValues(
         getSortFieldValue(a, sortField),
         getSortFieldValue(b, sortField),
-        sortDirection
-      )
+        sortDirection,
+      ),
     );
     return sorted;
   }, [
@@ -456,9 +526,12 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
         ...member,
         assigneeId:
           override.assigneeId !== undefined
-            ? override.assigneeId ?? undefined
+            ? (override.assigneeId ?? undefined)
             : member.assigneeId,
-        status: override.status !== undefined ? override.status ?? undefined : member.status,
+        status:
+          override.status !== undefined
+            ? (override.status ?? undefined)
+            : member.status,
       };
       // Apply custom field overrides
       for (const [key, val] of Object.entries(override)) {
@@ -472,7 +545,9 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
 
   useEffect(() => {
     if (Object.keys(localOverrides).length === 0) return;
-    const memberMap = new Map(members.map((member) => [member.groupMemberId, member]));
+    const memberMap = new Map(
+      members.map((member) => [member.groupMemberId, member]),
+    );
     const next: typeof localOverrides = {};
     let changed = false;
 
@@ -502,7 +577,8 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       // Handle custom field overrides
       for (const [key, val] of Object.entries(override)) {
         if (key.startsWith("custom") && val !== undefined) {
-          const serverVal = (serverMember as Record<string, unknown>)[key] ?? null;
+          const serverVal =
+            (serverMember as Record<string, unknown>)[key] ?? null;
           if (serverVal !== (val ?? null)) {
             pending[key] = val;
           } else {
@@ -673,7 +749,14 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     const customColumns: GridColumn[] = customFields.map((field) => ({
       key: field.slot,
       label: field.name,
-      width: field.type === "boolean" ? 72 : field.type === "dropdown" ? 100 : field.type === "multiselect" ? 120 : 120,
+      width:
+        field.type === "boolean"
+          ? 72
+          : field.type === "dropdown"
+            ? 100
+            : field.type === "multiselect"
+              ? 120
+              : 120,
       sortable: SERVER_SORTABLE_FIELDS.has(field.slot),
       kind:
         field.type === "boolean"
@@ -701,9 +784,14 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
 
     let ordered: GridColumn[];
     if (savedOrder.length > 0) {
-      const listed = savedOrder.map((key) => byKey.get(key)).filter(Boolean) as GridColumn[];
+      const listed = savedOrder
+        .map((key) => byKey.get(key))
+        .filter(Boolean) as GridColumn[];
       const listedSet = new Set(listed.map((column) => column.key));
-      ordered = [...listed, ...allAvailable.filter((column) => !listedSet.has(column.key))];
+      ordered = [
+        ...listed,
+        ...allAvailable.filter((column) => !listedSet.has(column.key)),
+      ];
     } else {
       ordered = allAvailable;
     }
@@ -715,7 +803,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
 
   const dataColumnsWidth = useMemo(
     () => dataColumns.reduce((sum, column) => sum + column.width, 0),
-    [dataColumns]
+    [dataColumns],
   );
   const pinnedWidth = SELECT_COL_WIDTH + MEMBER_COL_WIDTH;
   const flatListExtraData = useMemo(
@@ -736,12 +824,14 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       editSheet,
       isUpdatingField,
       selectedIds,
-    ]
+    ],
   );
 
   const handleSortPress = (field: string) => {
     if (field === sortField) {
-      setSortDirection((prevDirection) => (prevDirection === "asc" ? "desc" : "asc"));
+      setSortDirection((prevDirection) =>
+        prevDirection === "asc" ? "desc" : "asc",
+      );
       return;
     }
     setSortField(field);
@@ -797,7 +887,9 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     if (selectedIds.size === 0) return;
     setIsRemoving(true);
     try {
-      const selectedMembers = members.filter((member) => selectedIds.has(member.groupMemberId));
+      const selectedMembers = members.filter((member) =>
+        selectedIds.has(member.groupMemberId),
+      );
       const isAnnouncement = !!groupData?.isAnnouncementGroup;
       const results = await Promise.allSettled(
         selectedMembers.map((member) => {
@@ -811,22 +903,34 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
             groupId: groupId as Id<"groups">,
             userId: member.userId as Id<"users">,
           });
-        })
+        }),
       );
-      const failed = results.filter((result) => result.status === "rejected").length;
+      const failed = results.filter(
+        (result) => result.status === "rejected",
+      ).length;
       const success = results.length - failed;
       if (failed > 0) {
         Alert.alert("Partial failure", `${success} removed, ${failed} failed.`);
       }
     } catch (error) {
-      console.error("[FollowupMobileGrid] Failed to remove selected members:", error);
+      console.error(
+        "[FollowupMobileGrid] Failed to remove selected members:",
+        error,
+      );
       Alert.alert("Could not remove members", "Please try again.");
     } finally {
       setIsRemoving(false);
       setShowRemoveModal(false);
       setSelectedIds(new Set());
     }
-  }, [selectedIds, members, groupData, removeCommunityMember, removeGroupMember, groupId]);
+  }, [
+    selectedIds,
+    members,
+    groupData,
+    removeCommunityMember,
+    removeGroupMember,
+    groupId,
+  ]);
 
   const getMemberSubtitleLines = (member: FollowupMember): string[] => {
     if (memberSubtitleIds.length === 0) {
@@ -838,36 +942,48 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     return memberSubtitleIds
       .map((id) => SUBTITLE_VARIABLE_MAP.get(id))
       .filter((value): value is SubtitleVariable => value !== undefined)
-      .map((variable) => variable.render(member, (value) => formatDate(value, "Never")));
+      .map((variable) =>
+        variable.render(member, (value) => formatDate(value, "Never")),
+      );
   };
 
   const activeFilterBadges = useMemo(() => {
     const badges: string[] = [];
-    if (parsedQuery.statusFilter) badges.push(`status:${parsedQuery.statusFilter}`);
+    if (parsedQuery.statusFilter)
+      badges.push(`status:${parsedQuery.statusFilter}`);
     if (parsedQuery.assigneeFilter) {
       const leader = leaderMap.get(parsedQuery.assigneeFilter);
       badges.push(
-        leader ? `assignee:${leader.firstName}` : `assignee:${parsedQuery.assigneeFilter}`
+        leader
+          ? `assignee:${leader.firstName}`
+          : `assignee:${parsedQuery.assigneeFilter}`,
       );
     }
     if (parsedQuery.excludedAssigneeFilters.length > 0) {
       for (const assigneeId of parsedQuery.excludedAssigneeFilters) {
         const leader = leaderMap.get(assigneeId);
-        badges.push(leader ? `-assignee:${leader.firstName}` : `-assignee:${assigneeId}`);
+        badges.push(
+          leader ? `-assignee:${leader.firstName}` : `-assignee:${assigneeId}`,
+        );
       }
     }
     if (parsedQuery.scoreField) {
-      const scoreIndex = Number.parseInt(parsedQuery.scoreField.replace("score", ""), 10) - 1;
-      const scoreLabel = scoreConfig[scoreIndex]?.name ?? parsedQuery.scoreField;
-      if (parsedQuery.scoreMin !== undefined) badges.push(`${scoreLabel}:>${parsedQuery.scoreMin}`);
-      if (parsedQuery.scoreMax !== undefined) badges.push(`${scoreLabel}:<${parsedQuery.scoreMax}`);
+      const scoreIndex =
+        Number.parseInt(parsedQuery.scoreField.replace("score", ""), 10) - 1;
+      const scoreLabel =
+        scoreConfig[scoreIndex]?.name ?? parsedQuery.scoreField;
+      if (parsedQuery.scoreMin !== undefined)
+        badges.push(`${scoreLabel}:>${parsedQuery.scoreMin}`);
+      if (parsedQuery.scoreMax !== undefined)
+        badges.push(`${scoreLabel}:<${parsedQuery.scoreMax}`);
     }
     if (parsedQuery.dateAddedFilter) {
-      const op = parsedQuery.dateAddedFilter.operator === "eq"
-        ? ""
-        : parsedQuery.dateAddedFilter.operator === "lt"
-          ? "<"
-          : ">";
+      const op =
+        parsedQuery.dateAddedFilter.operator === "eq"
+          ? ""
+          : parsedQuery.dateAddedFilter.operator === "lt"
+            ? "<"
+            : ">";
       badges.push(`date added:${op}${parsedQuery.dateAddedFilter.raw}`);
     }
     if (parsedQuery.searchText) badges.push(`text:"${parsedQuery.searchText}"`);
@@ -887,7 +1003,11 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
 
   const activeEditMember = useMemo(() => {
     if (!editSheet) return null;
-    return displayMembers.find((member) => member.groupMemberId === editSheet.memberId) ?? null;
+    return (
+      displayMembers.find(
+        (member) => member.groupMemberId === editSheet.memberId,
+      ) ?? null
+    );
   }, [editSheet, displayMembers]);
 
   const closeEditSheet = () => {
@@ -897,7 +1017,11 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
   };
 
   const handleCustomFieldSave = useCallback(
-    async (memberId: string, slot: string, value: string | number | boolean | undefined) => {
+    async (
+      memberId: string,
+      slot: string,
+      value: string | number | boolean | undefined,
+    ) => {
       setIsUpdatingField(true);
       try {
         await setCustomFieldMut({
@@ -913,7 +1037,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
         setIsUpdatingField(false);
       }
     },
-    [setCustomFieldMut, groupId]
+    [setCustomFieldMut, groupId],
   );
 
   const handleCustomTextSubmit = useCallback(async () => {
@@ -921,7 +1045,9 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     const cf = editSheet.customField;
     let value: string | number | undefined;
     if (cf.type === "number") {
-      const num = customFieldInput.trim() ? Number(customFieldInput) : undefined;
+      const num = customFieldInput.trim()
+        ? Number(customFieldInput)
+        : undefined;
       value = num !== undefined && !Number.isNaN(num) ? num : undefined;
     } else {
       value = customFieldInput.trim() || undefined;
@@ -934,10 +1060,14 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
   const handleCustomDropdownSelect = useCallback(
     async (value: string | undefined) => {
       if (!editSheet || !editSheet.customField) return;
-      await handleCustomFieldSave(editSheet.memberId, editSheet.customField.slot, value ?? undefined);
+      await handleCustomFieldSave(
+        editSheet.memberId,
+        editSheet.customField.slot,
+        value ?? undefined,
+      );
       setEditSheet(null);
     },
-    [editSheet, handleCustomFieldSave]
+    [editSheet, handleCustomFieldSave],
   );
 
   const handleMultiselectToggle = useCallback(
@@ -945,34 +1075,55 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       if (!editSheet || !editSheet.customField || !activeEditMember) return;
       const slot = editSheet.customField.slot;
       const memberId = editSheet.memberId;
-      const currentVal = (activeEditMember as Record<string, unknown>)[slot];
-      const selectedValues = currentVal ? String(currentVal).split("; ").filter(Boolean) : [];
-      const isChecked = selectedValues.includes(option);
-      const newValues = isChecked
-        ? selectedValues.filter((v) => v !== option)
-        : [...selectedValues, option];
-      const newValue = newValues.length > 0 ? newValues.join("; ") : undefined;
+      const serverVal = (activeEditMember as Record<string, unknown>)[slot];
+
+      // Track previous value for rollback - set synchronously within setLocalOverrides
+      let previousValue: string | null = null;
+      let newValue: string | null = null;
+
       // Optimistic update for immediate UI feedback on rapid toggles
-      setLocalOverrides((prev) => ({
-        ...prev,
-        [memberId]: { ...prev[memberId], [slot]: newValue ?? null },
-      }));
+      // Compute value from current optimistic state (via prev) to avoid stale closure issues
+      setLocalOverrides((prev) => {
+        const existingOptimistic = prev[memberId]?.[slot];
+        const currentValue =
+          existingOptimistic !== undefined
+            ? String(existingOptimistic ?? "")
+            : String(serverVal ?? "");
+
+        previousValue = currentValue || null;
+
+        const selectedValues = currentValue
+          ? currentValue.split("; ").filter(Boolean)
+          : [];
+        const isChecked = selectedValues.includes(option);
+        const newValues = isChecked
+          ? selectedValues.filter((v) => v !== option)
+          : [...selectedValues, option];
+        newValue = newValues.length > 0 ? newValues.join("; ") : null;
+
+        return { ...prev, [memberId]: { ...prev[memberId], [slot]: newValue } };
+      });
       setIsUpdatingField(true);
       try {
         await setCustomFieldMut({
           groupId: groupId as Id<"groups">,
           groupMemberId: memberId as Id<"groupMembers">,
           slot,
-          value: newValue ?? undefined,
+          value: newValue || undefined,
         });
       } catch (err) {
         console.error("[FollowupMobileGrid] multiselect toggle failed:", err);
-        // Rollback optimistic update on failure
+        // Restore to previous value instead of deleting slot to preserve other in-flight toggles
         setLocalOverrides((prev) => {
           const next = { ...prev };
-          if (next[memberId]) {
-            delete next[memberId][slot];
-            if (Object.keys(next[memberId]).length === 0) delete next[memberId];
+          if (previousValue) {
+            next[memberId] = { ...next[memberId], [slot]: previousValue };
+          } else {
+            if (next[memberId]) {
+              delete next[memberId][slot];
+              if (Object.keys(next[memberId]).length === 0)
+                delete next[memberId];
+            }
           }
           return next;
         });
@@ -982,18 +1133,30 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       }
       // Don't close sheet — allow multiple toggles
     },
-    [editSheet, activeEditMember, setCustomFieldMut, groupId]
+    [editSheet, activeEditMember, setCustomFieldMut, groupId],
   );
 
   const handleMultiselectClear = useCallback(async () => {
-    if (!editSheet || !editSheet.customField) return;
+    if (!editSheet || !editSheet.customField || !activeEditMember) return;
     const { memberId } = editSheet;
     const { slot } = editSheet.customField;
+    const serverVal = (activeEditMember as Record<string, unknown>)[slot];
+
+    // Track previous value for rollback - set synchronously within setLocalOverrides
+    let previousValue: string | null = null;
+
     // Optimistic clear
-    setLocalOverrides((prev) => ({
-      ...prev,
-      [memberId]: { ...prev[memberId], [slot]: null },
-    }));
+    setLocalOverrides((prev) => {
+      const existingOptimistic = prev[memberId]?.[slot];
+      const currentValue =
+        existingOptimistic !== undefined
+          ? String(existingOptimistic ?? "")
+          : String(serverVal ?? "");
+
+      previousValue = currentValue || null;
+
+      return { ...prev, [memberId]: { ...prev[memberId], [slot]: null } };
+    });
     setEditSheet(null);
     try {
       await setCustomFieldMut({
@@ -1004,17 +1167,22 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       });
     } catch (err) {
       console.error("[FollowupMobileGrid] multiselect clear failed:", err);
+      // Restore to previous value instead of deleting slot to preserve other in-flight toggles
       setLocalOverrides((prev) => {
         const next = { ...prev };
-        if (next[memberId]) {
-          delete next[memberId][slot];
-          if (Object.keys(next[memberId]).length === 0) delete next[memberId];
+        if (previousValue) {
+          next[memberId] = { ...next[memberId], [slot]: previousValue };
+        } else {
+          if (next[memberId]) {
+            delete next[memberId][slot];
+            if (Object.keys(next[memberId]).length === 0) delete next[memberId];
+          }
         }
         return next;
       });
       Alert.alert("Could not update field", "Please try again.");
     }
-  }, [editSheet, setCustomFieldMut, groupId]);
+  }, [editSheet, activeEditMember, setCustomFieldMut, groupId]);
 
   const handleAssignChange = async (assigneeId?: string) => {
     if (!editSheet || !activeEditMember) return;
@@ -1104,7 +1272,8 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     }
   };
 
-  const isInitialLoading = (!hasTextSearch && isLoading && members.length === 0) || isSearchLoading;
+  const isInitialLoading =
+    (!hasTextSearch && isLoading && members.length === 0) || isSearchLoading;
 
   const renderColumnHeader = (column: GridColumn) => {
     const isActiveSort = sortField === column.key;
@@ -1119,7 +1288,10 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       >
         <Text
           numberOfLines={1}
-          style={[styles.headerCellText, !column.sortable && styles.headerCellTextMuted]}
+          style={[
+            styles.headerCellText,
+            !column.sortable && styles.headerCellTextMuted,
+          ]}
         >
           {column.label}
         </Text>
@@ -1143,10 +1315,15 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
         <View
           style={[
             styles.scorePill,
-            { borderColor: scoreStyles.border, backgroundColor: scoreStyles.bg },
+            {
+              borderColor: scoreStyles.border,
+              backgroundColor: scoreStyles.bg,
+            },
           ]}
         >
-          <Text style={[styles.scorePillText, { color: scoreStyles.text }]}>{value}%</Text>
+          <Text style={[styles.scorePillText, { color: scoreStyles.text }]}>
+            {value}%
+          </Text>
         </View>
       );
     }
@@ -1154,15 +1331,24 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     if (column.kind === "status") {
       const status = typeof value === "string" ? value : "none";
       const statusStyles = getStatusStyles(status);
-      const label = status === "none" ? "None" : `${status.charAt(0).toUpperCase()}${status.slice(1)}`;
+      const label =
+        status === "none"
+          ? "None"
+          : `${status.charAt(0).toUpperCase()}${status.slice(1)}`;
       return (
         <View style={[styles.statusPill, { backgroundColor: statusStyles.bg }]}>
-          <Text style={[styles.statusPillText, { color: statusStyles.text }]}>{label}</Text>
+          <Text style={[styles.statusPillText, { color: statusStyles.text }]}>
+            {label}
+          </Text>
         </View>
       );
     }
 
-    if (column.kind === "boolean" && column.editable === "custom" && column.customField) {
+    if (
+      column.kind === "boolean" &&
+      column.editable === "custom" &&
+      column.customField
+    ) {
       const cf = column.customField;
       return (
         <TouchableOpacity
@@ -1192,10 +1378,16 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       );
     }
 
-    if (column.kind === "multiselect" && column.editable === "custom" && column.customField) {
+    if (
+      column.kind === "multiselect" &&
+      column.editable === "custom" &&
+      column.customField
+    ) {
       const cf = column.customField;
       const rawValue = String(value ?? "");
-      const selectedValues = rawValue ? rawValue.split("; ").filter(Boolean) : [];
+      const selectedValues = rawValue
+        ? rawValue.split("; ").filter(Boolean)
+        : [];
       return (
         <TouchableOpacity
           style={styles.editableCell}
@@ -1213,25 +1405,39 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
             <View style={styles.multiselectChipRow}>
               {selectedValues.slice(0, 2).map((v) => (
                 <View key={v} style={styles.multiselectChip}>
-                  <Text style={styles.multiselectChipText} numberOfLines={1}>{v}</Text>
+                  <Text style={styles.multiselectChipText} numberOfLines={1}>
+                    {v}
+                  </Text>
                 </View>
               ))}
               {selectedValues.length > 2 && (
-                <Text style={styles.multiselectMoreText}>+{selectedValues.length - 2}</Text>
+                <Text style={styles.multiselectMoreText}>
+                  +{selectedValues.length - 2}
+                </Text>
               )}
             </View>
           ) : (
-            <Text style={[styles.dataCellText, styles.dataCellPlaceholder]} numberOfLines={1}>
+            <Text
+              style={[styles.dataCellText, styles.dataCellPlaceholder]}
+              numberOfLines={1}
+            >
               Select…
             </Text>
           )}
-          <Ionicons name="chevron-down" size={11} color="#6B7280" style={styles.editIcon} />
+          <Ionicons
+            name="chevron-down"
+            size={11}
+            color="#6B7280"
+            style={styles.editIcon}
+          />
         </TouchableOpacity>
       );
     }
 
     if (
-      (column.kind === "text" || column.kind === "dropdown" || column.kind === "number") &&
+      (column.kind === "text" ||
+        column.kind === "dropdown" ||
+        column.kind === "number") &&
       column.editable === "custom" &&
       column.customField
     ) {
@@ -1252,10 +1458,21 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
             setCustomFieldInput(displayVal);
           }}
         >
-          <Text style={[styles.dataCellText, !displayVal && styles.dataCellPlaceholder]} numberOfLines={1}>
+          <Text
+            style={[
+              styles.dataCellText,
+              !displayVal && styles.dataCellPlaceholder,
+            ]}
+            numberOfLines={1}
+          >
             {displayVal || (isDropdown ? "Select…" : "Tap to add")}
           </Text>
-          <Ionicons name="chevron-down" size={11} color="#6B7280" style={styles.editIcon} />
+          <Ionicons
+            name="chevron-down"
+            size={11}
+            color="#6B7280"
+            style={styles.editIcon}
+          />
         </TouchableOpacity>
       );
     }
@@ -1286,13 +1503,15 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
           syncingScrollRef.current = false;
         });
       },
-    []
+    [],
   );
 
   const renderMemberRowLeft = ({ item }: { item: FollowupMember }) => {
-    const subtitleLine = getMemberSubtitleLines(item)[0] ?? "No recent follow-up details";
+    const subtitleLine =
+      getMemberSubtitleLines(item)[0] ?? "No recent follow-up details";
     const hasAlerts = (item.alerts?.length ?? 0) > 0;
-    const isSnoozed = item.isSnoozed && !!item.snoozedUntil && item.snoozedUntil > Date.now();
+    const isSnoozed =
+      item.isSnoozed && !!item.snoozedUntil && item.snoozedUntil > Date.now();
     const isSelected = selectedIds.has(item.groupMemberId);
 
     return (
@@ -1322,10 +1541,15 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
           onPress={() => handleMemberPress(item.groupMemberId)}
         >
           {item.avatarUrl ? (
-            <Image source={{ uri: item.avatarUrl }} style={styles.avatarImage} />
+            <Image
+              source={{ uri: item.avatarUrl }}
+              style={styles.avatarImage}
+            />
           ) : (
             <View style={styles.avatarFallback}>
-              <Text style={styles.avatarFallbackText}>{item.firstName?.[0]?.toUpperCase() ?? "?"}</Text>
+              <Text style={styles.avatarFallbackText}>
+                {item.firstName?.[0]?.toUpperCase() ?? "?"}
+              </Text>
             </View>
           )}
 
@@ -1344,7 +1568,8 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
 
   const renderMemberRowRight = ({ item }: { item: FollowupMember }) => {
     const hasAlerts = (item.alerts?.length ?? 0) > 0;
-    const isSnoozed = item.isSnoozed && !!item.snoozedUntil && item.snoozedUntil > Date.now();
+    const isSnoozed =
+      item.isSnoozed && !!item.snoozedUntil && item.snoozedUntil > Date.now();
     const isSelected = selectedIds.has(item.groupMemberId);
 
     return (
@@ -1358,7 +1583,8 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       >
         <View style={styles.rowDataCells}>
           {dataColumns.map((column) => {
-            const isEditable = column.editable === "assignee" || column.editable === "status";
+            const isEditable =
+              column.editable === "assignee" || column.editable === "status";
             if (!isEditable) {
               return (
                 <View
@@ -1373,17 +1599,27 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
             return (
               <TouchableOpacity
                 key={`${item.groupMemberId}-${column.key}`}
-                style={[styles.dataCell, styles.editableCell, { width: column.width }]}
+                style={[
+                  styles.dataCell,
+                  styles.editableCell,
+                  { width: column.width },
+                ]}
                 activeOpacity={0.7}
                 onPress={() => {
                   setEditSheet({
-                    type: column.editable === "assignee" ? "assignee" : "status",
+                    type:
+                      column.editable === "assignee" ? "assignee" : "status",
                     memberId: item.groupMemberId,
                   });
                 }}
               >
                 {renderDataCell(item, column)}
-                <Ionicons name="chevron-down" size={11} color="#6B7280" style={styles.editIcon} />
+                <Ionicons
+                  name="chevron-down"
+                  size={11}
+                  color="#6B7280"
+                  style={styles.editIcon}
+                />
               </TouchableOpacity>
             );
           })}
@@ -1405,20 +1641,34 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     <View style={styles.screen}>
       <View style={[styles.header, { paddingTop: insets.top + 14 }]}>
         <View style={styles.headerTopRow}>
-          <TouchableOpacity style={styles.backButton} onPress={handleBack} testID="back-button">
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={handleBack}
+            testID="back-button"
+          >
             <Ionicons name="arrow-back" size={24} color="#333" />
           </TouchableOpacity>
           <View style={styles.headerContent}>
             <Text style={styles.headerTitle}>{toolDisplayName}</Text>
-            <Text style={styles.headerSubtitle}>{groupData?.name || "Group"}</Text>
+            <Text style={styles.headerSubtitle}>
+              {groupData?.name || "Group"}
+            </Text>
           </View>
-          <TouchableOpacity style={styles.settingsButton} onPress={handleSettingsPress}>
+          <TouchableOpacity
+            style={styles.settingsButton}
+            onPress={handleSettingsPress}
+          >
             <Ionicons name="settings-outline" size={22} color="#666" />
           </TouchableOpacity>
         </View>
 
         <View style={styles.searchRow}>
-          <Ionicons name="search" size={16} color="#777" style={styles.searchIcon} />
+          <Ionicons
+            name="search"
+            size={16}
+            color="#777"
+            style={styles.searchIcon}
+          />
           <TextInput
             value={searchQuery}
             onChangeText={setSearchQuery}
@@ -1430,12 +1680,17 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
             testID="followup-mobile-search"
           />
           {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery("")} style={styles.clearSearchButton}>
+            <TouchableOpacity
+              onPress={() => setSearchQuery("")}
+              style={styles.clearSearchButton}
+            >
               <Ionicons name="close-circle" size={18} color="#888" />
             </TouchableOpacity>
           )}
         </View>
-        {searchHelperText && <Text style={styles.searchHelperText}>{searchHelperText}</Text>}
+        {searchHelperText && (
+          <Text style={styles.searchHelperText}>{searchHelperText}</Text>
+        )}
         {showSearchSuggestions && (
           <View style={styles.searchSuggestionBox}>
             {searchSuggestions.map((suggestion) => (
@@ -1443,12 +1698,18 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
                 key={suggestion.id}
                 style={styles.searchSuggestionRow}
                 onPress={() => {
-                  setSearchQuery(applyFollowupSuggestion(searchQuery, suggestion.insertText));
+                  setSearchQuery(
+                    applyFollowupSuggestion(searchQuery, suggestion.insertText),
+                  );
                   setIsSearchFocused(false);
                 }}
               >
-                <Text style={styles.searchSuggestionLabel}>{suggestion.label}</Text>
-                <Text style={styles.searchSuggestionHelp}>{suggestion.helperText}</Text>
+                <Text style={styles.searchSuggestionLabel}>
+                  {suggestion.label}
+                </Text>
+                <Text style={styles.searchSuggestionHelp}>
+                  {suggestion.helperText}
+                </Text>
               </TouchableOpacity>
             ))}
           </View>
@@ -1472,7 +1733,8 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
           Showing {displayMembers.length}
           {typeof totalCount === "number" ? ` of ${totalCount}` : ""}
           {hasStructuredFilters || hasTextSearch ? " (filtered)" : ""}
-          {(isSearchLoading || (!hasTextSearch && isLoading)) && displayMembers.length > 0
+          {(isSearchLoading || (!hasTextSearch && isLoading)) &&
+          displayMembers.length > 0
             ? " …"
             : ""}
         </Text>
@@ -1482,7 +1744,9 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
         {selectedIds.size > 0 && (
           <View style={styles.actionBar}>
             <View style={styles.actionBarLeft}>
-              <Text style={styles.actionBarCount}>{selectedIds.size} selected</Text>
+              <Text style={styles.actionBarCount}>
+                {selectedIds.size} selected
+              </Text>
               <TouchableOpacity onPress={() => setSelectedIds(new Set())}>
                 <Text style={styles.actionBarDeselect}>Deselect all</Text>
               </TouchableOpacity>
@@ -1516,7 +1780,9 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
                   color={selectedIds.size > 0 ? primaryColor : "#9CA3AF"}
                 />
               </TouchableOpacity>
-              <View style={[styles.memberHeaderCell, { width: MEMBER_COL_WIDTH }]}>
+              <View
+                style={[styles.memberHeaderCell, { width: MEMBER_COL_WIDTH }]}
+              >
                 <Text style={styles.memberHeaderText}>Member</Text>
               </View>
             </View>
@@ -1564,7 +1830,9 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
           >
             <View style={[styles.tableContainer, { width: dataColumnsWidth }]}>
               <View style={styles.headerRow}>
-                <View style={styles.headerDataCells}>{dataColumns.map(renderColumnHeader)}</View>
+                <View style={styles.headerDataCells}>
+                  {dataColumns.map(renderColumnHeader)}
+                </View>
               </View>
               <FlatList
                 ref={rightListRef}
@@ -1628,10 +1896,17 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
                   autoFocus
                   onSubmitEditing={handleCustomTextSubmit}
                   returnKeyType="done"
-                  keyboardType={editSheet.customField?.type === "number" ? "numeric" : "default"}
+                  keyboardType={
+                    editSheet.customField?.type === "number"
+                      ? "numeric"
+                      : "default"
+                  }
                 />
                 <TouchableOpacity
-                  style={[styles.customFieldSaveButton, { backgroundColor: primaryColor }]}
+                  style={[
+                    styles.customFieldSaveButton,
+                    { backgroundColor: primaryColor },
+                  ]}
                   onPress={handleCustomTextSubmit}
                   disabled={isUpdatingField}
                 >
@@ -1645,15 +1920,22 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
                     key={opt}
                     style={[
                       styles.optionRow,
-                      (activeEditMember as Record<string, unknown>)?.[editSheet!.customField!.slot] === opt &&
-                        styles.optionRowSelected,
+                      (activeEditMember as Record<string, unknown>)?.[
+                        editSheet!.customField!.slot
+                      ] === opt && styles.optionRowSelected,
                     ]}
                     onPress={() => handleCustomDropdownSelect(opt)}
                     disabled={isUpdatingField}
                   >
                     <Text style={styles.optionText}>{opt}</Text>
-                    {(activeEditMember as Record<string, unknown>)?.[editSheet!.customField!.slot] === opt && (
-                      <Ionicons name="checkmark" size={16} color={primaryColor} />
+                    {(activeEditMember as Record<string, unknown>)?.[
+                      editSheet!.customField!.slot
+                    ] === opt && (
+                      <Ionicons
+                        name="checkmark"
+                        size={16}
+                        color={primaryColor}
+                      />
                     )}
                   </TouchableOpacity>
                 ))}
@@ -1668,8 +1950,12 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
             ) : editSheet?.type === "customMultiselect" ? (
               <ScrollView style={styles.optionList}>
                 {(editSheet.customField?.options ?? []).map((opt) => {
-                  const currentVal = (activeEditMember as Record<string, unknown>)?.[editSheet!.customField!.slot];
-                  const selectedValues = currentVal ? String(currentVal).split("; ").filter(Boolean) : [];
+                  const currentVal = (
+                    activeEditMember as Record<string, unknown>
+                  )?.[editSheet!.customField!.slot];
+                  const selectedValues = currentVal
+                    ? String(currentVal).split("; ").filter(Boolean)
+                    : [];
                   const isChecked = selectedValues.includes(opt);
                   return (
                     <TouchableOpacity
@@ -1708,14 +1994,23 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
                   return (
                     <TouchableOpacity
                       key={leader.id}
-                      style={[styles.optionRow, isSelected && styles.optionRowSelected]}
+                      style={[
+                        styles.optionRow,
+                        isSelected && styles.optionRowSelected,
+                      ]}
                       onPress={() => handleAssignChange(leader.id)}
                       disabled={isUpdatingField}
                     >
                       <Text style={styles.optionText}>
                         {leader.firstName} {leader.lastName}
                       </Text>
-                      {isSelected && <Ionicons name="checkmark" size={16} color={primaryColor} />}
+                      {isSelected && (
+                        <Ionicons
+                          name="checkmark"
+                          size={16}
+                          color={primaryColor}
+                        />
+                      )}
                     </TouchableOpacity>
                   );
                 })}
@@ -1730,16 +2025,26 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
             ) : (
               <View style={styles.optionList}>
                 {STATUS_OPTIONS.map((option) => {
-                  const isSelected = (activeEditMember?.status ?? undefined) === option.value;
+                  const isSelected =
+                    (activeEditMember?.status ?? undefined) === option.value;
                   return (
                     <TouchableOpacity
                       key={option.label}
-                      style={[styles.optionRow, isSelected && styles.optionRowSelected]}
+                      style={[
+                        styles.optionRow,
+                        isSelected && styles.optionRowSelected,
+                      ]}
                       onPress={() => handleStatusChange(option.value)}
                       disabled={isUpdatingField}
                     >
                       <Text style={styles.optionText}>{option.label}</Text>
-                      {isSelected && <Ionicons name="checkmark" size={16} color={primaryColor} />}
+                      {isSelected && (
+                        <Ionicons
+                          name="checkmark"
+                          size={16}
+                          color={primaryColor}
+                        />
+                      )}
                     </TouchableOpacity>
                   );
                 })}
