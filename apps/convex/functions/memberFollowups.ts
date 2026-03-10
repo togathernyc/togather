@@ -1219,6 +1219,153 @@ const csvImportRowValidator = v.object({
 const CSV_IMPORT_NOTE_TAG = "[csv import]";
 const MAX_CSV_IMPORT_ROWS = 500;
 
+/**
+ * Shared helper that creates or updates a user and ensures they have
+ * active community and group memberships. Used by both CSV import and quick-add.
+ */
+async function ensureUserAndMembership(
+  ctx: any,
+  prepared: PreparedCsvImportRow,
+  group: Doc<"groups">,
+  timestamp: number
+): Promise<{
+  userId: Id<"users">;
+  groupMemberId: Id<"groupMembers">;
+  createdUser: boolean;
+}> {
+  const memberTimestamp = prepared.parsedAddedAt ?? timestamp;
+  const normalizedEmail = prepared.row.email?.toLowerCase();
+
+  let userId: Id<"users">;
+  let createdUser = false;
+  if (prepared.existingUser) {
+    userId = prepared.existingUser._id;
+    const { updates } = getUserProfileUpdates(prepared.existingUser, prepared.row, prepared.parsedDateOfBirth);
+    if (Object.keys(updates).length > 0) {
+      await ctx.db.patch(userId, updates);
+    }
+  } else {
+    createdUser = true;
+    userId = await ctx.db.insert("users", {
+      firstName: prepared.row.firstName,
+      lastName: prepared.row.lastName,
+      phone: prepared.normalizedPhone,
+      phoneVerified: false,
+      email: normalizedEmail,
+      zipCode: prepared.row.zipCode,
+      dateOfBirth: prepared.parsedDateOfBirth,
+      searchText: buildSearchText({
+        firstName: prepared.row.firstName,
+        lastName: prepared.row.lastName,
+        email: normalizedEmail,
+        phone: prepared.normalizedPhone,
+      }),
+      isActive: true,
+      isStaff: false,
+      isSuperuser: false,
+      dateJoined: memberTimestamp,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+  }
+
+  const existingCommunityMembership = await ctx.db
+    .query("userCommunities")
+    .withIndex("by_user_community", (q: any) =>
+      q.eq("userId", userId).eq("communityId", group.communityId)
+    )
+    .first();
+
+  if (!existingCommunityMembership) {
+    await ctx.db.insert("userCommunities", {
+      userId,
+      communityId: group.communityId,
+      roles: 1,
+      status: 1,
+      createdAt: memberTimestamp,
+      updatedAt: timestamp,
+    });
+  } else if (existingCommunityMembership.status !== 1) {
+    await ctx.db.patch(existingCommunityMembership._id, {
+      status: 1,
+      updatedAt: timestamp,
+    });
+  }
+
+  const existingGroupMembership = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_group_user", (q: any) =>
+      q.eq("groupId", group._id).eq("userId", userId)
+    )
+    .first();
+
+  let groupMemberId: Id<"groupMembers">;
+  let needsChannelSync = false;
+  if (!existingGroupMembership) {
+    groupMemberId = await ctx.db.insert("groupMembers", {
+      groupId: group._id,
+      userId,
+      role: "member",
+      joinedAt: memberTimestamp,
+      notificationsEnabled: true,
+    });
+    needsChannelSync = true;
+  } else if (existingGroupMembership.leftAt) {
+    await ctx.db.patch(existingGroupMembership._id, {
+      leftAt: undefined,
+      role: "member",
+      joinedAt: memberTimestamp,
+      notificationsEnabled: true,
+    });
+    groupMemberId = existingGroupMembership._id;
+    needsChannelSync = true;
+  } else {
+    groupMemberId = existingGroupMembership._id;
+  }
+
+  if (needsChannelSync) {
+    await syncUserChannelMembershipsLogic(ctx, userId, group._id);
+  }
+
+  return { userId, groupMemberId, createdUser };
+}
+
+/**
+ * Apply custom field values to the member's score document, with a scheduler
+ * fallback if the score document doesn't exist yet.
+ */
+async function applyCustomFieldValues(
+  ctx: any,
+  groupMemberId: Id<"groupMembers">,
+  customFieldValues: Record<string, string | number | boolean>,
+  timestamp: number
+): Promise<void> {
+  if (Object.keys(customFieldValues).length === 0) {
+    return;
+  }
+
+  const scoreDoc = await ctx.db
+    .query("memberFollowupScores")
+    .withIndex("by_groupMember", (q: any) => q.eq("groupMemberId", groupMemberId))
+    .first();
+
+  if (scoreDoc) {
+    await ctx.db.patch(scoreDoc._id, {
+      ...customFieldValues,
+      updatedAt: timestamp,
+    });
+  } else {
+    await ctx.scheduler.runAfter(
+      1000,
+      internal.functions.memberFollowups.applyCsvImportScorePatch,
+      {
+        groupMemberId,
+        customFieldValues,
+      }
+    );
+  }
+}
+
 type CsvImportRow = {
   rowNumber: number;
   addedAt?: string;
@@ -1958,6 +2105,77 @@ export const applyCsvImportScorePatch = internalMutation({
   },
 });
 
+export const applyQuickAddFollowupPatch = internalMutation({
+  args: {
+    groupId: v.id("groups"),
+    groupMemberId: v.id("groupMembers"),
+    status: v.optional(v.string()),
+    assigneeId: v.optional(v.id("users")),
+    retryCount: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const patch: Record<string, unknown> = {};
+    if (args.status !== undefined) {
+      patch.status = args.status;
+    }
+    if (args.assigneeId !== undefined) {
+      patch.assigneeId = args.assigneeId;
+    }
+    if (Object.keys(patch).length === 0) {
+      return { applied: false };
+    }
+
+    const scoreDoc = await ctx.db
+      .query("memberFollowupScores")
+      .withIndex("by_groupMember", (q) => q.eq("groupMemberId", args.groupMemberId))
+      .first();
+
+    if (scoreDoc) {
+      // Only patch fields that haven't been modified by another user since quick-add.
+      // If current value is undefined, we set it. If it differs from what we want to set,
+      // another user changed it and we should not overwrite their change.
+      const safePatch: Record<string, unknown> = {};
+      if (args.status !== undefined && scoreDoc.status === undefined) {
+        safePatch.status = args.status;
+      }
+      if (args.assigneeId !== undefined && scoreDoc.assigneeId === undefined) {
+        safePatch.assigneeId = args.assigneeId;
+      }
+      if (Object.keys(safePatch).length > 0) {
+        await ctx.db.patch(scoreDoc._id, {
+          ...safePatch,
+          updatedAt: now(),
+        });
+      }
+      // Send notification if assigneeId was requested and is now set (either by us or atomically by computeSingleMemberScore)
+      if (args.assigneeId && (safePatch.assigneeId || scoreDoc.assigneeId === args.assigneeId)) {
+        await ctx.scheduler.runAfter(0, internal.functions.notifications.senders.notifyFollowupAssigned, {
+          assigneeId: args.assigneeId,
+          groupId: args.groupId,
+          groupMemberId: args.groupMemberId,
+        });
+      }
+      return { applied: Object.keys(safePatch).length > 0 };
+    }
+
+    const retryCount = args.retryCount ?? 0;
+    if (retryCount < 5) {
+      await ctx.scheduler.runAfter(
+        1000,
+        internal.functions.memberFollowups.applyQuickAddFollowupPatch,
+        {
+          groupId: args.groupId,
+          groupMemberId: args.groupMemberId,
+          status: args.status,
+          assigneeId: args.assigneeId,
+          retryCount: retryCount + 1,
+        }
+      );
+    }
+    return { applied: false, retried: retryCount < 5 };
+  },
+});
+
 export const previewCsvImport = mutation({
   args: {
     token: v.string(),
@@ -2003,101 +2221,10 @@ export const applyCsvImport = mutation({
     for (const prepared of preparedRows) {
       if (prepared.rowReport.status !== "ready") continue;
 
-      const row = prepared.row;
-      const normalizedEmail = row.email?.toLowerCase();
-      const memberTimestamp = prepared.parsedAddedAt ?? timestamp;
+      const { groupMemberId } = await ensureUserAndMembership(ctx, prepared, group, timestamp);
 
-      let userId: Id<"users">;
-      if (prepared.existingUser) {
-        userId = prepared.existingUser._id;
-        const { updates } = getUserProfileUpdates(prepared.existingUser, row, prepared.parsedDateOfBirth);
-        if (Object.keys(updates).length > 0) {
-          await ctx.db.patch(userId, updates);
-        }
-      } else {
-        userId = await ctx.db.insert("users", {
-          firstName: row.firstName,
-          lastName: row.lastName,
-          phone: prepared.normalizedPhone,
-          phoneVerified: false,
-          email: normalizedEmail,
-          zipCode: row.zipCode,
-          dateOfBirth: prepared.parsedDateOfBirth,
-          searchText: buildSearchText({
-            firstName: row.firstName,
-            lastName: row.lastName,
-            email: normalizedEmail,
-            phone: prepared.normalizedPhone,
-          }),
-          isActive: true,
-          isStaff: false,
-          isSuperuser: false,
-          dateJoined: memberTimestamp,
-          createdAt: timestamp,
-          updatedAt: timestamp,
-        });
-      }
-
-      const existingCommunityMembership = await ctx.db
-        .query("userCommunities")
-        .withIndex("by_user_community", (q: any) =>
-          q.eq("userId", userId).eq("communityId", group.communityId)
-        )
-        .first();
-
-      if (!existingCommunityMembership) {
-        await ctx.db.insert("userCommunities", {
-          userId,
-          communityId: group.communityId,
-          roles: 1,
-          status: 1,
-          createdAt: memberTimestamp,
-          updatedAt: timestamp,
-        });
-      } else if (existingCommunityMembership.status !== 1) {
-        await ctx.db.patch(existingCommunityMembership._id, {
-          status: 1,
-          updatedAt: timestamp,
-        });
-      }
-
-      const existingGroupMembership = await ctx.db
-        .query("groupMembers")
-        .withIndex("by_group_user", (q: any) =>
-          q.eq("groupId", group._id).eq("userId", userId)
-        )
-        .first();
-
-      let groupMemberId: Id<"groupMembers">;
-      let needsChannelSync = false;
-      if (!existingGroupMembership) {
-        groupMemberId = await ctx.db.insert("groupMembers", {
-          groupId: group._id,
-          userId,
-          role: "member",
-          joinedAt: memberTimestamp,
-          notificationsEnabled: true,
-        });
-        needsChannelSync = true;
-      } else if (existingGroupMembership.leftAt) {
-        await ctx.db.patch(existingGroupMembership._id, {
-          leftAt: undefined,
-          role: "member",
-          joinedAt: memberTimestamp,
-          notificationsEnabled: true,
-        });
-        groupMemberId = existingGroupMembership._id;
-        needsChannelSync = true;
-      } else {
-        groupMemberId = existingGroupMembership._id;
-      }
-
-      if (needsChannelSync) {
-        await syncUserChannelMembershipsLogic(ctx, userId, group._id);
-      }
-
-      if (row.notes) {
-        const noteLine = `${new Date(timestamp).toISOString()} - ${row.notes}`;
+      if (prepared.row.notes) {
+        const noteLine = `${new Date(timestamp).toISOString()} - ${prepared.row.notes}`;
         const existingCsvNote = await getExistingCsvImportNote(ctx, groupMemberId);
         if (existingCsvNote) {
           const previousContent = existingCsvNote.content ?? CSV_IMPORT_NOTE_TAG;
@@ -2165,6 +2292,117 @@ export const applyCsvImport = mutation({
     return {
       summary: buildCsvImportSummary(rowReports),
       rows: rowReports,
+    };
+  },
+});
+
+export const quickAddRow = mutation({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+    firstName: v.string(),
+    phone: v.string(),
+    lastName: v.optional(v.string()),
+    email: v.optional(v.string()),
+    zipCode: v.optional(v.string()),
+    dateOfBirth: v.optional(v.string()),
+    notes: v.optional(v.string()),
+    status: v.optional(v.string()),
+    assigneeId: v.optional(v.id("users")),
+    customFieldValues: v.optional(v.record(v.string(), v.string())),
+  },
+  handler: async (ctx, args) => {
+    const normalizedStatus = args.status?.trim().toLowerCase();
+    if (
+      normalizedStatus !== undefined &&
+      normalizedStatus.length > 0 &&
+      normalizedStatus !== "green" &&
+      normalizedStatus !== "orange" &&
+      normalizedStatus !== "red"
+    ) {
+      throw new ConvexError("Status must be green, orange, or red");
+    }
+
+    const { group, userId: importedById } = await requireImportAccess(ctx, args.token, args.groupId);
+
+    if (args.assigneeId) {
+      const leaderMembership = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q: any) =>
+          q.eq("groupId", group._id).eq("userId", args.assigneeId)
+        )
+        .first();
+      if (!leaderMembership || leaderMembership.leftAt || leaderMembership.role !== "leader") {
+        throw new ConvexError("Assignee must be an active group leader");
+      }
+    }
+
+    const row: CsvImportRow = {
+      rowNumber: 2,
+      firstName: args.firstName,
+      lastName: args.lastName,
+      phone: args.phone,
+      email: args.email,
+      zipCode: args.zipCode,
+      dateOfBirth: args.dateOfBirth,
+      notes: args.notes,
+      customFieldValues: args.customFieldValues,
+    };
+
+    const { rowReports, preparedRows } = await analyzeCsvImportRows(ctx, group, [row]);
+    const report = rowReports[0];
+    const prepared = preparedRows[0];
+    if (!report || report.status !== "ready" || !prepared) {
+      const reason = report?.reasons?.join(", ") || "invalid_data";
+      throw new ConvexError(`Could not add member: ${reason}`);
+    }
+
+    const timestamp = now();
+
+    const { userId, groupMemberId, createdUser } = await ensureUserAndMembership(ctx, prepared, group, timestamp);
+
+    if (prepared.row.notes) {
+      await ctx.db.insert("memberFollowups", {
+        groupMemberId,
+        createdById: importedById,
+        type: "note",
+        content: prepared.row.notes,
+        createdAt: timestamp,
+      });
+    }
+
+    await applyCustomFieldValues(ctx, groupMemberId, prepared.parsedCustomFieldValues, timestamp);
+
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.followupScoreComputation.computeSingleMemberScore,
+      {
+        groupId: group._id,
+        groupMemberId,
+        status: normalizedStatus || undefined,
+        assigneeId: args.assigneeId,
+      }
+    );
+
+    if (normalizedStatus || args.assigneeId) {
+      // Patch serves as fallback (if action races) and triggers notification
+      await ctx.scheduler.runAfter(
+        500,
+        internal.functions.memberFollowups.applyQuickAddFollowupPatch,
+        {
+          groupId: group._id,
+          groupMemberId,
+          status: normalizedStatus || undefined,
+          assigneeId: args.assigneeId,
+        }
+      );
+    }
+
+    return {
+      groupMemberId,
+      userId,
+      createdUser,
+      row: report,
     };
   },
 });
