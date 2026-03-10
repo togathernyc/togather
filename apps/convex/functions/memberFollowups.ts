@@ -1527,7 +1527,8 @@ function parseCsvCustomFieldValues(
         parsedValues[slot] = value;
         continue;
       }
-      const parts = value.split(/[;,]+/).map((p) => p.trim()).filter(Boolean);
+      const delimiter = value.includes(";") ? /;+/ : /,+/;
+      const parts = value.split(delimiter).map((p) => p.trim()).filter(Boolean);
       const validParts: string[] = [];
       for (const part of parts) {
         const matchedOption = options.find(

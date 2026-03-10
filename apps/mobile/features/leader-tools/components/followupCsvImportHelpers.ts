@@ -38,7 +38,6 @@ export type CsvImportRowPayload = {
 
 const FIELD_ALIASES: Record<CsvImportField, string[]> = {
   addedAt: [
-    "column 1",
     "date",
     "date added",
     "added at",

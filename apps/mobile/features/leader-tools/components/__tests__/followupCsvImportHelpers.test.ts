@@ -8,7 +8,7 @@ import {
 describe("getDefaultCsvImportMapping", () => {
   it("auto-maps common header aliases", () => {
     const mapping = getDefaultCsvImportMapping([
-      "Column 1",
+      "Date Added",
       "First Name",
       "Last Name",
       "Phone Number",
@@ -21,7 +21,7 @@ describe("getDefaultCsvImportMapping", () => {
     ]);
 
     expect(mapping).toEqual({
-      addedAt: "Column 1",
+      addedAt: "Date Added",
       firstName: "First Name",
       lastName: "Last Name",
       phone: "Phone Number",
