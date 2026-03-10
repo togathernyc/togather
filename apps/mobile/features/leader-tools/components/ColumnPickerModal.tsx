@@ -18,7 +18,7 @@ import { CustomModal } from "@/components/ui/Modal";
 export type CustomFieldDef = {
   slot: string;
   name: string;
-  type: "text" | "number" | "boolean" | "dropdown";
+  type: "text" | "number" | "boolean" | "dropdown" | "multiselect";
   options?: string[];
 };
 
@@ -46,12 +46,13 @@ interface ColumnPickerModalProps {
 const SLOT_CANDIDATES: Record<string, string[]> = {
   text: ["customText1", "customText2", "customText3", "customText4", "customText5"],
   dropdown: ["customText1", "customText2", "customText3", "customText4", "customText5"],
+  multiselect: ["customText1", "customText2", "customText3", "customText4", "customText5"],
   number: ["customNum1", "customNum2", "customNum3", "customNum4", "customNum5"],
   boolean: ["customBool1", "customBool2", "customBool3", "customBool4", "customBool5"],
 };
 
 const SLOT_CAPACITIES: Record<string, { label: string; total: number; types: string[] }> = {
-  text: { label: "Text/Dropdown", total: 5, types: ["text", "dropdown"] },
+  text: { label: "Text/Dropdown/Multi", total: 5, types: ["text", "dropdown", "multiselect"] },
   number: { label: "Number", total: 5, types: ["number"] },
   boolean: { label: "Checkbox", total: 5, types: ["boolean"] },
 };
@@ -68,6 +69,7 @@ const FIELD_TYPES = [
   { value: "number", label: "Number" },
   { value: "boolean", label: "Checkbox" },
   { value: "dropdown", label: "Dropdown" },
+  { value: "multiselect", label: "Multi-Select" },
 ] as const;
 
 // ============================================================================
@@ -90,7 +92,7 @@ export function ColumnPickerModal({
   const [fields, setFields] = useState<CustomFieldDef[]>([]);
   const [editingFieldIdx, setEditingFieldIdx] = useState<number | null>(null);
   const [newFieldName, setNewFieldName] = useState("");
-  const [newFieldType, setNewFieldType] = useState<"text" | "number" | "boolean" | "dropdown">("text");
+  const [newFieldType, setNewFieldType] = useState<"text" | "number" | "boolean" | "dropdown" | "multiselect">("text");
   const [newFieldOptions, setNewFieldOptions] = useState<string[]>([]);
   const [showAddField, setShowAddField] = useState(false);
 
@@ -157,8 +159,8 @@ export function ColumnPickerModal({
       slot,
       name: newFieldName.trim(),
       type: newFieldType,
-      ...(newFieldType === "dropdown" && newFieldOptions.length > 0
-        ? { options: newFieldOptions.filter((o) => o.trim()) }
+      ...((newFieldType === "dropdown" || newFieldType === "multiselect") && newFieldOptions.length > 0
+        ? { options: newFieldOptions.filter((o) => o.trim()).map((o) => o.replace(/;/g, "")) }
         : {}),
     };
 
@@ -288,7 +290,7 @@ export function ColumnPickerModal({
               <View style={[styles.typeBadge, styles[`typeBadge_${field.type}` as keyof typeof styles] as any]}>
                 <Text style={styles.typeBadgeText}>{field.type}</Text>
               </View>
-              {field.type === "dropdown" && field.options && (
+              {(field.type === "dropdown" || field.type === "multiselect") && field.options && (
                 <Text style={styles.fieldOptions} numberOfLines={1}>
                   ({field.options.join(", ")})
                 </Text>
@@ -339,8 +341,8 @@ export function ColumnPickerModal({
               })}
             </View>
 
-            {/* Dropdown options editor */}
-            {newFieldType === "dropdown" && (
+            {/* Dropdown / Multi-Select options editor */}
+            {(newFieldType === "dropdown" || newFieldType === "multiselect") && (
               <View style={styles.optionsEditor}>
                 <Text style={styles.optionsLabel}>Options:</Text>
                 {newFieldOptions.map((opt, i) => (
@@ -350,7 +352,7 @@ export function ColumnPickerModal({
                       value={opt}
                       onChangeText={(text) => {
                         const next = [...newFieldOptions];
-                        next[i] = text;
+                        next[i] = text.replace(/;/g, "");
                         setNewFieldOptions(next);
                       }}
                       placeholder={`Option ${i + 1}`}
@@ -530,6 +532,7 @@ const styles = StyleSheet.create({
   typeBadge_number: { backgroundColor: "#D1FAE5" },
   typeBadge_boolean: { backgroundColor: "#FEF3C7" },
   typeBadge_dropdown: { backgroundColor: "#EDE9FE" },
+  typeBadge_multiselect: { backgroundColor: "#FCE7F3" },
   typeBadgeText: {
     fontSize: 11,
     fontWeight: "600" as const,

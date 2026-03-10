@@ -39,6 +39,7 @@ const FIELD_TYPES = [
   { value: "number", label: "Number" },
   { value: "boolean", label: "Checkbox" },
   { value: "dropdown", label: "Dropdown" },
+  { value: "multiselect", label: "Multi-Select" },
   { value: "section_header", label: "Section Header" },
   { value: "subtitle", label: "Subtitle" },
 ];
@@ -468,6 +469,7 @@ export function LandingPageContent() {
                     <Text style={styles.listItemSubtitle}>
                       {field.type === "section_header" ? "section header" :
                        field.type === "subtitle" ? "subtitle" :
+                       field.type === "multiselect" ? "multi-select" :
                        field.type}
                       {!isDecorative && (field.slot ? ` · ${field.slot}` : " · notes only")}
                       {!isDecorative && field.required ? " · required" : ""}
@@ -693,6 +695,12 @@ function FieldEditorModal({
       return;
     }
 
+    // Validate semicolons in options for dropdown/multiselect
+    if ((type === "dropdown" || type === "multiselect") && options.includes(";")) {
+      Alert.alert("Error", "Option values cannot contain semicolons (;). Semicolons are reserved as the multi-select separator.");
+      return;
+    }
+
     // Auto-select a slot based on type if not explicitly chosen
     const resolvedSlot = slot || undefined;
 
@@ -704,7 +712,7 @@ function FieldEditorModal({
       required,
       order: field?.order ?? 0,
       options:
-        type === "dropdown"
+        type === "dropdown" || type === "multiselect"
           ? options.split(",").map((o) => o.trim()).filter(Boolean)
           : undefined,
       includeInNotes: true,
@@ -765,7 +773,7 @@ function FieldEditorModal({
                       // Reset slot if incompatible with new type
                       if (slot) {
                         const isCompatible =
-                          (t.value === "text" || t.value === "dropdown") ? slot.startsWith("customText") :
+                          (t.value === "text" || t.value === "dropdown" || t.value === "multiselect") ? slot.startsWith("customText") :
                           t.value === "number" ? slot.startsWith("customNum") :
                           t.value === "boolean" ? slot.startsWith("customBool") :
                           false;
@@ -803,7 +811,7 @@ function FieldEditorModal({
                     {availableSlots
                       .filter((s) => {
                         if (!s.value) return true; // "No slot" always shows
-                        if (type === "text" || type === "dropdown")
+                        if (type === "text" || type === "dropdown" || type === "multiselect")
                           return s.value.startsWith("customText");
                         if (type === "number") return s.value.startsWith("customNum");
                         if (type === "boolean") return s.value.startsWith("customBool");
@@ -833,7 +841,7 @@ function FieldEditorModal({
               </View>
             )}
 
-            {!isDecorative && type === "dropdown" && (
+            {!isDecorative && (type === "dropdown" || type === "multiselect") && (
               <View style={styles.field}>
                 <Text style={styles.fieldLabel}>Options (comma-separated)</Text>
                 <TextInput

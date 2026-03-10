@@ -14,7 +14,7 @@ export type CsvImportSourceRow = Record<string, unknown>;
 export type CsvImportCustomFieldDef = {
   slot: string;
   name: string;
-  type: "text" | "number" | "boolean" | "dropdown";
+  type: "text" | "number" | "boolean" | "dropdown" | "multiselect";
   options?: string[];
 };
 

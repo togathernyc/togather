@@ -678,7 +678,7 @@ export const saveConfig = mutation({
 
     // Slot prefix to allowed types mapping
     const SLOT_PREFIX_TYPE: Record<string, string[]> = {
-      customText: ["text", "dropdown"],
+      customText: ["text", "dropdown", "multiselect"],
       customNum: ["number"],
       customBool: ["boolean"],
     };

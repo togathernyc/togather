@@ -726,6 +726,56 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
     }
   };
 
+  const handleMultiSelectToggle = async (memberId: string, slot: string, rawServerValue: string | undefined | null, toggledOption: string) => {
+    // Track values for rollback - set synchronously within setOptimistic
+    let previousValue: string | null = null;
+    let newValue: string | null = null;
+
+    // Optimistic update WITHOUT closing dropdown
+    // Compute value from current optimistic state (via prev) to avoid stale closure issues
+    setOptimistic((prev) => {
+      const existingOptimistic = (prev[memberId] as Record<string, any> | undefined)?.[slot];
+      const currentValue = existingOptimistic !== undefined
+        ? String(existingOptimistic ?? "")
+        : String(rawServerValue ?? "");
+
+      previousValue = currentValue || null;
+
+      const selectedValues = currentValue ? currentValue.split("; ").filter(Boolean) : [];
+      const isSelected = selectedValues.includes(toggledOption);
+      const newValues = isSelected
+        ? selectedValues.filter((v) => v !== toggledOption)
+        : [...selectedValues, toggledOption];
+      newValue = newValues.length > 0 ? newValues.join("; ") : null;
+
+      return { ...prev, [memberId]: { ...prev[memberId], [slot]: newValue } };
+    });
+
+    try {
+      await setCustomFieldMut({
+        groupId: groupId as Id<"groups">,
+        groupMemberId: memberId as Id<"groupMembers">,
+        slot,
+        value: newValue || undefined,
+      });
+    } catch (err) {
+      console.error("[setCustomField multiselect] failed:", err);
+      // Restore to previous value instead of deleting slot to preserve other in-flight toggles
+      setOptimistic((prev) => {
+        const next = { ...prev };
+        if (previousValue) {
+          next[memberId] = { ...next[memberId], [slot]: previousValue };
+        } else {
+          if (next[memberId]) {
+            delete (next[memberId] as any)[slot];
+            if (Object.keys(next[memberId]).length === 0) delete next[memberId];
+          }
+        }
+        return next;
+      });
+    }
+  };
+
   // Open dropdown at fixed position from cell rect
   const openDropdownAtCell = useCallback((e: any, memberId: string, type: "assignee" | "status") => {
     if (Platform.OS !== "web") return;
@@ -1010,6 +1060,38 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
                   size={18}
                   color={rawValue ? primaryColor : "#9CA3AF"}
                 />
+              </TouchableOpacity>
+            );
+          }
+
+          // Multiselect: click to show portal dropdown with checkboxes
+          if (cf.type === "multiselect" && cf.options) {
+            const selectedValues = rawValue ? String(rawValue).split("; ").filter(Boolean) : [];
+            return (
+              <TouchableOpacity
+                style={s.editableCellTouchable}
+                data-dropdown="true"
+                onPress={(e) => {
+                  setCustomDropdownFor({ memberId: item.groupMemberId, slot: cf.slot });
+                  setAssigneeDropdownFor(null);
+                  setStatusDropdownFor(null);
+                  const rect = (e.target as any)?.getBoundingClientRect?.();
+                  if (rect) {
+                    setDropdownPos({ top: rect.bottom + 2, left: rect.left, width: Math.max(rect.width, 160) });
+                  }
+                }}
+              >
+                {selectedValues.length > 0 ? (
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 2 }}>
+                    {selectedValues.map((val) => (
+                      <View key={val} style={s.multiSelectChip}>
+                        <Text style={s.multiSelectChipText}>{val}</Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : (
+                  <Text style={[s.cellText, s.cellPlaceholder]}>Select...</Text>
+                )}
               </TouchableOpacity>
             );
           }
@@ -1476,6 +1558,55 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
         const cf = customFields.find((f) => f.slot === customDropdownFor.slot);
         const member = members.find((m) => m.groupMemberId === customDropdownFor.memberId);
         if (!cf || !cf.options || !member) return null;
+
+        if (cf.type === "multiselect") {
+          const optState = optimistic[member.groupMemberId] as Record<string, any> | undefined;
+          const currentValue = String(
+            optState?.[cf.slot] !== undefined
+              ? (optState[cf.slot] ?? "")
+              : ((member as any)[cf.slot] ?? "")
+          );
+          const selectedValues = currentValue ? currentValue.split("; ").filter(Boolean) : [];
+
+          return (
+            <View
+              style={[
+                s.dropdownPortal,
+                { top: dropdownPos.top, left: dropdownPos.left, minWidth: dropdownPos.width },
+              ]}
+              data-dropdown="true"
+            >
+              {cf.options.map((opt) => {
+                const isChecked = selectedValues.includes(opt);
+                return (
+                  <TouchableOpacity
+                    key={opt}
+                    style={[s.dropdownItem, isChecked && { backgroundColor: "#F3F4F6" }]}
+                    onPress={() => handleMultiSelectToggle(member.groupMemberId, cf.slot, currentValue, opt)}
+                  >
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                      <Ionicons
+                        name={isChecked ? "checkbox" : "square-outline"}
+                        size={16}
+                        color={isChecked ? "#6B21A8" : "#9CA3AF"}
+                      />
+                      <Text style={s.dropdownItemText}>{opt}</Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+              <TouchableOpacity
+                style={[s.dropdownItem, s.dropdownItemDanger]}
+                onPress={() => {
+                  handleCustomFieldSave(member.groupMemberId, cf.slot, undefined);
+                }}
+              >
+                <Text style={[s.dropdownItemText, { color: "#FF3B30" }]}>Clear all</Text>
+              </TouchableOpacity>
+            </View>
+          );
+        }
+
         return (
           <View
             style={[
@@ -1822,6 +1953,18 @@ const s = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 3,
     backgroundColor: "#fff",
+  },
+
+  // Multiselect chips
+  multiSelectChip: {
+    backgroundColor: "#EDE9FE",
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+  },
+  multiSelectChipText: {
+    fontSize: 11,
+    color: "#6B21A8",
   },
 
   // Alerts

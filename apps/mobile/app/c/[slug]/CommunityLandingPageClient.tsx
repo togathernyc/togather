@@ -176,6 +176,11 @@ export default function CommunityLandingPageClient() {
             setSubmitError(`${field.label} must be checked`);
             return;
           }
+        } else if (field.type === "multiselect") {
+          if (!Array.isArray(value) || value.length === 0) {
+            setSubmitError(`${field.label} is required`);
+            return;
+          }
         } else if (value === undefined || value === null || value === "") {
           setSubmitError(`${field.label} is required`);
           return;
@@ -200,6 +205,8 @@ export default function CommunityLandingPageClient() {
           // For optional fields, only include if user provided a non-default value
           if (field.type === "boolean") {
             return rawValue === true;
+          } else if (field.type === "multiselect") {
+            return Array.isArray(rawValue) && rawValue.length > 0;
           } else if (field.type === "number") {
             return rawValue !== undefined && rawValue !== "" && rawValue !== 0;
           } else {
@@ -214,6 +221,8 @@ export default function CommunityLandingPageClient() {
             value = rawValue ?? false;
           } else if (field.type === "number") {
             value = rawValue !== undefined && rawValue !== "" ? Number(rawValue) : 0;
+          } else if (field.type === "multiselect") {
+            value = Array.isArray(rawValue) ? rawValue.join("; ") : (rawValue ?? "");
           } else {
             value = rawValue ?? "";
           }
@@ -604,6 +613,54 @@ function DynamicField({
         </View>
       );
 
+    case "multiselect": {
+      const selectedValues: string[] = Array.isArray(value) ? value : [];
+      return (
+        <View style={styles.field}>
+          <Text style={styles.fieldLabel}>
+            {field.label}
+            {field.required && <Text style={styles.required}> *</Text>}
+          </Text>
+          <View style={styles.multiselectContainer}>
+            {(field.options || []).map((option) => {
+              const isChecked = selectedValues.includes(option);
+              return (
+                <TouchableOpacity
+                  key={option}
+                  style={[
+                    styles.multiselectOption,
+                    isChecked && styles.multiselectOptionSelected,
+                  ]}
+                  onPress={() => {
+                    const newValues = isChecked
+                      ? selectedValues.filter((v) => v !== option)
+                      : [...selectedValues, option];
+                    onChange(newValues);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons
+                    name={isChecked ? "checkbox" : "square-outline"}
+                    size={20}
+                    color={isChecked ? "#4CAF50" : "#999"}
+                    style={{ marginRight: 8 }}
+                  />
+                  <Text
+                    style={[
+                      styles.multiselectOptionText,
+                      isChecked && styles.multiselectOptionTextSelected,
+                    ]}
+                  >
+                    {option}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+      );
+    }
+
     case "text":
     default:
       return (
@@ -791,6 +848,33 @@ const styles = StyleSheet.create({
     color: "#666",
   },
   dropdownOptionTextSelected: {
+    color: "#2E7D32",
+    fontWeight: "600",
+  },
+
+  // Multiselect (checkbox group)
+  multiselectContainer: {
+    gap: 6,
+  },
+  multiselectOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#ddd",
+    backgroundColor: "#fafafa",
+  },
+  multiselectOptionSelected: {
+    borderColor: "#4CAF50",
+    backgroundColor: "#E8F5E9",
+  },
+  multiselectOptionText: {
+    fontSize: 14,
+    color: "#666",
+  },
+  multiselectOptionTextSelected: {
     color: "#2E7D32",
     fontWeight: "600",
   },

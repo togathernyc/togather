@@ -5,7 +5,8 @@ import {
 
 describe("followupRefreshState", () => {
   it("formats refresh timestamps for display", () => {
-    expect(formatFollowupRefreshTimestamp(1735689600000)).toContain("Jan");
+    // Use a mid-month timestamp (Jan 15, 2025 12:00 UTC) to avoid timezone edge cases
+    expect(formatFollowupRefreshTimestamp(1736942400000)).toContain("Jan");
   });
 
   it("returns button labels for each refresh state", () => {

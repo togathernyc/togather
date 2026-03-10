@@ -1361,6 +1361,31 @@ function parseCsvCustomFieldValues(
       continue;
     }
 
+    if (definition.type === "multiselect") {
+      const options = definition.options ?? [];
+      if (options.length === 0) {
+        parsedValues[slot] = value;
+        continue;
+      }
+      const parts = value.split(";").map((p) => p.trim()).filter(Boolean);
+      const validParts: string[] = [];
+      for (const part of parts) {
+        const matchedOption = options.find(
+          (option) => option.trim().toLowerCase() === part.toLowerCase()
+        );
+        if (matchedOption) {
+          validParts.push(matchedOption);
+        } else {
+          reasons.push("invalid_custom_multiselect_option_ignored");
+        }
+      }
+      const deduplicated = Array.from(new Set(validParts));
+      if (deduplicated.length > 0) {
+        parsedValues[slot] = deduplicated.join("; ");
+      }
+      continue;
+    }
+
     parsedValues[slot] = value;
   }
 
