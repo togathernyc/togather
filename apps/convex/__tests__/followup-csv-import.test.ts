@@ -85,6 +85,12 @@ async function seedGroupWithLeader(
                   type: "dropdown",
                   options: ["Email", "Text", "Call"],
                 },
+                {
+                  slot: "customText3",
+                  name: "Interests",
+                  type: "multiselect",
+                  options: ["Music", "Sports", "Art", "Tech"],
+                },
               ],
             },
           }
@@ -286,5 +292,155 @@ describe("follow-up CSV import", () => {
     expect(preview.rows[0].status).toBe("ready");
     expect(preview.rows[0].actions.user).toBe("update");
     expect(preview.rows[0].reasons).toContain("invalid_custom_number_ignored");
+  });
+
+  test("preview parses multiselect semicolon-separated values correctly", async () => {
+    const t = convexTest(schema, modules);
+    const { leaderId, communityId, groupId } = await seedGroupWithLeader(t);
+    const token = (await generateTokens(leaderId, communityId)).accessToken;
+
+    const preview = await t.mutation(api.functions.memberFollowups.previewCsvImport, {
+      token,
+      groupId,
+      rows: [
+        {
+          rowNumber: 2,
+          firstName: "Multi",
+          phone: "(202) 555-0150",
+          customFieldValues: {
+            customText3: "Music; Sports; Art",
+          },
+        },
+        {
+          rowNumber: 3,
+          firstName: "Partial",
+          phone: "(202) 555-0151",
+          customFieldValues: {
+            customText3: "Music; Cooking; Tech",
+          },
+        },
+        {
+          rowNumber: 4,
+          firstName: "AllInvalid",
+          phone: "(202) 555-0152",
+          customFieldValues: {
+            customText3: "Cooking; Dance",
+          },
+        },
+      ],
+    });
+
+    expect(preview.summary.readyRows).toBe(3);
+    // Row 1: all valid multiselect options
+    expect(preview.rows[0].actions.customFields).toBe("update");
+    // Row 2: partial valid — "Cooking" is invalid
+    expect(preview.rows[1].reasons).toContain("invalid_custom_multiselect_option_ignored");
+    // Row 3: all invalid — no custom field update
+    expect(preview.rows[2].actions.customFields).toBe("none");
+    expect(preview.rows[2].reasons).toContain("invalid_custom_multiselect_option_ignored");
+  });
+
+  test("apply writes semicolon-separated multiselect values to score doc", async () => {
+    const t = convexTest(schema, modules);
+    const { leaderId, communityId, groupId } = await seedGroupWithLeader(t);
+    const token = (await generateTokens(leaderId, communityId)).accessToken;
+
+    const setup = await t.run(async (ctx) => {
+      const timestamp = Date.now();
+      const userId = await ctx.db.insert("users", {
+        firstName: "MultiUser",
+        lastName: "Test",
+        phone: "+12025550160",
+        isActive: true,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+
+      await ctx.db.insert("userCommunities", {
+        userId,
+        communityId,
+        roles: 1,
+        status: 1,
+        createdAt: timestamp,
+      });
+
+      const groupMemberId = await ctx.db.insert("groupMembers", {
+        groupId,
+        userId,
+        role: "member",
+        joinedAt: timestamp,
+        notificationsEnabled: true,
+      });
+
+      await ctx.db.insert("memberFollowupScores", {
+        groupId,
+        groupMemberId,
+        userId,
+        firstName: "MultiUser",
+        lastName: "Test",
+        score1: 50,
+        score2: 50,
+        alerts: [],
+        isSnoozed: false,
+        attendanceScore: 50,
+        connectionScore: 50,
+        followupScore: 50,
+        missedMeetings: 0,
+        consecutiveMissed: 0,
+        scoreIds: ["default_attendance", "default_connection"],
+        updatedAt: timestamp,
+      });
+
+      return { groupMemberId };
+    });
+
+    await t.mutation(api.functions.memberFollowups.applyCsvImport, {
+      token,
+      groupId,
+      rows: [
+        {
+          rowNumber: 2,
+          firstName: "MultiUser",
+          phone: "(202) 555-0160",
+          customFieldValues: {
+            customText3: "music; Sports; art",
+          },
+        },
+      ],
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const updatedScore = await t.run(async (ctx) =>
+      ctx.db
+        .query("memberFollowupScores")
+        .withIndex("by_groupMember", (q) => q.eq("groupMemberId", setup.groupMemberId))
+        .first()
+    );
+
+    // Should be case-corrected to match configured options
+    expect(updatedScore?.customText3).toBe("Music; Sports; Art");
+  });
+
+  test("multiselect deduplicates repeated values in CSV", async () => {
+    const t = convexTest(schema, modules);
+    const { leaderId, communityId, groupId } = await seedGroupWithLeader(t);
+    const token = (await generateTokens(leaderId, communityId)).accessToken;
+
+    const preview = await t.mutation(api.functions.memberFollowups.previewCsvImport, {
+      token,
+      groupId,
+      rows: [
+        {
+          rowNumber: 2,
+          firstName: "DupeTest",
+          phone: "(202) 555-0170",
+          customFieldValues: {
+            customText3: "Music; Music; Sports",
+          },
+        },
+      ],
+    });
+
+    expect(preview.rows[0].actions.customFields).toBe("update");
   });
 });

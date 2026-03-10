@@ -950,7 +950,7 @@ export const refreshFollowupScores = mutation({
  * Pass undefined to clear the config.
  */
 const SLOT_PREFIX_TYPE: Record<string, string[]> = {
-  customText: ["text", "dropdown"],
+  customText: ["text", "dropdown", "multiselect"],
   customNum: ["number"],
   customBool: ["boolean"],
 };

@@ -105,7 +105,7 @@ type GridColumn = {
   label: string;
   width: number;
   sortable: boolean;
-  kind: "score" | "status" | "text" | "boolean" | "dropdown" | "number";
+  kind: "score" | "status" | "text" | "boolean" | "dropdown" | "multiselect" | "number";
   editable?: "assignee" | "status" | "custom";
   customField?: CustomFieldDef;
   getValue: (member: FollowupMember) => string | number | boolean;
@@ -197,7 +197,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const [editSheet, setEditSheet] = useState<{
-    type: "assignee" | "status" | "customText" | "customDropdown";
+    type: "assignee" | "status" | "customText" | "customDropdown" | "customMultiselect";
     memberId: string;
     customField?: CustomFieldDef;
     initialValue?: string;
@@ -655,16 +655,18 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     const customColumns: GridColumn[] = customFields.map((field) => ({
       key: field.slot,
       label: field.name,
-      width: field.type === "boolean" ? 72 : field.type === "dropdown" ? 100 : 120,
+      width: field.type === "boolean" ? 72 : field.type === "dropdown" ? 100 : field.type === "multiselect" ? 120 : 120,
       sortable: SERVER_SORTABLE_FIELDS.has(field.slot),
       kind:
         field.type === "boolean"
           ? "boolean"
           : field.type === "dropdown"
             ? "dropdown"
-            : field.type === "number"
-              ? "number"
-              : "text",
+            : field.type === "multiselect"
+              ? "multiselect"
+              : field.type === "number"
+                ? "number"
+                : "text",
       editable: "custom",
       customField: field,
       getValue: (member) => {
@@ -920,6 +922,28 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     [editSheet, handleCustomFieldSave]
   );
 
+  const handleMultiselectToggle = useCallback(
+    async (option: string) => {
+      if (!editSheet || !editSheet.customField || !activeEditMember) return;
+      const currentVal = (activeEditMember as Record<string, unknown>)[editSheet.customField.slot];
+      const selectedValues = currentVal ? String(currentVal).split("; ").filter(Boolean) : [];
+      const isChecked = selectedValues.includes(option);
+      const newValues = isChecked
+        ? selectedValues.filter((v) => v !== option)
+        : [...selectedValues, option];
+      const newValue = newValues.length > 0 ? newValues.join("; ") : undefined;
+      await handleCustomFieldSave(editSheet.memberId, editSheet.customField.slot, newValue);
+      // Don't close sheet — allow multiple toggles
+    },
+    [editSheet, activeEditMember, handleCustomFieldSave]
+  );
+
+  const handleMultiselectClear = useCallback(async () => {
+    if (!editSheet || !editSheet.customField) return;
+    await handleCustomFieldSave(editSheet.memberId, editSheet.customField.slot, undefined);
+    setEditSheet(null);
+  }, [editSheet, handleCustomFieldSave]);
+
   const handleAssignChange = async (assigneeId?: string) => {
     if (!editSheet || !activeEditMember) return;
     const memberId = editSheet.memberId;
@@ -1093,6 +1117,44 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
           size={16}
           color={value ? primaryColor : "#9CA3AF"}
         />
+      );
+    }
+
+    if (column.kind === "multiselect" && column.editable === "custom" && column.customField) {
+      const cf = column.customField;
+      const rawValue = String(value ?? "");
+      const selectedValues = rawValue ? rawValue.split("; ").filter(Boolean) : [];
+      return (
+        <TouchableOpacity
+          style={styles.editableCell}
+          activeOpacity={0.7}
+          onPress={() => {
+            setEditSheet({
+              type: "customMultiselect",
+              memberId: member.groupMemberId,
+              customField: cf,
+              initialValue: rawValue,
+            });
+          }}
+        >
+          {selectedValues.length > 0 ? (
+            <View style={styles.multiselectChipRow}>
+              {selectedValues.slice(0, 2).map((v) => (
+                <View key={v} style={styles.multiselectChip}>
+                  <Text style={styles.multiselectChipText} numberOfLines={1}>{v}</Text>
+                </View>
+              ))}
+              {selectedValues.length > 2 && (
+                <Text style={styles.multiselectMoreText}>+{selectedValues.length - 2}</Text>
+              )}
+            </View>
+          ) : (
+            <Text style={[styles.dataCellText, styles.dataCellPlaceholder]} numberOfLines={1}>
+              Select…
+            </Text>
+          )}
+          <Ionicons name="chevron-down" size={11} color="#6B7280" style={styles.editIcon} />
+        </TouchableOpacity>
       );
     }
 
@@ -1473,7 +1535,9 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
                     ? `Edit ${editSheet.customField?.name ?? "field"}`
                     : editSheet?.type === "customDropdown"
                       ? `Select ${editSheet.customField?.name ?? "option"}`
-                      : "Edit"}
+                      : editSheet?.type === "customMultiselect"
+                        ? `Select ${editSheet.customField?.name ?? "options"}`
+                        : "Edit"}
             </Text>
             <Text style={styles.editSheetSubtitle}>
               {activeEditMember
@@ -1527,6 +1591,42 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
                   disabled={isUpdatingField}
                 >
                   <Text style={styles.optionText}>Clear</Text>
+                </TouchableOpacity>
+              </ScrollView>
+            ) : editSheet?.type === "customMultiselect" ? (
+              <ScrollView style={styles.optionList}>
+                {(editSheet.customField?.options ?? []).map((opt) => {
+                  const currentVal = (activeEditMember as Record<string, unknown>)?.[editSheet!.customField!.slot];
+                  const selectedValues = currentVal ? String(currentVal).split("; ").filter(Boolean) : [];
+                  const isChecked = selectedValues.includes(opt);
+                  return (
+                    <TouchableOpacity
+                      key={opt}
+                      style={[
+                        styles.optionRow,
+                        isChecked && styles.optionRowSelected,
+                      ]}
+                      onPress={() => handleMultiselectToggle(opt)}
+                      disabled={isUpdatingField}
+                    >
+                      <View style={styles.multiselectOptionRow}>
+                        <Ionicons
+                          name={isChecked ? "checkbox" : "square-outline"}
+                          size={20}
+                          color={isChecked ? primaryColor : "#9CA3AF"}
+                          style={styles.multiselectCheckboxIcon}
+                        />
+                        <Text style={styles.optionText}>{opt}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+                <TouchableOpacity
+                  style={styles.optionRow}
+                  onPress={handleMultiselectClear}
+                  disabled={isUpdatingField}
+                >
+                  <Text style={styles.optionText}>Clear all</Text>
                 </TouchableOpacity>
               </ScrollView>
             ) : editSheet?.type === "assignee" ? (
@@ -2081,5 +2181,37 @@ const styles = StyleSheet.create({
   optionText: {
     fontSize: 14,
     color: "#111827",
+  },
+  multiselectChipRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 3,
+    alignItems: "center",
+    flex: 1,
+  },
+  multiselectChip: {
+    backgroundColor: "#EDE9FE",
+    borderRadius: 4,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    maxWidth: 60,
+  },
+  multiselectChipText: {
+    fontSize: 10,
+    color: "#6B21A8",
+    fontWeight: "600",
+  },
+  multiselectMoreText: {
+    fontSize: 10,
+    color: "#6B21A8",
+    fontWeight: "600",
+  },
+  multiselectOptionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+  },
+  multiselectCheckboxIcon: {
+    marginRight: 10,
   },
 });
