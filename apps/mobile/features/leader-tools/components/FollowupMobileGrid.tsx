@@ -55,6 +55,7 @@ import {
   type ScoreConfigEntry,
 } from "./followupGridHelpers";
 import type { CustomFieldDef } from "./ColumnPickerModal";
+import { FollowupQuickAddPanel } from "./FollowupQuickAddPanel";
 
 type SortDirection = "asc" | "desc";
 
@@ -233,6 +234,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showRemoveModal, setShowRemoveModal] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
+  const [showQuickAddModal, setShowQuickAddModal] = useState(false);
   const [localOverrides, setLocalOverrides] = useState<
     Record<
       string,
@@ -1671,6 +1673,12 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
             </Text>
           </View>
           <TouchableOpacity
+            style={styles.headerAddButton}
+            onPress={() => setShowQuickAddModal(true)}
+          >
+            <Ionicons name="person-add-outline" size={20} color="#16A34A" />
+          </TouchableOpacity>
+          <TouchableOpacity
             style={styles.settingsButton}
             onPress={handleSettingsPress}
           >
@@ -1873,6 +1881,29 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
           </ScrollView>
         </View>
       </View>
+
+      <Modal
+        visible={showQuickAddModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowQuickAddModal(false)}
+      >
+        <View style={styles.quickAddBackdrop}>
+          <View style={styles.quickAddCard}>
+            <FollowupQuickAddPanel
+              groupId={groupId}
+              customFields={customFields}
+              leaderOptions={leaderOptions}
+              primaryColor={primaryColor}
+              onCancel={() => setShowQuickAddModal(false)}
+              onCreated={({ groupMemberId }) => {
+                setShowQuickAddModal(false);
+                router.push(`/(user)/leader-tools/${groupId}/followup/${groupMemberId}`);
+              }}
+            />
+          </View>
+        </View>
+      </Modal>
 
       <Modal
         visible={!!editSheet}
@@ -2162,6 +2193,10 @@ const styles = StyleSheet.create({
   },
   settingsButton: {
     padding: 6,
+  },
+  headerAddButton: {
+    padding: 6,
+    marginRight: 6,
   },
   searchRow: {
     marginTop: 12,
@@ -2561,6 +2596,19 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0, 0, 0, 0.28)",
     justifyContent: "center",
     paddingHorizontal: 20,
+  },
+  quickAddBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(15, 23, 42, 0.35)",
+    justifyContent: "center",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  quickAddCard: {
+    backgroundColor: "#FFF",
+    borderRadius: 12,
+    overflow: "hidden",
+    maxHeight: "92%",
   },
   editSheetCard: {
     backgroundColor: "#FFF",

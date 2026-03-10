@@ -1753,6 +1753,64 @@ export const applyCsvImportCustomFieldPatch = internalMutation({
   },
 });
 
+export const applyQuickAddFollowupPatch = internalMutation({
+  args: {
+    groupId: v.id("groups"),
+    groupMemberId: v.id("groupMembers"),
+    status: v.optional(v.string()),
+    assigneeId: v.optional(v.id("users")),
+    retryCount: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const patch: Record<string, unknown> = {};
+    if (args.status !== undefined) {
+      patch.status = args.status;
+    }
+    if (args.assigneeId !== undefined) {
+      patch.assigneeId = args.assigneeId;
+    }
+    if (Object.keys(patch).length === 0) {
+      return { applied: false };
+    }
+
+    const scoreDoc = await ctx.db
+      .query("memberFollowupScores")
+      .withIndex("by_groupMember", (q) => q.eq("groupMemberId", args.groupMemberId))
+      .first();
+
+    if (scoreDoc) {
+      await ctx.db.patch(scoreDoc._id, {
+        ...patch,
+        updatedAt: now(),
+      });
+      if (args.assigneeId) {
+        await ctx.scheduler.runAfter(0, internal.functions.notifications.senders.notifyFollowupAssigned, {
+          assigneeId: args.assigneeId,
+          groupId: args.groupId,
+          groupMemberId: args.groupMemberId,
+        });
+      }
+      return { applied: true };
+    }
+
+    const retryCount = args.retryCount ?? 0;
+    if (retryCount < 5) {
+      await ctx.scheduler.runAfter(
+        1000,
+        internal.functions.memberFollowups.applyQuickAddFollowupPatch,
+        {
+          groupId: args.groupId,
+          groupMemberId: args.groupMemberId,
+          status: args.status,
+          assigneeId: args.assigneeId,
+          retryCount: retryCount + 1,
+        }
+      );
+    }
+    return { applied: false, retried: retryCount < 5 };
+  },
+});
+
 export const previewCsvImport = mutation({
   args: {
     token: v.string(),
@@ -1945,6 +2003,222 @@ export const applyCsvImport = mutation({
     return {
       summary: buildCsvImportSummary(rowReports),
       rows: rowReports,
+    };
+  },
+});
+
+export const quickAddRow = mutation({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+    firstName: v.string(),
+    phone: v.string(),
+    lastName: v.optional(v.string()),
+    email: v.optional(v.string()),
+    zipCode: v.optional(v.string()),
+    dateOfBirth: v.optional(v.string()),
+    notes: v.optional(v.string()),
+    status: v.optional(v.string()),
+    assigneeId: v.optional(v.id("users")),
+    customFieldValues: v.optional(v.record(v.string(), v.string())),
+  },
+  handler: async (ctx, args) => {
+    const normalizedStatus = args.status?.trim().toLowerCase();
+    if (
+      normalizedStatus !== undefined &&
+      normalizedStatus.length > 0 &&
+      normalizedStatus !== "green" &&
+      normalizedStatus !== "orange" &&
+      normalizedStatus !== "red"
+    ) {
+      throw new ConvexError("Status must be green, orange, or red");
+    }
+
+    const { group, userId: importedById } = await requireImportAccess(ctx, args.token, args.groupId);
+
+    if (args.assigneeId) {
+      const leaderMembership = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q: any) =>
+          q.eq("groupId", group._id).eq("userId", args.assigneeId)
+        )
+        .first();
+      if (!leaderMembership || leaderMembership.leftAt || leaderMembership.role !== "leader") {
+        throw new ConvexError("Assignee must be an active group leader");
+      }
+    }
+
+    const row: CsvImportRow = {
+      rowNumber: 2,
+      firstName: args.firstName,
+      lastName: args.lastName,
+      phone: args.phone,
+      email: args.email,
+      zipCode: args.zipCode,
+      dateOfBirth: args.dateOfBirth,
+      notes: args.notes,
+      customFieldValues: args.customFieldValues,
+    };
+
+    const { rowReports, preparedRows } = await analyzeCsvImportRows(ctx, group, [row]);
+    const report = rowReports[0];
+    const prepared = preparedRows[0];
+    if (!report || report.status !== "ready" || !prepared) {
+      const reason = report?.reasons?.join(", ") || "invalid_data";
+      throw new ConvexError(`Could not add member: ${reason}`);
+    }
+
+    const normalizedEmail = prepared.row.email?.toLowerCase();
+    const timestamp = now();
+
+    let userId: Id<"users">;
+    let createdUser = false;
+    if (prepared.existingUser) {
+      userId = prepared.existingUser._id;
+      const { updates } = getUserProfileUpdates(prepared.existingUser, prepared.row, prepared.parsedDateOfBirth);
+      if (Object.keys(updates).length > 0) {
+        await ctx.db.patch(userId, updates);
+      }
+    } else {
+      createdUser = true;
+      userId = await ctx.db.insert("users", {
+        firstName: prepared.row.firstName,
+        lastName: prepared.row.lastName,
+        phone: prepared.normalizedPhone,
+        phoneVerified: false,
+        email: normalizedEmail,
+        zipCode: prepared.row.zipCode,
+        dateOfBirth: prepared.parsedDateOfBirth,
+        searchText: buildSearchText({
+          firstName: prepared.row.firstName,
+          lastName: prepared.row.lastName,
+          email: normalizedEmail,
+          phone: prepared.normalizedPhone,
+        }),
+        isActive: true,
+        isStaff: false,
+        isSuperuser: false,
+        dateJoined: timestamp,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+    }
+
+    const existingCommunityMembership = await ctx.db
+      .query("userCommunities")
+      .withIndex("by_user_community", (q: any) =>
+        q.eq("userId", userId).eq("communityId", group.communityId)
+      )
+      .first();
+
+    if (!existingCommunityMembership) {
+      await ctx.db.insert("userCommunities", {
+        userId,
+        communityId: group.communityId,
+        roles: 1,
+        status: 1,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+    } else if (existingCommunityMembership.status !== 1) {
+      await ctx.db.patch(existingCommunityMembership._id, {
+        status: 1,
+        updatedAt: timestamp,
+      });
+    }
+
+    const existingGroupMembership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q: any) =>
+        q.eq("groupId", group._id).eq("userId", userId)
+      )
+      .first();
+
+    let groupMemberId: Id<"groupMembers">;
+    let needsChannelSync = false;
+    if (!existingGroupMembership) {
+      groupMemberId = await ctx.db.insert("groupMembers", {
+        groupId: group._id,
+        userId,
+        role: "member",
+        joinedAt: timestamp,
+        notificationsEnabled: true,
+      });
+      needsChannelSync = true;
+    } else if (existingGroupMembership.leftAt) {
+      await ctx.db.patch(existingGroupMembership._id, {
+        leftAt: undefined,
+        role: "member",
+        joinedAt: timestamp,
+        notificationsEnabled: true,
+      });
+      groupMemberId = existingGroupMembership._id;
+      needsChannelSync = true;
+    } else {
+      groupMemberId = existingGroupMembership._id;
+    }
+
+    if (needsChannelSync) {
+      await syncUserChannelMembershipsLogic(ctx, userId, group._id);
+    }
+
+    if (prepared.row.notes) {
+      await ctx.db.insert("memberFollowups", {
+        groupMemberId,
+        createdById: importedById,
+        type: "note",
+        content: prepared.row.notes,
+        createdAt: timestamp,
+      });
+    }
+
+    if (Object.keys(prepared.parsedCustomFieldValues).length > 0) {
+      const scoreDoc = await ctx.db
+        .query("memberFollowupScores")
+        .withIndex("by_groupMember", (q: any) => q.eq("groupMemberId", groupMemberId))
+        .first();
+
+      if (scoreDoc) {
+        await ctx.db.patch(scoreDoc._id, {
+          ...prepared.parsedCustomFieldValues,
+          updatedAt: timestamp,
+        });
+      } else {
+        await ctx.scheduler.runAfter(
+          1000,
+          internal.functions.memberFollowups.applyCsvImportCustomFieldPatch,
+          {
+            groupMemberId,
+            customFieldValues: prepared.parsedCustomFieldValues,
+          }
+        );
+      }
+    }
+
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.followupScoreComputation.computeSingleMemberScore,
+      { groupId: group._id, groupMemberId }
+    );
+
+    if (normalizedStatus || args.assigneeId) {
+      await ctx.scheduler.runAfter(
+        500,
+        internal.functions.memberFollowups.applyQuickAddFollowupPatch,
+        {
+          groupId: group._id,
+          groupMemberId,
+          status: normalizedStatus || undefined,
+          assigneeId: args.assigneeId,
+        }
+      );
+    }
+
+    return {
+      groupMemberId,
+      userId,
+      createdUser,
+      row: report,
     };
   },
 });

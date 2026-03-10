@@ -443,4 +443,133 @@ describe("follow-up CSV import", () => {
 
     expect(preview.rows[0].actions.customFields).toBe("update");
   });
+
+  test("quick add creates user + memberships and sets follow-up fields", async () => {
+    const t = convexTest(schema, modules);
+    const { leaderId, communityId, groupId } = await seedGroupWithLeader(t);
+    const token = (await generateTokens(leaderId, communityId)).accessToken;
+
+    const result = await t.mutation(api.functions.memberFollowups.quickAddRow, {
+      token,
+      groupId,
+      firstName: "Quick",
+      lastName: "Add",
+      phone: "(202) 555-0700",
+      status: "green",
+      assigneeId: leaderId,
+      customFieldValues: {
+        customText1: "North",
+        customNum1: "3",
+        customBool1: "true",
+      },
+      notes: "Initial note",
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(result.createdUser).toBe(true);
+
+    const snapshot = await t.run(async (ctx) => {
+      const user = await ctx.db
+        .query("users")
+        .withIndex("by_phone", (q) => q.eq("phone", "+12025550700"))
+        .first();
+      const membership = user
+        ? await ctx.db
+          .query("groupMembers")
+          .withIndex("by_group_user", (q) => q.eq("groupId", groupId).eq("userId", user._id))
+          .first()
+        : null;
+      const score = membership
+        ? await ctx.db
+          .query("memberFollowupScores")
+          .withIndex("by_groupMember", (q) => q.eq("groupMemberId", membership._id))
+          .first()
+        : null;
+      const note = membership
+        ? await ctx.db
+          .query("memberFollowups")
+          .withIndex("by_groupMember_createdAt", (q) => q.eq("groupMemberId", membership._id))
+          .order("desc")
+          .first()
+        : null;
+      return { user, membership, score, note };
+    });
+
+    expect(snapshot.user?._id).toBeTruthy();
+    expect(snapshot.membership?._id).toBeTruthy();
+    expect(snapshot.score?.status).toBe("green");
+    expect(snapshot.score?.assigneeId).toBe(leaderId);
+    expect(snapshot.score?.customText1).toBe("North");
+    expect(snapshot.score?.customNum1).toBe(3);
+    expect(snapshot.score?.customBool1).toBe(true);
+    expect(snapshot.note?.content).toBe("Initial note");
+  });
+
+  test("quick add reuses existing user by phone (no duplicate users)", async () => {
+    const t = convexTest(schema, modules);
+    const { leaderId, communityId, groupId } = await seedGroupWithLeader(t);
+    const token = (await generateTokens(leaderId, communityId)).accessToken;
+
+    const existingUserId = await t.run(async (ctx) => {
+      const timestamp = Date.now();
+      return await ctx.db.insert("users", {
+        firstName: "Existing",
+        lastName: "Person",
+        phone: "+12025550777",
+        isActive: true,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+    });
+
+    const result = await t.mutation(api.functions.memberFollowups.quickAddRow, {
+      token,
+      groupId,
+      firstName: "Existing",
+      phone: "202-555-0777",
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(result.createdUser).toBe(false);
+    expect(result.userId).toBe(existingUserId);
+
+    const snapshot = await t.run(async (ctx) => {
+      const usersWithPhone = await ctx.db
+        .query("users")
+        .withIndex("by_phone", (q) => q.eq("phone", "+12025550777"))
+        .collect();
+      const membership = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q) => q.eq("groupId", groupId).eq("userId", existingUserId))
+        .first();
+      return { usersWithPhone, membership };
+    });
+
+    expect(snapshot.usersWithPhone).toHaveLength(1);
+    expect(snapshot.membership?._id).toBeTruthy();
+  });
+
+  test("quick add enforces required first name + phone", async () => {
+    const t = convexTest(schema, modules);
+    const { leaderId, communityId, groupId } = await seedGroupWithLeader(t);
+    const token = (await generateTokens(leaderId, communityId)).accessToken;
+
+    await expect(
+      t.mutation(api.functions.memberFollowups.quickAddRow, {
+        token,
+        groupId,
+        firstName: " ",
+        phone: " ",
+      })
+    ).rejects.toThrow("missing_phone");
+
+    await expect(
+      t.mutation(api.functions.memberFollowups.quickAddRow, {
+        token,
+        groupId,
+        firstName: "Person",
+        phone: "not-a-phone",
+      })
+    ).rejects.toThrow("invalid_phone");
+  });
 });
