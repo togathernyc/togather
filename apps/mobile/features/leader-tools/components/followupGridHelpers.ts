@@ -174,7 +174,7 @@ export function parseFollowupQuerySyntax(
 }
 
 export function applyParsedFollowupFilters<
-  T extends { assigneeId?: string; addedAt?: number }
+  T extends { assigneeId?: string; assigneeIds?: string[]; addedAt?: number }
 >(items: T[], parsed: ParsedFollowupFilters): T[] {
   if (
     parsed.excludedAssigneeFilters.length === 0 &&
@@ -184,10 +184,15 @@ export function applyParsedFollowupFilters<
   }
 
   return items.filter((item) => {
+    const assigneeIds =
+      item.assigneeIds && item.assigneeIds.length > 0
+        ? item.assigneeIds
+        : item.assigneeId
+          ? [item.assigneeId]
+          : [];
     if (
       parsed.excludedAssigneeFilters.length > 0 &&
-      item.assigneeId &&
-      parsed.excludedAssigneeFilters.includes(item.assigneeId)
+      assigneeIds.some((id) => parsed.excludedAssigneeFilters.includes(id))
     ) {
       return false;
     }
@@ -223,7 +228,7 @@ export function getFollowupSearchSuggestions(
       id: "assignee",
       label: "assignee:seyi",
       insertText: "assignee:",
-      helperText: "Assign to one leader",
+      helperText: "Filter by one or more assignees",
     },
     {
       id: "exclude-assignee",

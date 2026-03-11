@@ -860,6 +860,7 @@ export default defineSchema({
     // ── Manual leader fields (Phase 2 — set via mutations) ──
     status: v.optional(v.string()),
     assigneeId: v.optional(v.id("users")),
+    assigneeIds: v.optional(v.array(v.id("users"))),
     connectionPoint: v.optional(v.string()),
 
     // ── Custom field slots (configurable columns) ──

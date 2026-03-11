@@ -1234,6 +1234,7 @@ const csvImportBatchRowValidator = v.object({
   parsedDateOfBirth: v.optional(v.number()),
   parsedStatus: v.optional(v.string()),
   parsedAssigneeId: v.optional(v.id("users")),
+  parsedAssigneeIds: v.optional(v.array(v.id("users"))),
   parsedCustomFieldValues: v.record(v.string(), v.union(v.string(), v.number(), v.boolean())),
 });
 
@@ -1428,6 +1429,7 @@ type PreparedCsvImportRow = {
   parsedDateOfBirth?: number;
   parsedStatus?: "green" | "orange" | "red";
   parsedAssigneeId?: Id<"users">;
+  parsedAssigneeIds?: Id<"users">[];
   parsedCustomFieldValues: Record<string, string | number | boolean>;
   existingUser: Doc<"users"> | null;
   rowReport: CsvImportRowReport;
@@ -1501,6 +1503,38 @@ function normalizeAssigneeName(value: string): string {
     .trim();
 }
 
+function dedupeAssigneeIds(assigneeIds: Id<"users">[] | undefined): Id<"users">[] {
+  if (!assigneeIds) return [];
+  return Array.from(new Set(assigneeIds));
+}
+
+function normalizeAssigneeSelection(args: {
+  assigneeId?: Id<"users">;
+  assigneeIds?: Id<"users">[];
+}): Id<"users">[] {
+  if (args.assigneeIds !== undefined) return dedupeAssigneeIds(args.assigneeIds);
+  if (args.assigneeId) return [args.assigneeId];
+  return [];
+}
+
+async function validateAssigneeIdsForGroup(
+  ctx: any,
+  groupId: Id<"groups">,
+  assigneeIds: Id<"users">[]
+): Promise<void> {
+  for (const assigneeId of assigneeIds) {
+    const leaderMembership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q: any) =>
+        q.eq("groupId", groupId).eq("userId", assigneeId)
+      )
+      .first();
+    if (!leaderMembership || leaderMembership.leftAt || (leaderMembership.role !== "leader" && leaderMembership.role !== "admin")) {
+      throw new ConvexError("Assignees must be active group leaders or admins");
+    }
+  }
+}
+
 type CsvAssigneeLookup = {
   byFullName: Map<string, Id<"users">>;
   byFirstName: Map<string, Id<"users">[]>;
@@ -1567,6 +1601,7 @@ function resolveCsvAssignee(
   lookup: CsvAssigneeLookup
 ): {
   assigneeId?: Id<"users">;
+  assigneeIds?: Id<"users">[];
   reason?: string;
 } {
   if (!assignee) return {};
@@ -1624,12 +1659,13 @@ function resolveCsvAssignee(
 
   if (uniqueMatches.length > 1) {
     return {
+      assigneeIds: uniqueMatches,
       assigneeId: uniqueMatches[0],
-      reason: "multiple_assignees_first_used",
+      reason: "multiple_assignees_resolved",
     };
   }
 
-  return { assigneeId: uniqueMatches[0] };
+  return { assigneeId: uniqueMatches[0], assigneeIds: uniqueMatches };
 }
 
 function parseCsvCustomFieldValues(
@@ -1883,7 +1919,7 @@ async function analyzeCsvImportRows(
       }
     }
 
-    const { assigneeId: parsedAssigneeId, reason: assigneeReason } = resolveCsvAssignee(
+    const { assigneeIds: parsedAssigneeIds, assigneeId: parsedAssigneeId, reason: assigneeReason } = resolveCsvAssignee(
       row.assignee,
       assigneeLookup
     );
@@ -1907,6 +1943,7 @@ async function analyzeCsvImportRows(
       parsedDateOfBirth,
       parsedStatus,
       parsedAssigneeId,
+      parsedAssigneeIds,
       parsedCustomFieldValues,
     };
   });
@@ -2043,6 +2080,7 @@ async function analyzeCsvImportRows(
       parsedDateOfBirth: item.parsedDateOfBirth,
       parsedStatus: item.parsedStatus,
       parsedAssigneeId: item.parsedAssigneeId,
+      parsedAssigneeIds: item.parsedAssigneeIds,
       parsedCustomFieldValues: item.parsedCustomFieldValues,
       existingUser,
       rowReport: report,
@@ -2079,6 +2117,7 @@ export const applyCsvImportScorePatch = internalMutation({
     groupMemberId: v.id("groupMembers"),
     status: v.optional(v.string()),
     assigneeId: v.optional(v.id("users")),
+    assigneeIds: v.optional(v.array(v.id("users"))),
     customFieldValues: v.optional(v.record(v.string(), v.union(v.string(), v.number(), v.boolean()))),
     retryCount: v.optional(v.number()),
   },
@@ -2086,9 +2125,16 @@ export const applyCsvImportScorePatch = internalMutation({
     const validCustomPatch = Object.fromEntries(
       Object.entries(args.customFieldValues ?? {}).filter(([slot]) => VALID_CUSTOM_SLOTS.has(slot))
     );
-    const metadataPatch: Record<string, string | Id<"users">> = {};
+    const metadataPatch: Record<string, string | Id<"users"> | Id<"users">[]> = {};
     if (args.status) metadataPatch.status = args.status;
-    if (args.assigneeId) metadataPatch.assigneeId = args.assigneeId;
+    const normalizedAssigneeIds = normalizeAssigneeSelection({
+      assigneeId: args.assigneeId,
+      assigneeIds: args.assigneeIds,
+    });
+    if (normalizedAssigneeIds.length > 0) {
+      metadataPatch.assigneeId = normalizedAssigneeIds[0];
+      metadataPatch.assigneeIds = normalizedAssigneeIds;
+    }
 
     const fullPatch = {
       ...metadataPatch,
@@ -2120,6 +2166,7 @@ export const applyCsvImportScorePatch = internalMutation({
           groupMemberId: args.groupMemberId,
           status: args.status,
           assigneeId: args.assigneeId,
+          assigneeIds: args.assigneeIds,
           customFieldValues: validCustomPatch,
           retryCount: retryCount + 1,
         }
@@ -2167,6 +2214,7 @@ export const applyCsvImportBatch = internalMutation({
         parsedDateOfBirth: batchRow.parsedDateOfBirth,
         parsedStatus: batchRow.parsedStatus as PreparedCsvImportRow["parsedStatus"],
         parsedAssigneeId: batchRow.parsedAssigneeId,
+        parsedAssigneeIds: batchRow.parsedAssigneeIds,
         parsedCustomFieldValues: batchRow.parsedCustomFieldValues,
         existingUser: existingUser ?? null,
         rowReport: {
@@ -2202,14 +2250,19 @@ export const applyCsvImportBatch = internalMutation({
         }
       }
 
-      const scorePatch: Record<string, string | number | boolean | Id<"users">> = {
+      const scorePatch: Record<string, string | number | boolean | Id<"users"> | Id<"users">[]> = {
         ...batchRow.parsedCustomFieldValues,
       };
       if (batchRow.parsedStatus) {
         scorePatch.status = batchRow.parsedStatus;
       }
-      if (batchRow.parsedAssigneeId) {
-        scorePatch.assigneeId = batchRow.parsedAssigneeId;
+      const parsedAssigneeIds = normalizeAssigneeSelection({
+        assigneeId: batchRow.parsedAssigneeId,
+        assigneeIds: batchRow.parsedAssigneeIds,
+      });
+      if (parsedAssigneeIds.length > 0) {
+        scorePatch.assigneeId = parsedAssigneeIds[0];
+        scorePatch.assigneeIds = parsedAssigneeIds;
       }
 
       if (Object.keys(scorePatch).length > 0) {
@@ -2231,6 +2284,7 @@ export const applyCsvImportBatch = internalMutation({
               groupMemberId,
               status: batchRow.parsedStatus,
               assigneeId: batchRow.parsedAssigneeId,
+              assigneeIds: batchRow.parsedAssigneeIds,
               customFieldValues: Object.keys(batchRow.parsedCustomFieldValues).length > 0
                 ? batchRow.parsedCustomFieldValues
                 : undefined,
@@ -2247,6 +2301,7 @@ export const applyCsvImportBatch = internalMutation({
           groupMemberId,
           status: batchRow.parsedStatus,
           assigneeId: batchRow.parsedAssigneeId,
+          assigneeIds: batchRow.parsedAssigneeIds,
         }
       );
     }
@@ -2310,6 +2365,7 @@ export const applyQuickAddFollowupPatch = internalMutation({
     groupMemberId: v.id("groupMembers"),
     status: v.optional(v.string()),
     assigneeId: v.optional(v.id("users")),
+    assigneeIds: v.optional(v.array(v.id("users"))),
     retryCount: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
@@ -2317,8 +2373,13 @@ export const applyQuickAddFollowupPatch = internalMutation({
     if (args.status !== undefined) {
       patch.status = args.status;
     }
-    if (args.assigneeId !== undefined) {
-      patch.assigneeId = args.assigneeId;
+    const requestedAssigneeIds = normalizeAssigneeSelection({
+      assigneeId: args.assigneeId,
+      assigneeIds: args.assigneeIds,
+    });
+    if (args.assigneeIds !== undefined || args.assigneeId !== undefined) {
+      patch.assigneeId = requestedAssigneeIds[0];
+      patch.assigneeIds = requestedAssigneeIds.length > 0 ? requestedAssigneeIds : undefined;
     }
     if (Object.keys(patch).length === 0) {
       return { applied: false };
@@ -2337,8 +2398,13 @@ export const applyQuickAddFollowupPatch = internalMutation({
       if (args.status !== undefined && scoreDoc.status === undefined) {
         safePatch.status = args.status;
       }
-      if (args.assigneeId !== undefined && scoreDoc.assigneeId === undefined) {
-        safePatch.assigneeId = args.assigneeId;
+      if (
+        (args.assigneeIds !== undefined || args.assigneeId !== undefined) &&
+        scoreDoc.assigneeId === undefined &&
+        scoreDoc.assigneeIds === undefined
+      ) {
+        safePatch.assigneeId = requestedAssigneeIds[0];
+        safePatch.assigneeIds = requestedAssigneeIds.length > 0 ? requestedAssigneeIds : undefined;
       }
       if (Object.keys(safePatch).length > 0) {
         await ctx.db.patch(scoreDoc._id, {
@@ -2346,10 +2412,17 @@ export const applyQuickAddFollowupPatch = internalMutation({
           updatedAt: now(),
         });
       }
-      // Send notification if assigneeId was requested and is now set (either by us or atomically by computeSingleMemberScore)
-      if (args.assigneeId && (safePatch.assigneeId || scoreDoc.assigneeId === args.assigneeId)) {
+      // Send notifications if assignees were requested and are now set.
+      const effectiveAssigneeIds = requestedAssigneeIds.length > 0
+        ? requestedAssigneeIds
+        : dedupeAssigneeIds(scoreDoc.assigneeIds).length > 0
+          ? dedupeAssigneeIds(scoreDoc.assigneeIds)
+          : scoreDoc.assigneeId
+            ? [scoreDoc.assigneeId]
+            : [];
+      for (const assigneeId of effectiveAssigneeIds) {
         await ctx.scheduler.runAfter(0, internal.functions.notifications.senders.notifyFollowupAssigned, {
-          assigneeId: args.assigneeId,
+          assigneeId,
           groupId: args.groupId,
           groupMemberId: args.groupMemberId,
         });
@@ -2367,6 +2440,7 @@ export const applyQuickAddFollowupPatch = internalMutation({
           groupMemberId: args.groupMemberId,
           status: args.status,
           assigneeId: args.assigneeId,
+          assigneeIds: args.assigneeIds,
           retryCount: retryCount + 1,
         }
       );
@@ -2434,6 +2508,7 @@ export const applyCsvImport = mutation({
         parsedDateOfBirth: p.parsedDateOfBirth,
         parsedStatus: p.parsedStatus,
         parsedAssigneeId: p.parsedAssigneeId,
+        parsedAssigneeIds: p.parsedAssigneeIds,
         parsedCustomFieldValues: p.parsedCustomFieldValues,
       }));
 
@@ -2472,6 +2547,7 @@ export const quickAddRow = mutation({
     notes: v.optional(v.string()),
     status: v.optional(v.string()),
     assigneeId: v.optional(v.id("users")),
+    assigneeIds: v.optional(v.array(v.id("users"))),
     customFieldValues: v.optional(v.record(v.string(), v.string())),
   },
   handler: async (ctx, args) => {
@@ -2488,16 +2564,12 @@ export const quickAddRow = mutation({
 
     const { group, userId: importedById } = await requireImportAccess(ctx, args.token, args.groupId);
 
-    if (args.assigneeId) {
-      const leaderMembership = await ctx.db
-        .query("groupMembers")
-        .withIndex("by_group_user", (q: any) =>
-          q.eq("groupId", group._id).eq("userId", args.assigneeId)
-        )
-        .first();
-      if (!leaderMembership || leaderMembership.leftAt || (leaderMembership.role !== "leader" && leaderMembership.role !== "admin")) {
-        throw new ConvexError("Assignee must be an active group leader or admin");
-      }
+    const normalizedAssigneeIds = normalizeAssigneeSelection({
+      assigneeId: args.assigneeId,
+      assigneeIds: args.assigneeIds,
+    });
+    if (normalizedAssigneeIds.length > 0) {
+      await validateAssigneeIdsForGroup(ctx, group._id, normalizedAssigneeIds);
     }
 
     const row: CsvImportRow = {
@@ -2543,11 +2615,12 @@ export const quickAddRow = mutation({
         groupId: group._id,
         groupMemberId,
         status: normalizedStatus || undefined,
-        assigneeId: args.assigneeId,
+        assigneeId: normalizedAssigneeIds[0],
+        assigneeIds: normalizedAssigneeIds.length > 0 ? normalizedAssigneeIds : undefined,
       }
     );
 
-    if (normalizedStatus || args.assigneeId) {
+    if (normalizedStatus || normalizedAssigneeIds.length > 0) {
       // Patch serves as fallback (if action races) and triggers notification
       await ctx.scheduler.runAfter(
         500,
@@ -2556,7 +2629,8 @@ export const quickAddRow = mutation({
           groupId: group._id,
           groupMemberId,
           status: normalizedStatus || undefined,
-          assigneeId: args.assigneeId,
+          assigneeId: normalizedAssigneeIds[0],
+          assigneeIds: normalizedAssigneeIds.length > 0 ? normalizedAssigneeIds : undefined,
         }
       );
     }
@@ -2920,20 +2994,29 @@ export const setAssignee = mutation({
     groupId: v.id("groups"),
     groupMemberId: v.id("groupMembers"),
     assigneeId: v.optional(v.id("users")),
+    assigneeIds: v.optional(v.array(v.id("users"))),
   },
   handler: async (ctx, args) => {
     const scoreDoc = await requireLeaderAndGetScoreDoc(
       ctx, args.token, args.groupId, args.groupMemberId
     );
-    await ctx.db.patch(scoreDoc._id, {
+    const assigneeIds = normalizeAssigneeSelection({
       assigneeId: args.assigneeId,
+      assigneeIds: args.assigneeIds,
+    });
+    if (assigneeIds.length > 0) {
+      await validateAssigneeIdsForGroup(ctx, args.groupId, assigneeIds);
+    }
+    await ctx.db.patch(scoreDoc._id, {
+      assigneeId: assigneeIds[0],
+      assigneeIds: assigneeIds.length > 0 ? assigneeIds : undefined,
       updatedAt: Date.now(),
     });
 
-    // Notify the assignee (skip if clearing assignment)
-    if (args.assigneeId) {
+    // Notify assignees (skip if clearing assignment)
+    for (const assigneeId of assigneeIds) {
       await ctx.scheduler.runAfter(0, internal.functions.notifications.senders.notifyFollowupAssigned, {
-        assigneeId: args.assigneeId,
+        assigneeId,
         groupId: args.groupId,
         groupMemberId: args.groupMemberId,
       });
