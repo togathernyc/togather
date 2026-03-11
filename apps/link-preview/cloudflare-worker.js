@@ -175,8 +175,8 @@ function getConfig(hostname) {
 // Brand configuration
 const BRAND_NAME = "Togather";
 
-// Default OG image (optional - can be updated with actual asset URL)
-const DEFAULT_OG_IMAGE = "";
+// Default OG image for link previews
+const DEFAULT_OG_IMAGE = "https://togather.nyc/og-image.png";
 
 // Static paths that should go to the landing page (not the app)
 // Note: /android path handling is environment-aware (see isLandingPagePath)
@@ -457,8 +457,8 @@ function formatDate(isoDate) {
  * @param {Object} config - Environment-specific configuration
  */
 function generateHomepageOgHtml(config) {
-  const title = `${BRAND_NAME} - Build Your Community`;
-  const description = "Connect with your community through events, groups, and meaningful connections.";
+  const title = `${BRAND_NAME} - Connect Your Community`;
+  const description = "Togather brings your groups, messaging, and events together in one place. The all-in-one platform for churches and communities.";
   const pageUrl = config.baseUrl;
 
   return `<!DOCTYPE html>
@@ -481,7 +481,7 @@ function generateHomepageOgHtml(config) {
   ${DEFAULT_OG_IMAGE ? `<meta property="og:image" content="${DEFAULT_OG_IMAGE}">` : ""}
 
   <!-- Twitter -->
-  <meta name="twitter:card" content="summary">
+  <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:url" content="${pageUrl}">
   <meta name="twitter:title" content="${title}">
   <meta name="twitter:description" content="${description}">
