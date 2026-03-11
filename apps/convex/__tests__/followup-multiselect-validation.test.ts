@@ -178,5 +178,94 @@ describe("follow-up multiselect validation", () => {
       })
     ).resolves.toEqual({ success: true });
   });
+
+  test("supports hidden landing fields and full-width button fields", async () => {
+    const t = convexTest(schema, modules);
+    const { adminId, communityId } = await seedAdminAndGroup(t);
+    const token = (await generateTokens(adminId, communityId)).accessToken;
+
+    await t.run(async (ctx) => {
+      const groupType = await ctx.db
+        .query("groupTypes")
+        .withIndex("by_community", (q) => q.eq("communityId", communityId))
+        .first();
+
+      if (!groupType) throw new Error("Missing group type");
+
+      await ctx.db.insert("groups", {
+        communityId,
+        groupTypeId: groupType._id,
+        name: "Announcements",
+        isAnnouncementGroup: true,
+        isArchived: false,
+        isPublic: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        followupColumnConfig: {
+          columnOrder: [],
+          hiddenColumns: [],
+          customFields: [],
+        },
+      });
+    });
+
+    await expect(
+      t.mutation(api.functions.communityLandingPage.saveConfig, {
+        token,
+        communityId,
+        isEnabled: true,
+        title: "Welcome",
+        description: "Landing page",
+        submitButtonText: "Submit",
+        successMessage: "Thanks!",
+        generateNoteSummary: true,
+        requireZipCode: false,
+        requireBirthday: false,
+        formFields: [
+          {
+            slot: "customText1",
+            label: "Internal Follow-up Label",
+            type: "text",
+            required: false,
+            order: 0,
+            includeInNotes: true,
+            showOnLanding: false,
+          },
+          {
+            label: "Visit our website",
+            type: "button",
+            buttonUrl: "https://example.com",
+            required: false,
+            order: 1,
+            showOnLanding: true,
+          },
+        ],
+        automationRules: [],
+      })
+    ).resolves.toEqual({ success: true });
+
+    const result = await t.query(api.functions.communityLandingPage.getBySlug, {
+      slug: "validation-community",
+    });
+    expect(result?.formFields[0].showOnLanding).toBe(false);
+    expect(result?.formFields[1].type).toBe("button");
+
+    const syncedCustomFields = await t.run(async (ctx) => {
+      const announcementGroup = await ctx.db
+        .query("groups")
+        .withIndex("by_community", (q) => q.eq("communityId", communityId))
+        .filter((q) => q.eq(q.field("isAnnouncementGroup"), true))
+        .first();
+      return announcementGroup?.followupColumnConfig?.customFields ?? [];
+    });
+
+    expect(syncedCustomFields).toEqual([
+      {
+        slot: "customText1",
+        name: "Internal Follow-up Label",
+        type: "text",
+      },
+    ]);
+  });
 });
 

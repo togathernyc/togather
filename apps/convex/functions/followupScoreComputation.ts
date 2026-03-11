@@ -213,6 +213,36 @@ export const deleteScoreDoc = internalMutation({
   },
 });
 
+/**
+ * Delete denormalized score docs that no longer map to an active group member.
+ * This prevents stale rows from surviving after community/group membership cleanup.
+ */
+export const pruneStaleScoreDocsForGroup = internalMutation({
+  args: { groupId: v.id("groups") },
+  handler: async (ctx, args) => {
+    const docs = await ctx.db
+      .query("memberFollowupScores")
+      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+      .collect();
+
+    let deleted = 0;
+    for (const doc of docs) {
+      const groupMember = await ctx.db.get(doc.groupMemberId);
+      const isStale =
+        !groupMember ||
+        groupMember.groupId !== args.groupId ||
+        groupMember.leftAt !== undefined;
+
+      if (isStale) {
+        await ctx.db.delete(doc._id);
+        deleted++;
+      }
+    }
+
+    return { deleted };
+  },
+});
+
 // ============================================================================
 // Score Computation Actions
 // ============================================================================
@@ -417,6 +447,12 @@ export const computeGroupScores = internalAction({
         isDone = page.isDone;
         cursor = page.continueCursor;
       }
+
+      // Step 6: prune stale denormalized rows for deleted/left members.
+      await ctx.runMutation(
+        internal.functions.followupScoreComputation.pruneStaleScoreDocsForGroup,
+        { groupId: args.groupId }
+      );
 
       await ctx.runMutation(
         internal.functions.followupScoreComputation.setFollowupRefreshCompleted,

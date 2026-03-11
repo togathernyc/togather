@@ -171,4 +171,68 @@ describe("followup refresh state + lastActiveAt", () => {
     expect(scoreDoc).toBeTruthy();
     expect(scoreDoc?.lastActiveAt).toBe(fixture.communityLastLogin);
   });
+
+  test("manual refresh prunes stale score rows for removed members", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedFollowupRefreshFixture(t);
+    const timestamp = Date.now();
+
+    const staleGroupMemberId = await t.run(async (ctx) => {
+      const staleUserId = await ctx.db.insert("users", {
+        firstName: "Stale",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      const staleMembershipId = await ctx.db.insert("groupMembers", {
+        groupId: fixture.groupId,
+        userId: staleUserId,
+        role: "member",
+        joinedAt: timestamp,
+        notificationsEnabled: true,
+      });
+      await ctx.db.insert("memberFollowupScores", {
+        groupId: fixture.groupId,
+        groupMemberId: staleMembershipId,
+        userId: staleUserId,
+        firstName: "Stale",
+        lastName: "Member",
+        score1: 1,
+        score2: 1,
+        alerts: [],
+        isSnoozed: false,
+        attendanceScore: 1,
+        connectionScore: 1,
+        followupScore: 1,
+        missedMeetings: 0,
+        consecutiveMissed: 0,
+        scoreIds: ["default_attendance", "default_connection"],
+        updatedAt: timestamp,
+        addedAt: timestamp,
+        searchText: "stale member",
+      });
+      await ctx.db.delete(staleMembershipId);
+      return staleMembershipId;
+    });
+
+    await t.mutation(api.functions.groups.mutations.refreshFollowupScores, {
+      token: fixture.token,
+      groupId: fixture.groupId,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const [staleScoreDoc, activeScoreDoc] = await t.run(async (ctx) => {
+      const staleDoc = await ctx.db
+        .query("memberFollowupScores")
+        .withIndex("by_groupMember", (q) => q.eq("groupMemberId", staleGroupMemberId))
+        .first();
+      const activeDoc = await ctx.db
+        .query("memberFollowupScores")
+        .withIndex("by_groupMember", (q) => q.eq("groupMemberId", fixture.memberGroupMemberId))
+        .first();
+      return [staleDoc, activeDoc];
+    });
+
+    expect(staleScoreDoc).toBeNull();
+    expect(activeScoreDoc).toBeTruthy();
+  });
 });
