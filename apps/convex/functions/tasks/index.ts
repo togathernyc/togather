@@ -107,57 +107,6 @@ async function getTaskOrThrow(ctx: { db: any }, taskId: Id<"tasks">) {
   return task;
 }
 
-async function syncReachOutRequestFromTaskAction(
-  ctx: { db: any },
-  args: {
-    task: {
-      sourceType: string;
-      sourceRef?: string;
-    };
-    action: "assigned" | "pending" | "resolved";
-    performedById: Id<"users">;
-    assignedToId?: Id<"users">;
-  },
-) {
-  if (args.task.sourceType !== "reach_out" || !args.task.sourceRef) {
-    return;
-  }
-
-  const requestId = args.task.sourceRef as Id<"reachOutRequests">;
-  const request = await ctx.db.get(requestId);
-  if (!request) return;
-
-  const timestamp = now();
-
-  if (args.action === "assigned") {
-    await ctx.db.patch(requestId, {
-      status: "assigned",
-      assignedToId: args.assignedToId,
-      assignedAt: timestamp,
-      updatedAt: timestamp,
-    });
-    return;
-  }
-
-  if (args.action === "pending") {
-    await ctx.db.patch(requestId, {
-      status: "pending",
-      assignedToId: undefined,
-      assignedAt: undefined,
-      updatedAt: timestamp,
-    });
-    return;
-  }
-
-  await ctx.db.patch(requestId, {
-    status: "resolved",
-    resolvedById: args.performedById,
-    resolvedAt: timestamp,
-    resolutionNotes: request.resolutionNotes ?? "Resolved via Tasks workflow",
-    updatedAt: timestamp,
-  });
-}
-
 function assertTargetArgs(
   targetType: "none" | "member" | "group",
   targetMemberId: Id<"users"> | undefined,
@@ -230,6 +179,11 @@ function applyTaskFilters<T extends FilterableTask>(
     }
     return true;
   });
+}
+
+function formatUserName(user: any) {
+  const name = [user?.firstName, user?.lastName].filter(Boolean).join(" ");
+  return name || "Member";
 }
 
 async function enrichTasks<T extends { groupId: Id<"groups">; assignedToId?: Id<"users">; targetMemberId?: Id<"users">; targetGroupId?: Id<"groups"> }>(
@@ -456,6 +410,57 @@ export const listAssignableLeaders = query({
   },
 });
 
+export const getTaskCard = query({
+  args: {
+    token: v.string(),
+    taskId: v.id("tasks"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const task = await getTaskOrThrow(ctx, args.taskId);
+
+    const membership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q: any) =>
+        q.eq("groupId", task.groupId).eq("userId", userId),
+      )
+      .first();
+
+    const isLeader = isActiveMembership(membership) && isLeaderRole(membership.role);
+    const isTargetMember = task.targetMemberId === userId;
+    if (!isLeader && !isTargetMember) {
+      throw new ConvexError("Access denied");
+    }
+
+    const [assigneeUser, targetMemberUser] = await Promise.all([
+      task.assignedToId ? ctx.db.get(task.assignedToId) : Promise.resolve(null),
+      task.targetMemberId ? ctx.db.get(task.targetMemberId) : Promise.resolve(null),
+    ]);
+
+    return {
+      _id: task._id,
+      groupId: task.groupId,
+      title: task.title,
+      description: task.description,
+      status: task.status,
+      sourceType: task.sourceType,
+      responsibilityType: task.responsibilityType,
+      assignedToId: task.assignedToId,
+      assignedToName: assigneeUser ? formatUserName(assigneeUser) : undefined,
+      targetMemberId: task.targetMemberId,
+      targetMemberName: targetMemberUser ? formatUserName(targetMemberUser) : undefined,
+      createdAt: task.createdAt,
+      updatedAt: task.updatedAt,
+      viewerCanManage: isLeader,
+      viewerCanWithdraw:
+        task.sourceType === "reach_out" &&
+        isTargetMember &&
+        task.status !== "done" &&
+        task.status !== "canceled",
+    };
+  },
+});
+
 export const create = mutation({
   args: {
     token: v.string(),
@@ -591,13 +596,6 @@ export const assign = mutation({
       payload: { assigneeId: args.assigneeId ?? null },
     });
 
-    await syncReachOutRequestFromTaskAction(ctx, {
-      task,
-      action: args.assigneeId ? "assigned" : "pending",
-      performedById: userId,
-      assignedToId: args.assigneeId,
-    });
-
     return { success: true };
   },
 });
@@ -630,13 +628,6 @@ export const claim = mutation({
       groupId: task.groupId,
       type: "claimed",
       performedById: userId,
-    });
-
-    await syncReachOutRequestFromTaskAction(ctx, {
-      task,
-      action: "assigned",
-      performedById: userId,
-      assignedToId: userId,
     });
 
     return { success: true };
@@ -684,12 +675,6 @@ export const markDone = mutation({
       taskId: args.taskId,
       groupId: task.groupId,
       type: "done",
-      performedById: userId,
-    });
-
-    await syncReachOutRequestFromTaskAction(ctx, {
-      task,
-      action: "resolved",
       performedById: userId,
     });
 
@@ -772,6 +757,100 @@ export const cancel = mutation({
     });
 
     return { success: true };
+  },
+});
+
+export const withdrawReachOut = mutation({
+  args: {
+    token: v.string(),
+    taskId: v.id("tasks"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const task = await getTaskOrThrow(ctx, args.taskId);
+
+    if (task.sourceType !== "reach_out") {
+      throw new ConvexError("Only reach-out tasks can be withdrawn");
+    }
+    if (task.targetMemberId !== userId) {
+      throw new ConvexError("Only the requester can withdraw this task");
+    }
+    if (task.status === "done") {
+      throw new ConvexError("Cannot withdraw a resolved request");
+    }
+    if (task.status === "canceled") {
+      return { success: true };
+    }
+    if (!openStatuses.has(task.status)) {
+      throw new ConvexError("Only open requests can be withdrawn");
+    }
+
+    const timestamp = now();
+    await ctx.db.patch(args.taskId, {
+      status: "canceled",
+      canceledAt: timestamp,
+      snoozedUntil: undefined,
+      updatedAt: timestamp,
+    });
+
+    await appendTaskEvent(ctx, {
+      taskId: args.taskId,
+      groupId: task.groupId,
+      type: "canceled",
+      performedById: userId,
+      payload: { source: "reach_out", reason: "withdrawn_by_member" },
+    });
+
+    return { success: true };
+  },
+});
+
+export const createFromReachOutSubmission = internalMutation({
+  args: {
+    groupId: v.id("groups"),
+    submittedById: v.id("users"),
+    content: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const timestamp = now();
+    const title =
+      args.content.length > 120
+        ? `${args.content.slice(0, 117)}...`
+        : args.content;
+    const taskId = await ctx.db.insert("tasks", {
+      groupId: args.groupId,
+      title,
+      description: args.content,
+      status: "open",
+      responsibilityType: "group",
+      assignedToId: undefined,
+      createdById: args.submittedById,
+      sourceType: "reach_out",
+      sourceRef: undefined,
+      sourceKey: `reach_out:${args.groupId}:${args.submittedById}:${timestamp}`,
+      targetType: "member",
+      targetMemberId: args.submittedById,
+      targetGroupId: undefined,
+      tags: ["reach_out"],
+      parentTaskId: undefined,
+      orderKey: undefined,
+      dueAt: undefined,
+      snoozedUntil: undefined,
+      completedAt: undefined,
+      canceledAt: undefined,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+
+    await appendTaskEvent(ctx, {
+      taskId,
+      groupId: args.groupId,
+      type: "created",
+      performedById: args.submittedById,
+      payload: { sourceType: "reach_out" },
+    });
+
+    return taskId;
   },
 });
 

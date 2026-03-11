@@ -1,5 +1,5 @@
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import schema from "../schema";
 import { modules } from "../test.setup";
 import { api, internal } from "../_generated/api";
@@ -172,6 +172,18 @@ async function seedData(t: ReturnType<typeof convexTest>): Promise<SeedData> {
   };
 }
 
+function emptyWeeklySchedule() {
+  return {
+    monday: [],
+    tuesday: [],
+    wednesday: [],
+    thursday: [],
+    friday: [],
+    saturday: [],
+    sunday: [],
+  } as Record<string, Array<{ id: string; message: string; roleIds: string[] }>>;
+}
+
 describe("tasks functions", () => {
   test("leader can create, claim, and complete tasks", async () => {
     const t = convexTest(schema, modules);
@@ -333,6 +345,146 @@ describe("tasks functions", () => {
     );
 
     expect(secondTaskId).toBe(firstTaskId);
+  });
+
+  test("task reminder bot task_only mode creates tasks without channel posts", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-11T15:00:00Z"));
+    try {
+      const t = convexTest(schema, modules);
+      const { groupId, leaderId, leadersChannelId } = await seedData(t);
+
+      const schedule = emptyWeeklySchedule();
+      schedule.wednesday = [
+        {
+          id: "task-only-1",
+          message: "Send weekly update",
+          roleIds: ["role-1"],
+        },
+      ];
+
+      const configId = await t.run(async (ctx) =>
+        ctx.db.insert("groupBotConfigs", {
+          groupId,
+          botType: "task-reminder",
+          enabled: true,
+          config: {
+            roles: [{ id: "role-1", name: "Lead", assignedMemberId: leaderId }],
+            schedule,
+            deliveryMode: "task_only",
+            targetChannelSlugs: ["leaders"],
+          },
+          state: {},
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          nextScheduledAt: Date.now(),
+        }),
+      );
+
+      await t.action(internal.functions.scheduledJobs.runTaskReminderBot, {
+        configId,
+        groupId,
+      });
+
+      const [tasks, leaderMessages] = await Promise.all([
+        t.run(async (ctx) =>
+          ctx.db
+            .query("tasks")
+            .withIndex("by_group", (q) => q.eq("groupId", groupId))
+            .collect(),
+        ),
+        t.run(async (ctx) =>
+          ctx.db
+            .query("chatMessages")
+            .withIndex("by_channel", (q) => q.eq("channelId", leadersChannelId))
+            .collect(),
+        ),
+      ]);
+
+      const reminderTasks = tasks.filter(
+        (task) => task.sourceType === "bot_task_reminder",
+      );
+      expect(reminderTasks.length).toBe(1);
+      expect(
+        leaderMessages.filter((message) => message.contentType === "task_card").length,
+      ).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("task reminder bot post mode is idempotent for task cards", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-11T15:00:00Z"));
+    try {
+      const t = convexTest(schema, modules);
+      const { groupId, leaderId, leadersChannelId } = await seedData(t);
+
+      const schedule = emptyWeeklySchedule();
+      schedule.wednesday = [
+        {
+          id: "post-mode-1",
+          message: "Post task card",
+          roleIds: ["role-1"],
+        },
+      ];
+
+      const configId = await t.run(async (ctx) =>
+        ctx.db.insert("groupBotConfigs", {
+          groupId,
+          botType: "task-reminder",
+          enabled: true,
+          config: {
+            roles: [{ id: "role-1", name: "Lead", assignedMemberId: leaderId }],
+            schedule,
+            deliveryMode: "task_and_channel_post",
+            targetChannelSlugs: ["leaders"],
+          },
+          state: {},
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          nextScheduledAt: Date.now(),
+        }),
+      );
+
+      await t.action(internal.functions.scheduledJobs.runTaskReminderBot, {
+        configId,
+        groupId,
+      });
+      await t.action(internal.functions.scheduledJobs.runTaskReminderBot, {
+        configId,
+        groupId,
+      });
+
+      const [tasks, leaderMessages] = await Promise.all([
+        t.run(async (ctx) =>
+          ctx.db
+            .query("tasks")
+            .withIndex("by_group", (q) => q.eq("groupId", groupId))
+            .collect(),
+        ),
+        t.run(async (ctx) =>
+          ctx.db
+            .query("chatMessages")
+            .withIndex("by_channel", (q) => q.eq("channelId", leadersChannelId))
+            .collect(),
+        ),
+      ]);
+
+      const reminderTasks = tasks.filter(
+        (task) => task.sourceType === "bot_task_reminder",
+      );
+      expect(reminderTasks.length).toBe(1);
+
+      const taskCards = leaderMessages.filter(
+        (message) =>
+          message.contentType === "task_card" &&
+          message.taskId === reminderTasks[0]?._id,
+      );
+      expect(taskCards.length).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("my tasks aggregates assignments across multiple led groups", async () => {
@@ -667,100 +819,74 @@ describe("tasks functions", () => {
     expect(cardMessage?.contentType).toBe("reach_out_request");
   });
 
-  test("reach-out linked task lifecycle updates requester status when worked from tasks", async () => {
+  test("task-native reach-out requester status tracks canonical task state", async () => {
     const t = convexTest(schema, modules);
     const {
       groupId,
       leadersChannelId,
       reachOutChannelId,
-      memberId,
-      memberGroupMembershipId,
       leaderToken,
-      leaderId,
       memberToken,
     } = await seedData(t);
 
-    const timestamp = Date.now();
-    const requestId = await t.run(async (ctx) => {
-      return await ctx.db.insert("reachOutRequests", {
+    const reachOutTaskId = await t.mutation(
+      api.functions.messaging.reachOut.submitTaskRequest,
+      {
+        token: memberToken,
         groupId,
         channelId: reachOutChannelId,
-        leadersChannelId,
-        submittedById: memberId,
-        groupMemberId: memberGroupMembershipId,
-        content: "Can someone follow up with me this week?",
-        status: "pending",
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      });
-    });
-
-    const linkedTaskId = await t.mutation(
-      internal.functions.tasks.index.createFromReachOutRequest,
-      {
-        groupId,
-        submittedById: memberId,
-        requestId,
         content: "Can someone follow up with me this week?",
       },
     );
 
-    await t.run(async (ctx) => {
-      await ctx.db.patch(requestId, { taskId: linkedTaskId });
-      await ctx.db.insert("chatMessages", {
-        channelId: leadersChannelId,
-        senderId: memberId,
-        senderName: "Member One",
-        content: "Reach out request",
-        contentType: "reach_out_request",
-        reachOutRequestId: requestId,
-        createdAt: Date.now(),
-        isDeleted: false,
-      });
-    });
-
-    const submittedRequest = await t.run(async (ctx) => ctx.db.get(requestId));
-    expect(submittedRequest?.taskId).toBe(linkedTaskId);
-
-    const linkedTask = await t.run(async (ctx) => ctx.db.get(linkedTaskId));
+    const linkedTask = await t.run(async (ctx) => ctx.db.get(reachOutTaskId));
     expect(linkedTask?.sourceType).toBe("reach_out");
-    expect(linkedTask?.sourceRef).toBe(requestId.toString());
     expect(linkedTask?.status).toBe("open");
 
-    const leadersMessages = await t.run(async (ctx) => {
+    const reachOutRows = await t.run(async (ctx) => {
       return await ctx.db
-        .query("chatMessages")
-        .withIndex("by_channel", (q) => q.eq("channelId", leadersChannelId))
+        .query("reachOutRequests")
+        .withIndex("by_group", (q) => q.eq("groupId", groupId))
         .collect();
     });
-    const leadersCard = leadersMessages.find(
-      (message) => message.reachOutRequestId === requestId,
+    expect(reachOutRows.length).toBe(0);
+
+    const leadersMessages = await t.run(async (ctx) =>
+      ctx.db
+        .query("chatMessages")
+        .withIndex("by_channel", (q) => q.eq("channelId", leadersChannelId))
+        .collect(),
     );
-    expect(leadersCard?.contentType).toBe("reach_out_request");
+    const leadersCard = leadersMessages.find(
+      (message) => message.taskId === reachOutTaskId,
+    );
+    expect(leadersCard?.contentType).toBe("task_card");
+    expect(leadersCard?.reachOutRequestId).toBeUndefined();
 
     await t.mutation(api.functions.tasks.index.claim, {
       token: leaderToken,
-      taskId: linkedTaskId,
+      taskId: reachOutTaskId,
     });
 
-    const requestAfterClaim = await t.run(async (ctx) => ctx.db.get(requestId));
-    expect(requestAfterClaim?.status).toBe("assigned");
-    expect(requestAfterClaim?.assignedToId).toBe(leaderId);
+    const afterClaim = await t.query(
+      api.functions.messaging.reachOut.getMyTaskRequests,
+      {
+        token: memberToken,
+        groupId,
+      },
+    );
+    expect(afterClaim[0]?.status).toBe("assigned");
 
     await t.mutation(api.functions.tasks.index.markDone, {
       token: leaderToken,
-      taskId: linkedTaskId,
+      taskId: reachOutTaskId,
     });
 
-    const requestAfterDone = await t.run(async (ctx) => ctx.db.get(requestId));
-    expect(requestAfterDone?.status).toBe("resolved");
-    expect(requestAfterDone?.resolvedById).toBe(leaderId);
-
-    const memberView = await t.query(api.functions.messaging.reachOut.getMyRequests, {
+    const memberView = await t.query(api.functions.messaging.reachOut.getMyTaskRequests, {
       token: memberToken,
       groupId,
     });
-    const requestForMember = memberView.find((request) => request._id === requestId);
+    const requestForMember = memberView.find((request) => request._id === reachOutTaskId);
     expect(requestForMember?.status).toBe("resolved");
   });
 

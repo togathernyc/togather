@@ -14,9 +14,166 @@ import { requireAuth } from "../../lib/auth";
 import { getDisplayName, getMediaUrl } from "../../lib/utils";
 import { isLeaderRole, isActiveMembership } from "../../lib/helpers";
 
+type ReachOutMemberStatus = "pending" | "assigned" | "resolved" | "revoked";
+
+function mapTaskStatusToReachOutStatus(task: {
+  status: string;
+  assignedToId?: Id<"users">;
+}): ReachOutMemberStatus {
+  if (task.status === "done") return "resolved";
+  if (task.status === "canceled") return "revoked";
+  if (task.status === "open" || task.status === "snoozed") {
+    return task.assignedToId ? "assigned" : "pending";
+  }
+  return "pending";
+}
+
 // =============================================================================
 // Queries
 // =============================================================================
+
+/**
+ * Task-native requester view for reach-out requests.
+ * Active runtime path should read from tasks, not reachOutRequests.
+ */
+export const getMyTaskRequests = query({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const candidateTasks = await ctx.db
+      .query("tasks")
+      .withIndex("by_target_member", (q) => q.eq("targetMemberId", userId))
+      .collect();
+
+    const reachOutTasks = candidateTasks
+      .filter((task) => task.groupId === args.groupId && task.sourceType === "reach_out")
+      .sort((a, b) => b.createdAt - a.createdAt);
+
+    return await Promise.all(
+      reachOutTasks.map(async (task) => {
+        let assignee = null;
+        if (task.assignedToId) {
+          const assigneeUser = await ctx.db.get(task.assignedToId);
+          if (assigneeUser) {
+            assignee = {
+              _id: assigneeUser._id,
+              name: getDisplayName(assigneeUser.firstName, assigneeUser.lastName),
+              profilePhoto: getMediaUrl(assigneeUser.profilePhoto),
+            };
+          }
+        }
+
+        return {
+          _id: task._id,
+          content: task.description ?? task.title,
+          status: mapTaskStatusToReachOutStatus(task),
+          assignee,
+          createdAt: task.createdAt,
+          updatedAt: task.updatedAt,
+        };
+      }),
+    );
+  },
+});
+
+/**
+ * Submit a new reach-out request as a canonical task.
+ * This is the task-native reach-out path.
+ */
+export const submitTaskRequest = mutation({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+    channelId: v.id("chatChannels"),
+    content: v.string(),
+  },
+  handler: async (ctx, args): Promise<Id<"tasks">> => {
+    const userId = await requireAuth(ctx, args.token);
+    const now = Date.now();
+    const content = args.content.trim();
+    if (!content) {
+      throw new ConvexError("Request content cannot be empty");
+    }
+
+    const channel = await ctx.db.get(args.channelId);
+    if (!channel || channel.channelType !== "reach_out" || channel.groupId !== args.groupId || channel.isArchived) {
+      throw new ConvexError("Invalid reach out channel");
+    }
+
+    const membership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", args.groupId).eq("userId", userId)
+      )
+      .first();
+    if (!isActiveMembership(membership)) {
+      throw new ConvexError("Must be a group member");
+    }
+
+    const leadersChannel = await ctx.db
+      .query("chatChannels")
+      .withIndex("by_group_type", (q) =>
+        q.eq("groupId", args.groupId).eq("channelType", "leaders")
+      )
+      .first();
+    if (!leadersChannel || leadersChannel.isArchived) {
+      throw new ConvexError("Leaders channel is not available");
+    }
+
+    const submitter = await ctx.db.get(userId);
+    const submitterName = submitter
+      ? getDisplayName(submitter.firstName, submitter.lastName)
+      : "A member";
+
+    const taskId: Id<"tasks"> = await ctx.runMutation(
+      internal.functions.tasks.index.createFromReachOutSubmission,
+      {
+        groupId: args.groupId,
+        submittedById: userId,
+        content,
+      },
+    );
+
+    const preview = content.length > 100 ? content.substring(0, 97) + "..." : content;
+    const messageId = await ctx.db.insert("chatMessages", {
+      channelId: leadersChannel._id,
+      senderId: userId,
+      senderName: submitterName,
+      senderProfilePhoto: submitter ? getMediaUrl(submitter.profilePhoto) : undefined,
+      content: `${submitterName}: ${preview}`,
+      contentType: "task_card",
+      taskId,
+      createdAt: now,
+      isDeleted: false,
+    });
+
+    await ctx.db.patch(leadersChannel._id, {
+      lastMessageAt: now,
+      lastMessagePreview: `Reach out from ${submitterName}`,
+      updatedAt: now,
+    });
+
+    await ctx.scheduler.runAfter(0, internal.functions.messaging.events.onMessageSent, {
+      messageId,
+      channelId: leadersChannel._id,
+      senderId: userId,
+    });
+
+    await ctx.db.insert("memberFollowups", {
+      groupMemberId: membership._id,
+      createdById: userId,
+      type: "reach_out",
+      content: `Reach out: ${content.substring(0, 100)}`,
+      createdAt: now,
+    });
+
+    return taskId;
+  },
+});
 
 /**
  * Get the current user's submitted requests for a group.

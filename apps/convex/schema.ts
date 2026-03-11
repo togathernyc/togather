@@ -1224,7 +1224,7 @@ export default defineSchema({
     channelId: v.id("chatChannels"),
     senderId: v.optional(v.id("users")), // Optional for bot/system messages
     content: v.string(), // Message text
-    contentType: v.string(), // "text" | "image" | "file" | "system" | "bot"
+    contentType: v.string(), // "text" | "image" | "file" | "system" | "bot" | "reach_out_request" | "task_card"
     attachments: v.optional(
       v.array(
         v.object({
@@ -1257,12 +1257,17 @@ export default defineSchema({
     hideLinkPreview: v.optional(v.boolean()),
     // Reach Out request reference (for request cards in leaders channel)
     reachOutRequestId: v.optional(v.id("reachOutRequests")),
+    // Canonical task reference for task-aware chat cards
+    taskId: v.optional(v.id("tasks")),
+    // Optional idempotency key for generated bot/task posts
+    sourceKey: v.optional(v.string()),
   })
     .index("by_channel", ["channelId"])
     .index("by_channel_createdAt", ["channelId", "createdAt"])
     .index("by_sender", ["senderId"])
     .index("by_parentMessage", ["parentMessageId"])
-    .index("by_createdAt", ["createdAt"]),
+    .index("by_createdAt", ["createdAt"])
+    .index("by_sourceKey", ["sourceKey"]),
 
   /**
    * Chat Message Reactions
@@ -1542,7 +1547,7 @@ export default defineSchema({
     submittedById: v.id("users"),
     groupMemberId: v.id("groupMembers"),        // For followup integration
     content: v.string(),
-    status: v.string(),                          // "pending" | "assigned" | "contacted" | "resolved"
+    status: v.string(),                          // "pending" | "assigned" | "contacted" | "resolved" | "revoked"
     assignedToId: v.optional(v.id("users")),
     assignedAt: v.optional(v.number()),
     contactActions: v.optional(v.array(v.object({
