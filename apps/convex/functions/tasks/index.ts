@@ -107,6 +107,57 @@ async function getTaskOrThrow(ctx: { db: any }, taskId: Id<"tasks">) {
   return task;
 }
 
+async function syncReachOutRequestFromTaskAction(
+  ctx: { db: any },
+  args: {
+    task: {
+      sourceType: string;
+      sourceRef?: string;
+    };
+    action: "assigned" | "pending" | "resolved";
+    performedById: Id<"users">;
+    assignedToId?: Id<"users">;
+  },
+) {
+  if (args.task.sourceType !== "reach_out" || !args.task.sourceRef) {
+    return;
+  }
+
+  const requestId = args.task.sourceRef as Id<"reachOutRequests">;
+  const request = await ctx.db.get(requestId);
+  if (!request) return;
+
+  const timestamp = now();
+
+  if (args.action === "assigned") {
+    await ctx.db.patch(requestId, {
+      status: "assigned",
+      assignedToId: args.assignedToId,
+      assignedAt: timestamp,
+      updatedAt: timestamp,
+    });
+    return;
+  }
+
+  if (args.action === "pending") {
+    await ctx.db.patch(requestId, {
+      status: "pending",
+      assignedToId: undefined,
+      assignedAt: undefined,
+      updatedAt: timestamp,
+    });
+    return;
+  }
+
+  await ctx.db.patch(requestId, {
+    status: "resolved",
+    resolvedById: args.performedById,
+    resolvedAt: timestamp,
+    resolutionNotes: request.resolutionNotes ?? "Resolved via Tasks workflow",
+    updatedAt: timestamp,
+  });
+}
+
 function assertTargetArgs(
   targetType: "none" | "member" | "group",
   targetMemberId: Id<"users"> | undefined,
@@ -540,6 +591,13 @@ export const assign = mutation({
       payload: { assigneeId: args.assigneeId ?? null },
     });
 
+    await syncReachOutRequestFromTaskAction(ctx, {
+      task,
+      action: args.assigneeId ? "assigned" : "pending",
+      performedById: userId,
+      assignedToId: args.assigneeId,
+    });
+
     return { success: true };
   },
 });
@@ -572,6 +630,13 @@ export const claim = mutation({
       groupId: task.groupId,
       type: "claimed",
       performedById: userId,
+    });
+
+    await syncReachOutRequestFromTaskAction(ctx, {
+      task,
+      action: "assigned",
+      performedById: userId,
+      assignedToId: userId,
     });
 
     return { success: true };
@@ -619,6 +684,12 @@ export const markDone = mutation({
       taskId: args.taskId,
       groupId: task.groupId,
       type: "done",
+      performedById: userId,
+    });
+
+    await syncReachOutRequestFromTaskAction(ctx, {
+      task,
+      action: "resolved",
       performedById: userId,
     });
 

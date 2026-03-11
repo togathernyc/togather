@@ -667,6 +667,103 @@ describe("tasks functions", () => {
     expect(cardMessage?.contentType).toBe("reach_out_request");
   });
 
+  test("reach-out linked task lifecycle updates requester status when worked from tasks", async () => {
+    const t = convexTest(schema, modules);
+    const {
+      groupId,
+      leadersChannelId,
+      reachOutChannelId,
+      memberId,
+      memberGroupMembershipId,
+      leaderToken,
+      leaderId,
+      memberToken,
+    } = await seedData(t);
+
+    const timestamp = Date.now();
+    const requestId = await t.run(async (ctx) => {
+      return await ctx.db.insert("reachOutRequests", {
+        groupId,
+        channelId: reachOutChannelId,
+        leadersChannelId,
+        submittedById: memberId,
+        groupMemberId: memberGroupMembershipId,
+        content: "Can someone follow up with me this week?",
+        status: "pending",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+    });
+
+    const linkedTaskId = await t.mutation(
+      internal.functions.tasks.index.createFromReachOutRequest,
+      {
+        groupId,
+        submittedById: memberId,
+        requestId,
+        content: "Can someone follow up with me this week?",
+      },
+    );
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(requestId, { taskId: linkedTaskId });
+      await ctx.db.insert("chatMessages", {
+        channelId: leadersChannelId,
+        senderId: memberId,
+        senderName: "Member One",
+        content: "Reach out request",
+        contentType: "reach_out_request",
+        reachOutRequestId: requestId,
+        createdAt: Date.now(),
+        isDeleted: false,
+      });
+    });
+
+    const submittedRequest = await t.run(async (ctx) => ctx.db.get(requestId));
+    expect(submittedRequest?.taskId).toBe(linkedTaskId);
+
+    const linkedTask = await t.run(async (ctx) => ctx.db.get(linkedTaskId));
+    expect(linkedTask?.sourceType).toBe("reach_out");
+    expect(linkedTask?.sourceRef).toBe(requestId.toString());
+    expect(linkedTask?.status).toBe("open");
+
+    const leadersMessages = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("chatMessages")
+        .withIndex("by_channel", (q) => q.eq("channelId", leadersChannelId))
+        .collect();
+    });
+    const leadersCard = leadersMessages.find(
+      (message) => message.reachOutRequestId === requestId,
+    );
+    expect(leadersCard?.contentType).toBe("reach_out_request");
+
+    await t.mutation(api.functions.tasks.index.claim, {
+      token: leaderToken,
+      taskId: linkedTaskId,
+    });
+
+    const requestAfterClaim = await t.run(async (ctx) => ctx.db.get(requestId));
+    expect(requestAfterClaim?.status).toBe("assigned");
+    expect(requestAfterClaim?.assignedToId).toBe(leaderId);
+
+    await t.mutation(api.functions.tasks.index.markDone, {
+      token: leaderToken,
+      taskId: linkedTaskId,
+    });
+
+    const requestAfterDone = await t.run(async (ctx) => ctx.db.get(requestId));
+    expect(requestAfterDone?.status).toBe("resolved");
+    expect(requestAfterDone?.resolvedById).toBe(leaderId);
+
+    const memberView = await t.query(api.functions.messaging.reachOut.getMyRequests, {
+      token: memberToken,
+      groupId,
+    });
+    const requestForMember = memberView.find((request) => request._id === requestId);
+    expect(requestForMember?.status).toBe("resolved");
+  });
+
   test("task queries remain correct with 120 assigned tasks", async () => {
     const t = convexTest(schema, modules);
     const { groupId, leaderId, leaderToken } = await seedData(t);
