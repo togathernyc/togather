@@ -314,6 +314,67 @@ export const listMine = query({
   },
 });
 
+export const listAll = query({
+  args: {
+    token: v.string(),
+    sourceType: v.optional(sourceTypeValidator),
+    tag: v.optional(v.string()),
+    searchText: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const leaderGroupIds = await getActiveLeaderGroupIds(ctx, userId);
+    if (leaderGroupIds.length === 0) return [];
+
+    const leaderGroupIdSet = new Set(leaderGroupIds.map((id) => id.toString()));
+    const [groupOpenTasks, groupSnoozedTasks, personOpenTasks, personSnoozedTasks] =
+      await Promise.all([
+        ctx.db
+          .query("tasks")
+          .withIndex("by_responsibility_status", (q: any) =>
+            q.eq("responsibilityType", "group").eq("status", "open"),
+          )
+          .collect(),
+        ctx.db
+          .query("tasks")
+          .withIndex("by_responsibility_status", (q: any) =>
+            q.eq("responsibilityType", "group").eq("status", "snoozed"),
+          )
+          .collect(),
+        ctx.db
+          .query("tasks")
+          .withIndex("by_responsibility_status", (q: any) =>
+            q.eq("responsibilityType", "person").eq("status", "open"),
+          )
+          .collect(),
+        ctx.db
+          .query("tasks")
+          .withIndex("by_responsibility_status", (q: any) =>
+            q.eq("responsibilityType", "person").eq("status", "snoozed"),
+          )
+          .collect(),
+      ]);
+
+    const tasks = [
+      ...groupOpenTasks,
+      ...groupSnoozedTasks,
+      ...personOpenTasks,
+      ...personSnoozedTasks,
+    ].filter((task) => leaderGroupIdSet.has(task.groupId.toString()));
+
+    const enrichedTasks = await enrichTasks(ctx, tasks);
+    return applyTaskFilters(enrichedTasks, args).sort((a, b) => {
+      if (a.status !== b.status) {
+        return a.status === "open" ? -1 : 1;
+      }
+      const orderA = a.orderKey ?? Number.MAX_SAFE_INTEGER;
+      const orderB = b.orderKey ?? Number.MAX_SAFE_INTEGER;
+      if (orderA !== orderB) return orderA - orderB;
+      return b.createdAt - a.createdAt;
+    });
+  },
+});
+
 export const listClaimable = query({
   args: {
     token: v.string(),
