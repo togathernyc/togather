@@ -648,9 +648,11 @@ export const saveConfig = mutation({
         type: v.string(),
         placeholder: v.optional(v.string()),
         options: v.optional(v.array(v.string())),
+        buttonUrl: v.optional(v.string()),
         required: v.boolean(),
         order: v.number(),
         includeInNotes: v.optional(v.boolean()),
+        showOnLanding: v.optional(v.boolean()),
       })
     ),
     automationRules: v.array(
@@ -685,7 +687,21 @@ export const saveConfig = mutation({
 
     // Validate form field slots
     for (const field of args.formFields) {
-      if (field.type === "section_header" || field.type === "subtitle") continue;
+      if (field.type === "section_header" || field.type === "subtitle" || field.type === "button") {
+        if (field.type === "button") {
+          if (field.slot) {
+            throw new Error(`Button field "${field.label}" cannot map to a custom field slot`);
+          }
+          const url = field.buttonUrl?.trim();
+          if (!url) {
+            throw new Error(`Button field "${field.label}" requires a link URL`);
+          }
+          if (!/^https?:\/\/\S+$/i.test(url)) {
+            throw new Error(`Button field "${field.label}" link must start with http:// or https://`);
+          }
+        }
+        continue;
+      }
       if (field.slot) {
         if (!VALID_CUSTOM_SLOTS.has(field.slot)) {
           throw new Error(`Invalid custom field slot: ${field.slot}`);

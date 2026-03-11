@@ -47,9 +47,11 @@ export function useLandingPageConfig() {
         label: string;
         type: string;
         options?: string[];
+        buttonUrl?: string;
         required: boolean;
         order: number;
         includeInNotes?: boolean;
+        showOnLanding?: boolean;
       }>;
       automationRules: Array<{
         id: string;

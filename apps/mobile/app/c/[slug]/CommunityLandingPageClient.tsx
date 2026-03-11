@@ -11,6 +11,7 @@ import {
   TextInput,
   Platform,
   KeyboardAvoidingView,
+  Linking,
 } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { useQuery, useAction, api } from "@services/api/convex";
@@ -20,6 +21,11 @@ import { AppImage } from "@components/ui";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { DOMAIN_CONFIG } from "@togather/shared";
 import { validateZipCode, normalizeZipCode } from "@features/groups/utils/geocodeLocation";
+import {
+  isFieldVisibleOnLanding,
+  parseSubtitleSegments,
+  shouldCollectFieldResponse,
+} from "./landingFieldUtils";
 
 type FormField = {
   slot?: string;
@@ -27,9 +33,20 @@ type FormField = {
   type: string;
   placeholder?: string;
   options?: string[];
+  buttonUrl?: string;
   required: boolean;
   order: number;
   includeInNotes?: boolean;
+  showOnLanding?: boolean;
+};
+
+const openExternalUrl = async (url: string) => {
+  if (!url) return;
+  if (Platform.OS === "web" && typeof window !== "undefined") {
+    window.open(url, "_blank", "noopener,noreferrer");
+    return;
+  }
+  await Linking.openURL(url);
 };
 
 export default function CommunityLandingPageClient() {
@@ -64,6 +81,9 @@ export default function CommunityLandingPageClient() {
   const notFound = data === null;
 
   const primaryColor = data?.community?.primaryColor || DEFAULT_PRIMARY_COLOR;
+  const visibleFormFields = [...(data?.formFields || [])]
+    .filter((field) => isFieldVisibleOnLanding(field))
+    .sort((a, b) => a.order - b.order);
 
   const updateCustomField = (fieldKey: string, value: any) => {
     setCustomFieldValues((prev) => ({ ...prev, [fieldKey]: value }));
@@ -165,8 +185,8 @@ export default function CommunityLandingPageClient() {
     }
 
     // Validate required custom fields
-    for (const field of data.formFields || []) {
-      if (field.type === "section_header" || field.type === "subtitle") continue;
+    for (const field of visibleFormFields) {
+      if (!shouldCollectFieldResponse(field)) continue;
       if (field.required) {
         const key = field.slot || field.label;
         const value = customFieldValues[key];
@@ -193,9 +213,9 @@ export default function CommunityLandingPageClient() {
 
     try {
       // Build custom fields array — only include fields the user actually filled in
-      const customFields = (data.formFields || [])
+      const customFields = visibleFormFields
         .filter((field) => {
-          if (field.type === "section_header" || field.type === "subtitle") return false;
+          if (!shouldCollectFieldResponse(field)) return false;
           const key = field.slot || field.label;
           const rawValue = customFieldValues[key];
 
@@ -463,18 +483,16 @@ export default function CommunityLandingPageClient() {
             </View>
 
             {/* Dynamic custom fields */}
-            {[...(data.formFields || [])]
-              .sort((a, b) => a.order - b.order)
-              .map((field, index) => (
-                <DynamicField
-                  key={field.slot || field.label || index}
-                  field={field}
-                  value={customFieldValues[field.slot || field.label]}
-                  onChange={(value) =>
-                    updateCustomField(field.slot || field.label, value)
-                  }
-                />
-              ))}
+            {visibleFormFields.map((field, index) => (
+              <DynamicField
+                key={field.slot || field.label || index}
+                field={field}
+                value={customFieldValues[field.slot || field.label]}
+                onChange={(value) =>
+                  updateCustomField(field.slot || field.label, value)
+                }
+              />
+            ))}
 
             {/* Error message */}
             {submitError && (
@@ -529,6 +547,9 @@ function DynamicField({
   value: any;
   onChange: (value: any) => void;
 }) {
+  const subtitleSegments =
+    field.type === "subtitle" ? parseSubtitleSegments(field.label) : [];
+
   switch (field.type) {
     case "section_header":
       return (
@@ -540,7 +561,39 @@ function DynamicField({
     case "subtitle":
       return (
         <View style={styles.subtitleField}>
-          <Text style={styles.subtitleText}>{field.label}</Text>
+          <Text style={styles.subtitleText}>
+            {subtitleSegments.map((segment, idx) =>
+              segment.type === "link" ? (
+                <Text
+                  key={`${segment.url}-${idx}`}
+                  style={styles.subtitleLink}
+                  onPress={() => openExternalUrl(segment.url)}
+                  suppressHighlighting
+                >
+                  {segment.text}
+                </Text>
+              ) : (
+                <Text key={`${segment.text}-${idx}`}>{segment.text}</Text>
+              )
+            )}
+          </Text>
+        </View>
+      );
+
+    case "button":
+      return (
+        <View style={styles.field}>
+          <TouchableOpacity
+            style={styles.fullWidthButton}
+            onPress={() => {
+              if (field.buttonUrl) {
+                openExternalUrl(field.buttonUrl);
+              }
+            }}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.fullWidthButtonText}>{field.label}</Text>
+          </TouchableOpacity>
         </View>
       );
 
@@ -899,6 +952,25 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#666",
     lineHeight: 20,
+  },
+  subtitleLink: {
+    color: "#2563EB",
+    textDecorationLine: "underline",
+  },
+
+  fullWidthButton: {
+    width: "100%",
+    borderRadius: 12,
+    backgroundColor: "#2563EB",
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  fullWidthButtonText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
   },
 
   // Error
