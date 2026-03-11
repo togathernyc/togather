@@ -557,9 +557,36 @@ async function removeUserFromCommunity(
     count: groupMembershipsToRemove.length,
   });
 
+  let followupsDeleted = 0;
+  let followupScoresDeleted = 0;
   for (const gm of groupMembershipsToRemove) {
+    // Clean up follow-up artifacts tied to this membership to prevent zombie rows
+    // in the denormalized follow-up table after community removal.
+    const followups = await ctx.db
+      .query("memberFollowups")
+      .withIndex("by_groupMember", (q: any) => q.eq("groupMemberId", gm._id))
+      .collect();
+    for (const followup of followups) {
+      await ctx.db.delete(followup._id);
+      followupsDeleted++;
+    }
+
+    const scoreDoc = await ctx.db
+      .query("memberFollowupScores")
+      .withIndex("by_groupMember", (q: any) => q.eq("groupMemberId", gm._id))
+      .first();
+    if (scoreDoc) {
+      await ctx.db.delete(scoreDoc._id);
+      followupScoresDeleted++;
+    }
+
     await ctx.db.delete(gm._id);
   }
+
+  console.log(`${logPrefix} Removed follow-up artifacts`, {
+    followupsDeleted,
+    followupScoresDeleted,
+  });
 
   // 4. Find all meetings in these groups and delete RSVPs
   let rsvpsCancelled = 0;
