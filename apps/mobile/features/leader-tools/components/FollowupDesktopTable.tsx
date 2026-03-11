@@ -79,6 +79,7 @@ type FollowupMember = {
   addedAt?: number;
   status?: string;
   assigneeId?: string;
+  assigneeIds?: string[];
   customText1?: string;
   customText2?: string;
   customText3?: string;
@@ -236,7 +237,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
   const [hoveredRowId, setHoveredRowId] = useState<string | null>(null);
 
   // Optimistic updates — instant UI while mutation round-trips
-  const [optimistic, setOptimistic] = useState<Record<string, { assigneeId?: string | null; status?: string | null }>>({});
+  const [optimistic, setOptimistic] = useState<Record<string, { assigneeIds?: string[] | null; status?: string | null; [key: string]: any }>>({});
 
   // Bulk selection state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -343,7 +344,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
     });
 
     allAvailable.push(
-      { key: "assignee", label: "Assignee", defaultWidth: 140, sortable: true, serverSortKey: "assignee" },
+      { key: "assignee", label: "Assignees", defaultWidth: 140, sortable: true, serverSortKey: "assignee" },
       { key: "notes", label: "Notes", defaultWidth: 200, sortable: false },
       { key: "status", label: "Status", defaultWidth: 100, sortable: true, serverSortKey: "status" },
       { key: "lastAttendedAt", label: "Last Attended", defaultWidth: 120, sortable: true, serverSortKey: "lastAttendedAt" },
@@ -531,13 +532,24 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
   ]);
 
   // Merge optimistic overrides for consistent UI display
+  const getAssigneeIds = useCallback((member: { assigneeId?: string; assigneeIds?: string[] }) => {
+    const ids = (member.assigneeIds && member.assigneeIds.length > 0)
+      ? member.assigneeIds
+      : (member.assigneeId ? [member.assigneeId] : []);
+    return Array.from(new Set(ids));
+  }, []);
+
   const displayMembers = useMemo(() => {
     if (Object.keys(optimistic).length === 0) return members;
     return members.map((member) => {
       const opt = optimistic[member.groupMemberId];
       if (!opt) return member;
       const overrides: any = {};
-      if (opt.assigneeId !== undefined) overrides.assigneeId = opt.assigneeId ?? undefined;
+      if (opt.assigneeIds !== undefined) {
+        const nextIds = opt.assigneeIds ?? [];
+        overrides.assigneeIds = nextIds.length > 0 ? nextIds : undefined;
+        overrides.assigneeId = nextIds[0];
+      }
       if (opt.status !== undefined) overrides.status = opt.status ?? undefined;
       for (const [key, val] of Object.entries(opt)) {
         if (key.startsWith("custom")) overrides[key] = val ?? undefined;
@@ -562,7 +574,18 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
       if (!server) { next[id] = overrides; continue; }
       const remaining: typeof overrides = {};
       for (const [key, val] of Object.entries(overrides)) {
-        const serverVal = (server as any)[key === "assigneeId" ? "assigneeId" : key] ?? null;
+        if (key === "assigneeIds") {
+          const serverAssigneeIds = getAssigneeIds(server);
+          const overrideAssigneeIds = val ?? [];
+          const sameAssignees = JSON.stringify(serverAssigneeIds) === JSON.stringify(overrideAssigneeIds);
+          if (!sameAssignees) {
+            (remaining as any)[key] = val;
+          } else {
+            changed = true;
+          }
+          continue;
+        }
+        const serverVal = (server as any)[key] ?? null;
         if (val !== undefined && serverVal !== (val ?? null)) {
           (remaining as any)[key] = val;
         } else if (val !== undefined) {
@@ -573,7 +596,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
       else changed = true;
     }
     if (changed) setOptimistic(next);
-  }, [members, optimistic]);
+  }, [members, optimistic, getAssigneeIds]);
 
   // Mutations
   const setAssigneeMut = useAuthenticatedMutation(api.functions.memberFollowups.setAssignee);
@@ -692,27 +715,33 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
     setSelectedMemberId(null);
   };
 
-  const handleAssigneeSelect = async (memberId: string, assigneeId?: string) => {
+  const handleAssigneeSelect = async (memberId: string, assigneeIds: string[]) => {
+    const normalizedAssigneeIds = Array.from(new Set(assigneeIds));
+    let previousAssigneeIds: string[] = [];
     // Optimistic: update UI instantly
-    setOptimistic((prev) => ({ ...prev, [memberId]: { ...prev[memberId], assigneeId: assigneeId ?? null } }));
-    setAssigneeDropdownFor(null);
-    setDropdownPos(null);
-    setAssigneeSearch("");
+    setOptimistic((prev) => {
+      const existingOpt = prev[memberId]?.assigneeIds;
+      if (existingOpt !== undefined) {
+        previousAssigneeIds = [...(existingOpt ?? [])];
+      } else {
+        const serverMember = members.find((m) => m.groupMemberId === memberId);
+        previousAssigneeIds = serverMember ? getAssigneeIds(serverMember) : [];
+      }
+      return { ...prev, [memberId]: { ...prev[memberId], assigneeIds: normalizedAssigneeIds } };
+    });
     try {
       await setAssigneeMut({
         groupId: groupId as Id<"groups">,
         groupMemberId: memberId as Id<"groupMembers">,
-        assigneeId: assigneeId ? (assigneeId as Id<"users">) : undefined,
+        assigneeIds: normalizedAssigneeIds as Id<"users">[],
       });
     } catch (err) {
       console.error("[setAssignee] failed:", err);
       // Revert optimistic update on failure
       setOptimistic((prev) => {
         const next = { ...prev };
-        if (next[memberId]) {
-          delete next[memberId].assigneeId;
-          if (Object.keys(next[memberId]).length === 0) delete next[memberId];
-        }
+        next[memberId] = { ...next[memberId], assigneeIds: previousAssigneeIds };
+        if (Object.keys(next[memberId]).length === 0) delete next[memberId];
         return next;
       });
     }
@@ -892,8 +921,8 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
   const activeDropdownMember = useMemo(() => {
     const id = assigneeDropdownFor ?? statusDropdownFor ?? customDropdownFor?.memberId;
     if (!id) return null;
-    return members.find((m) => m.groupMemberId === id) ?? null;
-  }, [assigneeDropdownFor, statusDropdownFor, customDropdownFor, members]);
+    return displayMembers.find((m) => m.groupMemberId === id) ?? null;
+  }, [assigneeDropdownFor, statusDropdownFor, customDropdownFor, displayMembers]);
 
   // ── Render helpers ──
 
@@ -903,7 +932,11 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
     let item = rawItem;
     if (opt) {
       const overrides: any = {};
-      if (opt.assigneeId !== undefined) overrides.assigneeId = opt.assigneeId ?? undefined;
+      if (opt.assigneeIds !== undefined) {
+        const nextIds = opt.assigneeIds ?? [];
+        overrides.assigneeIds = nextIds.length > 0 ? nextIds : undefined;
+        overrides.assigneeId = nextIds[0];
+      }
       if (opt.status !== undefined) overrides.status = opt.status ?? undefined;
       // Apply custom field overrides
       for (const [key, val] of Object.entries(opt)) {
@@ -1002,7 +1035,10 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
 
       case "assignee": {
         const isOpen = assigneeDropdownFor === item.groupMemberId;
-        const assignee = item.assigneeId ? leaderMap.get(item.assigneeId) : null;
+        const assigneeIds = getAssigneeIds(item);
+        const assignees = assigneeIds
+          .map((assigneeId) => ({ assigneeId, leader: leaderMap.get(assigneeId) }))
+          .filter((entry) => !!entry.leader);
         return (
           <TouchableOpacity
             style={s.editableCellTouchable}
@@ -1016,16 +1052,23 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
               }
             }}
           >
-            {assignee ? (
-              <View style={s.assigneeBadge}>
-                <Avatar
-                  name={`${assignee.firstName} ${assignee.lastName}`}
-                  imageUrl={assignee.profilePhoto}
-                  size={20}
-                />
-                <Text style={s.assigneeBadgeText}>
-                  {assignee.firstName}
-                </Text>
+            {assignees.length > 0 ? (
+              <View style={s.assigneeBadgesRow}>
+                {assignees.slice(0, 2).map(({ assigneeId, leader }) => (
+                  <View key={assigneeId} style={s.assigneeBadge}>
+                    <Avatar
+                      name={`${leader!.firstName} ${leader!.lastName}`}
+                      imageUrl={leader!.profilePhoto}
+                      size={20}
+                    />
+                    <Text style={s.assigneeBadgeText}>
+                      {leader!.firstName}
+                    </Text>
+                  </View>
+                ))}
+                {assignees.length > 2 && (
+                  <Text style={s.assigneeMoreText}>+{assignees.length - 2}</Text>
+                )}
               </View>
             ) : (
               <Text style={s.cellPlaceholder}>Assign</Text>
@@ -1565,9 +1608,19 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
           {currentUserId && (
             <TouchableOpacity
               style={s.dropdownItem}
-              onPress={() => handleAssigneeSelect(activeDropdownMember.groupMemberId, currentUserId)}
+              onPress={() => {
+                const currentAssigneeIds = getAssigneeIds(activeDropdownMember);
+                const nextAssigneeIds = currentAssigneeIds.includes(currentUserId)
+                  ? currentAssigneeIds.filter((id) => id !== currentUserId)
+                  : [...currentAssigneeIds, currentUserId];
+                handleAssigneeSelect(activeDropdownMember.groupMemberId, nextAssigneeIds);
+              }}
             >
-              <Ionicons name="person" size={14} color={primaryColor} />
+              <Ionicons
+                name={getAssigneeIds(activeDropdownMember).includes(currentUserId) ? "checkbox" : "square-outline"}
+                size={16}
+                color={primaryColor}
+              />
               <Text style={[s.dropdownItemText, { color: primaryColor }]}>Assign to me</Text>
             </TouchableOpacity>
           )}
@@ -1581,12 +1634,24 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
           <ScrollView style={s.dropdownList} nestedScrollEnabled>
             {filteredLeaders.map((leader: any) => {
               const lid = leader.userId?.toString?.() ?? leader._id?.toString?.() ?? "";
+              const isChecked = getAssigneeIds(activeDropdownMember).includes(lid);
               return (
                 <TouchableOpacity
                   key={lid}
                   style={s.dropdownItem}
-                  onPress={() => handleAssigneeSelect(activeDropdownMember.groupMemberId, lid)}
+                  onPress={() => {
+                    const currentAssigneeIds = getAssigneeIds(activeDropdownMember);
+                    const nextAssigneeIds = isChecked
+                      ? currentAssigneeIds.filter((id) => id !== lid)
+                      : [...currentAssigneeIds, lid];
+                    handleAssigneeSelect(activeDropdownMember.groupMemberId, nextAssigneeIds);
+                  }}
                 >
+                  <Ionicons
+                    name={isChecked ? "checkbox" : "square-outline"}
+                    size={16}
+                    color={isChecked ? primaryColor : "#9CA3AF"}
+                  />
                   <Avatar
                     name={`${leader.firstName ?? ""} ${leader.lastName ?? ""}`}
                     imageUrl={leader.profilePhoto}
@@ -1599,12 +1664,12 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
               );
             })}
           </ScrollView>
-          {activeDropdownMember.assigneeId && (
+          {getAssigneeIds(activeDropdownMember).length > 0 && (
             <TouchableOpacity
               style={[s.dropdownItem, s.dropdownItemDanger]}
-              onPress={() => handleAssigneeSelect(activeDropdownMember.groupMemberId, undefined)}
+              onPress={() => handleAssigneeSelect(activeDropdownMember.groupMemberId, [])}
             >
-              <Text style={[s.dropdownItemText, { color: "#FF3B30" }]}>Unassign</Text>
+              <Text style={[s.dropdownItemText, { color: "#FF3B30" }]}>Clear all assignees</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -2081,6 +2146,17 @@ const s = StyleSheet.create({
     fontSize: 12,
     color: "#4338CA",
     fontWeight: "500" as const,
+  },
+  assigneeBadgesRow: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 4,
+    flexWrap: "wrap" as const,
+  },
+  assigneeMoreText: {
+    fontSize: 11,
+    color: "#6B7280",
+    fontWeight: "600" as const,
   },
 
   // Notes cell
