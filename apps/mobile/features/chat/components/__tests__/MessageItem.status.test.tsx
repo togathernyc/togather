@@ -45,6 +45,12 @@ jest.mock('../ThreadReplies', () => ({
 jest.mock('../ReactionDetailsModal', () => ({
   ReactionDetailsModal: () => null,
 }));
+jest.mock('../TaskCardFromMessage', () => ({
+  TaskCardFromMessage: ({ taskId }: { taskId: string }) => {
+    const { Text } = require('react-native');
+    return <Text testID="task-card-render">{taskId}</Text>;
+  },
+}));
 jest.mock('@components/ui', () => ({
   AppImage: () => null,
   ImageViewer: () => null,
@@ -129,5 +135,22 @@ describe('MessageItem status indicators', () => {
     );
     // Read receipts show checkmark symbols - should not be present
     expect(queryByText('\u2713')).toBeNull();
+  });
+
+  it('renders task card when message contentType is task_card', () => {
+    const { getByTestId, queryByText } = render(
+      <MessageItem
+        message={{
+          ...baseMessage,
+          content: 'Task reminder',
+          contentType: 'task_card',
+          taskId: 'task-1' as any,
+        }}
+        currentUserId={'user-1' as any}
+      />
+    );
+
+    expect(getByTestId('task-card-render')).toBeTruthy();
+    expect(queryByText('Task reminder')).toBeNull();
   });
 });

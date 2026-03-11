@@ -64,6 +64,8 @@ interface Message {
   hideLinkPreview?: boolean;
   // Reach out request reference
   reachOutRequestId?: Id<"reachOutRequests">;
+  // Canonical task reference for task cards
+  taskId?: Id<"tasks">;
 }
 
 interface MessageListProps {
@@ -334,6 +336,7 @@ export function MessageList({
             threadReplyCount: message.threadReplyCount,
             hideLinkPreview: message.hideLinkPreview,
             reachOutRequestId: message.reachOutRequestId,
+            taskId: message.taskId,
           }}
           currentUserId={currentUserId}
           groupId={groupId}

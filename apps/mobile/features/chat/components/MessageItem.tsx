@@ -36,6 +36,7 @@ import { ImageAttachmentsGrid } from './ImageAttachmentsGrid';
 import { ThreadReplies } from './ThreadReplies';
 import { ReactionDetailsModal } from './ReactionDetailsModal';
 import { ReachOutRequestCardFromMessage } from './ReachOutRequestCardFromMessage';
+import { TaskCardFromMessage } from './TaskCardFromMessage';
 import { extractEventShortIds, extractToolShortIds, stripEventLinksFromText, stripToolLinksFromText, extractFirstExternalUrl } from '../utils/eventLinkUtils';
 import { useLinkPreview } from '../hooks/useLinkPreview';
 import { getMediaUrl } from '@/utils/media';
@@ -63,6 +64,7 @@ interface MessageItemProps {
     threadReplyCount?: number;
     hideLinkPreview?: boolean;
     reachOutRequestId?: Id<"reachOutRequests">;
+    taskId?: Id<"tasks">;
   };
   currentUserId: Id<"users">;
   groupId?: Id<"groups">;
@@ -706,6 +708,17 @@ function MessageItemInner({
     );
   };
 
+  const renderTaskCard = () => {
+    if (message.contentType !== "task_card" || !message.taskId) {
+      return null;
+    }
+    return (
+      <View style={styles.eventCardsContainer}>
+        <TaskCardFromMessage taskId={message.taskId} />
+      </View>
+    );
+  };
+
   // Render optimistic message status indicator
   const renderOptimisticStatus = () => {
     if (!isOptimistic || !optimisticStatus) return null;
@@ -817,8 +830,8 @@ function MessageItemInner({
             <Text style={styles.senderName}>{message.senderName || 'Unknown'}</Text>
           )}
 
-          {/* Message bubble (hidden for reach-out cards) */}
-          {message.contentType !== "reach_out_request" && (
+          {/* Message bubble (hidden for special card messages) */}
+          {message.contentType !== "reach_out_request" && message.contentType !== "task_card" && (
             <View style={styles.bubbleWrapper}>
               <View
                 style={[
@@ -869,6 +882,9 @@ function MessageItemInner({
 
           {/* Reach-out request card */}
           {renderReachOutCard()}
+
+          {/* Task card */}
+          {renderTaskCard()}
 
           {/* Event cards for meeting links */}
           {renderEventCards()}
