@@ -252,6 +252,7 @@ export async function syncUserChannelMembershipsLogic(
     const expectedChannelRole = isLeaderOrAdmin ? "admin" : "member";
 
     // Sync membership to desired state
+    let memberCountDelta = 0;
     if (shouldBeInChannel && !isCurrentlyInChannel) {
       // ADD to channel
       if (currentMembership) {
@@ -277,12 +278,14 @@ export async function syncUserChannelMembershipsLogic(
         });
         console.log(`[syncUserChannelMembershipsLogic] Added user ${userId} to ${channel.channelType} channel ${channel._id}`);
       }
+      memberCountDelta = 1;
     } else if (!shouldBeInChannel && isCurrentlyInChannel) {
       // REMOVE from channel (soft delete)
       await ctx.db.patch(currentMembership!._id, {
         leftAt: now,
       });
       console.log(`[syncUserChannelMembershipsLogic] Removed user ${userId} from ${channel.channelType} channel ${channel._id}`);
+      memberCountDelta = -1;
     } else if (shouldBeInChannel && isCurrentlyInChannel && currentMembership.role !== expectedChannelRole) {
       // UPDATE role if it changed (e.g., promoted to leader or demoted from leader)
       await ctx.db.patch(currentMembership._id, {
@@ -292,16 +295,13 @@ export async function syncUserChannelMembershipsLogic(
       });
     }
 
-    // Update channel member count
-    const memberCount = await ctx.db
-      .query("chatChannelMembers")
-      .withIndex("by_channel", (q: any) => q.eq("channelId", channel._id))
-      .filter((q: any) => q.eq(q.field("leftAt"), undefined))
-      .collect();
-
-    await ctx.db.patch(channel._id, {
-      memberCount: memberCount.length,
-    });
+    // Increment/decrement channel member count
+    if (memberCountDelta !== 0) {
+      const currentCount = channel.memberCount ?? 0;
+      await ctx.db.patch(channel._id, {
+        memberCount: Math.max(0, currentCount + memberCountDelta),
+      });
+    }
   }
 
   // Handle custom channels when user leaves group
@@ -359,15 +359,10 @@ export async function syncUserChannelMembershipsLogic(
         await ctx.db.patch(channelMembership._id, { leftAt: now });
         console.log(`[syncUserChannelMembershipsLogic] Removed user ${userId} from custom channel ${channel._id} (left group)`);
 
-        // Update member count
-        const updatedMemberCount = await ctx.db
-          .query("chatChannelMembers")
-          .withIndex("by_channel", (q: any) => q.eq("channelId", channel._id))
-          .filter((q: any) => q.eq(q.field("leftAt"), undefined))
-          .collect();
-
+        // Decrement member count
+        const currentCount = channel.memberCount ?? 0;
         await ctx.db.patch(channel._id, {
-          memberCount: updatedMemberCount.length,
+          memberCount: Math.max(0, currentCount - 1),
           updatedAt: now,
         });
       }
