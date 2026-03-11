@@ -1,15 +1,16 @@
 import { View, Pressable, StyleSheet } from "react-native";
-import { usePathname, router } from "expo-router";
+import { type Href, usePathname, router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { api, Id, useAuthenticatedQuery } from "@services/api/convex";
 
 type NavItem = {
   key: string;
   label: string;
   icon: keyof typeof Ionicons.glyphMap;
   iconFocused: keyof typeof Ionicons.glyphMap;
-  href: string;
+  href: Href;
   match: (path: string) => boolean;
 };
 
@@ -25,6 +26,12 @@ export function DesktopSideNav() {
 
   const isAdmin = user?.is_admin === true;
   const hasCommunity = !!community?.id;
+  const hasLeaderAccess = useAuthenticatedQuery(
+    api.functions.tasks.index.hasLeaderAccess,
+    community?.id
+      ? { communityId: community.id as Id<"communities"> }
+      : "skip"
+  );
 
   const items: NavItem[] = [
     {
@@ -35,6 +42,18 @@ export function DesktopSideNav() {
       href: "/(tabs)/search",
       match: (p) => p === "/" || p.startsWith("/search"),
     },
+    ...(hasCommunity && hasLeaderAccess
+      ? [
+          {
+            key: "tasks",
+            label: "Tasks",
+            icon: "checkmark-done-outline" as keyof typeof Ionicons.glyphMap,
+            iconFocused: "checkmark-done" as keyof typeof Ionicons.glyphMap,
+            href: "/tasks",
+            match: (p: string) => p.startsWith("/tasks"),
+          },
+        ]
+      : []),
     ...(hasCommunity
       ? [
           {
@@ -78,7 +97,7 @@ export function DesktopSideNav() {
         return (
           <Pressable
             key={item.key}
-            onPress={() => router.push(item.href as any)}
+            onPress={() => router.push(item.href)}
             style={styles.item}
           >
             <View style={styles.itemInner}>

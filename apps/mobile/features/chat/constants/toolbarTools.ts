@@ -24,6 +24,11 @@ export const TOOLBAR_TOOLS = {
     icon: "chatbubble-ellipses-outline",
     label: "Follow-up",
   },
+  tasks: {
+    id: "tasks",
+    icon: "checkmark-done-outline",
+    label: "Tasks",
+  },
   events: { id: "events", icon: "calendar-outline", label: "Events" },
   bots: { id: "bots", icon: "hardware-chip-outline", label: "Bots" },
   sync: {
@@ -55,7 +60,7 @@ export const ALL_TOOL_IDS = Object.keys(TOOLBAR_TOOLS) as ToolId[];
  * Default tools shown when leaderToolbarTools is undefined.
  * Note: "sync" is NOT included by default - must be explicitly enabled.
  */
-export const DEFAULT_TOOLS = ["attendance", "followup", "events", "bots"];
+export const DEFAULT_TOOLS = ["attendance", "followup", "tasks", "events", "bots"];
 
 /**
  * Resource tool ID helpers.
