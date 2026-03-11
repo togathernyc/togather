@@ -18,7 +18,7 @@ export function useArchiveGroup(groupId: number | string | null | undefined) {
   const mutate = useCallback(async () => {
     if (!groupId) {
       Alert.alert("Error", "Group ID is required");
-      return;
+      return false;
     }
 
     setIsPending(true);
@@ -29,22 +29,18 @@ export function useArchiveGroup(groupId: number | string | null | undefined) {
         isArchived: true,
       });
 
-      Alert.alert("Success", "Group has been archived.", [
-        {
-          text: "OK",
-          onPress: () => {
-            // Navigate back to groups list
-            if (router.canGoBack()) {
-              router.back();
-            } else {
-              router.replace("/groups");
-            }
-          },
-        },
-      ]);
+      // Navigate immediately after archive so the action never depends on a second alert tap.
+      if (router.canGoBack()) {
+        router.back();
+      } else {
+        router.replace("/groups");
+      }
+
+      return true;
     } catch (error: any) {
       const errorMessage = formatError(error, "Failed to archive group. Please try again.");
       Alert.alert("Error", errorMessage);
+      return false;
     } finally {
       setIsPending(false);
     }
