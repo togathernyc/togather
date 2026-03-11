@@ -2378,7 +2378,7 @@ export const applyQuickAddFollowupPatch = internalMutation({
       assigneeIds: args.assigneeIds,
     });
     if (args.assigneeIds !== undefined || args.assigneeId !== undefined) {
-      patch.assigneeId = requestedAssigneeIds[0];
+      patch.assigneeId = requestedAssigneeIds.length > 0 ? requestedAssigneeIds[0] : undefined;
       patch.assigneeIds = requestedAssigneeIds.length > 0 ? requestedAssigneeIds : undefined;
     }
     if (Object.keys(patch).length === 0) {
@@ -2403,7 +2403,7 @@ export const applyQuickAddFollowupPatch = internalMutation({
         scoreDoc.assigneeId === undefined &&
         scoreDoc.assigneeIds === undefined
       ) {
-        safePatch.assigneeId = requestedAssigneeIds[0];
+        safePatch.assigneeId = requestedAssigneeIds.length > 0 ? requestedAssigneeIds[0] : undefined;
         safePatch.assigneeIds = requestedAssigneeIds.length > 0 ? requestedAssigneeIds : undefined;
       }
       if (Object.keys(safePatch).length > 0) {
@@ -2412,20 +2412,15 @@ export const applyQuickAddFollowupPatch = internalMutation({
           updatedAt: now(),
         });
       }
-      // Send notifications if assignees were requested and are now set.
-      const effectiveAssigneeIds = requestedAssigneeIds.length > 0
-        ? requestedAssigneeIds
-        : dedupeAssigneeIds(scoreDoc.assigneeIds).length > 0
-          ? dedupeAssigneeIds(scoreDoc.assigneeIds)
-          : scoreDoc.assigneeId
-            ? [scoreDoc.assigneeId]
-            : [];
-      for (const assigneeId of effectiveAssigneeIds) {
-        await ctx.scheduler.runAfter(0, internal.functions.notifications.senders.notifyFollowupAssigned, {
-          assigneeId,
-          groupId: args.groupId,
-          groupMemberId: args.groupMemberId,
-        });
+      // Send notifications only if caller explicitly requested assignees and we have some to notify.
+      if (args.assigneeIds !== undefined || args.assigneeId !== undefined) {
+        for (const assigneeId of requestedAssigneeIds) {
+          await ctx.scheduler.runAfter(0, internal.functions.notifications.senders.notifyFollowupAssigned, {
+            assigneeId,
+            groupId: args.groupId,
+            groupMemberId: args.groupMemberId,
+          });
+        }
       }
       return { applied: Object.keys(safePatch).length > 0 };
     }
@@ -3008,7 +3003,7 @@ export const setAssignee = mutation({
       await validateAssigneeIdsForGroup(ctx, args.groupId, assigneeIds);
     }
     await ctx.db.patch(scoreDoc._id, {
-      assigneeId: assigneeIds[0],
+      assigneeId: assigneeIds.length > 0 ? assigneeIds[0] : undefined,
       assigneeIds: assigneeIds.length > 0 ? assigneeIds : undefined,
       updatedAt: Date.now(),
     });

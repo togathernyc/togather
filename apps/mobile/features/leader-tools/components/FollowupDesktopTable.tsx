@@ -603,7 +603,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
   const setStatusMut = useAuthenticatedMutation(api.functions.memberFollowups.setStatus);
   // Custom field mutation
   const setCustomFieldMut = useAuthenticatedMutation(api.functions.memberFollowups.setCustomField);
-  const assigneeMutationQueueRef = useRef<Record<string, Promise<void>>>({});
+  const assigneeMutationQueueRef = useRef<Record<string, Promise<unknown>>>({});
 
   // Bulk remove mutations
   const removeGroupMember = useAuthenticatedMutation(api.functions.groupMembers.remove);
@@ -748,8 +748,16 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
       await enqueueAssigneeUpdate(memberId, normalizedAssigneeIds);
     } catch (err) {
       console.error("[setAssignee] failed:", err);
-      // Revert optimistic update on failure
+      // Revert optimistic update on failure, but only if the current state matches what we set.
+      // This prevents reverting a newer state set by a subsequent call.
       setOptimistic((prev) => {
+        const currentIds = prev[memberId]?.assigneeIds;
+        const isSameState = currentIds &&
+          currentIds.length === normalizedAssigneeIds.length &&
+          currentIds.every((id, i) => id === normalizedAssigneeIds[i]);
+        if (!isSameState) {
+          return prev;
+        }
         const next = { ...prev };
         if (next[memberId]) {
           delete next[memberId].assigneeIds;
