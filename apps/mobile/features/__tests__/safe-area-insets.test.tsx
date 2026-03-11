@@ -193,6 +193,11 @@ jest.mock('@services/api/convex', () => ({
       meetings: {
         list: 'api.functions.meetings.list',
       },
+      tasks: {
+        index: {
+          hasLeaderAccess: 'api.functions.tasks.index.hasLeaderAccess',
+        },
+      },
     },
   },
   useAuthenticatedQuery: jest.fn(() => []),
