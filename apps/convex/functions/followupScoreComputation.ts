@@ -117,11 +117,17 @@ export const getMembersForScoring = internalQuery({
 /**
  * Upsert a batch of score docs into memberFollowupScores.
  * Uses the by_groupMember index for fast lookup.
+ *
+ * Optional initialStatus/initialAssigneeId are applied when INSERTING a new doc,
+ * ensuring these values are set atomically during quick-add (avoids race condition
+ * with the separate applyQuickAddFollowupPatch mutation).
  */
 export const internalUpsertScoreBatch = internalMutation({
   args: {
     groupId: v.id("groups"),
     scores: v.array(v.any()),
+    initialStatus: v.optional(v.string()),
+    initialAssigneeId: v.optional(v.id("users")),
   },
   handler: async (ctx, args) => {
     for (const score of args.scores) {
@@ -176,7 +182,13 @@ export const internalUpsertScoreBatch = internalMutation({
       if (existing) {
         await ctx.db.patch(existing._id, doc);
       } else {
-        await ctx.db.insert("memberFollowupScores", doc);
+        // When creating a new doc, include initial status/assignee if provided
+        const insertDoc = {
+          ...doc,
+          ...(args.initialStatus !== undefined && { status: args.initialStatus }),
+          ...(args.initialAssigneeId !== undefined && { assigneeId: args.initialAssigneeId }),
+        };
+        await ctx.db.insert("memberFollowupScores", insertDoc);
       }
     }
   },
@@ -198,6 +210,36 @@ export const deleteScoreDoc = internalMutation({
     if (existing) {
       await ctx.db.delete(existing._id);
     }
+  },
+});
+
+/**
+ * Delete denormalized score docs that no longer map to an active group member.
+ * This prevents stale rows from surviving after community/group membership cleanup.
+ */
+export const pruneStaleScoreDocsForGroup = internalMutation({
+  args: { groupId: v.id("groups") },
+  handler: async (ctx, args) => {
+    const docs = await ctx.db
+      .query("memberFollowupScores")
+      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+      .collect();
+
+    let deleted = 0;
+    for (const doc of docs) {
+      const groupMember = await ctx.db.get(doc.groupMemberId);
+      const isStale =
+        !groupMember ||
+        groupMember.groupId !== args.groupId ||
+        groupMember.leftAt !== undefined;
+
+      if (isStale) {
+        await ctx.db.delete(doc._id);
+        deleted++;
+      }
+    }
+
+    return { deleted };
   },
 });
 
@@ -406,6 +448,12 @@ export const computeGroupScores = internalAction({
         cursor = page.continueCursor;
       }
 
+      // Step 6: prune stale denormalized rows for deleted/left members.
+      await ctx.runMutation(
+        internal.functions.followupScoreComputation.pruneStaleScoreDocsForGroup,
+        { groupId: args.groupId }
+      );
+
       await ctx.runMutation(
         internal.functions.followupScoreComputation.setFollowupRefreshCompleted,
         { groupId: args.groupId, runId }
@@ -427,11 +475,16 @@ export const computeGroupScores = internalAction({
 /**
  * Recompute score for a single member.
  * Called after followup add, snooze change, etc.
+ *
+ * Optional status/assigneeId are passed through to the upsert so they're
+ * set atomically when creating a new score doc (avoids race with patch).
  */
 export const computeSingleMemberScore = internalAction({
   args: {
     groupId: v.id("groups"),
     groupMemberId: v.id("groupMembers"),
+    status: v.optional(v.string()),
+    assigneeId: v.optional(v.id("users")),
   },
   handler: async (ctx, args) => {
     // Get group config
@@ -487,7 +540,12 @@ export const computeSingleMemberScore = internalAction({
 
     await ctx.runMutation(
       internal.functions.followupScoreComputation.internalUpsertScoreBatch,
-      { groupId: args.groupId, scores: [scoreDoc] }
+      {
+        groupId: args.groupId,
+        scores: [scoreDoc],
+        initialStatus: args.status,
+        initialAssigneeId: args.assigneeId,
+      }
     );
   },
 });

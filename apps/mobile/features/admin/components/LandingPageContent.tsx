@@ -40,11 +40,13 @@ const FIELD_TYPES = [
   { value: "boolean", label: "Checkbox" },
   { value: "dropdown", label: "Dropdown" },
   { value: "multiselect", label: "Multi-Select" },
+  { value: "button", label: "Button" },
   { value: "section_header", label: "Section Header" },
   { value: "subtitle", label: "Subtitle" },
 ];
 
-const DECORATIVE_TYPES = new Set(["section_header", "subtitle"]);
+const DECORATIVE_TYPES = new Set(["section_header", "subtitle", "button"]);
+const HTTP_URL_REGEX = /^https?:\/\/\S+$/i;
 
 const OPERATORS = [
   { value: "equals", label: "Equals" },
@@ -69,9 +71,11 @@ type FormField = {
   type: string;
   placeholder?: string;
   options?: string[];
+  buttonUrl?: string;
   required: boolean;
   order: number;
   includeInNotes?: boolean;
+  showOnLanding?: boolean;
 };
 
 type AutomationRule = {
@@ -132,7 +136,11 @@ export function LandingPageContent() {
       setRequireBirthday(config.requireBirthday ?? false);
 
       // Merge landing page fields with follow-up custom fields (two-way sync)
-      const landingFields: FormField[] = config.formFields || [];
+      const landingFields: FormField[] = (config.formFields || []).map((f: any) => ({
+        ...f,
+        includeInNotes: f.includeInNotes ?? true,
+        showOnLanding: f.showOnLanding ?? true,
+      }));
       const landingSlotsSet = new Set(
         landingFields.map((f) => f.slot).filter(Boolean)
       );
@@ -150,6 +158,7 @@ export function LandingPageContent() {
           required: false,
           order: landingFields.length + i,
           includeInNotes: true,
+          showOnLanding: true,
         }));
 
       // Normalize orders on load to fix gaps/duplicates from previous edits
@@ -453,7 +462,13 @@ export function LandingPageContent() {
                     <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                       {isDecorative && (
                         <Ionicons
-                          name={field.type === "section_header" ? "remove-outline" : "information-circle-outline"}
+                          name={
+                            field.type === "section_header"
+                              ? "remove-outline"
+                              : field.type === "button"
+                                ? "link-outline"
+                                : "information-circle-outline"
+                          }
                           size={16}
                           color="#999"
                         />
@@ -469,12 +484,33 @@ export function LandingPageContent() {
                     <Text style={styles.listItemSubtitle}>
                       {field.type === "section_header" ? "section header" :
                        field.type === "subtitle" ? "subtitle" :
+                       field.type === "button" ? "button" :
                        field.type === "multiselect" ? "multi-select" :
                        field.type}
                       {!isDecorative && (field.slot ? ` · ${field.slot}` : " · notes only")}
                       {!isDecorative && field.required ? " · required" : ""}
+                      {field.showOnLanding === false ? " · hidden on form" : ""}
                     </Text>
                   </View>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setFormFields((prev) =>
+                        prev.map((f, i) =>
+                          i === originalIndex
+                            ? { ...f, showOnLanding: f.showOnLanding === false ? true : false }
+                            : f
+                        )
+                      );
+                      markDirty();
+                    }}
+                    style={styles.iconButton}
+                  >
+                    <Ionicons
+                      name={field.showOnLanding === false ? "eye-off-outline" : "eye-outline"}
+                      size={18}
+                      color={field.showOnLanding === false ? "#999" : "#2563EB"}
+                    />
+                  </TouchableOpacity>
                   <TouchableOpacity
                     onPress={() => {
                       setEditingFieldIndex(originalIndex);
@@ -665,6 +701,7 @@ function FieldEditorModal({
   const [required, setRequired] = useState(false);
   const [options, setOptions] = useState("");
   const [placeholder, setPlaceholder] = useState("");
+  const [buttonUrl, setButtonUrl] = useState("");
 
   useEffect(() => {
     if (visible) {
@@ -674,6 +711,7 @@ function FieldEditorModal({
       setRequired(field?.required || false);
       setOptions(field?.options?.join(", ") || "");
       setPlaceholder(field?.placeholder || "");
+      setButtonUrl(field?.buttonUrl || "");
     }
   }, [visible, field]);
 
@@ -686,11 +724,24 @@ function FieldEditorModal({
     }
 
     if (isDecorative) {
+      if (type === "button") {
+        const trimmedUrl = buttonUrl.trim();
+        if (!trimmedUrl) {
+          Alert.alert("Error", "Button link is required");
+          return;
+        }
+        if (!HTTP_URL_REGEX.test(trimmedUrl)) {
+          Alert.alert("Error", "Button link must start with http:// or https://");
+          return;
+        }
+      }
       onSave({
         label: label.trim(),
         type,
+        buttonUrl: type === "button" ? buttonUrl.trim() : undefined,
         required: false,
         order: field?.order ?? 0,
+        showOnLanding: field?.showOnLanding ?? true,
       });
       return;
     }
@@ -726,6 +777,7 @@ function FieldEditorModal({
       order: field?.order ?? 0,
       options: parsedOptions,
       includeInNotes: true,
+      showOnLanding: field?.showOnLanding ?? true,
     });
   };
 
@@ -768,6 +820,22 @@ function FieldEditorModal({
               </View>
             )}
 
+            {type === "button" && (
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>Button Link URL</Text>
+                <Text style={styles.fieldHint}>
+                  Full URL beginning with https://
+                </Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={buttonUrl}
+                  onChangeText={setButtonUrl}
+                  placeholder="https://example.com"
+                  autoCapitalize="none"
+                />
+              </View>
+            )}
+
             <View style={styles.field}>
               <Text style={styles.fieldLabel}>Type</Text>
               <View style={modalStyles.chipContainer}>
@@ -805,6 +873,12 @@ function FieldEditorModal({
                 ))}
               </View>
             </View>
+
+            {type === "subtitle" && (
+              <Text style={styles.fieldHint}>
+                Supports links using [label](https://url) or plain https:// URLs.
+              </Text>
+            )}
 
             {!isDecorative && (
               <View style={styles.field}>

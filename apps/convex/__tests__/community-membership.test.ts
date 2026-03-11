@@ -128,8 +128,8 @@ async function seedCommunityWithUsers(t: ReturnType<typeof convexTest>) {
   });
 
   // Add test user to announcement group
-  await t.run(async (ctx) => {
-    await ctx.db.insert("groupMembers", {
+  const testAnnouncementGroupMemberId = await t.run(async (ctx) => {
+    return await ctx.db.insert("groupMembers", {
       groupId: announcementGroupId,
       userId: testUserId,
       role: "member",
@@ -144,6 +144,7 @@ async function seedCommunityWithUsers(t: ReturnType<typeof convexTest>) {
     announcementGroupId,
     adminUserId,
     testUserId,
+    testAnnouncementGroupMemberId,
   };
 }
 
@@ -152,6 +153,75 @@ async function seedCommunityWithUsers(t: ReturnType<typeof convexTest>) {
 // ============================================================================
 
 describe("Community Member Removal", () => {
+  test("removing a user deletes followup entries and denormalized score rows", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, testUserId, adminUserId, announcementGroupId, testAnnouncementGroupMemberId } =
+      await seedCommunityWithUsers(t);
+
+    const timestamp = Date.now();
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("memberFollowups", {
+        groupMemberId: testAnnouncementGroupMemberId,
+        createdById: adminUserId,
+        type: "note",
+        content: "Should be removed with membership cleanup",
+        createdAt: timestamp,
+      });
+
+      await ctx.db.insert("memberFollowupScores", {
+        groupId: announcementGroupId,
+        groupMemberId: testAnnouncementGroupMemberId,
+        userId: testUserId,
+        firstName: "Zombie",
+        lastName: "Member",
+        score1: 10,
+        score2: 20,
+        alerts: [],
+        isSnoozed: false,
+        attendanceScore: 10,
+        connectionScore: 20,
+        followupScore: 15,
+        missedMeetings: 1,
+        consecutiveMissed: 1,
+        scoreIds: ["default_attendance", "default_connection"],
+        updatedAt: timestamp,
+        addedAt: timestamp,
+        searchText: "zombie member",
+      });
+    });
+
+    const { accessToken: adminToken } = await generateTokens(adminUserId);
+    await t.mutation(api.functions.communities.removeMember, {
+      token: adminToken,
+      communityId,
+      targetUserId: testUserId,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const [membershipAfter, followupsAfter, scoreAfter] = await t.run(async (ctx) => {
+      const membership = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q) =>
+          q.eq("groupId", announcementGroupId).eq("userId", testUserId)
+        )
+        .first();
+      const followups = await ctx.db
+        .query("memberFollowups")
+        .withIndex("by_groupMember", (q) => q.eq("groupMemberId", testAnnouncementGroupMemberId))
+        .collect();
+      const score = await ctx.db
+        .query("memberFollowupScores")
+        .withIndex("by_groupMember", (q) => q.eq("groupMemberId", testAnnouncementGroupMemberId))
+        .first();
+      return [membership, followups, score];
+    });
+
+    expect(membershipAfter).toBeNull();
+    expect(followupsAfter).toHaveLength(0);
+    expect(scoreAfter).toBeNull();
+  });
+
   test("removing a user should clear their activeCommunityId if it points to the removed community", async () => {
     /**
      * BUG REPRODUCTION:

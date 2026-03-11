@@ -91,6 +91,12 @@ async function seedGroupWithLeader(
                   type: "multiselect",
                   options: ["Music", "Sports", "Art", "Tech"],
                 },
+                {
+                  slot: "customText4",
+                  name: "Connection Point",
+                  type: "multiselect",
+                  options: ["Team", "Dinner Party", "Foundations", "Lobby", "Salvation"],
+                },
               ],
             },
           }
@@ -442,5 +448,273 @@ describe("follow-up CSV import", () => {
     });
 
     expect(preview.rows[0].actions.customFields).toBe("update");
+  });
+
+  test("preview parses added date/status/assignee and custom multiselect connection point", async () => {
+    const t = convexTest(schema, modules);
+    const { leaderId, communityId, groupId } = await seedGroupWithLeader(t);
+    const token = (await generateTokens(leaderId, communityId)).accessToken;
+
+    await t.run(async (ctx) => {
+      const timestamp = Date.now();
+      const rachelId = await ctx.db.insert("users", {
+        firstName: "Rachel",
+        lastName: "Leader",
+        phone: "+12025550170",
+        isActive: true,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      await ctx.db.insert("groupMembers", {
+        groupId,
+        userId: rachelId,
+        role: "leader",
+        joinedAt: timestamp,
+        notificationsEnabled: true,
+      });
+    });
+
+    const preview = await t.mutation(api.functions.memberFollowups.previewCsvImport, {
+      token,
+      groupId,
+      rows: [
+        {
+          rowNumber: 2,
+          firstName: "Jordan",
+          phone: "(202) 555-0155",
+          addedAt: "1/4/2026",
+          status: "Orange",
+          assignee: "Rachel",
+          customFieldValues: {
+            customText4: "Team, Dinner Party",
+          },
+        },
+        {
+          rowNumber: 3,
+          firstName: "Bad Data",
+          phone: "(202) 555-0156",
+          addedAt: "not-a-date",
+          status: "Blue",
+          assignee: "Unknown Person",
+          customFieldValues: {
+            customText4: "Unknown Source, Team",
+          },
+        },
+      ],
+    });
+
+    expect(preview.summary.readyRows).toBe(2);
+    expect(preview.rows[0].status).toBe("ready");
+    expect(preview.rows[0].reasons).not.toContain("invalid_added_at_ignored");
+    expect(preview.rows[1].reasons).toContain("invalid_added_at_ignored");
+    expect(preview.rows[1].reasons).toContain("invalid_status_ignored");
+    expect(preview.rows[1].reasons).toContain("unknown_assignee_ignored");
+    expect(preview.rows[1].reasons).toContain("invalid_custom_multiselect_option_ignored");
+  });
+
+  test("apply imports status, assignee, and custom multiselect connection point using added date", async () => {
+    const t = convexTest(schema, modules);
+    const { leaderId, communityId, groupId } = await seedGroupWithLeader(t);
+    const token = (await generateTokens(leaderId, communityId)).accessToken;
+
+    const setup = await t.run(async (ctx) => {
+      const timestamp = Date.now();
+      const mikeId = await ctx.db.insert("users", {
+        firstName: "Mike",
+        lastName: "Leader",
+        phone: "+12025550180",
+        isActive: true,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      await ctx.db.insert("groupMembers", {
+        groupId,
+        userId: mikeId,
+        role: "leader",
+        joinedAt: timestamp,
+        notificationsEnabled: true,
+      });
+
+      return { mikeId };
+    });
+
+    await t.mutation(api.functions.memberFollowups.applyCsvImport, {
+      token,
+      groupId,
+      rows: [
+        {
+          rowNumber: 2,
+          firstName: "Casey",
+          lastName: "Imported",
+          phone: "(202) 555-0188",
+          addedAt: "1/4/2026",
+          status: "Green",
+          assignee: "Mike",
+          customFieldValues: {
+            customText4: "Team, Dinner Party",
+          },
+          notes: "Reached out and connected",
+        },
+      ],
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const result = await t.run(async (ctx) => {
+      const importedUser = await ctx.db
+        .query("users")
+        .withIndex("by_phone", (q) => q.eq("phone", "+12025550188"))
+        .first();
+      if (!importedUser) return null;
+
+      const groupMember = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q) => q.eq("groupId", groupId).eq("userId", importedUser._id))
+        .first();
+      if (!groupMember) return null;
+
+      const scoreDoc = await ctx.db
+        .query("memberFollowupScores")
+        .withIndex("by_groupMember", (q) => q.eq("groupMemberId", groupMember._id))
+        .first();
+
+      return {
+        groupMember,
+        scoreDoc,
+      };
+    });
+
+    expect(result).not.toBeNull();
+    expect(result?.groupMember.joinedAt).toBe(new Date("1/4/2026").getTime());
+    expect(result?.scoreDoc?.status).toBe("green");
+    expect(result?.scoreDoc?.assigneeId).toBe(setup.mikeId);
+    expect(result?.scoreDoc?.customText4).toBe("Team; Dinner Party");
+  });
+  test("quick add creates user + memberships and sets follow-up fields", async () => {
+    const t = convexTest(schema, modules);
+    const { leaderId, communityId, groupId } = await seedGroupWithLeader(t);
+    const token = (await generateTokens(leaderId, communityId)).accessToken;
+
+    const result = await t.mutation(api.functions.memberFollowups.quickAddRow, {
+      token,
+      groupId,
+      firstName: "Quick",
+      lastName: "Add",
+      phone: "(202) 555-0700",
+      status: "green",
+      assigneeId: leaderId,
+      customFieldValues: {
+        customText1: "North",
+        customNum1: "3",
+        customBool1: "true",
+      },
+      notes: "Initial note",
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(result.createdUser).toBe(true);
+
+    const snapshot = await t.run(async (ctx) => {
+      const user = await ctx.db
+        .query("users")
+        .withIndex("by_phone", (q) => q.eq("phone", "+12025550700"))
+        .first();
+      const membership = user
+        ? await ctx.db
+          .query("groupMembers")
+          .withIndex("by_group_user", (q) => q.eq("groupId", groupId).eq("userId", user._id))
+          .first()
+        : null;
+      const score = membership
+        ? await ctx.db
+          .query("memberFollowupScores")
+          .withIndex("by_groupMember", (q) => q.eq("groupMemberId", membership._id))
+          .first()
+        : null;
+      const note = membership
+        ? await ctx.db
+          .query("memberFollowups")
+          .withIndex("by_groupMember_createdAt", (q) => q.eq("groupMemberId", membership._id))
+          .order("desc")
+          .first()
+        : null;
+      return { user, membership, score, note };
+    });
+
+    expect(snapshot.user?._id).toBeTruthy();
+    expect(snapshot.membership?._id).toBeTruthy();
+    expect(snapshot.score?.status).toBe("green");
+    expect(snapshot.score?.assigneeId).toBe(leaderId);
+    expect(snapshot.score?.customText1).toBe("North");
+    expect(snapshot.score?.customNum1).toBe(3);
+    expect(snapshot.score?.customBool1).toBe(true);
+    expect(snapshot.note?.content).toBe("Initial note");
+  });
+
+  test("quick add reuses existing user by phone (no duplicate users)", async () => {
+    const t = convexTest(schema, modules);
+    const { leaderId, communityId, groupId } = await seedGroupWithLeader(t);
+    const token = (await generateTokens(leaderId, communityId)).accessToken;
+
+    const existingUserId = await t.run(async (ctx) => {
+      const timestamp = Date.now();
+      return await ctx.db.insert("users", {
+        firstName: "Existing",
+        lastName: "Person",
+        phone: "+12025550777",
+        isActive: true,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+    });
+
+    const result = await t.mutation(api.functions.memberFollowups.quickAddRow, {
+      token,
+      groupId,
+      firstName: "Existing",
+      phone: "202-555-0777",
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(result.createdUser).toBe(false);
+    expect(result.userId).toBe(existingUserId);
+
+    const snapshot = await t.run(async (ctx) => {
+      const usersWithPhone = await ctx.db
+        .query("users")
+        .withIndex("by_phone", (q) => q.eq("phone", "+12025550777"))
+        .collect();
+      const membership = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q) => q.eq("groupId", groupId).eq("userId", existingUserId))
+        .first();
+      return { usersWithPhone, membership };
+    });
+
+    expect(snapshot.usersWithPhone).toHaveLength(1);
+    expect(snapshot.membership?._id).toBeTruthy();
+  });
+
+  test("quick add enforces required first name + phone", async () => {
+    const t = convexTest(schema, modules);
+    const { leaderId, communityId, groupId } = await seedGroupWithLeader(t);
+    const token = (await generateTokens(leaderId, communityId)).accessToken;
+
+    await expect(
+      t.mutation(api.functions.memberFollowups.quickAddRow, {
+        token,
+        groupId,
+        firstName: " ",
+        phone: " ",
+      })
+    ).rejects.toThrow("missing_phone");
+
+    await expect(
+      t.mutation(api.functions.memberFollowups.quickAddRow, {
+        token,
+        groupId,
+        firstName: "Person",
+        phone: "not-a-phone",
+      })
+    ).rejects.toThrow("invalid_phone");
   });
 });

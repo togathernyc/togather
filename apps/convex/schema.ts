@@ -1591,11 +1591,14 @@ export default defineSchema({
     formFields: v.array(v.object({
       slot: v.optional(v.string()),  // "customText1", "customBool3", etc. If null, field only appears in notes summary
       label: v.string(),
-      type: v.string(),              // "text" | "number" | "boolean" | "dropdown"
+      type: v.string(),              // "text" | "number" | "boolean" | "dropdown" | "multiselect" | "section_header" | "subtitle" | "button"
+      placeholder: v.optional(v.string()),
       options: v.optional(v.array(v.string())),
+      buttonUrl: v.optional(v.string()),
       required: v.boolean(),
       order: v.number(),
       includeInNotes: v.optional(v.boolean()),
+      showOnLanding: v.optional(v.boolean()),
     })),
     // Automation rules
     automationRules: v.array(v.object({

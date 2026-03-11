@@ -22,6 +22,7 @@ import { FollowupDetailContent } from "./FollowupDetailScreen";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { FollowupSettingsPanel } from "./FollowupSettingsPanel";
 import { FollowupCsvImportModal } from "./FollowupCsvImportModal";
+import { FollowupQuickAddPanel } from "./FollowupQuickAddPanel";
 import type { CustomFieldDef } from "./ColumnPickerModal";
 import { getScoreValue } from "./followupShared";
 import {
@@ -244,6 +245,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
 
   // Settings panel state
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
+  const [showQuickAddPanel, setShowQuickAddPanel] = useState(false);
   const [showCsvImportModal, setShowCsvImportModal] = useState(false);
 
   // Custom field dropdown state
@@ -274,6 +276,16 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
         { firstName: l.firstName ?? "", lastName: l.lastName ?? "", profilePhoto: l.profilePhoto },
       ])
     );
+  }, [leaders]);
+  const leaderOptions = useMemo(() => {
+    if (!leaders) return [] as Array<{ id: string; firstName: string; lastName: string }>;
+    return (leaders as any[])
+      .map((leader: any) => ({
+        id: leader.userId?.toString?.() ?? leader._id?.toString?.() ?? "",
+        firstName: leader.firstName ?? "",
+        lastName: leader.lastName ?? "",
+      }))
+      .filter((leader: any) => leader.id.length > 0);
   }, [leaders]);
 
   // Parse search query
@@ -676,6 +688,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
 
   const handleSettingsPress = () => {
     setShowSettingsPanel(true);
+    setShowQuickAddPanel(false);
     setSelectedMemberId(null);
   };
 
@@ -1256,10 +1269,22 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
           <Text style={s.headerSubtitle}>{groupData?.name || "Group"}</Text>
         </View>
         <TouchableOpacity
+          style={s.addButton}
+          onPress={() => {
+            setSelectedMemberId(null);
+            setShowSettingsPanel(false);
+            setShowQuickAddPanel(true);
+          }}
+        >
+          <Ionicons name="person-add-outline" size={16} color="#16A34A" />
+          <Text style={s.addButtonText}>Add Person</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
           style={s.importButton}
           onPress={() => {
             setSelectedMemberId(null);
             setShowSettingsPanel(false);
+            setShowQuickAddPanel(false);
             setShowCsvImportModal(true);
           }}
         >
@@ -1439,6 +1464,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
                         if (e.target?.closest?.("[data-checkbox]")) return;
                         if (e.target?.closest?.("[data-notes]")) return;
                         setShowSettingsPanel(false);
+                        setShowQuickAddPanel(false);
                         setSelectedMemberId(item.groupMemberId);
                         setScrollToNotes(false);
                       }}
@@ -1491,6 +1517,24 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
               <FollowupSettingsPanel
                 groupId={groupId}
                 onClose={() => setShowSettingsPanel(false)}
+              />
+            </View>
+          </>
+        ) : showQuickAddPanel ? (
+          <>
+            <View style={s.divider} />
+            <View style={s.sideSheet}>
+              <FollowupQuickAddPanel
+                groupId={groupId}
+                customFields={customFields}
+                leaderOptions={leaderOptions}
+                primaryColor={primaryColor}
+                onCancel={() => setShowQuickAddPanel(false)}
+                onCreated={({ groupMemberId }) => {
+                  setShowQuickAddPanel(false);
+                  setSelectedMemberId(groupMemberId);
+                  setScrollToNotes(false);
+                }}
               />
             </View>
           </>
@@ -1805,6 +1849,23 @@ const s = StyleSheet.create({
     fontSize: 12,
     fontWeight: "600" as const,
     color: "#2563EB",
+  },
+  addButton: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 4,
+    borderWidth: 1,
+    borderColor: "#BBF7D0",
+    backgroundColor: "#F0FDF4",
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    marginRight: 8,
+  },
+  addButtonText: {
+    fontSize: 12,
+    fontWeight: "600" as const,
+    color: "#16A34A",
   },
 
   // Search bar

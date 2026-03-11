@@ -1,11 +1,14 @@
 export type CsvImportField =
+  | "addedAt"
   | "firstName"
   | "lastName"
   | "phone"
   | "email"
   | "zipCode"
   | "dateOfBirth"
-  | "notes";
+  | "notes"
+  | "assignee"
+  | "status";
 
 export type CsvImportMapping = Record<CsvImportField, string | null>;
 
@@ -20,6 +23,7 @@ export type CsvImportCustomFieldDef = {
 
 export type CsvImportRowPayload = {
   rowNumber: number;
+  addedAt?: string;
   firstName?: string;
   lastName?: string;
   phone?: string;
@@ -27,10 +31,21 @@ export type CsvImportRowPayload = {
   zipCode?: string;
   dateOfBirth?: string;
   notes?: string;
+  assignee?: string;
+  status?: string;
   customFieldValues?: Record<string, string>;
 };
 
 const FIELD_ALIASES: Record<CsvImportField, string[]> = {
+  addedAt: [
+    "date",
+    "date added",
+    "added at",
+    "created at",
+    "import date",
+    "followup date",
+    "follow-up date",
+  ],
   firstName: ["first name", "firstname", "first", "given name", "given_name"],
   lastName: ["last name", "lastname", "last", "surname", "family name", "family_name"],
   phone: ["phone", "phone number", "phone_number", "mobile", "mobile phone", "cell", "cell phone"],
@@ -38,6 +53,8 @@ const FIELD_ALIASES: Record<CsvImportField, string[]> = {
   zipCode: ["zip", "zip code", "zipcode", "postal code", "postal_code"],
   dateOfBirth: ["date of birth", "dob", "birthday", "birth date", "birth_date"],
   notes: ["notes", "note", "comment", "comments"],
+  assignee: ["assignee", "owner", "assigned to", "follow-up owner", "followup owner"],
+  status: ["status", "follow-up status", "followup status"],
 };
 
 function normalizeHeader(header: string): string {
@@ -49,6 +66,7 @@ function normalizeHeader(header: string): string {
 }
 
 const STANDARD_FIELDS: CsvImportField[] = [
+  "addedAt",
   "firstName",
   "lastName",
   "phone",
@@ -56,6 +74,8 @@ const STANDARD_FIELDS: CsvImportField[] = [
   "zipCode",
   "dateOfBirth",
   "notes",
+  "assignee",
+  "status",
 ];
 
 export function getDefaultCsvImportMapping(headers: string[]): CsvImportMapping {
@@ -65,6 +85,7 @@ export function getDefaultCsvImportMapping(headers: string[]): CsvImportMapping 
   }));
 
   const mapping: CsvImportMapping = {
+    addedAt: null,
     firstName: null,
     lastName: null,
     phone: null,
@@ -72,6 +93,8 @@ export function getDefaultCsvImportMapping(headers: string[]): CsvImportMapping 
     zipCode: null,
     dateOfBirth: null,
     notes: null,
+    assignee: null,
+    status: null,
   };
 
   const usedHeaders = new Set<string>();

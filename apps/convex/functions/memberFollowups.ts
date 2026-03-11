@@ -1203,6 +1203,7 @@ export const history = query({
 
 const csvImportRowValidator = v.object({
   rowNumber: v.number(),
+  addedAt: v.optional(v.string()),
   firstName: v.optional(v.string()),
   lastName: v.optional(v.string()),
   phone: v.optional(v.string()),
@@ -1210,14 +1211,186 @@ const csvImportRowValidator = v.object({
   zipCode: v.optional(v.string()),
   dateOfBirth: v.optional(v.string()),
   notes: v.optional(v.string()),
+  assignee: v.optional(v.string()),
+  status: v.optional(v.string()),
   customFieldValues: v.optional(v.record(v.string(), v.string())),
+});
+
+/**
+ * Validator for serialized batch rows passed to the scheduler.
+ * These are pre-analyzed rows with parsed values ready for processing.
+ */
+const csvImportBatchRowValidator = v.object({
+  rowNumber: v.number(),
+  firstName: v.optional(v.string()),
+  lastName: v.optional(v.string()),
+  phone: v.optional(v.string()),
+  email: v.optional(v.string()),
+  zipCode: v.optional(v.string()),
+  dateOfBirth: v.optional(v.string()),
+  notes: v.optional(v.string()),
+  normalizedPhone: v.string(),
+  parsedAddedAt: v.optional(v.number()),
+  parsedDateOfBirth: v.optional(v.number()),
+  parsedStatus: v.optional(v.string()),
+  parsedAssigneeId: v.optional(v.id("users")),
+  parsedCustomFieldValues: v.record(v.string(), v.union(v.string(), v.number(), v.boolean())),
 });
 
 const CSV_IMPORT_NOTE_TAG = "[csv import]";
 const MAX_CSV_IMPORT_ROWS = 500;
+const CSV_IMPORT_BATCH_SIZE = 25;
+
+/**
+ * Shared helper that creates or updates a user and ensures they have
+ * active community and group memberships. Used by both CSV import and quick-add.
+ */
+async function ensureUserAndMembership(
+  ctx: any,
+  prepared: PreparedCsvImportRow,
+  group: Doc<"groups">,
+  timestamp: number
+): Promise<{
+  userId: Id<"users">;
+  groupMemberId: Id<"groupMembers">;
+  createdUser: boolean;
+}> {
+  const memberTimestamp = prepared.parsedAddedAt ?? timestamp;
+  const normalizedEmail = prepared.row.email?.toLowerCase();
+
+  let userId: Id<"users">;
+  let createdUser = false;
+  if (prepared.existingUser) {
+    userId = prepared.existingUser._id;
+    const { updates } = getUserProfileUpdates(prepared.existingUser, prepared.row, prepared.parsedDateOfBirth);
+    if (Object.keys(updates).length > 0) {
+      await ctx.db.patch(userId, updates);
+    }
+  } else {
+    createdUser = true;
+    userId = await ctx.db.insert("users", {
+      firstName: prepared.row.firstName,
+      lastName: prepared.row.lastName,
+      phone: prepared.normalizedPhone,
+      phoneVerified: false,
+      email: normalizedEmail,
+      zipCode: prepared.row.zipCode,
+      dateOfBirth: prepared.parsedDateOfBirth,
+      searchText: buildSearchText({
+        firstName: prepared.row.firstName,
+        lastName: prepared.row.lastName,
+        email: normalizedEmail,
+        phone: prepared.normalizedPhone,
+      }),
+      isActive: true,
+      isStaff: false,
+      isSuperuser: false,
+      dateJoined: memberTimestamp,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+  }
+
+  const existingCommunityMembership = await ctx.db
+    .query("userCommunities")
+    .withIndex("by_user_community", (q: any) =>
+      q.eq("userId", userId).eq("communityId", group.communityId)
+    )
+    .first();
+
+  if (!existingCommunityMembership) {
+    await ctx.db.insert("userCommunities", {
+      userId,
+      communityId: group.communityId,
+      roles: 1,
+      status: 1,
+      createdAt: memberTimestamp,
+      updatedAt: timestamp,
+    });
+  } else if (existingCommunityMembership.status !== 1) {
+    await ctx.db.patch(existingCommunityMembership._id, {
+      status: 1,
+      updatedAt: timestamp,
+    });
+  }
+
+  const existingGroupMembership = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_group_user", (q: any) =>
+      q.eq("groupId", group._id).eq("userId", userId)
+    )
+    .first();
+
+  let groupMemberId: Id<"groupMembers">;
+  let needsChannelSync = false;
+  if (!existingGroupMembership) {
+    groupMemberId = await ctx.db.insert("groupMembers", {
+      groupId: group._id,
+      userId,
+      role: "member",
+      joinedAt: memberTimestamp,
+      notificationsEnabled: true,
+    });
+    needsChannelSync = true;
+  } else if (existingGroupMembership.leftAt) {
+    await ctx.db.patch(existingGroupMembership._id, {
+      leftAt: undefined,
+      role: "member",
+      joinedAt: memberTimestamp,
+      notificationsEnabled: true,
+    });
+    groupMemberId = existingGroupMembership._id;
+    needsChannelSync = true;
+  } else {
+    groupMemberId = existingGroupMembership._id;
+  }
+
+  if (needsChannelSync) {
+    await syncUserChannelMembershipsLogic(ctx, userId, group._id);
+  }
+
+  return { userId, groupMemberId, createdUser };
+}
+
+/**
+ * Apply custom field values to the member's score document, with a scheduler
+ * fallback if the score document doesn't exist yet.
+ */
+async function applyCustomFieldValues(
+  ctx: any,
+  groupMemberId: Id<"groupMembers">,
+  customFieldValues: Record<string, string | number | boolean>,
+  timestamp: number
+): Promise<void> {
+  if (Object.keys(customFieldValues).length === 0) {
+    return;
+  }
+
+  const scoreDoc = await ctx.db
+    .query("memberFollowupScores")
+    .withIndex("by_groupMember", (q: any) => q.eq("groupMemberId", groupMemberId))
+    .first();
+
+  if (scoreDoc) {
+    await ctx.db.patch(scoreDoc._id, {
+      ...customFieldValues,
+      updatedAt: timestamp,
+    });
+  } else {
+    await ctx.scheduler.runAfter(
+      1000,
+      internal.functions.memberFollowups.applyCsvImportScorePatch,
+      {
+        groupMemberId,
+        customFieldValues,
+      }
+    );
+  }
+}
 
 type CsvImportRow = {
   rowNumber: number;
+  addedAt?: string;
   firstName?: string;
   lastName?: string;
   phone?: string;
@@ -1225,6 +1398,8 @@ type CsvImportRow = {
   zipCode?: string;
   dateOfBirth?: string;
   notes?: string;
+  assignee?: string;
+  status?: string;
   customFieldValues?: Record<string, string>;
 };
 
@@ -1249,7 +1424,10 @@ type CsvImportRowReport = {
 type PreparedCsvImportRow = {
   row: CsvImportRow;
   normalizedPhone: string;
+  parsedAddedAt?: number;
   parsedDateOfBirth?: number;
+  parsedStatus?: "green" | "orange" | "red";
+  parsedAssigneeId?: Id<"users">;
   parsedCustomFieldValues: Record<string, string | number | boolean>;
   existingUser: Doc<"users"> | null;
   rowReport: CsvImportRowReport;
@@ -1281,6 +1459,7 @@ function getNormalizedRow(row: CsvImportRow): CsvImportRow {
 
   return {
     rowNumber: row.rowNumber,
+    addedAt: sanitizeCsvValue(row.addedAt),
     firstName: sanitizeCsvValue(row.firstName),
     lastName: sanitizeCsvValue(row.lastName),
     phone: sanitizeCsvValue(row.phone),
@@ -1288,6 +1467,8 @@ function getNormalizedRow(row: CsvImportRow): CsvImportRow {
     zipCode: sanitizeCsvValue(row.zipCode),
     dateOfBirth: sanitizeCsvValue(row.dateOfBirth),
     notes: sanitizeCsvValue(row.notes),
+    assignee: sanitizeCsvValue(row.assignee),
+    status: sanitizeCsvValue(row.status),
     customFieldValues: Object.keys(normalizedCustomValues).length > 0
       ? normalizedCustomValues
       : undefined,
@@ -1299,6 +1480,156 @@ function parseCsvBoolean(value: string): boolean | undefined {
   if (["true", "1", "yes", "y"].includes(normalized)) return true;
   if (["false", "0", "no", "n"].includes(normalized)) return false;
   return undefined;
+}
+
+function parseCsvStatus(value: string): "green" | "orange" | "red" | undefined {
+  const normalized = value.trim().toLowerCase();
+  if (["green", "g"].includes(normalized)) return "green";
+  if (["orange", "amber", "yellow", "o", "y"].includes(normalized)) return "orange";
+  if (["red", "r"].includes(normalized)) return "red";
+  return undefined;
+}
+
+function normalizeAssigneeName(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+type CsvAssigneeLookup = {
+  byFullName: Map<string, Id<"users">>;
+  byFirstName: Map<string, Id<"users">[]>;
+  byLastName: Map<string, Id<"users">[]>;
+};
+
+function appendAssigneeLookupIndex(
+  index: Map<string, Id<"users">[]>,
+  key: string,
+  userId: Id<"users">
+) {
+  if (!key) return;
+  const existing = index.get(key) ?? [];
+  if (!existing.includes(userId)) {
+    existing.push(userId);
+    index.set(key, existing);
+  }
+}
+
+async function buildCsvAssigneeLookup(
+  ctx: any,
+  groupId: Id<"groups">
+): Promise<CsvAssigneeLookup> {
+  const leaderMemberships = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_group", (q: any) => q.eq("groupId", groupId))
+    .filter((q: any) =>
+      q.and(
+        q.eq(q.field("leftAt"), undefined),
+        q.or(q.eq(q.field("role"), "leader"), q.eq(q.field("role"), "admin"))
+      )
+    )
+    .take(100);
+
+  const userIds = Array.from(new Set(leaderMemberships.map((m: Doc<"groupMembers">) => m.userId)));
+  const users = await Promise.all(userIds.map((id) => ctx.db.get(id)));
+
+  const byFullName = new Map<string, Id<"users">>();
+  const byFirstName = new Map<string, Id<"users">[]>();
+  const byLastName = new Map<string, Id<"users">[]>();
+
+  for (const user of users) {
+    if (!user) continue;
+    const first = normalizeAssigneeName(user.firstName ?? "");
+    const last = normalizeAssigneeName(user.lastName ?? "");
+    const full = normalizeAssigneeName(`${user.firstName ?? ""} ${user.lastName ?? ""}`);
+
+    if (full) {
+      byFullName.set(full, user._id);
+    }
+    appendAssigneeLookupIndex(byFirstName, first, user._id);
+    appendAssigneeLookupIndex(byLastName, last, user._id);
+  }
+
+  return {
+    byFullName,
+    byFirstName,
+    byLastName,
+  };
+}
+
+function resolveCsvAssignee(
+  assignee: string | undefined,
+  lookup: CsvAssigneeLookup
+): {
+  assigneeId?: Id<"users">;
+  reason?: string;
+} {
+  if (!assignee) return {};
+
+  const tokens = Array.from(
+    new Set(
+      [
+        assignee,
+        ...assignee
+          .split(/[,;]+|&|\/|\band\b/gi)
+          .map((token) => token.trim())
+          .filter(Boolean),
+      ]
+        .map(normalizeAssigneeName)
+        .filter(Boolean)
+    )
+  );
+
+  const matchedIds: Id<"users">[] = [];
+  let sawAmbiguous = false;
+
+  for (const token of tokens) {
+    const fullMatch = lookup.byFullName.get(token);
+    if (fullMatch) {
+      matchedIds.push(fullMatch);
+      continue;
+    }
+
+    const firstMatches = lookup.byFirstName.get(token) ?? [];
+    if (firstMatches.length === 1) {
+      matchedIds.push(firstMatches[0]);
+      continue;
+    }
+    if (firstMatches.length > 1) {
+      sawAmbiguous = true;
+      continue;
+    }
+
+    const lastMatches = lookup.byLastName.get(token) ?? [];
+    if (lastMatches.length === 1) {
+      matchedIds.push(lastMatches[0]);
+      continue;
+    }
+    if (lastMatches.length > 1) {
+      sawAmbiguous = true;
+    }
+  }
+
+  const uniqueMatches = Array.from(new Set(matchedIds));
+  if (uniqueMatches.length === 0) {
+    return {
+      reason: sawAmbiguous ? "ambiguous_assignee_ignored" : "unknown_assignee_ignored",
+    };
+  }
+
+  if (uniqueMatches.length > 1) {
+    return {
+      assigneeId: uniqueMatches[0],
+      reason: "multiple_assignees_first_used",
+    };
+  }
+
+  return { assigneeId: uniqueMatches[0] };
 }
 
 function parseCsvCustomFieldValues(
@@ -1367,7 +1698,8 @@ function parseCsvCustomFieldValues(
         parsedValues[slot] = value;
         continue;
       }
-      const parts = value.split(";").map((p) => p.trim()).filter(Boolean);
+      const delimiter = value.includes(";") ? /;+/ : /,+/;
+      const parts = value.split(delimiter).map((p) => p.trim()).filter(Boolean);
       const validParts: string[] = [];
       for (const part of parts) {
         const matchedOption = options.find(
@@ -1488,7 +1820,7 @@ async function getExistingCsvImportNote(
       (f: Doc<"memberFollowups">) =>
         f.type === "note" &&
         typeof f.content === "string" &&
-        f.content.startsWith(CSV_IMPORT_NOTE_TAG)
+        f.content.includes(CSV_IMPORT_NOTE_TAG)
     ) ?? null
   );
 }
@@ -1506,6 +1838,7 @@ async function analyzeCsvImportRows(
     type: string;
     options?: string[];
   }>;
+  const assigneeLookup = await buildCsvAssigneeLookup(ctx, group._id);
   const customFieldDefsBySlot = new Map(
     customFieldDefs.map((field) => [
       field.slot,
@@ -1533,6 +1866,31 @@ async function analyzeCsvImportRows(
       }
     }
 
+    let parsedAddedAt: number | undefined;
+    if (row.addedAt) {
+      try {
+        parsedAddedAt = parseDateOptional(row.addedAt, "addedAt");
+      } catch {
+        reasons.push("invalid_added_at_ignored");
+      }
+    }
+
+    let parsedStatus: "green" | "orange" | "red" | undefined;
+    if (row.status) {
+      parsedStatus = parseCsvStatus(row.status);
+      if (!parsedStatus) {
+        reasons.push("invalid_status_ignored");
+      }
+    }
+
+    const { assigneeId: parsedAssigneeId, reason: assigneeReason } = resolveCsvAssignee(
+      row.assignee,
+      assigneeLookup
+    );
+    if (assigneeReason) {
+      reasons.push(assigneeReason);
+    }
+
     const { parsedValues: parsedCustomFieldValues, reasons: customFieldReasons } =
       parseCsvCustomFieldValues(row, customFieldDefsBySlot);
     reasons.push(...customFieldReasons);
@@ -1545,7 +1903,10 @@ async function analyzeCsvImportRows(
       row,
       reasons,
       normalizedPhone,
+      parsedAddedAt,
       parsedDateOfBirth,
+      parsedStatus,
+      parsedAssigneeId,
       parsedCustomFieldValues,
     };
   });
@@ -1678,7 +2039,10 @@ async function analyzeCsvImportRows(
     preparedRows.push({
       row: item.row,
       normalizedPhone: item.normalizedPhone,
+      parsedAddedAt: item.parsedAddedAt,
       parsedDateOfBirth: item.parsedDateOfBirth,
+      parsedStatus: item.parsedStatus,
+      parsedAssigneeId: item.parsedAssigneeId,
       parsedCustomFieldValues: item.parsedCustomFieldValues,
       existingUser,
       rowReport: report,
@@ -1710,17 +2074,27 @@ function buildCsvImportSummary(rowReports: CsvImportRowReport[]) {
   return summary;
 }
 
-export const applyCsvImportCustomFieldPatch = internalMutation({
+export const applyCsvImportScorePatch = internalMutation({
   args: {
     groupMemberId: v.id("groupMembers"),
-    customFieldValues: v.record(v.string(), v.union(v.string(), v.number(), v.boolean())),
+    status: v.optional(v.string()),
+    assigneeId: v.optional(v.id("users")),
+    customFieldValues: v.optional(v.record(v.string(), v.union(v.string(), v.number(), v.boolean()))),
     retryCount: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const validPatch = Object.fromEntries(
-      Object.entries(args.customFieldValues).filter(([slot]) => VALID_CUSTOM_SLOTS.has(slot))
+    const validCustomPatch = Object.fromEntries(
+      Object.entries(args.customFieldValues ?? {}).filter(([slot]) => VALID_CUSTOM_SLOTS.has(slot))
     );
-    if (Object.keys(validPatch).length === 0) {
+    const metadataPatch: Record<string, string | Id<"users">> = {};
+    if (args.status) metadataPatch.status = args.status;
+    if (args.assigneeId) metadataPatch.assigneeId = args.assigneeId;
+
+    const fullPatch = {
+      ...metadataPatch,
+      ...validCustomPatch,
+    };
+    if (Object.keys(fullPatch).length === 0) {
       return { applied: false };
     }
 
@@ -1731,7 +2105,7 @@ export const applyCsvImportCustomFieldPatch = internalMutation({
 
     if (scoreDoc) {
       await ctx.db.patch(scoreDoc._id, {
-        ...validPatch,
+        ...fullPatch,
         updatedAt: now(),
       });
       return { applied: true };
@@ -1741,10 +2115,258 @@ export const applyCsvImportCustomFieldPatch = internalMutation({
     if (retryCount < 5) {
       await ctx.scheduler.runAfter(
         1000,
-        internal.functions.memberFollowups.applyCsvImportCustomFieldPatch,
+        internal.functions.memberFollowups.applyCsvImportScorePatch,
         {
           groupMemberId: args.groupMemberId,
-          customFieldValues: validPatch,
+          status: args.status,
+          assigneeId: args.assigneeId,
+          customFieldValues: validCustomPatch,
+          retryCount: retryCount + 1,
+        }
+      );
+    }
+    return { applied: false, retried: retryCount < 5 };
+  },
+});
+
+/**
+ * Internal mutation that processes a batch of pre-analyzed CSV import rows.
+ * Called via scheduler from applyCsvImport to stay under the 32K document read limit.
+ */
+export const applyCsvImportBatch = internalMutation({
+  args: {
+    groupId: v.id("groups"),
+    importedById: v.id("users"),
+    timestamp: v.number(),
+    batchRows: v.array(csvImportBatchRowValidator),
+  },
+  handler: async (ctx, args) => {
+    const group = await ctx.db.get(args.groupId);
+    if (!group) return;
+
+    for (const batchRow of args.batchRows) {
+      // Reconstruct the PreparedCsvImportRow from serialized data
+      const existingUser = await ctx.db
+        .query("users")
+        .withIndex("by_phone", (q: any) => q.eq("phone", batchRow.normalizedPhone))
+        .first();
+
+      const prepared: PreparedCsvImportRow = {
+        row: {
+          rowNumber: batchRow.rowNumber,
+          firstName: batchRow.firstName,
+          lastName: batchRow.lastName,
+          phone: batchRow.phone,
+          email: batchRow.email,
+          zipCode: batchRow.zipCode,
+          dateOfBirth: batchRow.dateOfBirth,
+          notes: batchRow.notes,
+        },
+        normalizedPhone: batchRow.normalizedPhone,
+        parsedAddedAt: batchRow.parsedAddedAt,
+        parsedDateOfBirth: batchRow.parsedDateOfBirth,
+        parsedStatus: batchRow.parsedStatus as PreparedCsvImportRow["parsedStatus"],
+        parsedAssigneeId: batchRow.parsedAssigneeId,
+        parsedCustomFieldValues: batchRow.parsedCustomFieldValues,
+        existingUser: existingUser ?? null,
+        rowReport: {
+          rowNumber: batchRow.rowNumber,
+          phone: batchRow.normalizedPhone,
+          status: "ready",
+          reasons: [],
+          actions: { user: "none", profileUpdates: [], community: "none", group: "none", followup: "none", notes: "none", customFields: "none" },
+        },
+      };
+
+      const { groupMemberId } = await ensureUserAndMembership(ctx, prepared, group, args.timestamp);
+
+      if (batchRow.notes) {
+        const existingCsvNote = await getExistingCsvImportNote(ctx, groupMemberId);
+        if (existingCsvNote) {
+          // Strip existing tag, append new note, re-add tag at bottom
+          const withoutTag = existingCsvNote.content?.replace(/\n?\[csv import\]$/m, "").trim() ?? "";
+          const nextContent = `${withoutTag}\n${batchRow.notes}\n${CSV_IMPORT_NOTE_TAG}`;
+          await ctx.db.patch(existingCsvNote._id, {
+            content: nextContent,
+            createdAt: args.timestamp,
+            createdById: args.importedById,
+          });
+        } else {
+          await ctx.db.insert("memberFollowups", {
+            groupMemberId,
+            createdById: args.importedById,
+            type: "note",
+            content: `${batchRow.notes}\n${CSV_IMPORT_NOTE_TAG}`,
+            createdAt: args.timestamp,
+          });
+        }
+      }
+
+      const scorePatch: Record<string, string | number | boolean | Id<"users">> = {
+        ...batchRow.parsedCustomFieldValues,
+      };
+      if (batchRow.parsedStatus) {
+        scorePatch.status = batchRow.parsedStatus;
+      }
+      if (batchRow.parsedAssigneeId) {
+        scorePatch.assigneeId = batchRow.parsedAssigneeId;
+      }
+
+      if (Object.keys(scorePatch).length > 0) {
+        const scoreDoc = await ctx.db
+          .query("memberFollowupScores")
+          .withIndex("by_groupMember", (q: any) => q.eq("groupMemberId", groupMemberId))
+          .first();
+
+        if (scoreDoc) {
+          await ctx.db.patch(scoreDoc._id, {
+            ...scorePatch,
+            updatedAt: args.timestamp,
+          });
+        } else {
+          await ctx.scheduler.runAfter(
+            1000,
+            internal.functions.memberFollowups.applyCsvImportScorePatch,
+            {
+              groupMemberId,
+              status: batchRow.parsedStatus,
+              assigneeId: batchRow.parsedAssigneeId,
+              customFieldValues: Object.keys(batchRow.parsedCustomFieldValues).length > 0
+                ? batchRow.parsedCustomFieldValues
+                : undefined,
+            }
+          );
+        }
+      }
+
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.followupScoreComputation.computeSingleMemberScore,
+        {
+          groupId: group._id,
+          groupMemberId,
+          status: batchRow.parsedStatus,
+          assigneeId: batchRow.parsedAssigneeId,
+        }
+      );
+    }
+  },
+});
+
+/**
+ * One-time backfill: reformat existing CSV import notes so the actual note
+ * text is on top and the [csv import] tag is at the bottom.
+ *
+ * Run via: npx convex run --prod functions/memberFollowups:backfillCsvImportNotes
+ */
+export const backfillCsvImportNotes = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const allNotes = await ctx.db
+      .query("memberFollowups")
+      .filter((q: any) => q.eq(q.field("type"), "note"))
+      .collect();
+
+    const csvNotes = allNotes.filter(
+      (n) => typeof n.content === "string" && n.content.includes(CSV_IMPORT_NOTE_TAG)
+    );
+
+    let updated = 0;
+    for (const note of csvNotes) {
+      const content = note.content as string;
+
+      // Already in new format (tag at end, not at start)
+      if (!content.startsWith(CSV_IMPORT_NOTE_TAG)) continue;
+
+      // Old format: "[csv import]\n2026-03-11T02:12:34.622Z - actual note text"
+      // New format: "actual note text\n[csv import]"
+      const lines = content.split("\n").filter((l) => l.trim().length > 0);
+
+      const noteLines: string[] = [];
+      for (const line of lines) {
+        if (line === CSV_IMPORT_NOTE_TAG) continue;
+        // Strip "2026-03-11T02:12:34.622Z - " prefix from note lines
+        const match = line.match(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s*-\s*(.+)$/);
+        if (match) {
+          noteLines.push(match[1]);
+        } else {
+          noteLines.push(line);
+        }
+      }
+
+      const newContent = `${noteLines.join("\n")}\n${CSV_IMPORT_NOTE_TAG}`;
+
+      await ctx.db.patch(note._id, { content: newContent });
+      updated++;
+    }
+
+    return { total: csvNotes.length, updated };
+  },
+});
+
+export const applyQuickAddFollowupPatch = internalMutation({
+  args: {
+    groupId: v.id("groups"),
+    groupMemberId: v.id("groupMembers"),
+    status: v.optional(v.string()),
+    assigneeId: v.optional(v.id("users")),
+    retryCount: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const patch: Record<string, unknown> = {};
+    if (args.status !== undefined) {
+      patch.status = args.status;
+    }
+    if (args.assigneeId !== undefined) {
+      patch.assigneeId = args.assigneeId;
+    }
+    if (Object.keys(patch).length === 0) {
+      return { applied: false };
+    }
+
+    const scoreDoc = await ctx.db
+      .query("memberFollowupScores")
+      .withIndex("by_groupMember", (q) => q.eq("groupMemberId", args.groupMemberId))
+      .first();
+
+    if (scoreDoc) {
+      // Only patch fields that haven't been modified by another user since quick-add.
+      // If current value is undefined, we set it. If it differs from what we want to set,
+      // another user changed it and we should not overwrite their change.
+      const safePatch: Record<string, unknown> = {};
+      if (args.status !== undefined && scoreDoc.status === undefined) {
+        safePatch.status = args.status;
+      }
+      if (args.assigneeId !== undefined && scoreDoc.assigneeId === undefined) {
+        safePatch.assigneeId = args.assigneeId;
+      }
+      if (Object.keys(safePatch).length > 0) {
+        await ctx.db.patch(scoreDoc._id, {
+          ...safePatch,
+          updatedAt: now(),
+        });
+      }
+      // Send notification if assigneeId was requested and is now set (either by us or atomically by computeSingleMemberScore)
+      if (args.assigneeId && (safePatch.assigneeId || scoreDoc.assigneeId === args.assigneeId)) {
+        await ctx.scheduler.runAfter(0, internal.functions.notifications.senders.notifyFollowupAssigned, {
+          assigneeId: args.assigneeId,
+          groupId: args.groupId,
+          groupMemberId: args.groupMemberId,
+        });
+      }
+      return { applied: Object.keys(safePatch).length > 0 };
+    }
+
+    const retryCount = args.retryCount ?? 0;
+    if (retryCount < 5) {
+      await ctx.scheduler.runAfter(
+        1000,
+        internal.functions.memberFollowups.applyQuickAddFollowupPatch,
+        {
+          groupId: args.groupId,
+          groupMemberId: args.groupMemberId,
+          status: args.status,
+          assigneeId: args.assigneeId,
           retryCount: retryCount + 1,
         }
       );
@@ -1795,156 +2417,155 @@ export const applyCsvImport = mutation({
     const { rowReports, preparedRows } = await analyzeCsvImportRows(ctx, group, args.rows);
     const timestamp = now();
 
-    for (const prepared of preparedRows) {
-      if (prepared.rowReport.status !== "ready") continue;
+    // Serialize ready rows for batch scheduling
+    const readyRows = preparedRows
+      .filter((p) => p.rowReport.status === "ready")
+      .map((p) => ({
+        rowNumber: p.row.rowNumber,
+        firstName: p.row.firstName,
+        lastName: p.row.lastName,
+        phone: p.row.phone,
+        email: p.row.email,
+        zipCode: p.row.zipCode,
+        dateOfBirth: p.row.dateOfBirth,
+        notes: p.row.notes,
+        normalizedPhone: p.normalizedPhone,
+        parsedAddedAt: p.parsedAddedAt,
+        parsedDateOfBirth: p.parsedDateOfBirth,
+        parsedStatus: p.parsedStatus,
+        parsedAssigneeId: p.parsedAssigneeId,
+        parsedCustomFieldValues: p.parsedCustomFieldValues,
+      }));
 
-      const row = prepared.row;
-      const normalizedEmail = row.email?.toLowerCase();
-
-      let userId: Id<"users">;
-      if (prepared.existingUser) {
-        userId = prepared.existingUser._id;
-        const { updates } = getUserProfileUpdates(prepared.existingUser, row, prepared.parsedDateOfBirth);
-        if (Object.keys(updates).length > 0) {
-          await ctx.db.patch(userId, updates);
-        }
-      } else {
-        userId = await ctx.db.insert("users", {
-          firstName: row.firstName,
-          lastName: row.lastName,
-          phone: prepared.normalizedPhone,
-          phoneVerified: false,
-          email: normalizedEmail,
-          zipCode: row.zipCode,
-          dateOfBirth: prepared.parsedDateOfBirth,
-          searchText: buildSearchText({
-            firstName: row.firstName,
-            lastName: row.lastName,
-            email: normalizedEmail,
-            phone: prepared.normalizedPhone,
-          }),
-          isActive: true,
-          isStaff: false,
-          isSuperuser: false,
-          dateJoined: timestamp,
-          createdAt: timestamp,
-          updatedAt: timestamp,
-        });
-      }
-
-      const existingCommunityMembership = await ctx.db
-        .query("userCommunities")
-        .withIndex("by_user_community", (q: any) =>
-          q.eq("userId", userId).eq("communityId", group.communityId)
-        )
-        .first();
-
-      if (!existingCommunityMembership) {
-        await ctx.db.insert("userCommunities", {
-          userId,
-          communityId: group.communityId,
-          roles: 1,
-          status: 1,
-          createdAt: timestamp,
-          updatedAt: timestamp,
-        });
-      } else if (existingCommunityMembership.status !== 1) {
-        await ctx.db.patch(existingCommunityMembership._id, {
-          status: 1,
-          updatedAt: timestamp,
-        });
-      }
-
-      const existingGroupMembership = await ctx.db
-        .query("groupMembers")
-        .withIndex("by_group_user", (q: any) =>
-          q.eq("groupId", group._id).eq("userId", userId)
-        )
-        .first();
-
-      let groupMemberId: Id<"groupMembers">;
-      let needsChannelSync = false;
-      if (!existingGroupMembership) {
-        groupMemberId = await ctx.db.insert("groupMembers", {
-          groupId: group._id,
-          userId,
-          role: "member",
-          joinedAt: timestamp,
-          notificationsEnabled: true,
-        });
-        needsChannelSync = true;
-      } else if (existingGroupMembership.leftAt) {
-        await ctx.db.patch(existingGroupMembership._id, {
-          leftAt: undefined,
-          role: "member",
-          joinedAt: timestamp,
-          notificationsEnabled: true,
-        });
-        groupMemberId = existingGroupMembership._id;
-        needsChannelSync = true;
-      } else {
-        groupMemberId = existingGroupMembership._id;
-      }
-
-      if (needsChannelSync) {
-        await syncUserChannelMembershipsLogic(ctx, userId, group._id);
-      }
-
-      if (row.notes) {
-        const noteLine = `${new Date(timestamp).toISOString()} - ${row.notes}`;
-        const existingCsvNote = await getExistingCsvImportNote(ctx, groupMemberId);
-        if (existingCsvNote) {
-          const previousContent = existingCsvNote.content ?? CSV_IMPORT_NOTE_TAG;
-          const nextContent = `${previousContent}\n${noteLine}`;
-          await ctx.db.patch(existingCsvNote._id, {
-            content: nextContent,
-            createdAt: timestamp,
-            createdById: importedById,
-          });
-        } else {
-          await ctx.db.insert("memberFollowups", {
-            groupMemberId,
-            createdById: importedById,
-            type: "note",
-            content: `${CSV_IMPORT_NOTE_TAG}\n${noteLine}`,
-            createdAt: timestamp,
-          });
-        }
-      }
-
-      if (Object.keys(prepared.parsedCustomFieldValues).length > 0) {
-        const scoreDoc = await ctx.db
-          .query("memberFollowupScores")
-          .withIndex("by_groupMember", (q: any) => q.eq("groupMemberId", groupMemberId))
-          .first();
-
-        if (scoreDoc) {
-          await ctx.db.patch(scoreDoc._id, {
-            ...prepared.parsedCustomFieldValues,
-            updatedAt: timestamp,
-          });
-        } else {
-          await ctx.scheduler.runAfter(
-            1000,
-            internal.functions.memberFollowups.applyCsvImportCustomFieldPatch,
-            {
-              groupMemberId,
-              customFieldValues: prepared.parsedCustomFieldValues,
-            }
-          );
-        }
-      }
-
+    // Schedule batches of rows for processing in separate transactions
+    for (let i = 0; i < readyRows.length; i += CSV_IMPORT_BATCH_SIZE) {
+      const batch = readyRows.slice(i, i + CSV_IMPORT_BATCH_SIZE);
       await ctx.scheduler.runAfter(
         0,
-        internal.functions.followupScoreComputation.computeSingleMemberScore,
-        { groupId: group._id, groupMemberId }
+        internal.functions.memberFollowups.applyCsvImportBatch,
+        {
+          groupId: group._id,
+          importedById,
+          timestamp,
+          batchRows: batch,
+        }
       );
     }
 
     return {
       summary: buildCsvImportSummary(rowReports),
       rows: rowReports,
+    };
+  },
+});
+
+export const quickAddRow = mutation({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+    firstName: v.string(),
+    phone: v.string(),
+    lastName: v.optional(v.string()),
+    email: v.optional(v.string()),
+    zipCode: v.optional(v.string()),
+    dateOfBirth: v.optional(v.string()),
+    notes: v.optional(v.string()),
+    status: v.optional(v.string()),
+    assigneeId: v.optional(v.id("users")),
+    customFieldValues: v.optional(v.record(v.string(), v.string())),
+  },
+  handler: async (ctx, args) => {
+    const normalizedStatus = args.status?.trim().toLowerCase();
+    if (
+      normalizedStatus !== undefined &&
+      normalizedStatus.length > 0 &&
+      normalizedStatus !== "green" &&
+      normalizedStatus !== "orange" &&
+      normalizedStatus !== "red"
+    ) {
+      throw new ConvexError("Status must be green, orange, or red");
+    }
+
+    const { group, userId: importedById } = await requireImportAccess(ctx, args.token, args.groupId);
+
+    if (args.assigneeId) {
+      const leaderMembership = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q: any) =>
+          q.eq("groupId", group._id).eq("userId", args.assigneeId)
+        )
+        .first();
+      if (!leaderMembership || leaderMembership.leftAt || (leaderMembership.role !== "leader" && leaderMembership.role !== "admin")) {
+        throw new ConvexError("Assignee must be an active group leader or admin");
+      }
+    }
+
+    const row: CsvImportRow = {
+      rowNumber: 2,
+      firstName: args.firstName,
+      lastName: args.lastName,
+      phone: args.phone,
+      email: args.email,
+      zipCode: args.zipCode,
+      dateOfBirth: args.dateOfBirth,
+      notes: args.notes,
+      customFieldValues: args.customFieldValues,
+    };
+
+    const { rowReports, preparedRows } = await analyzeCsvImportRows(ctx, group, [row]);
+    const report = rowReports[0];
+    const prepared = preparedRows[0];
+    if (!report || report.status !== "ready" || !prepared) {
+      const reason = report?.reasons?.join(", ") || "invalid_data";
+      throw new ConvexError(`Could not add member: ${reason}`);
+    }
+
+    const timestamp = now();
+
+    const { userId, groupMemberId, createdUser } = await ensureUserAndMembership(ctx, prepared, group, timestamp);
+
+    if (prepared.row.notes) {
+      await ctx.db.insert("memberFollowups", {
+        groupMemberId,
+        createdById: importedById,
+        type: "note",
+        content: prepared.row.notes,
+        createdAt: timestamp,
+      });
+    }
+
+    await applyCustomFieldValues(ctx, groupMemberId, prepared.parsedCustomFieldValues, timestamp);
+
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.followupScoreComputation.computeSingleMemberScore,
+      {
+        groupId: group._id,
+        groupMemberId,
+        status: normalizedStatus || undefined,
+        assigneeId: args.assigneeId,
+      }
+    );
+
+    if (normalizedStatus || args.assigneeId) {
+      // Patch serves as fallback (if action races) and triggers notification
+      await ctx.scheduler.runAfter(
+        500,
+        internal.functions.memberFollowups.applyQuickAddFollowupPatch,
+        {
+          groupId: group._id,
+          groupMemberId,
+          status: normalizedStatus || undefined,
+          assigneeId: args.assigneeId,
+        }
+      );
+    }
+
+    return {
+      groupMemberId,
+      userId,
+      createdUser,
+      row: report,
     };
   },
 });
