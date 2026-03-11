@@ -323,7 +323,7 @@ export function FollowupCsvImportModal({ visible, groupId, onClose, onImported }
         rows: payloadRows,
       })) as CsvImportPreviewResult;
       setPreviewResult(result);
-      Alert.alert("Import complete", `${result.summary.readyRows} rows imported.`);
+      Alert.alert("Import started", `${result.summary.readyRows} rows are being imported. Members will appear as they're processed.`);
       onImported?.();
     } catch (error: unknown) {
       Alert.alert("Import failed", getErrorMessage(error) ?? "Could not import CSV.");

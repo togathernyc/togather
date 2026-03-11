@@ -1216,8 +1216,30 @@ const csvImportRowValidator = v.object({
   customFieldValues: v.optional(v.record(v.string(), v.string())),
 });
 
+/**
+ * Validator for serialized batch rows passed to the scheduler.
+ * These are pre-analyzed rows with parsed values ready for processing.
+ */
+const csvImportBatchRowValidator = v.object({
+  rowNumber: v.number(),
+  firstName: v.optional(v.string()),
+  lastName: v.optional(v.string()),
+  phone: v.optional(v.string()),
+  email: v.optional(v.string()),
+  zipCode: v.optional(v.string()),
+  dateOfBirth: v.optional(v.string()),
+  notes: v.optional(v.string()),
+  normalizedPhone: v.string(),
+  parsedAddedAt: v.optional(v.number()),
+  parsedDateOfBirth: v.optional(v.number()),
+  parsedStatus: v.optional(v.string()),
+  parsedAssigneeId: v.optional(v.id("users")),
+  parsedCustomFieldValues: v.record(v.string(), v.union(v.string(), v.number(), v.boolean())),
+});
+
 const CSV_IMPORT_NOTE_TAG = "[csv import]";
 const MAX_CSV_IMPORT_ROWS = 500;
+const CSV_IMPORT_BATCH_SIZE = 25;
 
 /**
  * Shared helper that creates or updates a user and ensures they have
@@ -2107,6 +2129,130 @@ export const applyCsvImportScorePatch = internalMutation({
   },
 });
 
+/**
+ * Internal mutation that processes a batch of pre-analyzed CSV import rows.
+ * Called via scheduler from applyCsvImport to stay under the 32K document read limit.
+ */
+export const applyCsvImportBatch = internalMutation({
+  args: {
+    groupId: v.id("groups"),
+    importedById: v.id("users"),
+    timestamp: v.number(),
+    batchRows: v.array(csvImportBatchRowValidator),
+  },
+  handler: async (ctx, args) => {
+    const group = await ctx.db.get(args.groupId);
+    if (!group) return;
+
+    for (const batchRow of args.batchRows) {
+      // Reconstruct the PreparedCsvImportRow from serialized data
+      const existingUser = await ctx.db
+        .query("users")
+        .withIndex("by_phone", (q: any) => q.eq("phone", batchRow.normalizedPhone))
+        .first();
+
+      const prepared: PreparedCsvImportRow = {
+        row: {
+          rowNumber: batchRow.rowNumber,
+          firstName: batchRow.firstName,
+          lastName: batchRow.lastName,
+          phone: batchRow.phone,
+          email: batchRow.email,
+          zipCode: batchRow.zipCode,
+          dateOfBirth: batchRow.dateOfBirth,
+          notes: batchRow.notes,
+        },
+        normalizedPhone: batchRow.normalizedPhone,
+        parsedAddedAt: batchRow.parsedAddedAt,
+        parsedDateOfBirth: batchRow.parsedDateOfBirth,
+        parsedStatus: batchRow.parsedStatus as PreparedCsvImportRow["parsedStatus"],
+        parsedAssigneeId: batchRow.parsedAssigneeId,
+        parsedCustomFieldValues: batchRow.parsedCustomFieldValues,
+        existingUser: existingUser ?? null,
+        rowReport: {
+          rowNumber: batchRow.rowNumber,
+          phone: batchRow.normalizedPhone,
+          status: "ready",
+          reasons: [],
+          actions: { user: "none", profileUpdates: [], community: "none", group: "none", followup: "none", notes: "none", customFields: "none" },
+        },
+      };
+
+      const { groupMemberId } = await ensureUserAndMembership(ctx, prepared, group, args.timestamp);
+
+      if (batchRow.notes) {
+        const noteLine = `${new Date(args.timestamp).toISOString()} - ${batchRow.notes}`;
+        const existingCsvNote = await getExistingCsvImportNote(ctx, groupMemberId);
+        if (existingCsvNote) {
+          const previousContent = existingCsvNote.content ?? CSV_IMPORT_NOTE_TAG;
+          const nextContent = `${previousContent}\n${noteLine}`;
+          await ctx.db.patch(existingCsvNote._id, {
+            content: nextContent,
+            createdAt: args.timestamp,
+            createdById: args.importedById,
+          });
+        } else {
+          await ctx.db.insert("memberFollowups", {
+            groupMemberId,
+            createdById: args.importedById,
+            type: "note",
+            content: `${CSV_IMPORT_NOTE_TAG}\n${noteLine}`,
+            createdAt: args.timestamp,
+          });
+        }
+      }
+
+      const scorePatch: Record<string, string | number | boolean | Id<"users">> = {
+        ...batchRow.parsedCustomFieldValues,
+      };
+      if (batchRow.parsedStatus) {
+        scorePatch.status = batchRow.parsedStatus;
+      }
+      if (batchRow.parsedAssigneeId) {
+        scorePatch.assigneeId = batchRow.parsedAssigneeId;
+      }
+
+      if (Object.keys(scorePatch).length > 0) {
+        const scoreDoc = await ctx.db
+          .query("memberFollowupScores")
+          .withIndex("by_groupMember", (q: any) => q.eq("groupMemberId", groupMemberId))
+          .first();
+
+        if (scoreDoc) {
+          await ctx.db.patch(scoreDoc._id, {
+            ...scorePatch,
+            updatedAt: args.timestamp,
+          });
+        } else {
+          await ctx.scheduler.runAfter(
+            1000,
+            internal.functions.memberFollowups.applyCsvImportScorePatch,
+            {
+              groupMemberId,
+              status: batchRow.parsedStatus,
+              assigneeId: batchRow.parsedAssigneeId,
+              customFieldValues: Object.keys(batchRow.parsedCustomFieldValues).length > 0
+                ? batchRow.parsedCustomFieldValues
+                : undefined,
+            }
+          );
+        }
+      }
+
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.followupScoreComputation.computeSingleMemberScore,
+        {
+          groupId: group._id,
+          groupMemberId,
+          status: batchRow.parsedStatus,
+          assigneeId: batchRow.parsedAssigneeId,
+        }
+      );
+    }
+  },
+});
+
 export const applyQuickAddFollowupPatch = internalMutation({
   args: {
     groupId: v.id("groups"),
@@ -2220,78 +2366,37 @@ export const applyCsvImport = mutation({
     const { rowReports, preparedRows } = await analyzeCsvImportRows(ctx, group, args.rows);
     const timestamp = now();
 
-    for (const prepared of preparedRows) {
-      if (prepared.rowReport.status !== "ready") continue;
+    // Serialize ready rows for batch scheduling
+    const readyRows = preparedRows
+      .filter((p) => p.rowReport.status === "ready")
+      .map((p) => ({
+        rowNumber: p.row.rowNumber,
+        firstName: p.row.firstName,
+        lastName: p.row.lastName,
+        phone: p.row.phone,
+        email: p.row.email,
+        zipCode: p.row.zipCode,
+        dateOfBirth: p.row.dateOfBirth,
+        notes: p.row.notes,
+        normalizedPhone: p.normalizedPhone,
+        parsedAddedAt: p.parsedAddedAt,
+        parsedDateOfBirth: p.parsedDateOfBirth,
+        parsedStatus: p.parsedStatus,
+        parsedAssigneeId: p.parsedAssigneeId,
+        parsedCustomFieldValues: p.parsedCustomFieldValues,
+      }));
 
-      const { groupMemberId } = await ensureUserAndMembership(ctx, prepared, group, timestamp);
-
-      if (prepared.row.notes) {
-        const noteLine = `${new Date(timestamp).toISOString()} - ${prepared.row.notes}`;
-        const existingCsvNote = await getExistingCsvImportNote(ctx, groupMemberId);
-        if (existingCsvNote) {
-          const previousContent = existingCsvNote.content ?? CSV_IMPORT_NOTE_TAG;
-          const nextContent = `${previousContent}\n${noteLine}`;
-          await ctx.db.patch(existingCsvNote._id, {
-            content: nextContent,
-            createdAt: timestamp,
-            createdById: importedById,
-          });
-        } else {
-          await ctx.db.insert("memberFollowups", {
-            groupMemberId,
-            createdById: importedById,
-            type: "note",
-            content: `${CSV_IMPORT_NOTE_TAG}\n${noteLine}`,
-            createdAt: timestamp,
-          });
-        }
-      }
-
-      const scorePatch: Record<string, string | number | boolean | Id<"users">> = {
-        ...prepared.parsedCustomFieldValues,
-      };
-      if (prepared.parsedStatus) {
-        scorePatch.status = prepared.parsedStatus;
-      }
-      if (prepared.parsedAssigneeId) {
-        scorePatch.assigneeId = prepared.parsedAssigneeId;
-      }
-
-      if (Object.keys(scorePatch).length > 0) {
-        const scoreDoc = await ctx.db
-          .query("memberFollowupScores")
-          .withIndex("by_groupMember", (q: any) => q.eq("groupMemberId", groupMemberId))
-          .first();
-
-        if (scoreDoc) {
-          await ctx.db.patch(scoreDoc._id, {
-            ...scorePatch,
-            updatedAt: timestamp,
-          });
-        } else {
-          await ctx.scheduler.runAfter(
-            1000,
-            internal.functions.memberFollowups.applyCsvImportScorePatch,
-            {
-              groupMemberId,
-              status: prepared.parsedStatus,
-              assigneeId: prepared.parsedAssigneeId,
-              customFieldValues: Object.keys(prepared.parsedCustomFieldValues).length > 0
-                ? prepared.parsedCustomFieldValues
-                : undefined,
-            }
-          );
-        }
-      }
-
+    // Schedule batches of rows for processing in separate transactions
+    for (let i = 0; i < readyRows.length; i += CSV_IMPORT_BATCH_SIZE) {
+      const batch = readyRows.slice(i, i + CSV_IMPORT_BATCH_SIZE);
       await ctx.scheduler.runAfter(
         0,
-        internal.functions.followupScoreComputation.computeSingleMemberScore,
+        internal.functions.memberFollowups.applyCsvImportBatch,
         {
           groupId: group._id,
-          groupMemberId,
-          status: prepared.parsedStatus,
-          assigneeId: prepared.parsedAssigneeId,
+          importedById,
+          timestamp,
+          batchRows: batch,
         }
       );
     }
