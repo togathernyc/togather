@@ -15,6 +15,7 @@ import { Id } from "../_generated/dataModel";
 import { now } from "../lib/utils";
 import { calculateCommunicationBotNextSchedule, calculateNextScheduledTimeForDayOfWeek } from "../lib/scheduling";
 import { requireAuth, requireAuthFromToken } from "../lib/auth";
+import { isActiveMembership, isLeaderRole } from "../lib/helpers";
 
 // ============================================================================
 // Bot Definitions
@@ -292,6 +293,22 @@ export const getConfig = query({
 // Bot Mutations
 // ============================================================================
 
+async function requireLeaderForGroup(
+  ctx: { db: any },
+  groupId: Id<"groups">,
+  userId: Id<"users">
+) {
+  const membership = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_group_user", (q: any) =>
+      q.eq("groupId", groupId).eq("userId", userId)
+    )
+    .first();
+  if (!isActiveMembership(membership) || !isLeaderRole(membership.role)) {
+    throw new Error("Only group leaders can manage bot configuration");
+  }
+}
+
 /**
  * Update config for a bot (leaders only)
  */
@@ -303,7 +320,8 @@ export const updateConfig = mutation({
     config: v.any(), // Flexible config object
   },
   handler: async (ctx, args): Promise<{ success: boolean }> => {
-    await requireAuth(ctx, args.token);
+    const userId = await requireAuth(ctx, args.token);
+    await requireLeaderForGroup(ctx, args.groupId, userId);
     const timestamp = now();
 
     const bot = botDefinitions[args.botId];
@@ -375,7 +393,8 @@ export const toggle = mutation({
     enabled: v.boolean(),
   },
   handler: async (ctx, args): Promise<{ success: boolean }> => {
-    await requireAuth(ctx, args.token);
+    const userId = await requireAuth(ctx, args.token);
+    await requireLeaderForGroup(ctx, args.groupId, userId);
     const timestamp = now();
 
     // Verify bot exists
@@ -449,7 +468,8 @@ export const resetConfig = mutation({
     botId: v.string(),
   },
   handler: async (ctx, args): Promise<{ success: boolean }> => {
-    await requireAuth(ctx, args.token);
+    const userId = await requireAuth(ctx, args.token);
+    await requireLeaderForGroup(ctx, args.groupId, userId);
     const timestamp = now();
 
     const bot = botDefinitions[args.botId];

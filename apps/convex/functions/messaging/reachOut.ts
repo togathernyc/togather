@@ -341,6 +341,17 @@ export const submitRequest = mutation({
       updatedAt: now,
     });
 
+    // Create canonical task mirror for leader workflows
+    const taskId = await ctx.runMutation(
+      internal.functions.tasks.index.createFromReachOutRequest,
+      {
+        groupId: args.groupId,
+        submittedById: userId,
+        requestId,
+        content,
+      }
+    );
+
     // Post a card message to the leaders channel
     const preview = content.length > 100 ? content.substring(0, 97) + "..." : content;
     const messageId = await ctx.db.insert("chatMessages", {
@@ -356,7 +367,7 @@ export const submitRequest = mutation({
     });
 
     // Update the request with the message reference
-    await ctx.db.patch(requestId, { leadersMessageId: messageId });
+    await ctx.db.patch(requestId, { leadersMessageId: messageId, taskId });
 
     // Update leaders channel metadata
     await ctx.db.patch(leadersChannel._id, {
@@ -434,6 +445,13 @@ export const assignRequest = mutation({
       assignedAt: now,
       status: "assigned",
       updatedAt: now,
+    });
+
+    await ctx.runMutation(internal.functions.tasks.index.syncReachOutTask, {
+      requestId: args.requestId,
+      status: "assigned",
+      performedById: userId,
+      assignedToId: args.assignToUserId,
     });
   },
 });
@@ -545,6 +563,12 @@ export const resolveRequest = mutation({
       updatedAt: now,
     });
 
+    await ctx.runMutation(internal.functions.tasks.index.syncReachOutTask, {
+      requestId: args.requestId,
+      status: "resolved",
+      performedById: userId,
+    });
+
     // Create followup entry
     await ctx.db.insert("memberFollowups", {
       groupMemberId: request.groupMemberId,
@@ -593,6 +617,12 @@ export const unassignRequest = mutation({
       status: "pending",
       updatedAt: now,
     });
+
+    await ctx.runMutation(internal.functions.tasks.index.syncReachOutTask, {
+      requestId: args.requestId,
+      status: "pending",
+      performedById: userId,
+    });
   },
 });
 
@@ -629,6 +659,12 @@ export const revokeRequest = mutation({
     await ctx.db.patch(args.requestId, {
       status: "revoked",
       updatedAt: now,
+    });
+
+    await ctx.runMutation(internal.functions.tasks.index.syncReachOutTask, {
+      requestId: args.requestId,
+      status: "revoked",
+      performedById: userId,
     });
   },
 });

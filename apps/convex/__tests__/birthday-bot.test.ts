@@ -103,7 +103,7 @@ async function seedTestData(
     await ctx.db.insert("groupMembers", {
       userId,
       groupId,
-      role: "member",
+      role: "leader",
       joinedAt: Date.now(),
       notificationsEnabled: true,
     });

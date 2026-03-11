@@ -1004,7 +1004,14 @@ export const runTaskReminderBot = internalAction({
       weekday: "long",
       timeZone: timezone,
     });
+    const dateFormatter: Intl.DateTimeFormat = new Intl.DateTimeFormat("en-CA", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      timeZone: timezone,
+    });
     const todayName: string = dayFormatter.format(nowDate).toLowerCase();
+    const todayDateKey: string = dateFormatter.format(nowDate);
 
     const todayTasks: TaskReminderTask[] = schedule[todayName] || [];
 
@@ -1053,6 +1060,18 @@ export const runTaskReminderBot = internalAction({
             .filter(Boolean)
             .join(" ");
           memberNames.push(displayName || "Member");
+
+          const sourceKey = `bot_task_reminder:${configId}:${todayDateKey}:${task.id}:${user._id}`;
+          await ctx.runMutation(
+            internal.functions.tasks.index.createFromBotReminder,
+            {
+              groupId,
+              assignedToId: user._id,
+              title: task.message,
+              description: `Task reminder generated for ${todayName}`,
+              sourceKey,
+            }
+          );
         }
       }
 
