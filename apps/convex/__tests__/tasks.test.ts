@@ -214,6 +214,25 @@ describe("tasks functions", () => {
     expect(mineAfterDone.some((task) => task._id === taskId)).toBe(false);
   });
 
+  test("hasLeaderAccess differentiates leader and member", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, leaderToken, memberToken } = await seedData(t);
+
+    const [leaderAccess, memberAccess] = await Promise.all([
+      t.query(api.functions.tasks.index.hasLeaderAccess, {
+        token: leaderToken,
+        communityId,
+      }),
+      t.query(api.functions.tasks.index.hasLeaderAccess, {
+        token: memberToken,
+        communityId,
+      }),
+    ]);
+
+    expect(leaderAccess).toBe(true);
+    expect(memberAccess).toBe(false);
+  });
+
   test("non-leader cannot create group tasks", async () => {
     const t = convexTest(schema, modules);
     const { groupId, memberToken } = await seedData(t);
@@ -314,6 +333,67 @@ describe("tasks functions", () => {
     );
 
     expect(secondTaskId).toBe(firstTaskId);
+  });
+
+  test("my tasks aggregates assignments across multiple led groups", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, leaderToken, leaderId } = await seedData(t);
+
+    const groupTypeId = await t.run(async (ctx) => {
+      const groupType = await ctx.db
+        .query("groupTypes")
+        .withIndex("by_community_slug", (q) =>
+          q.eq("communityId", communityId).eq("slug", "small-groups"),
+        )
+        .first();
+      if (!groupType) throw new Error("group type not found");
+      return groupType._id;
+    });
+
+    const secondGroupId = await t.run(async (ctx) => {
+      const timestamp = Date.now();
+      const insertedGroupId = await ctx.db.insert("groups", {
+        communityId,
+        groupTypeId,
+        name: "Second Queue Group",
+        isArchived: false,
+        isPublic: true,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      await ctx.db.insert("groupMembers", {
+        groupId: insertedGroupId,
+        userId: leaderId,
+        role: "leader",
+        joinedAt: timestamp,
+        notificationsEnabled: true,
+      });
+      return insertedGroupId;
+    });
+
+    await Promise.all([
+      t.mutation(api.functions.tasks.index.create, {
+        token: leaderToken,
+        groupId,
+        title: "Task A",
+        responsibilityType: "person",
+        assignedToId: leaderId,
+      }),
+      t.mutation(api.functions.tasks.index.create, {
+        token: leaderToken,
+        groupId: secondGroupId,
+        title: "Task B",
+        responsibilityType: "person",
+        assignedToId: leaderId,
+      }),
+    ]);
+
+    const mine = await t.query(api.functions.tasks.index.listMine, {
+      token: leaderToken,
+    });
+
+    expect(mine.length).toBe(2);
+    expect(new Set(mine.map((task) => task.groupId.toString())).size).toBe(2);
   });
 
   test("create validates title and target cardinality", async () => {
@@ -491,6 +571,34 @@ describe("tasks functions", () => {
     expect(leaders.every((leader) => leader.name.length > 0)).toBe(true);
   });
 
+  test("task claim conflict keeps authoritative assignee", async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, leaderToken, secondLeaderToken, leaderId, secondLeaderId } =
+      await seedData(t);
+
+    const taskId = await t.mutation(api.functions.tasks.index.create, {
+      token: leaderToken,
+      groupId,
+      title: "Claim race",
+    });
+
+    await t.mutation(api.functions.tasks.index.claim, {
+      token: leaderToken,
+      taskId,
+    });
+
+    await expect(
+      t.mutation(api.functions.tasks.index.claim, {
+        token: secondLeaderToken,
+        taskId,
+      }),
+    ).rejects.toThrow("Task is already assigned");
+
+    const task = await t.run(async (ctx) => ctx.db.get(taskId));
+    expect([leaderId, secondLeaderId]).toContain(task?.assignedToId);
+    expect(task?.assignedToId).toBe(leaderId);
+  });
+
   test("non-leaders cannot mutate existing tasks", async () => {
     const t = convexTest(schema, modules);
     const { groupId, leaderToken, memberToken } = await seedData(t);
@@ -510,6 +618,13 @@ describe("tasks functions", () => {
 
     await expect(
       t.mutation(api.functions.tasks.index.markDone, {
+        token: memberToken,
+        taskId,
+      }),
+    ).rejects.toThrow("Leader access required");
+
+    await expect(
+      t.mutation(api.functions.tasks.index.assign, {
         token: memberToken,
         taskId,
       }),
