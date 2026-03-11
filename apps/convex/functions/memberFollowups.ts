@@ -1203,6 +1203,7 @@ export const history = query({
 
 const csvImportRowValidator = v.object({
   rowNumber: v.number(),
+  addedAt: v.optional(v.string()),
   firstName: v.optional(v.string()),
   lastName: v.optional(v.string()),
   phone: v.optional(v.string()),
@@ -1210,6 +1211,8 @@ const csvImportRowValidator = v.object({
   zipCode: v.optional(v.string()),
   dateOfBirth: v.optional(v.string()),
   notes: v.optional(v.string()),
+  assignee: v.optional(v.string()),
+  status: v.optional(v.string()),
   customFieldValues: v.optional(v.record(v.string(), v.string())),
 });
 
@@ -1230,6 +1233,7 @@ async function ensureUserAndMembership(
   groupMemberId: Id<"groupMembers">;
   createdUser: boolean;
 }> {
+  const memberTimestamp = prepared.parsedAddedAt ?? timestamp;
   const normalizedEmail = prepared.row.email?.toLowerCase();
 
   let userId: Id<"users">;
@@ -1259,7 +1263,7 @@ async function ensureUserAndMembership(
       isActive: true,
       isStaff: false,
       isSuperuser: false,
-      dateJoined: timestamp,
+      dateJoined: memberTimestamp,
       createdAt: timestamp,
       updatedAt: timestamp,
     });
@@ -1278,7 +1282,7 @@ async function ensureUserAndMembership(
       communityId: group.communityId,
       roles: 1,
       status: 1,
-      createdAt: timestamp,
+      createdAt: memberTimestamp,
       updatedAt: timestamp,
     });
   } else if (existingCommunityMembership.status !== 1) {
@@ -1302,7 +1306,7 @@ async function ensureUserAndMembership(
       groupId: group._id,
       userId,
       role: "member",
-      joinedAt: timestamp,
+      joinedAt: memberTimestamp,
       notificationsEnabled: true,
     });
     needsChannelSync = true;
@@ -1310,7 +1314,7 @@ async function ensureUserAndMembership(
     await ctx.db.patch(existingGroupMembership._id, {
       leftAt: undefined,
       role: "member",
-      joinedAt: timestamp,
+      joinedAt: memberTimestamp,
       notificationsEnabled: true,
     });
     groupMemberId = existingGroupMembership._id;
@@ -1353,7 +1357,7 @@ async function applyCustomFieldValues(
   } else {
     await ctx.scheduler.runAfter(
       1000,
-      internal.functions.memberFollowups.applyCsvImportCustomFieldPatch,
+      internal.functions.memberFollowups.applyCsvImportScorePatch,
       {
         groupMemberId,
         customFieldValues,
@@ -1364,6 +1368,7 @@ async function applyCustomFieldValues(
 
 type CsvImportRow = {
   rowNumber: number;
+  addedAt?: string;
   firstName?: string;
   lastName?: string;
   phone?: string;
@@ -1371,6 +1376,8 @@ type CsvImportRow = {
   zipCode?: string;
   dateOfBirth?: string;
   notes?: string;
+  assignee?: string;
+  status?: string;
   customFieldValues?: Record<string, string>;
 };
 
@@ -1395,7 +1402,10 @@ type CsvImportRowReport = {
 type PreparedCsvImportRow = {
   row: CsvImportRow;
   normalizedPhone: string;
+  parsedAddedAt?: number;
   parsedDateOfBirth?: number;
+  parsedStatus?: "green" | "orange" | "red";
+  parsedAssigneeId?: Id<"users">;
   parsedCustomFieldValues: Record<string, string | number | boolean>;
   existingUser: Doc<"users"> | null;
   rowReport: CsvImportRowReport;
@@ -1427,6 +1437,7 @@ function getNormalizedRow(row: CsvImportRow): CsvImportRow {
 
   return {
     rowNumber: row.rowNumber,
+    addedAt: sanitizeCsvValue(row.addedAt),
     firstName: sanitizeCsvValue(row.firstName),
     lastName: sanitizeCsvValue(row.lastName),
     phone: sanitizeCsvValue(row.phone),
@@ -1434,6 +1445,8 @@ function getNormalizedRow(row: CsvImportRow): CsvImportRow {
     zipCode: sanitizeCsvValue(row.zipCode),
     dateOfBirth: sanitizeCsvValue(row.dateOfBirth),
     notes: sanitizeCsvValue(row.notes),
+    assignee: sanitizeCsvValue(row.assignee),
+    status: sanitizeCsvValue(row.status),
     customFieldValues: Object.keys(normalizedCustomValues).length > 0
       ? normalizedCustomValues
       : undefined,
@@ -1445,6 +1458,156 @@ function parseCsvBoolean(value: string): boolean | undefined {
   if (["true", "1", "yes", "y"].includes(normalized)) return true;
   if (["false", "0", "no", "n"].includes(normalized)) return false;
   return undefined;
+}
+
+function parseCsvStatus(value: string): "green" | "orange" | "red" | undefined {
+  const normalized = value.trim().toLowerCase();
+  if (["green", "g"].includes(normalized)) return "green";
+  if (["orange", "amber", "yellow", "o", "y"].includes(normalized)) return "orange";
+  if (["red", "r"].includes(normalized)) return "red";
+  return undefined;
+}
+
+function normalizeAssigneeName(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+type CsvAssigneeLookup = {
+  byFullName: Map<string, Id<"users">>;
+  byFirstName: Map<string, Id<"users">[]>;
+  byLastName: Map<string, Id<"users">[]>;
+};
+
+function appendAssigneeLookupIndex(
+  index: Map<string, Id<"users">[]>,
+  key: string,
+  userId: Id<"users">
+) {
+  if (!key) return;
+  const existing = index.get(key) ?? [];
+  if (!existing.includes(userId)) {
+    existing.push(userId);
+    index.set(key, existing);
+  }
+}
+
+async function buildCsvAssigneeLookup(
+  ctx: any,
+  groupId: Id<"groups">
+): Promise<CsvAssigneeLookup> {
+  const leaderMemberships = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_group", (q: any) => q.eq("groupId", groupId))
+    .filter((q: any) =>
+      q.and(
+        q.eq(q.field("leftAt"), undefined),
+        q.or(q.eq(q.field("role"), "leader"), q.eq(q.field("role"), "admin"))
+      )
+    )
+    .take(100);
+
+  const userIds = Array.from(new Set(leaderMemberships.map((m: Doc<"groupMembers">) => m.userId)));
+  const users = await Promise.all(userIds.map((id) => ctx.db.get(id)));
+
+  const byFullName = new Map<string, Id<"users">>();
+  const byFirstName = new Map<string, Id<"users">[]>();
+  const byLastName = new Map<string, Id<"users">[]>();
+
+  for (const user of users) {
+    if (!user) continue;
+    const first = normalizeAssigneeName(user.firstName ?? "");
+    const last = normalizeAssigneeName(user.lastName ?? "");
+    const full = normalizeAssigneeName(`${user.firstName ?? ""} ${user.lastName ?? ""}`);
+
+    if (full) {
+      byFullName.set(full, user._id);
+    }
+    appendAssigneeLookupIndex(byFirstName, first, user._id);
+    appendAssigneeLookupIndex(byLastName, last, user._id);
+  }
+
+  return {
+    byFullName,
+    byFirstName,
+    byLastName,
+  };
+}
+
+function resolveCsvAssignee(
+  assignee: string | undefined,
+  lookup: CsvAssigneeLookup
+): {
+  assigneeId?: Id<"users">;
+  reason?: string;
+} {
+  if (!assignee) return {};
+
+  const tokens = Array.from(
+    new Set(
+      [
+        assignee,
+        ...assignee
+          .split(/[,;]+|&|\/|\band\b/gi)
+          .map((token) => token.trim())
+          .filter(Boolean),
+      ]
+        .map(normalizeAssigneeName)
+        .filter(Boolean)
+    )
+  );
+
+  const matchedIds: Id<"users">[] = [];
+  let sawAmbiguous = false;
+
+  for (const token of tokens) {
+    const fullMatch = lookup.byFullName.get(token);
+    if (fullMatch) {
+      matchedIds.push(fullMatch);
+      continue;
+    }
+
+    const firstMatches = lookup.byFirstName.get(token) ?? [];
+    if (firstMatches.length === 1) {
+      matchedIds.push(firstMatches[0]);
+      continue;
+    }
+    if (firstMatches.length > 1) {
+      sawAmbiguous = true;
+      continue;
+    }
+
+    const lastMatches = lookup.byLastName.get(token) ?? [];
+    if (lastMatches.length === 1) {
+      matchedIds.push(lastMatches[0]);
+      continue;
+    }
+    if (lastMatches.length > 1) {
+      sawAmbiguous = true;
+    }
+  }
+
+  const uniqueMatches = Array.from(new Set(matchedIds));
+  if (uniqueMatches.length === 0) {
+    return {
+      reason: sawAmbiguous ? "ambiguous_assignee_ignored" : "unknown_assignee_ignored",
+    };
+  }
+
+  if (uniqueMatches.length > 1) {
+    return {
+      assigneeId: uniqueMatches[0],
+      reason: "multiple_assignees_first_used",
+    };
+  }
+
+  return { assigneeId: uniqueMatches[0] };
 }
 
 function parseCsvCustomFieldValues(
@@ -1513,7 +1676,8 @@ function parseCsvCustomFieldValues(
         parsedValues[slot] = value;
         continue;
       }
-      const parts = value.split(";").map((p) => p.trim()).filter(Boolean);
+      const delimiter = value.includes(";") ? /;+/ : /,+/;
+      const parts = value.split(delimiter).map((p) => p.trim()).filter(Boolean);
       const validParts: string[] = [];
       for (const part of parts) {
         const matchedOption = options.find(
@@ -1652,6 +1816,7 @@ async function analyzeCsvImportRows(
     type: string;
     options?: string[];
   }>;
+  const assigneeLookup = await buildCsvAssigneeLookup(ctx, group._id);
   const customFieldDefsBySlot = new Map(
     customFieldDefs.map((field) => [
       field.slot,
@@ -1679,6 +1844,31 @@ async function analyzeCsvImportRows(
       }
     }
 
+    let parsedAddedAt: number | undefined;
+    if (row.addedAt) {
+      try {
+        parsedAddedAt = parseDateOptional(row.addedAt, "addedAt");
+      } catch {
+        reasons.push("invalid_added_at_ignored");
+      }
+    }
+
+    let parsedStatus: "green" | "orange" | "red" | undefined;
+    if (row.status) {
+      parsedStatus = parseCsvStatus(row.status);
+      if (!parsedStatus) {
+        reasons.push("invalid_status_ignored");
+      }
+    }
+
+    const { assigneeId: parsedAssigneeId, reason: assigneeReason } = resolveCsvAssignee(
+      row.assignee,
+      assigneeLookup
+    );
+    if (assigneeReason) {
+      reasons.push(assigneeReason);
+    }
+
     const { parsedValues: parsedCustomFieldValues, reasons: customFieldReasons } =
       parseCsvCustomFieldValues(row, customFieldDefsBySlot);
     reasons.push(...customFieldReasons);
@@ -1691,7 +1881,10 @@ async function analyzeCsvImportRows(
       row,
       reasons,
       normalizedPhone,
+      parsedAddedAt,
       parsedDateOfBirth,
+      parsedStatus,
+      parsedAssigneeId,
       parsedCustomFieldValues,
     };
   });
@@ -1824,7 +2017,10 @@ async function analyzeCsvImportRows(
     preparedRows.push({
       row: item.row,
       normalizedPhone: item.normalizedPhone,
+      parsedAddedAt: item.parsedAddedAt,
       parsedDateOfBirth: item.parsedDateOfBirth,
+      parsedStatus: item.parsedStatus,
+      parsedAssigneeId: item.parsedAssigneeId,
       parsedCustomFieldValues: item.parsedCustomFieldValues,
       existingUser,
       rowReport: report,
@@ -1856,17 +2052,27 @@ function buildCsvImportSummary(rowReports: CsvImportRowReport[]) {
   return summary;
 }
 
-export const applyCsvImportCustomFieldPatch = internalMutation({
+export const applyCsvImportScorePatch = internalMutation({
   args: {
     groupMemberId: v.id("groupMembers"),
-    customFieldValues: v.record(v.string(), v.union(v.string(), v.number(), v.boolean())),
+    status: v.optional(v.string()),
+    assigneeId: v.optional(v.id("users")),
+    customFieldValues: v.optional(v.record(v.string(), v.union(v.string(), v.number(), v.boolean()))),
     retryCount: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const validPatch = Object.fromEntries(
-      Object.entries(args.customFieldValues).filter(([slot]) => VALID_CUSTOM_SLOTS.has(slot))
+    const validCustomPatch = Object.fromEntries(
+      Object.entries(args.customFieldValues ?? {}).filter(([slot]) => VALID_CUSTOM_SLOTS.has(slot))
     );
-    if (Object.keys(validPatch).length === 0) {
+    const metadataPatch: Record<string, string | Id<"users">> = {};
+    if (args.status) metadataPatch.status = args.status;
+    if (args.assigneeId) metadataPatch.assigneeId = args.assigneeId;
+
+    const fullPatch = {
+      ...metadataPatch,
+      ...validCustomPatch,
+    };
+    if (Object.keys(fullPatch).length === 0) {
       return { applied: false };
     }
 
@@ -1877,7 +2083,7 @@ export const applyCsvImportCustomFieldPatch = internalMutation({
 
     if (scoreDoc) {
       await ctx.db.patch(scoreDoc._id, {
-        ...validPatch,
+        ...fullPatch,
         updatedAt: now(),
       });
       return { applied: true };
@@ -1887,10 +2093,12 @@ export const applyCsvImportCustomFieldPatch = internalMutation({
     if (retryCount < 5) {
       await ctx.scheduler.runAfter(
         1000,
-        internal.functions.memberFollowups.applyCsvImportCustomFieldPatch,
+        internal.functions.memberFollowups.applyCsvImportScorePatch,
         {
           groupMemberId: args.groupMemberId,
-          customFieldValues: validPatch,
+          status: args.status,
+          assigneeId: args.assigneeId,
+          customFieldValues: validCustomPatch,
           retryCount: retryCount + 1,
         }
       );
@@ -2039,12 +2247,52 @@ export const applyCsvImport = mutation({
         }
       }
 
-      await applyCustomFieldValues(ctx, groupMemberId, prepared.parsedCustomFieldValues, timestamp);
+      const scorePatch: Record<string, string | number | boolean | Id<"users">> = {
+        ...prepared.parsedCustomFieldValues,
+      };
+      if (prepared.parsedStatus) {
+        scorePatch.status = prepared.parsedStatus;
+      }
+      if (prepared.parsedAssigneeId) {
+        scorePatch.assigneeId = prepared.parsedAssigneeId;
+      }
+
+      if (Object.keys(scorePatch).length > 0) {
+        const scoreDoc = await ctx.db
+          .query("memberFollowupScores")
+          .withIndex("by_groupMember", (q: any) => q.eq("groupMemberId", groupMemberId))
+          .first();
+
+        if (scoreDoc) {
+          await ctx.db.patch(scoreDoc._id, {
+            ...scorePatch,
+            updatedAt: timestamp,
+          });
+        } else {
+          await ctx.scheduler.runAfter(
+            1000,
+            internal.functions.memberFollowups.applyCsvImportScorePatch,
+            {
+              groupMemberId,
+              status: prepared.parsedStatus,
+              assigneeId: prepared.parsedAssigneeId,
+              customFieldValues: Object.keys(prepared.parsedCustomFieldValues).length > 0
+                ? prepared.parsedCustomFieldValues
+                : undefined,
+            }
+          );
+        }
+      }
 
       await ctx.scheduler.runAfter(
         0,
         internal.functions.followupScoreComputation.computeSingleMemberScore,
-        { groupId: group._id, groupMemberId }
+        {
+          groupId: group._id,
+          groupMemberId,
+          status: prepared.parsedStatus,
+          assigneeId: prepared.parsedAssigneeId,
+        }
       );
     }
 
@@ -2091,8 +2339,8 @@ export const quickAddRow = mutation({
           q.eq("groupId", group._id).eq("userId", args.assigneeId)
         )
         .first();
-      if (!leaderMembership || leaderMembership.leftAt || leaderMembership.role !== "leader") {
-        throw new ConvexError("Assignee must be an active group leader");
+      if (!leaderMembership || leaderMembership.leftAt || (leaderMembership.role !== "leader" && leaderMembership.role !== "admin")) {
+        throw new ConvexError("Assignee must be an active group leader or admin");
       }
     }
 

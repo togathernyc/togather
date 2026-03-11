@@ -71,6 +71,7 @@ type Props = {
 
 const REQUIRED_FIELDS: CsvImportField[] = ["firstName", "phone"];
 const FIELD_ORDER: Array<{ key: CsvImportField; label: string; required?: boolean }> = [
+  { key: "addedAt", label: "Date Added" },
   { key: "firstName", label: "First Name", required: true },
   { key: "phone", label: "Phone", required: true },
   { key: "lastName", label: "Last Name" },
@@ -78,6 +79,8 @@ const FIELD_ORDER: Array<{ key: CsvImportField; label: string; required?: boolea
   { key: "zipCode", label: "ZIP Code" },
   { key: "dateOfBirth", label: "Date of Birth" },
   { key: "notes", label: "Notes" },
+  { key: "assignee", label: "Assignee" },
+  { key: "status", label: "Status" },
 ];
 
 function isRequiredField(field: CsvImportField) {
@@ -105,6 +108,7 @@ export function FollowupCsvImportModal({ visible, groupId, onClose, onImported }
   const [headers, setHeaders] = useState<string[]>([]);
   const [sourceRows, setSourceRows] = useState<CsvImportSourceRow[]>([]);
   const [mapping, setMapping] = useState<CsvImportMapping>({
+    addedAt: null,
     firstName: null,
     lastName: null,
     phone: null,
@@ -112,6 +116,8 @@ export function FollowupCsvImportModal({ visible, groupId, onClose, onImported }
     zipCode: null,
     dateOfBirth: null,
     notes: null,
+    assignee: null,
+    status: null,
   });
   const [customFieldMapping, setCustomFieldMapping] = useState<Record<string, string | null>>({});
   const [selectedFields, setSelectedFields] = useState<Set<CsvImportField>>(
@@ -134,6 +140,7 @@ export function FollowupCsvImportModal({ visible, groupId, onClose, onImported }
       setSelectedFields(new Set(REQUIRED_FIELDS));
       setSelectedCustomSlots(new Set());
       setMapping({
+        addedAt: null,
         firstName: null,
         lastName: null,
         phone: null,
@@ -141,6 +148,8 @@ export function FollowupCsvImportModal({ visible, groupId, onClose, onImported }
         zipCode: null,
         dateOfBirth: null,
         notes: null,
+        assignee: null,
+        status: null,
       });
       setCustomFieldMapping({});
     }
