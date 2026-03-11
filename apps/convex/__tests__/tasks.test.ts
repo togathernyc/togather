@@ -599,6 +599,118 @@ describe("tasks functions", () => {
     expect(task?.assignedToId).toBe(leaderId);
   });
 
+  test("reach-out migration keeps request record with linked taskId", async () => {
+    const t = convexTest(schema, modules);
+    const {
+      groupId,
+      memberId,
+      memberGroupMembershipId,
+      reachOutChannelId,
+      leadersChannelId,
+    } = await seedData(t);
+
+    const timestamp = Date.now();
+    const requestId = await t.run(async (ctx) => {
+      return await ctx.db.insert("reachOutRequests", {
+        groupId,
+        channelId: reachOutChannelId,
+        leadersChannelId,
+        submittedById: memberId,
+        groupMemberId: memberGroupMembershipId,
+        content: "Please pray for my job interview",
+        status: "pending",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+    });
+
+    const taskId = await t.mutation(
+      internal.functions.tasks.index.createFromReachOutRequest,
+      {
+        groupId,
+        submittedById: memberId,
+        requestId,
+        content: "Please pray for my job interview",
+      },
+    );
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(requestId, { taskId });
+      await ctx.db.insert("chatMessages", {
+        channelId: leadersChannelId,
+        senderId: memberId,
+        senderName: "Member One",
+        content: "Reach out request",
+        contentType: "reach_out_request",
+        reachOutRequestId: requestId,
+        createdAt: Date.now(),
+        isDeleted: false,
+      });
+    });
+
+    const request = await t.run(async (ctx) => ctx.db.get(requestId));
+    expect(request?.taskId).toBe(taskId);
+
+    const linkedTask = await t.run(async (ctx) => ctx.db.get(taskId));
+    expect(linkedTask?.sourceType).toBe("reach_out");
+    expect(linkedTask?.sourceRef).toBe(requestId.toString());
+
+    const leadersMessages = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("chatMessages")
+        .withIndex("by_channel", (q) => q.eq("channelId", leadersChannelId))
+        .collect();
+    });
+    const cardMessage = leadersMessages.find(
+      (message) => message.reachOutRequestId === requestId,
+    );
+    expect(cardMessage?.contentType).toBe("reach_out_request");
+  });
+
+  test("task queries remain correct with 120 assigned tasks", async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, leaderId, leaderToken } = await seedData(t);
+
+    await t.run(async (ctx) => {
+      const timestamp = Date.now();
+      for (let i = 0; i < 120; i += 1) {
+        await ctx.db.insert("tasks", {
+          groupId,
+          title: `Bulk task ${i + 1}`,
+          description: undefined,
+          status: "open",
+          responsibilityType: "person",
+          assignedToId: leaderId,
+          createdById: leaderId,
+          sourceType: "manual",
+          sourceRef: undefined,
+          sourceKey: undefined,
+          targetType: "none",
+          targetMemberId: undefined,
+          targetGroupId: undefined,
+          tags: ["bulk"],
+          parentTaskId: undefined,
+          orderKey: i,
+          dueAt: undefined,
+          snoozedUntil: undefined,
+          completedAt: undefined,
+          canceledAt: undefined,
+          createdAt: timestamp + i,
+          updatedAt: timestamp + i,
+        });
+      }
+    });
+
+    const mine = await t.query(api.functions.tasks.index.listMine, {
+      token: leaderToken,
+      tag: "bulk",
+    });
+
+    expect(mine.length).toBe(120);
+    expect(mine[0].title).toBe("Bulk task 1");
+    expect(mine[119].title).toBe("Bulk task 120");
+  });
+
   test("non-leaders cannot mutate existing tasks", async () => {
     const t = convexTest(schema, modules);
     const { groupId, leaderToken, memberToken } = await seedData(t);
