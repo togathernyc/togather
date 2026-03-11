@@ -69,6 +69,8 @@ Key shipped changes:
 ### CUJ evidence runs (recorded)
 
 - 14 terminal-driven CUJ proof runs recorded; one MP4 per CUJ section (paths above).
+- Additional browser-based manual smoke run recorded:
+  - `/opt/cursor/artifacts/tasks_cuj_ui_manual_smoke_web.mp4`
 
 ## Bugs Fixed During Run
 
@@ -88,4 +90,4 @@ Key shipped changes:
 ## Remaining Gaps / Blockers
 
 - No hard blocker remained for code/test execution.
-- **Important caveat:** CUJ recordings were terminal-driven (test execution evidence) rather than full touch/click browser walkthroughs for every section. This provides concrete execution proof, but not full visual UX walkthrough parity for each checklist bullet.
+- **Important caveat:** Primary CUJ recordings are terminal-driven (test execution evidence). Added one browser/manual smoke video (`tasks_cuj_ui_manual_smoke_web.mp4`), but did not re-record all 14 CUJs as full interactive GUI walkthroughs.
