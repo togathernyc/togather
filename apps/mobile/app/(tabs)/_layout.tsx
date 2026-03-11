@@ -6,19 +6,12 @@ import { useAuth } from '@providers/AuthProvider';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
 import { useIsDesktopWeb } from '../../hooks/useIsDesktopWeb';
 import { DesktopSideNav } from '@components/DesktopSideNav';
-import { api, Id, useAuthenticatedQuery } from '@services/api/convex';
 
 export default function TabsLayout() {
   const { user, community } = useAuth();
   const { primaryColor } = useCommunityTheme();
   const isDesktopWeb = useIsDesktopWeb();
   const isAdmin = user?.is_admin === true;
-  const hasLeaderAccess = useAuthenticatedQuery(
-    api.functions.tasks.index.hasLeaderAccess,
-    community?.id
-      ? { communityId: community.id as Id<'communities'> }
-      : 'skip'
-  );
 
   // Use stable state for tab visibility to prevent infinite loops
   // Only update when community actually changes (not on every render)
@@ -66,7 +59,7 @@ export default function TabsLayout() {
         }}
       />
 
-      {/* Visible tabs - Order: Explore, Tasks, Inbox, (Admin for admins), Profile */}
+      {/* Visible tabs - Order: Explore, Inbox, (Admin for admins), Profile */}
       <Tabs.Screen
         name="search"
         options={{
@@ -84,7 +77,9 @@ export default function TabsLayout() {
         name="tasks"
         options={{
           title: 'Tasks',
-          href: hasCommunity && hasLeaderAccess ? '/(tabs)/tasks' : null,
+          // Keep the route available, but hide from primary tab navigation.
+          // Tasks are now accessed via Profile > Settings.
+          href: null,
           tabBarIcon: ({ color, focused }) => (
             <Ionicons
               name={focused ? 'checkmark-done' : 'checkmark-done-outline'}
