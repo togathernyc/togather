@@ -194,9 +194,11 @@ export function GroupDetailScreen() {
         {
           text: "Archive",
           style: "destructive",
-          onPress: () => {
-            archiveGroupMutation.mutate();
-            setShowOptionsModal(false);
+          onPress: async () => {
+            const didArchive = await archiveGroupMutation.mutate();
+            if (didArchive) {
+              setShowOptionsModal(false);
+            }
           },
         },
       ]
