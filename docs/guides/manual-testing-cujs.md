@@ -2,6 +2,8 @@
 
 This guide documents Critical User Journeys (CUJs) for manual testing of the Togather app. Use these flows to verify features are working correctly after deployments or changes.
 
+For the dedicated Tasks rollout matrix (task bot, reach out source flow, assignment lifecycle, permissions, realtime, migration), use `docs/testing/TASKS-CUJ-CHECKLIST.md`.
+
 ## Test Credentials
 
 Use the test credentials from the seed script (`npx convex run functions/seed:seedDemoData`). The seed data creates test users with bypass OTP codes. Search for "Demo Community" when testing.
@@ -804,7 +806,7 @@ Use the test credentials from the seed script (`npx convex run functions/seed:se
 | Blank modal                | View History shows nothing | Network tab for API errors                  |
 | Edit form empty            | Fields not prepopulated    | API response for group data                 |
 | Profile photo not updating | Old photo still shows      | Cache clearing                              |
-| Tab bar disappears         | No bottom navigation       | Modal presentation in _layout.tsx           |
+| Tab bar disappears         | No bottom navigation       | Modal presentation in \_layout.tsx          |
 | Back button unresponsive   | Tapping back does nothing  | Touch target size (min 44x44)               |
 | Navigation stack corrupted | Can't go back properly     | Route configuration in app layouts          |
 
@@ -813,7 +815,9 @@ Use the test credentials from the seed script (`npx convex run functions/seed:se
 ## iOS-Specific Checks
 
 ### Touch Targets
+
 All interactive elements must have minimum 44x44pt touch targets per iOS HIG:
+
 - Back buttons
 - Menu buttons
 - Tab bar items
@@ -821,22 +825,28 @@ All interactive elements must have minimum 44x44pt touch targets per iOS HIG:
 - Form inputs
 
 ### Tab Bar Visibility
+
 The tab bar should remain visible when:
+
 - On any main tab screen (Explore, Inbox, Admin, Profile)
 - After dismissing a modal
 
 The tab bar should be hidden when:
+
 - In a detail screen (chat room, group detail, etc.)
 - In a modal flow (events, members, attendance)
 
 ### Navigation Patterns
+
 - Modal screens (`/(user)/...`, `/groups/...`) slide up from bottom
 - Detail screens slide in from right
 - Back gesture (swipe from left edge) should work on detail screens
 - Pull-down dismissal should work on modal screens
 
 ### Safe Areas
+
 Content should respect:
+
 - Status bar / Dynamic Island at top
 - Home indicator at bottom
 - Tab bar when visible
