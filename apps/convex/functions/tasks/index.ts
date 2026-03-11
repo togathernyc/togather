@@ -7,6 +7,13 @@ import { now } from "../../lib/utils";
 
 const openStatuses = new Set(["open", "snoozed"]);
 
+const sourceTypeValidator = v.union(
+  v.literal("manual"),
+  v.literal("bot_task_reminder"),
+  v.literal("reach_out"),
+  v.literal("followup"),
+);
+
 const responsibilityTypeValidator = v.union(
   v.literal("group"),
   v.literal("person"),
@@ -29,6 +36,8 @@ const snoozePresetMs: Record<"1_day" | "3_days" | "1_week", number> = {
   "3_days": 3 * 24 * 60 * 60 * 1000,
   "1_week": 7 * 24 * 60 * 60 * 1000,
 };
+
+type TaskSourceType = "manual" | "bot_task_reminder" | "reach_out" | "followup";
 
 function normalizeTags(tags: string[] | undefined): string[] {
   return (tags ?? [])
@@ -103,12 +112,138 @@ function assertTargetArgs(
   targetMemberId: Id<"users"> | undefined,
   targetGroupId: Id<"groups"> | undefined,
 ) {
+  if (targetType === "none" && (targetMemberId || targetGroupId)) {
+    throw new ConvexError(
+      "targetMemberId and targetGroupId must be omitted when targetType=none",
+    );
+  }
   if (targetType === "member" && !targetMemberId) {
     throw new ConvexError("targetMemberId is required when targetType=member");
+  }
+  if (targetType === "member" && targetGroupId) {
+    throw new ConvexError("targetGroupId is not allowed when targetType=member");
   }
   if (targetType === "group" && !targetGroupId) {
     throw new ConvexError("targetGroupId is required when targetType=group");
   }
+  if (targetType === "group" && targetMemberId) {
+    throw new ConvexError("targetMemberId is not allowed when targetType=group");
+  }
+}
+
+type TaskFilterArgs = {
+  sourceType?: TaskSourceType;
+  tag?: string;
+  searchText?: string;
+};
+
+type FilterableTask = {
+  sourceType: string;
+  tags?: string[];
+  title: string;
+  description?: string;
+  groupName?: string;
+  targetMemberName?: string;
+  targetGroupName?: string;
+};
+
+function applyTaskFilters<T extends FilterableTask>(
+  tasks: T[],
+  filters: TaskFilterArgs,
+): T[] {
+  const normalizedTag = filters.tag?.trim().toLowerCase().replace(/\s+/g, "_");
+  const normalizedSearch = filters.searchText?.trim().toLowerCase();
+
+  return tasks.filter((task) => {
+    if (filters.sourceType && task.sourceType !== filters.sourceType) {
+      return false;
+    }
+    if (normalizedTag && !(task.tags ?? []).includes(normalizedTag)) {
+      return false;
+    }
+    if (normalizedSearch) {
+      const searchableText = [
+        task.title,
+        task.description,
+        task.groupName,
+        task.targetMemberName,
+        task.targetGroupName,
+        ...(task.tags ?? []),
+      ]
+        .filter((value): value is string => Boolean(value))
+        .join(" ")
+        .toLowerCase();
+      if (!searchableText.includes(normalizedSearch)) {
+        return false;
+      }
+    }
+    return true;
+  });
+}
+
+async function enrichTasks<T extends { groupId: Id<"groups">; assignedToId?: Id<"users">; targetMemberId?: Id<"users">; targetGroupId?: Id<"groups"> }>(
+  ctx: { db: any },
+  tasks: T[],
+): Promise<Array<T & { groupName: string; assignedToName?: string; targetMemberName?: string; targetGroupName?: string }>> {
+  if (tasks.length === 0) return [];
+
+  const groupIdStrings = [
+    ...new Set(
+      tasks.flatMap((task) => [
+        task.groupId.toString(),
+        task.targetGroupId?.toString(),
+      ]),
+    ),
+  ].filter(Boolean) as string[];
+  const userIdStrings = [
+    ...new Set(
+      tasks.flatMap((task) => [
+        task.assignedToId?.toString(),
+        task.targetMemberId?.toString(),
+      ]),
+    ),
+  ].filter(Boolean) as string[];
+
+  const [groups, users] = await Promise.all([
+    Promise.all(
+      groupIdStrings.map((groupId) => ctx.db.get(groupId as Id<"groups">)),
+    ),
+    Promise.all(userIdStrings.map((userId) => ctx.db.get(userId as Id<"users">))),
+  ]);
+
+  const groupMap = new Map<string, any>();
+  groups.forEach((group, index) => {
+    if (group) groupMap.set(groupIdStrings[index], group);
+  });
+  const userMap = new Map<string, any>();
+  users.forEach((user, index) => {
+    if (user) userMap.set(userIdStrings[index], user);
+  });
+
+  return tasks.map((task) => {
+    const groupName = groupMap.get(task.groupId.toString())?.name ?? "Group";
+    const assignedToName = task.assignedToId
+      ? [userMap.get(task.assignedToId.toString())?.firstName, userMap.get(task.assignedToId.toString())?.lastName]
+          .filter(Boolean)
+          .join(" ")
+      : undefined;
+    const targetMemberName = task.targetMemberId
+      ? [userMap.get(task.targetMemberId.toString())?.firstName, userMap.get(task.targetMemberId.toString())?.lastName]
+          .filter(Boolean)
+          .join(" ")
+      : undefined;
+    const targetGroupName = task.targetGroupId
+      ? groupMap.get(task.targetGroupId.toString())?.name
+      : undefined;
+
+    return {
+      ...task,
+      groupName,
+      assignedToName: assignedToName || undefined,
+      targetMemberName: targetMemberName || undefined,
+      targetGroupName,
+    };
+  });
 }
 
 export const hasLeaderAccess = query({
@@ -132,6 +267,9 @@ export const hasLeaderAccess = query({
 export const listMine = query({
   args: {
     token: v.string(),
+    sourceType: v.optional(sourceTypeValidator),
+    tag: v.optional(v.string()),
+    searchText: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -158,23 +296,8 @@ export const listMine = query({
       leaderGroupIdSet.has(task.groupId.toString()),
     );
 
-    const uniqueGroupIds = [
-      ...new Set(tasks.map((task) => task.groupId.toString())),
-    ] as string[];
-    const groups = await Promise.all(
-      uniqueGroupIds.map((groupId) => ctx.db.get(groupId as Id<"groups">)),
-    );
-    const groupNameMap = new Map<string, string>();
-    groups.forEach((group, index) => {
-      if (group) groupNameMap.set(uniqueGroupIds[index], group.name);
-    });
-
-    return tasks
-      .map((task) => ({
-        ...task,
-        groupName: groupNameMap.get(task.groupId.toString()) ?? "Group",
-      }))
-      .sort((a, b) => {
+    const enrichedTasks = await enrichTasks(ctx, tasks);
+    return applyTaskFilters(enrichedTasks, args).sort((a, b) => {
         if (a.status !== b.status) {
           return a.status === "open" ? -1 : 1;
         }
@@ -189,6 +312,9 @@ export const listMine = query({
 export const listClaimable = query({
   args: {
     token: v.string(),
+    sourceType: v.optional(sourceTypeValidator),
+    tag: v.optional(v.string()),
+    searchText: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -207,24 +333,10 @@ export const listClaimable = query({
       (task) =>
         !task.assignedToId && leaderGroupIdSet.has(task.groupId.toString()),
     );
-
-    const uniqueGroupIds = [
-      ...new Set(tasks.map((task) => task.groupId.toString())),
-    ] as string[];
-    const groups = await Promise.all(
-      uniqueGroupIds.map((groupId) => ctx.db.get(groupId as Id<"groups">)),
+    const enrichedTasks = await enrichTasks(ctx, tasks);
+    return applyTaskFilters(enrichedTasks, args).sort(
+      (a, b) => b.createdAt - a.createdAt,
     );
-    const groupNameMap = new Map<string, string>();
-    groups.forEach((group, index) => {
-      if (group) groupNameMap.set(uniqueGroupIds[index], group.name);
-    });
-
-    return tasks
-      .map((task) => ({
-        ...task,
-        groupName: groupNameMap.get(task.groupId.toString()) ?? "Group",
-      }))
-      .sort((a, b) => b.createdAt - a.createdAt);
   },
 });
 
@@ -232,6 +344,9 @@ export const listGroup = query({
   args: {
     token: v.string(),
     groupId: v.id("groups"),
+    sourceType: v.optional(sourceTypeValidator),
+    tag: v.optional(v.string()),
+    searchText: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -241,7 +356,8 @@ export const listGroup = query({
       .query("tasks")
       .withIndex("by_group", (q: any) => q.eq("groupId", args.groupId))
       .collect();
-    return tasks.sort((a, b) => {
+    const enrichedTasks = await enrichTasks(ctx, tasks);
+    return applyTaskFilters(enrichedTasks, args).sort((a, b) => {
       const aRank = a.status === "open" ? 0 : a.status === "snoozed" ? 1 : 2;
       const bRank = b.status === "open" ? 0 : b.status === "snoozed" ? 1 : 2;
       if (aRank !== bRank) return aRank - bRank;
@@ -250,6 +366,42 @@ export const listGroup = query({
       if (orderA !== orderB) return orderA - orderB;
       return b.createdAt - a.createdAt;
     });
+  },
+});
+
+export const listAssignableLeaders = query({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await getLeaderMembership(ctx, args.groupId, userId);
+
+    const memberships = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group", (q: any) => q.eq("groupId", args.groupId))
+      .collect();
+    const leaders = memberships.filter(
+      (membership) =>
+        isActiveMembership(membership) && isLeaderRole(membership.role),
+    );
+    const users = await Promise.all(
+      leaders.map((membership) => ctx.db.get(membership.userId)),
+    );
+
+    return users
+      .map((user) => {
+        if (!user) return null;
+        const name = [user.firstName, user.lastName].filter(Boolean).join(" ");
+        return {
+          userId: user._id,
+          name: name || "Leader",
+        };
+      })
+      .filter((leader): leader is { userId: Id<"users">; name: string } =>
+        Boolean(leader),
+      );
   },
 });
 
@@ -273,6 +425,11 @@ export const create = mutation({
     const userId = await requireAuth(ctx, args.token);
     await getLeaderMembership(ctx, args.groupId, userId);
 
+    const title = args.title.trim();
+    if (!title) {
+      throw new ConvexError("title is required");
+    }
+
     const responsibilityType = args.responsibilityType ?? "group";
     if (responsibilityType === "person" && !args.assignedToId) {
       throw new ConvexError(
@@ -285,11 +442,41 @@ export const create = mutation({
 
     const targetType = args.targetType ?? "none";
     assertTargetArgs(targetType, args.targetMemberId, args.targetGroupId);
+    if (targetType === "member" && args.targetMemberId) {
+      const targetMembership = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q: any) =>
+          q.eq("groupId", args.groupId).eq("userId", args.targetMemberId),
+        )
+        .first();
+      if (!isActiveMembership(targetMembership)) {
+        throw new ConvexError("target member must be active in this group");
+      }
+    }
+    if (targetType === "group" && args.targetGroupId) {
+      const targetGroup = await ctx.db.get(args.targetGroupId);
+      if (!targetGroup) {
+        throw new ConvexError("target group not found");
+      }
+      const currentGroup = await ctx.db.get(args.groupId);
+      if (!currentGroup || targetGroup.communityId !== currentGroup.communityId) {
+        throw new ConvexError("target group must be in the same community");
+      }
+    }
+    if (args.parentTaskId) {
+      const parentTask = await ctx.db.get(args.parentTaskId);
+      if (!parentTask) {
+        throw new ConvexError("parent task not found");
+      }
+      if (parentTask.groupId !== args.groupId) {
+        throw new ConvexError("parent task must belong to the same group");
+      }
+    }
 
     const timestamp = now();
     const taskId = await ctx.db.insert("tasks", {
       groupId: args.groupId,
-      title: args.title.trim(),
+      title,
       description: args.description?.trim(),
       status: "open",
       responsibilityType,

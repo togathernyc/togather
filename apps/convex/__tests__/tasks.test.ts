@@ -12,11 +12,13 @@ interface SeedData {
   communityId: Id<"communities">;
   groupId: Id<"groups">;
   leaderId: Id<"users">;
+  secondLeaderId: Id<"users">;
   memberId: Id<"users">;
   memberGroupMembershipId: Id<"groupMembers">;
   leadersChannelId: Id<"chatChannels">;
   reachOutChannelId: Id<"chatChannels">;
   leaderToken: string;
+  secondLeaderToken: string;
   memberToken: string;
 }
 
@@ -71,6 +73,15 @@ async function seedData(t: ReturnType<typeof convexTest>): Promise<SeedData> {
       updatedAt: timestamp,
     });
 
+    const secondLeaderId = await ctx.db.insert("users", {
+      firstName: "Leader",
+      lastName: "Two",
+      phone: "+12025550103",
+      activeCommunityId: communityId,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+
     await ctx.db.insert("groupMembers", {
       groupId,
       userId: leaderId,
@@ -83,6 +94,14 @@ async function seedData(t: ReturnType<typeof convexTest>): Promise<SeedData> {
       groupId,
       userId: memberId,
       role: "member",
+      joinedAt: timestamp,
+      notificationsEnabled: true,
+    });
+
+    await ctx.db.insert("groupMembers", {
+      groupId,
+      userId: secondLeaderId,
+      role: "leader",
       joinedAt: timestamp,
       notificationsEnabled: true,
     });
@@ -127,6 +146,7 @@ async function seedData(t: ReturnType<typeof convexTest>): Promise<SeedData> {
       communityId,
       groupId,
       leaderId,
+      secondLeaderId,
       memberId,
       memberGroupMembershipId,
       leadersChannelId,
@@ -134,15 +154,20 @@ async function seedData(t: ReturnType<typeof convexTest>): Promise<SeedData> {
     };
   });
 
-  const [{ accessToken: leaderToken }, { accessToken: memberToken }] =
-    await Promise.all([
+  const [
+    { accessToken: leaderToken },
+    { accessToken: secondLeaderToken },
+    { accessToken: memberToken },
+  ] = await Promise.all([
       generateTokens(ids.leaderId),
+      generateTokens(ids.secondLeaderId),
       generateTokens(ids.memberId),
     ]);
 
   return {
     ...ids,
     leaderToken,
+    secondLeaderToken,
     memberToken,
   };
 }
@@ -289,5 +314,264 @@ describe("tasks functions", () => {
     );
 
     expect(secondTaskId).toBe(firstTaskId);
+  });
+
+  test("create validates title and target cardinality", async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, leaderToken, memberId } = await seedData(t);
+
+    await expect(
+      t.mutation(api.functions.tasks.index.create, {
+        token: leaderToken,
+        groupId,
+        title: "   ",
+      }),
+    ).rejects.toThrow("title is required");
+
+    await expect(
+      t.mutation(api.functions.tasks.index.create, {
+        token: leaderToken,
+        groupId,
+        title: "Bad target",
+        targetType: "none",
+        targetMemberId: memberId,
+      }),
+    ).rejects.toThrow(
+      "targetMemberId and targetGroupId must be omitted when targetType=none",
+    );
+
+    await expect(
+      t.mutation(api.functions.tasks.index.create, {
+        token: leaderToken,
+        groupId,
+        title: "Bad target combo",
+        targetType: "member",
+        targetMemberId: memberId,
+        targetGroupId: groupId,
+      }),
+    ).rejects.toThrow("targetGroupId is not allowed when targetType=member");
+  });
+
+  test("create rejects parent tasks from another group", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, leaderToken, leaderId } = await seedData(t);
+
+    const groupTypeId = await t.run(async (ctx) => {
+      const groupType = await ctx.db
+        .query("groupTypes")
+        .withIndex("by_community_slug", (q) =>
+          q.eq("communityId", communityId).eq("slug", "small-groups"),
+        )
+        .first();
+      if (!groupType) throw new Error("group type not found");
+      return groupType._id;
+    });
+
+    const { otherGroupId } = await t.run(async (ctx) => {
+      const timestamp = Date.now();
+      const insertedGroupId = await ctx.db.insert("groups", {
+        communityId,
+        groupTypeId,
+        name: "Other Group",
+        isArchived: false,
+        isPublic: true,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      await ctx.db.insert("groupMembers", {
+        groupId: insertedGroupId,
+        userId: leaderId,
+        role: "leader",
+        joinedAt: timestamp,
+        notificationsEnabled: true,
+      });
+      return { otherGroupId: insertedGroupId };
+    });
+
+    const parentTaskId = await t.mutation(api.functions.tasks.index.create, {
+      token: leaderToken,
+      groupId: otherGroupId,
+      title: "Parent",
+    });
+
+    await expect(
+      t.mutation(api.functions.tasks.index.create, {
+        token: leaderToken,
+        groupId,
+        title: "Child",
+        parentTaskId,
+      }),
+    ).rejects.toThrow("parent task must belong to the same group");
+  });
+
+  test("leader can assign to another leader and unassign", async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, leaderToken, secondLeaderId } = await seedData(t);
+
+    const taskId = await t.mutation(api.functions.tasks.index.create, {
+      token: leaderToken,
+      groupId,
+      title: "Assign me",
+    });
+
+    await t.mutation(api.functions.tasks.index.assign, {
+      token: leaderToken,
+      taskId,
+      assigneeId: secondLeaderId,
+    });
+
+    let task = await t.run(async (ctx) => ctx.db.get(taskId));
+    expect(task?.assignedToId).toBe(secondLeaderId);
+    expect(task?.responsibilityType).toBe("person");
+
+    await t.mutation(api.functions.tasks.index.assign, {
+      token: leaderToken,
+      taskId,
+    });
+
+    task = await t.run(async (ctx) => ctx.db.get(taskId));
+    expect(task?.assignedToId).toBeUndefined();
+    expect(task?.responsibilityType).toBe("group");
+  });
+
+  test("list queries support source, tag, and search filters", async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, leaderToken, leaderId } = await seedData(t);
+
+    await t.mutation(api.functions.tasks.index.create, {
+      token: leaderToken,
+      groupId,
+      title: "Call Sarah",
+      tags: ["Prayer Request", "Care"],
+      targetType: "member",
+      targetMemberId: leaderId,
+    });
+
+    await t.mutation(internal.functions.tasks.index.createFromBotReminder, {
+      groupId,
+      assignedToId: leaderId,
+      title: "Send weekly update",
+      sourceKey: "bot-task-filter-test",
+    });
+
+    const sourceFiltered = await t.query(api.functions.tasks.index.listMine, {
+      token: leaderToken,
+      sourceType: "bot_task_reminder",
+    });
+    expect(sourceFiltered.length).toBe(1);
+    expect(sourceFiltered[0].sourceType).toBe("bot_task_reminder");
+
+    const tagFiltered = await t.query(api.functions.tasks.index.listGroup, {
+      token: leaderToken,
+      groupId,
+      tag: "prayer request",
+    });
+    expect(tagFiltered.length).toBe(1);
+    expect(tagFiltered[0].tags).toContain("prayer_request");
+
+    const searchFiltered = await t.query(api.functions.tasks.index.listGroup, {
+      token: leaderToken,
+      groupId,
+      searchText: "weekly update",
+    });
+    expect(searchFiltered.length).toBe(1);
+    expect(searchFiltered[0].title).toContain("weekly update");
+  });
+
+  test("listAssignableLeaders returns only active leaders", async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, leaderToken } = await seedData(t);
+
+    const leaders = await t.query(api.functions.tasks.index.listAssignableLeaders, {
+      token: leaderToken,
+      groupId,
+    });
+
+    expect(leaders.length).toBe(2);
+    expect(leaders.every((leader) => leader.name.length > 0)).toBe(true);
+  });
+
+  test("non-leaders cannot mutate existing tasks", async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, leaderToken, memberToken } = await seedData(t);
+
+    const taskId = await t.mutation(api.functions.tasks.index.create, {
+      token: leaderToken,
+      groupId,
+      title: "Secure task",
+    });
+
+    await expect(
+      t.mutation(api.functions.tasks.index.claim, {
+        token: memberToken,
+        taskId,
+      }),
+    ).rejects.toThrow("Leader access required");
+
+    await expect(
+      t.mutation(api.functions.tasks.index.markDone, {
+        token: memberToken,
+        taskId,
+      }),
+    ).rejects.toThrow("Leader access required");
+  });
+
+  test("leader cannot mutate tasks for groups they do not lead", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, leaderToken, secondLeaderToken, secondLeaderId } =
+      await seedData(t);
+
+    const taskInOriginalGroup = await t.mutation(api.functions.tasks.index.create, {
+      token: leaderToken,
+      groupId,
+      title: "Original group task",
+    });
+    await expect(
+      t.mutation(api.functions.tasks.index.markDone, {
+        token: secondLeaderToken,
+        taskId: taskInOriginalGroup,
+      }),
+    ).resolves.toEqual({ success: true });
+
+    const isolatedGroupId = await t.run(async (ctx) => {
+      const timestamp = Date.now();
+      const groupType = await ctx.db
+        .query("groupTypes")
+        .withIndex("by_community_slug", (q) =>
+          q.eq("communityId", communityId).eq("slug", "small-groups"),
+        )
+        .first();
+      if (!groupType) throw new Error("group type not found");
+      const newGroupId = await ctx.db.insert("groups", {
+        communityId,
+        groupTypeId: groupType._id,
+        name: "Isolated Group",
+        isArchived: false,
+        isPublic: true,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      await ctx.db.insert("groupMembers", {
+        groupId: newGroupId,
+        userId: secondLeaderId,
+        role: "leader",
+        joinedAt: timestamp,
+        notificationsEnabled: true,
+      });
+      return newGroupId;
+    });
+
+    const isolatedTaskId = await t.mutation(api.functions.tasks.index.create, {
+      token: secondLeaderToken,
+      groupId: isolatedGroupId,
+      title: "Isolated task",
+    });
+
+    await expect(
+      t.mutation(api.functions.tasks.index.assign, {
+        token: leaderToken,
+        taskId: isolatedTaskId,
+      }),
+    ).rejects.toThrow("Leader access required");
   });
 });
