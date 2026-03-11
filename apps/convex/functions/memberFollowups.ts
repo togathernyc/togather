@@ -2259,7 +2259,7 @@ export const applyCsvImportBatch = internalMutation({
  *
  * Run via: npx convex run --prod functions/memberFollowups:backfillCsvImportNotes
  */
-export const backfillCsvImportNotes = mutation({
+export const backfillCsvImportNotes = internalMutation({
   args: {},
   handler: async (ctx) => {
     const allNotes = await ctx.db
