@@ -1820,7 +1820,7 @@ async function getExistingCsvImportNote(
       (f: Doc<"memberFollowups">) =>
         f.type === "note" &&
         typeof f.content === "string" &&
-        f.content.includes(CSV_IMPORT_NOTE_TAG)
+        (f.content.startsWith(CSV_IMPORT_NOTE_TAG) || f.content.endsWith(CSV_IMPORT_NOTE_TAG))
     ) ?? null
   );
 }
@@ -2258,25 +2258,31 @@ export const applyCsvImportBatch = internalMutation({
  * text is on top and the [csv import] tag is at the bottom.
  *
  * Run via: npx convex run --prod functions/memberFollowups:backfillCsvImportNotes
+ *
+ * This uses pagination to avoid exceeding Convex document scan limits.
+ * Re-run until `isDone: true` is returned.
  */
 export const backfillCsvImportNotes = mutation({
-  args: {},
-  handler: async (ctx) => {
-    const allNotes = await ctx.db
-      .query("memberFollowups")
-      .filter((q: any) => q.eq(q.field("type"), "note"))
-      .collect();
+  args: {
+    cursor: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const PAGE_SIZE = 500;
 
-    const csvNotes = allNotes.filter(
-      (n) => typeof n.content === "string" && n.content.includes(CSV_IMPORT_NOTE_TAG)
+    const paginatedResult = await ctx.db
+      .query("memberFollowups")
+      .paginate({ numItems: PAGE_SIZE, cursor: args.cursor ?? null });
+
+    const notes = paginatedResult.page.filter(
+      (n) =>
+        n.type === "note" &&
+        typeof n.content === "string" &&
+        n.content.startsWith(CSV_IMPORT_NOTE_TAG)
     );
 
     let updated = 0;
-    for (const note of csvNotes) {
+    for (const note of notes) {
       const content = note.content as string;
-
-      // Already in new format (tag at end, not at start)
-      if (!content.startsWith(CSV_IMPORT_NOTE_TAG)) continue;
 
       // Old format: "[csv import]\n2026-03-11T02:12:34.622Z - actual note text"
       // New format: "actual note text\n[csv import]"
@@ -2300,7 +2306,11 @@ export const backfillCsvImportNotes = mutation({
       updated++;
     }
 
-    return { total: csvNotes.length, updated };
+    return {
+      updated,
+      isDone: paginatedResult.isDone,
+      continueCursor: paginatedResult.isDone ? null : paginatedResult.continueCursor,
+    };
   },
 });
 
