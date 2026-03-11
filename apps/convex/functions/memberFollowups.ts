@@ -1820,7 +1820,7 @@ async function getExistingCsvImportNote(
       (f: Doc<"memberFollowups">) =>
         f.type === "note" &&
         typeof f.content === "string" &&
-        f.content.startsWith(CSV_IMPORT_NOTE_TAG)
+        f.content.includes(CSV_IMPORT_NOTE_TAG)
     ) ?? null
   );
 }
@@ -2181,11 +2181,11 @@ export const applyCsvImportBatch = internalMutation({
       const { groupMemberId } = await ensureUserAndMembership(ctx, prepared, group, args.timestamp);
 
       if (batchRow.notes) {
-        const noteLine = `${new Date(args.timestamp).toISOString()} - ${batchRow.notes}`;
         const existingCsvNote = await getExistingCsvImportNote(ctx, groupMemberId);
         if (existingCsvNote) {
-          const previousContent = existingCsvNote.content ?? CSV_IMPORT_NOTE_TAG;
-          const nextContent = `${previousContent}\n${noteLine}`;
+          // Strip existing tag, append new note, re-add tag at bottom
+          const withoutTag = existingCsvNote.content?.replace(/\n?\[csv import\]$/m, "").trim() ?? "";
+          const nextContent = `${withoutTag}\n${batchRow.notes}\n${CSV_IMPORT_NOTE_TAG}`;
           await ctx.db.patch(existingCsvNote._id, {
             content: nextContent,
             createdAt: args.timestamp,
@@ -2196,7 +2196,7 @@ export const applyCsvImportBatch = internalMutation({
             groupMemberId,
             createdById: args.importedById,
             type: "note",
-            content: `${CSV_IMPORT_NOTE_TAG}\n${noteLine}`,
+            content: `${batchRow.notes}\n${CSV_IMPORT_NOTE_TAG}`,
             createdAt: args.timestamp,
           });
         }
@@ -2250,6 +2250,57 @@ export const applyCsvImportBatch = internalMutation({
         }
       );
     }
+  },
+});
+
+/**
+ * One-time backfill: reformat existing CSV import notes so the actual note
+ * text is on top and the [csv import] tag is at the bottom.
+ *
+ * Run via: npx convex run --prod functions/memberFollowups:backfillCsvImportNotes
+ */
+export const backfillCsvImportNotes = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const allNotes = await ctx.db
+      .query("memberFollowups")
+      .filter((q: any) => q.eq(q.field("type"), "note"))
+      .collect();
+
+    const csvNotes = allNotes.filter(
+      (n) => typeof n.content === "string" && n.content.includes(CSV_IMPORT_NOTE_TAG)
+    );
+
+    let updated = 0;
+    for (const note of csvNotes) {
+      const content = note.content as string;
+
+      // Already in new format (tag at end, not at start)
+      if (!content.startsWith(CSV_IMPORT_NOTE_TAG)) continue;
+
+      // Old format: "[csv import]\n2026-03-11T02:12:34.622Z - actual note text"
+      // New format: "actual note text\n[csv import]"
+      const lines = content.split("\n").filter((l) => l.trim().length > 0);
+
+      const noteLines: string[] = [];
+      for (const line of lines) {
+        if (line === CSV_IMPORT_NOTE_TAG) continue;
+        // Strip "2026-03-11T02:12:34.622Z - " prefix from note lines
+        const match = line.match(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s*-\s*(.+)$/);
+        if (match) {
+          noteLines.push(match[1]);
+        } else {
+          noteLines.push(line);
+        }
+      }
+
+      const newContent = `${noteLines.join("\n")}\n${CSV_IMPORT_NOTE_TAG}`;
+
+      await ctx.db.patch(note._id, { content: newContent });
+      updated++;
+    }
+
+    return { total: csvNotes.length, updated };
   },
 });
 
