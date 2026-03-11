@@ -603,6 +603,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
   const setStatusMut = useAuthenticatedMutation(api.functions.memberFollowups.setStatus);
   // Custom field mutation
   const setCustomFieldMut = useAuthenticatedMutation(api.functions.memberFollowups.setCustomField);
+  const assigneeMutationQueueRef = useRef<Record<string, Promise<void>>>({});
 
   // Bulk remove mutations
   const removeGroupMember = useAuthenticatedMutation(api.functions.groupMembers.remove);
@@ -715,33 +716,45 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
     setSelectedMemberId(null);
   };
 
+  const enqueueAssigneeUpdate = useCallback(
+    (memberId: string, assigneeIds: string[]) => {
+      const previous = assigneeMutationQueueRef.current[memberId] ?? Promise.resolve();
+      const next = previous
+        .catch(() => undefined)
+        .then(() =>
+          setAssigneeMut({
+            groupId: groupId as Id<"groups">,
+            groupMemberId: memberId as Id<"groupMembers">,
+            assigneeIds: assigneeIds as Id<"users">[],
+          })
+        );
+      assigneeMutationQueueRef.current[memberId] = next.finally(() => {
+        if (assigneeMutationQueueRef.current[memberId] === next) {
+          delete assigneeMutationQueueRef.current[memberId];
+        }
+      });
+      return next;
+    },
+    [groupId, setAssigneeMut]
+  );
+
   const handleAssigneeSelect = async (memberId: string, assigneeIds: string[]) => {
     const normalizedAssigneeIds = Array.from(new Set(assigneeIds));
-    let previousAssigneeIds: string[] = [];
     // Optimistic: update UI instantly
     setOptimistic((prev) => {
-      const existingOpt = prev[memberId]?.assigneeIds;
-      if (existingOpt !== undefined) {
-        previousAssigneeIds = [...(existingOpt ?? [])];
-      } else {
-        const serverMember = members.find((m) => m.groupMemberId === memberId);
-        previousAssigneeIds = serverMember ? getAssigneeIds(serverMember) : [];
-      }
       return { ...prev, [memberId]: { ...prev[memberId], assigneeIds: normalizedAssigneeIds } };
     });
     try {
-      await setAssigneeMut({
-        groupId: groupId as Id<"groups">,
-        groupMemberId: memberId as Id<"groupMembers">,
-        assigneeIds: normalizedAssigneeIds as Id<"users">[],
-      });
+      await enqueueAssigneeUpdate(memberId, normalizedAssigneeIds);
     } catch (err) {
       console.error("[setAssignee] failed:", err);
       // Revert optimistic update on failure
       setOptimistic((prev) => {
         const next = { ...prev };
-        next[memberId] = { ...next[memberId], assigneeIds: previousAssigneeIds };
-        if (Object.keys(next[memberId]).length === 0) delete next[memberId];
+        if (next[memberId]) {
+          delete next[memberId].assigneeIds;
+          if (Object.keys(next[memberId]).length === 0) delete next[memberId];
+        }
         return next;
       });
     }
