@@ -2285,7 +2285,12 @@ export const applyCsvImport = mutation({
       await ctx.scheduler.runAfter(
         0,
         internal.functions.followupScoreComputation.computeSingleMemberScore,
-        { groupId: group._id, groupMemberId }
+        {
+          groupId: group._id,
+          groupMemberId,
+          status: prepared.parsedStatus,
+          assigneeId: prepared.parsedAssigneeId,
+        }
       );
     }
 
@@ -2332,8 +2337,8 @@ export const quickAddRow = mutation({
           q.eq("groupId", group._id).eq("userId", args.assigneeId)
         )
         .first();
-      if (!leaderMembership || leaderMembership.leftAt || leaderMembership.role !== "leader") {
-        throw new ConvexError("Assignee must be an active group leader");
+      if (!leaderMembership || leaderMembership.leftAt || (leaderMembership.role !== "leader" && leaderMembership.role !== "admin")) {
+        throw new ConvexError("Assignee must be an active group leader or admin");
       }
     }
 
