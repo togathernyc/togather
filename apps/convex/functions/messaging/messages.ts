@@ -470,6 +470,42 @@ export const deleteMessage = mutation({
       deletedAt: now,
       deletedById: userId,
     });
+
+    // Update channel preview if the deleted message was the most recent
+    // Re-read channel (already fetched above, but re-read for freshest lastMessageAt)
+    const freshChannel = await ctx.db.get(message.channelId);
+    if (freshChannel && freshChannel.lastMessageAt && message.createdAt >= freshChannel.lastMessageAt) {
+      const previousMessage = await ctx.db
+        .query("chatMessages")
+        .withIndex("by_channel_createdAt", (q) => q.eq("channelId", message.channelId))
+        .order("desc")
+        .filter((q) =>
+          q.and(
+            q.eq(q.field("isDeleted"), false),
+            q.neq(q.field("_id"), args.messageId),
+            q.eq(q.field("parentMessageId"), undefined)
+          )
+        )
+        .first();
+
+      if (previousMessage) {
+        await ctx.db.patch(message.channelId, {
+          lastMessageAt: previousMessage.createdAt,
+          lastMessagePreview: previousMessage.content.slice(0, MAX_PREVIEW_LENGTH),
+          lastMessageSenderId: previousMessage.senderId,
+          lastMessageSenderName: previousMessage.senderName,
+          updatedAt: now,
+        });
+      } else {
+        await ctx.db.patch(message.channelId, {
+          lastMessageAt: undefined,
+          lastMessagePreview: undefined,
+          lastMessageSenderId: undefined,
+          lastMessageSenderName: undefined,
+          updatedAt: now,
+        });
+      }
+    }
   },
 });
 
