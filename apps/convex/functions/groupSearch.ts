@@ -648,6 +648,7 @@ export const searchCommunityMembers = query({
     communityId: v.id("communities"),
     search: v.string(),
     excludeUserIds: v.optional(v.array(v.id("users"))),
+    includeGroupIds: v.optional(v.array(v.id("groups"))),
     excludeGroupId: v.optional(v.id("groups")),
     token: v.string(),
     /** If true, includes the current user in results (default: false, excludes current user) */
@@ -671,6 +672,7 @@ export const searchCommunityMembers = query({
       communityId: args.communityId,
       search: args.search,
       excludeUserIds,
+      groupIds: args.includeGroupIds,
       excludeGroupId: args.excludeGroupId,
       limit: Math.min(args.limit ?? 20, 50),
     });

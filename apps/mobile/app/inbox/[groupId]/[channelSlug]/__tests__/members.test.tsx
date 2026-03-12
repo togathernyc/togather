@@ -161,19 +161,25 @@ jest.mock("@services/api/convex", () => ({
 
 // Mock MemberSearch component
 jest.mock("@components/ui/MemberSearch", () => ({
-  MemberSearch: ({ onMultiSelect }: any) => {
-    const { TouchableOpacity, Text } = require("react-native");
+  MemberSearch: ({ onMultiSelect, includeGroupIds, placeholder }: any) => {
+    const { TouchableOpacity, Text, View } = require("react-native");
     return (
-      <TouchableOpacity
-        testID="member-search"
-        onPress={() =>
-          onMultiSelect([
-            { user_id: "user-4", first_name: "New", last_name: "Member" },
-          ])
-        }
-      >
-        <Text>Search Members</Text>
-      </TouchableOpacity>
+      <View>
+        <TouchableOpacity
+          testID="member-search"
+          onPress={() =>
+            onMultiSelect([
+              { user_id: "user-4", first_name: "New", last_name: "Member" },
+            ])
+          }
+        >
+          <Text>Search Members</Text>
+        </TouchableOpacity>
+        <Text testID="member-search-placeholder">{placeholder ?? ""}</Text>
+        <Text testID="member-search-include-group-ids">
+          {(includeGroupIds ?? []).join(",")}
+        </Text>
+      </View>
     );
   },
 }));
@@ -561,6 +567,45 @@ describe("ChannelMembersScreen", () => {
       });
 
       expect(getByText("Cancel")).toBeTruthy();
+    });
+
+    it("restricts shared-channel search to primary + connected groups and shows explicit copy", () => {
+      mockUseQueryReturn = {
+        channelData: {
+          ...mockChannelData,
+          isShared: true,
+          groupId: "test-group-id",
+          sharedGroups: [
+            {
+              groupId: "secondary-group-id",
+              status: "accepted",
+              invitedById: "user-1",
+              invitedAt: Date.now(),
+            },
+          ],
+        },
+        membersData: mockMembersData,
+        groupData: mockGroupData,
+      };
+
+      const { getByText, getByTestId } = render(<ChannelMembersScreen />);
+
+      const addIcon = getByText("person-add-outline");
+      act(() => {
+        fireEvent.press(addIcon.parent!);
+      });
+
+      expect(
+        getByText(
+          "Only primary + connected group members appear here. Adding someone from a connected group adds them to this channel only, not to the primary group."
+        )
+      ).toBeTruthy();
+      expect(getByTestId("member-search-placeholder").props.children).toBe(
+        "Search primary + connected group members..."
+      );
+      expect(getByTestId("member-search-include-group-ids").props.children).toBe(
+        "test-group-id,secondary-group-id"
+      );
     });
 
     it("calls addChannelMembers when members are selected", async () => {
