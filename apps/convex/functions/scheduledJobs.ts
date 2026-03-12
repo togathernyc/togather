@@ -87,7 +87,7 @@ export const runBirthdayBot = internalAction({
 
         const finalMessage =
           config.mode === "leader_reminder"
-            ? `**Birthday Reminder**\n\n${message}\n\nPlease give them a shoutout in the group chat!`
+            ? `**Birthday Reminder**\n\n${message}\n\nPlease wish them a happy birthday in General chat.`
             : message;
 
         await ctx.runAction(internal.functions.scheduledJobs.sendBotMessage, {
@@ -174,7 +174,7 @@ export const processBirthdayBotBucket = internalAction({
 
           const finalMessage =
             config.mode === "leader_reminder"
-              ? `**Birthday Reminder**\n\n${message}\n\nPlease give them a shoutout in the group chat!`
+              ? `**Birthday Reminder**\n\n${message}\n\nPlease wish them a happy birthday in General chat.`
               : message;
 
           await ctx.runAction(internal.functions.scheduledJobs.sendBotMessage, {
@@ -300,7 +300,7 @@ export const getBirthdayBotConfigs = internalQuery({
         mode: (configData.mode as string) || "leader_reminder",
         message:
           (configData.message as string) ||
-          "🎂 Happy Birthday, [[birthday_names]]! 🎉",
+          "🎂 It's [[birthday_names]]'s birthday today! Please wish them a happy birthday in General chat. 🎉",
         lastLeaderIndex: (stateData.lastLeaderIndex as number) ?? -1,
         leaderCount: leaderCountMap.get(config.groupId) || 1,
         targetChannelSlug: (configData.targetChannelSlug as string) || undefined,
@@ -355,7 +355,7 @@ export const getDueBirthdayBotConfigs = internalQuery({
         mode: (configData.mode as string) || "leader_reminder",
         message:
           (configData.message as string) ||
-          "🎂 Happy Birthday, [[birthday_names]]! 🎉",
+          "🎂 It's [[birthday_names]]'s birthday today! Please wish them a happy birthday in General chat. 🎉",
         lastLeaderIndex: (stateData.lastLeaderIndex as number) ?? -1,
         targetChannelSlug: (configData.targetChannelSlug as string) || undefined,
       });
