@@ -159,10 +159,10 @@ async function seedData(t: ReturnType<typeof convexTest>): Promise<SeedData> {
     { accessToken: secondLeaderToken },
     { accessToken: memberToken },
   ] = await Promise.all([
-      generateTokens(ids.leaderId),
-      generateTokens(ids.secondLeaderId),
-      generateTokens(ids.memberId),
-    ]);
+    generateTokens(ids.leaderId),
+    generateTokens(ids.secondLeaderId),
+    generateTokens(ids.memberId),
+  ]);
 
   return {
     ...ids,
@@ -181,7 +181,10 @@ function emptyWeeklySchedule() {
     friday: [],
     saturday: [],
     sunday: [],
-  } as Record<string, Array<{ id: string; message: string; roleIds: string[] }>>;
+  } as Record<
+    string,
+    Array<{ id: string; message: string; roleIds: string[] }>
+  >;
 }
 
 describe("tasks functions", () => {
@@ -406,7 +409,8 @@ describe("tasks functions", () => {
       );
       expect(reminderTasks.length).toBe(1);
       expect(
-        leaderMessages.filter((message) => message.contentType === "task_card").length,
+        leaderMessages.filter((message) => message.contentType === "task_card")
+          .length,
       ).toBe(0);
     } finally {
       vi.useRealTimers();
@@ -714,10 +718,13 @@ describe("tasks functions", () => {
     const t = convexTest(schema, modules);
     const { groupId, leaderToken } = await seedData(t);
 
-    const leaders = await t.query(api.functions.tasks.index.listAssignableLeaders, {
-      token: leaderToken,
-      groupId,
-    });
+    const leaders = await t.query(
+      api.functions.tasks.index.listAssignableLeaders,
+      {
+        token: leaderToken,
+        groupId,
+      },
+    );
 
     expect(leaders.length).toBe(2);
     expect(leaders.every((leader) => leader.name.length > 0)).toBe(true);
@@ -800,10 +807,49 @@ describe("tasks functions", () => {
     expect(history.some((event) => event.performedByName)).toBe(true);
   });
 
+  test("update preserves targetType none when relevantMemberId is null", async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, leaderToken } = await seedData(t);
+
+    const taskId = await t.mutation(api.functions.tasks.index.create, {
+      token: leaderToken,
+      groupId,
+      title: "Task with no target",
+      targetType: "none",
+    });
+
+    const detailBefore = await t.query(api.functions.tasks.index.getDetail, {
+      token: leaderToken,
+      taskId,
+    });
+    expect(detailBefore.targetType).toBe("none");
+
+    await t.mutation(api.functions.tasks.index.update, {
+      token: leaderToken,
+      taskId,
+      title: "Updated title",
+      relevantMemberId: null,
+    });
+
+    const detailAfter = await t.query(api.functions.tasks.index.getDetail, {
+      token: leaderToken,
+      taskId,
+    });
+    expect(detailAfter.title).toBe("Updated title");
+    expect(detailAfter.targetType).toBe("none");
+    expect(detailAfter.targetMemberId).toBeUndefined();
+    expect(detailAfter.targetGroupId).toBeUndefined();
+  });
+
   test("task claim conflict keeps authoritative assignee", async () => {
     const t = convexTest(schema, modules);
-    const { groupId, leaderToken, secondLeaderToken, leaderId, secondLeaderId } =
-      await seedData(t);
+    const {
+      groupId,
+      leaderToken,
+      secondLeaderToken,
+      leaderId,
+      secondLeaderId,
+    } = await seedData(t);
 
     const taskId = await t.mutation(api.functions.tasks.index.create, {
       token: leaderToken,
@@ -959,11 +1005,16 @@ describe("tasks functions", () => {
       taskId: reachOutTaskId,
     });
 
-    const memberView = await t.query(api.functions.messaging.reachOut.getMyTaskRequests, {
-      token: memberToken,
-      groupId,
-    });
-    const requestForMember = memberView.find((request) => request._id === reachOutTaskId);
+    const memberView = await t.query(
+      api.functions.messaging.reachOut.getMyTaskRequests,
+      {
+        token: memberToken,
+        groupId,
+      },
+    );
+    const requestForMember = memberView.find(
+      (request) => request._id === reachOutTaskId,
+    );
     expect(requestForMember?.status).toBe("resolved");
   });
 
@@ -1045,14 +1096,22 @@ describe("tasks functions", () => {
 
   test("leader cannot mutate tasks for groups they do not lead", async () => {
     const t = convexTest(schema, modules);
-    const { communityId, groupId, leaderToken, secondLeaderToken, secondLeaderId } =
-      await seedData(t);
-
-    const taskInOriginalGroup = await t.mutation(api.functions.tasks.index.create, {
-      token: leaderToken,
+    const {
+      communityId,
       groupId,
-      title: "Original group task",
-    });
+      leaderToken,
+      secondLeaderToken,
+      secondLeaderId,
+    } = await seedData(t);
+
+    const taskInOriginalGroup = await t.mutation(
+      api.functions.tasks.index.create,
+      {
+        token: leaderToken,
+        groupId,
+        title: "Original group task",
+      },
+    );
     await expect(
       t.mutation(api.functions.tasks.index.markDone, {
         token: secondLeaderToken,

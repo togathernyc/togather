@@ -121,13 +121,17 @@ function assertTargetArgs(
     throw new ConvexError("targetMemberId is required when targetType=member");
   }
   if (targetType === "member" && targetGroupId) {
-    throw new ConvexError("targetGroupId is not allowed when targetType=member");
+    throw new ConvexError(
+      "targetGroupId is not allowed when targetType=member",
+    );
   }
   if (targetType === "group" && !targetGroupId) {
     throw new ConvexError("targetGroupId is required when targetType=group");
   }
   if (targetType === "group" && targetMemberId) {
-    throw new ConvexError("targetMemberId is not allowed when targetType=group");
+    throw new ConvexError(
+      "targetMemberId is not allowed when targetType=group",
+    );
   }
 }
 
@@ -186,10 +190,26 @@ function formatUserName(user: any) {
   return name || "Member";
 }
 
-async function enrichTasks<T extends { groupId: Id<"groups">; assignedToId?: Id<"users">; targetMemberId?: Id<"users">; targetGroupId?: Id<"groups"> }>(
+async function enrichTasks<
+  T extends {
+    groupId: Id<"groups">;
+    assignedToId?: Id<"users">;
+    targetMemberId?: Id<"users">;
+    targetGroupId?: Id<"groups">;
+  },
+>(
   ctx: { db: any },
   tasks: T[],
-): Promise<Array<T & { groupName: string; assignedToName?: string; targetMemberName?: string; targetGroupName?: string }>> {
+): Promise<
+  Array<
+    T & {
+      groupName: string;
+      assignedToName?: string;
+      targetMemberName?: string;
+      targetGroupName?: string;
+    }
+  >
+> {
   if (tasks.length === 0) return [];
 
   const groupIdStrings = [
@@ -213,7 +233,9 @@ async function enrichTasks<T extends { groupId: Id<"groups">; assignedToId?: Id<
     Promise.all(
       groupIdStrings.map((groupId) => ctx.db.get(groupId as Id<"groups">)),
     ),
-    Promise.all(userIdStrings.map((userId) => ctx.db.get(userId as Id<"users">))),
+    Promise.all(
+      userIdStrings.map((userId) => ctx.db.get(userId as Id<"users">)),
+    ),
   ]);
 
   const groupMap = new Map<string, any>();
@@ -228,12 +250,18 @@ async function enrichTasks<T extends { groupId: Id<"groups">; assignedToId?: Id<
   return tasks.map((task) => {
     const groupName = groupMap.get(task.groupId.toString())?.name ?? "Group";
     const assignedToName = task.assignedToId
-      ? [userMap.get(task.assignedToId.toString())?.firstName, userMap.get(task.assignedToId.toString())?.lastName]
+      ? [
+          userMap.get(task.assignedToId.toString())?.firstName,
+          userMap.get(task.assignedToId.toString())?.lastName,
+        ]
           .filter(Boolean)
           .join(" ")
       : undefined;
     const targetMemberName = task.targetMemberId
-      ? [userMap.get(task.targetMemberId.toString())?.firstName, userMap.get(task.targetMemberId.toString())?.lastName]
+      ? [
+          userMap.get(task.targetMemberId.toString())?.firstName,
+          userMap.get(task.targetMemberId.toString())?.lastName,
+        ]
           .filter(Boolean)
           .join(" ")
       : undefined;
@@ -303,14 +331,14 @@ export const listMine = query({
 
     const enrichedTasks = await enrichTasks(ctx, tasks);
     return applyTaskFilters(enrichedTasks, args).sort((a, b) => {
-        if (a.status !== b.status) {
-          return a.status === "open" ? -1 : 1;
-        }
-        const orderA = a.orderKey ?? Number.MAX_SAFE_INTEGER;
-        const orderB = b.orderKey ?? Number.MAX_SAFE_INTEGER;
-        if (orderA !== orderB) return orderA - orderB;
-        return b.createdAt - a.createdAt;
-      });
+      if (a.status !== b.status) {
+        return a.status === "open" ? -1 : 1;
+      }
+      const orderA = a.orderKey ?? Number.MAX_SAFE_INTEGER;
+      const orderB = b.orderKey ?? Number.MAX_SAFE_INTEGER;
+      if (orderA !== orderB) return orderA - orderB;
+      return b.createdAt - a.createdAt;
+    });
   },
 });
 
@@ -327,33 +355,37 @@ export const listAll = query({
     if (leaderGroupIds.length === 0) return [];
 
     const leaderGroupIdSet = new Set(leaderGroupIds.map((id) => id.toString()));
-    const [groupOpenTasks, groupSnoozedTasks, personOpenTasks, personSnoozedTasks] =
-      await Promise.all([
-        ctx.db
-          .query("tasks")
-          .withIndex("by_responsibility_status", (q: any) =>
-            q.eq("responsibilityType", "group").eq("status", "open"),
-          )
-          .collect(),
-        ctx.db
-          .query("tasks")
-          .withIndex("by_responsibility_status", (q: any) =>
-            q.eq("responsibilityType", "group").eq("status", "snoozed"),
-          )
-          .collect(),
-        ctx.db
-          .query("tasks")
-          .withIndex("by_responsibility_status", (q: any) =>
-            q.eq("responsibilityType", "person").eq("status", "open"),
-          )
-          .collect(),
-        ctx.db
-          .query("tasks")
-          .withIndex("by_responsibility_status", (q: any) =>
-            q.eq("responsibilityType", "person").eq("status", "snoozed"),
-          )
-          .collect(),
-      ]);
+    const [
+      groupOpenTasks,
+      groupSnoozedTasks,
+      personOpenTasks,
+      personSnoozedTasks,
+    ] = await Promise.all([
+      ctx.db
+        .query("tasks")
+        .withIndex("by_responsibility_status", (q: any) =>
+          q.eq("responsibilityType", "group").eq("status", "open"),
+        )
+        .collect(),
+      ctx.db
+        .query("tasks")
+        .withIndex("by_responsibility_status", (q: any) =>
+          q.eq("responsibilityType", "group").eq("status", "snoozed"),
+        )
+        .collect(),
+      ctx.db
+        .query("tasks")
+        .withIndex("by_responsibility_status", (q: any) =>
+          q.eq("responsibilityType", "person").eq("status", "open"),
+        )
+        .collect(),
+      ctx.db
+        .query("tasks")
+        .withIndex("by_responsibility_status", (q: any) =>
+          q.eq("responsibilityType", "person").eq("status", "snoozed"),
+        )
+        .collect(),
+    ]);
 
     const tasks = [
       ...groupOpenTasks,
@@ -471,6 +503,65 @@ export const listAssignableLeaders = query({
   },
 });
 
+async function searchGroupMembers(
+  ctx: { db: any },
+  groupId: Id<"groups">,
+  searchText: string,
+  options: {
+    limit: number;
+    requireLeaderRole: boolean;
+    fallbackName: string;
+  },
+): Promise<{ userId: Id<"users">; name: string }[]> {
+  const normalizedSearch = searchText.trim().toLowerCase();
+  if (!normalizedSearch) {
+    return [];
+  }
+
+  const memberships = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_group", (q: any) => q.eq("groupId", groupId))
+    .collect();
+  const filteredMemberships = memberships.filter((membership: any) =>
+    options.requireLeaderRole
+      ? isActiveMembership(membership) && isLeaderRole(membership.role)
+      : isActiveMembership(membership),
+  );
+  const users = await Promise.all(
+    filteredMemberships.map((membership: any) => ctx.db.get(membership.userId)),
+  );
+
+  return users
+    .map((user) => {
+      if (!user) return null;
+      const fullName = [user.firstName, user.lastName]
+        .filter(Boolean)
+        .join(" ");
+      const searchableText = [
+        fullName,
+        user.firstName,
+        user.lastName,
+        user.email,
+        user.phone,
+      ]
+        .filter((value): value is string => Boolean(value))
+        .join(" ")
+        .toLowerCase();
+      if (!searchableText.includes(normalizedSearch)) {
+        return null;
+      }
+      return {
+        userId: user._id,
+        name: fullName || options.fallbackName,
+      };
+    })
+    .filter((result): result is { userId: Id<"users">; name: string } =>
+      Boolean(result),
+    )
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .slice(0, options.limit);
+}
+
 export const searchAssignableLeaders = query({
   args: {
     token: v.string(),
@@ -482,51 +573,11 @@ export const searchAssignableLeaders = query({
     const userId = await requireAuth(ctx, args.token);
     await getLeaderMembership(ctx, args.groupId, userId);
 
-    const normalizedSearch = args.searchText.trim().toLowerCase();
-    const limit = Math.min(args.limit ?? 25, 100);
-    if (!normalizedSearch) {
-      return [];
-    }
-
-    const memberships = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group", (q: any) => q.eq("groupId", args.groupId))
-      .collect();
-    const leaders = memberships.filter(
-      (membership) =>
-        isActiveMembership(membership) && isLeaderRole(membership.role),
-    );
-    const users = await Promise.all(
-      leaders.map((membership) => ctx.db.get(membership.userId)),
-    );
-
-    return users
-      .map((user) => {
-        if (!user) return null;
-        const fullName = [user.firstName, user.lastName].filter(Boolean).join(" ");
-        const searchableText = [
-          fullName,
-          user.firstName,
-          user.lastName,
-          user.email,
-          user.phone,
-        ]
-          .filter((value): value is string => Boolean(value))
-          .join(" ")
-          .toLowerCase();
-        if (!searchableText.includes(normalizedSearch)) {
-          return null;
-        }
-        return {
-          userId: user._id,
-          name: fullName || "Leader",
-        };
-      })
-      .filter((leader): leader is { userId: Id<"users">; name: string } =>
-        Boolean(leader),
-      )
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .slice(0, limit);
+    return searchGroupMembers(ctx, args.groupId, args.searchText, {
+      limit: Math.min(args.limit ?? 25, 100),
+      requireLeaderRole: true,
+      fallbackName: "Leader",
+    });
   },
 });
 
@@ -541,50 +592,11 @@ export const searchRelevantMembers = query({
     const userId = await requireAuth(ctx, args.token);
     await getLeaderMembership(ctx, args.groupId, userId);
 
-    const normalizedSearch = args.searchText.trim().toLowerCase();
-    const limit = Math.min(args.limit ?? 30, 100);
-    if (!normalizedSearch) {
-      return [];
-    }
-
-    const memberships = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group", (q: any) => q.eq("groupId", args.groupId))
-      .collect();
-    const activeMemberships = memberships.filter((membership) =>
-      isActiveMembership(membership),
-    );
-    const users = await Promise.all(
-      activeMemberships.map((membership) => ctx.db.get(membership.userId)),
-    );
-
-    return users
-      .map((user) => {
-        if (!user) return null;
-        const fullName = [user.firstName, user.lastName].filter(Boolean).join(" ");
-        const searchableText = [
-          fullName,
-          user.firstName,
-          user.lastName,
-          user.email,
-          user.phone,
-        ]
-          .filter((value): value is string => Boolean(value))
-          .join(" ")
-          .toLowerCase();
-        if (!searchableText.includes(normalizedSearch)) {
-          return null;
-        }
-        return {
-          userId: user._id,
-          name: fullName || "Member",
-        };
-      })
-      .filter((member): member is { userId: Id<"users">; name: string } =>
-        Boolean(member),
-      )
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .slice(0, limit);
+    return searchGroupMembers(ctx, args.groupId, args.searchText, {
+      limit: Math.min(args.limit ?? 30, 100),
+      requireLeaderRole: false,
+      fallbackName: "Member",
+    });
   },
 });
 
@@ -604,7 +616,8 @@ export const getTaskCard = query({
       )
       .first();
 
-    const isLeader = isActiveMembership(membership) && isLeaderRole(membership.role);
+    const isLeader =
+      isActiveMembership(membership) && isLeaderRole(membership.role);
     const isTargetMember = task.targetMemberId === userId;
     if (!isLeader && !isTargetMember) {
       throw new ConvexError("Access denied");
@@ -612,7 +625,9 @@ export const getTaskCard = query({
 
     const [assigneeUser, targetMemberUser] = await Promise.all([
       task.assignedToId ? ctx.db.get(task.assignedToId) : Promise.resolve(null),
-      task.targetMemberId ? ctx.db.get(task.targetMemberId) : Promise.resolve(null),
+      task.targetMemberId
+        ? ctx.db.get(task.targetMemberId)
+        : Promise.resolve(null),
     ]);
 
     return {
@@ -626,7 +641,9 @@ export const getTaskCard = query({
       assignedToId: task.assignedToId,
       assignedToName: assigneeUser ? formatUserName(assigneeUser) : undefined,
       targetMemberId: task.targetMemberId,
-      targetMemberName: targetMemberUser ? formatUserName(targetMemberUser) : undefined,
+      targetMemberName: targetMemberUser
+        ? formatUserName(targetMemberUser)
+        : undefined,
       createdAt: task.createdAt,
       updatedAt: task.updatedAt,
       viewerCanManage: isLeader,
@@ -649,24 +666,36 @@ export const getDetail = query({
     const task = await getTaskOrThrow(ctx, args.taskId);
     await getLeaderMembership(ctx, task.groupId, userId);
 
-    const [group, createdBy, assignedTo, targetMember, targetGroup, parentTask] =
-      await Promise.all([
-        ctx.db.get(task.groupId),
-        task.createdById ? ctx.db.get(task.createdById) : Promise.resolve(null),
-        task.assignedToId ? ctx.db.get(task.assignedToId) : Promise.resolve(null),
-        task.targetMemberId ? ctx.db.get(task.targetMemberId) : Promise.resolve(null),
-        task.targetGroupId ? ctx.db.get(task.targetGroupId) : Promise.resolve(null),
-        task.parentTaskId ? ctx.db.get(task.parentTaskId) : Promise.resolve(null),
-      ]);
+    const [
+      group,
+      createdBy,
+      assignedTo,
+      targetMember,
+      targetGroup,
+      parentTask,
+    ] = await Promise.all([
+      ctx.db.get(task.groupId),
+      task.createdById ? ctx.db.get(task.createdById) : Promise.resolve(null),
+      task.assignedToId ? ctx.db.get(task.assignedToId) : Promise.resolve(null),
+      task.targetMemberId
+        ? ctx.db.get(task.targetMemberId)
+        : Promise.resolve(null),
+      task.targetGroupId
+        ? ctx.db.get(task.targetGroupId)
+        : Promise.resolve(null),
+      task.parentTaskId ? ctx.db.get(task.parentTaskId) : Promise.resolve(null),
+    ]);
 
     return {
       ...task,
-      groupName: (group && "name" in group) ? group.name : "Group",
+      groupName: group && "name" in group ? group.name : "Group",
       createdByName: createdBy ? formatUserName(createdBy) : undefined,
       assignedToName: assignedTo ? formatUserName(assignedTo) : undefined,
       targetMemberName: targetMember ? formatUserName(targetMember) : undefined,
-      targetGroupName: (targetGroup && "name" in targetGroup) ? targetGroup.name : undefined,
-      parentTaskTitle: (parentTask && "title" in parentTask) ? parentTask.title : undefined,
+      targetGroupName:
+        targetGroup && "name" in targetGroup ? targetGroup.name : undefined,
+      parentTaskTitle:
+        parentTask && "title" in parentTask ? parentTask.title : undefined,
     };
   },
 });
@@ -686,8 +715,9 @@ export const listHistory = query({
       .withIndex("by_task_createdAt", (q: any) => q.eq("taskId", args.taskId))
       .collect();
 
-    const performerIds = [...new Set(events.map((event) => event.performedById?.toString()))]
-      .filter(Boolean) as string[];
+    const performerIds = [
+      ...new Set(events.map((event) => event.performedById?.toString())),
+    ].filter(Boolean) as string[];
     const performers = await Promise.all(
       performerIds.map((performerId) => ctx.db.get(performerId as Id<"users">)),
     );
@@ -701,7 +731,7 @@ export const listHistory = query({
       .map((event) => ({
         ...event,
         performedByName: event.performedById
-          ? performerMap.get(event.performedById.toString()) ?? "Leader"
+          ? (performerMap.get(event.performedById.toString()) ?? "Leader")
           : undefined,
       }))
       .sort((a, b) => b.createdAt - a.createdAt);
@@ -762,7 +792,10 @@ export const create = mutation({
         throw new ConvexError("target group not found");
       }
       const currentGroup = await ctx.db.get(args.groupId);
-      if (!currentGroup || targetGroup.communityId !== currentGroup.communityId) {
+      if (
+        !currentGroup ||
+        targetGroup.communityId !== currentGroup.communityId
+      ) {
         throw new ConvexError("target group must be in the same community");
       }
     }
@@ -852,7 +885,9 @@ export const update = mutation({
         const membership = await ctx.db
           .query("groupMembers")
           .withIndex("by_group_user", (q: any) =>
-            q.eq("groupId", task.groupId).eq("userId", args.relevantMemberId as Id<"users">),
+            q
+              .eq("groupId", task.groupId)
+              .eq("userId", args.relevantMemberId as Id<"users">),
           )
           .first();
         if (!isActiveMembership(membership)) {
@@ -861,7 +896,7 @@ export const update = mutation({
         patch.targetType = "member";
         patch.targetMemberId = args.relevantMemberId;
         patch.targetGroupId = undefined;
-      } else {
+      } else if (task.targetType === "member") {
         patch.targetType = "group";
         patch.targetMemberId = undefined;
         patch.targetGroupId = task.groupId;
@@ -893,7 +928,9 @@ export const update = mutation({
       type: "updated",
       performedById: userId,
       payload: {
-        changedFields: Object.keys(patch).filter((field) => field !== "updatedAt"),
+        changedFields: Object.keys(patch).filter(
+          (field) => field !== "updatedAt",
+        ),
       },
     });
 
