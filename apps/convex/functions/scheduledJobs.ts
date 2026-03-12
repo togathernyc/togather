@@ -35,6 +35,31 @@ import { DOMAIN_CONFIG } from "@togather/shared/config";
 const APP_URL = process.env.APP_URL || DOMAIN_CONFIG.appUrl;
 const BRAND_NAME = DOMAIN_CONFIG.brandName;
 
+type BirthdayReminderLeader = {
+  userId: Id<"users">;
+  displayName: string;
+};
+
+function resolveBirthdayReminderLeader(params: {
+  leaders: BirthdayReminderLeader[];
+  assignmentMode?: string;
+  specificLeaderId?: Id<"users">;
+  lastLeaderIndex?: number;
+}): BirthdayReminderLeader | null {
+  const { leaders, assignmentMode, specificLeaderId, lastLeaderIndex } = params;
+  if (leaders.length === 0) return null;
+
+  if (assignmentMode === "specific_leader" && specificLeaderId) {
+    const specificLeader = leaders.find((leader) => leader.userId === specificLeaderId);
+    if (specificLeader) {
+      return specificLeader;
+    }
+  }
+
+  const nextIndex = ((lastLeaderIndex ?? -1) + 1) % leaders.length;
+  return leaders[nextIndex];
+}
+
 // ============================================================================
 // BIRTHDAY BOT
 // ============================================================================
@@ -59,6 +84,11 @@ export const runBirthdayBot = internalAction({
 
     for (const config of configs) {
       try {
+        const leaders = await ctx.runQuery(
+          internal.functions.scheduledJobs.getBirthdayBotLeaders,
+          { groupId: config.groupId }
+        );
+
         // Get members with birthdays today
         const birthdays = await ctx.runQuery(
           internal.functions.scheduledJobs.getMembersWithBirthdayToday,
@@ -74,9 +104,21 @@ export const runBirthdayBot = internalAction({
           .map((m: { firstName?: string }) => m.firstName || "a member")
           .join(", ");
 
+        const targetLeader =
+          config.mode === "leader_reminder"
+            ? resolveBirthdayReminderLeader({
+                leaders,
+                assignmentMode: config.assignmentMode,
+                specificLeaderId: config.specificLeaderId,
+                lastLeaderIndex: config.lastLeaderIndex,
+              })
+            : null;
+        const leaderName = targetLeader?.displayName || "leader";
+
         // Build message with placeholder replacement
         const message = config.message
           .replace("[[birthday_names]]", birthdayNames)
+          .replace("[[leader_name]]", leaderName)
           .replace("[[group_name]]", config.groupName)
           .replace("[[community_name]]", config.communityName);
 
@@ -87,7 +129,7 @@ export const runBirthdayBot = internalAction({
 
         const finalMessage =
           config.mode === "leader_reminder"
-            ? `**Birthday Reminder**\n\n${message}\n\nPlease wish them a happy birthday in General chat.`
+            ? `**Birthday Reminder**\n\n${message}`
             : message;
 
         await ctx.runAction(internal.functions.scheduledJobs.sendBotMessage, {
@@ -98,14 +140,18 @@ export const runBirthdayBot = internalAction({
         });
 
         // Update state for round-robin
-        if (config.mode === "leader_reminder") {
+        if (
+          config.mode === "leader_reminder" &&
+          config.assignmentMode !== "specific_leader"
+        ) {
+          const leaderPoolSize = leaders.length || config.leaderCount || 1;
           await ctx.runMutation(
             internal.functions.scheduledJobs.updateBotState,
             {
               configId: config.configId,
               stateUpdates: {
                 lastLeaderIndex:
-                  ((config.lastLeaderIndex ?? -1) + 1) % config.leaderCount,
+                  ((config.lastLeaderIndex ?? -1) + 1) % leaderPoolSize,
               },
             }
           );
@@ -151,6 +197,11 @@ export const processBirthdayBotBucket = internalAction({
 
     for (const config of configs) {
       try {
+        const leaders = await ctx.runQuery(
+          internal.functions.scheduledJobs.getBirthdayBotLeaders,
+          { groupId: config.groupId }
+        );
+
         // Get members with birthdays today IN THE COMMUNITY'S TIMEZONE
         const birthdays = await ctx.runQuery(
           internal.functions.scheduledJobs.getMembersWithBirthdayToday,
@@ -162,8 +213,20 @@ export const processBirthdayBotBucket = internalAction({
             .map((m: { firstName?: string }) => m.firstName || "a member")
             .join(", ");
 
+          const targetLeader =
+            config.mode === "leader_reminder"
+              ? resolveBirthdayReminderLeader({
+                  leaders,
+                  assignmentMode: config.assignmentMode,
+                  specificLeaderId: config.specificLeaderId,
+                  lastLeaderIndex: config.lastLeaderIndex,
+                })
+              : null;
+          const leaderName = targetLeader?.displayName || "leader";
+
           const message = config.message
             .replace("[[birthday_names]]", birthdayNames)
+            .replace("[[leader_name]]", leaderName)
             .replace("[[group_name]]", config.groupName)
             .replace("[[community_name]]", config.communityName);
 
@@ -174,7 +237,7 @@ export const processBirthdayBotBucket = internalAction({
 
           const finalMessage =
             config.mode === "leader_reminder"
-              ? `**Birthday Reminder**\n\n${message}\n\nPlease wish them a happy birthday in General chat.`
+              ? `**Birthday Reminder**\n\n${message}`
               : message;
 
           await ctx.runAction(internal.functions.scheduledJobs.sendBotMessage, {
@@ -183,6 +246,23 @@ export const processBirthdayBotBucket = internalAction({
             targetChannelSlug,
             botType: "birthday",
           });
+
+          if (
+            config.mode === "leader_reminder" &&
+            config.assignmentMode !== "specific_leader"
+          ) {
+            const leaderPoolSize = leaders.length || 1;
+            await ctx.runMutation(
+              internal.functions.scheduledJobs.updateBotState,
+              {
+                configId: config.configId,
+                stateUpdates: {
+                  lastLeaderIndex:
+                    ((config.lastLeaderIndex ?? -1) + 1) % leaderPoolSize,
+                },
+              }
+            );
+          }
         }
 
         results.push({ groupId: config.groupId, success: true });
@@ -298,9 +378,11 @@ export const getBirthdayBotConfigs = internalQuery({
         groupName: group.name,
         communityName: community.name || "Community",
         mode: (configData.mode as string) || "leader_reminder",
+        assignmentMode: (configData.assignmentMode as string) || "round_robin",
+        specificLeaderId: configData.specificLeaderId as Id<"users"> | undefined,
         message:
           (configData.message as string) ||
-          "🎂 It's [[birthday_names]]'s birthday today! Please wish them a happy birthday in General chat. 🎉",
+          "🎂 Hey [[leader_name]], it's your turn to wish [[birthday_names]] a happy birthday in General chat! 🎉",
         lastLeaderIndex: (stateData.lastLeaderIndex as number) ?? -1,
         leaderCount: leaderCountMap.get(config.groupId) || 1,
         targetChannelSlug: (configData.targetChannelSlug as string) || undefined,
@@ -353,15 +435,58 @@ export const getDueBirthdayBotConfigs = internalQuery({
         communityName: community.name || "Community",
         timezone: community.timezone || "America/New_York",
         mode: (configData.mode as string) || "leader_reminder",
+        assignmentMode: (configData.assignmentMode as string) || "round_robin",
+        specificLeaderId: configData.specificLeaderId as Id<"users"> | undefined,
         message:
           (configData.message as string) ||
-          "🎂 It's [[birthday_names]]'s birthday today! Please wish them a happy birthday in General chat. 🎉",
+          "🎂 Hey [[leader_name]], it's your turn to wish [[birthday_names]] a happy birthday in General chat! 🎉",
         lastLeaderIndex: (stateData.lastLeaderIndex as number) ?? -1,
         targetChannelSlug: (configData.targetChannelSlug as string) || undefined,
       });
     }
 
     return results;
+  },
+});
+
+export const getBirthdayBotLeaders = internalQuery({
+  args: {
+    groupId: v.id("groups"),
+  },
+  handler: async (ctx, { groupId }) => {
+    const memberships = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group", (q) => q.eq("groupId", groupId))
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("leftAt"), undefined),
+          q.eq(q.field("role"), "leader")
+        )
+      )
+      .take(100);
+
+    const userIds = memberships.map((m) => m.userId);
+    const users = await Promise.all(userIds.map((id) => ctx.db.get(id)));
+    const userMap = new Map(
+      users
+        .filter((u): u is NonNullable<typeof u> => u !== null)
+        .map((u) => [u._id, u])
+    );
+
+    return memberships
+      .map((membership) => {
+        const user = userMap.get(membership.userId);
+        if (!user) return null;
+
+        const displayName =
+          [user.firstName, user.lastName].filter(Boolean).join(" ") || "leader";
+
+        return {
+          userId: membership.userId,
+          displayName,
+        };
+      })
+      .filter((leader): leader is BirthdayReminderLeader => leader !== null);
   },
 });
 

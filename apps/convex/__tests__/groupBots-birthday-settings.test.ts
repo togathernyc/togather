@@ -67,7 +67,7 @@ describe("groupBots birthday settings", () => {
     expect(config.defaultConfig.mode).toBe("leader_reminder");
     expect(config.defaultConfig.targetChannelSlug).toBe("leaders");
     expect(config.defaultConfig.message).toBe(
-      "🎂 It's [[birthday_names]]'s birthday today! Please wish them a happy birthday in General chat. 🎉"
+      "🎂 Hey [[leader_name]], it's your turn to wish [[birthday_names]] a happy birthday in General chat! 🎉"
     );
   });
 });

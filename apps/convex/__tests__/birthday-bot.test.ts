@@ -854,4 +854,56 @@ describe("Birthday Bot - Timezone Awareness", () => {
       expect(ourConfig).toBeUndefined();
     });
   });
+
+  describe("leader_name placeholder", () => {
+    test("replaces [[leader_name]] in leader reminder messages", async () => {
+      const t = convexTest(schema, modules);
+      const currentTime = new Date("2024-01-15T14:00:00Z").getTime();
+      vi.setSystemTime(currentTime);
+
+      const birthdayTimestamp = new Date("2000-01-15T00:00:00Z").getTime();
+      const { groupId, userId } = await seedTestData(t, {
+        timezone: "America/New_York",
+        userBirthday: birthdayTimestamp,
+      });
+
+      await t.run(async (ctx) => {
+        await ctx.db.insert("chatChannels", {
+          groupId,
+          slug: "leaders",
+          channelType: "leaders",
+          name: "Leaders",
+          createdById: userId,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          isArchived: false,
+          memberCount: 1,
+        });
+      });
+
+      await createBirthdayBotConfig(t, {
+        groupId,
+        enabled: true,
+        config: {
+          mode: "leader_reminder",
+          assignmentMode: "round_robin",
+          message:
+            "Hey [[leader_name]], it's your turn to say happy birthday to [[birthday_names]] in General chat!",
+        },
+      });
+
+      await t.action(internal.functions.scheduledJobs.runBirthdayBot, {});
+
+      const messages = await t.run(async (ctx) => {
+        return await ctx.db.query("chatMessages").collect();
+      });
+
+      const botMessage = messages.find((message) =>
+        message.content.includes("it's your turn to say happy birthday")
+      );
+      expect(botMessage).toBeDefined();
+      expect(botMessage?.content).toContain("Hey Test User");
+      expect(botMessage?.content).not.toContain("[[leader_name]]");
+    });
+  });
 });

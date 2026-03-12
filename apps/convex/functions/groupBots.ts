@@ -57,7 +57,7 @@ const botDefinitions: Record<string, BotDefinition> = {
     triggerType: "cron",
     defaultConfig: {
       message:
-        "🎂 It's [[birthday_names]]'s birthday today! Please wish them a happy birthday in General chat. 🎉",
+        "🎂 Hey [[leader_name]], it's your turn to wish [[birthday_names]] a happy birthday in General chat! 🎉",
       mode: "leader_reminder",
       targetChannelSlug: "leaders",
       assignmentMode: "round_robin",
@@ -68,7 +68,7 @@ const botDefinitions: Record<string, BotDefinition> = {
         label: "Birthday Message",
         type: "textarea",
         placeholder:
-          "🎂 It's [[birthday_names]]'s birthday today! Please wish them a happy birthday in General chat. 🎉",
+          "🎂 Hey [[leader_name]], it's your turn to wish [[birthday_names]] a happy birthday in General chat! 🎉",
         helpText:
           "Available placeholders: [[birthday_names]], [[leader_name]], [[group_name]], [[community_name]]",
       },
