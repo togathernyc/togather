@@ -9,10 +9,8 @@ describe("toolbar tools", () => {
     });
   });
 
-  test("shows tasks in default tool order", () => {
-    expect(DEFAULT_TOOLS).toContain("tasks");
-    expect(DEFAULT_TOOLS.indexOf("tasks")).toBeLessThan(
-      DEFAULT_TOOLS.indexOf("events"),
-    );
+  test("hides tasks from default tools until enabled", () => {
+    expect(DEFAULT_TOOLS).not.toContain("tasks");
+    expect(DEFAULT_TOOLS).toEqual(["attendance", "followup", "events", "bots"]);
   });
 });
