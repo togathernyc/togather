@@ -120,7 +120,7 @@ export function FollowupDetailContent({
 
   // Fetch tasks associated with this member
   const memberTasks = useAuthenticatedQuery(
-    api.functions.tasks.listByTargetMember,
+    api.functions.tasks.index.listByTargetMember,
     historyData?.member?.odUserId
       ? {
           targetMemberId: historyData.member.odUserId as Id<"users">,
@@ -131,7 +131,7 @@ export function FollowupDetailContent({
 
   // Fetch assignable leaders for task creation
   const assignableLeaders = useAuthenticatedQuery(
-    api.functions.tasks.searchAssignableLeaders,
+    api.functions.tasks.index.searchAssignableLeaders,
     groupId && assigneeSearchText.length >= 1
       ? {
           groupId: groupId as Id<"groups">,
@@ -141,11 +141,11 @@ export function FollowupDetailContent({
   );
 
   const allLeaders = useAuthenticatedQuery(
-    api.functions.tasks.listAssignableLeaders,
+    api.functions.tasks.index.listAssignableLeaders,
     groupId ? { groupId: groupId as Id<"groups"> } : "skip"
   );
 
-  const createTaskMutation = useAuthenticatedMutation(api.functions.tasks.create);
+  const createTaskMutation = useAuthenticatedMutation(api.functions.tasks.index.create);
 
   const isLoading = historyData === undefined;
   const refetch = () => {}; // Convex auto-updates

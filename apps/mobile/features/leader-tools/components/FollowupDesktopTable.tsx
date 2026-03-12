@@ -271,7 +271,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
 
   // Group tasks — used to build per-member task counts for the table
   const groupTasks = useAuthenticatedQuery(
-    api.functions.tasks.listGroup,
+    api.functions.tasks.index.listGroup,
     groupId ? { groupId: groupId as Id<"groups"> } : "skip"
   );
 

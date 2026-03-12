@@ -282,7 +282,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
   );
 
   const groupTasks = useAuthenticatedQuery(
-    api.functions.tasks.listGroup,
+    api.functions.tasks.index.listGroup,
     groupId ? { groupId: groupId as Id<"groups"> } : "skip",
   );
 
