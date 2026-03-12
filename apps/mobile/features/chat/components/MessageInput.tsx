@@ -782,7 +782,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
             const contentHeight = event.nativeEvent.contentSize.height;
             const maxHeight = LINE_HEIGHT * MAX_INPUT_LINES + INPUT_PADDING_VERTICAL * 2;
             const clamped = Math.min(contentHeight, maxHeight);
-            setInputHeight(prev => Math.abs(clamped - prev) > 2 ? clamped : prev);
+            setInputHeight(prev => Math.abs(clamped - prev) > 2 || clamped >= maxHeight ? clamped : prev);
           }}
           placeholder="Message..."
           placeholderTextColor="#999"
