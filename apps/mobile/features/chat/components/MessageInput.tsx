@@ -116,7 +116,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   const [uploadedImageUrls, setUploadedImageUrls] = useState<string[]>([]);
   const [selectedFile, setSelectedFile] = useState<SelectedFile | null>(null);
   const [uploadedFile, setUploadedFile] = useState<{ storagePath: string; name: string; category: FileCategory } | null>(null);
-  const [inputHeight, setInputHeight] = useState(LINE_HEIGHT);
+  const [nativeScrollEnabled, setNativeScrollEnabled] = useState(false);
   const [debouncedText, setDebouncedText] = useState('');
   const isWeb = Platform.OS === 'web';
   const prevChannelIdRef = useRef(channelId);
@@ -131,7 +131,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
       // Load draft for the new channel
       const draft = getDraft(channelId);
       setText(draft);
-      setInputHeight(LINE_HEIGHT);
+      setNativeScrollEnabled(false);
       prevChannelIdRef.current = channelId;
     }
   }, [channelId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -547,7 +547,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
       // Clear input and draft
       setText('');
       setDebouncedText('');
-      setInputHeight(LINE_HEIGHT);
+      setNativeScrollEnabled(false);
       if (channelId) clearDraft(channelId);
       setSelectedImages([]);
       setUploadedImageUrls([]);
@@ -771,9 +771,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
           ref={textInputRef}
           style={[
             styles.input,
-            isWeb
-              ? styles.inputWeb
-              : { height: Math.max(40, inputHeight) },
+            isWeb ? styles.inputWeb : styles.inputNative,
           ]}
           value={text}
           onChangeText={handleTextChange}
@@ -781,13 +779,12 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
           onContentSizeChange={isWeb ? undefined : (event) => {
             const contentHeight = event.nativeEvent.contentSize.height;
             const maxHeight = LINE_HEIGHT * MAX_INPUT_LINES + INPUT_PADDING_VERTICAL * 2;
-            const clamped = Math.min(contentHeight, maxHeight);
-            setInputHeight(prev => Math.abs(clamped - prev) > 2 || clamped >= maxHeight ? clamped : prev);
+            setNativeScrollEnabled(contentHeight >= maxHeight);
           }}
           placeholder="Message..."
           placeholderTextColor="#999"
           multiline
-          scrollEnabled={isWeb ? true : inputHeight >= LINE_HEIGHT * MAX_INPUT_LINES + INPUT_PADDING_VERTICAL * 2}
+          scrollEnabled={isWeb ? true : nativeScrollEnabled}
           maxLength={2000}
           editable={!uploading && !isSending}
         />
@@ -958,6 +955,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
     maxHeight: LINE_HEIGHT * MAX_INPUT_LINES + INPUT_PADDING_VERTICAL * 2,
     backgroundColor: '#f9f9f9',
+  },
+  inputNative: {
+    minHeight: 40,
   },
   inputWeb: {
     minHeight: 40,

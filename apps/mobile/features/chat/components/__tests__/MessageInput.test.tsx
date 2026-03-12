@@ -100,7 +100,7 @@ describe('MessageInput', () => {
     expect(getByPlaceholderText('Message...')).toBeTruthy();
   });
 
-  it('starts with minimum height of 40', () => {
+  it('uses native auto-grow with minHeight on iOS (no explicit height)', () => {
     const { getByPlaceholderText } = render(
       <MessageInput channelId={'test-channel' as any} />
     );
@@ -109,123 +109,20 @@ describe('MessageInput', () => {
     const flatStyle = Array.isArray(style)
       ? Object.assign({}, ...style.filter(Boolean))
       : style;
-    expect(flatStyle.height).toBeGreaterThanOrEqual(40);
+
+    // Should have minHeight for minimum size, not an explicit height
+    expect(flatStyle.minHeight).toBe(40);
+    // maxHeight should cap expansion
+    expect(flatStyle.maxHeight).toBe(LINE_HEIGHT * MAX_INPUT_LINES + INPUT_PADDING_VERTICAL * 2);
   });
 
-  describe('height calculation (anti-oscillation)', () => {
-    it('does NOT add extra padding to the explicit height style', () => {
+  describe('scroll behavior', () => {
+    it('disables scrolling when content is below max height', () => {
       const { getByPlaceholderText } = render(
         <MessageInput channelId={'test-channel' as any} />
       );
       const input = getByPlaceholderText('Message...');
 
-      act(() => {
-        fireEvent(input, 'contentSizeChange', {
-          nativeEvent: { contentSize: { width: 300, height: 60 } },
-        });
-      });
-
-      const style = input.props.style;
-      const flatStyle = Array.isArray(style)
-        ? Object.assign({}, ...style.filter(Boolean))
-        : style;
-
-      // Height should be the contentSize value directly, NOT contentSize + padding
-      // The old buggy code added INPUT_PADDING_VERTICAL * 2 (20) which caused oscillation
-      expect(flatStyle.height).toBeLessThanOrEqual(60);
-      expect(flatStyle.height).not.toBe(60 + INPUT_PADDING_VERTICAL * 2);
-    });
-
-    it('ignores height changes smaller than threshold to prevent oscillation', () => {
-      const { getByPlaceholderText } = render(
-        <MessageInput channelId={'test-channel' as any} />
-      );
-      const input = getByPlaceholderText('Message...');
-
-      act(() => {
-        fireEvent(input, 'contentSizeChange', {
-          nativeEvent: { contentSize: { width: 300, height: 60 } },
-        });
-      });
-
-      const styleAfterFirst = input.props.style;
-      const flatFirst = Array.isArray(styleAfterFirst)
-        ? Object.assign({}, ...styleAfterFirst.filter(Boolean))
-        : styleAfterFirst;
-      const heightAfterFirst = flatFirst.height;
-
-      // Fire again with a tiny change (1px) — should be ignored
-      act(() => {
-        fireEvent(input, 'contentSizeChange', {
-          nativeEvent: { contentSize: { width: 300, height: 61 } },
-        });
-      });
-
-      const styleAfterSecond = input.props.style;
-      const flatSecond = Array.isArray(styleAfterSecond)
-        ? Object.assign({}, ...styleAfterSecond.filter(Boolean))
-        : styleAfterSecond;
-
-      expect(flatSecond.height).toBe(heightAfterFirst);
-    });
-
-    it('applies height changes larger than threshold', () => {
-      const { getByPlaceholderText } = render(
-        <MessageInput channelId={'test-channel' as any} />
-      );
-      const input = getByPlaceholderText('Message...');
-
-      act(() => {
-        fireEvent(input, 'contentSizeChange', {
-          nativeEvent: { contentSize: { width: 300, height: 60 } },
-        });
-      });
-
-      act(() => {
-        fireEvent(input, 'contentSizeChange', {
-          nativeEvent: { contentSize: { width: 300, height: 80 } },
-        });
-      });
-
-      const style = input.props.style;
-      const flat = Array.isArray(style)
-        ? Object.assign({}, ...style.filter(Boolean))
-        : style;
-
-      expect(flat.height).toBe(80);
-    });
-
-    it('clamps height at max input height', () => {
-      const maxHeight = LINE_HEIGHT * MAX_INPUT_LINES + INPUT_PADDING_VERTICAL * 2;
-
-      const { getByPlaceholderText } = render(
-        <MessageInput channelId={'test-channel' as any} />
-      );
-      const input = getByPlaceholderText('Message...');
-
-      act(() => {
-        fireEvent(input, 'contentSizeChange', {
-          nativeEvent: { contentSize: { width: 300, height: 500 } },
-        });
-      });
-
-      const style = input.props.style;
-      const flat = Array.isArray(style)
-        ? Object.assign({}, ...style.filter(Boolean))
-        : style;
-
-      expect(flat.height).toBeLessThanOrEqual(maxHeight);
-    });
-
-    it('enables scrolling only after reaching max height', () => {
-      const maxHeight = LINE_HEIGHT * MAX_INPUT_LINES + INPUT_PADDING_VERTICAL * 2;
-
-      const { getByPlaceholderText } = render(
-        <MessageInput channelId={'test-channel' as any} />
-      );
-      const input = getByPlaceholderText('Message...');
-
-      // Below max — scrolling should be disabled
       act(() => {
         fireEvent(input, 'contentSizeChange', {
           nativeEvent: { contentSize: { width: 300, height: 60 } },
@@ -233,8 +130,16 @@ describe('MessageInput', () => {
       });
 
       expect(input.props.scrollEnabled).toBe(false);
+    });
 
-      // At/above max — scrolling should be enabled
+    it('enables scrolling when content reaches max height', () => {
+      const maxHeight = LINE_HEIGHT * MAX_INPUT_LINES + INPUT_PADDING_VERTICAL * 2;
+
+      const { getByPlaceholderText } = render(
+        <MessageInput channelId={'test-channel' as any} />
+      );
+      const input = getByPlaceholderText('Message...');
+
       act(() => {
         fireEvent(input, 'contentSizeChange', {
           nativeEvent: { contentSize: { width: 300, height: maxHeight + 10 } },
@@ -244,47 +149,29 @@ describe('MessageInput', () => {
       expect(input.props.scrollEnabled).toBe(true);
     });
 
-    it('reaches max height even when current height is within threshold of max (dead zone fix)', () => {
-      const maxHeight = LINE_HEIGHT * MAX_INPUT_LINES + INPUT_PADDING_VERTICAL * 2; // 180
+    it('disables scrolling again when content shrinks below max', () => {
+      const maxHeight = LINE_HEIGHT * MAX_INPUT_LINES + INPUT_PADDING_VERTICAL * 2;
 
       const { getByPlaceholderText } = render(
         <MessageInput channelId={'test-channel' as any} />
       );
       const input = getByPlaceholderText('Message...');
 
-      // Set height to just below maxHeight (within the 2px threshold)
-      const nearMaxHeight = maxHeight - 1.5; // 178.5
-      act(() => {
-        fireEvent(input, 'contentSizeChange', {
-          nativeEvent: { contentSize: { width: 300, height: nearMaxHeight } },
-        });
-      });
-
-      const styleAfterFirst = input.props.style;
-      const flatFirst = Array.isArray(styleAfterFirst)
-        ? Object.assign({}, ...styleAfterFirst.filter(Boolean))
-        : styleAfterFirst;
-      expect(flatFirst.height).toBe(nearMaxHeight);
-      expect(input.props.scrollEnabled).toBe(false);
-
-      // Now content grows beyond max - should clamp to maxHeight and enable scrolling
-      // The difference (180 - 178.5 = 1.5) is within threshold, but since clamped >= maxHeight,
-      // the fix ensures inputHeight updates to maxHeight anyway
+      // First, grow beyond max
       act(() => {
         fireEvent(input, 'contentSizeChange', {
           nativeEvent: { contentSize: { width: 300, height: maxHeight + 50 } },
         });
       });
-
-      const styleAfterSecond = input.props.style;
-      const flatSecond = Array.isArray(styleAfterSecond)
-        ? Object.assign({}, ...styleAfterSecond.filter(Boolean))
-        : styleAfterSecond;
-
-      // Input height should reach exactly maxHeight (not stuck at 178.5)
-      expect(flatSecond.height).toBe(maxHeight);
-      // Scrolling should now be enabled
       expect(input.props.scrollEnabled).toBe(true);
+
+      // Then shrink below max
+      act(() => {
+        fireEvent(input, 'contentSizeChange', {
+          nativeEvent: { contentSize: { width: 300, height: 60 } },
+        });
+      });
+      expect(input.props.scrollEnabled).toBe(false);
     });
   });
 
