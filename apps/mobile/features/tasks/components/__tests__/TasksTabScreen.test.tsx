@@ -3,13 +3,15 @@ import { fireEvent, render } from "@testing-library/react-native";
 import { TasksTabScreen } from "../TasksTabScreen";
 import { useAuthenticatedMutation, useAuthenticatedQuery } from "@services/api/convex";
 
+let mockSearchParams: { group_id?: string } = {};
+
 jest.mock("expo-router", () => ({
   useRouter: () => ({
     canGoBack: () => true,
     back: jest.fn(),
     push: jest.fn(),
   }),
-  useLocalSearchParams: () => ({}),
+  useLocalSearchParams: () => mockSearchParams,
 }));
 
 jest.mock("react-native-safe-area-context", () => ({
@@ -66,6 +68,7 @@ jest.mock("@services/api/convex", () => ({
 describe("TasksTabScreen", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockSearchParams = {};
 
     (useAuthenticatedMutation as jest.Mock).mockReturnValue(jest.fn());
 
@@ -145,19 +148,12 @@ describe("TasksTabScreen", () => {
         return [{ _id: "group-1", name: "Group A", userRole: "leader" }];
       }
 
-      if (queryFn === "api.functions.tasks.index.listGroup") {
-        return [];
-      }
-
-      if (queryFn === "api.functions.tasks.index.listAssignableLeaders") {
-        return [];
-      }
-
-      if (queryFn === "api.functions.tasks.index.searchAssignableLeaders") {
-        return [];
-      }
-
-      if (queryFn === "api.functions.tasks.index.searchRelevantMembers") {
+      if (
+        queryFn === "api.functions.tasks.index.listGroup" ||
+        queryFn === "api.functions.tasks.index.listAssignableLeaders" ||
+        queryFn === "api.functions.tasks.index.searchAssignableLeaders" ||
+        queryFn === "api.functions.tasks.index.searchRelevantMembers"
+      ) {
         return [];
       }
 
@@ -165,12 +161,8 @@ describe("TasksTabScreen", () => {
     });
   });
 
-  it("shows My/All/Claimable tabs and filters all tasks by assignee", () => {
-    const { getByText, queryByText } = render(<TasksTabScreen />);
-
-    expect(getByText("My Tasks")).toBeTruthy();
-    expect(getByText("All Tasks")).toBeTruthy();
-    expect(getByText("Claimable")).toBeTruthy();
+  it("filters all tasks by assignee using filter modal controls", () => {
+    const { getByText, getByTestId, queryByText } = render(<TasksTabScreen />);
 
     expect(getByText("My Follow-up")).toBeTruthy();
     expect(queryByText("Other Leader Task")).toBeNull();
@@ -179,13 +171,27 @@ describe("TasksTabScreen", () => {
     expect(getByText("Other Leader Task")).toBeTruthy();
     expect(getByText("Unassigned Task")).toBeTruthy();
 
-    fireEvent.press(getByText("Alex Leader"));
+    fireEvent.press(getByTestId("tasks-filter-button"));
+    fireEvent.press(getByTestId("tasks-filter-assignee-leader-alex"));
+    fireEvent.press(getByTestId("tasks-filter-apply"));
     expect(getByText("Other Leader Task")).toBeTruthy();
     expect(queryByText("My Follow-up")).toBeNull();
     expect(queryByText("Unassigned Task")).toBeNull();
 
-    fireEvent.press(getByText("Unassigned"));
+    fireEvent.press(getByTestId("tasks-filter-button"));
+    fireEvent.press(getByTestId("tasks-filter-assignee-unassigned"));
+    fireEvent.press(getByTestId("tasks-filter-apply"));
     expect(getByText("Unassigned Task")).toBeTruthy();
     expect(queryByText("Other Leader Task")).toBeNull();
+  });
+
+  it("defaults to current group filter when opened from a group route", () => {
+    mockSearchParams = { group_id: "group-1" };
+    const { getByText, queryByText } = render(<TasksTabScreen />);
+
+    fireEvent.press(getByText("All Tasks"));
+    expect(getByText("My Follow-up")).toBeTruthy();
+    expect(getByText("Other Leader Task")).toBeTruthy();
+    expect(queryByText("Unassigned Task")).toBeNull();
   });
 });

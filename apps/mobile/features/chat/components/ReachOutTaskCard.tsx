@@ -86,7 +86,7 @@ export function ReachOutTaskCard({ task, variant }: ReachOutTaskCardProps) {
   const status = useMemo(() => mapStatus(task), [task]);
   const badge = statusBadge(status);
   const assigneeName = task.assignee?.name || task.assignedToName;
-  const content = task.content || task.description || task.title || "Reach-out request";
+  const content = task.content || task.title || task.description || "Reach-out request";
   const isOpen = status === "pending" || status === "assigned";
 
   const onClaim = async () => {
