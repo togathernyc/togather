@@ -113,11 +113,17 @@ export function TasksTabScreen() {
     [sourceFilter, tagFilter, searchText],
   );
 
-  const myTasks = useAuthenticatedQuery(api.functions.tasks.index.listMine, taskFilterArgs);
-  const allTasks = useAuthenticatedQuery(api.functions.tasks.index.listAll, taskFilterArgs);
+  const myTasks = useAuthenticatedQuery(
+    api.functions.tasks.index.listMine,
+    segment === "my" ? taskFilterArgs : "skip",
+  );
+  const allTasks = useAuthenticatedQuery(
+    api.functions.tasks.index.listAll,
+    segment === "all" ? taskFilterArgs : "skip",
+  );
   const claimableTasks = useAuthenticatedQuery(
     api.functions.tasks.index.listClaimable,
-    taskFilterArgs,
+    segment === "claimable" ? taskFilterArgs : "skip",
   );
 
   const groups = useAuthenticatedQuery(

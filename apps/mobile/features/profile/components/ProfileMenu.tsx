@@ -109,7 +109,7 @@ export function ProfileMenu() {
       ) : null}
 
       <TouchableOpacity
-        style={[styles.menuItem, hasLeaderAccess === true ? undefined : styles.menuItemLast]}
+        style={[styles.menuItem, styles.menuItemLast]}
         onPress={() => router.push('/(user)/settings')}
         activeOpacity={0.7}
       >
