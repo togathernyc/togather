@@ -113,7 +113,7 @@ describe("memberFollowups.list compatibility", () => {
     expect(legacyResult.members).toHaveLength(1);
     expect(legacyResult.members[0].firstName).toBe("Alex");
     expect(Array.isArray(legacyResult.scoreConfig)).toBe(true);
-    expect(legacyResult.toolDisplayName).toBe("Follow-up");
+    expect(legacyResult.toolDisplayName).toBe("People");
   });
 
   test("supports sorting by lastActiveAt", async () => {

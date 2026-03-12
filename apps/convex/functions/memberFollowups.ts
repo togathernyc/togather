@@ -380,7 +380,7 @@ export const internalGetGroupConfig = internalQuery({
         scheduledAt: m.scheduledAt,
       })),
       scoreConfigScores: scoreConfig.scores.map((s) => ({ id: s.id, name: s.name })),
-      toolDisplayName: (group as any)?.toolDisplayNames?.followup || "Follow-up",
+      toolDisplayName: (group as any)?.toolDisplayNames?.followup || "People",
       memberSubtitle: (group?.followupScoreConfig as any)?.memberSubtitle || "",
     };
   },
@@ -725,7 +725,7 @@ export const list = query({
       return {
         members: paginatedResult.page,
         scoreConfig: scoreConfig.scores.map((s) => ({ id: s.id, name: s.name })),
-        toolDisplayName: (group as any)?.toolDisplayNames?.followup || "Follow-up",
+        toolDisplayName: (group as any)?.toolDisplayNames?.followup || "People",
         memberSubtitle: (group?.followupScoreConfig as any)?.memberSubtitle || "",
       };
     }
@@ -749,7 +749,7 @@ export const getFollowupConfig = query({
 
     return {
       scoreConfigScores: scoreConfig.scores.map((s) => ({ id: s.id, name: s.name })),
-      toolDisplayName: (group as any)?.toolDisplayNames?.followup || "Follow-up",
+      toolDisplayName: (group as any)?.toolDisplayNames?.followup || "People",
       memberSubtitle: (group?.followupScoreConfig as any)?.memberSubtitle || "",
       followupColumnConfig: group.followupColumnConfig ?? null,
       followupRefreshState: group.followupRefreshState ?? null,
@@ -1191,7 +1191,7 @@ export const history = query({
       scoreBreakdown,
       crossGroupAttendance,
       servingHistory,
-      toolDisplayName: (group as any)?.toolDisplayNames?.followup || "Follow-up",
+      toolDisplayName: (group as any)?.toolDisplayNames?.followup || "People",
       triggeredAlerts,
     };
   },
