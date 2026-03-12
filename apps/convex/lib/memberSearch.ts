@@ -293,6 +293,7 @@ export async function searchCommunityMembersInternal(
           q.eq(q.field("leftAt"), undefined),
           q.or(
             q.eq(q.field("requestStatus"), undefined),
+            q.eq(q.field("requestStatus"), null),
             q.eq(q.field("requestStatus"), "accepted")
           )
         )
