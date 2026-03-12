@@ -8,7 +8,7 @@ import {
   View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { usePathname, useRouter } from "expo-router";
 import type { Id } from "@services/api/convex";
 import { api, useAuthenticatedMutation } from "@services/api/convex";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
@@ -76,6 +76,7 @@ interface ReachOutTaskCardProps {
 export function ReachOutTaskCard({ task, variant }: ReachOutTaskCardProps) {
   const { primaryColor } = useCommunityTheme();
   const router = useRouter();
+  const pathname = usePathname();
   const [busyAction, setBusyAction] = useState<null | "claim" | "done" | "unassign" | "withdraw">(null);
 
   const claimTask = useAuthenticatedMutation(api.functions.tasks.index.claim);
@@ -86,7 +87,7 @@ export function ReachOutTaskCard({ task, variant }: ReachOutTaskCardProps) {
   const status = useMemo(() => mapStatus(task), [task]);
   const badge = statusBadge(status);
   const assigneeName = task.assignee?.name || task.assignedToName;
-  const content = task.content || task.description || task.title || "Reach-out request";
+  const content = task.content || task.title || task.description || "Reach-out request";
   const isOpen = status === "pending" || status === "assigned";
 
   const onClaim = async () => {
@@ -147,11 +148,12 @@ export function ReachOutTaskCard({ task, variant }: ReachOutTaskCardProps) {
   };
 
   const openTasks = () => {
+    const encodedReturnTo = encodeURIComponent(pathname);
     if (task.groupId) {
-      router.push(`/(user)/leader-tools/${task.groupId}/tasks`);
+      router.push(`/(user)/leader-tools/${task.groupId}/tasks?returnTo=${encodedReturnTo}`);
       return;
     }
-    router.push("/tasks");
+    router.push(`/tasks?returnTo=${encodedReturnTo}`);
   };
 
   return (

@@ -132,6 +132,7 @@ const mockReplace = jest.fn();
 
 jest.mock('expo-router', () => ({
   useLocalSearchParams: () => mockUseLocalSearchParams(),
+  usePathname: () => '/inbox/group-123/general',
   useRouter: jest.fn(() => ({
     push: mockPush,
     back: mockBack,

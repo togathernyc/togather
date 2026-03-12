@@ -20,7 +20,7 @@ import {
 } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAuth } from "@providers/AuthProvider";
 import { useNotifications } from "@providers/NotificationProvider";
 import { useLeaveGroup } from "@features/groups/hooks/useLeaveGroup";
@@ -73,6 +73,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams() as ChatRoomParams;
   const router = useRouter();
+  const pathname = usePathname();
   const { user, token } = useAuth();
   const { primaryColor } = useCommunityTheme();
   const { addBlockedUser } = useBlockedUsersContext();
@@ -550,12 +551,13 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   const handleGoToTasks = useCallback(() => {
     setMenuVisible(false);
     const id = getGroupIdForNavigation();
+    const encodedReturnTo = encodeURIComponent(pathname);
     if (id) {
-      router.push(`/(user)/leader-tools/${id}/tasks`);
+      router.push(`/(user)/leader-tools/${id}/tasks?returnTo=${encodedReturnTo}`);
       return;
     }
-    router.push("/tasks");
-  }, [router, getGroupIdForNavigation]);
+    router.push(`/tasks?returnTo=${encodedReturnTo}`);
+  }, [router, getGroupIdForNavigation, pathname]);
 
   const handleGoToRunSheet = useCallback(() => {
     setMenuVisible(false);

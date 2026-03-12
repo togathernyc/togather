@@ -10,7 +10,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { UserRoute } from "@components/guards/UserRoute";
@@ -35,6 +35,7 @@ type Segment = "my" | "all" | "claimable";
 type TaskId = Id<"tasks">;
 type SourceFilter = "all" | TaskSourceType;
 type AssigneeFilter = "all" | "unassigned" | string;
+type GroupFilter = "all" | string;
 type GroupMemberSearchResult = {
   userId: string;
   name: string;
@@ -75,18 +76,28 @@ function statusColor(status: string): string {
 export function TasksTabScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const params = useLocalSearchParams<{ group_id?: string }>();
+  const pathname = usePathname();
+  const params = useLocalSearchParams<{ group_id?: string; returnTo?: string }>();
   const { primaryColor } = useCommunityTheme();
   const isDesktopWeb = useIsDesktopWeb();
   const { community } = useAuth();
   const contextGroupId =
     typeof params.group_id === "string" ? params.group_id : null;
+  const returnToParam =
+    typeof params.returnTo === "string" && params.returnTo.trim().length > 0
+      ? decodeURIComponent(params.returnTo)
+      : null;
+  const returnTo = returnToParam && returnToParam !== pathname ? returnToParam : null;
 
   const [segment, setSegment] = useState<Segment>("my");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [tagFilter, setTagFilter] = useState<string>("all");
   const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilter>("all");
+  const [selectedGroupId, setSelectedGroupId] = useState<GroupFilter>(
+    contextGroupId ?? "all",
+  );
   const [searchText, setSearchText] = useState("");
+  const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
   const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
   const [expandedParents, setExpandedParents] = useState<Set<string>>(new Set());
   const [assigningTaskId, setAssigningTaskId] = useState<string | null>(null);
@@ -157,6 +168,11 @@ export function TasksTabScreen() {
   }, [contextGroupId]);
 
   useEffect(() => {
+    setSelectedGroupId(contextGroupId ?? "all");
+    setAssigneeFilter("all");
+  }, [contextGroupId]);
+
+  useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedRelevantMemberSearch(createRelevantMemberSearch.trim());
     }, 300);
@@ -217,8 +233,26 @@ export function TasksTabScreen() {
     [createGroupTasks],
   );
 
+  const groupScopedAllTasks = useMemo(() => {
+    if (!allTasks) return allTasks;
+    if (selectedGroupId === "all") return allTasks;
+    return allTasks.filter((task) => task.groupId.toString() === selectedGroupId);
+  }, [allTasks, selectedGroupId]);
+
+  const groupScopedMyTasks = useMemo(() => {
+    if (!myTasks) return myTasks;
+    if (selectedGroupId === "all") return myTasks;
+    return myTasks.filter((task) => task.groupId.toString() === selectedGroupId);
+  }, [myTasks, selectedGroupId]);
+
+  const groupScopedClaimableTasks = useMemo(() => {
+    if (!claimableTasks) return claimableTasks;
+    if (selectedGroupId === "all") return claimableTasks;
+    return claimableTasks.filter((task) => task.groupId.toString() === selectedGroupId);
+  }, [claimableTasks, selectedGroupId]);
+
   const assigneeOptions = useMemo(() => {
-    const tasks = allTasks ?? [];
+    const tasks = groupScopedAllTasks ?? [];
     const leadersById = new Map<string, string>();
     let hasUnassigned = false;
     for (const task of tasks) {
@@ -241,22 +275,32 @@ export function TasksTabScreen() {
       ...leaderOptions,
       ...(hasUnassigned ? [{ value: "unassigned", label: "Unassigned" }] : []),
     ];
-  }, [allTasks]);
+  }, [groupScopedAllTasks]);
+
+  useEffect(() => {
+    if (assigneeFilter === "all") return;
+    const isValid = assigneeOptions.some((option) => option.value === assigneeFilter);
+    if (!isValid) {
+      setAssigneeFilter("all");
+    }
+  }, [assigneeFilter, assigneeOptions]);
 
   const filteredAllTasks = useMemo(() => {
-    if (!allTasks) return allTasks;
-    if (assigneeFilter === "all") return allTasks;
+    if (!groupScopedAllTasks) return groupScopedAllTasks;
+    if (assigneeFilter === "all") return groupScopedAllTasks;
     if (assigneeFilter === "unassigned") {
-      return allTasks.filter((task) => !task.assignedToId);
+      return groupScopedAllTasks.filter((task) => !task.assignedToId);
     }
-    return allTasks.filter((task) => task.assignedToId?.toString() === assigneeFilter);
-  }, [allTasks, assigneeFilter]);
+    return groupScopedAllTasks.filter(
+      (task) => task.assignedToId?.toString() === assigneeFilter,
+    );
+  }, [groupScopedAllTasks, assigneeFilter]);
 
   const activeTasks = useMemo(() => {
-    if (segment === "my") return myTasks;
-    if (segment === "claimable") return claimableTasks;
+    if (segment === "my") return groupScopedMyTasks;
+    if (segment === "claimable") return groupScopedClaimableTasks;
     return filteredAllTasks;
-  }, [claimableTasks, filteredAllTasks, myTasks, segment]);
+  }, [filteredAllTasks, groupScopedClaimableTasks, groupScopedMyTasks, segment]);
 
   const assigningTask = useMemo(
     () =>
@@ -274,6 +318,14 @@ export function TasksTabScreen() {
     const tasks = activeTasks ?? [];
     return [...new Set(tasks.flatMap((task) => task.tags ?? []))].sort();
   }, [activeTasks]);
+
+  useEffect(() => {
+    if (tagFilter === "all") return;
+    const isValid = availableTags.includes(tagFilter);
+    if (!isValid) {
+      setTagFilter("all");
+    }
+  }, [tagFilter, availableTags]);
 
   const taskRows = useMemo(() => {
     return activeTasks ? buildTaskRows(activeTasks, expandedParents) : [];
@@ -564,6 +616,19 @@ export function TasksTabScreen() {
   };
 
   const isLoading = activeTasks === undefined;
+  const groupFilterOptions = useMemo(
+    () => [
+      { value: "all", label: "All Groups" },
+      ...leaderGroups.map((group) => ({ value: group._id, label: group.name })),
+    ],
+    [leaderGroups],
+  );
+  const defaultGroupFilter = contextGroupId ?? "all";
+  const hasActiveFilters =
+    selectedGroupId !== defaultGroupFilter ||
+    sourceFilter !== "all" ||
+    tagFilter !== "all" ||
+    assigneeFilter !== "all";
 
   const content = (
     <View style={styles.container}>
@@ -571,13 +636,18 @@ export function TasksTabScreen() {
         <View style={styles.headerRow}>
           <View style={styles.headerTitleWrap}>
             <Pressable
+              testID="tasks-back-button"
               style={styles.backButton}
               onPress={() => {
+                if (returnTo) {
+                  router.push(returnTo as any);
+                  return;
+                }
                 if (router.canGoBack()) {
                   router.back();
                   return;
                 }
-                router.push("/(tabs)/profile");
+                router.replace("/(tabs)/profile");
               }}
             >
               <Ionicons name="arrow-back" size={22} color="#0F172A" />
@@ -587,10 +657,20 @@ export function TasksTabScreen() {
               <Text style={styles.headerSubtitle}>All task-related workflows</Text>
             </View>
           </View>
-          <Pressable style={styles.createButton} onPress={() => setIsCreateOpen(true)}>
-            <Ionicons name="add" size={16} color="#fff" />
-            <Text style={styles.createButtonText}>Create</Text>
-          </Pressable>
+          <View style={styles.headerActions}>
+            <Pressable style={styles.createButton} onPress={() => setIsCreateOpen(true)}>
+              <Ionicons name="add" size={16} color="#fff" />
+              <Text style={styles.createButtonText}>Create</Text>
+            </Pressable>
+            <Pressable
+              testID="tasks-filter-button"
+              style={styles.headerFilterButton}
+              onPress={() => setIsFilterModalOpen(true)}
+            >
+              <Ionicons name="options-outline" size={18} color="#334155" />
+              {hasActiveFilters ? <View style={styles.headerFilterDot} /> : null}
+            </Pressable>
+          </View>
         </View>
       </View>
 
@@ -646,85 +726,6 @@ export function TasksTabScreen() {
           placeholder="Search title, tag, member, or group"
           style={styles.searchInput}
         />
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <View style={styles.chipsRow}>
-            {(["all", "manual", "reach_out", "bot_task_reminder"] as SourceFilter[]).map(
-              (source) => (
-                <Pressable
-                  key={source}
-                  onPress={() => setSourceFilter(source)}
-                  style={[
-                    styles.filterChip,
-                    sourceFilter === source && styles.filterChipActive,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.filterChipText,
-                      sourceFilter === source && styles.filterChipTextActive,
-                    ]}
-                  >
-                    {source === "all" ? "All Sources" : sourceLabels[source]}
-                  </Text>
-                </Pressable>
-              ),
-            )}
-            <Pressable
-              onPress={() => setTagFilter("all")}
-              style={[styles.filterChip, tagFilter === "all" && styles.filterChipActive]}
-            >
-              <Text
-                style={[
-                  styles.filterChipText,
-                  tagFilter === "all" && styles.filterChipTextActive,
-                ]}
-              >
-                All Tags
-              </Text>
-            </Pressable>
-            {availableTags.map((tag) => (
-              <Pressable
-                key={tag}
-                onPress={() => setTagFilter(tag)}
-                style={[styles.filterChip, tagFilter === tag && styles.filterChipActive]}
-              >
-                <Text
-                  style={[
-                    styles.filterChipText,
-                    tagFilter === tag && styles.filterChipTextActive,
-                  ]}
-                >
-                  #{tag}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-        </ScrollView>
-        {segment === "all" ? (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            <View style={styles.chipsRow}>
-              {assigneeOptions.map((option) => (
-                <Pressable
-                  key={option.value}
-                  onPress={() => setAssigneeFilter(option.value)}
-                  style={[
-                    styles.filterChip,
-                    assigneeFilter === option.value && styles.filterChipActive,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.filterChipText,
-                      assigneeFilter === option.value && styles.filterChipTextActive,
-                    ]}
-                  >
-                    {option.label}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-          </ScrollView>
-        ) : null}
       </View>
 
       {actionError ? <Text style={styles.errorText}>{actionError}</Text> : null}
@@ -775,7 +776,163 @@ export function TasksTabScreen() {
         />
       )}
 
-      <Modal visible={isCreateOpen} animationType="slide" onRequestClose={() => setIsCreateOpen(false)}>
+      <Modal
+        visible={isFilterModalOpen}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setIsFilterModalOpen(false)}
+      >
+        <View style={styles.filterModalOverlay}>
+          <View style={styles.filterModalCard}>
+            <View style={styles.filterModalHeader}>
+              <Text style={styles.filterModalTitle}>Filter Tasks</Text>
+              <Pressable onPress={() => setIsFilterModalOpen(false)}>
+                <Ionicons name="close" size={22} color="#334155" />
+              </Pressable>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <Text style={styles.filterSectionTitle}>Group</Text>
+              <View style={styles.chipsWrap}>
+                {groupFilterOptions.map((option) => (
+                  <Pressable
+                    key={option.value}
+                    testID={`tasks-filter-group-${option.value}`}
+                    onPress={() => setSelectedGroupId(option.value)}
+                    style={[
+                      styles.filterChip,
+                      selectedGroupId === option.value && styles.filterChipActive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.filterChipText,
+                        selectedGroupId === option.value && styles.filterChipTextActive,
+                      ]}
+                    >
+                      {option.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              <Text style={styles.filterSectionTitle}>Source</Text>
+              <View style={styles.chipsWrap}>
+                {(
+                  ["all", "manual", "reach_out", "bot_task_reminder", "followup"] as SourceFilter[]
+                ).map((source) => (
+                  <Pressable
+                    key={source}
+                    onPress={() => setSourceFilter(source)}
+                    style={[
+                      styles.filterChip,
+                      sourceFilter === source && styles.filterChipActive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.filterChipText,
+                        sourceFilter === source && styles.filterChipTextActive,
+                      ]}
+                    >
+                      {source === "all" ? "All Sources" : sourceLabels[source]}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              <Text style={styles.filterSectionTitle}>Tags</Text>
+              <View style={styles.chipsWrap}>
+                <Pressable
+                  onPress={() => setTagFilter("all")}
+                  style={[styles.filterChip, tagFilter === "all" && styles.filterChipActive]}
+                >
+                  <Text
+                    style={[
+                      styles.filterChipText,
+                      tagFilter === "all" && styles.filterChipTextActive,
+                    ]}
+                  >
+                    All Tags
+                  </Text>
+                </Pressable>
+                {availableTags.map((tag) => (
+                  <Pressable
+                    key={tag}
+                    onPress={() => setTagFilter(tag)}
+                    style={[styles.filterChip, tagFilter === tag && styles.filterChipActive]}
+                  >
+                    <Text
+                      style={[
+                        styles.filterChipText,
+                        tagFilter === tag && styles.filterChipTextActive,
+                      ]}
+                    >
+                      #{tag}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              {segment === "all" ? (
+                <>
+                  <Text style={styles.filterSectionTitle}>Assignee</Text>
+                  <View style={styles.chipsWrap}>
+                    {assigneeOptions.map((option) => (
+                      <Pressable
+                        key={option.value}
+                        testID={`tasks-filter-assignee-${option.value}`}
+                        onPress={() => setAssigneeFilter(option.value)}
+                        style={[
+                          styles.filterChip,
+                          assigneeFilter === option.value && styles.filterChipActive,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.filterChipText,
+                            assigneeFilter === option.value && styles.filterChipTextActive,
+                          ]}
+                        >
+                          {option.label}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </>
+              ) : null}
+
+              <View style={styles.filterActionsRow}>
+                <Pressable
+                  testID="tasks-filter-reset"
+                  style={[styles.inlineAction, styles.filterActionButton]}
+                  onPress={() => {
+                    setSelectedGroupId(defaultGroupFilter);
+                    setSourceFilter("all");
+                    setTagFilter("all");
+                    setAssigneeFilter("all");
+                  }}
+                >
+                  <Text style={styles.inlineActionText}>Reset</Text>
+                </Pressable>
+                <Pressable
+                  testID="tasks-filter-apply"
+                  style={[styles.primaryAction, styles.filterActionButton]}
+                  onPress={() => setIsFilterModalOpen(false)}
+                >
+                  <Text style={styles.primaryActionText}>Done</Text>
+                </Pressable>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={isCreateOpen}
+        animationType="slide"
+        onRequestClose={() => setIsCreateOpen(false)}
+      >
         <ScrollView
           style={styles.modalContainer}
           contentContainerStyle={{ paddingTop: insets.top + 16, paddingBottom: insets.bottom + 24 }}
@@ -1040,6 +1197,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
   headerTitleWrap: {
     flexDirection: "row",
     alignItems: "center",
@@ -1072,6 +1234,23 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontWeight: "700",
     fontSize: 12,
+  },
+  headerFilterButton: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+    backgroundColor: "#fff",
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  headerFilterDot: {
+    position: "absolute",
+    top: 4,
+    right: 4,
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: "#2563EB",
   },
   segmentRow: {
     flexDirection: "row",
@@ -1363,6 +1542,49 @@ const styles = StyleSheet.create({
   detailMetaText: {
     fontSize: 13,
     color: "#64748B",
+  },
+  filterModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(15, 23, 42, 0.45)",
+    justifyContent: "flex-end",
+  },
+  filterModalCard: {
+    maxHeight: "80%",
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    backgroundColor: "#fff",
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 18,
+  },
+  filterModalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  filterModalTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#0F172A",
+  },
+  filterSectionTitle: {
+    marginTop: 14,
+    marginBottom: 6,
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#475569",
+    letterSpacing: 0.3,
+  },
+  filterActionsRow: {
+    marginTop: 18,
+    marginBottom: 4,
+    flexDirection: "row",
+    gap: 10,
+  },
+  filterActionButton: {
+    flex: 1,
+    alignItems: "center",
   },
   modalContainer: {
     flex: 1,

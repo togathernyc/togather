@@ -97,7 +97,12 @@ export function ProfileMenu() {
       {hasLeaderAccess === true ? (
         <TouchableOpacity
           style={styles.menuItem}
-          onPress={() => router.push("/tasks")}
+          onPress={() =>
+            router.push({
+              pathname: "/tasks",
+              params: { returnTo: "/(tabs)/profile" },
+            })
+          }
           activeOpacity={0.7}
         >
           <View style={styles.menuIconContainer}>

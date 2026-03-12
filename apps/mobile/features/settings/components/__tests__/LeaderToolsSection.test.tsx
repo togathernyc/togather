@@ -63,6 +63,9 @@ describe("LeaderToolsSection", () => {
     expect(tasksRow).toBeTruthy();
 
     fireEvent.press(tasksRow);
-    expect(mockPush).toHaveBeenCalledWith("/tasks");
+    expect(mockPush).toHaveBeenCalledWith({
+      pathname: "/tasks",
+      params: { returnTo: "/(user)/settings" },
+    });
   });
 });
