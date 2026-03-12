@@ -119,7 +119,7 @@ export function FollowupQuickAddPanel({
         customFieldValues,
       });
 
-      Alert.alert("Person added", "They were added to the group and follow-up list.");
+      Alert.alert("Person added", "They were added to the group and people list.");
       onCreated?.({
         groupMemberId: String(result.groupMemberId),
         userId: String(result.userId),
@@ -229,7 +229,7 @@ export function FollowupQuickAddPanel({
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Follow-up fields</Text>
+          <Text style={styles.sectionTitle}>People fields</Text>
 
           <View style={styles.fieldWrap}>
             <Text style={styles.label}>Status</Text>

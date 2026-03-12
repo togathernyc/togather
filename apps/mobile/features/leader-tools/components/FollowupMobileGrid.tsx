@@ -262,7 +262,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
   const toolDisplayName =
     typeof config?.toolDisplayName === "string"
       ? config.toolDisplayName
-      : "Follow-up";
+      : "People";
   const memberSubtitleIds = useMemo(
     () =>
       normalizeSubtitleVariableIds(
@@ -280,6 +280,29 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     api.functions.groups.members.getLeaders,
     groupId ? { groupId: groupId as Id<"groups"> } : "skip",
   );
+
+  const groupTasks = useAuthenticatedQuery(
+    api.functions.tasks.index.listGroup,
+    groupId ? { groupId: groupId as Id<"groups"> } : "skip",
+  );
+
+  const tasksByMember = useMemo(() => {
+    const map = new Map<string, Array<{ _id: string; title: string; status: string; assignedToName?: string }>>();
+    if (!groupTasks) return map;
+    for (const task of groupTasks as any[]) {
+      if (task.status !== "open" || !task.targetMemberId) continue;
+      const memberId = task.targetMemberId.toString();
+      if (!map.has(memberId)) map.set(memberId, []);
+      map.get(memberId)!.push({
+        _id: task._id,
+        title: task.title,
+        status: task.status,
+        assignedToName: task.assignedToName,
+      });
+    }
+    return map;
+  }, [groupTasks]);
+
   const leaderMap = useMemo(() => {
     if (!leaders) return new Map<string, LeaderInfo>();
     const leaderRows = (leaders ?? []) as LeaderRecord[];
@@ -745,6 +768,20 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
         getValue: (member) => member.latestNote ?? "",
       },
       {
+        key: "tasks",
+        label: "Tasks",
+        width: 140,
+        sortable: false,
+        kind: "text",
+        getValue: (member) => {
+          const tasks = tasksByMember.get(member.userId) ?? [];
+          if (tasks.length === 0) return "\u2014";
+          if (tasks.length === 1)
+            return `${tasks[0].assignedToName ?? "Unassigned"} \u2014 ${tasks[0].title}`;
+          return `${tasks.length} tasks`;
+        },
+      },
+      {
         key: "missedMeetings",
         label: "Missed",
         width: 64,
@@ -770,7 +807,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       },
       {
         key: "lastFollowupAt",
-        label: "Last Follow-up",
+        label: "Last Contact",
         width: 96,
         sortable: true,
         kind: "text",
@@ -1554,7 +1591,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
 
   const renderMemberRowLeft = ({ item }: { item: FollowupMember }) => {
     const subtitleLine =
-      getMemberSubtitleLines(item)[0] ?? "No recent follow-up details";
+      getMemberSubtitleLines(item)[0] ?? "No recent activity details";
     const hasAlerts = (item.alerts?.length ?? 0) > 0;
     const isSnoozed =
       item.isSnoozed && !!item.snoozedUntil && item.snoozedUntil > Date.now();
@@ -1678,7 +1715,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={primaryColor} />
-        <Text style={styles.loadingText}>Loading follow-up list...</Text>
+        <Text style={styles.loadingText}>Loading people list...</Text>
       </View>
     );
   }
@@ -1867,7 +1904,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
                   <Text style={styles.emptyText}>
                     {hasTextSearch || hasStructuredFilters
                       ? "No members match your search and filters."
-                      : "No members need follow-up right now."}
+                      : "No members to show right now."}
                   </Text>
                 </View>
               }

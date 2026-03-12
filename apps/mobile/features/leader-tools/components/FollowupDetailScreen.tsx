@@ -17,7 +17,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { UserRoute } from "@components/guards/UserRoute";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useQuery, useAuthenticatedMutation, api } from "@services/api/convex";
+import { useQuery, useAuthenticatedQuery, useAuthenticatedMutation, api } from "@services/api/convex";
 import { Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
@@ -43,11 +43,13 @@ export function FollowupDetailContent({
   memberId,
   onClose,
   scrollToNotes,
+  scrollToTasks,
 }: {
   groupId: string;
   memberId: string;
   onClose?: () => void;
   scrollToNotes?: boolean;
+  scrollToTasks?: boolean;
 }) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -72,6 +74,17 @@ export function FollowupDetailContent({
   const [isSnoozing, setIsSnoozing] = useState(false);
   const [isUpdatingAttendance, setIsUpdatingAttendance] = useState(false);
 
+  // Tasks section
+  const [tasksSectionY, setTasksSectionY] = useState(0);
+  const [showCreateTaskModal, setShowCreateTaskModal] = useState(false);
+  const [newTaskTitle, setNewTaskTitle] = useState("");
+  const [newTaskDescription, setNewTaskDescription] = useState("");
+  const [newTaskAssigneeId, setNewTaskAssigneeId] = useState<string | null>(null);
+  const [assigneeSearchText, setAssigneeSearchText] = useState("");
+  const [isCreatingTask, setIsCreatingTask] = useState(false);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [tagInput, setTagInput] = useState("");
+
   // Reset local state when switching between members (desktop side-sheet reuses component)
   useEffect(() => {
     setNoteText("");
@@ -83,6 +96,15 @@ export function FollowupDetailContent({
     setIsAddingFollowup(false);
     setIsSnoozing(false);
     setIsUpdatingAttendance(false);
+    setTasksSectionY(0);
+    setShowCreateTaskModal(false);
+    setNewTaskTitle("");
+    setNewTaskDescription("");
+    setNewTaskAssigneeId(null);
+    setAssigneeSearchText("");
+    setIsCreatingTask(false);
+    setSelectedTags([]);
+    setTagInput("");
   }, [memberId]);
 
   const group_id = groupId;
@@ -99,6 +121,63 @@ export function FollowupDetailContent({
         }
       : "skip"
   );
+
+  // Fetch all group tasks — used for member tasks + tag autocomplete
+  const groupTasks = useAuthenticatedQuery(
+    api.functions.tasks.index.listGroup,
+    groupId ? { groupId: groupId as Id<"groups"> } : "skip"
+  );
+
+  const memberTasks = useMemo(() => {
+    if (!groupTasks || !historyData?.member?.odUserId) return undefined;
+    const targetId = historyData.member.odUserId;
+    return (groupTasks as any[]).filter(
+      (t) => t.targetMemberId === targetId && (t.status === "open" || t.status === "snoozed")
+    );
+  }, [groupTasks, historyData?.member?.odUserId]);
+
+  // Fetch assignable leaders for task creation
+  const assignableLeaders = useAuthenticatedQuery(
+    api.functions.tasks.index.searchAssignableLeaders,
+    groupId && assigneeSearchText.length >= 1
+      ? {
+          groupId: groupId as Id<"groups">,
+          searchText: assigneeSearchText,
+        }
+      : "skip"
+  );
+
+  const allLeaders = useAuthenticatedQuery(
+    api.functions.tasks.index.listAssignableLeaders,
+    groupId ? { groupId: groupId as Id<"groups"> } : "skip"
+  );
+
+  const createTaskMutation = useAuthenticatedMutation(api.functions.tasks.index.create);
+
+  const availableTags = useMemo(() => {
+    if (!groupTasks) return [];
+    return [...new Set((groupTasks as any[]).flatMap((t) => t.tags ?? []))].sort();
+  }, [groupTasks]);
+
+  const filteredTagSuggestions = useMemo(() => {
+    const input = tagInput.trim().toLowerCase();
+    if (!input) return [];
+    return availableTags.filter(
+      (tag) => tag.includes(input) && !selectedTags.includes(tag)
+    );
+  }, [tagInput, availableTags, selectedTags]);
+
+  const handleAddTag = (tag: string) => {
+    const normalized = tag.trim().toLowerCase().replace(/\s+/g, "_");
+    if (normalized && !selectedTags.includes(normalized)) {
+      setSelectedTags((prev) => [...prev, normalized]);
+    }
+    setTagInput("");
+  };
+
+  const handleRemoveTag = (tag: string) => {
+    setSelectedTags((prev) => prev.filter((t) => t !== tag));
+  };
 
   const isLoading = historyData === undefined;
   const refetch = () => {}; // Convex auto-updates
@@ -131,7 +210,7 @@ export function FollowupDetailContent({
       scoreBreakdown: historyData.scoreBreakdown,
       crossGroupAttendance: historyData.crossGroupAttendance ?? [],
       servingHistory: historyData.servingHistory ?? [],
-      toolDisplayName: historyData.toolDisplayName ?? "Follow-up",
+      toolDisplayName: historyData.toolDisplayName ?? "People",
       triggeredAlerts: historyData.triggeredAlerts ?? [],
     };
   }, [historyData]);
@@ -168,7 +247,7 @@ export function FollowupDetailContent({
         setNoteText("");
         // Convex auto-updates reactive queries
       } catch (err: any) {
-        Alert.alert("Error", err.message || "Failed to add follow-up");
+        Alert.alert("Error", err.message || "Failed to add note");
       } finally {
         setIsAddingFollowup(false);
       }
@@ -287,7 +366,7 @@ export function FollowupDetailContent({
   const handleDeleteFollowup = (followupId: string) => {
     Alert.alert(
       "Delete Entry",
-      "Are you sure you want to delete this follow-up entry?",
+      "Are you sure you want to delete this entry?",
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -409,6 +488,61 @@ export function FollowupDetailContent({
     }
   }, [scrollToNotes, history, notesSectionY]);
 
+  // Auto-scroll to the tasks section when opened from the desktop table tasks cell
+  useEffect(() => {
+    if (scrollToTasks && history && tasksSectionY > 0) {
+      const timer = setTimeout(() => {
+        scrollViewRef.current?.scrollTo({ y: tasksSectionY, animated: true });
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [scrollToTasks, history, tasksSectionY]);
+
+  const handleCreateTask = async () => {
+    if (!newTaskTitle.trim() || !historyData?.member?.odUserId) return;
+    setIsCreatingTask(true);
+    try {
+      await createTaskMutation({
+        groupId: groupId as Id<"groups">,
+        title: newTaskTitle.trim(),
+        description: newTaskDescription.trim() || undefined,
+        targetType: "member",
+        targetMemberId: historyData.member.odUserId as Id<"users">,
+        assignedToId: newTaskAssigneeId
+          ? (newTaskAssigneeId as Id<"users">)
+          : undefined,
+        responsibilityType: newTaskAssigneeId ? "person" : "group",
+        tags: selectedTags.length > 0 ? selectedTags : undefined,
+      });
+      setShowCreateTaskModal(false);
+      setNewTaskTitle("");
+      setNewTaskDescription("");
+      setNewTaskAssigneeId(null);
+      setAssigneeSearchText("");
+      setSelectedTags([]);
+      setTagInput("");
+    } catch (err: any) {
+      Alert.alert("Error", err.message || "Failed to create task");
+    } finally {
+      setIsCreatingTask(false);
+    }
+  };
+
+  const getTaskStatusColor = (status: string) => {
+    switch (status) {
+      case "open":
+        return "#3B82F6";
+      case "snoozed":
+        return "#F59E0B";
+      case "done":
+        return "#10B981";
+      case "canceled":
+        return "#6B7280";
+      default:
+        return "#6B7280";
+    }
+  };
+
 
   if (isLoading) {
     return (
@@ -446,7 +580,7 @@ export function FollowupDetailContent({
         <TouchableOpacity style={styles.backButton} onPress={handleBack}>
           <Ionicons name={onClose ? "close" : "arrow-back"} size={24} color="#333" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>{history?.toolDisplayName ?? "Follow-up"}</Text>
+        <Text style={styles.headerTitle}>{history?.toolDisplayName ?? "People"}</Text>
         <View style={styles.headerSpacer} />
       </View>
 
@@ -791,12 +925,91 @@ export function FollowupDetailContent({
           </View>
         )}
 
+        {/* Associated Tasks */}
+        <View
+          style={styles.section}
+          onLayout={(e) => setTasksSectionY(e.nativeEvent.layout.y)}
+        >
+          <Text style={styles.sectionTitle}>Associated Tasks</Text>
+          {memberTasks === undefined ? (
+            <ActivityIndicator size="small" color={primaryColor} />
+          ) : memberTasks.length === 0 ? (
+            <Text style={styles.emptyTimeline}>No tasks associated with this member</Text>
+          ) : (
+            <View style={{ gap: 8 }}>
+              {memberTasks.map((task: any) => (
+                <TouchableOpacity
+                  key={task._id}
+                  style={styles.taskCard}
+                  onPress={() =>
+                    router.push(
+                      `/(user)/leader-tools/${task.groupId}/tasks/${task._id}` as any
+                    )
+                  }
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.taskCardHeader}>
+                    <Text style={styles.taskCardTitle} numberOfLines={1}>
+                      {task.title}
+                    </Text>
+                    <View
+                      style={[
+                        styles.taskStatusBadge,
+                        { backgroundColor: getTaskStatusColor(task.status) + "20" },
+                      ]}
+                    >
+                      <View
+                        style={[
+                          styles.taskStatusDot,
+                          { backgroundColor: getTaskStatusColor(task.status) },
+                        ]}
+                      />
+                      <Text
+                        style={[
+                          styles.taskStatusText,
+                          { color: getTaskStatusColor(task.status) },
+                        ]}
+                      >
+                        {task.status}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={styles.taskCardAssignee}>
+                    {task.assignedToName ?? "Unassigned"}
+                  </Text>
+                  {task.tags && task.tags.length > 0 && (
+                    <View style={styles.taskCardTagsRow}>
+                      {task.tags.map((tag: string) => (
+                        <View key={tag} style={styles.taskCardTagChip}>
+                          <Text style={styles.taskCardTagText}>#{tag}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                  {task.groupId !== groupId && task.groupName && (
+                    <Text style={styles.taskCardGroup}>{task.groupName}</Text>
+                  )}
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+          <TouchableOpacity
+            style={styles.addTaskButton}
+            onPress={() => setShowCreateTaskModal(true)}
+          >
+            <Ionicons name="add-circle-outline" size={20} color={primaryColor} />
+            <Text style={[styles.addTaskButtonText, { color: primaryColor }]}>
+              Add Task
+            </Text>
+          </TouchableOpacity>
+        </View>
+
         {/* Add Note */}
         <View style={styles.section} onLayout={(e) => setNotesSectionY(e.nativeEvent.layout.y)}>
           <Text style={styles.sectionTitle}>Add Note</Text>
           <TextInput
             style={styles.noteInput}
-            placeholder="Add a follow-up note..."
+            placeholder="Add a note..."
             value={noteText}
             onChangeText={setNoteText}
             multiline
@@ -819,11 +1032,11 @@ export function FollowupDetailContent({
           </TouchableOpacity>
         </View>
 
-        {/* Follow-up Timeline */}
+        {/* People History */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Follow-up History</Text>
+          <Text style={styles.sectionTitle}>People History</Text>
           {followups.length === 0 ? (
-            <Text style={styles.emptyTimeline}>No follow-ups recorded yet</Text>
+            <Text style={styles.emptyTimeline}>No entries recorded yet</Text>
           ) : (
             <View style={styles.timeline}>
               {followups.map((entry, index) => (
@@ -886,9 +1099,9 @@ export function FollowupDetailContent({
           onPress={() => setShowSnoozeModal(false)}
         >
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Snooze Follow-up</Text>
+            <Text style={styles.modalTitle}>Snooze Member</Text>
             <Text style={styles.modalSubtitle}>
-              How long should we hide this member from the follow-up list?
+              How long should we hide this member from the people list?
             </Text>
 
             <TextInput
@@ -988,6 +1201,162 @@ export function FollowupDetailContent({
               <Text style={styles.modalCancelText}>Cancel</Text>
             </TouchableOpacity>
           </View>
+        </Pressable>
+      </Modal>
+
+      {/* Create Task Modal */}
+      <Modal
+        visible={showCreateTaskModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowCreateTaskModal(false)}
+      >
+        <Pressable
+          style={styles.modalOverlay}
+          onPress={() => setShowCreateTaskModal(false)}
+        >
+          <Pressable style={styles.createTaskModalContent} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.modalTitle}>Create Task</Text>
+            <Text style={styles.createTaskSubtitle}>
+              For {member?.firstName} {member?.lastName}
+            </Text>
+
+            <Text style={styles.createTaskLabel}>Title *</Text>
+            <TextInput
+              style={styles.createTaskInput}
+              placeholder="Task title..."
+              value={newTaskTitle}
+              onChangeText={setNewTaskTitle}
+              autoFocus
+            />
+
+            <Text style={styles.createTaskLabel}>Description</Text>
+            <TextInput
+              style={[styles.createTaskInput, { minHeight: 60 }]}
+              placeholder="Optional description..."
+              value={newTaskDescription}
+              onChangeText={setNewTaskDescription}
+              multiline
+              numberOfLines={2}
+            />
+
+            <Text style={styles.createTaskLabel}>Assign To</Text>
+            {newTaskAssigneeId ? (
+              <View style={styles.selectedAssigneeRow}>
+                <Text style={styles.selectedAssigneeName}>
+                  {allLeaders?.find((l: any) => l.userId === newTaskAssigneeId)?.name ?? "Selected leader"}
+                </Text>
+                <TouchableOpacity onPress={() => { setNewTaskAssigneeId(null); setAssigneeSearchText(""); }}>
+                  <Ionicons name="close-circle" size={20} color="#999" />
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <>
+                <TextInput
+                  style={styles.createTaskInput}
+                  placeholder="Search leaders..."
+                  value={assigneeSearchText}
+                  onChangeText={setAssigneeSearchText}
+                />
+                {assignableLeaders && assignableLeaders.length > 0 && (
+                  <View style={styles.leaderSuggestions}>
+                    {assignableLeaders.map((leader: any) => (
+                      <TouchableOpacity
+                        key={leader.userId}
+                        style={styles.leaderSuggestionItem}
+                        onPress={() => {
+                          setNewTaskAssigneeId(leader.userId);
+                          setAssigneeSearchText("");
+                        }}
+                      >
+                        <Text style={styles.leaderSuggestionText}>{leader.name}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+              </>
+            )}
+
+            <Text style={styles.createTaskLabel}>Tags</Text>
+            {selectedTags.length > 0 && (
+              <View style={styles.selectedTagsRow}>
+                {selectedTags.map((tag) => (
+                  <View key={tag} style={styles.selectedTagChip}>
+                    <Text style={styles.selectedTagChipText}>#{tag}</Text>
+                    <TouchableOpacity onPress={() => handleRemoveTag(tag)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                      <Ionicons name="close-circle" size={16} color="#6366F1" />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            )}
+            <TextInput
+              style={styles.createTaskInput}
+              placeholder="Type to search or add tags..."
+              value={tagInput}
+              onChangeText={setTagInput}
+              onSubmitEditing={() => {
+                if (tagInput.trim()) handleAddTag(tagInput);
+              }}
+              returnKeyType="done"
+            />
+            {filteredTagSuggestions.length > 0 && (
+              <View style={styles.tagSuggestions}>
+                {filteredTagSuggestions.slice(0, 6).map((tag) => (
+                  <TouchableOpacity
+                    key={tag}
+                    style={styles.tagSuggestionItem}
+                    onPress={() => handleAddTag(tag)}
+                  >
+                    <Text style={styles.tagSuggestionText}>#{tag}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+            {tagInput.trim() && !availableTags.includes(tagInput.trim().toLowerCase().replace(/\s+/g, "_")) && (
+              <TouchableOpacity
+                style={styles.tagCreateNew}
+                onPress={() => handleAddTag(tagInput)}
+              >
+                <Ionicons name="add-circle-outline" size={16} color="#6366F1" />
+                <Text style={styles.tagCreateNewText}>
+                  Create tag "{tagInput.trim().toLowerCase().replace(/\s+/g, "_")}"
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            <View style={styles.createTaskActions}>
+              <TouchableOpacity
+                style={styles.createTaskCancelBtn}
+                onPress={() => {
+                  setShowCreateTaskModal(false);
+                  setNewTaskTitle("");
+                  setNewTaskDescription("");
+                  setNewTaskAssigneeId(null);
+                  setAssigneeSearchText("");
+                  setSelectedTags([]);
+                  setTagInput("");
+                }}
+              >
+                <Text style={styles.createTaskCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.createTaskSubmitBtn,
+                  { backgroundColor: primaryColor },
+                  (!newTaskTitle.trim() || isCreatingTask) && { opacity: 0.5 },
+                ]}
+                onPress={handleCreateTask}
+                disabled={!newTaskTitle.trim() || isCreatingTask}
+              >
+                {isCreatingTask ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.createTaskSubmitText}>Create</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </Pressable>
         </Pressable>
       </Modal>
     </>
@@ -1497,6 +1866,216 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 14,
     fontWeight: "600",
+  },
+  // Task card styles
+  taskCard: {
+    backgroundColor: "#f8f8f8",
+    borderRadius: 8,
+    padding: 12,
+    borderLeftWidth: 3,
+    borderLeftColor: "#4338CA",
+  },
+  taskCardHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 8,
+  },
+  taskCardTitle: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#333",
+  },
+  taskStatusBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+    gap: 4,
+  },
+  taskStatusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  taskStatusText: {
+    fontSize: 11,
+    fontWeight: "600",
+    textTransform: "capitalize",
+  },
+  taskCardAssignee: {
+    fontSize: 12,
+    color: "#666",
+    marginTop: 4,
+  },
+  taskCardTagsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 4,
+    marginTop: 4,
+  },
+  taskCardTagChip: {
+    backgroundColor: "#F3F4F6",
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  taskCardTagText: {
+    fontSize: 11,
+    color: "#6366F1",
+    fontWeight: "500",
+  },
+  taskCardGroup: {
+    fontSize: 11,
+    color: "#999",
+    marginTop: 2,
+  },
+  addTaskButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 12,
+    paddingVertical: 8,
+  },
+  addTaskButtonText: {
+    fontSize: 14,
+    fontWeight: "500",
+  },
+  // Create task modal styles
+  createTaskModalContent: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 20,
+    width: "100%",
+    maxWidth: 380,
+  },
+  createTaskSubtitle: {
+    fontSize: 13,
+    color: "#666",
+    textAlign: "center",
+    marginTop: 4,
+    marginBottom: 16,
+  },
+  createTaskLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#555",
+    marginBottom: 4,
+    marginTop: 8,
+  },
+  createTaskInput: {
+    borderWidth: 1,
+    borderColor: "#e0e0e0",
+    borderRadius: 8,
+    padding: 10,
+    fontSize: 14,
+    backgroundColor: "#fafafa",
+  },
+  selectedAssigneeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#EEF2FF",
+    borderRadius: 8,
+    padding: 10,
+  },
+  selectedAssigneeName: {
+    fontSize: 14,
+    color: "#4338CA",
+    fontWeight: "500",
+  },
+  leaderSuggestions: {
+    borderWidth: 1,
+    borderColor: "#e0e0e0",
+    borderRadius: 8,
+    marginTop: 4,
+    maxHeight: 120,
+    overflow: "hidden",
+  },
+  leaderSuggestionItem: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f0f0f0",
+  },
+  leaderSuggestionText: {
+    fontSize: 14,
+    color: "#333",
+  },
+  selectedTagsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    marginBottom: 6,
+  },
+  selectedTagChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#EEF2FF",
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    gap: 4,
+  },
+  selectedTagChipText: {
+    fontSize: 13,
+    color: "#4338CA",
+    fontWeight: "500",
+  },
+  tagSuggestions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    marginTop: 6,
+  },
+  tagSuggestionItem: {
+    backgroundColor: "#F3F4F6",
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  tagSuggestionText: {
+    fontSize: 13,
+    color: "#4338CA",
+  },
+  tagCreateNew: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginTop: 6,
+    paddingVertical: 4,
+  },
+  tagCreateNewText: {
+    fontSize: 13,
+    color: "#6366F1",
+    fontWeight: "500",
+  },
+  createTaskActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 12,
+    marginTop: 20,
+  },
+  createTaskCancelBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  createTaskCancelText: {
+    fontSize: 15,
+    color: "#666",
+  },
+  createTaskSubmitBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  createTaskSubmitText: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#fff",
   },
   // Score breakdown styles
   scoresContainer: {

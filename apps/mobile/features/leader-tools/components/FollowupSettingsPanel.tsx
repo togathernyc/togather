@@ -274,9 +274,10 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
     cols.push(
       { key: "assignee", label: "Assignee" },
       { key: "notes", label: "Notes" },
+      { key: "tasks", label: "Tasks" },
       { key: "status", label: "Status" },
       { key: "lastAttendedAt", label: "Last Attended" },
-      { key: "lastFollowupAt", label: "Last Follow-up" },
+      { key: "lastFollowupAt", label: "Last Contact" },
       { key: "lastActiveAt", label: "Date Active" },
       { key: "alerts", label: "Alerts" },
     );
@@ -438,7 +439,7 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
           customFields,
         },
       });
-      Alert.alert("Columns saved", "Follow-up columns were saved.");
+      Alert.alert("Columns saved", "People columns were saved.");
     } catch (err) {
       console.error("[saveFollowupColumnConfig] failed:", err);
       Alert.alert(
@@ -806,7 +807,7 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
               value={toolDisplayName}
               onChangeText={setToolDisplayName}
               onBlur={handleDisplayNameBlur}
-              placeholder="Follow-up"
+              placeholder="People"
               placeholderTextColor="#9CA3AF"
               maxLength={20}
             />
@@ -837,11 +838,11 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
                   </Text>
                 </View>
               ) : (
-                <Text style={styles.saveButtonText}>Refresh Follow-up Table Now</Text>
+                <Text style={styles.saveButtonText}>Refresh People Table Now</Text>
               )}
             </TouchableOpacity>
             <Text style={styles.hintText}>
-              Rebuilds this group's denormalized follow-up rows immediately.
+              Rebuilds this group's denormalized people rows immediately.
             </Text>
             {refreshMessage && <Text style={styles.hintText}>{refreshMessage}</Text>}
             {refreshInProgress && (

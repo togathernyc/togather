@@ -12,7 +12,7 @@ describe("followupRefreshState", () => {
   it("returns button labels for each refresh state", () => {
     expect(getFollowupRefreshButtonLabel(true, false)).toBe("Starting Refresh...");
     expect(getFollowupRefreshButtonLabel(false, true)).toBe("Refresh In Progress...");
-    expect(getFollowupRefreshButtonLabel(false, false)).toBe("Refresh Follow-up Table Now");
+    expect(getFollowupRefreshButtonLabel(false, false)).toBe("Refresh People Table Now");
   });
 
   it("returns null when timestamp is missing", () => {

@@ -25,5 +25,5 @@ export function getFollowupRefreshButtonLabel(
 ): string {
   if (isRefreshRequestPending) return "Starting Refresh...";
   if (isRefreshRunning) return "Refresh In Progress...";
-  return "Refresh Follow-up Table Now";
+  return "Refresh People Table Now";
 }

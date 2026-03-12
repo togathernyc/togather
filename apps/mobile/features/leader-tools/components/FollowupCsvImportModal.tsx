@@ -480,7 +480,7 @@ export function FollowupCsvImportModal({ visible, groupId, onClose, onImported }
                   <Text style={styles.summaryItem}>Update users: {previewResult.summary.usersToUpdate}</Text>
                   <Text style={styles.summaryItem}>Add to community: {previewResult.summary.communityAdds}</Text>
                   <Text style={styles.summaryItem}>Add to group: {previewResult.summary.groupAdds}</Text>
-                  <Text style={styles.summaryItem}>Follow-up creates: {previewResult.summary.followupCreates}</Text>
+                  <Text style={styles.summaryItem}>Records created: {previewResult.summary.followupCreates}</Text>
                   <Text style={styles.summaryItem}>Notes append/create: {previewResult.summary.notesAppends + previewResult.summary.notesCreates}</Text>
                   <Text style={styles.summaryItem}>Custom field updates: {previewResult.summary.customFieldUpdates}</Text>
                 </View>
