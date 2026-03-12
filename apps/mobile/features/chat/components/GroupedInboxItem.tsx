@@ -709,10 +709,11 @@ const styles = StyleSheet.create({
     marginRight: 16,
     marginBottom: 8,
     marginTop: 4,
+    borderWidth: 1,
+    borderColor: "transparent",
   },
   subChannelCardUnread: {
     backgroundColor: "#EBF3FF",
-    borderWidth: 1,
     borderColor: "#D0E2FF",
   },
   subChannelCardPressed: {
