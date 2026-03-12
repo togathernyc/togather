@@ -773,20 +773,21 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
             styles.input,
             isWeb
               ? styles.inputWeb
-              : { height: Math.max(40, inputHeight + INPUT_PADDING_VERTICAL * 2) },
+              : { height: Math.max(40, inputHeight) },
           ]}
           value={text}
           onChangeText={handleTextChange}
           onSelectionChange={handleSelectionChange}
           onContentSizeChange={isWeb ? undefined : (event) => {
             const contentHeight = event.nativeEvent.contentSize.height;
-            const maxContentHeight = LINE_HEIGHT * MAX_INPUT_LINES;
-            setInputHeight(Math.min(contentHeight, maxContentHeight));
+            const maxHeight = LINE_HEIGHT * MAX_INPUT_LINES + INPUT_PADDING_VERTICAL * 2;
+            const clamped = Math.min(contentHeight, maxHeight);
+            setInputHeight(prev => Math.abs(clamped - prev) > 2 ? clamped : prev);
           }}
           placeholder="Message..."
           placeholderTextColor="#999"
           multiline
-          scrollEnabled={isWeb ? true : inputHeight >= LINE_HEIGHT * MAX_INPUT_LINES}
+          scrollEnabled={isWeb ? true : inputHeight >= LINE_HEIGHT * MAX_INPUT_LINES + INPUT_PADDING_VERTICAL * 2}
           maxLength={2000}
           editable={!uploading && !isSending}
         />
