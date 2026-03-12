@@ -280,6 +280,29 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     api.functions.groups.members.getLeaders,
     groupId ? { groupId: groupId as Id<"groups"> } : "skip",
   );
+
+  const groupTasks = useAuthenticatedQuery(
+    api.functions.tasks.listGroup,
+    groupId ? { groupId: groupId as Id<"groups"> } : "skip",
+  );
+
+  const tasksByMember = useMemo(() => {
+    const map = new Map<string, Array<{ _id: string; title: string; status: string; assignedToName?: string }>>();
+    if (!groupTasks) return map;
+    for (const task of groupTasks as any[]) {
+      if (task.status !== "open" || !task.targetMemberId) continue;
+      const memberId = task.targetMemberId.toString();
+      if (!map.has(memberId)) map.set(memberId, []);
+      map.get(memberId)!.push({
+        _id: task._id,
+        title: task.title,
+        status: task.status,
+        assignedToName: task.assignedToName,
+      });
+    }
+    return map;
+  }, [groupTasks]);
+
   const leaderMap = useMemo(() => {
     if (!leaders) return new Map<string, LeaderInfo>();
     const leaderRows = (leaders ?? []) as LeaderRecord[];
@@ -743,6 +766,20 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
         sortable: false,
         kind: "text",
         getValue: (member) => member.latestNote ?? "",
+      },
+      {
+        key: "tasks",
+        label: "Tasks",
+        width: 140,
+        sortable: false,
+        kind: "text",
+        getValue: (member) => {
+          const tasks = tasksByMember.get(member.userId) ?? [];
+          if (tasks.length === 0) return "\u2014";
+          if (tasks.length === 1)
+            return `${tasks[0].assignedToName ?? "Unassigned"} \u2014 ${tasks[0].title}`;
+          return `${tasks.length} tasks`;
+        },
       },
       {
         key: "missedMeetings",
