@@ -804,3 +804,107 @@ describe("removeGroupFromChannel", () => {
     expect(channel!.isShared).toBe(false);
   });
 });
+
+// ============================================================================
+// addChannelMembers + shared channel membership rules
+// ============================================================================
+
+describe("addChannelMembers on shared channels", () => {
+  test("adds accepted secondary-group members without adding them to primary group", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedSharedChannelTestData(t);
+
+    // Invite and accept secondary group so its members become eligible.
+    await t.mutation(api.functions.messaging.sharedChannels.inviteGroupToChannel, {
+      token: data.primaryLeaderToken,
+      channelId: data.channelId,
+      groupId: data.secondaryGroupId,
+    });
+    await t.mutation(api.functions.messaging.sharedChannels.respondToChannelInvite, {
+      token: data.secondaryLeaderToken,
+      channelId: data.channelId,
+      groupId: data.secondaryGroupId,
+      response: "accepted",
+    });
+
+    const result = await t.mutation(api.functions.messaging.channels.addChannelMembers, {
+      token: data.primaryLeaderToken,
+      channelId: data.channelId,
+      userIds: [data.secondaryMemberUserId],
+    });
+
+    expect(result.addedCount).toBe(1);
+
+    // User should be added to channel membership.
+    const channelMembership = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", data.channelId).eq("userId", data.secondaryMemberUserId)
+        )
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .first();
+    });
+    expect(channelMembership).not.toBeNull();
+
+    // Critically, user should NOT be auto-added to the primary group.
+    const primaryGroupMembership = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q) =>
+          q.eq("groupId", data.primaryGroupId).eq("userId", data.secondaryMemberUserId)
+        )
+        .first();
+    });
+    expect(primaryGroupMembership).toBeNull();
+  });
+
+  test("rejects users not in primary or accepted shared groups", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedSharedChannelTestData(t);
+
+    // Invite and accept one secondary group.
+    await t.mutation(api.functions.messaging.sharedChannels.inviteGroupToChannel, {
+      token: data.primaryLeaderToken,
+      channelId: data.channelId,
+      groupId: data.secondaryGroupId,
+    });
+    await t.mutation(api.functions.messaging.sharedChannels.respondToChannelInvite, {
+      token: data.secondaryLeaderToken,
+      channelId: data.channelId,
+      groupId: data.secondaryGroupId,
+      response: "accepted",
+    });
+
+    // Create a user in the same community but in no eligible group.
+    const outsiderUserId = await t.run(async (ctx) => {
+      return await ctx.db.insert("users", {
+        firstName: "Outside",
+        lastName: "User",
+        phone: "+15555550999",
+        phoneVerified: true,
+        activeCommunityId: data.communityId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+
+    await expect(
+      t.mutation(api.functions.messaging.channels.addChannelMembers, {
+        token: data.primaryLeaderToken,
+        channelId: data.channelId,
+        userIds: [outsiderUserId],
+      })
+    ).rejects.toThrow(/must already belong to the primary group or an accepted shared group/i);
+
+    const outsiderMembership = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", data.channelId).eq("userId", outsiderUserId)
+        )
+        .first();
+    });
+    expect(outsiderMembership).toBeNull();
+  });
+});
