@@ -438,44 +438,6 @@ export const listClaimable = query({
   },
 });
 
-export const listByTargetMember = query({
-  args: {
-    token: v.string(),
-    targetMemberId: v.id("users"),
-    groupId: v.optional(v.id("groups")),
-    includeCompleted: v.optional(v.boolean()),
-  },
-  handler: async (ctx, args) => {
-    const userId = await requireAuth(ctx, args.token);
-    const leaderGroupIds = await getActiveLeaderGroupIds(ctx, userId);
-    if (leaderGroupIds.length === 0) return [];
-
-    const leaderGroupIdSet = new Set(leaderGroupIds.map((id) => id.toString()));
-
-    const tasks = await ctx.db
-      .query("tasks")
-      .withIndex("by_target_member", (q: any) =>
-        q.eq("targetMemberId", args.targetMemberId),
-      )
-      .collect();
-
-    const filtered = tasks.filter((task) => {
-      if (!leaderGroupIdSet.has(task.groupId.toString())) return false;
-      if (args.groupId && task.groupId !== args.groupId) return false;
-      if (!args.includeCompleted && !openStatuses.has(task.status)) return false;
-      return true;
-    });
-
-    const enrichedTasks = await enrichTasks(ctx, filtered);
-    return enrichedTasks.sort((a, b) => {
-      const aRank = a.status === "open" ? 0 : a.status === "snoozed" ? 1 : 2;
-      const bRank = b.status === "open" ? 0 : b.status === "snoozed" ? 1 : 2;
-      if (aRank !== bRank) return aRank - bRank;
-      return b.createdAt - a.createdAt;
-    });
-  },
-});
-
 export const listGroup = query({
   args: {
     token: v.string(),

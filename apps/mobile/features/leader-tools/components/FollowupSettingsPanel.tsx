@@ -277,7 +277,7 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
       { key: "tasks", label: "Tasks" },
       { key: "status", label: "Status" },
       { key: "lastAttendedAt", label: "Last Attended" },
-      { key: "lastFollowupAt", label: "Last People" },
+      { key: "lastFollowupAt", label: "Last Contact" },
       { key: "lastActiveAt", label: "Date Active" },
       { key: "alerts", label: "Alerts" },
     );

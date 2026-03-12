@@ -374,7 +374,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
       { key: "tasks", label: "Tasks", defaultWidth: 220, sortable: false },
       { key: "status", label: "Status", defaultWidth: 100, sortable: true, serverSortKey: "status" },
       { key: "lastAttendedAt", label: "Last Attended", defaultWidth: 120, sortable: true, serverSortKey: "lastAttendedAt" },
-      { key: "lastFollowupAt", label: "Last People", defaultWidth: 120, sortable: true, serverSortKey: "lastFollowupAt" },
+      { key: "lastFollowupAt", label: "Last Contact", defaultWidth: 120, sortable: true, serverSortKey: "lastFollowupAt" },
       { key: "lastActiveAt", label: "Date Active", defaultWidth: 120, sortable: true, serverSortKey: "lastActiveAt" },
       { key: "alerts", label: "Alerts", defaultWidth: 120, sortable: false },
     );

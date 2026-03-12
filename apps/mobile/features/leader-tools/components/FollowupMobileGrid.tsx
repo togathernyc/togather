@@ -807,7 +807,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       },
       {
         key: "lastFollowupAt",
-        label: "Last People",
+        label: "Last Contact",
         width: 96,
         sortable: true,
         kind: "text",
