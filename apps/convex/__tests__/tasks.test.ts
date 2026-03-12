@@ -723,6 +723,83 @@ describe("tasks functions", () => {
     expect(leaders.every((leader) => leader.name.length > 0)).toBe(true);
   });
 
+  test("task detail, history, and search helpers support task editing flows", async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, leaderToken, leaderId, memberId } = await seedData(t);
+
+    const parentTaskId = await t.mutation(api.functions.tasks.index.create, {
+      token: leaderToken,
+      groupId,
+      title: "Parent task",
+      targetType: "group",
+      targetGroupId: groupId,
+    });
+
+    const taskId = await t.mutation(api.functions.tasks.index.create, {
+      token: leaderToken,
+      groupId,
+      title: "Initial task title",
+      description: "Initial details",
+      targetType: "member",
+      targetMemberId: memberId,
+      tags: ["Initial"],
+    });
+
+    const leaderSearch = await t.query(
+      api.functions.tasks.index.searchAssignableLeaders,
+      {
+        token: leaderToken,
+        groupId,
+        searchText: "leader",
+      },
+    );
+    expect(leaderSearch.length).toBeGreaterThan(0);
+
+    const detailBefore = await t.query(api.functions.tasks.index.getDetail, {
+      token: leaderToken,
+      taskId,
+    });
+    expect(detailBefore.title).toBe("Initial task title");
+    expect(detailBefore.targetType).toBe("member");
+    expect(detailBefore.targetMemberName).toBeDefined();
+
+    await t.mutation(api.functions.tasks.index.assign, {
+      token: leaderToken,
+      taskId,
+      assigneeId: leaderId,
+    });
+
+    await t.mutation(api.functions.tasks.index.update, {
+      token: leaderToken,
+      taskId,
+      title: "Updated task title",
+      description: "Updated details",
+      tags: ["Care Followup"],
+      relevantMemberId: null,
+      parentTaskId,
+    });
+
+    const detailAfter = await t.query(api.functions.tasks.index.getDetail, {
+      token: leaderToken,
+      taskId,
+    });
+    expect(detailAfter.title).toBe("Updated task title");
+    expect(detailAfter.description).toBe("Updated details");
+    expect(detailAfter.tags).toContain("care_followup");
+    expect(detailAfter.targetType).toBe("group");
+    expect(detailAfter.targetGroupId).toBe(groupId);
+    expect(detailAfter.parentTaskId).toBe(parentTaskId);
+
+    const history = await t.query(api.functions.tasks.index.listHistory, {
+      token: leaderToken,
+      taskId,
+    });
+    expect(history.length).toBeGreaterThanOrEqual(3);
+    expect(history[0]?.type).toBeDefined();
+    expect(history.some((event) => event.type === "updated")).toBe(true);
+    expect(history.some((event) => event.performedByName)).toBe(true);
+  });
+
   test("task claim conflict keeps authoritative assignee", async () => {
     const t = convexTest(schema, modules);
     const { groupId, leaderToken, secondLeaderToken, leaderId, secondLeaderId } =

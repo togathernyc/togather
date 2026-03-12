@@ -471,6 +471,123 @@ export const listAssignableLeaders = query({
   },
 });
 
+export const searchAssignableLeaders = query({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+    searchText: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await getLeaderMembership(ctx, args.groupId, userId);
+
+    const normalizedSearch = args.searchText.trim().toLowerCase();
+    const limit = Math.min(args.limit ?? 25, 100);
+    if (!normalizedSearch) {
+      return [];
+    }
+
+    const memberships = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group", (q: any) => q.eq("groupId", args.groupId))
+      .collect();
+    const leaders = memberships.filter(
+      (membership) =>
+        isActiveMembership(membership) && isLeaderRole(membership.role),
+    );
+    const users = await Promise.all(
+      leaders.map((membership) => ctx.db.get(membership.userId)),
+    );
+
+    return users
+      .map((user) => {
+        if (!user) return null;
+        const fullName = [user.firstName, user.lastName].filter(Boolean).join(" ");
+        const searchableText = [
+          fullName,
+          user.firstName,
+          user.lastName,
+          user.email,
+          user.phone,
+        ]
+          .filter((value): value is string => Boolean(value))
+          .join(" ")
+          .toLowerCase();
+        if (!searchableText.includes(normalizedSearch)) {
+          return null;
+        }
+        return {
+          userId: user._id,
+          name: fullName || "Leader",
+        };
+      })
+      .filter((leader): leader is { userId: Id<"users">; name: string } =>
+        Boolean(leader),
+      )
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(0, limit);
+  },
+});
+
+export const searchRelevantMembers = query({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+    searchText: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await getLeaderMembership(ctx, args.groupId, userId);
+
+    const normalizedSearch = args.searchText.trim().toLowerCase();
+    const limit = Math.min(args.limit ?? 30, 100);
+    if (!normalizedSearch) {
+      return [];
+    }
+
+    const memberships = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group", (q: any) => q.eq("groupId", args.groupId))
+      .collect();
+    const activeMemberships = memberships.filter((membership) =>
+      isActiveMembership(membership),
+    );
+    const users = await Promise.all(
+      activeMemberships.map((membership) => ctx.db.get(membership.userId)),
+    );
+
+    return users
+      .map((user) => {
+        if (!user) return null;
+        const fullName = [user.firstName, user.lastName].filter(Boolean).join(" ");
+        const searchableText = [
+          fullName,
+          user.firstName,
+          user.lastName,
+          user.email,
+          user.phone,
+        ]
+          .filter((value): value is string => Boolean(value))
+          .join(" ")
+          .toLowerCase();
+        if (!searchableText.includes(normalizedSearch)) {
+          return null;
+        }
+        return {
+          userId: user._id,
+          name: fullName || "Member",
+        };
+      })
+      .filter((member): member is { userId: Id<"users">; name: string } =>
+        Boolean(member),
+      )
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(0, limit);
+  },
+});
+
 export const getTaskCard = query({
   args: {
     token: v.string(),
@@ -519,6 +636,75 @@ export const getTaskCard = query({
         task.status !== "done" &&
         task.status !== "canceled",
     };
+  },
+});
+
+export const getDetail = query({
+  args: {
+    token: v.string(),
+    taskId: v.id("tasks"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const task = await getTaskOrThrow(ctx, args.taskId);
+    await getLeaderMembership(ctx, task.groupId, userId);
+
+    const [group, createdBy, assignedTo, targetMember, targetGroup, parentTask] =
+      await Promise.all([
+        ctx.db.get(task.groupId),
+        task.createdById ? ctx.db.get(task.createdById) : Promise.resolve(null),
+        task.assignedToId ? ctx.db.get(task.assignedToId) : Promise.resolve(null),
+        task.targetMemberId ? ctx.db.get(task.targetMemberId) : Promise.resolve(null),
+        task.targetGroupId ? ctx.db.get(task.targetGroupId) : Promise.resolve(null),
+        task.parentTaskId ? ctx.db.get(task.parentTaskId) : Promise.resolve(null),
+      ]);
+
+    return {
+      ...task,
+      groupName: (group && "name" in group) ? group.name : "Group",
+      createdByName: createdBy ? formatUserName(createdBy) : undefined,
+      assignedToName: assignedTo ? formatUserName(assignedTo) : undefined,
+      targetMemberName: targetMember ? formatUserName(targetMember) : undefined,
+      targetGroupName: (targetGroup && "name" in targetGroup) ? targetGroup.name : undefined,
+      parentTaskTitle: (parentTask && "title" in parentTask) ? parentTask.title : undefined,
+    };
+  },
+});
+
+export const listHistory = query({
+  args: {
+    token: v.string(),
+    taskId: v.id("tasks"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const task = await getTaskOrThrow(ctx, args.taskId);
+    await getLeaderMembership(ctx, task.groupId, userId);
+
+    const events = await ctx.db
+      .query("taskEvents")
+      .withIndex("by_task_createdAt", (q: any) => q.eq("taskId", args.taskId))
+      .collect();
+
+    const performerIds = [...new Set(events.map((event) => event.performedById?.toString()))]
+      .filter(Boolean) as string[];
+    const performers = await Promise.all(
+      performerIds.map((performerId) => ctx.db.get(performerId as Id<"users">)),
+    );
+    const performerMap = new Map<string, string>();
+    performers.forEach((performer, index) => {
+      if (!performer) return;
+      performerMap.set(performerIds[index], formatUserName(performer));
+    });
+
+    return events
+      .map((event) => ({
+        ...event,
+        performedByName: event.performedById
+          ? performerMap.get(event.performedById.toString()) ?? "Leader"
+          : undefined,
+      }))
+      .sort((a, b) => b.createdAt - a.createdAt);
   },
 });
 
@@ -622,6 +808,96 @@ export const create = mutation({
     });
 
     return taskId;
+  },
+});
+
+export const update = mutation({
+  args: {
+    token: v.string(),
+    taskId: v.id("tasks"),
+    title: v.optional(v.string()),
+    description: v.optional(v.union(v.string(), v.null())),
+    tags: v.optional(v.array(v.string())),
+    relevantMemberId: v.optional(v.union(v.id("users"), v.null())),
+    parentTaskId: v.optional(v.union(v.id("tasks"), v.null())),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const task = await getTaskOrThrow(ctx, args.taskId);
+    await getLeaderMembership(ctx, task.groupId, userId);
+
+    const patch: Record<string, unknown> = {
+      updatedAt: now(),
+    };
+
+    if (args.title !== undefined) {
+      const trimmedTitle = args.title.trim();
+      if (!trimmedTitle) {
+        throw new ConvexError("title is required");
+      }
+      patch.title = trimmedTitle;
+    }
+
+    if (args.description !== undefined) {
+      const trimmedDescription = args.description?.trim();
+      patch.description = trimmedDescription || undefined;
+    }
+
+    if (args.tags !== undefined) {
+      patch.tags = normalizeTags(args.tags);
+    }
+
+    if (args.relevantMemberId !== undefined) {
+      if (args.relevantMemberId) {
+        const membership = await ctx.db
+          .query("groupMembers")
+          .withIndex("by_group_user", (q: any) =>
+            q.eq("groupId", task.groupId).eq("userId", args.relevantMemberId as Id<"users">),
+          )
+          .first();
+        if (!isActiveMembership(membership)) {
+          throw new ConvexError("relevant member must be active in this group");
+        }
+        patch.targetType = "member";
+        patch.targetMemberId = args.relevantMemberId;
+        patch.targetGroupId = undefined;
+      } else {
+        patch.targetType = "group";
+        patch.targetMemberId = undefined;
+        patch.targetGroupId = task.groupId;
+      }
+    }
+
+    if (args.parentTaskId !== undefined) {
+      if (args.parentTaskId) {
+        if (args.parentTaskId === task._id) {
+          throw new ConvexError("task cannot be its own parent");
+        }
+        const parentTask = await ctx.db.get(args.parentTaskId as Id<"tasks">);
+        if (!parentTask) {
+          throw new ConvexError("parent task not found");
+        }
+        if (parentTask.groupId !== task.groupId) {
+          throw new ConvexError("parent task must belong to the same group");
+        }
+        patch.parentTaskId = args.parentTaskId;
+      } else {
+        patch.parentTaskId = undefined;
+      }
+    }
+
+    await ctx.db.patch(args.taskId, patch);
+    await appendTaskEvent(ctx, {
+      taskId: args.taskId,
+      groupId: task.groupId,
+      type: "updated",
+      performedById: userId,
+      payload: {
+        changedFields: Object.keys(patch).filter((field) => field !== "updatedAt"),
+      },
+    });
+
+    return { success: true };
   },
 });
 

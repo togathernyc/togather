@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -10,7 +10,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { UserRoute } from "@components/guards/UserRoute";
@@ -29,14 +29,20 @@ import {
   type TaskListItem,
   type TaskRow,
   type TaskSourceType,
-  type TargetType,
 } from "./taskHelpers";
 
 type Segment = "my" | "all" | "claimable";
 type TaskId = Id<"tasks">;
-type ResponsibilityType = "group" | "person";
 type SourceFilter = "all" | TaskSourceType;
 type AssigneeFilter = "all" | "unassigned" | string;
+type GroupMemberSearchResult = {
+  userId: string;
+  name: string;
+};
+type LeaderSearchResult = {
+  userId: string;
+  name: string;
+};
 
 const sourceLabels: Record<TaskSourceType, string> = {
   manual: "MANUAL",
@@ -69,16 +75,18 @@ function statusColor(status: string): string {
 export function TasksTabScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const params = useLocalSearchParams<{ group_id?: string }>();
   const { primaryColor } = useCommunityTheme();
   const isDesktopWeb = useIsDesktopWeb();
   const { community } = useAuth();
+  const contextGroupId =
+    typeof params.group_id === "string" ? params.group_id : null;
 
   const [segment, setSegment] = useState<Segment>("my");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [tagFilter, setTagFilter] = useState<string>("all");
   const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilter>("all");
   const [searchText, setSearchText] = useState("");
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
   const [expandedParents, setExpandedParents] = useState<Set<string>>(new Set());
   const [assigningTaskId, setAssigningTaskId] = useState<string | null>(null);
@@ -86,21 +94,28 @@ export function TasksTabScreen() {
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [createGroupId, setCreateGroupId] = useState<string | null>(null);
+  const [createGroupId, setCreateGroupId] = useState<string | null>(contextGroupId);
   const [createTitle, setCreateTitle] = useState("");
   const [createDescription, setCreateDescription] = useState("");
   const [createTagsInput, setCreateTagsInput] = useState("");
-  const [createTargetType, setCreateTargetType] = useState<TargetType>("none");
-  const [createTargetMemberId, setCreateTargetMemberId] = useState<string | null>(
+  const [createRelevantMemberId, setCreateRelevantMemberId] = useState<string | null>(
     null,
   );
-  const [createTargetGroupId, setCreateTargetGroupId] = useState<string | null>(
-    null,
-  );
-  const [createResponsibilityType, setCreateResponsibilityType] =
-    useState<ResponsibilityType>("group");
+  const [createRelevantMemberName, setCreateRelevantMemberName] = useState<
+    string | null
+  >(null);
+  const [createRelevantMemberSearch, setCreateRelevantMemberSearch] = useState("");
+  const [debouncedRelevantMemberSearch, setDebouncedRelevantMemberSearch] =
+    useState("");
   const [createAssignedToId, setCreateAssignedToId] = useState<string | null>(null);
+  const [createAssignedToName, setCreateAssignedToName] = useState<string | null>(
+    null,
+  );
+  const [createAssignedSearch, setCreateAssignedSearch] = useState("");
+  const [debouncedAssignedSearch, setDebouncedAssignedSearch] = useState("");
   const [createParentTaskId, setCreateParentTaskId] = useState<string | null>(null);
+  const [createParentTaskSearch, setCreateParentTaskSearch] = useState("");
+  const [debouncedParentTaskSearch, setDebouncedParentTaskSearch] = useState("");
   const [createBusy, setCreateBusy] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -136,18 +151,71 @@ export function TasksTabScreen() {
     );
   }, [groups]);
 
+  useEffect(() => {
+    if (!contextGroupId) return;
+    setCreateGroupId(contextGroupId);
+  }, [contextGroupId]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedRelevantMemberSearch(createRelevantMemberSearch.trim());
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [createRelevantMemberSearch]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedAssignedSearch(createAssignedSearch.trim());
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [createAssignedSearch]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedParentTaskSearch(createParentTaskSearch.trim());
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [createParentTaskSearch]);
+
   const selectedCreateGroup =
     createGroupId && leaderGroups.find((group) => group._id === createGroupId);
 
-  const createGroupMembers = useAuthenticatedQuery(
-    api.functions.groupMembers.list,
-    createGroupId ? { groupId: createGroupId as Id<"groups">, limit: 200 } : "skip",
-  ) as { items?: Array<{ role: string; user?: { id: string; firstName: string; lastName?: string } }> } | undefined;
+  const createRelevantMemberResults = useAuthenticatedQuery(
+    api.functions.tasks.index.searchRelevantMembers,
+    createGroupId && debouncedRelevantMemberSearch.length >= 2
+      ? {
+          groupId: createGroupId as Id<"groups">,
+          searchText: debouncedRelevantMemberSearch,
+          limit: 30,
+        }
+      : "skip",
+  ) as GroupMemberSearchResult[] | undefined;
+
+  const createAssignableLeaderResults = useAuthenticatedQuery(
+    api.functions.tasks.index.searchAssignableLeaders,
+    createGroupId && debouncedAssignedSearch.length >= 2
+      ? {
+          groupId: createGroupId as Id<"groups">,
+          searchText: debouncedAssignedSearch,
+          limit: 30,
+        }
+      : "skip",
+  ) as LeaderSearchResult[] | undefined;
 
   const createGroupTasks = useAuthenticatedQuery(
     api.functions.tasks.index.listGroup,
-    createGroupId ? { groupId: createGroupId as Id<"groups"> } : "skip",
+    createGroupId
+      ? {
+          groupId: createGroupId as Id<"groups">,
+          searchText: debouncedParentTaskSearch || undefined,
+        }
+      : "skip",
   ) as TaskListItem[] | undefined;
+
+  const createParentTaskOptions = useMemo(
+    () => (createGroupTasks ?? []).filter((task) => !task.parentTaskId),
+    [createGroupTasks],
+  );
 
   const assigneeOptions = useMemo(() => {
     const tasks = allTasks ?? [];
@@ -190,30 +258,17 @@ export function TasksTabScreen() {
     return filteredAllTasks;
   }, [claimableTasks, filteredAllTasks, myTasks, segment]);
 
-  const selectedTask = useMemo(() => {
-    if (!activeTasks || activeTasks.length === 0) return null;
-    const fallback = activeTasks[0];
-    if (!selectedTaskId) return fallback;
-    return activeTasks.find((task) => task._id.toString() === selectedTaskId) ?? fallback;
-  }, [activeTasks, selectedTaskId]);
+  const assigningTask = useMemo(
+    () =>
+      (activeTasks ?? []).find((task) => task._id.toString() === assigningTaskId) ??
+      null,
+    [activeTasks, assigningTaskId],
+  );
 
   const assignableLeaders = useAuthenticatedQuery(
     api.functions.tasks.index.listAssignableLeaders,
-    selectedTask ? { groupId: selectedTask.groupId } : "skip",
+    assigningTask ? { groupId: assigningTask.groupId } : "skip",
   ) as Array<{ userId: string; name: string }> | undefined;
-
-  const createAssignableLeaders = useMemo(() => {
-    const members = createGroupMembers?.items ?? [];
-    return members
-      .filter((member) => member.role === "leader" || member.role === "admin")
-      .map((member) => ({
-        userId: member.user?.id ?? "",
-        name:
-          `${member.user?.firstName ?? ""} ${member.user?.lastName ?? ""}`.trim() ||
-          "Leader",
-      }))
-      .filter((leader) => Boolean(leader.userId));
-  }, [createGroupMembers]);
 
   const availableTags = useMemo(() => {
     const tasks = activeTasks ?? [];
@@ -282,20 +337,17 @@ export function TasksTabScreen() {
         title: createTitle,
         description: createDescription.trim() || undefined,
         tags: parseTagsInput(createTagsInput),
-        responsibilityType: createResponsibilityType,
-        assignedToId:
-          createResponsibilityType === "person" && createAssignedToId
-            ? (createAssignedToId as Id<"users">)
-            : undefined,
-        targetType: createTargetType,
-        targetMemberId:
-          createTargetType === "member" && createTargetMemberId
-            ? (createTargetMemberId as Id<"users">)
-            : undefined,
-        targetGroupId:
-          createTargetType === "group" && createTargetGroupId
-            ? (createTargetGroupId as Id<"groups">)
-            : undefined,
+        responsibilityType: createAssignedToId ? "person" : "group",
+        assignedToId: createAssignedToId
+          ? (createAssignedToId as Id<"users">)
+          : undefined,
+        targetType: createRelevantMemberId ? "member" : "group",
+        targetMemberId: createRelevantMemberId
+          ? (createRelevantMemberId as Id<"users">)
+          : undefined,
+        targetGroupId: createRelevantMemberId
+          ? undefined
+          : (createGroupId as Id<"groups">),
         parentTaskId: createParentTaskId
           ? (createParentTaskId as Id<"tasks">)
           : undefined,
@@ -304,12 +356,17 @@ export function TasksTabScreen() {
       setCreateTitle("");
       setCreateDescription("");
       setCreateTagsInput("");
-      setCreateTargetType("none");
-      setCreateTargetMemberId(null);
-      setCreateTargetGroupId(null);
-      setCreateResponsibilityType("group");
+      setCreateRelevantMemberId(null);
+      setCreateRelevantMemberName(null);
+      setCreateRelevantMemberSearch("");
       setCreateAssignedToId(null);
+      setCreateAssignedToName(null);
+      setCreateAssignedSearch("");
       setCreateParentTaskId(null);
+      setCreateParentTaskSearch("");
+      if (!contextGroupId) {
+        setCreateGroupId(null);
+      }
       setIsCreateOpen(false);
       setActionSuccess("Task created");
     } catch (error) {
@@ -333,25 +390,28 @@ export function TasksTabScreen() {
     const taskId = task._id;
     const taskIdKey = taskId.toString();
     const sourceType = (task.sourceType ?? "manual") as TaskSourceType;
-    const isSelected = selectedTask?._id?.toString() === taskIdKey;
     const isBusy = busyTaskId === taskIdKey;
     const showAssignPanel = assigningTaskId === taskIdKey;
 
     return (
       <Pressable
-        onPress={() => setSelectedTaskId(taskIdKey)}
+        onPress={() =>
+          router.push(`/(user)/leader-tools/${task.groupId}/tasks/${taskIdKey}`)
+        }
         style={[
           styles.card,
           item.depth > 0 && styles.childCard,
           { marginLeft: item.depth * 14 },
-          isSelected && isDesktopWeb ? styles.cardSelected : undefined,
         ]}
       >
         <View style={styles.cardHeader}>
           <View style={styles.titleContainer}>
             {item.hasChildren ? (
               <Pressable
-                onPress={() => toggleParentExpanded(taskIdKey)}
+                onPress={(event) => {
+                  event.stopPropagation();
+                  toggleParentExpanded(taskIdKey);
+                }}
                 hitSlop={8}
                 style={styles.chevronButton}
               >
@@ -409,7 +469,10 @@ export function TasksTabScreen() {
           {(segment === "claimable" || segment === "all") && !task.assignedToId ? (
             <Pressable
               disabled={isBusy}
-              onPress={() => runTaskAction(taskId, "claim")}
+              onPress={(event) => {
+                event.stopPropagation();
+                runTaskAction(taskId, "claim");
+              }}
               style={[styles.primaryAction, isBusy && styles.disabledAction]}
             >
               <Text style={styles.primaryActionText}>{isBusy ? "..." : "Claim"}</Text>
@@ -418,21 +481,30 @@ export function TasksTabScreen() {
             <>
               <Pressable
                 disabled={isBusy}
-                onPress={() => runTaskAction(taskId, "done")}
+                onPress={(event) => {
+                  event.stopPropagation();
+                  runTaskAction(taskId, "done");
+                }}
                 style={[styles.inlineAction, isBusy && styles.disabledAction]}
               >
                 <Text style={styles.inlineActionText}>Done</Text>
               </Pressable>
               <Pressable
                 disabled={isBusy}
-                onPress={() => runTaskAction(taskId, "snooze")}
+                onPress={(event) => {
+                  event.stopPropagation();
+                  runTaskAction(taskId, "snooze");
+                }}
                 style={[styles.inlineAction, isBusy && styles.disabledAction]}
               >
                 <Text style={styles.inlineActionText}>Snooze 1w</Text>
               </Pressable>
               <Pressable
                 disabled={isBusy}
-                onPress={() => runTaskAction(taskId, "cancel")}
+                onPress={(event) => {
+                  event.stopPropagation();
+                  runTaskAction(taskId, "cancel");
+                }}
                 style={[styles.inlineAction, isBusy && styles.disabledAction]}
               >
                 <Text style={[styles.inlineActionText, { color: "#DC2626" }]}>
@@ -441,9 +513,12 @@ export function TasksTabScreen() {
               </Pressable>
               <Pressable
                 disabled={isBusy}
-                onPress={() =>
-                  setAssigningTaskId((current) => (current === taskIdKey ? null : taskIdKey))
-                }
+                onPress={(event) => {
+                  event.stopPropagation();
+                  setAssigningTaskId((current) =>
+                    current === taskIdKey ? null : taskIdKey,
+                  );
+                }}
                 style={[styles.inlineAction, isBusy && styles.disabledAction]}
               >
                 <Text style={styles.inlineActionText}>
@@ -456,15 +531,16 @@ export function TasksTabScreen() {
 
         {showAssignPanel ? (
           <View style={styles.assignPanel}>
-            <Text style={styles.assignPanelTitle}>Assign leader</Text>
+            <Text style={styles.assignPanelTitle}>Assigned to</Text>
             <View style={styles.assignButtonsRow}>
               {(assignableLeaders ?? []).map((leader) => (
                 <Pressable
                   key={`${taskIdKey}-${leader.userId}`}
                   disabled={isBusy}
-                  onPress={() =>
-                    runTaskAction(taskId, "assign", leader.userId as Id<"users">)
-                  }
+                  onPress={(event) => {
+                    event.stopPropagation();
+                    runTaskAction(taskId, "assign", leader.userId as Id<"users">);
+                  }}
                   style={[styles.assignButton, isBusy && styles.disabledAction]}
                 >
                   <Text style={styles.assignButtonText}>{leader.name}</Text>
@@ -472,7 +548,10 @@ export function TasksTabScreen() {
               ))}
               <Pressable
                 disabled={isBusy}
-                onPress={() => runTaskAction(taskId, "assign")}
+                onPress={(event) => {
+                  event.stopPropagation();
+                  runTaskAction(taskId, "assign");
+                }}
                 style={[styles.assignButton, isBusy && styles.disabledAction]}
               >
                 <Text style={styles.assignButtonText}>Unassign</Text>
@@ -493,7 +572,13 @@ export function TasksTabScreen() {
           <View style={styles.headerTitleWrap}>
             <Pressable
               style={styles.backButton}
-              onPress={() => router.replace("/(tabs)/profile")}
+              onPress={() => {
+                if (router.canGoBack()) {
+                  router.back();
+                  return;
+                }
+                router.push("/(tabs)/profile");
+              }}
             >
               <Ionicons name="arrow-back" size={22} color="#0F172A" />
             </Pressable>
@@ -558,7 +643,7 @@ export function TasksTabScreen() {
         <TextInput
           value={searchText}
           onChangeText={setSearchText}
-          placeholder="Search title, tag, target, or group"
+          placeholder="Search title, tag, member, or group"
           style={styles.searchInput}
         />
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -673,40 +758,12 @@ export function TasksTabScreen() {
             />
           </View>
           <View style={styles.desktopDetail}>
-            {selectedTask ? (
-              <ScrollView contentContainerStyle={styles.detailContent}>
-                <Text style={styles.detailTitle}>{selectedTask.title}</Text>
-                {selectedTask.description ? (
-                  <Text style={styles.detailBody}>{selectedTask.description}</Text>
-                ) : null}
-                <View style={styles.detailMeta}>
-                  <Text style={styles.detailMetaText}>
-                    Group: {selectedTask.groupName ?? "Group"}
-                  </Text>
-                  <Text
-                    style={[
-                      styles.detailMetaText,
-                      { color: statusColor(selectedTask.status) },
-                    ]}
-                  >
-                    Status: {formatStatus(selectedTask.status)}
-                  </Text>
-                  <Text style={styles.detailMetaText}>
-                    {selectedTask.assignedToName
-                      ? `Assigned: ${selectedTask.assignedToName}`
-                      : "Assigned: Unassigned"}
-                  </Text>
-                  {selectedTask.targetType !== "none" ? (
-                    <Text style={styles.detailMetaText}>
-                      Target:{" "}
-                      {selectedTask.targetType === "member"
-                        ? selectedTask.targetMemberName ?? "Member"
-                        : selectedTask.targetGroupName ?? "Group"}
-                    </Text>
-                  ) : null}
-                </View>
-              </ScrollView>
-            ) : null}
+            <ScrollView contentContainerStyle={styles.detailContent}>
+              <Text style={styles.detailTitle}>Task details</Text>
+              <Text style={styles.detailBody}>
+                Click a task to open its detail page, edit it, and review history.
+              </Text>
+            </ScrollView>
           </View>
         </View>
       ) : (
@@ -731,27 +788,42 @@ export function TasksTabScreen() {
           </View>
 
           <Text style={styles.inputLabel}>Group</Text>
-          <View style={styles.chipsWrap}>
-            {leaderGroups.map((group) => (
-              <Pressable
-                key={group._id}
-                onPress={() => setCreateGroupId(group._id)}
-                style={[
-                  styles.groupChip,
-                  createGroupId === group._id && styles.groupChipActive,
-                ]}
-              >
-                <Text
+          {contextGroupId ? (
+            <View style={styles.lockedField}>
+              <Text style={styles.lockedFieldText}>
+                {selectedCreateGroup?.name ?? "Current group"}
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.chipsWrap}>
+              {leaderGroups.map((group) => (
+                <Pressable
+                  key={group._id}
+                  onPress={() => {
+                    setCreateGroupId(group._id);
+                    setCreateRelevantMemberId(null);
+                    setCreateRelevantMemberName(null);
+                    setCreateAssignedToId(null);
+                    setCreateAssignedToName(null);
+                    setCreateParentTaskId(null);
+                  }}
                   style={[
-                    styles.groupChipText,
-                    createGroupId === group._id && styles.groupChipTextActive,
+                    styles.groupChip,
+                    createGroupId === group._id && styles.groupChipActive,
                   ]}
                 >
-                  {group.name}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
+                  <Text
+                    style={[
+                      styles.groupChipText,
+                      createGroupId === group._id && styles.groupChipTextActive,
+                    ]}
+                  >
+                    {group.name}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
 
           <Text style={styles.inputLabel}>Title *</Text>
           <TextInput
@@ -778,194 +850,152 @@ export function TasksTabScreen() {
             style={styles.textInput}
           />
 
-          <Text style={styles.inputLabel}>Target</Text>
-          <View style={styles.chipsWrap}>
-            {(["none", "member", "group"] as TargetType[]).map((targetType) => (
-              <Pressable
-                key={targetType}
-                onPress={() => {
-                  setCreateTargetType(targetType);
-                  setCreateTargetMemberId(null);
-                  setCreateTargetGroupId(null);
-                }}
-                style={[
-                  styles.groupChip,
-                  createTargetType === targetType && styles.groupChipActive,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.groupChipText,
-                    createTargetType === targetType && styles.groupChipTextActive,
-                  ]}
-                >
-                  {targetType}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
+          <Text style={styles.helperText}>
+            Target defaults to this group. Add a relevant member only if needed.
+          </Text>
 
-          {createTargetType === "member" ? (
-            <>
-              <Text style={styles.inputLabel}>Target Member</Text>
-              <View style={styles.chipsWrap}>
-                {(createGroupMembers?.items ?? []).map((member) => {
-                  const memberId = member.user?.id;
-                  if (!memberId) return null;
-                  const memberName =
-                    `${member.user?.firstName ?? ""} ${member.user?.lastName ?? ""}`.trim() ||
-                    "Member";
-                  return (
-                    <Pressable
-                      key={memberId}
-                      onPress={() => setCreateTargetMemberId(memberId)}
-                      style={[
-                        styles.groupChip,
-                        createTargetMemberId === memberId && styles.groupChipActive,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.groupChipText,
-                          createTargetMemberId === memberId && styles.groupChipTextActive,
-                        ]}
-                      >
-                        {memberName}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </>
+          <Text style={styles.inputLabel}>Relevant member</Text>
+          <TextInput
+            value={createRelevantMemberSearch}
+            onChangeText={setCreateRelevantMemberSearch}
+            placeholder="Search members (server search)"
+            style={styles.textInput}
+          />
+          {createRelevantMemberId && createRelevantMemberName ? (
+            <Pressable
+              onPress={() => {
+                setCreateRelevantMemberId(null);
+                setCreateRelevantMemberName(null);
+              }}
+              style={styles.selectionPill}
+            >
+              <Text style={styles.selectionPillText}>
+                {createRelevantMemberName} • Tap to clear
+              </Text>
+            </Pressable>
           ) : null}
-
-          {createTargetType === "group" ? (
-            <>
-              <Text style={styles.inputLabel}>Target Group</Text>
-              <View style={styles.chipsWrap}>
-                {leaderGroups.map((group) => (
+          {createRelevantMemberSearch.trim().length >= 2 ? (
+            <ScrollView
+              style={styles.searchResultsList}
+              nestedScrollEnabled
+              keyboardShouldPersistTaps="handled"
+            >
+              {(createRelevantMemberResults ?? []).map((member) => {
+                return (
                   <Pressable
-                    key={`target-${group._id}`}
-                    onPress={() => setCreateTargetGroupId(group._id)}
-                    style={[
-                      styles.groupChip,
-                      createTargetGroupId === group._id && styles.groupChipActive,
-                    ]}
+                    key={member.userId}
+                    onPress={() => {
+                      setCreateRelevantMemberId(member.userId);
+                      setCreateRelevantMemberName(member.name);
+                      setCreateRelevantMemberSearch("");
+                    }}
+                    style={styles.searchResultRow}
                   >
-                    <Text
-                      style={[
-                        styles.groupChipText,
-                        createTargetGroupId === group._id && styles.groupChipTextActive,
-                      ]}
-                    >
-                      {group.name}
-                    </Text>
+                    <Text style={styles.searchResultText}>{member.name}</Text>
                   </Pressable>
-                ))}
-              </View>
-            </>
-          ) : null}
+                );
+              })}
+              {createRelevantMemberResults !== undefined &&
+              createRelevantMemberResults.length === 0 ? (
+                <Text style={styles.searchHelperText}>No matching members.</Text>
+              ) : null}
+            </ScrollView>
+          ) : (
+            <Text style={styles.searchHelperText}>Type at least 2 characters.</Text>
+          )}
 
-          <Text style={styles.inputLabel}>Responsibility</Text>
-          <View style={styles.chipsWrap}>
-            {(["group", "person"] as ResponsibilityType[]).map((responsibilityType) => (
-              <Pressable
-                key={responsibilityType}
-                onPress={() => {
-                  setCreateResponsibilityType(responsibilityType);
-                  if (responsibilityType === "group") setCreateAssignedToId(null);
-                }}
-                style={[
-                  styles.groupChip,
-                  createResponsibilityType === responsibilityType && styles.groupChipActive,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.groupChipText,
-                    createResponsibilityType === responsibilityType &&
-                      styles.groupChipTextActive,
-                  ]}
+          <Text style={styles.inputLabel}>Assigned to</Text>
+          <TextInput
+            value={createAssignedSearch}
+            onChangeText={setCreateAssignedSearch}
+            placeholder="Search group leaders (server search)"
+            style={styles.textInput}
+          />
+          {createAssignedToId && createAssignedToName ? (
+            <Pressable
+              onPress={() => {
+                setCreateAssignedToId(null);
+                setCreateAssignedToName(null);
+              }}
+              style={styles.selectionPill}
+            >
+              <Text style={styles.selectionPillText}>
+                {createAssignedToName} • Tap to clear
+              </Text>
+            </Pressable>
+          ) : (
+            <Text style={styles.searchHelperText}>
+              Leave empty to keep responsibility at group level.
+            </Text>
+          )}
+          {createAssignedSearch.trim().length >= 2 ? (
+            <ScrollView
+              style={styles.searchResultsList}
+              nestedScrollEnabled
+              keyboardShouldPersistTaps="handled"
+            >
+              {(createAssignableLeaderResults ?? []).map((leader) => (
+                <Pressable
+                  key={leader.userId}
+                  onPress={() => {
+                    setCreateAssignedToId(leader.userId);
+                    setCreateAssignedToName(leader.name);
+                    setCreateAssignedSearch("");
+                  }}
+                  style={styles.searchResultRow}
                 >
-                  {responsibilityType}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-
-          {createResponsibilityType === "person" ? (
-            <>
-              <Text style={styles.inputLabel}>Assign to Leader</Text>
-              <View style={styles.chipsWrap}>
-                {createAssignableLeaders.map((leader) => (
-                  <Pressable
-                    key={leader.userId}
-                    onPress={() => setCreateAssignedToId(leader.userId)}
-                    style={[
-                      styles.groupChip,
-                      createAssignedToId === leader.userId && styles.groupChipActive,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.groupChipText,
-                        createAssignedToId === leader.userId && styles.groupChipTextActive,
-                      ]}
-                    >
-                      {leader.name}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            </>
+                  <Text style={styles.searchResultText}>{leader.name}</Text>
+                </Pressable>
+              ))}
+              {createAssignableLeaderResults !== undefined &&
+              createAssignableLeaderResults.length === 0 ? (
+                <Text style={styles.searchHelperText}>No matching leaders.</Text>
+              ) : null}
+            </ScrollView>
           ) : null}
 
-          {selectedCreateGroup ? (
+          {createGroupId ? (
             <>
               <Text style={styles.inputLabel}>
-                Parent Task ({selectedCreateGroup.name})
+                Parent Task ({selectedCreateGroup?.name ?? "Current group"})
               </Text>
-              <View style={styles.chipsWrap}>
+              <TextInput
+                value={createParentTaskSearch}
+                onChangeText={setCreateParentTaskSearch}
+                placeholder="Search tasks (server search)"
+                style={styles.textInput}
+              />
+              <ScrollView
+                style={styles.searchResultsList}
+                nestedScrollEnabled
+                keyboardShouldPersistTaps="handled"
+              >
                 <Pressable
                   onPress={() => setCreateParentTaskId(null)}
                   style={[
-                    styles.groupChip,
-                    createParentTaskId === null && styles.groupChipActive,
+                    styles.searchResultRow,
+                    createParentTaskId === null && styles.searchResultRowActive,
                   ]}
                 >
-                  <Text
+                  <Text style={styles.searchResultText}>None</Text>
+                </Pressable>
+                {createParentTaskOptions.map((task) => (
+                  <Pressable
+                    key={task._id}
+                    onPress={() => setCreateParentTaskId(task._id.toString())}
                     style={[
-                      styles.groupChipText,
-                      createParentTaskId === null && styles.groupChipTextActive,
+                      styles.searchResultRow,
+                      createParentTaskId === task._id.toString() &&
+                        styles.searchResultRowActive,
                     ]}
                   >
-                    None
-                  </Text>
-                </Pressable>
-                {(createGroupTasks ?? [])
-                  .filter((task) => !task.parentTaskId)
-                  .map((task) => (
-                    <Pressable
-                      key={task._id}
-                      onPress={() => setCreateParentTaskId(task._id.toString())}
-                      style={[
-                        styles.groupChip,
-                        createParentTaskId === task._id.toString() &&
-                          styles.groupChipActive,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.groupChipText,
-                          createParentTaskId === task._id.toString() &&
-                            styles.groupChipTextActive,
-                        ]}
-                      >
-                        {task.title}
-                      </Text>
-                    </Pressable>
-                  ))}
-              </View>
+                    <Text style={styles.searchResultText}>{task.title}</Text>
+                  </Pressable>
+                ))}
+                {createParentTaskOptions.length === 0 ? (
+                  <Text style={styles.searchHelperText}>No matching parent tasks.</Text>
+                ) : null}
+              </ScrollView>
             </>
           ) : null}
 
@@ -1357,6 +1387,25 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "700",
   },
+  helperText: {
+    marginTop: 10,
+    color: "#64748B",
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  lockedField: {
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: "#F8FAFC",
+  },
+  lockedFieldText: {
+    fontSize: 14,
+    color: "#0F172A",
+    fontWeight: "600",
+  },
   textInput: {
     borderWidth: 1,
     borderColor: "#CBD5E1",
@@ -1395,6 +1444,48 @@ const styles = StyleSheet.create({
   },
   groupChipTextActive: {
     color: "#3730A3",
+  },
+  selectionPill: {
+    marginTop: 8,
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+    backgroundColor: "#EFF6FF",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  selectionPillText: {
+    color: "#1D4ED8",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  searchResultsList: {
+    maxHeight: 180,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    borderRadius: 10,
+    backgroundColor: "#fff",
+  },
+  searchResultRow: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F1F5F9",
+  },
+  searchResultRowActive: {
+    backgroundColor: "#EFF6FF",
+  },
+  searchResultText: {
+    color: "#0F172A",
+    fontSize: 13,
+    fontWeight: "500",
+  },
+  searchHelperText: {
+    marginTop: 8,
+    color: "#64748B",
+    fontSize: 12,
   },
   modalActions: {
     marginTop: 20,

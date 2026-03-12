@@ -549,8 +549,13 @@ const ConvexChatRoomScreenInner: React.FC = () => {
 
   const handleGoToTasks = useCallback(() => {
     setMenuVisible(false);
-    router.push('/tasks');
-  }, [router]);
+    const id = getGroupIdForNavigation();
+    if (id) {
+      router.push(`/(user)/leader-tools/${id}/tasks`);
+      return;
+    }
+    router.push("/tasks");
+  }, [router, getGroupIdForNavigation]);
 
   const handleGoToRunSheet = useCallback(() => {
     setMenuVisible(false);

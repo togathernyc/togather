@@ -9,6 +9,7 @@ jest.mock("expo-router", () => ({
     back: jest.fn(),
     push: jest.fn(),
   }),
+  useLocalSearchParams: () => ({}),
 }));
 
 jest.mock("react-native-safe-area-context", () => ({
@@ -40,6 +41,8 @@ jest.mock("@services/api/convex", () => ({
           listAll: "api.functions.tasks.index.listAll",
           listClaimable: "api.functions.tasks.index.listClaimable",
           listAssignableLeaders: "api.functions.tasks.index.listAssignableLeaders",
+          searchAssignableLeaders: "api.functions.tasks.index.searchAssignableLeaders",
+          searchRelevantMembers: "api.functions.tasks.index.searchRelevantMembers",
           listGroup: "api.functions.tasks.index.listGroup",
           claim: "api.functions.tasks.index.claim",
           markDone: "api.functions.tasks.index.markDone",
@@ -53,9 +56,6 @@ jest.mock("@services/api/convex", () => ({
         queries: {
           listForUser: "api.functions.groups.queries.listForUser",
         },
-      },
-      groupMembers: {
-        list: "api.functions.groupMembers.list",
       },
     },
   },
@@ -145,15 +145,19 @@ describe("TasksTabScreen", () => {
         return [{ _id: "group-1", name: "Group A", userRole: "leader" }];
       }
 
-      if (queryFn === "api.functions.groupMembers.list") {
-        return { items: [] };
-      }
-
       if (queryFn === "api.functions.tasks.index.listGroup") {
         return [];
       }
 
       if (queryFn === "api.functions.tasks.index.listAssignableLeaders") {
+        return [];
+      }
+
+      if (queryFn === "api.functions.tasks.index.searchAssignableLeaders") {
+        return [];
+      }
+
+      if (queryFn === "api.functions.tasks.index.searchRelevantMembers") {
         return [];
       }
 
