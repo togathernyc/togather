@@ -19,6 +19,74 @@ import { DOMAIN_CONFIG } from "@togather/shared/config";
 const MAX_PREVIEW_LENGTH = 100;
 const DEFAULT_PAGE_SIZE = 50;
 
+// Message type for preview generation (minimal interface for preview logic)
+interface MessageForPreview {
+  content: string;
+  attachments?: Array<{
+    type: string;
+    url: string;
+    name?: string;
+    size?: number;
+    mimeType?: string;
+    thumbnailUrl?: string;
+  }>;
+}
+
+/**
+ * Generate a smart preview for a message based on its content and attachments.
+ * Used for channel lastMessagePreview to show user-friendly strings like
+ * "Sent a photo", "Sent a file", "Shared an event", etc.
+ */
+function generateMessagePreview(message: MessageForPreview): string {
+  const content = message.content;
+  const attachments = message.attachments;
+
+  if (attachments && attachments.length > 0) {
+    const imageCount = attachments.filter((a) => a.type === "image").length;
+    const fileCount = attachments.filter((a) =>
+      a.type === "file" || a.type === "document" || a.type === "audio" || a.type === "video"
+    ).length;
+    const audioCount = attachments.filter((a) => a.type === "audio").length;
+    const videoCount = attachments.filter((a) => a.type === "video").length;
+
+    if (imageCount > 0 && content.trim()) {
+      // Has both images and text - show text
+      return content.slice(0, MAX_PREVIEW_LENGTH);
+    } else if (imageCount > 0) {
+      // Only images
+      return imageCount === 1 ? "Sent a photo" : `Sent ${imageCount} photos`;
+    } else if (audioCount > 0) {
+      // Audio files
+      return audioCount === 1 ? "Sent an audio message" : `Sent ${audioCount} audio files`;
+    } else if (videoCount > 0) {
+      // Video files
+      return videoCount === 1 ? "Sent a video" : `Sent ${videoCount} videos`;
+    } else if (fileCount > 0) {
+      // Documents and other files
+      return fileCount === 1 ? "Sent a file" : `Sent ${fileCount} files`;
+    } else {
+      return content.slice(0, MAX_PREVIEW_LENGTH);
+    }
+  } else if (DOMAIN_CONFIG.eventLinkRegexSingle().test(content)) {
+    // Event link shared
+    return content.trim() === content.match(DOMAIN_CONFIG.eventLinkRegexSingle())?.[0]
+      ? "Shared an event"
+      : content.slice(0, MAX_PREVIEW_LENGTH);
+  } else if (DOMAIN_CONFIG.toolLinkRegexSingle().test(content)) {
+    // Tool link shared (Run Sheet, Resource)
+    return content.trim() === content.match(DOMAIN_CONFIG.toolLinkRegexSingle())?.[0]
+      ? "Shared a tool"
+      : content.slice(0, MAX_PREVIEW_LENGTH);
+  } else if (DOMAIN_CONFIG.groupLinkRegexSingle().test(content)) {
+    // Group link shared
+    return content.trim() === content.match(DOMAIN_CONFIG.groupLinkRegexSingle())?.[0]
+      ? "Shared a group"
+      : content.slice(0, MAX_PREVIEW_LENGTH);
+  } else {
+    return content.slice(0, MAX_PREVIEW_LENGTH);
+  }
+}
+
 // ============================================================================
 // Queries
 // ============================================================================
@@ -294,52 +362,10 @@ export const sendMessage = mutation({
 
     // Update channel with last message info (for inbox preview)
     // Generate smart preview based on content type
-    let preview: string;
-    if (args.attachments && args.attachments.length > 0) {
-      const imageCount = args.attachments.filter((a) => a.type === "image").length;
-      // Count all non-image attachment types: file, document, audio, video
-      const fileCount = args.attachments.filter((a) =>
-        a.type === "file" || a.type === "document" || a.type === "audio" || a.type === "video"
-      ).length;
-      const audioCount = args.attachments.filter((a) => a.type === "audio").length;
-      const videoCount = args.attachments.filter((a) => a.type === "video").length;
-
-      if (imageCount > 0 && args.content.trim()) {
-        // Has both images and text - show text
-        preview = args.content.slice(0, MAX_PREVIEW_LENGTH);
-      } else if (imageCount > 0) {
-        // Only images
-        preview = imageCount === 1 ? "Sent a photo" : `Sent ${imageCount} photos`;
-      } else if (audioCount > 0) {
-        // Audio files
-        preview = audioCount === 1 ? "Sent an audio message" : `Sent ${audioCount} audio files`;
-      } else if (videoCount > 0) {
-        // Video files
-        preview = videoCount === 1 ? "Sent a video" : `Sent ${videoCount} videos`;
-      } else if (fileCount > 0) {
-        // Documents and other files
-        preview = fileCount === 1 ? "Sent a file" : `Sent ${fileCount} files`;
-      } else {
-        preview = args.content.slice(0, MAX_PREVIEW_LENGTH);
-      }
-    } else if (DOMAIN_CONFIG.eventLinkRegexSingle().test(args.content)) {
-      // Event link shared
-      preview = args.content.trim() === args.content.match(DOMAIN_CONFIG.eventLinkRegexSingle())?.[0]
-        ? "Shared an event"
-        : args.content.slice(0, MAX_PREVIEW_LENGTH);
-    } else if (DOMAIN_CONFIG.toolLinkRegexSingle().test(args.content)) {
-      // Tool link shared (Run Sheet, Resource)
-      preview = args.content.trim() === args.content.match(DOMAIN_CONFIG.toolLinkRegexSingle())?.[0]
-        ? "Shared a tool"
-        : args.content.slice(0, MAX_PREVIEW_LENGTH);
-    } else if (DOMAIN_CONFIG.groupLinkRegexSingle().test(args.content)) {
-      // Group link shared
-      preview = args.content.trim() === args.content.match(DOMAIN_CONFIG.groupLinkRegexSingle())?.[0]
-        ? "Shared a group"
-        : args.content.slice(0, MAX_PREVIEW_LENGTH);
-    } else {
-      preview = args.content.slice(0, MAX_PREVIEW_LENGTH);
-    }
+    const preview = generateMessagePreview({
+      content: args.content,
+      attachments: args.attachments,
+    });
 
     await ctx.db.patch(args.channelId, {
       lastMessageAt: now,
@@ -470,6 +496,46 @@ export const deleteMessage = mutation({
       deletedAt: now,
       deletedById: userId,
     });
+
+    // Update channel preview if the deleted message was the most recent
+    // Re-read channel (already fetched above, but re-read for freshest lastMessageAt)
+    const freshChannel = await ctx.db.get(message.channelId);
+    if (freshChannel && freshChannel.lastMessageAt && message.createdAt >= freshChannel.lastMessageAt) {
+      const previousMessage = await ctx.db
+        .query("chatMessages")
+        .withIndex("by_channel_createdAt", (q) => q.eq("channelId", message.channelId))
+        .order("desc")
+        .filter((q) =>
+          q.and(
+            q.eq(q.field("isDeleted"), false),
+            q.neq(q.field("_id"), args.messageId),
+            q.eq(q.field("parentMessageId"), undefined)
+          )
+        )
+        .first();
+
+      if (previousMessage) {
+        const preview = generateMessagePreview({
+          content: previousMessage.content,
+          attachments: previousMessage.attachments,
+        });
+        await ctx.db.patch(message.channelId, {
+          lastMessageAt: previousMessage.createdAt,
+          lastMessagePreview: preview,
+          lastMessageSenderId: previousMessage.senderId,
+          lastMessageSenderName: previousMessage.senderName,
+          updatedAt: now,
+        });
+      } else {
+        await ctx.db.patch(message.channelId, {
+          lastMessageAt: undefined,
+          lastMessagePreview: undefined,
+          lastMessageSenderId: undefined,
+          lastMessageSenderName: undefined,
+          updatedAt: now,
+        });
+      }
+    }
   },
 });
 

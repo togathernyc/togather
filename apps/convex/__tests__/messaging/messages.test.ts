@@ -840,6 +840,105 @@ describe("Delete Message", () => {
     expect(message?.deletedById).toBe(leader2Id);
   });
 
+  test("should update channel preview when last message is deleted", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { channelId, accessToken } = await seedTestData(t);
+
+    // Send first message
+    await t.mutation(api.functions.messaging.messages.sendMessage, {
+      token: accessToken,
+      channelId,
+      content: "First message",
+    });
+    vi.runAllTimers();
+    await t.finishInProgressScheduledFunctions();
+
+    // Send second message (becomes the latest)
+    const msg2Id = await t.mutation(api.functions.messaging.messages.sendMessage, {
+      token: accessToken,
+      channelId,
+      content: "Second message",
+    });
+    vi.runAllTimers();
+    await t.finishInProgressScheduledFunctions();
+
+    // Verify channel preview shows second message
+    let channel = await t.run(async (ctx) => ctx.db.get(channelId));
+    expect(channel?.lastMessagePreview).toBe("Second message");
+
+    // Delete the second (latest) message
+    await t.mutation(api.functions.messaging.messages.deleteMessage, {
+      token: accessToken,
+      messageId: msg2Id,
+    });
+
+    // Channel preview should now show the first message
+    channel = await t.run(async (ctx) => ctx.db.get(channelId));
+    expect(channel?.lastMessagePreview).toBe("First message");
+  });
+
+  test("should clear channel preview when only message is deleted", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { channelId, accessToken } = await seedTestData(t);
+
+    const msgId = await t.mutation(api.functions.messaging.messages.sendMessage, {
+      token: accessToken,
+      channelId,
+      content: "Only message",
+    });
+    vi.runAllTimers();
+    await t.finishInProgressScheduledFunctions();
+
+    // Delete the only message
+    await t.mutation(api.functions.messaging.messages.deleteMessage, {
+      token: accessToken,
+      messageId: msgId,
+    });
+
+    const channel = await t.run(async (ctx) => ctx.db.get(channelId));
+    expect(channel?.lastMessagePreview).toBeUndefined();
+    expect(channel?.lastMessageAt).toBeUndefined();
+  });
+
+  test("should not update channel preview when non-latest message is deleted", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { channelId, accessToken } = await seedTestData(t);
+
+    // Send first message
+    const msg1Id = await t.mutation(api.functions.messaging.messages.sendMessage, {
+      token: accessToken,
+      channelId,
+      content: "First message",
+    });
+    vi.runAllTimers();
+    await t.finishInProgressScheduledFunctions();
+
+    // Advance time to ensure ordering
+    vi.advanceTimersByTime(100);
+
+    // Send second message
+    await t.mutation(api.functions.messaging.messages.sendMessage, {
+      token: accessToken,
+      channelId,
+      content: "Second message",
+    });
+    vi.runAllTimers();
+    await t.finishInProgressScheduledFunctions();
+
+    // Delete the first (non-latest) message
+    await t.mutation(api.functions.messaging.messages.deleteMessage, {
+      token: accessToken,
+      messageId: msg1Id,
+    });
+
+    // Channel preview should still show the second message
+    const channel = await t.run(async (ctx) => ctx.db.get(channelId));
+    expect(channel?.lastMessagePreview).toBe("Second message");
+  });
+
   test("should preserve deleted message for audit", async () => {
     vi.useFakeTimers();
     const t = convexTest(schema, modules);

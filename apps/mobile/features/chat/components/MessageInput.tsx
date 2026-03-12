@@ -40,6 +40,7 @@ import {
   getFileCategoryFromFilename,
   type FileCategory,
 } from '../utils/fileTypes';
+import { useDraftStore } from '../../../stores/draftStore';
 
 interface MessageInputProps {
   channelId: Id<"chatChannels"> | null;
@@ -68,8 +69,9 @@ interface MentionMatch {
   startIndex: number;
 }
 
-const MAX_INPUT_LINES = 5;
+const MAX_INPUT_LINES = 8;
 const LINE_HEIGHT = 20;
+const INPUT_PADDING_VERTICAL = 10;
 const TYPING_STOP_DELAY = 3000; // 3 seconds
 const LINK_PREVIEW_DEBOUNCE = 500; // 500ms debounce for URL detection
 
@@ -105,7 +107,9 @@ const filterMembers = (members: ChannelMember[], searchText: string): ChannelMem
 };
 
 export function MessageInput({ channelId, replyToMessage, onCancelReply, hideReplyPreview, externalSendMessage, externalIsSending }: MessageInputProps) {
-  const [text, setText] = useState('');
+  const { getDraft, setDraft: saveDraft, clearDraft } = useDraftStore();
+  const initialDraft = channelId ? getDraft(channelId) : '';
+  const [text, setText] = useState(initialDraft);
   const [cursorPosition, setCursorPosition] = useState(0);
   const [mentionMatch, setMentionMatch] = useState<MentionMatch | null>(null);
   const [selectedImages, setSelectedImages] = useState<string[]>([]);
@@ -114,6 +118,23 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   const [uploadedFile, setUploadedFile] = useState<{ storagePath: string; name: string; category: FileCategory } | null>(null);
   const [inputHeight, setInputHeight] = useState(LINE_HEIGHT);
   const [debouncedText, setDebouncedText] = useState('');
+  const isWeb = Platform.OS === 'web';
+  const prevChannelIdRef = useRef(channelId);
+
+  // Restore draft when switching channels
+  useEffect(() => {
+    if (channelId && channelId !== prevChannelIdRef.current) {
+      // Save current draft for the previous channel before switching
+      if (prevChannelIdRef.current && text) {
+        saveDraft(prevChannelIdRef.current, text);
+      }
+      // Load draft for the new channel
+      const draft = getDraft(channelId);
+      setText(draft);
+      setInputHeight(LINE_HEIGHT);
+      prevChannelIdRef.current = channelId;
+    }
+  }, [channelId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const textInputRef = useRef<TextInput>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -157,6 +178,11 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   const handleTextChange = useCallback((newText: string) => {
     setText(newText);
 
+    // Persist draft for the current channel
+    if (channelId) {
+      saveDraft(channelId, newText);
+    }
+
     // Use text length as cursor position when typing (more reliable than stale cursorPosition state)
     // onSelectionChange fires AFTER onChangeText, so cursorPosition would be stale here
     const currentCursorPos = newText.length;
@@ -190,7 +216,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
         clearTimeout(typingTimeoutRef.current);
       }
     }
-  }, [setTyping]);
+  }, [setTyping, channelId, saveDraft]);
 
   /**
    * Handle cursor position change
@@ -518,9 +544,11 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
         hideLinkPreview: isLinkPreviewDismissed ? true : undefined,
       });
 
-      // Clear input
+      // Clear input and draft
       setText('');
       setDebouncedText('');
+      setInputHeight(LINE_HEIGHT);
+      if (channelId) clearDraft(channelId);
       setSelectedImages([]);
       setUploadedImageUrls([]);
       setSelectedFile(null);
@@ -555,6 +583,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
     resetFileUpload,
     setTyping,
     isLinkPreviewDismissed,
+    clearDraft,
   ]);
 
   /**
@@ -740,18 +769,24 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
         {/* Text Input */}
         <TextInput
           ref={textInputRef}
-          style={[styles.input, { height: Math.max(40, inputHeight) }]}
+          style={[
+            styles.input,
+            isWeb
+              ? styles.inputWeb
+              : { height: Math.max(40, inputHeight + INPUT_PADDING_VERTICAL * 2) },
+          ]}
           value={text}
           onChangeText={handleTextChange}
           onSelectionChange={handleSelectionChange}
-          onContentSizeChange={(event) => {
-            const height = event.nativeEvent.contentSize.height;
-            const maxHeight = LINE_HEIGHT * MAX_INPUT_LINES;
-            setInputHeight(Math.min(height, maxHeight));
+          onContentSizeChange={isWeb ? undefined : (event) => {
+            const contentHeight = event.nativeEvent.contentSize.height;
+            const maxContentHeight = LINE_HEIGHT * MAX_INPUT_LINES;
+            setInputHeight(Math.min(contentHeight, maxContentHeight));
           }}
           placeholder="Message..."
           placeholderTextColor="#999"
           multiline
+          scrollEnabled={isWeb ? true : inputHeight >= LINE_HEIGHT * MAX_INPUT_LINES}
           maxLength={2000}
           editable={!uploading && !isSending}
         />
@@ -918,10 +953,14 @@ const styles = StyleSheet.create({
     borderColor: '#e0e0e0',
     borderRadius: 20,
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingVertical: INPUT_PADDING_VERTICAL,
     fontSize: 16,
-    maxHeight: LINE_HEIGHT * MAX_INPUT_LINES,
+    maxHeight: LINE_HEIGHT * MAX_INPUT_LINES + INPUT_PADDING_VERTICAL * 2,
     backgroundColor: '#f9f9f9',
+  },
+  inputWeb: {
+    minHeight: 40,
+    height: 'auto' as any,
   },
   sendButton: {
     width: 40,

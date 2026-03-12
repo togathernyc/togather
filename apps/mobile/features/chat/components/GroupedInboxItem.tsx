@@ -266,6 +266,7 @@ function GroupedInboxItemInner({
         onPress={() => handleChannelPress(primaryChannel)}
         style={({ pressed }) => [
           styles.groupItem,
+          hasUnread && styles.groupItemUnread,
           pressed && styles.groupItemPressed,
           isActive && styles.groupItemActive,
         ]}
@@ -293,7 +294,7 @@ function GroupedInboxItemInner({
         <View style={styles.groupContent}>
           {/* Top row: Name + Badge */}
           <View style={styles.topRow}>
-            <Text style={styles.groupName} numberOfLines={1}>
+            <Text style={[styles.groupName, hasUnread && styles.groupNameUnread]} numberOfLines={1}>
               {group.name}
             </Text>
             {primaryChannel.isShared && (
@@ -315,7 +316,7 @@ function GroupedInboxItemInner({
               {getMessagePreview(primaryChannel)}
             </Text>
             {primaryChannel.lastMessageAt && (
-              <Text style={styles.timestamp}>
+              <Text style={[styles.timestamp, hasUnread && styles.timestampUnread]}>
                 {formatRelativeTime(primaryChannel.lastMessageAt)}
               </Text>
             )}
@@ -326,7 +327,11 @@ function GroupedInboxItemInner({
         {loadingChannelId === primaryChannel._id ? (
           <ActivityIndicator size="small" color={primaryColor} style={styles.loadingIndicator} />
         ) : hasUnread ? (
-          <View style={[styles.unreadDot, { backgroundColor: primaryColor }]} />
+          <View style={[styles.unreadBadgeCount, { backgroundColor: primaryColor }]}>
+            <Text style={styles.unreadBadgeCountText}>
+              {primaryChannel.unreadCount > 99 ? "99+" : primaryChannel.unreadCount}
+            </Text>
+          </View>
         ) : null}
       </Pressable>
     );
@@ -358,6 +363,7 @@ function GroupedInboxItemInner({
         onContextMenu={handleContextMenu}
         style={({ pressed }) => [
           styles.groupItem,
+          (mainHasUnread || totalUnread > 0) && styles.groupItemUnread,
           pressed && styles.groupItemPressed,
           isActiveGroup && activeChannelSlug === mainChannel.slug && styles.groupItemActive,
         ]}
@@ -385,7 +391,7 @@ function GroupedInboxItemInner({
         <View style={styles.groupContent}>
           {/* Top row: Name + Badge */}
           <View style={styles.topRow}>
-            <Text style={styles.groupName} numberOfLines={1}>
+            <Text style={[styles.groupName, (mainHasUnread || totalUnread > 0) && styles.groupNameUnread]} numberOfLines={1}>
               {group.name}
             </Text>
             <View style={[styles.badge, { backgroundColor: badgeColors.bg }]}>
@@ -404,7 +410,7 @@ function GroupedInboxItemInner({
               {getMessagePreview(mainChannel)}
             </Text>
             {mainChannel.lastMessageAt && (
-              <Text style={styles.timestamp}>
+              <Text style={[styles.timestamp, mainHasUnread && styles.timestampUnread]}>
                 {formatRelativeTime(mainChannel.lastMessageAt)}
               </Text>
             )}
@@ -414,8 +420,12 @@ function GroupedInboxItemInner({
         {/* Loading or Unread indicator */}
         {loadingChannelId === mainChannel._id ? (
           <ActivityIndicator size="small" color={primaryColor} style={styles.loadingIndicator} />
-        ) : mainHasUnread ? (
-          <View style={[styles.unreadDot, { backgroundColor: primaryColor }]} />
+        ) : totalUnread > 0 ? (
+          <View style={[styles.unreadBadgeCount, { backgroundColor: primaryColor }]}>
+            <Text style={styles.unreadBadgeCountText}>
+              {totalUnread > 99 ? "99+" : totalUnread}
+            </Text>
+          </View>
         ) : null}
       </Pressable>
 
@@ -436,6 +446,7 @@ function GroupedInboxItemInner({
               onPress={() => handleChannelPress(channel)}
               style={({ pressed }) => [
                 styles.subChannelCard,
+                hasUnread && styles.subChannelCardUnread,
                 pressed && styles.subChannelCardPressed,
                 isActiveGroup && activeChannelSlug === channel.slug && styles.subChannelCardActive,
               ]}
@@ -443,7 +454,7 @@ function GroupedInboxItemInner({
               {channel.isShared && (
                 <Ionicons name="link" size={12} color="#8B5CF6" style={styles.subChannelSharedIcon} />
               )}
-              <Text style={styles.subChannelName}>{channel.name}</Text>
+              <Text style={[styles.subChannelName, hasUnread && styles.subChannelNameUnread]}>{channel.name}</Text>
               <Text
                 style={[styles.subChannelPreview, hasUnread && styles.subChannelPreviewUnread]}
                 numberOfLines={1}
@@ -451,16 +462,18 @@ function GroupedInboxItemInner({
                 {getMessagePreview(channel)}
               </Text>
               {channel.lastMessageAt && (
-                <Text style={styles.subChannelTimestamp}>
+                <Text style={[styles.subChannelTimestamp, hasUnread && styles.subChannelTimestampUnread]}>
                   {formatRelativeTime(channel.lastMessageAt)}
                 </Text>
               )}
               {loadingChannelId === channel._id ? (
                 <ActivityIndicator size="small" color={primaryColor} />
               ) : hasUnread ? (
-                <View
-                  style={[styles.subChannelUnreadDot, { backgroundColor: primaryColor }]}
-                />
+                <View style={[styles.subChannelUnreadBadge, { backgroundColor: primaryColor }]}>
+                  <Text style={styles.subChannelUnreadBadgeText}>
+                    {channel.unreadCount > 99 ? "99+" : channel.unreadCount}
+                  </Text>
+                </View>
               ) : null}
             </Pressable>
           </View>
@@ -480,6 +493,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     backgroundColor: "#fff",
+  },
+  groupItemUnread: {
+    backgroundColor: "#F0F7FF",
   },
   groupItemPressed: {
     backgroundColor: "#F5F5F5",
@@ -524,6 +540,9 @@ const styles = StyleSheet.create({
     flex: 1,
     marginRight: 8,
   },
+  groupNameUnread: {
+    fontWeight: "700",
+  },
   badge: {
     paddingHorizontal: 8,
     paddingVertical: 2,
@@ -552,11 +571,23 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#999",
   },
-  unreadDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+  timestampUnread: {
+    color: "#007AFF",
+    fontWeight: "600",
+  },
+  unreadBadgeCount: {
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    justifyContent: "center" as const,
+    alignItems: "center" as const,
+    paddingHorizontal: 6,
     marginLeft: 8,
+  },
+  unreadBadgeCountText: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "700",
   },
   loadingIndicator: {
     marginLeft: 8,
@@ -678,6 +709,12 @@ const styles = StyleSheet.create({
     marginRight: 16,
     marginBottom: 8,
     marginTop: 4,
+    borderWidth: 1,
+    borderColor: "transparent",
+  },
+  subChannelCardUnread: {
+    backgroundColor: "#EBF3FF",
+    borderColor: "#D0E2FF",
   },
   subChannelCardPressed: {
     backgroundColor: "#E8E8E8",
@@ -690,6 +727,10 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#374151",
     marginRight: 8,
+  },
+  subChannelNameUnread: {
+    fontWeight: "700",
+    color: "#1F2937",
   },
   subChannelPreview: {
     flex: 1,
@@ -705,11 +746,23 @@ const styles = StyleSheet.create({
     color: "#9CA3AF",
     marginLeft: 8,
   },
-  subChannelUnreadDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+  subChannelTimestampUnread: {
+    color: "#007AFF",
+    fontWeight: "600",
+  },
+  subChannelUnreadBadge: {
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    justifyContent: "center" as const,
+    alignItems: "center" as const,
+    paddingHorizontal: 5,
     marginLeft: 8,
+  },
+  subChannelUnreadBadgeText: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "700",
   },
 
   // Shared channel icon styles
