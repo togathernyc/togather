@@ -319,6 +319,14 @@ export function TasksTabScreen() {
     return [...new Set(tasks.flatMap((task) => task.tags ?? []))].sort();
   }, [activeTasks]);
 
+  useEffect(() => {
+    if (tagFilter === "all") return;
+    const isValid = availableTags.includes(tagFilter);
+    if (!isValid) {
+      setTagFilter("all");
+    }
+  }, [tagFilter, availableTags]);
+
   const taskRows = useMemo(() => {
     return activeTasks ? buildTaskRows(activeTasks, expandedParents) : [];
   }, [activeTasks, expandedParents]);
