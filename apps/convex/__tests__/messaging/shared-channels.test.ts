@@ -908,3 +908,86 @@ describe("addChannelMembers on shared channels", () => {
     expect(outsiderMembership).toBeNull();
   });
 });
+
+// ============================================================================
+// Shared-channel eligible member search filtering
+// ============================================================================
+
+describe("searchCommunityMembers includeGroupIds", () => {
+  test("returns only members from the provided groups", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedSharedChannelTestData(t);
+    const timestamp = Date.now();
+
+    const outsiderUserId = await t.run(async (ctx) => {
+      const userId = await ctx.db.insert("users", {
+        firstName: "Outside",
+        lastName: "Member",
+        phone: "+15555550998",
+        phoneVerified: true,
+        activeCommunityId: data.communityId,
+        searchText: "outside member",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+
+      await ctx.db.insert("userCommunities", {
+        userId,
+        communityId: data.communityId,
+        roles: 1,
+        status: 1,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+
+      return userId;
+    });
+
+    await t.run(async (ctx) => {
+      // convex-test's search index requires every user doc to have searchText.
+      const allUsers = await ctx.db.query("users").collect();
+      for (const user of allUsers) {
+        const existingSearchText = user.searchText;
+        if (!existingSearchText) {
+          const fallbackSearchText = `${user.firstName || ""} ${user.lastName || ""}`.trim().toLowerCase();
+          await ctx.db.patch(user._id, { searchText: fallbackSearchText || "user" });
+        }
+      }
+
+      // Ensure key users are searchable by "member".
+      await ctx.db.patch(data.primaryMemberUserId, { searchText: "primary member" });
+      await ctx.db.patch(data.secondaryMemberUserId, { searchText: "secondary member" });
+
+      await ctx.db.insert("userCommunities", {
+        userId: data.primaryMemberUserId,
+        communityId: data.communityId,
+        roles: 1,
+        status: 1,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      await ctx.db.insert("userCommunities", {
+        userId: data.secondaryMemberUserId,
+        communityId: data.communityId,
+        roles: 1,
+        status: 1,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+    });
+
+    const results = await t.query(api.functions.groupSearch.searchCommunityMembers as any, {
+      token: data.primaryLeaderToken,
+      communityId: data.communityId,
+      search: "member",
+      includeGroupIds: [data.secondaryGroupId],
+      includeSelf: true,
+      limit: 20,
+    });
+
+    const returnedIds = results.map((user: { id: string }) => user.id);
+    expect(returnedIds).toContain(data.secondaryMemberUserId);
+    expect(returnedIds).not.toContain(data.primaryMemberUserId);
+    expect(returnedIds).not.toContain(outsiderUserId);
+  });
+});

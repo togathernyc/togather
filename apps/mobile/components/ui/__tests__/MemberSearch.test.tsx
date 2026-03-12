@@ -289,6 +289,7 @@ describe("MemberSearch", () => {
         pageSize={10}
         excludeUserIds={[1, 2]}
         groupId="test-group"
+        includeGroupIds={["group-1", "group-2"]}
         excludeGroupMembersOfGroupId="exclude-group-id"
         minSearchLength={3}
       />
@@ -300,6 +301,7 @@ describe("MemberSearch", () => {
         pageSize: 10,
         excludeUserIds: [1, 2],
         groupId: "test-group",
+        includeGroupIds: ["group-1", "group-2"],
         excludeGroupMembersOfGroupId: "exclude-group-id",
         minSearchLength: 3,
         enabled: true,

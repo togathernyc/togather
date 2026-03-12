@@ -46,6 +46,8 @@ export interface MemberSearchOptions {
   search?: string;
   excludeUserIds?: Id<"users">[];
   groupId?: Id<"groups">;
+  /** Include users who are active members of ANY of these groups */
+  groupIds?: Id<"groups">[];
   /** Exclude users who are already active members of this group */
   excludeGroupId?: Id<"groups">;
   limit?: number;
@@ -172,6 +174,7 @@ export async function searchCommunityMembersInternal(
     search,
     excludeUserIds = [],
     groupId,
+    groupIds,
     excludeGroupId,
     limit = 50,
     includeAdminFields = false,
@@ -237,9 +240,31 @@ export async function searchCommunityMembersInternal(
     return [];
   }
 
-  // If filtering by group, get those member user IDs
+  // If filtering by groups, get member user IDs from the allowed groups.
   let targetUserIds: Set<Id<"users">> | null = null;
-  if (groupId) {
+  if (groupIds && groupIds.length > 0) {
+    const uniqueGroupIds = [...new Set(groupIds)];
+    const membershipSets = await Promise.all(
+      uniqueGroupIds.map(async (targetGroupId) => {
+        const groupMemberships = await ctx.db
+          .query("groupMembers")
+          .withIndex("by_group", (q) => q.eq("groupId", targetGroupId))
+          .filter((q) =>
+            q.and(
+              q.eq(q.field("leftAt"), undefined),
+              q.or(
+                q.eq(q.field("requestStatus"), undefined),
+                q.eq(q.field("requestStatus"), null),
+                q.eq(q.field("requestStatus"), "accepted")
+              )
+            )
+          )
+          .collect();
+        return groupMemberships.map((gm) => gm.userId);
+      })
+    );
+    targetUserIds = new Set(membershipSets.flat());
+  } else if (groupId) {
     const groupMemberships = await ctx.db
       .query("groupMembers")
       .withIndex("by_group", (q) => q.eq("groupId", groupId))
@@ -248,6 +273,7 @@ export async function searchCommunityMembersInternal(
           q.eq(q.field("leftAt"), undefined),
           q.or(
             q.eq(q.field("requestStatus"), undefined),
+            q.eq(q.field("requestStatus"), null),
             q.eq(q.field("requestStatus"), "accepted")
           )
         )
@@ -267,6 +293,7 @@ export async function searchCommunityMembersInternal(
           q.eq(q.field("leftAt"), undefined),
           q.or(
             q.eq(q.field("requestStatus"), undefined),
+            q.eq(q.field("requestStatus"), null),
             q.eq(q.field("requestStatus"), "accepted")
           )
         )
