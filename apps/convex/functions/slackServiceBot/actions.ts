@@ -87,21 +87,56 @@ function isSimpleAcknowledgment(response: string): boolean {
 }
 
 /**
+ * Replace Slack mention tokens (`<@U12345>` or `<@U12345|display_name>`) with
+ * the person's real name so the AI can understand who is being referenced.
+ *
+ * Resolution order:
+ * 1. If the mention contains a display name (`<@U123|Jane Doe>`), use it.
+ * 2. If the user ID matches a configured team member, use their name.
+ * 3. Otherwise, leave the raw mention intact as a fallback.
+ */
+export function resolveSlackMentions(
+  text: string,
+  teamMembers: Array<{ slackUserId: string; name: string }>,
+  botSlackUserId?: string
+): string {
+  const memberMap = new Map(teamMembers.map((m) => [m.slackUserId, m.name]));
+
+  return text.replace(/<@([A-Z0-9]+)(?:\|([^>]+))?>/g, (_match, userId, displayName) => {
+    if (botSlackUserId && userId === botSlackUserId) {
+      return _match;
+    }
+    if (displayName) {
+      return displayName;
+    }
+    const knownName = memberMap.get(userId);
+    if (knownName) {
+      return knownName;
+    }
+    return _match;
+  });
+}
+
+/**
  * Format Slack thread messages into OpenAI conversation format.
- * Uses Slack mention format (<@U123>) for user attribution so the AI
- * doesn't adopt raw user ID prefixes in its own replies.
+ * Resolves Slack mentions to real names so the AI can understand
+ * who is being referenced when someone uses @mentions.
  */
 function formatThreadForAgent(
   messages: SlackMessage[],
-  botSlackUserId: string
+  botSlackUserId: string,
+  teamMembers?: Array<{ slackUserId: string; name: string }>
 ): Array<{ role: "user" | "assistant"; content: string }> {
+  const members = teamMembers ?? [];
+
   return messages
     .filter((m) => m.text && m.text.trim())
     .map((m) => {
       const isBot = m.bot_id || m.user === botSlackUserId;
+      const resolvedText = resolveSlackMentions(m.text!, members, botSlackUserId);
       return {
         role: (isBot ? "assistant" : "user") as "user" | "assistant",
-        content: isBot ? m.text! : `<@${m.user || "unknown"}>: ${m.text}`,
+        content: isBot ? m.text! : `<@${m.user || "unknown"}>: ${resolvedText}`,
       };
     });
 }
@@ -516,7 +551,7 @@ export const processThreadReply = internalAction({
       const systemPrompt = buildMentionPrompt(config, pcoContext);
 
       // Format thread messages for agent
-      const threadMessages = formatThreadForAgent(messages, config.botSlackUserId);
+      const threadMessages = formatThreadForAgent(messages, config.botSlackUserId, config.teamMembers);
 
       // Run agent loop
       const result = await runAgentLoop(ctx, {
@@ -664,7 +699,7 @@ async function nagThread(
     thread.slackChannelId,
     thread.slackThreadTs
   );
-  const threadMessages = formatThreadForAgent(messages, config.botSlackUserId);
+  const threadMessages = formatThreadForAgent(messages, config.botSlackUserId, config.teamMembers);
 
   // ── Phase 1: Catchup sync ──────────────────────────────────────────────
   // Read thread + PCO, sync any info the thread has but PCO doesn't.

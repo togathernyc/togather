@@ -8,12 +8,14 @@
  * - Missing items detection from parsed service plan
  * - Message formatting (thread creation, nag messages, confirmations)
  * - New message builders (generated content, PCO sync confirmation)
+ * - Slack mention resolution
  *
  * Run with: cd apps/convex && pnpm test __tests__/slackServiceBot.test.ts
  */
 
 import { expect, test, describe } from "vitest";
 import { verifySlackSignature } from "../functions/slackServiceBot/slack";
+import { resolveSlackMentions } from "../functions/slackServiceBot/actions";
 import {
   getMissingItems,
   getResponsibleMembers,
@@ -858,5 +860,76 @@ describe("sanitizeV2Item", () => {
     };
     const sanitized = sanitizeV2Item(item);
     expect(sanitized).toEqual(item);
+  });
+});
+
+// ============================================================================
+// Slack Mention Resolution
+// ============================================================================
+
+describe("resolveSlackMentions", () => {
+  const teamMembers = [
+    { slackUserId: "U001", name: "Kevin Myers" },
+    { slackUserId: "U002", name: "Brittany Walker" },
+    { slackUserId: "U003", name: "Mike Oaks" },
+  ];
+  const botId = "UBOT";
+
+  test("resolves mention with display name", () => {
+    const text = "<@U999|Jane Doe> is preaching this Sunday";
+    expect(resolveSlackMentions(text, teamMembers, botId))
+      .toBe("Jane Doe is preaching this Sunday");
+  });
+
+  test("resolves mention by team member lookup", () => {
+    const text = "<@U001> is preaching this Sunday";
+    expect(resolveSlackMentions(text, teamMembers, botId))
+      .toBe("Kevin Myers is preaching this Sunday");
+  });
+
+  test("leaves bot mentions untouched", () => {
+    const text = "<@UBOT> who is preaching?";
+    expect(resolveSlackMentions(text, teamMembers, botId))
+      .toBe("<@UBOT> who is preaching?");
+  });
+
+  test("leaves unknown user IDs untouched when no display name", () => {
+    const text = "<@UUNKNOWN> is doing announcements";
+    expect(resolveSlackMentions(text, teamMembers, botId))
+      .toBe("<@UUNKNOWN> is doing announcements");
+  });
+
+  test("resolves multiple mentions in one message", () => {
+    const text = "<@U001> is preaching and <@U002> is leading worship";
+    expect(resolveSlackMentions(text, teamMembers, botId))
+      .toBe("Kevin Myers is preaching and Brittany Walker is leading worship");
+  });
+
+  test("handles mixed known and unknown mentions", () => {
+    const text = "<@U003> and <@UUNKNOWN> are on the team";
+    expect(resolveSlackMentions(text, teamMembers, botId))
+      .toBe("Mike Oaks and <@UUNKNOWN> are on the team");
+  });
+
+  test("handles text with no mentions", () => {
+    const text = "John is preaching this Sunday";
+    expect(resolveSlackMentions(text, teamMembers, botId))
+      .toBe("John is preaching this Sunday");
+  });
+
+  test("handles empty text", () => {
+    expect(resolveSlackMentions("", teamMembers, botId)).toBe("");
+  });
+
+  test("prefers display name from mention over team member lookup", () => {
+    const text = "<@U001|KM> is preaching";
+    expect(resolveSlackMentions(text, teamMembers, botId))
+      .toBe("KM is preaching");
+  });
+
+  test("works without botSlackUserId", () => {
+    const text = "<@U001> is preaching";
+    expect(resolveSlackMentions(text, teamMembers))
+      .toBe("Kevin Myers is preaching");
   });
 });
