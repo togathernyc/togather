@@ -58,9 +58,11 @@ export const ALL_TOOL_IDS = Object.keys(TOOLBAR_TOOLS) as ToolId[];
 
 /**
  * Default tools shown when leaderToolbarTools is undefined.
- * Note: "sync" is NOT included by default - must be explicitly enabled.
+ * Notes:
+ * - "tasks" is NOT included by default - group leaders must explicitly enable it.
+ * - "sync" is NOT included by default - must be explicitly enabled.
  */
-export const DEFAULT_TOOLS = ["attendance", "followup", "tasks", "events", "bots"];
+export const DEFAULT_TOOLS = ["attendance", "followup", "events", "bots"];
 
 /**
  * Resource tool ID helpers.

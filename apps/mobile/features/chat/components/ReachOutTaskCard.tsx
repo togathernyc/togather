@@ -17,6 +17,7 @@ type ReachOutTaskStatus = "pending" | "assigned" | "resolved" | "revoked";
 
 type ReachOutTaskCardData = {
   _id: Id<"tasks">;
+  groupId?: Id<"groups">;
   title?: string;
   description?: string;
   content?: string;
@@ -146,6 +147,10 @@ export function ReachOutTaskCard({ task, variant }: ReachOutTaskCardProps) {
   };
 
   const openTasks = () => {
+    if (task.groupId) {
+      router.push(`/(user)/leader-tools/${task.groupId}/tasks`);
+      return;
+    }
     router.push("/tasks");
   };
 
