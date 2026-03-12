@@ -25,7 +25,10 @@ import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
 import { notifyBatch } from "../lib/notifications/send";
 import { now } from "../lib/utils";
-import { calculateCommunicationBotNextSchedule, isScheduleDueNow } from "../lib/scheduling";
+import {
+  calculateCommunicationBotNextSchedule,
+  isScheduleDueNow,
+} from "../lib/scheduling";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
 
 // ============================================================================
@@ -34,6 +37,33 @@ import { DOMAIN_CONFIG } from "@togather/shared/config";
 
 const APP_URL = process.env.APP_URL || DOMAIN_CONFIG.appUrl;
 const BRAND_NAME = DOMAIN_CONFIG.brandName;
+
+type BirthdayReminderLeader = {
+  userId: Id<"users">;
+  displayName: string;
+};
+
+function resolveBirthdayReminderLeader(params: {
+  leaders: BirthdayReminderLeader[];
+  assignmentMode?: string;
+  specificLeaderId?: Id<"users">;
+  lastLeaderIndex?: number;
+}): BirthdayReminderLeader | null {
+  const { leaders, assignmentMode, specificLeaderId, lastLeaderIndex } = params;
+  if (leaders.length === 0) return null;
+
+  if (assignmentMode === "specific_leader" && specificLeaderId) {
+    const specificLeader = leaders.find(
+      (leader) => leader.userId === specificLeaderId,
+    );
+    if (specificLeader) {
+      return specificLeader;
+    }
+  }
+
+  const nextIndex = ((lastLeaderIndex ?? -1) + 1) % leaders.length;
+  return leaders[nextIndex];
+}
 
 // ============================================================================
 // BIRTHDAY BOT
@@ -48,7 +78,7 @@ export const runBirthdayBot = internalAction({
   handler: async (ctx) => {
     // Get all groups with birthday bot enabled
     const configs = await ctx.runQuery(
-      internal.functions.scheduledJobs.getBirthdayBotConfigs
+      internal.functions.scheduledJobs.getBirthdayBotConfigs,
     );
 
     const results: Array<{
@@ -59,10 +89,15 @@ export const runBirthdayBot = internalAction({
 
     for (const config of configs) {
       try {
+        const leaders = await ctx.runQuery(
+          internal.functions.scheduledJobs.getBirthdayBotLeaders,
+          { groupId: config.groupId },
+        );
+
         // Get members with birthdays today
         const birthdays = await ctx.runQuery(
           internal.functions.scheduledJobs.getMembersWithBirthdayToday,
-          { groupId: config.groupId }
+          { groupId: config.groupId },
         );
 
         if (birthdays.length === 0) {
@@ -74,20 +109,33 @@ export const runBirthdayBot = internalAction({
           .map((m: { firstName?: string }) => m.firstName || "a member")
           .join(", ");
 
+        const targetLeader =
+          config.mode === "leader_reminder"
+            ? resolveBirthdayReminderLeader({
+                leaders,
+                assignmentMode: config.assignmentMode,
+                specificLeaderId: config.specificLeaderId,
+                lastLeaderIndex: config.lastLeaderIndex,
+              })
+            : null;
+        const leaderName = targetLeader?.displayName || "leader";
+
         // Build message with placeholder replacement
         const message = config.message
           .replace("[[birthday_names]]", birthdayNames)
+          .replace("[[leader_name]]", leaderName)
           .replace("[[group_name]]", config.groupName)
           .replace("[[community_name]]", config.communityName);
 
         // Determine target channel with backwards compatibility
         // Priority: 1) configured targetChannelSlug, 2) mode-based default
-        const defaultSlug = config.mode === "general_chat" ? "general" : "leaders";
+        const defaultSlug =
+          config.mode === "general_chat" ? "general" : "leaders";
         const targetChannelSlug = config.targetChannelSlug || defaultSlug;
 
         const finalMessage =
           config.mode === "leader_reminder"
-            ? `**Birthday Reminder**\n\n${message}\n\nPlease give them a shoutout in the group chat!`
+            ? `**Birthday Reminder**\n\n${message}`
             : message;
 
         await ctx.runAction(internal.functions.scheduledJobs.sendBotMessage, {
@@ -98,16 +146,20 @@ export const runBirthdayBot = internalAction({
         });
 
         // Update state for round-robin
-        if (config.mode === "leader_reminder") {
+        if (
+          config.mode === "leader_reminder" &&
+          config.assignmentMode !== "specific_leader"
+        ) {
+          const leaderPoolSize = leaders.length || config.leaderCount || 1;
           await ctx.runMutation(
             internal.functions.scheduledJobs.updateBotState,
             {
               configId: config.configId,
               stateUpdates: {
                 lastLeaderIndex:
-                  ((config.lastLeaderIndex ?? -1) + 1) % config.leaderCount,
+                  ((config.lastLeaderIndex ?? -1) + 1) % leaderPoolSize,
               },
-            }
+            },
           );
         }
 
@@ -115,7 +167,7 @@ export const runBirthdayBot = internalAction({
       } catch (error) {
         console.error(
           `[BirthdayBot] Error for group ${config.groupId}:`,
-          error
+          error,
         );
         results.push({
           groupId: config.groupId,
@@ -143,18 +195,26 @@ export const processBirthdayBotBucket = internalAction({
 
     const configs = await ctx.runQuery(
       internal.functions.scheduledJobs.getDueBirthdayBotConfigs,
-      { windowStart: hourStart, windowEnd: hourEnd }
+      { windowStart: hourStart, windowEnd: hourEnd },
     );
 
-    const results: Array<{ groupId: string; success: boolean; error?: string }> =
-      [];
+    const results: Array<{
+      groupId: string;
+      success: boolean;
+      error?: string;
+    }> = [];
 
     for (const config of configs) {
       try {
+        const leaders = await ctx.runQuery(
+          internal.functions.scheduledJobs.getBirthdayBotLeaders,
+          { groupId: config.groupId },
+        );
+
         // Get members with birthdays today IN THE COMMUNITY'S TIMEZONE
         const birthdays = await ctx.runQuery(
           internal.functions.scheduledJobs.getMembersWithBirthdayToday,
-          { groupId: config.groupId, timezone: config.timezone }
+          { groupId: config.groupId, timezone: config.timezone },
         );
 
         if (birthdays.length > 0) {
@@ -162,19 +222,32 @@ export const processBirthdayBotBucket = internalAction({
             .map((m: { firstName?: string }) => m.firstName || "a member")
             .join(", ");
 
+          const targetLeader =
+            config.mode === "leader_reminder"
+              ? resolveBirthdayReminderLeader({
+                  leaders,
+                  assignmentMode: config.assignmentMode,
+                  specificLeaderId: config.specificLeaderId,
+                  lastLeaderIndex: config.lastLeaderIndex,
+                })
+              : null;
+          const leaderName = targetLeader?.displayName || "leader";
+
           const message = config.message
             .replace("[[birthday_names]]", birthdayNames)
+            .replace("[[leader_name]]", leaderName)
             .replace("[[group_name]]", config.groupName)
             .replace("[[community_name]]", config.communityName);
 
           // Determine target channel with backwards compatibility
           // Priority: 1) configured targetChannelSlug, 2) mode-based default
-          const defaultSlug = config.mode === "general_chat" ? "general" : "leaders";
+          const defaultSlug =
+            config.mode === "general_chat" ? "general" : "leaders";
           const targetChannelSlug = config.targetChannelSlug || defaultSlug;
 
           const finalMessage =
             config.mode === "leader_reminder"
-              ? `**Birthday Reminder**\n\n${message}\n\nPlease give them a shoutout in the group chat!`
+              ? `**Birthday Reminder**\n\n${message}`
               : message;
 
           await ctx.runAction(internal.functions.scheduledJobs.sendBotMessage, {
@@ -183,13 +256,30 @@ export const processBirthdayBotBucket = internalAction({
             targetChannelSlug,
             botType: "birthday",
           });
+
+          if (
+            config.mode === "leader_reminder" &&
+            config.assignmentMode !== "specific_leader"
+          ) {
+            const leaderPoolSize = leaders.length || config.leaderCount || 1;
+            await ctx.runMutation(
+              internal.functions.scheduledJobs.updateBotState,
+              {
+                configId: config.configId,
+                stateUpdates: {
+                  lastLeaderIndex:
+                    ((config.lastLeaderIndex ?? -1) + 1) % leaderPoolSize,
+                },
+              },
+            );
+          }
         }
 
         results.push({ groupId: config.groupId, success: true });
       } catch (error) {
         console.error(
           `[BirthdayBot] Error for group ${config.groupId}:`,
-          error
+          error,
         );
         results.push({
           groupId: config.groupId,
@@ -201,7 +291,7 @@ export const processBirthdayBotBucket = internalAction({
       // Reschedule for next 9 AM in community timezone
       await ctx.runMutation(
         internal.functions.scheduledJobs.rescheduleBirthdayBot,
-        { configId: config.configId }
+        { configId: config.configId },
       );
     }
 
@@ -218,7 +308,7 @@ export const getBirthdayBotConfigs = internalQuery({
     const configs = await ctx.db
       .query("groupBotConfigs")
       .withIndex("by_botType_enabled", (q) =>
-        q.eq("botType", "birthday").eq("enabled", true)
+        q.eq("botType", "birthday").eq("enabled", true),
       )
       .take(100); // Safety limit
 
@@ -227,7 +317,7 @@ export const getBirthdayBotConfigs = internalQuery({
     const groups = await Promise.all(groupIds.map((id) => ctx.db.get(id)));
 
     // Build groupId -> group map for O(1) lookup
-    const groupMap = new Map<string, typeof groups[0]>();
+    const groupMap = new Map<string, (typeof groups)[0]>();
     groups.forEach((group, i) => {
       if (group) {
         groupMap.set(groupIds[i], group);
@@ -244,10 +334,12 @@ export const getBirthdayBotConfigs = internalQuery({
     const communityIds = Array.from(communityIdSet);
 
     // Batch fetch all communities upfront
-    const communities = await Promise.all(communityIds.map((id) => ctx.db.get(id)));
+    const communities = await Promise.all(
+      communityIds.map((id) => ctx.db.get(id)),
+    );
 
     // Build communityId -> community map for O(1) lookup
-    type CommunityDoc = NonNullable<typeof communities[0]>;
+    type CommunityDoc = NonNullable<(typeof communities)[0]>;
     const communityMap = new Map<string, CommunityDoc>();
     communities.forEach((community, i) => {
       if (community) {
@@ -266,12 +358,12 @@ export const getBirthdayBotConfigs = internalQuery({
           .filter((q) =>
             q.and(
               q.eq(q.field("leftAt"), undefined),
-              q.eq(q.field("role"), "leader")
-            )
+              q.eq(q.field("role"), "leader"),
+            ),
           )
           .take(100); // Safety limit per group
         return { groupId, count: leaders.length };
-      })
+      }),
     );
 
     // Build groupId -> leader count map
@@ -298,12 +390,17 @@ export const getBirthdayBotConfigs = internalQuery({
         groupName: group.name,
         communityName: community.name || "Community",
         mode: (configData.mode as string) || "leader_reminder",
+        assignmentMode: (configData.assignmentMode as string) || "round_robin",
+        specificLeaderId: configData.specificLeaderId as
+          | Id<"users">
+          | undefined,
         message:
           (configData.message as string) ||
-          "🎂 Happy Birthday, [[birthday_names]]! 🎉",
+          "🎂 Hey [[leader_name]], it's your turn to wish [[birthday_names]] a happy birthday in General chat! 🎉",
         lastLeaderIndex: (stateData.lastLeaderIndex as number) ?? -1,
         leaderCount: leaderCountMap.get(config.groupId) || 1,
-        targetChannelSlug: (configData.targetChannelSlug as string) || undefined,
+        targetChannelSlug:
+          (configData.targetChannelSlug as string) || undefined,
       });
     }
 
@@ -324,13 +421,13 @@ export const getDueBirthdayBotConfigs = internalQuery({
     const configs = await ctx.db
       .query("groupBotConfigs")
       .withIndex("by_botType_enabled_scheduled", (q) =>
-        q.eq("botType", "birthday").eq("enabled", true)
+        q.eq("botType", "birthday").eq("enabled", true),
       )
       .filter((q) =>
         q.and(
           q.gte(q.field("nextScheduledAt"), windowStart),
-          q.lt(q.field("nextScheduledAt"), windowEnd)
-        )
+          q.lt(q.field("nextScheduledAt"), windowEnd),
+        ),
       )
       .collect();
 
@@ -343,6 +440,19 @@ export const getDueBirthdayBotConfigs = internalQuery({
       const community = await ctx.db.get(group.communityId);
       if (!community) continue;
 
+      // Count leader memberships (same logic as getBirthdayBotConfigs)
+      const leaderMemberships = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group", (q) => q.eq("groupId", config.groupId))
+        .filter((q) =>
+          q.and(
+            q.eq(q.field("leftAt"), undefined),
+            q.eq(q.field("role"), "leader"),
+          ),
+        )
+        .take(100);
+      const leaderCount = leaderMemberships.length || 1;
+
       const configData = (config.config as Record<string, unknown>) || {};
       const stateData = (config.state as Record<string, unknown>) || {};
 
@@ -353,15 +463,62 @@ export const getDueBirthdayBotConfigs = internalQuery({
         communityName: community.name || "Community",
         timezone: community.timezone || "America/New_York",
         mode: (configData.mode as string) || "leader_reminder",
+        assignmentMode: (configData.assignmentMode as string) || "round_robin",
+        specificLeaderId: configData.specificLeaderId as
+          | Id<"users">
+          | undefined,
         message:
           (configData.message as string) ||
-          "🎂 Happy Birthday, [[birthday_names]]! 🎉",
+          "🎂 Hey [[leader_name]], it's your turn to wish [[birthday_names]] a happy birthday in General chat! 🎉",
         lastLeaderIndex: (stateData.lastLeaderIndex as number) ?? -1,
-        targetChannelSlug: (configData.targetChannelSlug as string) || undefined,
+        leaderCount,
+        targetChannelSlug:
+          (configData.targetChannelSlug as string) || undefined,
       });
     }
 
     return results;
+  },
+});
+
+export const getBirthdayBotLeaders = internalQuery({
+  args: {
+    groupId: v.id("groups"),
+  },
+  handler: async (ctx, { groupId }) => {
+    const memberships = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group", (q) => q.eq("groupId", groupId))
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("leftAt"), undefined),
+          q.eq(q.field("role"), "leader"),
+        ),
+      )
+      .take(100);
+
+    const userIds = memberships.map((m) => m.userId);
+    const users = await Promise.all(userIds.map((id) => ctx.db.get(id)));
+    const userMap = new Map(
+      users
+        .filter((u): u is NonNullable<typeof u> => u !== null)
+        .map((u) => [u._id, u]),
+    );
+
+    return memberships
+      .map((membership) => {
+        const user = userMap.get(membership.userId);
+        if (!user) return null;
+
+        const displayName =
+          [user.firstName, user.lastName].filter(Boolean).join(" ") || "leader";
+
+        return {
+          userId: membership.userId,
+          displayName,
+        };
+      })
+      .filter((leader): leader is BirthdayReminderLeader => leader !== null);
   },
 });
 
@@ -396,7 +553,7 @@ export const getMembersWithBirthdayToday = internalQuery({
         parseInt(parts.find((p) => p.type === "month")?.value || "1", 10) - 1;
       todayDate = parseInt(
         parts.find((p) => p.type === "day")?.value || "1",
-        10
+        10,
       );
     }
 
@@ -411,7 +568,7 @@ export const getMembersWithBirthdayToday = internalQuery({
     const users = await Promise.all(userIds.map((id) => ctx.db.get(id)));
 
     // Build userId -> user map for O(1) lookup
-    const userMap = new Map<string, typeof users[0]>();
+    const userMap = new Map<string, (typeof users)[0]>();
     users.forEach((user, i) => {
       if (user) {
         userMap.set(userIds[i], user);
@@ -458,7 +615,10 @@ interface RsvpRecord {
  */
 export const sendMeetingReminder = internalAction({
   args: { meetingId: v.id("meetings") },
-  handler: async (ctx, { meetingId }): Promise<{
+  handler: async (
+    ctx,
+    { meetingId },
+  ): Promise<{
     skipped?: boolean;
     reason?: string;
     sent?: number;
@@ -466,7 +626,7 @@ export const sendMeetingReminder = internalAction({
   }> => {
     const meeting = await ctx.runQuery(
       internal.functions.scheduledJobs.getMeetingForNotification,
-      { meetingId }
+      { meetingId },
     );
 
     if (!meeting) {
@@ -480,14 +640,14 @@ export const sendMeetingReminder = internalAction({
     // Get users who RSVPed "Going"
     const goingRsvps: RsvpRecord[] = await ctx.runQuery(
       internal.functions.scheduledJobs.getRsvpsByOption,
-      { meetingId, rsvpOptionId: 1 }
+      { meetingId, rsvpOptionId: 1 },
     );
 
     if (goingRsvps.length === 0) {
       // Mark as sent even if no RSVPs to avoid re-processing
       await ctx.runMutation(
         internal.functions.scheduledJobs.markMeetingReminderSent,
-        { meetingId }
+        { meetingId },
       );
       return { skipped: true, reason: "no_going_rsvps" };
     }
@@ -496,7 +656,7 @@ export const sendMeetingReminder = internalAction({
     const userIds: Id<"users">[] = goingRsvps.map((r) => r.userId);
     const pushTokens: string[] = await ctx.runQuery(
       internal.functions.scheduledJobs.getActivePushTokensForUsers,
-      { userIds }
+      { userIds },
     );
 
     // Format meeting time in the community's timezone using native Intl API
@@ -527,7 +687,7 @@ export const sendMeetingReminder = internalAction({
     // Mark reminder as sent
     await ctx.runMutation(
       internal.functions.scheduledJobs.markMeetingReminderSent,
-      { meetingId }
+      { meetingId },
     );
 
     return { sent: sentCount, totalRsvps: goingRsvps.length };
@@ -547,7 +707,7 @@ export const processMeetingReminderFallback = internalAction({
 
     const meetings = await ctx.runQuery(
       internal.functions.scheduledJobs.getMeetingsWithDueReminders,
-      { windowStart, windowEnd: currentTime }
+      { windowStart, windowEnd: currentTime },
     );
 
     let processed = 0;
@@ -555,13 +715,13 @@ export const processMeetingReminderFallback = internalAction({
       try {
         await ctx.runAction(
           internal.functions.scheduledJobs.sendMeetingReminder,
-          { meetingId: meeting._id }
+          { meetingId: meeting._id },
         );
         processed++;
       } catch (error) {
         console.error(
           `[MeetingReminderFallback] Error for meeting ${meeting._id}:`,
-          error
+          error,
         );
       }
     }
@@ -582,8 +742,8 @@ export const getMeetingsWithDueReminders = internalQuery({
           q.gte(q.field("reminderAt"), windowStart),
           q.lte(q.field("reminderAt"), windowEnd),
           q.eq(q.field("reminderSent"), false),
-          q.neq(q.field("status"), "cancelled")
-        )
+          q.neq(q.field("status"), "cancelled"),
+        ),
       )
       .collect();
 
@@ -601,7 +761,10 @@ export const getMeetingsWithDueReminders = internalQuery({
  */
 export const sendAttendanceConfirmation = internalAction({
   args: { meetingId: v.id("meetings") },
-  handler: async (ctx, { meetingId }): Promise<{
+  handler: async (
+    ctx,
+    { meetingId },
+  ): Promise<{
     skipped?: boolean;
     reason?: string;
     pushSent?: number;
@@ -610,7 +773,7 @@ export const sendAttendanceConfirmation = internalAction({
   }> => {
     const meeting = await ctx.runQuery(
       internal.functions.scheduledJobs.getMeetingForNotification,
-      { meetingId }
+      { meetingId },
     );
 
     if (!meeting) {
@@ -624,13 +787,13 @@ export const sendAttendanceConfirmation = internalAction({
     // Get users who RSVPed "Going" or "Maybe" (option IDs 1 and 2)
     const rsvps: RsvpRecord[] = await ctx.runQuery(
       internal.functions.scheduledJobs.getRsvpsByOptions,
-      { meetingId, rsvpOptionIds: [1, 2] }
+      { meetingId, rsvpOptionIds: [1, 2] },
     );
 
     if (rsvps.length === 0) {
       await ctx.runMutation(
         internal.functions.scheduledJobs.markAttendanceConfirmationSent,
-        { meetingId }
+        { meetingId },
       );
       return { skipped: true, reason: "no_rsvps" };
     }
@@ -641,7 +804,7 @@ export const sendAttendanceConfirmation = internalAction({
     for (const rsvp of rsvps) {
       const user = await ctx.runQuery(
         internal.functions.scheduledJobs.getUserForNotification,
-        { userId: rsvp.userId }
+        { userId: rsvp.userId },
       );
 
       if (!user) continue;
@@ -649,7 +812,7 @@ export const sendAttendanceConfirmation = internalAction({
       // Generate confirmation token
       const token: string = await ctx.runMutation(
         internal.functions.scheduledJobs.createAttendanceConfirmationToken,
-        { userId: rsvp.userId, meetingId }
+        { userId: rsvp.userId, meetingId },
       );
 
       const confirmUrl = `${APP_URL}/e/${meeting.shortId}?token=${token}&confirmAttendance=true`;
@@ -658,7 +821,7 @@ export const sendAttendanceConfirmation = internalAction({
       if (user?.pushNotificationsEnabled !== false) {
         const pushTokens: string[] = await ctx.runQuery(
           internal.functions.scheduledJobs.getActivePushTokensForUsers,
-          { userIds: [rsvp.userId] }
+          { userIds: [rsvp.userId] },
         );
 
         if (pushTokens.length > 0) {
@@ -692,7 +855,7 @@ export const sendAttendanceConfirmation = internalAction({
         } catch (error) {
           console.error(
             `[AttendanceConfirmation] Email error for user ${rsvp.userId}:`,
-            error
+            error,
           );
         }
       }
@@ -701,7 +864,7 @@ export const sendAttendanceConfirmation = internalAction({
     // Mark as sent
     await ctx.runMutation(
       internal.functions.scheduledJobs.markAttendanceConfirmationSent,
-      { meetingId }
+      { meetingId },
     );
 
     return { pushSent, emailSent, totalRsvps: rsvps.length };
@@ -719,7 +882,7 @@ export const processAttendanceConfirmationFallback = internalAction({
 
     const meetings = await ctx.runQuery(
       internal.functions.scheduledJobs.getMeetingsWithDueAttendanceConfirmation,
-      { windowStart, windowEnd: currentTime }
+      { windowStart, windowEnd: currentTime },
     );
 
     let processed = 0;
@@ -727,13 +890,13 @@ export const processAttendanceConfirmationFallback = internalAction({
       try {
         await ctx.runAction(
           internal.functions.scheduledJobs.sendAttendanceConfirmation,
-          { meetingId: meeting._id }
+          { meetingId: meeting._id },
         );
         processed++;
       } catch (error) {
         console.error(
           `[AttendanceConfirmationFallback] Error for meeting ${meeting._id}:`,
-          error
+          error,
         );
       }
     }
@@ -753,8 +916,8 @@ export const getMeetingsWithDueAttendanceConfirmation = internalQuery({
           q.gte(q.field("attendanceConfirmationAt"), windowStart),
           q.lte(q.field("attendanceConfirmationAt"), windowEnd),
           q.eq(q.field("attendanceConfirmationSent"), false),
-          q.neq(q.field("status"), "cancelled")
-        )
+          q.neq(q.field("status"), "cancelled"),
+        ),
       )
       .collect();
 
@@ -777,7 +940,10 @@ export const sendEventUpdateNotification = internalAction({
     newTime: v.optional(v.string()),
     newLocation: v.optional(v.string()),
   },
-  handler: async (ctx, { meetingId, changes, newTime, newLocation }): Promise<{
+  handler: async (
+    ctx,
+    { meetingId, changes, newTime, newLocation },
+  ): Promise<{
     error?: string;
     skipped?: boolean;
     reason?: string;
@@ -786,7 +952,7 @@ export const sendEventUpdateNotification = internalAction({
   }> => {
     const meeting = await ctx.runQuery(
       internal.functions.scheduledJobs.getMeetingForNotification,
-      { meetingId }
+      { meetingId },
     );
 
     if (!meeting) {
@@ -796,7 +962,7 @@ export const sendEventUpdateNotification = internalAction({
     // Get users who RSVPed "Going"
     const goingRsvps: RsvpRecord[] = await ctx.runQuery(
       internal.functions.scheduledJobs.getRsvpsByOption,
-      { meetingId, rsvpOptionId: 1 }
+      { meetingId, rsvpOptionId: 1 },
     );
 
     if (goingRsvps.length === 0) {
@@ -806,7 +972,7 @@ export const sendEventUpdateNotification = internalAction({
     const userIds: Id<"users">[] = goingRsvps.map((r) => r.userId);
     const pushTokens: string[] = await ctx.runQuery(
       internal.functions.scheduledJobs.getActivePushTokensForUsers,
-      { userIds }
+      { userIds },
     );
 
     const changeText = changes.join(", ");
@@ -847,12 +1013,13 @@ export const processTaskReminderBucket = internalAction({
   handler: async (ctx) => {
     const currentTime = now();
     // Round to start of current hour
-    const hourStart = Math.floor(currentTime / (60 * 60 * 1000)) * 60 * 60 * 1000;
+    const hourStart =
+      Math.floor(currentTime / (60 * 60 * 1000)) * 60 * 60 * 1000;
     const hourEnd = hourStart + 60 * 60 * 1000;
 
     const configs = await ctx.runQuery(
       internal.functions.scheduledJobs.getDueTaskReminderConfigs,
-      { windowStart: hourStart, windowEnd: hourEnd }
+      { windowStart: hourStart, windowEnd: hourEnd },
     );
 
     let processed = 0;
@@ -860,28 +1027,28 @@ export const processTaskReminderBucket = internalAction({
     for (const config of configs) {
       try {
         // Run the task reminder bot logic
-        await ctx.runAction(internal.functions.scheduledJobs.runTaskReminderBot, {
-          configId: config._id,
-          groupId: config.groupId,
-        });
+        await ctx.runAction(
+          internal.functions.scheduledJobs.runTaskReminderBot,
+          {
+            configId: config._id,
+            groupId: config.groupId,
+          },
+        );
         processed++;
       } catch (error) {
-        console.error(
-          `[TaskReminder] Error for config ${config._id}:`,
-          error
-        );
+        console.error(`[TaskReminder] Error for config ${config._id}:`, error);
       }
 
       // Always reschedule for next 9 AM in group's timezone
       try {
         await ctx.runMutation(
           internal.functions.scheduledJobs.rescheduleTaskReminder,
-          { configId: config._id }
+          { configId: config._id },
         );
       } catch (error) {
         console.error(
           `[TaskReminder] Error rescheduling config ${config._id}:`,
-          error
+          error,
         );
       }
     }
@@ -896,13 +1063,13 @@ export const getDueTaskReminderConfigs = internalQuery({
     const configs = await ctx.db
       .query("groupBotConfigs")
       .withIndex("by_botType_enabled_scheduled", (q) =>
-        q.eq("botType", "task-reminder").eq("enabled", true)
+        q.eq("botType", "task-reminder").eq("enabled", true),
       )
       .filter((q) =>
         q.and(
           q.gte(q.field("nextScheduledAt"), windowStart),
-          q.lt(q.field("nextScheduledAt"), windowEnd)
-        )
+          q.lt(q.field("nextScheduledAt"), windowEnd),
+        ),
       )
       .collect();
 
@@ -960,7 +1127,12 @@ export const getCommunityById = internalQuery({
 // Return type for runTaskReminderBot
 type TaskReminderResult =
   | { skipped: true; reason: string; day?: string }
-  | { success: true; day: string; tasksProcessed: number; messagesSent: number };
+  | {
+      success: true;
+      day: string;
+      tasksProcessed: number;
+      messagesSent: number;
+    };
 
 export const runTaskReminderBot = internalAction({
   args: {
@@ -971,7 +1143,7 @@ export const runTaskReminderBot = internalAction({
     // Get the config
     const config = await ctx.runQuery(
       internal.functions.scheduledJobs.getBotConfigById,
-      { configId }
+      { configId },
     );
 
     if (!config || !config.enabled) {
@@ -991,11 +1163,13 @@ export const runTaskReminderBot = internalAction({
       ...(configData.targetChannelSlug ? [configData.targetChannelSlug] : []),
     ].filter(Boolean);
     const resolvedTargetChannelSlugs =
-      targetChannelSlugs.length > 0 ? [...new Set(targetChannelSlugs)] : ["leaders"];
+      targetChannelSlugs.length > 0
+        ? [...new Set(targetChannelSlugs)]
+        : ["leaders"];
 
     if (!schedule || roles.length === 0) {
       console.log(
-        `[TaskReminder] No schedule or roles configured for group ${groupId}`
+        `[TaskReminder] No schedule or roles configured for group ${groupId}`,
       );
       return { skipped: true, reason: "no_schedule_or_roles" };
     }
@@ -1003,7 +1177,7 @@ export const runTaskReminderBot = internalAction({
     // Get community timezone
     const group = await ctx.runQuery(
       internal.functions.scheduledJobs.getGroupById,
-      { groupId }
+      { groupId },
     );
     const community = group?.communityId
       ? await ctx.runQuery(internal.functions.scheduledJobs.getCommunityById, {
@@ -1018,12 +1192,15 @@ export const runTaskReminderBot = internalAction({
       weekday: "long",
       timeZone: timezone,
     });
-    const dateFormatter: Intl.DateTimeFormat = new Intl.DateTimeFormat("en-CA", {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      timeZone: timezone,
-    });
+    const dateFormatter: Intl.DateTimeFormat = new Intl.DateTimeFormat(
+      "en-CA",
+      {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        timeZone: timezone,
+      },
+    );
     const todayName: string = dayFormatter.format(nowDate).toLowerCase();
     const todayDateKey: string = dateFormatter.format(nowDate);
 
@@ -1031,13 +1208,13 @@ export const runTaskReminderBot = internalAction({
 
     if (todayTasks.length === 0) {
       console.log(
-        `[TaskReminder] No tasks scheduled for ${todayName} in group ${groupId}`
+        `[TaskReminder] No tasks scheduled for ${todayName} in group ${groupId}`,
       );
       return { skipped: true, reason: "no_tasks_for_today", day: todayName };
     }
 
     console.log(
-      `[TaskReminder] Processing ${todayTasks.length} tasks for ${todayName} in group ${groupId}`
+      `[TaskReminder] Processing ${todayTasks.length} tasks for ${todayName} in group ${groupId}`,
     );
 
     // Build a map of role ID to role for quick lookup
@@ -1052,14 +1229,19 @@ export const runTaskReminderBot = internalAction({
       // Get all assigned members for this task's roles
       const assignmentsByUserId = new Map<
         string,
-        { userId: Id<"users">; memberName: string; sourceKey: string; taskId: Id<"tasks"> }
+        {
+          userId: Id<"users">;
+          memberName: string;
+          sourceKey: string;
+          taskId: Id<"tasks">;
+        }
       >();
 
       for (const roleId of task.roleIds) {
         const role = roleMap.get(roleId);
         if (!role || !role.assignedMemberId) {
           console.log(
-            `[TaskReminder] Role ${roleId} not found or no member assigned`
+            `[TaskReminder] Role ${roleId} not found or no member assigned`,
           );
           continue;
         }
@@ -1067,7 +1249,7 @@ export const runTaskReminderBot = internalAction({
         // Get the user's name for the mention
         const user = await ctx.runQuery(
           internal.functions.scheduledJobs.getUserById,
-          { userId: role.assignedMemberId as Id<"users"> }
+          { userId: role.assignedMemberId as Id<"users"> },
         );
 
         if (user) {
@@ -1085,7 +1267,7 @@ export const runTaskReminderBot = internalAction({
               title: task.message,
               description: `Task reminder generated for ${todayName}`,
               sourceKey,
-            }
+            },
           );
           assignmentsByUserId.set(user._id.toString(), {
             userId: user._id,
@@ -1099,14 +1281,14 @@ export const runTaskReminderBot = internalAction({
       const assignments = [...assignmentsByUserId.values()];
       if (assignments.length === 0) {
         console.log(
-          `[TaskReminder] No assigned members found for task "${task.message}"`
+          `[TaskReminder] No assigned members found for task "${task.message}"`,
         );
         continue;
       }
 
       if (deliveryMode === "task_only") {
         console.log(
-          `[TaskReminder] Created ${assignments.length} task(s) without channel post for "${task.message}"`
+          `[TaskReminder] Created ${assignments.length} task(s) without channel post for "${task.message}"`,
         );
         continue;
       }
@@ -1125,14 +1307,14 @@ export const runTaskReminderBot = internalAction({
               contentType: "task_card",
               taskId: assignment.taskId,
               sourceKey: postSourceKey,
-            }
+            },
           );
 
           if (result.success) {
             messagesSent++;
           } else {
             console.error(
-              `[TaskReminder] Failed task-card post for task ${assignment.taskId} to ${targetChannelSlug}: ${result.error}`
+              `[TaskReminder] Failed task-card post for task ${assignment.taskId} to ${targetChannelSlug}: ${result.error}`,
             );
           }
         }
@@ -1388,9 +1570,13 @@ export const sendBotMessage = internalAction({
       contentType,
       taskId,
       sourceKey,
-    }
+    },
   ): Promise<
-    | { success: true; channelId: Id<"chatChannels">; messageId: Id<"chatMessages"> }
+    | {
+        success: true;
+        channelId: Id<"chatChannels">;
+        messageId: Id<"chatMessages">;
+      }
     | { success: false; error: string }
   > => {
     // Determine target slug with backwards compatibility
@@ -1411,17 +1597,17 @@ export const sendBotMessage = internalAction({
     // Look up the channel by slug
     let channel = await ctx.runQuery(
       internal.functions.scheduledJobs.getChannelBySlug,
-      { groupId, slug: targetSlug }
+      { groupId, slug: targetSlug },
     );
 
     // If channel not found, log warning and fallback to general
     if (!channel) {
       console.warn(
-        `[sendBotMessage] Channel with slug "${targetSlug}" not found for group ${groupId}, falling back to general`
+        `[sendBotMessage] Channel with slug "${targetSlug}" not found for group ${groupId}, falling back to general`,
       );
       channel = await ctx.runQuery(
         internal.functions.scheduledJobs.getChannelBySlug,
-        { groupId, slug: "general" }
+        { groupId, slug: "general" },
       );
     }
 
@@ -1448,7 +1634,7 @@ export const sendBotMessage = internalAction({
         contentType,
         taskId,
         sourceKey,
-      }
+      },
     );
 
     return { success: true, channelId: channel._id, messageId };
@@ -1469,7 +1655,7 @@ export const getConvexChannelForGroup = internalQuery({
     return await ctx.db
       .query("chatChannels")
       .withIndex("by_group_type", (q) =>
-        q.eq("groupId", groupId).eq("channelType", chatType)
+        q.eq("groupId", groupId).eq("channelType", chatType),
       )
       .first();
   },
@@ -1494,7 +1680,7 @@ export const getChannelBySlug = internalQuery({
     let channel = await ctx.db
       .query("chatChannels")
       .withIndex("by_group_slug", (q) =>
-        q.eq("groupId", groupId).eq("slug", slug)
+        q.eq("groupId", groupId).eq("slug", slug),
       )
       .first();
 
@@ -1514,7 +1700,7 @@ export const getChannelBySlug = internalQuery({
       channel = await ctx.db
         .query("chatChannels")
         .withIndex("by_group_type", (q) =>
-          q.eq("groupId", groupId).eq("channelType", channelType)
+          q.eq("groupId", groupId).eq("channelType", channelType),
         )
         .first();
     }
@@ -1538,7 +1724,15 @@ export const insertBotMessage = internalMutation({
   },
   handler: async (
     ctx,
-    { channelId, content, botType, mentionedUserIds, contentType, taskId, sourceKey },
+    {
+      channelId,
+      content,
+      botType,
+      mentionedUserIds,
+      contentType,
+      taskId,
+      sourceKey,
+    },
   ) => {
     const now_ = now();
 
@@ -1594,7 +1788,7 @@ export const insertBotMessage = internalMutation({
         channelId,
         // No senderId for bot messages
         senderNameOverride: senderName,
-      }
+      },
     );
 
     return messageId;
@@ -1616,7 +1810,7 @@ interface PushNotificationPayload {
  */
 async function sendExpoPushNotifications(
   tokens: string[],
-  notification: PushNotificationPayload
+  notification: PushNotificationPayload,
 ): Promise<{ sent: number; failed: number }> {
   if (tokens.length === 0) {
     return { sent: 0, failed: 0 };
@@ -1653,7 +1847,9 @@ async function sendExpoPushNotifications(
       });
 
       if (response.ok) {
-        const result = (await response.json()) as { data?: Array<{ status: string }> };
+        const result = (await response.json()) as {
+          data?: Array<{ status: string }>;
+        };
         for (const ticket of result.data || []) {
           if (ticket.status === "ok") {
             sent++;
@@ -1664,7 +1860,7 @@ async function sendExpoPushNotifications(
       } else {
         failed += chunk.length;
         console.error(
-          `[ExpoPush] Failed batch: ${response.status} ${response.statusText}`
+          `[ExpoPush] Failed batch: ${response.status} ${response.statusText}`,
         );
       }
     } catch (error) {
@@ -1689,7 +1885,7 @@ interface AttendanceEmailParams {
  * Send attendance confirmation email via Resend.
  */
 async function sendAttendanceConfirmationEmail(
-  params: AttendanceEmailParams
+  params: AttendanceEmailParams,
 ): Promise<void> {
   const resendApiKey = process.env.RESEND_API_KEY;
 
@@ -1817,7 +2013,7 @@ function calculateNext9AMInTimezone(timezone: string): number {
   // Calculate offset directly
   // Create a date at midnight UTC and check the hour in the target timezone
   const testDate = new Date(
-    `${year}-${month.toString().padStart(2, "0")}-${day.toString().padStart(2, "0")}T00:00:00Z`
+    `${year}-${month.toString().padStart(2, "0")}-${day.toString().padStart(2, "0")}T00:00:00Z`,
   );
   const hourAtMidnightUTC = parseInt(tzFormatter.format(testDate), 10);
 
@@ -1868,7 +2064,7 @@ export const getWelcomeBotConfig = internalQuery({
     const config = await ctx.db
       .query("groupBotConfigs")
       .withIndex("by_group_botType", (q) =>
-        q.eq("groupId", groupId).eq("botType", "welcome")
+        q.eq("groupId", groupId).eq("botType", "welcome"),
       )
       .first();
 
@@ -1889,7 +2085,8 @@ export const getWelcomeBotConfig = internalQuery({
       enabled: config.enabled,
       groupName: group.name,
       communityName: community?.name || "Community",
-      message: (configData.message as string) ||
+      message:
+        (configData.message as string) ||
         "Welcome to [[group_name]], [[first_name]]! 👋",
       targetChannelSlug: (configData.targetChannelSlug as string) || undefined,
     };
@@ -1907,7 +2104,7 @@ export const sendWelcomeMessage = internalAction({
   },
   handler: async (
     ctx,
-    { groupId, userId }
+    { groupId, userId },
   ): Promise<
     | { skipped: true; reason: string }
     | { success: true; message: string }
@@ -1916,7 +2113,7 @@ export const sendWelcomeMessage = internalAction({
     // Get welcome bot config
     const config = await ctx.runQuery(
       internal.functions.scheduledJobs.getWelcomeBotConfig,
-      { groupId }
+      { groupId },
     );
 
     if (!config) {
@@ -1926,7 +2123,7 @@ export const sendWelcomeMessage = internalAction({
     // Get user info for placeholder replacement
     const user = await ctx.runQuery(
       internal.functions.scheduledJobs.getUserById,
-      { userId }
+      { userId },
     );
 
     if (!user) {
@@ -1985,7 +2182,7 @@ export const processCommunicationBotBucket = internalAction({
 
     const configs = await ctx.runQuery(
       internal.functions.scheduledJobs.getDueCommunicationBotConfigs,
-      { windowStart: hourStart, windowEnd: hourEnd }
+      { windowStart: hourStart, windowEnd: hourEnd },
     );
 
     const results: Array<{
@@ -2000,13 +2197,15 @@ export const processCommunicationBotBucket = internalAction({
         const configData = (config.config as Record<string, unknown>) || {};
 
         // Check for new multi-message format
-        const messages = configData.messages as Array<{
-          id: string;
-          message: string;
-          schedule: { dayOfWeek: number; hour: number; minute: number };
-          targetChannelSlug: string;
-          enabled: boolean;
-        }> | undefined;
+        const messages = configData.messages as
+          | Array<{
+              id: string;
+              message: string;
+              schedule: { dayOfWeek: number; hour: number; minute: number };
+              targetChannelSlug: string;
+              enabled: boolean;
+            }>
+          | undefined;
 
         if (messages && messages.length > 0) {
           // New format: process each enabled message that matches the current time
@@ -2023,23 +2222,27 @@ export const processCommunicationBotBucket = internalAction({
                 let resolvedMessage = msg.message;
                 try {
                   resolvedMessage = await ctx.runAction(
-                    internal.functions.pcoServices.actions.resolvePositionPlaceholdersInternal,
-                    { communityId: config.communityId, message: msg.message }
+                    internal.functions.pcoServices.actions
+                      .resolvePositionPlaceholdersInternal,
+                    { communityId: config.communityId, message: msg.message },
                   );
                 } catch (error) {
                   console.warn(
                     `[CommunicationBot] Failed to resolve placeholders for message ${msg.id}:`,
-                    error
+                    error,
                   );
                 }
 
                 // Send the message
-                const sendResult = await ctx.runAction(internal.functions.scheduledJobs.sendBotMessage, {
-                  groupId: config.groupId,
-                  message: resolvedMessage,
-                  targetChannelSlug: msg.targetChannelSlug,
-                  botType: "communication",
-                });
+                const sendResult = await ctx.runAction(
+                  internal.functions.scheduledJobs.sendBotMessage,
+                  {
+                    groupId: config.groupId,
+                    message: resolvedMessage,
+                    targetChannelSlug: msg.targetChannelSlug,
+                    botType: "communication",
+                  },
+                );
 
                 if (sendResult.success) {
                   results.push({
@@ -2050,7 +2253,7 @@ export const processCommunicationBotBucket = internalAction({
                 } else {
                   console.error(
                     `[CommunicationBot] Failed to send message ${msg.id}:`,
-                    sendResult.error
+                    sendResult.error,
                   );
                   results.push({
                     groupId: config.groupId,
@@ -2062,7 +2265,7 @@ export const processCommunicationBotBucket = internalAction({
               } catch (error) {
                 console.error(
                   `[CommunicationBot] Error sending message ${msg.id}:`,
-                  error
+                  error,
                 );
                 results.push({
                   groupId: config.groupId,
@@ -2081,7 +2284,7 @@ export const processCommunicationBotBucket = internalAction({
 
           if (!message.trim()) {
             console.log(
-              `[CommunicationBot] No message configured for group ${config.groupId}`
+              `[CommunicationBot] No message configured for group ${config.groupId}`,
             );
             results.push({ groupId: config.groupId, success: true });
           } else {
@@ -2089,23 +2292,27 @@ export const processCommunicationBotBucket = internalAction({
             let resolvedMessage = message;
             try {
               resolvedMessage = await ctx.runAction(
-                internal.functions.pcoServices.actions.resolvePositionPlaceholdersInternal,
-                { communityId: config.communityId, message }
+                internal.functions.pcoServices.actions
+                  .resolvePositionPlaceholdersInternal,
+                { communityId: config.communityId, message },
               );
             } catch (error) {
               console.warn(
                 `[CommunicationBot] Failed to resolve placeholders for group ${config.groupId}:`,
-                error
+                error,
               );
             }
 
             // Send the message
-            await ctx.runAction(internal.functions.scheduledJobs.sendBotMessage, {
-              groupId: config.groupId,
-              message: resolvedMessage,
-              targetChannelSlug,
-              botType: "communication",
-            });
+            await ctx.runAction(
+              internal.functions.scheduledJobs.sendBotMessage,
+              {
+                groupId: config.groupId,
+                message: resolvedMessage,
+                targetChannelSlug,
+                botType: "communication",
+              },
+            );
 
             results.push({ groupId: config.groupId, success: true });
           }
@@ -2113,7 +2320,7 @@ export const processCommunicationBotBucket = internalAction({
       } catch (error) {
         console.error(
           `[CommunicationBot] Error for group ${config.groupId}:`,
-          error
+          error,
         );
         results.push({
           groupId: config.groupId,
@@ -2127,12 +2334,12 @@ export const processCommunicationBotBucket = internalAction({
       try {
         await ctx.runMutation(
           internal.functions.scheduledJobs.rescheduleCommunicationBot,
-          { configId: config.configId }
+          { configId: config.configId },
         );
       } catch (rescheduleError) {
         console.error(
           `[CommunicationBot] Failed to reschedule config ${config.configId}:`,
-          rescheduleError
+          rescheduleError,
         );
         // Continue processing other configs even if rescheduling fails
       }
@@ -2155,13 +2362,13 @@ export const getDueCommunicationBotConfigs = internalQuery({
     const configs = await ctx.db
       .query("groupBotConfigs")
       .withIndex("by_botType_enabled_scheduled", (q) =>
-        q.eq("botType", "communication").eq("enabled", true)
+        q.eq("botType", "communication").eq("enabled", true),
       )
       .filter((q) =>
         q.and(
           q.gte(q.field("nextScheduledAt"), windowStart),
-          q.lt(q.field("nextScheduledAt"), windowEnd)
-        )
+          q.lt(q.field("nextScheduledAt"), windowEnd),
+        ),
       )
       .collect();
 
@@ -2208,7 +2415,10 @@ export const rescheduleCommunicationBot = internalMutation({
 
     const configData = (config.config as Record<string, unknown>) || {};
 
-    const nextScheduled = calculateCommunicationBotNextSchedule(configData, timezone);
+    const nextScheduled = calculateCommunicationBotNextSchedule(
+      configData,
+      timezone,
+    );
 
     if (nextScheduled) {
       await ctx.db.patch(configId, {

@@ -115,7 +115,41 @@ export function BotConfigModal({
   };
 
   const handleFieldChange = (key: string, value: unknown) => {
-    setFormValues((prev) => ({ ...prev, [key]: value }));
+    setFormValues((prev) => {
+      if (botId === "birthday" && key === "mode") {
+        const nextMode =
+          value === "leader_reminder" || value === "general_chat"
+            ? value
+            : undefined;
+        if (!nextMode) {
+          return { ...prev, [key]: value };
+        }
+
+        const nextValues: Record<string, unknown> = { ...prev, mode: nextMode };
+        const currentTargetChannel =
+          typeof prev.targetChannelSlug === "string"
+            ? prev.targetChannelSlug
+            : undefined;
+
+        if (
+          nextMode === "leader_reminder" &&
+          (!currentTargetChannel || currentTargetChannel === "general")
+        ) {
+          nextValues.targetChannelSlug = "leaders";
+        }
+
+        if (
+          nextMode === "general_chat" &&
+          (!currentTargetChannel || currentTargetChannel === "leaders")
+        ) {
+          nextValues.targetChannelSlug = "general";
+        }
+
+        return nextValues;
+      }
+
+      return { ...prev, [key]: value };
+    });
     setIsDirty(true);
   };
 

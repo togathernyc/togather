@@ -56,8 +56,10 @@ const botDefinitions: Record<string, BotDefinition> = {
     icon: "🎂",
     triggerType: "cron",
     defaultConfig: {
-      message: "🎂 Happy Birthday, [[birthday_names]]! 🎉",
+      message:
+        "🎂 Hey [[leader_name]], it's your turn to wish [[birthday_names]] a happy birthday in General chat! 🎉",
       mode: "leader_reminder",
+      targetChannelSlug: "leaders",
       assignmentMode: "round_robin",
     },
     configFields: [
@@ -65,7 +67,8 @@ const botDefinitions: Record<string, BotDefinition> = {
         key: "message",
         label: "Birthday Message",
         type: "textarea",
-        placeholder: "🎂 Happy Birthday, [[birthday_names]]! 🎉",
+        placeholder:
+          "🎂 Hey [[leader_name]], it's your turn to wish [[birthday_names]] a happy birthday in General chat! 🎉",
         helpText:
           "Available placeholders: [[birthday_names]], [[leader_name]], [[group_name]], [[community_name]]",
       },
@@ -92,7 +95,7 @@ const botDefinitions: Record<string, BotDefinition> = {
         label: "Leader Assignment",
         type: "select",
         options: [
-          { value: "round_robin", label: "Round robin" },
+          { value: "round_robin", label: "Rotate leaders" },
           { value: "specific_leader", label: "Specific leader" },
         ],
         helpText: "How to choose which leader receives the reminder",
