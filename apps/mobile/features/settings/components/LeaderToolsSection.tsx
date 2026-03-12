@@ -50,7 +50,7 @@ export function LeaderToolsSection() {
           <View style={styles.menuItemText}>
             <Text style={styles.menuItemLabel}>Tasks</Text>
             <Text style={styles.menuItemDescription}>
-              Manage leader follow-up tasks
+              Manage leader people tasks
             </Text>
           </View>
         </View>

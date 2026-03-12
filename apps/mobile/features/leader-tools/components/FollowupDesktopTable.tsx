@@ -259,7 +259,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
     groupId ? { groupId: groupId as Id<"groups"> } : "skip"
   );
   const scoreConfig: ScoreConfigEntry[] = config?.scoreConfigScores ?? [];
-  const toolDisplayName = config?.toolDisplayName ?? "Follow-up";
+  const toolDisplayName = config?.toolDisplayName ?? "People";
   const columnConfig = config?.followupColumnConfig ?? null;
   const customFields: CustomFieldDef[] = (columnConfig?.customFields ?? []) as CustomFieldDef[];
 
@@ -374,7 +374,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
       { key: "tasks", label: "Tasks", defaultWidth: 220, sortable: false },
       { key: "status", label: "Status", defaultWidth: 100, sortable: true, serverSortKey: "status" },
       { key: "lastAttendedAt", label: "Last Attended", defaultWidth: 120, sortable: true, serverSortKey: "lastAttendedAt" },
-      { key: "lastFollowupAt", label: "Last Follow-up", defaultWidth: 120, sortable: true, serverSortKey: "lastFollowupAt" },
+      { key: "lastFollowupAt", label: "Last People", defaultWidth: 120, sortable: true, serverSortKey: "lastFollowupAt" },
       { key: "lastActiveAt", label: "Date Active", defaultWidth: 120, sortable: true, serverSortKey: "lastActiveAt" },
       { key: "alerts", label: "Alerts", defaultWidth: 120, sortable: false },
     );

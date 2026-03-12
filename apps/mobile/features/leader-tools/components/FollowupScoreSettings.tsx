@@ -339,7 +339,7 @@ export function FollowupScoreSettings({ groupId }: Props) {
             setToolDisplayName(text);
             setHasChanges(true);
           }}
-          placeholder="Follow-up"
+          placeholder="People"
           maxLength={20}
         />
         <Text style={styles.displayNameHint}>
@@ -492,7 +492,7 @@ export function FollowupScoreSettings({ groupId }: Props) {
       </View>
 
       <Text style={styles.pageDescription}>
-        Configure how follow-up scores are calculated. Each score uses a
+        Configure how people scores are calculated. Each score uses a
         weighted combination of variables.
       </Text>
 

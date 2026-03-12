@@ -49,7 +49,7 @@ const sourceLabels: Record<TaskSourceType, string> = {
   manual: "MANUAL",
   bot_task_reminder: "BOT",
   reach_out: "REACH OUT",
-  followup: "FOLLOW-UP",
+  followup: "PEOPLE",
 };
 
 const sourceColors: Record<TaskSourceType, string> = {

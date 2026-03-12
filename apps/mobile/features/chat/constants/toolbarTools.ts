@@ -22,7 +22,7 @@ export const TOOLBAR_TOOLS = {
   followup: {
     id: "followup",
     icon: "chatbubble-ellipses-outline",
-    label: "Follow-up",
+    label: "People",
   },
   tasks: {
     id: "tasks",

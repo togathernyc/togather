@@ -178,7 +178,7 @@ export function FollowupDetailContent({
       scoreBreakdown: historyData.scoreBreakdown,
       crossGroupAttendance: historyData.crossGroupAttendance ?? [],
       servingHistory: historyData.servingHistory ?? [],
-      toolDisplayName: historyData.toolDisplayName ?? "Follow-up",
+      toolDisplayName: historyData.toolDisplayName ?? "People",
       triggeredAlerts: historyData.triggeredAlerts ?? [],
     };
   }, [historyData]);
@@ -215,7 +215,7 @@ export function FollowupDetailContent({
         setNoteText("");
         // Convex auto-updates reactive queries
       } catch (err: any) {
-        Alert.alert("Error", err.message || "Failed to add follow-up");
+        Alert.alert("Error", err.message || "Failed to add note");
       } finally {
         setIsAddingFollowup(false);
       }
@@ -334,7 +334,7 @@ export function FollowupDetailContent({
   const handleDeleteFollowup = (followupId: string) => {
     Alert.alert(
       "Delete Entry",
-      "Are you sure you want to delete this follow-up entry?",
+      "Are you sure you want to delete this entry?",
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -545,7 +545,7 @@ export function FollowupDetailContent({
         <TouchableOpacity style={styles.backButton} onPress={handleBack}>
           <Ionicons name={onClose ? "close" : "arrow-back"} size={24} color="#333" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>{history?.toolDisplayName ?? "Follow-up"}</Text>
+        <Text style={styles.headerTitle}>{history?.toolDisplayName ?? "People"}</Text>
         <View style={styles.headerSpacer} />
       </View>
 
@@ -965,7 +965,7 @@ export function FollowupDetailContent({
           <Text style={styles.sectionTitle}>Add Note</Text>
           <TextInput
             style={styles.noteInput}
-            placeholder="Add a follow-up note..."
+            placeholder="Add a note..."
             value={noteText}
             onChangeText={setNoteText}
             multiline
@@ -988,11 +988,11 @@ export function FollowupDetailContent({
           </TouchableOpacity>
         </View>
 
-        {/* Follow-up Timeline */}
+        {/* People History */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Follow-up History</Text>
+          <Text style={styles.sectionTitle}>People History</Text>
           {followups.length === 0 ? (
-            <Text style={styles.emptyTimeline}>No follow-ups recorded yet</Text>
+            <Text style={styles.emptyTimeline}>No entries recorded yet</Text>
           ) : (
             <View style={styles.timeline}>
               {followups.map((entry, index) => (
@@ -1055,9 +1055,9 @@ export function FollowupDetailContent({
           onPress={() => setShowSnoozeModal(false)}
         >
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Snooze Follow-up</Text>
+            <Text style={styles.modalTitle}>Snooze Member</Text>
             <Text style={styles.modalSubtitle}>
-              How long should we hide this member from the follow-up list?
+              How long should we hide this member from the people list?
             </Text>
 
             <TextInput

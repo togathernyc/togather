@@ -262,7 +262,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
   const toolDisplayName =
     typeof config?.toolDisplayName === "string"
       ? config.toolDisplayName
-      : "Follow-up";
+      : "People";
   const memberSubtitleIds = useMemo(
     () =>
       normalizeSubtitleVariableIds(
@@ -807,7 +807,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       },
       {
         key: "lastFollowupAt",
-        label: "Last Follow-up",
+        label: "Last People",
         width: 96,
         sortable: true,
         kind: "text",
@@ -1591,7 +1591,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
 
   const renderMemberRowLeft = ({ item }: { item: FollowupMember }) => {
     const subtitleLine =
-      getMemberSubtitleLines(item)[0] ?? "No recent follow-up details";
+      getMemberSubtitleLines(item)[0] ?? "No recent activity details";
     const hasAlerts = (item.alerts?.length ?? 0) > 0;
     const isSnoozed =
       item.isSnoozed && !!item.snoozedUntil && item.snoozedUntil > Date.now();
@@ -1715,7 +1715,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={primaryColor} />
-        <Text style={styles.loadingText}>Loading follow-up list...</Text>
+        <Text style={styles.loadingText}>Loading people list...</Text>
       </View>
     );
   }
@@ -1904,7 +1904,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
                   <Text style={styles.emptyText}>
                     {hasTextSearch || hasStructuredFilters
                       ? "No members match your search and filters."
-                      : "No members need follow-up right now."}
+                      : "No members to show right now."}
                   </Text>
                 </View>
               }
