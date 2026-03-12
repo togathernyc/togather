@@ -82,6 +82,8 @@ export function FollowupDetailContent({
   const [newTaskAssigneeId, setNewTaskAssigneeId] = useState<string | null>(null);
   const [assigneeSearchText, setAssigneeSearchText] = useState("");
   const [isCreatingTask, setIsCreatingTask] = useState(false);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [tagInput, setTagInput] = useState("");
 
   // Reset local state when switching between members (desktop side-sheet reuses component)
   useEffect(() => {
@@ -101,6 +103,8 @@ export function FollowupDetailContent({
     setNewTaskAssigneeId(null);
     setAssigneeSearchText("");
     setIsCreatingTask(false);
+    setSelectedTags([]);
+    setTagInput("");
   }, [memberId]);
 
   const group_id = groupId;
@@ -146,6 +150,37 @@ export function FollowupDetailContent({
   );
 
   const createTaskMutation = useAuthenticatedMutation(api.functions.tasks.index.create);
+
+  // Fetch all group tasks to derive available tags for autocomplete
+  const groupTasksForTags = useAuthenticatedQuery(
+    api.functions.tasks.index.listGroup,
+    groupId ? { groupId: groupId as Id<"groups"> } : "skip"
+  );
+
+  const availableTags = useMemo(() => {
+    if (!groupTasksForTags) return [];
+    return [...new Set((groupTasksForTags as any[]).flatMap((t) => t.tags ?? []))].sort();
+  }, [groupTasksForTags]);
+
+  const filteredTagSuggestions = useMemo(() => {
+    const input = tagInput.trim().toLowerCase();
+    if (!input) return [];
+    return availableTags.filter(
+      (tag) => tag.includes(input) && !selectedTags.includes(tag)
+    );
+  }, [tagInput, availableTags, selectedTags]);
+
+  const handleAddTag = (tag: string) => {
+    const normalized = tag.trim().toLowerCase().replace(/\s+/g, "_");
+    if (normalized && !selectedTags.includes(normalized)) {
+      setSelectedTags((prev) => [...prev, normalized]);
+    }
+    setTagInput("");
+  };
+
+  const handleRemoveTag = (tag: string) => {
+    setSelectedTags((prev) => prev.filter((t) => t !== tag));
+  };
 
   const isLoading = historyData === undefined;
   const refetch = () => {}; // Convex auto-updates
@@ -480,12 +515,15 @@ export function FollowupDetailContent({
           ? (newTaskAssigneeId as Id<"users">)
           : undefined,
         responsibilityType: newTaskAssigneeId ? "person" : "group",
+        tags: selectedTags.length > 0 ? selectedTags : undefined,
       });
       setShowCreateTaskModal(false);
       setNewTaskTitle("");
       setNewTaskDescription("");
       setNewTaskAssigneeId(null);
       setAssigneeSearchText("");
+      setSelectedTags([]);
+      setTagInput("");
     } catch (err: any) {
       Alert.alert("Error", err.message || "Failed to create task");
     } finally {
@@ -942,6 +980,15 @@ export function FollowupDetailContent({
                   <Text style={styles.taskCardAssignee}>
                     {task.assignedToName ?? "Unassigned"}
                   </Text>
+                  {task.tags && task.tags.length > 0 && (
+                    <View style={styles.taskCardTagsRow}>
+                      {task.tags.map((tag: string) => (
+                        <View key={tag} style={styles.taskCardTagChip}>
+                          <Text style={styles.taskCardTagText}>#{tag}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  )}
                   {task.groupId !== groupId && task.groupName && (
                     <Text style={styles.taskCardGroup}>{task.groupName}</Text>
                   )}
@@ -1233,6 +1280,54 @@ export function FollowupDetailContent({
               </>
             )}
 
+            <Text style={styles.createTaskLabel}>Tags</Text>
+            {selectedTags.length > 0 && (
+              <View style={styles.selectedTagsRow}>
+                {selectedTags.map((tag) => (
+                  <View key={tag} style={styles.selectedTagChip}>
+                    <Text style={styles.selectedTagChipText}>#{tag}</Text>
+                    <TouchableOpacity onPress={() => handleRemoveTag(tag)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                      <Ionicons name="close-circle" size={16} color="#6366F1" />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            )}
+            <TextInput
+              style={styles.createTaskInput}
+              placeholder="Type to search or add tags..."
+              value={tagInput}
+              onChangeText={setTagInput}
+              onSubmitEditing={() => {
+                if (tagInput.trim()) handleAddTag(tagInput);
+              }}
+              returnKeyType="done"
+            />
+            {filteredTagSuggestions.length > 0 && (
+              <View style={styles.tagSuggestions}>
+                {filteredTagSuggestions.slice(0, 6).map((tag) => (
+                  <TouchableOpacity
+                    key={tag}
+                    style={styles.tagSuggestionItem}
+                    onPress={() => handleAddTag(tag)}
+                  >
+                    <Text style={styles.tagSuggestionText}>#{tag}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+            {tagInput.trim() && !availableTags.includes(tagInput.trim().toLowerCase().replace(/\s+/g, "_")) && (
+              <TouchableOpacity
+                style={styles.tagCreateNew}
+                onPress={() => handleAddTag(tagInput)}
+              >
+                <Ionicons name="add-circle-outline" size={16} color="#6366F1" />
+                <Text style={styles.tagCreateNewText}>
+                  Create tag "{tagInput.trim().toLowerCase().replace(/\s+/g, "_")}"
+                </Text>
+              </TouchableOpacity>
+            )}
+
             <View style={styles.createTaskActions}>
               <TouchableOpacity
                 style={styles.createTaskCancelBtn}
@@ -1242,6 +1337,8 @@ export function FollowupDetailContent({
                   setNewTaskDescription("");
                   setNewTaskAssigneeId(null);
                   setAssigneeSearchText("");
+                  setSelectedTags([]);
+                  setTagInput("");
                 }}
               >
                 <Text style={styles.createTaskCancelText}>Cancel</Text>
@@ -1816,6 +1913,23 @@ const styles = StyleSheet.create({
     color: "#666",
     marginTop: 4,
   },
+  taskCardTagsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 4,
+    marginTop: 4,
+  },
+  taskCardTagChip: {
+    backgroundColor: "#F3F4F6",
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  taskCardTagText: {
+    fontSize: 11,
+    color: "#6366F1",
+    fontWeight: "500",
+  },
   taskCardGroup: {
     fontSize: 11,
     color: "#999",
@@ -1892,6 +2006,54 @@ const styles = StyleSheet.create({
   leaderSuggestionText: {
     fontSize: 14,
     color: "#333",
+  },
+  selectedTagsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    marginBottom: 6,
+  },
+  selectedTagChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#EEF2FF",
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    gap: 4,
+  },
+  selectedTagChipText: {
+    fontSize: 13,
+    color: "#4338CA",
+    fontWeight: "500",
+  },
+  tagSuggestions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    marginTop: 6,
+  },
+  tagSuggestionItem: {
+    backgroundColor: "#F3F4F6",
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  tagSuggestionText: {
+    fontSize: 13,
+    color: "#4338CA",
+  },
+  tagCreateNew: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginTop: 6,
+    paddingVertical: 4,
+  },
+  tagCreateNewText: {
+    fontSize: 13,
+    color: "#6366F1",
+    fontWeight: "500",
   },
   createTaskActions: {
     flexDirection: "row",
