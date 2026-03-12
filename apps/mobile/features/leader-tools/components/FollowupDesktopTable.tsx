@@ -222,6 +222,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
   // Side sheet
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
   const [scrollToNotes, setScrollToNotes] = useState(false);
+  const [scrollToTasks, setScrollToTasks] = useState(false);
 
   // Inline editing
   const [editingInlineField, setEditingInlineField] = useState<string | null>(null);
@@ -267,6 +268,30 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
     api.functions.groups.members.getLeaders,
     groupId ? { groupId: groupId as Id<"groups"> } : "skip"
   );
+
+  // Group tasks — used to build per-member task counts for the table
+  const groupTasks = useAuthenticatedQuery(
+    api.functions.tasks.listGroup,
+    groupId ? { groupId: groupId as Id<"groups"> } : "skip"
+  );
+
+  const tasksByMember = useMemo(() => {
+    const map = new Map<string, Array<{ _id: string; title: string; status: string; assignedToName?: string; groupName?: string }>>();
+    if (!groupTasks) return map;
+    for (const task of groupTasks as any[]) {
+      if (task.status !== "open" || !task.targetMemberId) continue;
+      const memberId = task.targetMemberId.toString();
+      if (!map.has(memberId)) map.set(memberId, []);
+      map.get(memberId)!.push({
+        _id: task._id,
+        title: task.title,
+        status: task.status,
+        assignedToName: task.assignedToName,
+        groupName: task.groupName,
+      });
+    }
+    return map;
+  }, [groupTasks]);
 
   // Assignee lookup
   const leaderMap = useMemo(() => {
@@ -346,6 +371,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
     allAvailable.push(
       { key: "assignee", label: "Assignees", defaultWidth: 140, sortable: true, serverSortKey: "assignee" },
       { key: "notes", label: "Notes", defaultWidth: 200, sortable: false },
+      { key: "tasks", label: "Tasks", defaultWidth: 220, sortable: false },
       { key: "status", label: "Status", defaultWidth: 100, sortable: true, serverSortKey: "status" },
       { key: "lastAttendedAt", label: "Last Attended", defaultWidth: 120, sortable: true, serverSortKey: "lastAttendedAt" },
       { key: "lastFollowupAt", label: "Last Follow-up", defaultWidth: 120, sortable: true, serverSortKey: "lastFollowupAt" },
@@ -1035,8 +1061,8 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
             onPress={() => {
               setShowSettingsPanel(false);
               setSelectedMemberId(item.groupMemberId);
-              // Reset first so re-clicking the same member's notes triggers the effect again
               setScrollToNotes(false);
+              setScrollToTasks(false);
               requestAnimationFrame(() => setScrollToNotes(true));
             }}
           >
@@ -1045,6 +1071,40 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
             </Text>
           </TouchableOpacity>
         );
+
+      case "tasks": {
+        const tasks = tasksByMember.get(item.userId) ?? [];
+        if (tasks.length === 0) {
+          return <Text style={s.cellText}>{"\u2014"}</Text>;
+        }
+        const visibleTasks = tasks.slice(0, 2);
+        const overflow = tasks.length - 2;
+        return (
+          <TouchableOpacity
+            style={s.tasksCell}
+            data-tasks="true"
+            onPress={() => {
+              setShowSettingsPanel(false);
+              setShowQuickAddPanel(false);
+              setSelectedMemberId(item.groupMemberId);
+              setScrollToNotes(false);
+              setScrollToTasks(false);
+              requestAnimationFrame(() => setScrollToTasks(true));
+            }}
+          >
+            {visibleTasks.map((task) => (
+              <View key={task._id} style={s.taskChip}>
+                <Text style={s.taskChipText} numberOfLines={1}>
+                  {task.assignedToName ?? "Unassigned"} — {task.title}
+                </Text>
+              </View>
+            ))}
+            {overflow > 0 && (
+              <Text style={s.taskOverflowText}>+{overflow} more</Text>
+            )}
+          </TouchableOpacity>
+        );
+      }
 
       case "assignee": {
         const isOpen = assigneeDropdownFor === item.groupMemberId;
@@ -1516,13 +1576,14 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
                         hoveredRowId === item._id && s.dataRowHovered,
                       ]}
                       onPress={(e: any) => {
-                        // Don't open side sheet when clicking checkbox or notes cell
                         if (e.target?.closest?.("[data-checkbox]")) return;
                         if (e.target?.closest?.("[data-notes]")) return;
+                        if (e.target?.closest?.("[data-tasks]")) return;
                         setShowSettingsPanel(false);
                         setShowQuickAddPanel(false);
                         setSelectedMemberId(item.groupMemberId);
                         setScrollToNotes(false);
+                        setScrollToTasks(false);
                       }}
                       activeOpacity={0.7}
                       {...(Platform.OS === "web"
@@ -1590,6 +1651,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
                   setShowQuickAddPanel(false);
                   setSelectedMemberId(groupMemberId);
                   setScrollToNotes(false);
+                  setScrollToTasks(false);
                 }}
               />
             </View>
@@ -1603,6 +1665,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
                 memberId={selectedMemberId}
                 onClose={() => setSelectedMemberId(null)}
                 scrollToNotes={scrollToNotes}
+                scrollToTasks={scrollToTasks}
               />
             </View>
           </>
@@ -2175,6 +2238,29 @@ const s = StyleSheet.create({
   // Notes cell
   notesCell: {
     flex: 1,
+  },
+
+  // Tasks cell
+  tasksCell: {
+    flex: 1,
+    gap: 4,
+  },
+  taskChip: {
+    backgroundColor: "#EEF2FF",
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  taskChipText: {
+    fontSize: 12,
+    color: "#4338CA",
+    fontWeight: "500" as const,
+  },
+  taskOverflowText: {
+    fontSize: 11,
+    color: "#6366F1",
+    fontWeight: "500" as const,
+    marginTop: 2,
   },
 
   // Editable cell touchable — full cell hitbox

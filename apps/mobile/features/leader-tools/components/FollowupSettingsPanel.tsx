@@ -274,9 +274,10 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
     cols.push(
       { key: "assignee", label: "Assignee" },
       { key: "notes", label: "Notes" },
+      { key: "tasks", label: "Tasks" },
       { key: "status", label: "Status" },
       { key: "lastAttendedAt", label: "Last Attended" },
-      { key: "lastFollowupAt", label: "Last Follow-up" },
+      { key: "lastFollowupAt", label: "Last People" },
       { key: "lastActiveAt", label: "Date Active" },
       { key: "alerts", label: "Alerts" },
     );
