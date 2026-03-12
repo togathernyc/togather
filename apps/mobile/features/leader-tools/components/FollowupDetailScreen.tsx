@@ -122,16 +122,19 @@ export function FollowupDetailContent({
       : "skip"
   );
 
-  // Fetch tasks associated with this member
-  const memberTasks = useAuthenticatedQuery(
-    api.functions.tasks.index.listByTargetMember,
-    historyData?.member?.odUserId
-      ? {
-          targetMemberId: historyData.member.odUserId as Id<"users">,
-          groupId: groupId as Id<"groups">,
-        }
-      : "skip"
+  // Fetch all group tasks — used for member tasks + tag autocomplete
+  const groupTasks = useAuthenticatedQuery(
+    api.functions.tasks.index.listGroup,
+    groupId ? { groupId: groupId as Id<"groups"> } : "skip"
   );
+
+  const memberTasks = useMemo(() => {
+    if (!groupTasks || !historyData?.member?.odUserId) return undefined;
+    const targetId = historyData.member.odUserId;
+    return (groupTasks as any[]).filter(
+      (t) => t.targetMemberId === targetId && (t.status === "open" || t.status === "snoozed")
+    );
+  }, [groupTasks, historyData?.member?.odUserId]);
 
   // Fetch assignable leaders for task creation
   const assignableLeaders = useAuthenticatedQuery(
@@ -151,16 +154,10 @@ export function FollowupDetailContent({
 
   const createTaskMutation = useAuthenticatedMutation(api.functions.tasks.index.create);
 
-  // Fetch all group tasks to derive available tags for autocomplete
-  const groupTasksForTags = useAuthenticatedQuery(
-    api.functions.tasks.index.listGroup,
-    groupId ? { groupId: groupId as Id<"groups"> } : "skip"
-  );
-
   const availableTags = useMemo(() => {
-    if (!groupTasksForTags) return [];
-    return [...new Set((groupTasksForTags as any[]).flatMap((t) => t.tags ?? []))].sort();
-  }, [groupTasksForTags]);
+    if (!groupTasks) return [];
+    return [...new Set((groupTasks as any[]).flatMap((t) => t.tags ?? []))].sort();
+  }, [groupTasks]);
 
   const filteredTagSuggestions = useMemo(() => {
     const input = tagInput.trim().toLowerCase();
