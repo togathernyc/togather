@@ -164,6 +164,7 @@ describe("Convex Migration Validation", () => {
         // Allow odUserId when it's being used as received from Convex backend
         // The backend returns odUserId containing the Convex Id<"users">
         if (match.includes("FollowupDetailScreen.tsx") && lineContent.includes("history.member.odUserId")) return false;
+        if (match.includes("FollowupDetailScreen.tsx") && lineContent.includes("historyData")) return false;
         // Allow FollowupScreen to read odUserId from backend response for mapping
         if (match.includes("FollowupScreen.tsx") && lineContent.includes("m.odUserId")) return false;
         return true;

@@ -421,7 +421,7 @@ describe('ChatNavigation - Full Component', () => {
   it('should show leader toolbar when showLeaderTools is true', () => {
     const { getByText, queryByText } = render(<ChatNavigation {...defaultProps} />);
     expect(getByText('Attendance')).toBeTruthy();
-    expect(getByText('Follow-up')).toBeTruthy();
+    expect(getByText('People')).toBeTruthy();
     expect(queryByText('Tasks')).toBeNull();
     expect(getByText('Events')).toBeTruthy();
     expect(getByText('Bots')).toBeTruthy();
@@ -432,7 +432,7 @@ describe('ChatNavigation - Full Component', () => {
       <ChatNavigation {...defaultProps} showLeaderTools={false} />
     );
     expect(queryByText('Attendance')).toBeNull();
-    expect(queryByText('Follow-up')).toBeNull();
+    expect(queryByText('People')).toBeNull();
   });
 });
 
