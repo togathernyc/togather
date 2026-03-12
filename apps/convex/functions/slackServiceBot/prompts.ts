@@ -250,6 +250,11 @@ ${teamMembersSection}
 ## Current PCO Plan State
 ${pcoSection}
 ${perItemSection}
+## Slack @Mentions
+When users @mention someone in Slack, those mentions are resolved to real names in the messages you see.
+For example, if someone writes "@John Smith is preaching", you'll see "John Smith is preaching".
+Treat these resolved names as the person being referenced and use them directly with search_pco_people.
+
 ## Instructions
 1. Read the conversation carefully. The last message is the one that triggered you.
 2. Determine what action to take based on the message and thread context.

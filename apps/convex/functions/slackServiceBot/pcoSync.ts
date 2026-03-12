@@ -274,7 +274,7 @@ export async function assignPersonToRoleCore(
       throw error;
     }
 
-    return { success: true, detail: `Assigned ${personName} as ${role} (pending acceptance)` };
+    return { success: true, detail: `Assigned ${personName} as ${role} (confirmed)` };
   } catch (error) {
     return { success: false, detail: String(error) };
   }
@@ -589,7 +589,7 @@ export async function fetchPcoContextCore(
  * Assign a person to a role on a PCO plan.
  * Fills an existing empty ("Needed") slot if one exists for the position,
  * otherwise creates a new team member entry.
- * Status is always "U" (unconfirmed/pending) — the person must accept in PCO.
+ * Status is "C" (confirmed) — matches PCO's "confirm on manually adding" setting.
  */
 async function assignPersonToRole(
   accessToken: string,
@@ -626,7 +626,7 @@ async function assignPersonToRole(
           data: {
             type: "PlanPerson",
             attributes: {
-              status: "U", // Pending — needs acceptance
+              status: "C", // Confirmed — matches PCO's "confirm on manually adding"
             },
             relationships: {
               person: { data: { type: "Person", id: personId } },
@@ -649,7 +649,7 @@ async function assignPersonToRole(
         data: {
           type: "PlanPerson",
           attributes: {
-            status: "U", // Pending — needs acceptance
+            status: "C", // Confirmed — matches PCO's "confirm on manually adding"
             team_position_name: positionName,
           },
           relationships: {
@@ -712,7 +712,7 @@ async function removePersonFromRole(
 /**
  * Sync preacher assignment to PCO plan.
  * Fills an existing "Needed" slot if available, otherwise creates a new entry.
- * Status is "U" (pending) — the person must accept.
+ * Status is "C" (confirmed) — matches PCO's "confirm on manually adding" setting.
  */
 export const syncPreacherToPCO = internalAction({
   args: {
@@ -771,6 +771,7 @@ export const syncPreacherToPCO = internalAction({
 /**
  * Sync music leader assignment to PCO plan.
  * Fills an existing "Needed" slot if available, otherwise creates a new entry.
+ * Status is "C" (confirmed) — matches PCO's "confirm on manually adding" setting.
  */
 export const syncMeetingLeaderToPCO = internalAction({
   args: {
