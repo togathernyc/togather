@@ -8,7 +8,7 @@ import { api, Id, useAuthenticatedQuery } from "@services/api/convex";
 
 /**
  * Hidden-by-default entry point for Tasks.
- * Leaders can access the Tasks workspace from Profile > Settings.
+ * Leaders can also access the Tasks workspace directly from Profile.
  */
 export function LeaderToolsSection() {
   const router = useRouter();

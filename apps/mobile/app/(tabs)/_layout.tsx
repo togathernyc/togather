@@ -78,7 +78,7 @@ export default function TabsLayout() {
         options={{
           title: 'Tasks',
           // Keep the route available, but hide from primary tab navigation.
-          // Tasks are now accessed via Profile > Settings.
+          // Tasks are accessed via Profile.
           href: null,
           tabBarIcon: ({ color, focused }) => (
             <Ionicons

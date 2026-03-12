@@ -10,6 +10,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { UserRoute } from "@components/guards/UserRoute";
@@ -31,10 +32,11 @@ import {
   type TargetType,
 } from "./taskHelpers";
 
-type Segment = "my" | "claimable";
+type Segment = "my" | "all" | "claimable";
 type TaskId = Id<"tasks">;
 type ResponsibilityType = "group" | "person";
 type SourceFilter = "all" | TaskSourceType;
+type AssigneeFilter = "all" | "unassigned" | string;
 
 const sourceLabels: Record<TaskSourceType, string> = {
   manual: "MANUAL",
@@ -66,6 +68,7 @@ function statusColor(status: string): string {
 
 export function TasksTabScreen() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const { primaryColor } = useCommunityTheme();
   const isDesktopWeb = useIsDesktopWeb();
   const { community } = useAuth();
@@ -73,6 +76,7 @@ export function TasksTabScreen() {
   const [segment, setSegment] = useState<Segment>("my");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [tagFilter, setTagFilter] = useState<string>("all");
+  const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilter>("all");
   const [searchText, setSearchText] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
@@ -110,6 +114,7 @@ export function TasksTabScreen() {
   );
 
   const myTasks = useAuthenticatedQuery(api.functions.tasks.index.listMine, taskFilterArgs);
+  const allTasks = useAuthenticatedQuery(api.functions.tasks.index.listAll, taskFilterArgs);
   const claimableTasks = useAuthenticatedQuery(
     api.functions.tasks.index.listClaimable,
     taskFilterArgs,
@@ -144,15 +149,53 @@ export function TasksTabScreen() {
     createGroupId ? { groupId: createGroupId as Id<"groups"> } : "skip",
   ) as TaskListItem[] | undefined;
 
+  const assigneeOptions = useMemo(() => {
+    const tasks = allTasks ?? [];
+    const leadersById = new Map<string, string>();
+    let hasUnassigned = false;
+    for (const task of tasks) {
+      if (task.assignedToId) {
+        leadersById.set(
+          task.assignedToId.toString(),
+          task.assignedToName?.trim() || "Assigned Leader",
+        );
+      } else {
+        hasUnassigned = true;
+      }
+    }
+
+    const leaderOptions = [...leadersById.entries()]
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+
+    return [
+      { value: "all", label: "All Assignees" },
+      ...leaderOptions,
+      ...(hasUnassigned ? [{ value: "unassigned", label: "Unassigned" }] : []),
+    ];
+  }, [allTasks]);
+
+  const filteredAllTasks = useMemo(() => {
+    if (!allTasks) return allTasks;
+    if (assigneeFilter === "all") return allTasks;
+    if (assigneeFilter === "unassigned") {
+      return allTasks.filter((task) => !task.assignedToId);
+    }
+    return allTasks.filter((task) => task.assignedToId?.toString() === assigneeFilter);
+  }, [allTasks, assigneeFilter]);
+
+  const activeTasks = useMemo(() => {
+    if (segment === "my") return myTasks;
+    if (segment === "claimable") return claimableTasks;
+    return filteredAllTasks;
+  }, [claimableTasks, filteredAllTasks, myTasks, segment]);
+
   const selectedTask = useMemo(() => {
-    const activeTasks = segment === "my" ? myTasks : claimableTasks;
     if (!activeTasks || activeTasks.length === 0) return null;
     const fallback = activeTasks[0];
     if (!selectedTaskId) return fallback;
-    return (
-      activeTasks.find((task) => task._id.toString() === selectedTaskId) ?? fallback
-    );
-  }, [claimableTasks, myTasks, segment, selectedTaskId]);
+    return activeTasks.find((task) => task._id.toString() === selectedTaskId) ?? fallback;
+  }, [activeTasks, selectedTaskId]);
 
   const assignableLeaders = useAuthenticatedQuery(
     api.functions.tasks.index.listAssignableLeaders,
@@ -173,13 +216,10 @@ export function TasksTabScreen() {
   }, [createGroupMembers]);
 
   const availableTags = useMemo(() => {
-    const activeTasks = (segment === "my" ? myTasks : claimableTasks) ?? [];
-    return [...new Set(activeTasks.flatMap((task) => task.tags ?? []))].sort();
-  }, [claimableTasks, myTasks, segment]);
+    const tasks = activeTasks ?? [];
+    return [...new Set(tasks.flatMap((task) => task.tags ?? []))].sort();
+  }, [activeTasks]);
 
-  const activeTasks = (segment === "my" ? myTasks : claimableTasks) as
-    | TaskListItem[]
-    | undefined;
   const taskRows = useMemo(() => {
     return activeTasks ? buildTaskRows(activeTasks, expandedParents) : [];
   }, [activeTasks, expandedParents]);
@@ -366,7 +406,7 @@ export function TasksTabScreen() {
         ) : null}
 
         <View style={styles.actionsRow}>
-          {segment === "claimable" && !task.assignedToId ? (
+          {(segment === "claimable" || segment === "all") && !task.assignedToId ? (
             <Pressable
               disabled={isBusy}
               onPress={() => runTaskAction(taskId, "claim")}
@@ -450,9 +490,17 @@ export function TasksTabScreen() {
     <View style={styles.container}>
       <View style={[styles.header, { paddingTop: insets.top + 14 }]}>
         <View style={styles.headerRow}>
-          <View>
-            <Text style={styles.headerTitle}>Tasks</Text>
-            <Text style={styles.headerSubtitle}>All task-related workflows</Text>
+          <View style={styles.headerTitleWrap}>
+            <Pressable
+              style={styles.backButton}
+              onPress={() => router.replace("/(tabs)/profile")}
+            >
+              <Ionicons name="arrow-back" size={22} color="#0F172A" />
+            </Pressable>
+            <View>
+              <Text style={styles.headerTitle}>Tasks</Text>
+              <Text style={styles.headerSubtitle}>All task-related workflows</Text>
+            </View>
           </View>
           <Pressable style={styles.createButton} onPress={() => setIsCreateOpen(true)}>
             <Ionicons name="add" size={16} color="#fff" />
@@ -473,6 +521,19 @@ export function TasksTabScreen() {
             style={[styles.segmentText, segment === "my" && styles.segmentTextActive]}
           >
             My Tasks
+          </Text>
+        </Pressable>
+        <Pressable
+          onPress={() => setSegment("all")}
+          style={[
+            styles.segmentButton,
+            segment === "all" && { backgroundColor: primaryColor },
+          ]}
+        >
+          <Text
+            style={[styles.segmentText, segment === "all" && styles.segmentTextActive]}
+          >
+            All Tasks
           </Text>
         </Pressable>
         <Pressable
@@ -554,6 +615,31 @@ export function TasksTabScreen() {
             ))}
           </View>
         </ScrollView>
+        {segment === "all" ? (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <View style={styles.chipsRow}>
+              {assigneeOptions.map((option) => (
+                <Pressable
+                  key={option.value}
+                  onPress={() => setAssigneeFilter(option.value)}
+                  style={[
+                    styles.filterChip,
+                    assigneeFilter === option.value && styles.filterChipActive,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.filterChipText,
+                      assigneeFilter === option.value && styles.filterChipTextActive,
+                    ]}
+                  >
+                    {option.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </ScrollView>
+        ) : null}
       </View>
 
       {actionError ? <Text style={styles.errorText}>{actionError}</Text> : null}
@@ -571,7 +657,9 @@ export function TasksTabScreen() {
           <Text style={styles.emptySubtitle}>
             {segment === "my"
               ? "Assigned tasks will appear here."
-              : "Unassigned group tasks will appear here."}
+              : segment === "all"
+                ? "Open and snoozed tasks from your groups will appear here."
+                : "Unassigned group tasks will appear here."}
           </Text>
         </View>
       ) : isDesktopWeb ? (
@@ -921,6 +1009,15 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+  },
+  headerTitleWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  backButton: {
+    borderRadius: 999,
+    padding: 4,
   },
   headerTitle: {
     fontSize: 28,

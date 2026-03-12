@@ -21,6 +21,10 @@ export function ProfileMenu() {
     userId ? {} : "skip"
   );
   const isLoadingCommunities = communities === undefined && !!userId;
+  const hasLeaderAccess = useAuthenticatedQuery(
+    api.functions.tasks.index.hasLeaderAccess,
+    community?.id ? { communityId: community.id as Id<"communities"> } : "skip"
+  );
 
   const handleSwitchCommunity = async () => {
     try {
@@ -90,8 +94,22 @@ export function ProfileMenu() {
         )}
       </TouchableOpacity>
 
+      {hasLeaderAccess === true ? (
+        <TouchableOpacity
+          style={styles.menuItem}
+          onPress={() => router.push("/tasks")}
+          activeOpacity={0.7}
+        >
+          <View style={styles.menuIconContainer}>
+            <Ionicons name="checkmark-done-outline" size={24} color={primaryColor} />
+          </View>
+          <Text style={styles.menuText}>Tasks</Text>
+          <Ionicons name="chevron-forward" size={20} color="#999" />
+        </TouchableOpacity>
+      ) : null}
+
       <TouchableOpacity
-        style={[styles.menuItem, styles.menuItemLast]}
+        style={[styles.menuItem, hasLeaderAccess === true ? undefined : styles.menuItemLast]}
         onPress={() => router.push('/(user)/settings')}
         activeOpacity={0.7}
       >
