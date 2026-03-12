@@ -704,7 +704,7 @@ export const updateLeaderToolbarTools = mutation({
     // Validate tool IDs
     // NOTE: This list must match apps/mobile/features/chat/constants/toolbarTools.ts
     // Backend validates independently for security; frontend uses for UI rendering.
-    const allowedBuiltInTools = ["attendance", "followup", "events", "bots", "sync", "runsheet"];
+    const allowedBuiltInTools = ["attendance", "followup", "tasks", "events", "bots", "sync", "runsheet"];
     for (const tool of args.tools) {
       // Allow built-in tools
       if (allowedBuiltInTools.includes(tool)) {

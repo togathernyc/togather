@@ -15,6 +15,7 @@ import { Id } from "../_generated/dataModel";
 import { now } from "../lib/utils";
 import { calculateCommunicationBotNextSchedule, calculateNextScheduledTimeForDayOfWeek } from "../lib/scheduling";
 import { requireAuth, requireAuthFromToken } from "../lib/auth";
+import { isActiveMembership, isLeaderRole } from "../lib/helpers";
 
 // ============================================================================
 // Bot Definitions
@@ -151,6 +152,8 @@ const botDefinitions: Record<string, BotDefinition> = {
         saturday: [],
         sunday: [],
       },
+      deliveryMode: "task_and_channel_post",
+      targetChannelSlugs: [],
     },
     configFields: [
       {
@@ -175,6 +178,58 @@ const botDefinitions: Record<string, BotDefinition> = {
     },
   },
 };
+
+function normalizeTaskReminderConfig(rawConfig: Record<string, unknown>) {
+  const defaultSchedule = {
+    monday: [],
+    tuesday: [],
+    wednesday: [],
+    thursday: [],
+    friday: [],
+    saturday: [],
+    sunday: [],
+  } as Record<string, Array<{ id: string; message: string; roleIds: string[] }>>;
+
+  const scheduleInput =
+    (rawConfig.schedule as Record<string, Array<{ id?: string; message?: string; roleIds?: string[] }>>) ||
+    defaultSchedule;
+  const schedule = Object.fromEntries(
+    Object.keys(defaultSchedule).map((day) => {
+      const dayTasks = scheduleInput[day] ?? [];
+      return [
+        day,
+        dayTasks.map((task, index) => ({
+          id: task.id || `${day}-${index}`,
+          message: (task.message || "").trim(),
+          roleIds: (task.roleIds || []).filter(Boolean),
+        })),
+      ];
+    }),
+  );
+
+  const rawDeliveryMode = rawConfig.deliveryMode;
+  const deliveryMode =
+    rawDeliveryMode === "task_only" || rawDeliveryMode === "task_and_channel_post"
+      ? rawDeliveryMode
+      : rawConfig.delivery === "notification"
+        ? "task_only"
+        : "task_and_channel_post";
+
+  const channelSlugsFromArray = Array.isArray(rawConfig.targetChannelSlugs)
+    ? (rawConfig.targetChannelSlugs as string[]).filter(Boolean)
+    : [];
+  const channelSlugsFromLegacy =
+    typeof rawConfig.targetChannelSlug === "string" && rawConfig.targetChannelSlug
+      ? [rawConfig.targetChannelSlug]
+      : [];
+
+  return {
+    roles: Array.isArray(rawConfig.roles) ? rawConfig.roles : [],
+    schedule,
+    deliveryMode,
+    targetChannelSlugs: [...new Set([...channelSlugsFromArray, ...channelSlugsFromLegacy])],
+  };
+}
 
 // ============================================================================
 // Bot Queries
@@ -292,6 +347,22 @@ export const getConfig = query({
 // Bot Mutations
 // ============================================================================
 
+async function requireLeaderForGroup(
+  ctx: { db: any },
+  groupId: Id<"groups">,
+  userId: Id<"users">
+) {
+  const membership = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_group_user", (q: any) =>
+      q.eq("groupId", groupId).eq("userId", userId)
+    )
+    .first();
+  if (!isActiveMembership(membership) || !isLeaderRole(membership.role)) {
+    throw new Error("Only group leaders can manage bot configuration");
+  }
+}
+
 /**
  * Update config for a bot (leaders only)
  */
@@ -303,13 +374,19 @@ export const updateConfig = mutation({
     config: v.any(), // Flexible config object
   },
   handler: async (ctx, args): Promise<{ success: boolean }> => {
-    await requireAuth(ctx, args.token);
+    const userId = await requireAuth(ctx, args.token);
+    await requireLeaderForGroup(ctx, args.groupId, userId);
     const timestamp = now();
 
     const bot = botDefinitions[args.botId];
     if (!bot) {
       throw new Error("Bot not found");
     }
+
+    const normalizedConfig =
+      args.botId === "task-reminder"
+        ? normalizeTaskReminderConfig(args.config as Record<string, unknown>)
+        : args.config;
 
     // Check for existing config
     const existing = await ctx.db
@@ -343,7 +420,7 @@ export const updateConfig = mutation({
 
     if (existing) {
       await ctx.db.patch(existing._id, {
-        config: args.config,
+        config: normalizedConfig,
         updatedAt: timestamp,
         ...(nextScheduledAt && { nextScheduledAt }),
       });
@@ -352,7 +429,7 @@ export const updateConfig = mutation({
         groupId: args.groupId,
         botType: args.botId,
         enabled: true,
-        config: args.config,
+        config: normalizedConfig,
         state: {},
         createdAt: timestamp,
         updatedAt: timestamp,
@@ -375,7 +452,8 @@ export const toggle = mutation({
     enabled: v.boolean(),
   },
   handler: async (ctx, args): Promise<{ success: boolean }> => {
-    await requireAuth(ctx, args.token);
+    const userId = await requireAuth(ctx, args.token);
+    await requireLeaderForGroup(ctx, args.groupId, userId);
     const timestamp = now();
 
     // Verify bot exists
@@ -449,7 +527,8 @@ export const resetConfig = mutation({
     botId: v.string(),
   },
   handler: async (ctx, args): Promise<{ success: boolean }> => {
-    await requireAuth(ctx, args.token);
+    const userId = await requireAuth(ctx, args.token);
+    await requireLeaderForGroup(ctx, args.groupId, userId);
     const timestamp = now();
 
     const bot = botDefinitions[args.botId];

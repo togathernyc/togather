@@ -547,6 +547,16 @@ const ConvexChatRoomScreenInner: React.FC = () => {
     }
   }, [router, getGroupIdForNavigation]);
 
+  const handleGoToTasks = useCallback(() => {
+    setMenuVisible(false);
+    const id = getGroupIdForNavigation();
+    if (id) {
+      router.push(`/(user)/leader-tools/${id}/tasks`);
+      return;
+    }
+    router.push("/tasks");
+  }, [router, getGroupIdForNavigation]);
+
   const handleGoToRunSheet = useCallback(() => {
     setMenuVisible(false);
     const id = getGroupIdForNavigation();
@@ -598,6 +608,9 @@ const ConvexChatRoomScreenInner: React.FC = () => {
       case 'bots':
         handleGoToBots();
         break;
+      case 'tasks':
+        handleGoToTasks();
+        break;
       case 'runsheet':
         handleGoToRunSheet();
         break;
@@ -605,7 +618,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
         handleSyncPress();
         break;
     }
-  }, [handleGoToAttendance, handleGoToFollowup, handleGoToEvents, handleGoToBots, handleGoToRunSheet, handleSyncPress]);
+  }, [handleGoToAttendance, handleGoToFollowup, handleGoToEvents, handleGoToBots, handleGoToTasks, handleGoToRunSheet, handleSyncPress]);
 
   // Handle long-press on channel tab to show members modal
   const handleTabLongPress = useCallback((channel: ChannelTab) => {

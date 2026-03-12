@@ -16,7 +16,7 @@ import type { Id } from "@services/api/convex";
 import { useQuery, useAuthenticatedMutation, api } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
-import { ReachOutRequestCard } from "./ReachOutRequestCard";
+import { ReachOutTaskCard } from "./ReachOutTaskCard";
 
 interface ReachOutScreenProps {
   channelId: Id<"chatChannels">;
@@ -30,12 +30,12 @@ export function ReachOutScreen({ channelId, groupId }: ReachOutScreenProps) {
   const [submitting, setSubmitting] = useState(false);
 
   const requests = useQuery(
-    api.functions.messaging.reachOut.getMyRequests,
+    api.functions.messaging.reachOut.getMyTaskRequests,
     token ? { token, groupId } : "skip"
   );
 
   const submitRequest = useAuthenticatedMutation(
-    api.functions.messaging.reachOut.submitRequest
+    api.functions.messaging.reachOut.submitTaskRequest
   );
 
   const handleSubmit = useCallback(() => {
@@ -127,7 +127,7 @@ export function ReachOutScreen({ channelId, groupId }: ReachOutScreenProps) {
             data={requests}
             keyExtractor={(item) => item._id}
             renderItem={({ item }) => (
-              <ReachOutRequestCard request={item} variant="member" />
+              <ReachOutTaskCard task={item} variant="member" />
             )}
             contentContainerStyle={styles.listContent}
             ListHeaderComponent={

@@ -99,7 +99,7 @@ describe("parseFollowupQuerySyntax", () => {
 
 describe("applyParsedFollowupFilters", () => {
   const baseMembers = [
-    { assigneeId: "leader-1", addedAt: new Date(2025, 11, 13, 12).getTime() },
+    { assigneeId: "leader-1", assigneeIds: ["leader-1", "leader-2"], addedAt: new Date(2025, 11, 13, 12).getTime() },
     { assigneeId: "leader-2", addedAt: new Date(2025, 11, 14, 12).getTime() },
     { assigneeId: "leader-2", addedAt: new Date(2025, 11, 15, 12).getTime() },
   ];
@@ -110,8 +110,7 @@ describe("applyParsedFollowupFilters", () => {
       excludedAssigneeFilters: ["leader-2"],
     };
     const filtered = applyParsedFollowupFilters(baseMembers, parsed);
-    expect(filtered).toHaveLength(1);
-    expect(filtered[0].assigneeId).toBe("leader-1");
+    expect(filtered).toHaveLength(0);
   });
 
   it("applies exact date filter", () => {

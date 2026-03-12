@@ -39,7 +39,6 @@ type Task = {
   id: string;
   message: string;
   roleIds: string[];
-  delivery: "chat" | "notification" | "both";
 };
 
 type Schedule = Record<DayOfWeek, Task[]>;
@@ -47,7 +46,8 @@ type Schedule = Record<DayOfWeek, Task[]>;
 type TaskReminderConfig = {
   roles: Role[];
   schedule: Schedule;
-  targetChannelSlug?: string;
+  deliveryMode: "task_only" | "task_and_channel_post";
+  targetChannelSlugs: string[];
 };
 
 type TaskReminderConfigModalProps = {
@@ -66,10 +66,9 @@ const DAYS: { key: DayOfWeek; label: string; short: string }[] = [
   { key: "sunday", label: "Sunday", short: "Sun" },
 ];
 
-const DELIVERY_OPTIONS = [
-  { value: "chat", label: "Chat only" },
-  { value: "notification", label: "Notification only" },
-  { value: "both", label: "Both" },
+const DELIVERY_MODE_OPTIONS = [
+  { value: "task_only", label: "Create/assign tasks only" },
+  { value: "task_and_channel_post", label: "Create tasks + post task cards to channels" },
 ] as const;
 
 const DEFAULT_CONFIG: TaskReminderConfig = {
@@ -83,7 +82,8 @@ const DEFAULT_CONFIG: TaskReminderConfig = {
     saturday: [],
     sunday: [],
   },
-  targetChannelSlug: undefined,
+  deliveryMode: "task_and_channel_post",
+  targetChannelSlugs: [],
 };
 
 export function TaskReminderConfigModal({
@@ -193,11 +193,25 @@ export function TaskReminderConfigModal({
   // Load config when data is fetched
   useEffect(() => {
     if (configData?.config) {
-      const loadedConfig = configData.config as TaskReminderConfig;
+      const loadedConfig = configData.config as TaskReminderConfig & {
+        targetChannelSlug?: string;
+        delivery?: "chat" | "notification" | "both";
+      };
+      const deliveryMode =
+        loadedConfig.deliveryMode ??
+        (loadedConfig.delivery === "notification"
+          ? "task_only"
+          : "task_and_channel_post");
+      const targetChannelSlugs = loadedConfig.targetChannelSlugs?.length
+        ? loadedConfig.targetChannelSlugs
+        : loadedConfig.targetChannelSlug
+          ? [loadedConfig.targetChannelSlug]
+          : [];
       setConfig({
         roles: loadedConfig.roles || [],
         schedule: loadedConfig.schedule || DEFAULT_CONFIG.schedule,
-        targetChannelSlug: loadedConfig.targetChannelSlug,
+        deliveryMode,
+        targetChannelSlugs,
       });
       setIsDirty(false);
     }
@@ -303,7 +317,6 @@ export function TaskReminderConfigModal({
       id: generateId(),
       message: "",
       roleIds: [],
-      delivery: "both",
     };
     setEditingTask(newTask);
     setEditingTaskDay(selectedDay);
@@ -484,10 +497,6 @@ export function TaskReminderConfigModal({
           <Text style={styles.taskMeta}>
             Roles: {getRoleNames(task.roleIds) || "None"}
           </Text>
-          <Text style={styles.taskMeta}>
-            Delivery:{" "}
-            {DELIVERY_OPTIONS.find((o) => o.value === task.delivery)?.label}
-          </Text>
           {hasInvalid && (
             <Text style={styles.taskWarning}>
               Some roles no longer exist
@@ -597,34 +606,6 @@ export function TaskReminderConfigModal({
                 )}
               </View>
 
-              <Text style={styles.fieldLabel}>Delivery Method</Text>
-              <View style={styles.deliveryOptions}>
-                {DELIVERY_OPTIONS.map((option) => (
-                  <TouchableOpacity
-                    key={option.value}
-                    style={[
-                      styles.deliveryOption,
-                      editingTask.delivery === option.value &&
-                        styles.deliveryOptionSelected,
-                    ]}
-                    onPress={() =>
-                      setEditingTask((prev) =>
-                        prev && { ...prev, delivery: option.value }
-                      )
-                    }
-                  >
-                    <Text
-                      style={[
-                        styles.deliveryOptionText,
-                        editingTask.delivery === option.value &&
-                          styles.deliveryOptionTextSelected,
-                      ]}
-                    >
-                      {option.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
             </ScrollView>
 
             <TouchableOpacity
@@ -705,73 +686,95 @@ export function TaskReminderConfigModal({
                 )}
               </View>
 
-              {/* Target Channel Section */}
+              {/* Delivery Section */}
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>TARGET CHANNEL</Text>
+                <Text style={styles.sectionTitle}>DELIVERY</Text>
                 <Text style={styles.sectionDescription}>
-                  Select which channel the bot posts reminders to.
+                  Choose whether the bot only creates tasks or also posts task cards to channels.
                 </Text>
 
-                {/* Warning banner if selected channel is archived */}
-                {(() => {
-                  const currentChannel = (channelsData ?? []).find(
-                    (ch: { slug: string }) => ch.slug === config.targetChannelSlug
-                  );
-                  const isSelectedArchived = currentChannel?.isArchived === true;
-                  return isSelectedArchived ? (
-                    <View style={styles.warningBanner}>
-                      <Ionicons name="warning" size={16} color="#f59e0b" />
-                      <Text style={styles.warningText}>
-                        Selected channel is archived. Bot messages will fail until you select another channel.
-                      </Text>
-                    </View>
-                  ) : null;
-                })()}
-
-                <View style={styles.channelSelectContainer}>
-                  {(channelsData ?? [])
-                    .filter((ch: { isArchived: boolean }) => !ch.isArchived)
-                    .map((channel: { slug: string; name: string; channelType: string }) => {
-                      // Display friendly names for auto channels
-                      const displayName =
-                        channel.channelType === "main"
-                          ? "General"
-                          : channel.channelType === "leaders"
-                            ? "Leaders"
-                            : channel.name;
-
-                      // Default to "leaders" if not set (matches backend default)
-                      const isSelected =
-                        config.targetChannelSlug === channel.slug ||
-                        (!config.targetChannelSlug && channel.slug === "leaders");
-
-                      return (
-                        <TouchableOpacity
-                          key={channel.slug}
+                <View style={styles.deliveryOptions}>
+                  {DELIVERY_MODE_OPTIONS.map((option) => {
+                    const isSelected = config.deliveryMode === option.value;
+                    return (
+                      <TouchableOpacity
+                        key={option.value}
+                        style={[
+                          styles.deliveryOption,
+                          isSelected && styles.deliveryOptionSelected,
+                        ]}
+                        onPress={() => {
+                          setConfig((prev) => ({
+                            ...prev,
+                            deliveryMode: option.value,
+                          }));
+                          setIsDirty(true);
+                        }}
+                      >
+                        <Text
                           style={[
-                            styles.channelOption,
-                            isSelected && styles.channelOptionSelected,
+                            styles.deliveryOptionText,
+                            isSelected && styles.deliveryOptionTextSelected,
                           ]}
-                          onPress={() => {
-                            setConfig((prev) => ({
-                              ...prev,
-                              targetChannelSlug: channel.slug,
-                            }));
-                            setIsDirty(true);
-                          }}
                         >
-                          <Text
-                            style={[
-                              styles.channelOptionText,
-                              isSelected && styles.channelOptionTextSelected,
-                            ]}
-                          >
-                            {displayName}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
+                          {option.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
+
+                {config.deliveryMode === "task_and_channel_post" ? (
+                  <>
+                    <Text style={[styles.sectionTitle, { marginTop: 16 }]}>
+                      CHANNEL TARGETS
+                    </Text>
+                    <Text style={styles.sectionDescription}>
+                      Select one or more channels to receive task cards.
+                    </Text>
+
+                    <View style={styles.channelSelectContainer}>
+                      {(channelsData ?? [])
+                        .filter((ch: { isArchived: boolean }) => !ch.isArchived)
+                        .map((channel: { slug: string; name: string; channelType: string }) => {
+                          const displayName =
+                            channel.channelType === "main"
+                              ? "General"
+                              : channel.channelType === "leaders"
+                                ? "Leaders"
+                                : channel.name;
+                          const isSelected = config.targetChannelSlugs.includes(channel.slug);
+                          return (
+                            <TouchableOpacity
+                              key={channel.slug}
+                              style={[
+                                styles.channelOption,
+                                isSelected && styles.channelOptionSelected,
+                              ]}
+                              onPress={() => {
+                                setConfig((prev) => ({
+                                  ...prev,
+                                  targetChannelSlugs: isSelected
+                                    ? prev.targetChannelSlugs.filter((slug) => slug !== channel.slug)
+                                    : [...prev.targetChannelSlugs, channel.slug],
+                                }));
+                                setIsDirty(true);
+                              }}
+                            >
+                              <Text
+                                style={[
+                                  styles.channelOptionText,
+                                  isSelected && styles.channelOptionTextSelected,
+                                ]}
+                              >
+                                {displayName}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                    </View>
+                  </>
+                ) : null}
               </View>
 
               {/* Weekly Schedule Section */}

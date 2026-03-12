@@ -2135,10 +2135,21 @@ export const addChannelMembers = mutation({
       throw new Error("Only the channel owner or group leaders can add members.");
     }
 
-    // 4. Validate userIds exist and auto-add non-group members to the group
+    // 4. Validate userIds and enforce group eligibility
     const validUserIds: Id<"users">[] = [];
     const userDataMap = new Map<Id<"users">, { displayName: string; profilePhoto: string | undefined }>();
     const timestamp = Date.now();
+    const isSharedChannel = channel.isShared === true;
+    const eligibleGroupIds = new Set<Id<"groups">>([channel.groupId]);
+    const ineligibleUserDisplayNames: string[] = [];
+
+    if (isSharedChannel) {
+      for (const sharedGroup of channel.sharedGroups ?? []) {
+        if (sharedGroup.status === "accepted") {
+          eligibleGroupIds.add(sharedGroup.groupId);
+        }
+      }
+    }
 
     for (const userId of args.userIds) {
       // Check if user exists
@@ -2147,57 +2158,94 @@ export const addChannelMembers = mutation({
         continue; // Skip invalid user IDs
       }
 
-      // Check for any group membership (including inactive ones)
-      const existingGroupMembership = await ctx.db
-        .query("groupMembers")
-        .withIndex("by_group_user", (q) =>
-          q.eq("groupId", channel.groupId).eq("userId", userId)
-        )
-        .first();
+      if (isSharedChannel) {
+        // Shared channels must not mutate primary group membership.
+        // Users are only eligible if they already belong to the primary group
+        // or any accepted shared secondary group.
+        const userGroupMemberships = await ctx.db
+          .query("groupMembers")
+          .withIndex("by_user", (q) => q.eq("userId", userId))
+          .filter((q) =>
+            q.and(
+              q.eq(q.field("leftAt"), undefined),
+              q.or(
+                q.eq(q.field("requestStatus"), undefined),
+                q.eq(q.field("requestStatus"), null),
+                q.eq(q.field("requestStatus"), "accepted")
+              )
+            )
+          )
+          .collect();
 
-      const isActiveGroupMember = existingGroupMembership && !existingGroupMembership.leftAt;
+        const hasEligibleGroupMembership = userGroupMemberships.some((membership) =>
+          eligibleGroupIds.has(membership.groupId)
+        );
 
-      if (!isActiveGroupMember) {
-        // Auto-add user to the group
-        if (existingGroupMembership && existingGroupMembership.leftAt) {
-          // Reactivate: clear leftAt, update joinedAt
-          await ctx.db.patch(existingGroupMembership._id, {
-            role: "member",
-            leftAt: undefined,
-            joinedAt: timestamp,
-            notificationsEnabled: true,
-          });
-        } else {
-          // Create new group membership
-          await ctx.db.insert("groupMembers", {
-            groupId: channel.groupId,
-            userId,
-            role: "member",
-            joinedAt: timestamp,
-            notificationsEnabled: true,
-          });
+        if (!hasEligibleGroupMembership) {
+          ineligibleUserDisplayNames.push(getDisplayName(user.firstName, user.lastName));
+          continue;
+        }
+      } else {
+        // Non-shared channels keep legacy behavior: add missing primary group memberships.
+        const existingGroupMembership = await ctx.db
+          .query("groupMembers")
+          .withIndex("by_group_user", (q) =>
+            q.eq("groupId", channel.groupId).eq("userId", userId)
+          )
+          .first();
 
-          // Trigger welcome message for NEW group members only
-          await ctx.scheduler.runAfter(
-            0,
-            internal.functions.scheduledJobs.sendWelcomeMessage,
-            {
+        const isActiveGroupMember = existingGroupMembership && !existingGroupMembership.leftAt;
+
+        if (!isActiveGroupMember) {
+          // Auto-add user to the group
+          if (existingGroupMembership && existingGroupMembership.leftAt) {
+            // Reactivate: clear leftAt, update joinedAt
+            await ctx.db.patch(existingGroupMembership._id, {
+              role: "member",
+              leftAt: undefined,
+              joinedAt: timestamp,
+              notificationsEnabled: true,
+            });
+          } else {
+            // Create new group membership
+            await ctx.db.insert("groupMembers", {
               groupId: channel.groupId,
               userId,
-            }
-          );
-        }
+              role: "member",
+              joinedAt: timestamp,
+              notificationsEnabled: true,
+            });
 
-        // Sync channel memberships for the newly added group member
-        await syncUserChannelMembershipsLogic(ctx, userId, channel.groupId);
+            // Trigger welcome message for NEW group members only
+            await ctx.scheduler.runAfter(
+              0,
+              internal.functions.scheduledJobs.sendWelcomeMessage,
+              {
+                groupId: channel.groupId,
+                userId,
+              }
+            );
+          }
+
+          // Sync channel memberships for the newly added group member
+          await syncUserChannelMembershipsLogic(ctx, userId, channel.groupId);
+        }
       }
 
-      // User is now a valid group member, add to channel
+      // User is eligible to be added to the channel
       validUserIds.push(userId);
       userDataMap.set(userId, {
         displayName: getDisplayName(user.firstName, user.lastName),
         profilePhoto: getMediaUrl(user.profilePhoto),
       });
+    }
+
+    if (isSharedChannel && ineligibleUserDisplayNames.length > 0) {
+      const previewNames = ineligibleUserDisplayNames.slice(0, 3).join(", ");
+      const suffix = ineligibleUserDisplayNames.length > 3 ? ", and others" : "";
+      throw new Error(
+        `Cannot add ${previewNames}${suffix}. Shared channel members must already belong to the primary group or an accepted shared group.`
+      );
     }
 
     // 5. For each valid user, add or reactivate channel membership

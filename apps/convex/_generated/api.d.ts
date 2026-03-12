@@ -110,6 +110,7 @@ import type * as functions_slackServiceBot_slack from "../functions/slackService
 import type * as functions_slackServiceBot_tools from "../functions/slackServiceBot/tools.js";
 import type * as functions_sync_memberships from "../functions/sync/memberships.js";
 import type * as functions_syncHelpers from "../functions/syncHelpers.js";
+import type * as functions_tasks_index from "../functions/tasks/index.js";
 import type * as functions_toolShortLinks_index from "../functions/toolShortLinks/index.js";
 import type * as functions_uploads from "../functions/uploads.js";
 import type * as functions_users from "../functions/users.js";
@@ -250,6 +251,7 @@ declare const fullApi: ApiFromModules<{
   "functions/slackServiceBot/tools": typeof functions_slackServiceBot_tools;
   "functions/sync/memberships": typeof functions_sync_memberships;
   "functions/syncHelpers": typeof functions_syncHelpers;
+  "functions/tasks/index": typeof functions_tasks_index;
   "functions/toolShortLinks/index": typeof functions_toolShortLinks_index;
   "functions/uploads": typeof functions_uploads;
   "functions/users": typeof functions_users;

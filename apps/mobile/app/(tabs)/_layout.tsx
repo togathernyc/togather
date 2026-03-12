@@ -74,6 +74,22 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
+        name="tasks"
+        options={{
+          title: 'Tasks',
+          // Keep the route available, but hide from primary tab navigation.
+          // Tasks are accessed via Profile.
+          href: null,
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? 'checkmark-done' : 'checkmark-done-outline'}
+              size={24}
+              color={color}
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="chat"
         options={{
           title: 'Inbox',

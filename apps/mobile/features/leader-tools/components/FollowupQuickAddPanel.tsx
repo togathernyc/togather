@@ -62,7 +62,7 @@ export function FollowupQuickAddPanel({
   const [dateOfBirth, setDateOfBirth] = useState("");
   const [notes, setNotes] = useState("");
   const [status, setStatus] = useState("__none__");
-  const [assigneeId, setAssigneeId] = useState("__none__");
+  const [assigneeIds, setAssigneeIds] = useState<string[]>([]);
   const [customValues, setCustomValues] = useState<
     Record<string, string | string[] | boolean | undefined>
   >({});
@@ -115,7 +115,7 @@ export function FollowupQuickAddPanel({
         dateOfBirth: dateOfBirth.trim() || undefined,
         notes: notes.trim() || undefined,
         status: status !== "__none__" ? status : undefined,
-        assigneeId: assigneeId !== "__none__" ? (assigneeId as Id<"users">) : undefined,
+        assigneeIds: assigneeIds.length > 0 ? (assigneeIds as Id<"users">[]) : undefined,
         customFieldValues,
       });
 
@@ -248,22 +248,33 @@ export function FollowupQuickAddPanel({
           </View>
 
           <View style={styles.fieldWrap}>
-            <Text style={styles.label}>Assignee</Text>
-            <View style={styles.pickerWrap}>
-              <Picker
-                selectedValue={assigneeId}
-                onValueChange={(value) => setAssigneeId(String(value))}
-                enabled={!isSaving}
-              >
-                <Picker.Item label="Unassigned" value="__none__" />
-                {leaderOptions.map((leader) => (
-                  <Picker.Item
-                    key={leader.id}
-                    label={`${leader.firstName} ${leader.lastName}`.trim()}
-                    value={leader.id}
-                  />
-                ))}
-              </Picker>
+            <Text style={styles.label}>Assignees</Text>
+            <View style={styles.multiselectWrap}>
+              {leaderOptions.map((leader) => {
+                const id = leader.id;
+                const isSelected = assigneeIds.includes(id);
+                return (
+                  <TouchableOpacity
+                    key={id}
+                    style={[styles.multiselectChip, isSelected && styles.multiselectChipSelected]}
+                    onPress={() => {
+                      setAssigneeIds((prev) =>
+                        prev.includes(id) ? prev.filter((assigneeId) => assigneeId !== id) : [...prev, id]
+                      );
+                    }}
+                    disabled={isSaving}
+                  >
+                    <Text
+                      style={[
+                        styles.multiselectChipText,
+                        isSelected && styles.multiselectChipTextSelected,
+                      ]}
+                    >
+                      {`${leader.firstName} ${leader.lastName}`.trim()}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           </View>
 

@@ -12,6 +12,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SettingsForm } from "./SettingsForm";
 import { TimezoneSection } from "./TimezoneSection";
 import { NotificationPreferencesSection } from "./NotificationPreferencesSection";
+import { LeaderToolsSection } from "./LeaderToolsSection";
 import { QuickLinksSection } from "./QuickLinksSection";
 import { BlockedUsersSection } from "./BlockedUsersSection";
 import { DeleteAccountSection } from "./DeleteAccountSection";
@@ -42,6 +43,7 @@ export function SettingsScreen() {
       <SettingsForm />
       <TimezoneSection />
       <NotificationPreferencesSection />
+      <LeaderToolsSection />
       <QuickLinksSection />
       <BlockedUsersSection />
       <AppInfoSection />

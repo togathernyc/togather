@@ -81,6 +81,7 @@ type FollowupMember = {
   lastActiveAt?: number;
   status?: string;
   assigneeId?: string;
+  assigneeIds?: string[];
   addedAt?: number;
   email?: string;
   phone?: string;
@@ -239,9 +240,9 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     Record<
       string,
       {
-        assigneeId?: string | null;
+        assigneeIds?: string[] | null;
         status?: string | null;
-        [key: string]: string | number | boolean | null | undefined;
+        [key: string]: string | string[] | number | boolean | null | undefined;
       }
     >
   >({});
@@ -293,6 +294,19 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       ]),
     );
   }, [leaders]);
+
+  const getAssigneeIds = useCallback(
+    (member: { assigneeId?: string; assigneeIds?: string[] }) => {
+      const ids =
+        member.assigneeIds && member.assigneeIds.length > 0
+          ? member.assigneeIds
+          : member.assigneeId
+            ? [member.assigneeId]
+            : [];
+      return Array.from(new Set(ids));
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!sortField.startsWith("score")) return;
@@ -455,8 +469,9 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
         case "status":
           return member.status ?? "";
         case "assignee": {
-          if (!member.assigneeId) return "";
-          const leader = leaderMap.get(member.assigneeId);
+          const assigneeIds = getAssigneeIds(member);
+          if (assigneeIds.length === 0) return "";
+          const leader = leaderMap.get(assigneeIds[0]);
           return leader ? `${leader.firstName} ${leader.lastName}`.trim() : "";
         }
         case "lastAttendedAt":
@@ -478,7 +493,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
           );
       }
     },
-    [scoreConfig, leaderMap],
+    [scoreConfig, leaderMap, getAssigneeIds],
   );
 
   const members = useMemo(() => {
@@ -531,9 +546,13 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       if (!override) return member;
       const result: FollowupMember = {
         ...member,
+        assigneeIds:
+          override.assigneeIds !== undefined
+            ? ((override.assigneeIds ?? []) as string[])
+            : member.assigneeIds,
         assigneeId:
-          override.assigneeId !== undefined
-            ? (override.assigneeId ?? undefined)
+          override.assigneeIds !== undefined
+            ? ((override.assigneeIds ?? [])[0] as string | undefined)
             : member.assigneeId,
         status:
           override.status !== undefined
@@ -570,10 +589,14 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
         continue;
       }
       const pending: typeof override = {};
-      if (override.assigneeId !== undefined) {
-        const serverAssignee = serverMember.assigneeId ?? null;
-        if (serverAssignee !== (override.assigneeId ?? null)) {
-          pending.assigneeId = override.assigneeId;
+      if (override.assigneeIds !== undefined) {
+        const serverAssigneeIds = getAssigneeIds(serverMember);
+        const overrideAssigneeIds = (override.assigneeIds ?? []) as string[];
+        const sameAssignees =
+          JSON.stringify(serverAssigneeIds) ===
+          JSON.stringify(overrideAssigneeIds);
+        if (!sameAssignees) {
+          pending.assigneeIds = override.assigneeIds;
         } else {
           changed = true;
         }
@@ -607,7 +630,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     if (changed) {
       setLocalOverrides(next);
     }
-  }, [members, localOverrides]);
+  }, [members, localOverrides, getAssigneeIds]);
 
   const dataColumns: GridColumn[] = useMemo(() => {
     const scoreColumns: GridColumn[] = scoreConfig.map((score, index) => ({
@@ -688,16 +711,21 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       },
       {
         key: "assignee",
-        label: "Assignee",
+        label: "Assignees",
         width: 110,
         sortable: true,
         kind: "text",
         editable: "assignee",
         getValue: (member) => {
-          if (!member.assigneeId) return "Unassigned";
-          const leader = leaderMap.get(member.assigneeId);
-          if (!leader) return "Unassigned";
-          return `${leader.firstName} ${leader.lastName}`.trim();
+          const assigneeIds = getAssigneeIds(member);
+          if (assigneeIds.length === 0) return "Unassigned";
+          const names = assigneeIds
+            .map((id) => leaderMap.get(id))
+            .filter((leader): leader is LeaderInfo => !!leader)
+            .map((leader) => `${leader.firstName} ${leader.lastName}`.trim());
+          if (names.length === 0) return "Unassigned";
+          if (names.length === 1) return names[0];
+          return `${names[0]} +${names.length - 1}`;
         },
       },
       {
@@ -811,7 +839,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     return ordered
       .filter((column) => !hidden.has(column.key))
       .filter((column) => !HIDE_ON_MOBILE_COLUMNS.has(column.key));
-  }, [scoreConfig, leaderMap, customFields, columnConfig]);
+  }, [scoreConfig, leaderMap, customFields, columnConfig, getAssigneeIds]);
 
   const dataColumnsWidth = useMemo(
     () => dataColumns.reduce((sum, column) => sum + column.width, 0),
@@ -1188,35 +1216,35 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     }
   }, [editSheet, activeEditMember, setCustomFieldMut, groupId]);
 
-  const handleAssignChange = async (assigneeId?: string) => {
+  const handleAssignChange = async (assigneeIds: string[]) => {
     if (!editSheet || !activeEditMember) return;
     const memberId = editSheet.memberId;
-    const previousAssigneeOverride = localOverrides[memberId]?.assigneeId;
+    const previousAssigneeOverride = localOverrides[memberId]?.assigneeIds;
+    const normalizedAssigneeIds = Array.from(new Set(assigneeIds));
 
     setIsUpdatingField(true);
     setLocalOverrides((prev) => ({
       ...prev,
       [memberId]: {
         ...prev[memberId],
-        assigneeId: assigneeId ?? null,
+        assigneeIds: normalizedAssigneeIds,
       },
     }));
     try {
       await setAssigneeMut({
         groupId: groupId as Id<"groups">,
         groupMemberId: memberId as Id<"groupMembers">,
-        assigneeId: assigneeId ? (assigneeId as Id<"users">) : undefined,
+        assigneeIds: normalizedAssigneeIds as Id<"users">[],
       });
-      setEditSheet(null);
     } catch (error) {
       // Roll back optimistic assignee override on mutation failure.
       setLocalOverrides((prev) => {
         const existing = prev[memberId] ?? {};
         const restored = { ...existing };
         if (previousAssigneeOverride === undefined) {
-          delete restored.assigneeId;
+          delete restored.assigneeIds;
         } else {
-          restored.assigneeId = previousAssigneeOverride;
+          restored.assigneeIds = previousAssigneeOverride;
         }
         if (Object.keys(restored).length === 0) {
           const next = { ...prev };
@@ -1915,7 +1943,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
           <Pressable style={styles.editSheetCard} onPress={() => undefined}>
             <Text style={styles.editSheetTitle}>
               {editSheet?.type === "assignee"
-                ? "Update assignee"
+                ? "Update assignees"
                 : editSheet?.type === "status"
                   ? "Update status"
                   : editSheet?.type === "customText"
@@ -2067,7 +2095,10 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
             ) : editSheet?.type === "assignee" ? (
               <ScrollView style={styles.optionList}>
                 {leaderOptions.map((leader) => {
-                  const isSelected = activeEditMember?.assigneeId === leader.id;
+                  const selectedAssigneeIds = activeEditMember
+                    ? getAssigneeIds(activeEditMember)
+                    : [];
+                  const isSelected = selectedAssigneeIds.includes(leader.id);
                   return (
                     <TouchableOpacity
                       key={leader.id}
@@ -2075,7 +2106,12 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
                         styles.optionRow,
                         isSelected && styles.optionRowSelected,
                       ]}
-                      onPress={() => handleAssignChange(leader.id)}
+                      onPress={() => {
+                        const nextAssigneeIds = isSelected
+                          ? selectedAssigneeIds.filter((id) => id !== leader.id)
+                          : [...selectedAssigneeIds, leader.id];
+                        handleAssignChange(nextAssigneeIds);
+                      }}
                       disabled={isUpdatingField}
                     >
                       <Text style={styles.optionText}>
@@ -2093,10 +2129,17 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
                 })}
                 <TouchableOpacity
                   style={styles.optionRow}
-                  onPress={() => handleAssignChange(undefined)}
+                  onPress={() => handleAssignChange([])}
                   disabled={isUpdatingField}
                 >
-                  <Text style={styles.optionText}>Clear assignee</Text>
+                  <Text style={styles.optionText}>Clear all assignees</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.optionRow}
+                  onPress={() => setEditSheet(null)}
+                  disabled={isUpdatingField}
+                >
+                  <Text style={styles.optionText}>Done</Text>
                 </TouchableOpacity>
               </ScrollView>
             ) : (

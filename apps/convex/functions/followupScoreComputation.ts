@@ -118,7 +118,7 @@ export const getMembersForScoring = internalQuery({
  * Upsert a batch of score docs into memberFollowupScores.
  * Uses the by_groupMember index for fast lookup.
  *
- * Optional initialStatus/initialAssigneeId are applied when INSERTING a new doc,
+ * Optional initialStatus/initialAssigneeId(s) are applied when INSERTING a new doc,
  * ensuring these values are set atomically during quick-add (avoids race condition
  * with the separate applyQuickAddFollowupPatch mutation).
  */
@@ -128,8 +128,16 @@ export const internalUpsertScoreBatch = internalMutation({
     scores: v.array(v.any()),
     initialStatus: v.optional(v.string()),
     initialAssigneeId: v.optional(v.id("users")),
+    initialAssigneeIds: v.optional(v.array(v.id("users"))),
   },
   handler: async (ctx, args) => {
+    const normalizedInitialAssigneeIds = args.initialAssigneeIds !== undefined
+      ? Array.from(new Set(args.initialAssigneeIds))
+      : args.initialAssigneeId
+        ? [args.initialAssigneeId]
+        : undefined;
+    const primaryInitialAssigneeId = normalizedInitialAssigneeIds?.[0] ?? args.initialAssigneeId;
+
     for (const score of args.scores) {
       const existing = await ctx.db
         .query("memberFollowupScores")
@@ -186,7 +194,8 @@ export const internalUpsertScoreBatch = internalMutation({
         const insertDoc = {
           ...doc,
           ...(args.initialStatus !== undefined && { status: args.initialStatus }),
-          ...(args.initialAssigneeId !== undefined && { assigneeId: args.initialAssigneeId }),
+          ...(primaryInitialAssigneeId !== undefined && { assigneeId: primaryInitialAssigneeId }),
+          ...(normalizedInitialAssigneeIds !== undefined && { assigneeIds: normalizedInitialAssigneeIds }),
         };
         await ctx.db.insert("memberFollowupScores", insertDoc);
       }
@@ -483,7 +492,7 @@ export const computeGroupScores = internalAction({
  * Recompute score for a single member.
  * Called after followup add, snooze change, etc.
  *
- * Optional status/assigneeId are passed through to the upsert so they're
+ * Optional status/assigneeId(s) are passed through to the upsert so they're
  * set atomically when creating a new score doc (avoids race with patch).
  */
 export const computeSingleMemberScore = internalAction({
@@ -492,6 +501,7 @@ export const computeSingleMemberScore = internalAction({
     groupMemberId: v.id("groupMembers"),
     status: v.optional(v.string()),
     assigneeId: v.optional(v.id("users")),
+    assigneeIds: v.optional(v.array(v.id("users"))),
   },
   handler: async (ctx, args) => {
     // Get group config
@@ -552,6 +562,7 @@ export const computeSingleMemberScore = internalAction({
         scores: [scoreDoc],
         initialStatus: args.status,
         initialAssigneeId: args.assigneeId,
+        initialAssigneeIds: args.assigneeIds,
       }
     );
   },

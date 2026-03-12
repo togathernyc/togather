@@ -740,6 +740,63 @@ export default defineSchema({
     .index("by_snoozeUntil", ["snoozeUntil"]),
 
   // =============================================================================
+  // TASKS
+  // =============================================================================
+  // Canonical leader task system for reminders, reach-out intake, and manual work.
+  // Supports group-level ownership, person assignment, hierarchy, and source tracing.
+
+  tasks: defineTable({
+    groupId: v.id("groups"),
+    title: v.string(),
+    description: v.optional(v.string()),
+    status: v.string(), // "open" | "snoozed" | "done" | "canceled"
+    responsibilityType: v.string(), // "group" | "person"
+    assignedToId: v.optional(v.id("users")),
+    createdById: v.optional(v.id("users")), // optional for system-created tasks
+    sourceType: v.string(), // "manual" | "bot_task_reminder" | "reach_out" | "followup"
+    sourceRef: v.optional(v.string()),
+    sourceKey: v.optional(v.string()), // idempotency key for generated tasks
+    targetType: v.string(), // "none" | "member" | "group"
+    targetMemberId: v.optional(v.id("users")),
+    targetGroupId: v.optional(v.id("groups")),
+    tags: v.optional(v.array(v.string())),
+    parentTaskId: v.optional(v.id("tasks")),
+    orderKey: v.optional(v.number()),
+    dueAt: v.optional(v.number()),
+    snoozedUntil: v.optional(v.number()),
+    completedAt: v.optional(v.number()),
+    canceledAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_group", ["groupId"])
+    .index("by_group_status", ["groupId", "status"])
+    .index("by_group_assignee_status", ["groupId", "assignedToId", "status"])
+    .index("by_assignee_status", ["assignedToId", "status"])
+    .index("by_responsibility_status", ["responsibilityType", "status"])
+    .index("by_parent", ["parentTaskId"])
+    .index("by_sourceKey", ["sourceKey"])
+    .index("by_target_member", ["targetMemberId"])
+    .index("by_target_group", ["targetGroupId"]),
+
+  // =============================================================================
+  // TASK EVENTS
+  // =============================================================================
+  // Append-only audit timeline for task lifecycle changes.
+
+  taskEvents: defineTable({
+    taskId: v.id("tasks"),
+    groupId: v.id("groups"),
+    type: v.string(), // "created" | "assigned" | "claimed" | "done" | "snoozed" | "canceled" | "updated"
+    performedById: v.optional(v.id("users")),
+    payload: v.optional(v.any()),
+    createdAt: v.number(),
+  })
+    .index("by_task", ["taskId"])
+    .index("by_task_createdAt", ["taskId", "createdAt"])
+    .index("by_group_createdAt", ["groupId", "createdAt"]),
+
+  // =============================================================================
   // MEMBER FOLLOWUP SCORES (pre-computed for paginated list reads)
   // =============================================================================
   // Single source of truth for the followup screen. Pre-computed scores + manual
@@ -803,6 +860,7 @@ export default defineSchema({
     // ── Manual leader fields (Phase 2 — set via mutations) ──
     status: v.optional(v.string()),
     assigneeId: v.optional(v.id("users")),
+    assigneeIds: v.optional(v.array(v.id("users"))),
     connectionPoint: v.optional(v.string()),
 
     // ── Custom field slots (configurable columns) ──
@@ -1167,7 +1225,7 @@ export default defineSchema({
     channelId: v.id("chatChannels"),
     senderId: v.optional(v.id("users")), // Optional for bot/system messages
     content: v.string(), // Message text
-    contentType: v.string(), // "text" | "image" | "file" | "system" | "bot"
+    contentType: v.string(), // "text" | "image" | "file" | "system" | "bot" | "reach_out_request" | "task_card"
     attachments: v.optional(
       v.array(
         v.object({
@@ -1200,12 +1258,17 @@ export default defineSchema({
     hideLinkPreview: v.optional(v.boolean()),
     // Reach Out request reference (for request cards in leaders channel)
     reachOutRequestId: v.optional(v.id("reachOutRequests")),
+    // Canonical task reference for task-aware chat cards
+    taskId: v.optional(v.id("tasks")),
+    // Optional idempotency key for generated bot/task posts
+    sourceKey: v.optional(v.string()),
   })
     .index("by_channel", ["channelId"])
     .index("by_channel_createdAt", ["channelId", "createdAt"])
     .index("by_sender", ["senderId"])
     .index("by_parentMessage", ["parentMessageId"])
-    .index("by_createdAt", ["createdAt"]),
+    .index("by_createdAt", ["createdAt"])
+    .index("by_sourceKey", ["sourceKey"]),
 
   /**
    * Chat Message Reactions
@@ -1485,7 +1548,7 @@ export default defineSchema({
     submittedById: v.id("users"),
     groupMemberId: v.id("groupMembers"),        // For followup integration
     content: v.string(),
-    status: v.string(),                          // "pending" | "assigned" | "contacted" | "resolved"
+    status: v.string(),                          // "pending" | "assigned" | "contacted" | "resolved" | "revoked"
     assignedToId: v.optional(v.id("users")),
     assignedAt: v.optional(v.number()),
     contactActions: v.optional(v.array(v.object({
@@ -1499,6 +1562,7 @@ export default defineSchema({
     resolvedAt: v.optional(v.number()),
     resolutionNotes: v.optional(v.string()),
     leadersMessageId: v.optional(v.id("chatMessages")),  // Card in leaders channel
+    taskId: v.optional(v.id("tasks")), // Linked canonical task (migration path)
     createdAt: v.number(),
     updatedAt: v.number(),
   })

@@ -55,9 +55,8 @@ export function GroupNonMemberView({
         {
           text: "Archive",
           style: "destructive",
-          onPress: () => {
-            archiveGroupMutation.mutate();
-            setShowOptionsModal(false);
+          onPress: async () => {
+            await archiveGroupMutation.mutate();
           },
         },
       ]

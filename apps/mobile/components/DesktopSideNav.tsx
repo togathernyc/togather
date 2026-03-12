@@ -1,5 +1,5 @@
 import { View, Pressable, StyleSheet } from "react-native";
-import { usePathname, router } from "expo-router";
+import { type Href, usePathname, router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
@@ -9,7 +9,7 @@ type NavItem = {
   label: string;
   icon: keyof typeof Ionicons.glyphMap;
   iconFocused: keyof typeof Ionicons.glyphMap;
-  href: string;
+  href: Href;
   match: (path: string) => boolean;
 };
 
@@ -78,7 +78,7 @@ export function DesktopSideNav() {
         return (
           <Pressable
             key={item.key}
-            onPress={() => router.push(item.href as any)}
+            onPress={() => router.push(item.href)}
             style={styles.item}
           >
             <View style={styles.itemInner}>

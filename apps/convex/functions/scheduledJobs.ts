@@ -925,10 +925,16 @@ type TaskReminderTask = {
 
 type TaskReminderSchedule = Record<string, TaskReminderTask[]>;
 
+type TaskReminderDeliveryMode = "task_only" | "task_and_channel_post";
+
 type TaskReminderConfigData = {
   roles: TaskReminderRole[];
   schedule: TaskReminderSchedule;
+  deliveryMode?: TaskReminderDeliveryMode;
+  targetChannelSlugs?: string[];
+  // Legacy fields kept for backwards compatibility with existing configs.
   delivery?: "chat" | "notification" | "both";
+  targetChannelSlug?: string;
 };
 
 /**
@@ -972,12 +978,20 @@ export const runTaskReminderBot = internalAction({
       return { skipped: true, reason: "config_not_found_or_disabled" };
     }
 
-    const configData = (config.config as TaskReminderConfigData & { targetChannelSlug?: string }) || {};
+    const configData = (config.config as TaskReminderConfigData) || {};
     const schedule: TaskReminderSchedule | undefined = configData.schedule;
     const roles: TaskReminderRole[] = configData.roles || [];
-    // Get configured channel, or default to leaders for task reminders
-    const targetChannelSlug: string = configData.targetChannelSlug || "leaders";
-    const delivery: "chat" | "notification" | "both" = configData.delivery || "both";
+    const deliveryMode: TaskReminderDeliveryMode =
+      configData.deliveryMode ??
+      (configData.delivery === "notification"
+        ? "task_only"
+        : "task_and_channel_post");
+    const targetChannelSlugs: string[] = [
+      ...(configData.targetChannelSlugs ?? []),
+      ...(configData.targetChannelSlug ? [configData.targetChannelSlug] : []),
+    ].filter(Boolean);
+    const resolvedTargetChannelSlugs =
+      targetChannelSlugs.length > 0 ? [...new Set(targetChannelSlugs)] : ["leaders"];
 
     if (!schedule || roles.length === 0) {
       console.log(
@@ -1004,7 +1018,14 @@ export const runTaskReminderBot = internalAction({
       weekday: "long",
       timeZone: timezone,
     });
+    const dateFormatter: Intl.DateTimeFormat = new Intl.DateTimeFormat("en-CA", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      timeZone: timezone,
+    });
     const todayName: string = dayFormatter.format(nowDate).toLowerCase();
+    const todayDateKey: string = dateFormatter.format(nowDate);
 
     const todayTasks: TaskReminderTask[] = schedule[todayName] || [];
 
@@ -1029,8 +1050,10 @@ export const runTaskReminderBot = internalAction({
     let messagesSent = 0;
     for (const task of todayTasks) {
       // Get all assigned members for this task's roles
-      const mentionedUserIds: Id<"users">[] = [];
-      const memberNames: string[] = [];
+      const assignmentsByUserId = new Map<
+        string,
+        { userId: Id<"users">; memberName: string; sourceKey: string; taskId: Id<"tasks"> }
+      >();
 
       for (const roleId of task.roleIds) {
         const role = roleMap.get(roleId);
@@ -1048,74 +1071,70 @@ export const runTaskReminderBot = internalAction({
         );
 
         if (user) {
-          mentionedUserIds.push(user._id);
           const displayName = [user.firstName, user.lastName]
             .filter(Boolean)
             .join(" ");
-          memberNames.push(displayName || "Member");
+          const memberName = displayName || "Member";
+
+          const sourceKey = `bot_task_reminder:${configId}:${todayDateKey}:${task.id}:${user._id}`;
+          const taskId = await ctx.runMutation(
+            internal.functions.tasks.index.createFromBotReminder,
+            {
+              groupId,
+              assignedToId: user._id,
+              title: task.message,
+              description: `Task reminder generated for ${todayName}`,
+              sourceKey,
+            }
+          );
+          assignmentsByUserId.set(user._id.toString(), {
+            userId: user._id,
+            memberName,
+            sourceKey,
+            taskId,
+          });
         }
       }
 
-      if (mentionedUserIds.length === 0) {
+      const assignments = [...assignmentsByUserId.values()];
+      if (assignments.length === 0) {
         console.log(
           `[TaskReminder] No assigned members found for task "${task.message}"`
         );
         continue;
       }
 
-      // Build the message with @[Name] mentions
-      const mentionText = memberNames.map((name) => `@[${name}]`).join(", ");
-      const message = `📋 **Task Reminder**\n\nHey ${mentionText}, you have a task today:\n\n${task.message}`;
-
-      const groupName = group?.name || "your group";
-      const communityId = group?.communityId;
-
-      if (delivery === "notification") {
-        // Notification only: send push + email directly, no chat message
-        const results = await notifyBatch(ctx, {
-          type: "bot_task_reminder",
-          userIds: mentionedUserIds,
-          data: {
-            message: task.message,
-            taskTitle: "Task Reminder",
-            groupName,
-            groupId: groupId.toString(),
-            communityId: communityId ? communityId.toString() : "",
-          },
-          channels: ["push", "email"],
-          mode: "multi",
-          groupId,
-          communityId: communityId ?? undefined,
-        });
-        const anySucceeded = results.some((r) => r.success);
-        if (anySucceeded) {
-          messagesSent++;
-        }
+      if (deliveryMode === "task_only") {
         console.log(
-          `[TaskReminder] Sent notification-only reminder to ${mentionedUserIds.length} members for task: ${task.message} (success: ${anySucceeded})`
+          `[TaskReminder] Created ${assignments.length} task(s) without channel post for "${task.message}"`
         );
-      } else {
-        // "chat" or "both": send chat message
-        const result = await ctx.runAction(
-          internal.functions.scheduledJobs.sendBotMessage,
-          {
-            groupId,
-            message,
-            targetChannelSlug,
-            botType: "task_reminder",
-            // Only include mentions for "both" mode (triggers push + email)
-            // "chat" mode: no mentions = no push/email notifications
-            mentionedUserIds: delivery === "both" ? mentionedUserIds : [],
-          }
-        );
+        continue;
+      }
 
-        if (result.success) {
-          messagesSent++;
-          console.log(
-            `[TaskReminder] Sent ${delivery} reminder to ${mentionedUserIds.length} members for task: ${task.message}`
+      for (const assignment of assignments) {
+        for (const targetChannelSlug of resolvedTargetChannelSlugs) {
+          const postSourceKey = `${assignment.sourceKey}:channel:${targetChannelSlug}`;
+          const result = await ctx.runAction(
+            internal.functions.scheduledJobs.sendBotMessage,
+            {
+              groupId,
+              message: `Task reminder: ${task.message}`,
+              targetChannelSlug,
+              botType: "task_reminder",
+              mentionedUserIds: [assignment.userId],
+              contentType: "task_card",
+              taskId: assignment.taskId,
+              sourceKey: postSourceKey,
+            }
           );
-        } else {
-          console.error(`[TaskReminder] Failed to send reminder: ${result.error}`);
+
+          if (result.success) {
+            messagesSent++;
+          } else {
+            console.error(
+              `[TaskReminder] Failed task-card post for task ${assignment.taskId} to ${targetChannelSlug}: ${result.error}`
+            );
+          }
         }
       }
     }
@@ -1353,10 +1372,23 @@ export const sendBotMessage = internalAction({
     targetChannelSlug: v.optional(v.string()),
     botType: v.optional(v.string()), // "birthday", "welcome", "task_reminder"
     mentionedUserIds: v.optional(v.array(v.id("users"))),
+    contentType: v.optional(v.string()),
+    taskId: v.optional(v.id("tasks")),
+    sourceKey: v.optional(v.string()),
   },
   handler: async (
     ctx,
-    { groupId, message, chatType, targetChannelSlug, botType, mentionedUserIds }
+    {
+      groupId,
+      message,
+      chatType,
+      targetChannelSlug,
+      botType,
+      mentionedUserIds,
+      contentType,
+      taskId,
+      sourceKey,
+    }
   ): Promise<
     | { success: true; channelId: Id<"chatChannels">; messageId: Id<"chatMessages"> }
     | { success: false; error: string }
@@ -1413,6 +1445,9 @@ export const sendBotMessage = internalAction({
         content: message,
         botType: botType || "system",
         mentionedUserIds: mentionedUserIds || undefined,
+        contentType,
+        taskId,
+        sourceKey,
       }
     );
 
@@ -1497,9 +1532,25 @@ export const insertBotMessage = internalMutation({
     content: v.string(),
     botType: v.string(),
     mentionedUserIds: v.optional(v.array(v.id("users"))),
+    contentType: v.optional(v.string()),
+    taskId: v.optional(v.id("tasks")),
+    sourceKey: v.optional(v.string()),
   },
-  handler: async (ctx, { channelId, content, botType, mentionedUserIds }) => {
+  handler: async (
+    ctx,
+    { channelId, content, botType, mentionedUserIds, contentType, taskId, sourceKey },
+  ) => {
     const now_ = now();
+
+    if (sourceKey) {
+      const existing = await ctx.db
+        .query("chatMessages")
+        .withIndex("by_sourceKey", (q) => q.eq("sourceKey", sourceKey))
+        .first();
+      if (existing) {
+        return existing._id;
+      }
+    }
 
     // Determine bot display name
     const botNames: Record<string, string> = {
@@ -1516,11 +1567,13 @@ export const insertBotMessage = internalMutation({
       channelId,
       // senderId is undefined for bot messages
       content,
-      contentType: "bot",
+      contentType: contentType || "bot",
       createdAt: now_,
       isDeleted: false,
       senderName,
       mentionedUserIds: mentionedUserIds || undefined,
+      taskId,
+      sourceKey,
     });
 
     // Update channel with last message info
