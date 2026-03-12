@@ -39,6 +39,8 @@ export interface UseMemberSearchOptions {
   excludeUserIds?: (number | string)[];
   /** Filter to specific group */
   groupId?: string;
+  /** Restrict results to active members of any of these groups */
+  includeGroupIds?: string[];
   /** Exclude active members of this group from results (server-side) */
   excludeGroupMembersOfGroupId?: string;
   /** Minimum characters before search triggers (default: 2) */
@@ -113,6 +115,7 @@ export function useMemberSearch(
     pageSize = 20,
     excludeUserIds = [],
     groupId,
+    includeGroupIds,
     excludeGroupMembersOfGroupId,
     minSearchLength = 2,
     enabled = true,
@@ -138,6 +141,19 @@ export function useMemberSearch(
     return () => clearTimeout(timer);
   }, [searchQuery, debounceMs]);
 
+  const includeGroupIdsKey = useMemo(
+    () => (includeGroupIds && includeGroupIds.length > 0 ? includeGroupIds.join(",") : ""),
+    [includeGroupIds]
+  );
+
+  const normalizedIncludeGroupIds = useMemo(
+    () =>
+      includeGroupIds && includeGroupIds.length > 0
+        ? includeGroupIds.map((id) => String(id) as Id<"groups">)
+        : undefined,
+    [includeGroupIdsKey]
+  );
+
   // Reset pagination when search or filters change (but not on initial mount)
   useEffect(() => {
     if (isInitialMount.current) {
@@ -146,7 +162,7 @@ export function useMemberSearch(
     }
     setCurrentPage(1);
     setAllMembers([]);
-  }, [debouncedQuery, groupId, excludeGroupMembersOfGroupId]);
+  }, [debouncedQuery, groupId, includeGroupIdsKey, excludeGroupMembersOfGroupId]);
 
   // Determine if we should fetch - requires a valid search term
   const shouldFetch =
@@ -166,6 +182,7 @@ export function useMemberSearch(
           communityId: community?.id as Id<"communities">,
           search: debouncedQuery.trim(),
           excludeUserIds: excludeUserIds.map((id) => String(id) as Id<"users">),
+          includeGroupIds: normalizedIncludeGroupIds,
           excludeGroupId: excludeGroupMembersOfGroupId
             ? (String(excludeGroupMembersOfGroupId) as Id<"groups">)
             : undefined,

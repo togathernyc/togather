@@ -132,6 +132,14 @@ export default function ChannelMembersScreen() {
   // Shared channel state
   const isSharedChannel = !!channelData?.isShared;
   const sharedGroups: SharedGroupEntry[] = (channelData?.sharedGroups as SharedGroupEntry[] | undefined) ?? [];
+  const acceptedSharedGroupIds = useMemo(
+    () => sharedGroups.filter((sg) => sg.status === "accepted").map((sg) => sg.groupId),
+    [sharedGroups]
+  );
+  const sharedEligibleGroupIds = useMemo(() => {
+    if (!channelData || !isSharedChannel) return [];
+    return [channelData.groupId as Id<"groups">, ...acceptedSharedGroupIds];
+  }, [channelData, isSharedChannel, acceptedSharedGroupIds]);
 
   // Is the current URL group the primary (owner) group?
   const isPrimaryGroup = channelData ? channelData.groupId === groupId : false;
@@ -589,6 +597,8 @@ export default function ChannelMembersScreen() {
         <AddMemberModalContent
           groupId={groupId as Id<"groups">}
           existingMemberIds={existingMemberIds}
+          isSharedChannel={isSharedChannel}
+          eligibleGroupIds={sharedEligibleGroupIds}
           onAddMembers={handleAddMembers}
           onClose={() => setShowAddMemberModal(false)}
           isLoading={isAddingMembers}
@@ -643,6 +653,8 @@ export default function ChannelMembersScreen() {
 function AddMemberModalContent({
   groupId,
   existingMemberIds,
+  isSharedChannel,
+  eligibleGroupIds,
   onAddMembers,
   onClose,
   isLoading,
@@ -650,6 +662,8 @@ function AddMemberModalContent({
 }: {
   groupId: Id<"groups">;
   existingMemberIds: Id<"users">[];
+  isSharedChannel: boolean;
+  eligibleGroupIds: Id<"groups">[];
   onAddMembers: (members: CommunityMember[]) => void;
   onClose: () => void;
   isLoading: boolean;
@@ -699,7 +713,9 @@ function AddMemberModalContent({
       <View style={styles.infoNote}>
         <Ionicons name="information-circle-outline" size={16} color="#666" />
         <Text style={styles.infoNoteText}>
-          People not in this group will be automatically added when you add them to this channel.
+          {isSharedChannel
+            ? "Only primary + connected group members appear here. Adding someone from a connected group adds them to this channel only, not to the primary group."
+            : "People not in this group will be automatically added when you add them to this channel."}
         </Text>
       </View>
 
@@ -717,10 +733,11 @@ function AddMemberModalContent({
         <MemberSearch
           mode="multi"
           groupId={groupId}
+          includeGroupIds={isSharedChannel ? eligibleGroupIds : undefined}
           excludeUserIds={existingMemberIds}
           selectedMembers={selectedMembers}
           onMultiSelect={setSelectedMembers}
-          placeholder="Search group members to add..."
+          placeholder={isSharedChannel ? "Search primary + connected group members..." : "Search group members to add..."}
           showEmptyState
           showActionButton
           actionIcon="add-circle-outline"
