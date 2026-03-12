@@ -778,8 +778,8 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
           onSelectionChange={handleSelectionChange}
           onContentSizeChange={isWeb ? undefined : (event) => {
             const contentHeight = event.nativeEvent.contentSize.height;
-            const maxHeight = LINE_HEIGHT * MAX_INPUT_LINES + INPUT_PADDING_VERTICAL * 2;
-            setNativeScrollEnabled(contentHeight >= maxHeight);
+            const maxContentHeight = LINE_HEIGHT * MAX_INPUT_LINES;
+            setNativeScrollEnabled(contentHeight >= maxContentHeight);
           }}
           placeholder="Message..."
           placeholderTextColor="#999"

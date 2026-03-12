@@ -133,7 +133,7 @@ describe('MessageInput', () => {
     });
 
     it('enables scrolling when content reaches max height', () => {
-      const maxHeight = LINE_HEIGHT * MAX_INPUT_LINES + INPUT_PADDING_VERTICAL * 2;
+      const maxContentHeight = LINE_HEIGHT * MAX_INPUT_LINES;
 
       const { getByPlaceholderText } = render(
         <MessageInput channelId={'test-channel' as any} />
@@ -142,7 +142,7 @@ describe('MessageInput', () => {
 
       act(() => {
         fireEvent(input, 'contentSizeChange', {
-          nativeEvent: { contentSize: { width: 300, height: maxHeight + 10 } },
+          nativeEvent: { contentSize: { width: 300, height: maxContentHeight + 10 } },
         });
       });
 
@@ -150,7 +150,7 @@ describe('MessageInput', () => {
     });
 
     it('disables scrolling again when content shrinks below max', () => {
-      const maxHeight = LINE_HEIGHT * MAX_INPUT_LINES + INPUT_PADDING_VERTICAL * 2;
+      const maxContentHeight = LINE_HEIGHT * MAX_INPUT_LINES;
 
       const { getByPlaceholderText } = render(
         <MessageInput channelId={'test-channel' as any} />
@@ -160,7 +160,7 @@ describe('MessageInput', () => {
       // First, grow beyond max
       act(() => {
         fireEvent(input, 'contentSizeChange', {
-          nativeEvent: { contentSize: { width: 300, height: maxHeight + 50 } },
+          nativeEvent: { contentSize: { width: 300, height: maxContentHeight + 50 } },
         });
       });
       expect(input.props.scrollEnabled).toBe(true);
