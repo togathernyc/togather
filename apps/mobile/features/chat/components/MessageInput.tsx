@@ -68,8 +68,9 @@ interface MentionMatch {
   startIndex: number;
 }
 
-const MAX_INPUT_LINES = 5;
+const MAX_INPUT_LINES = 8;
 const LINE_HEIGHT = 20;
+const INPUT_PADDING_VERTICAL = 10;
 const TYPING_STOP_DELAY = 3000; // 3 seconds
 const LINK_PREVIEW_DEBOUNCE = 500; // 500ms debounce for URL detection
 
@@ -740,18 +741,19 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
         {/* Text Input */}
         <TextInput
           ref={textInputRef}
-          style={[styles.input, { height: Math.max(40, inputHeight) }]}
+          style={[styles.input, { height: Math.max(40, inputHeight + INPUT_PADDING_VERTICAL * 2) }]}
           value={text}
           onChangeText={handleTextChange}
           onSelectionChange={handleSelectionChange}
           onContentSizeChange={(event) => {
-            const height = event.nativeEvent.contentSize.height;
-            const maxHeight = LINE_HEIGHT * MAX_INPUT_LINES;
-            setInputHeight(Math.min(height, maxHeight));
+            const contentHeight = event.nativeEvent.contentSize.height;
+            const maxContentHeight = LINE_HEIGHT * MAX_INPUT_LINES;
+            setInputHeight(Math.min(contentHeight, maxContentHeight));
           }}
           placeholder="Message..."
           placeholderTextColor="#999"
           multiline
+          scrollEnabled={inputHeight >= LINE_HEIGHT * MAX_INPUT_LINES}
           maxLength={2000}
           editable={!uploading && !isSending}
         />
@@ -918,9 +920,9 @@ const styles = StyleSheet.create({
     borderColor: '#e0e0e0',
     borderRadius: 20,
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingVertical: INPUT_PADDING_VERTICAL,
     fontSize: 16,
-    maxHeight: LINE_HEIGHT * MAX_INPUT_LINES,
+    maxHeight: LINE_HEIGHT * MAX_INPUT_LINES + INPUT_PADDING_VERTICAL * 2,
     backgroundColor: '#f9f9f9',
   },
   sendButton: {
