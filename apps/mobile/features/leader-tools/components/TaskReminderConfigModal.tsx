@@ -9,6 +9,8 @@ import {
   ScrollView,
   ActivityIndicator,
   KeyboardAvoidingView,
+  Keyboard,
+  Pressable,
   Platform,
   Alert,
 } from "react-native";
@@ -529,98 +531,121 @@ export function TaskReminderConfigModal({
     if (!editingTask) return null;
 
     return (
-      <Modal visible={!!editingTask} animationType="slide" transparent>
-        <View style={styles.taskEditorOverlay}>
-          <View style={[styles.taskEditorContainer, { paddingBottom: insets.bottom + 16 }]}>
-            <View style={styles.taskEditorHeader}>
-              <Text style={styles.taskEditorTitle}>
-                {config.schedule[editingTaskDay!]?.find((t) => t.id === editingTask.id)
-                  ? "Edit Task"
-                  : "New Task"}
-              </Text>
-              <TouchableOpacity onPress={() => setEditingTask(null)}>
-                <Ionicons name="close" size={24} color="#333" />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView style={styles.taskEditorContent}>
-              <Text style={styles.fieldLabel}>Message</Text>
-              <TextInput
-                style={[styles.input, styles.textareaInput]}
-                value={editingTask.message}
-                onChangeText={(text) =>
-                  setEditingTask((prev) => prev && { ...prev, message: text })
-                }
-                placeholder="Enter reminder message"
-                placeholderTextColor="#999"
-                multiline
-                numberOfLines={3}
-              />
-
-              <Text style={styles.fieldLabel}>Assign to Roles</Text>
-              <View style={styles.roleCheckboxes}>
-                {config.roles.length === 0 ? (
-                  <Text style={styles.noRolesText}>
-                    No roles defined. Add roles above first.
-                  </Text>
-                ) : (
-                  config.roles.map((role) => (
-                    <TouchableOpacity
-                      key={role.id}
-                      style={[
-                        styles.roleCheckbox,
-                        editingTask.roleIds.includes(role.id) &&
-                          styles.roleCheckboxSelected,
-                      ]}
-                      onPress={() => {
-                        setEditingTask((prev) => {
-                          if (!prev) return prev;
-                          const isSelected = prev.roleIds.includes(role.id);
-                          return {
-                            ...prev,
-                            roleIds: isSelected
-                              ? prev.roleIds.filter((id) => id !== role.id)
-                              : [...prev.roleIds, role.id],
-                          };
-                        });
-                      }}
-                    >
-                      <Ionicons
-                        name={
-                          editingTask.roleIds.includes(role.id)
-                            ? "checkbox"
-                            : "square-outline"
-                        }
-                        size={20}
-                        color={
-                          editingTask.roleIds.includes(role.id)
-                            ? primaryColor
-                            : "#666"
-                        }
-                      />
-                      <Text style={styles.roleCheckboxText}>
-                        {role.name || "Unnamed role"}
-                      </Text>
-                    </TouchableOpacity>
-                  ))
-                )}
+      <Modal
+        visible={!!editingTask}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setEditingTask(null)}
+      >
+        <KeyboardAvoidingView
+          style={styles.taskEditorOverlay}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          keyboardVerticalOffset={Platform.OS === "ios" ? insets.top : 0}
+        >
+          <Pressable
+            testID="task-editor-backdrop"
+            style={styles.taskEditorOverlayBackdrop}
+            onPress={Keyboard.dismiss}
+          >
+            <Pressable
+              style={[styles.taskEditorContainer, { paddingBottom: insets.bottom + 16 }]}
+              onPress={(event) => event.stopPropagation()}
+            >
+              <View style={styles.taskEditorHeader}>
+                <Text style={styles.taskEditorTitle}>
+                  {config.schedule[editingTaskDay!]?.find((t) => t.id === editingTask.id)
+                    ? "Edit Task"
+                    : "New Task"}
+                </Text>
+                <TouchableOpacity onPress={() => setEditingTask(null)}>
+                  <Ionicons name="close" size={24} color="#333" />
+                </TouchableOpacity>
               </View>
 
-            </ScrollView>
+              <ScrollView
+                testID="task-editor-scroll"
+                style={styles.taskEditorContent}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+              >
+                <Text style={styles.fieldLabel}>Message</Text>
+                <TextInput
+                  style={[styles.input, styles.textareaInput]}
+                  value={editingTask.message}
+                  onChangeText={(text) =>
+                    setEditingTask((prev) => prev && { ...prev, message: text })
+                  }
+                  placeholder="Enter reminder message"
+                  placeholderTextColor="#999"
+                  multiline
+                  numberOfLines={3}
+                />
 
-            <TouchableOpacity
-              style={[
-                styles.saveTaskButton,
-                (!editingTask.message || editingTask.roleIds.length === 0) &&
-                  styles.saveTaskButtonDisabled,
-              ]}
-              onPress={() => saveTask(editingTask)}
-              disabled={!editingTask.message || editingTask.roleIds.length === 0}
-            >
-              <Text style={styles.saveTaskButtonText}>Save Task</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+                <Text style={styles.fieldLabel}>Assign to Roles</Text>
+                <View style={styles.roleCheckboxes}>
+                  {config.roles.length === 0 ? (
+                    <Text style={styles.noRolesText}>
+                      No roles defined. Add roles above first.
+                    </Text>
+                  ) : (
+                    config.roles.map((role) => (
+                      <TouchableOpacity
+                        key={role.id}
+                        style={[
+                          styles.roleCheckbox,
+                          editingTask.roleIds.includes(role.id) &&
+                            styles.roleCheckboxSelected,
+                        ]}
+                        onPress={() => {
+                          setEditingTask((prev) => {
+                            if (!prev) return prev;
+                            const isSelected = prev.roleIds.includes(role.id);
+                            return {
+                              ...prev,
+                              roleIds: isSelected
+                                ? prev.roleIds.filter((id) => id !== role.id)
+                                : [...prev.roleIds, role.id],
+                            };
+                          });
+                        }}
+                      >
+                        <Ionicons
+                          name={
+                            editingTask.roleIds.includes(role.id)
+                              ? "checkbox"
+                              : "square-outline"
+                          }
+                          size={20}
+                          color={
+                            editingTask.roleIds.includes(role.id)
+                              ? primaryColor
+                              : "#666"
+                          }
+                        />
+                        <Text style={styles.roleCheckboxText}>
+                          {role.name || "Unnamed role"}
+                        </Text>
+                      </TouchableOpacity>
+                    ))
+                  )}
+                </View>
+
+              </ScrollView>
+
+              <TouchableOpacity
+                style={[
+                  styles.saveTaskButton,
+                  (!editingTask.message || editingTask.roleIds.length === 0) &&
+                    styles.saveTaskButtonDisabled,
+                ]}
+                onPress={() => saveTask(editingTask)}
+                disabled={!editingTask.message || editingTask.roleIds.length === 0}
+              >
+                <Text style={styles.saveTaskButtonText}>Save Task</Text>
+              </TouchableOpacity>
+            </Pressable>
+          </Pressable>
+        </KeyboardAvoidingView>
       </Modal>
     );
   };
@@ -662,9 +687,11 @@ export function TaskReminderConfigModal({
         ) : (
           <>
             <ScrollView
+              testID="task-reminder-config-scroll"
               style={styles.scrollView}
               contentContainerStyle={styles.scrollContent}
               keyboardShouldPersistTaps="handled"
+              keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
             >
               {/* Roles Section */}
               <View style={styles.section}>
@@ -1175,6 +1202,9 @@ const styles = StyleSheet.create({
   },
   // Task editor styles
   taskEditorOverlay: {
+    flex: 1,
+  },
+  taskEditorOverlayBackdrop: {
     flex: 1,
     backgroundColor: "rgba(0, 0, 0, 0.5)",
     justifyContent: "flex-end",
