@@ -311,6 +311,13 @@ export const computeGroupScores = internalAction({
     trigger: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    // EMERGENCY KILL SWITCH — skip scheduled cron runs to free up workers.
+    // Manual triggers (from UI refresh button) still run.
+    if (!args.trigger || args.trigger === "scheduled") {
+      console.log(`[computeGroupScores] SKIPPED (kill switch) group=${args.groupId}`);
+      return;
+    }
+
     const runId = args.runId ?? `auto_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
     await ctx.runMutation(
