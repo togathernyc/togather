@@ -9,6 +9,7 @@ jest.mock("expo-router", () => ({
   useRouter: () => ({
     push: jest.fn(),
   }),
+  usePathname: () => "/inbox/group-1/general",
 }));
 
 jest.mock("@hooks/useCommunityTheme", () => ({

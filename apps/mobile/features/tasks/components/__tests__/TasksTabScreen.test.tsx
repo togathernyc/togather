@@ -3,15 +3,22 @@ import { fireEvent, render } from "@testing-library/react-native";
 import { TasksTabScreen } from "../TasksTabScreen";
 import { useAuthenticatedMutation, useAuthenticatedQuery } from "@services/api/convex";
 
-let mockSearchParams: { group_id?: string } = {};
+let mockSearchParams: { group_id?: string; returnTo?: string } = {};
+let mockPathname = "/tasks";
+const mockBack = jest.fn();
+const mockPush = jest.fn();
+const mockReplace = jest.fn();
+let mockCanGoBack = true;
 
 jest.mock("expo-router", () => ({
   useRouter: () => ({
-    canGoBack: () => true,
-    back: jest.fn(),
-    push: jest.fn(),
+    canGoBack: () => mockCanGoBack,
+    back: mockBack,
+    push: mockPush,
+    replace: mockReplace,
   }),
   useLocalSearchParams: () => mockSearchParams,
+  usePathname: () => mockPathname,
 }));
 
 jest.mock("react-native-safe-area-context", () => ({
@@ -69,6 +76,8 @@ describe("TasksTabScreen", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockSearchParams = {};
+    mockPathname = "/tasks";
+    mockCanGoBack = true;
 
     (useAuthenticatedMutation as jest.Mock).mockReturnValue(jest.fn());
 
@@ -193,5 +202,33 @@ describe("TasksTabScreen", () => {
     expect(getByText("My Follow-up")).toBeTruthy();
     expect(getByText("Other Leader Task")).toBeTruthy();
     expect(queryByText("Unassigned Task")).toBeNull();
+  });
+
+  it("navigates to explicit returnTo route when provided", () => {
+    mockSearchParams = { returnTo: encodeURIComponent("/(tabs)/profile") };
+    const { getByTestId } = render(<TasksTabScreen />);
+    fireEvent.press(getByTestId("tasks-back-button"));
+
+    expect(mockPush).toHaveBeenCalledWith("/(tabs)/profile");
+    expect(mockBack).not.toHaveBeenCalled();
+  });
+
+  it("uses replace to profile when no history is available", () => {
+    mockCanGoBack = false;
+    const { getByTestId } = render(<TasksTabScreen />);
+    fireEvent.press(getByTestId("tasks-back-button"));
+
+    expect(mockReplace).toHaveBeenCalledWith("/(tabs)/profile");
+    expect(mockBack).not.toHaveBeenCalled();
+  });
+
+  it("uses router.back when opened from group tasks route", () => {
+    mockSearchParams = { group_id: "group-1" };
+    mockPathname = "/leader-tools/group-1/tasks";
+    const { getByTestId } = render(<TasksTabScreen />);
+    fireEvent.press(getByTestId("tasks-back-button"));
+
+    expect(mockBack).toHaveBeenCalledTimes(1);
+    expect(mockReplace).not.toHaveBeenCalled();
   });
 });

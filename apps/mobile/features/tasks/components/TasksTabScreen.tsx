@@ -10,7 +10,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { UserRoute } from "@components/guards/UserRoute";
@@ -76,12 +76,18 @@ function statusColor(status: string): string {
 export function TasksTabScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const params = useLocalSearchParams<{ group_id?: string }>();
+  const pathname = usePathname();
+  const params = useLocalSearchParams<{ group_id?: string; returnTo?: string }>();
   const { primaryColor } = useCommunityTheme();
   const isDesktopWeb = useIsDesktopWeb();
   const { community } = useAuth();
   const contextGroupId =
     typeof params.group_id === "string" ? params.group_id : null;
+  const returnToParam =
+    typeof params.returnTo === "string" && params.returnTo.trim().length > 0
+      ? decodeURIComponent(params.returnTo)
+      : null;
+  const returnTo = returnToParam && returnToParam !== pathname ? returnToParam : null;
 
   const [segment, setSegment] = useState<Segment>("my");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
@@ -622,13 +628,18 @@ export function TasksTabScreen() {
         <View style={styles.headerRow}>
           <View style={styles.headerTitleWrap}>
             <Pressable
+              testID="tasks-back-button"
               style={styles.backButton}
               onPress={() => {
+                if (returnTo) {
+                  router.push(returnTo as any);
+                  return;
+                }
                 if (router.canGoBack()) {
                   router.back();
                   return;
                 }
-                router.push("/(tabs)/profile");
+                router.replace("/(tabs)/profile");
               }}
             >
               <Ionicons name="arrow-back" size={22} color="#0F172A" />

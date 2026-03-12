@@ -55,7 +55,10 @@ describe("ProfileMenu", () => {
     const { getByText } = render(<ProfileMenu />);
     fireEvent.press(getByText("Tasks"));
 
-    expect(mockPush).toHaveBeenCalledWith("/tasks");
+    expect(mockPush).toHaveBeenCalledWith({
+      pathname: "/tasks",
+      params: { returnTo: "/(tabs)/profile" },
+    });
   });
 
   it("hides tasks entry for non-leaders", () => {
