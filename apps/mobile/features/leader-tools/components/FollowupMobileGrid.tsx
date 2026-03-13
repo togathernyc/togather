@@ -210,7 +210,15 @@ function compareSortValues(
   );
 }
 
-export function FollowupMobileGrid({ groupId }: { groupId: string }) {
+export function FollowupMobileGrid({
+  groupId,
+  crossGroupMode,
+  returnTo,
+}: {
+  groupId: string;
+  crossGroupMode?: boolean;
+  returnTo?: string | null;
+}) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { primaryColor } = useCommunityTheme();
@@ -247,43 +255,50 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     >
   >({});
 
+  // Cross-group config
+  const crossGroupConfig = useAuthenticatedQuery(
+    api.functions.memberFollowups.getCrossGroupConfig,
+    crossGroupMode ? {} : "skip"
+  );
+  const [crossGroupFilter, setCrossGroupFilter] = useState<string>("all");
+
   const debouncedSearch = useDebounce(searchQuery, 450);
 
-  const config = useAuthenticatedQuery(
+  const perGroupConfig = useAuthenticatedQuery(
     api.functions.memberFollowups.getFollowupConfig,
-    groupId ? { groupId: groupId as Id<"groups"> } : "skip",
+    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip",
   );
-  const scoreConfigScores = config?.scoreConfigScores;
+  const config = crossGroupMode ? crossGroupConfig : perGroupConfig;
+  const scoreConfigScores = crossGroupMode ? (crossGroupConfig?.scoreConfigScores ?? []) : (perGroupConfig?.scoreConfigScores ?? []);
   const scoreConfig = useMemo<ScoreConfigEntry[]>(
     () => scoreConfigScores ?? [],
     [scoreConfigScores],
   );
   const isConfigLoaded = config !== undefined;
-  const toolDisplayName =
-    typeof config?.toolDisplayName === "string"
-      ? config.toolDisplayName
-      : "People";
+  const toolDisplayName = crossGroupMode ? "People" : (typeof perGroupConfig?.toolDisplayName === "string" ? perGroupConfig.toolDisplayName : "People");
+  const memberSubtitleRaw = crossGroupMode ? "" : ((config as any)?.memberSubtitle ?? "");
   const memberSubtitleIds = useMemo(
     () =>
       normalizeSubtitleVariableIds(
-        typeof config?.memberSubtitle === "string" ? config.memberSubtitle : "",
+        typeof memberSubtitleRaw === "string" ? memberSubtitleRaw : "",
       ),
-    [config?.memberSubtitle],
+    [memberSubtitleRaw],
   );
-  const columnConfig = config?.followupColumnConfig ?? null;
+  const columnConfig = crossGroupMode ? null : (perGroupConfig?.followupColumnConfig ?? null);
   const customFields = useMemo<CustomFieldDef[]>(
-    () => (columnConfig?.customFields ?? []) as CustomFieldDef[],
-    [columnConfig?.customFields],
+    () => crossGroupMode ? [] : ((columnConfig?.customFields ?? []) as CustomFieldDef[]),
+    [crossGroupMode, columnConfig?.customFields],
   );
 
-  const leaders = useAuthenticatedQuery(
+  const perGroupLeaders = useAuthenticatedQuery(
     api.functions.groups.members.getLeaders,
-    groupId ? { groupId: groupId as Id<"groups"> } : "skip",
+    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip",
   );
+  const leaders = crossGroupMode ? crossGroupConfig?.leaders : perGroupLeaders;
 
   const groupTasks = useAuthenticatedQuery(
     api.functions.tasks.index.listGroup,
-    groupId ? { groupId: groupId as Id<"groups"> } : "skip",
+    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip",
   );
 
   const tasksByMember = useMemo(() => {
@@ -399,14 +414,18 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     : "score1";
   const serverSortDirection = isClientSideSort ? "desc" : sortDirection;
 
+  const crossGroupFilterArg = crossGroupMode && crossGroupFilter !== "all"
+    ? { groupFilter: crossGroupFilter as Id<"groups"> }
+    : {};
+
   const {
-    results: rawMembers,
-    status: paginationStatus,
-    loadMore,
-    isLoading,
+    results: perGroupRawMembers,
+    status: perGroupPaginationStatus,
+    loadMore: perGroupLoadMore,
+    isLoading: perGroupIsLoading,
   } = useAuthenticatedPaginatedQuery(
     api.functions.memberFollowups.list,
-    !hasTextSearch && groupId
+    !crossGroupMode && !hasTextSearch && groupId
       ? {
           groupId: groupId as Id<"groups">,
           sortBy: serverSortBy,
@@ -417,9 +436,30 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     { initialNumItems: 50 },
   );
 
-  const searchResults = useAuthenticatedQuery(
+  const {
+    results: crossGroupRawMembers,
+    status: crossGroupPaginationStatus,
+    loadMore: crossGroupLoadMore,
+    isLoading: crossGroupIsLoading,
+  } = useAuthenticatedPaginatedQuery(
+    api.functions.memberFollowups.listAssignedToMe,
+    crossGroupMode && !hasTextSearch
+      ? {
+          ...listFilterArgs,
+          ...crossGroupFilterArg,
+        }
+      : "skip",
+    { initialNumItems: 50 },
+  );
+
+  const rawMembers = crossGroupMode ? crossGroupRawMembers : perGroupRawMembers;
+  const paginationStatus = crossGroupMode ? crossGroupPaginationStatus : perGroupPaginationStatus;
+  const loadMore = crossGroupMode ? crossGroupLoadMore : perGroupLoadMore;
+  const isLoading = crossGroupMode ? crossGroupIsLoading : perGroupIsLoading;
+
+  const perGroupSearchResults = useAuthenticatedQuery(
     api.functions.memberFollowups.search,
-    hasTextSearch && groupId
+    !crossGroupMode && hasTextSearch && groupId
       ? {
           groupId: groupId as Id<"groups">,
           searchText: parsedQuery.searchText,
@@ -449,9 +489,43 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       : "skip",
   );
 
+  const crossGroupSearchResults = useAuthenticatedQuery(
+    api.functions.memberFollowups.searchAssignedToMe,
+    crossGroupMode && hasTextSearch
+      ? {
+          searchText: parsedQuery.searchText,
+          ...(parsedQuery.statusFilter
+            ? { statusFilter: parsedQuery.statusFilter }
+            : {}),
+          ...(parsedQuery.assigneeFilter
+            ? { assigneeFilter: parsedQuery.assigneeFilter as Id<"users"> }
+            : {}),
+          ...(parsedQuery.excludedAssigneeFilters.length > 0
+            ? {
+                excludedAssigneeFilters:
+                  parsedQuery.excludedAssigneeFilters as Id<"users">[],
+              }
+            : {}),
+          ...(parsedQuery.scoreField
+            ? { scoreField: parsedQuery.scoreField }
+            : {}),
+          ...(parsedQuery.scoreMax !== undefined
+            ? { scoreMax: parsedQuery.scoreMax }
+            : {}),
+          ...(parsedQuery.scoreMin !== undefined
+            ? { scoreMin: parsedQuery.scoreMin }
+            : {}),
+          ...getDateAddedRangeArgs(parsedQuery.dateAddedFilter),
+          ...crossGroupFilterArg,
+        }
+      : "skip",
+  );
+
+  const searchResults = crossGroupMode ? crossGroupSearchResults : perGroupSearchResults;
+
   const totalCount = useAuthenticatedQuery(
     api.functions.memberFollowups.count,
-    groupId ? { groupId: groupId as Id<"groups"> } : "skip",
+    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip",
   );
   const setAssigneeMut = useAuthenticatedMutation(
     api.functions.memberFollowups.setAssignee,
@@ -471,7 +545,16 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
 
   const groupData = useQuery(
     api.functions.groups.index.getById,
-    groupId ? { groupId: groupId as Id<"groups"> } : "skip",
+    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip",
+  );
+
+  const getMemberGroupId = useCallback(
+    (memberId: string): Id<"groups"> => {
+      if (!crossGroupMode) return groupId as Id<"groups">;
+      const member = (rawMembers ?? []).find((m: any) => m.groupMemberId === memberId || m._id === memberId);
+      return ((member as any)?.groupId ?? groupId) as Id<"groups">;
+    },
+    [crossGroupMode, groupId, rawMembers]
   );
 
   const getSortFieldValue = useCallback(
@@ -916,10 +999,12 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
   };
 
   const handleBack = () => {
-    if (router.canGoBack()) {
+    if (returnTo) {
+      router.push(returnTo as any);
+    } else if (router.canGoBack()) {
       router.back();
     } else {
-      router.push("/(tabs)/chat");
+      router.push("/(tabs)/profile" as any);
     }
   };
 
@@ -977,7 +1062,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
             });
           }
           return removeGroupMember({
-            groupId: groupId as Id<"groups">,
+            groupId: getMemberGroupId(member.groupMemberId),
             userId: member.userId as Id<"users">,
           });
         }),
@@ -1006,7 +1091,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     groupData,
     removeCommunityMember,
     removeGroupMember,
-    groupId,
+    getMemberGroupId,
   ]);
 
   const getMemberSubtitleLines = (member: FollowupMember): string[] => {
@@ -1102,7 +1187,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       setIsUpdatingField(true);
       try {
         await setCustomFieldMut({
-          groupId: groupId as Id<"groups">,
+          groupId: getMemberGroupId(memberId),
           groupMemberId: memberId as Id<"groupMembers">,
           slot,
           value: value ?? undefined,
@@ -1114,7 +1199,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
         setIsUpdatingField(false);
       }
     },
-    [setCustomFieldMut, groupId],
+    [setCustomFieldMut, getMemberGroupId],
   );
 
   const handleCustomTextSubmit = useCallback(async () => {
@@ -1175,7 +1260,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       setIsUpdatingField(true);
       try {
         await setCustomFieldMut({
-          groupId: groupId as Id<"groups">,
+          groupId: getMemberGroupId(memberId),
           groupMemberId: memberId as Id<"groupMembers">,
           slot,
           value: newValue || undefined,
@@ -1202,7 +1287,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       }
       // Don't close sheet — allow multiple toggles
     },
-    [editSheet, activeEditMember, setCustomFieldMut, groupId],
+    [editSheet, activeEditMember, setCustomFieldMut, getMemberGroupId],
   );
 
   const handleMultiselectClear = useCallback(async () => {
@@ -1229,7 +1314,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     setEditSheet(null);
     try {
       await setCustomFieldMut({
-        groupId: groupId as Id<"groups">,
+        groupId: getMemberGroupId(memberId),
         groupMemberId: memberId as Id<"groupMembers">,
         slot,
         value: undefined,
@@ -1251,7 +1336,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
       });
       Alert.alert("Could not update field", "Please try again.");
     }
-  }, [editSheet, activeEditMember, setCustomFieldMut, groupId]);
+  }, [editSheet, activeEditMember, setCustomFieldMut, getMemberGroupId]);
 
   const handleAssignChange = async (assigneeIds: string[]) => {
     if (!editSheet || !activeEditMember) return;
@@ -1269,7 +1354,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     }));
     try {
       await setAssigneeMut({
-        groupId: groupId as Id<"groups">,
+        groupId: getMemberGroupId(memberId),
         groupMemberId: memberId as Id<"groupMembers">,
         assigneeIds: normalizedAssigneeIds as Id<"users">[],
       });
@@ -1312,7 +1397,7 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
     }));
     try {
       await setStatusMut({
-        groupId: groupId as Id<"groups">,
+        groupId: getMemberGroupId(memberId),
         groupMemberId: memberId as Id<"groupMembers">,
         status: status ?? undefined,
       });
@@ -1637,6 +1722,9 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
           )}
 
           <View style={styles.memberTextWrap}>
+            {crossGroupMode && (item as any).groupName ? (
+              <Text style={styles.groupNameBadge}>{(item as any).groupName}</Text>
+            ) : null}
             <Text style={styles.memberName} numberOfLines={1}>
               {item.firstName} {item.lastName}
             </Text>
@@ -1734,21 +1822,25 @@ export function FollowupMobileGrid({ groupId }: { groupId: string }) {
           <View style={styles.headerContent}>
             <Text style={styles.headerTitle}>{toolDisplayName}</Text>
             <Text style={styles.headerSubtitle}>
-              {groupData?.name || "Group"}
+              {crossGroupMode ? "All assigned people across groups" : (groupData?.name || "Group")}
             </Text>
           </View>
-          <TouchableOpacity
-            style={styles.headerAddButton}
-            onPress={() => setShowQuickAddModal(true)}
-          >
-            <Ionicons name="person-add-outline" size={20} color="#16A34A" />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.settingsButton}
-            onPress={handleSettingsPress}
-          >
-            <Ionicons name="settings-outline" size={22} color="#666" />
-          </TouchableOpacity>
+          {!crossGroupMode && (
+            <TouchableOpacity
+              style={styles.headerAddButton}
+              onPress={() => setShowQuickAddModal(true)}
+            >
+              <Ionicons name="person-add-outline" size={20} color="#16A34A" />
+            </TouchableOpacity>
+          )}
+          {!crossGroupMode && (
+            <TouchableOpacity
+              style={styles.settingsButton}
+              onPress={handleSettingsPress}
+            >
+              <Ionicons name="settings-outline" size={22} color="#666" />
+            </TouchableOpacity>
+          )}
         </View>
 
         <View style={styles.searchRow}>
@@ -2576,6 +2668,12 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontSize: 10,
     color: "#6B7280",
+  },
+  groupNameBadge: {
+    fontSize: 11,
+    color: "#6366F1",
+    fontWeight: "600",
+    marginBottom: 4,
   },
   rowDataCells: {
     flexDirection: "row",

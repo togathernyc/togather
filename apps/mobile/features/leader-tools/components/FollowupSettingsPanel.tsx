@@ -38,6 +38,9 @@ import type { CustomFieldDef } from "./ColumnPickerModal";
 
 interface FollowupSettingsPanelProps {
   groupId: string;
+  crossGroupMode?: boolean;
+  crossGroupColConfig?: { columnOrder: string[]; hiddenColumns: string[] } | null;
+  onCrossGroupColConfigChange?: (config: { columnOrder: string[]; hiddenColumns: string[] }) => void;
   onClose: () => void;
 }
 
@@ -125,7 +128,13 @@ function normalizeSelectFieldOptions(options: string[]): string[] {
 // Component
 // ============================================================================
 
-export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPanelProps) {
+export function FollowupSettingsPanel({
+  groupId,
+  crossGroupMode,
+  crossGroupColConfig,
+  onCrossGroupColConfigChange,
+  onClose,
+}: FollowupSettingsPanelProps) {
   const { primaryColor } = useCommunityTheme();
   const themeColor = primaryColor || DEFAULT_PRIMARY_COLOR;
 
@@ -141,12 +150,12 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
 
   const config = useAuthenticatedQuery(
     api.functions.memberFollowups.getFollowupConfig,
-    groupId ? { groupId: groupId as Id<"groups"> } : "skip"
+    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip"
   );
 
   const groupData = useAuthenticatedQuery(
     api.functions.groups.queries.getById,
-    { groupId: groupId as Id<"groups"> }
+    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip"
   ) as any;
 
   const availableVariables = useQuery(
@@ -425,6 +434,15 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
   }, [customFields]);
 
   const handleSaveColumns = useCallback(async () => {
+    if (crossGroupMode) {
+      // In cross-group mode, save to localStorage via callback
+      onCrossGroupColConfigChange?.({
+        columnOrder,
+        hiddenColumns: [...hiddenColumns],
+      });
+      Alert.alert("Columns saved", "Column preferences were saved.");
+      return;
+    }
     if (showAddField) {
       Alert.alert("Finish adding field", "Click Add Field or Cancel before saving columns.");
       return;
@@ -450,6 +468,8 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
       setIsSavingColumns(false);
     }
   }, [
+    crossGroupMode,
+    onCrossGroupColConfigChange,
     groupId,
     columnOrder,
     hiddenColumns,
@@ -795,9 +815,9 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
       </View>
 
       <ScrollView style={styles.scrollArea} contentContainerStyle={styles.scrollContent}>
-        {/* ── Section 1: Display Name ── */}
-        {renderSectionHeader("Display Name", displayNameOpen, () => setDisplayNameOpen((p) => !p))}
-        {displayNameOpen && (
+        {/* ── Section 1: Display Name (hidden in cross-group mode) ── */}
+        {!crossGroupMode && renderSectionHeader("Display Name", displayNameOpen, () => setDisplayNameOpen((p) => !p))}
+        {!crossGroupMode && displayNameOpen && (
           <View style={styles.sectionBody}>
             <TextInput
               style={[
@@ -817,9 +837,9 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
           </View>
         )}
 
-        {/* ── Section 2: Columns ── */}
-        {renderSectionHeader("Data", dataOpen, () => setDataOpen((p) => !p))}
-        {dataOpen && (
+        {/* ── Section 2: Data (hidden in cross-group mode) ── */}
+        {!crossGroupMode && renderSectionHeader("Data", dataOpen, () => setDataOpen((p) => !p))}
+        {!crossGroupMode && dataOpen && (
           <View style={styles.sectionBody}>
             <TouchableOpacity
               onPress={handleRefreshFollowupScores}
@@ -913,152 +933,156 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
               })}
             </View>
 
-            {/* Custom Fields subsection */}
-            <View style={styles.subsectionDivider} />
-            <Text style={styles.subsectionTitle}>Custom Fields</Text>
+            {/* Custom Fields subsection (hidden in cross-group mode) */}
+            {!crossGroupMode && (
+              <>
+                <View style={styles.subsectionDivider} />
+                <Text style={styles.subsectionTitle}>Custom Fields</Text>
 
-            {/* Capacity indicators */}
-            <View style={styles.capacityRow}>
-              {Object.entries(SLOT_CAPACITIES).map(([key, info]) => (
-                <View key={key} style={styles.capacityBadge}>
-                  <Text style={styles.capacityText}>
-                    {info.label}: {capacityInfo[key] ?? 0}/{info.total}
-                  </Text>
-                </View>
-              ))}
-            </View>
-
-            {/* Existing custom fields */}
-            {customFields.map((field, idx) => (
-              <View key={field.slot} style={styles.fieldRow}>
-                <View style={styles.fieldInfo}>
-                  <Text style={styles.fieldName}>{field.name}</Text>
-                  <View style={styles.typeBadge}>
-                    <Text style={styles.typeBadgeText}>{field.type}</Text>
-                  </View>
-                  {(field.type === "dropdown" || field.type === "multiselect") && field.options && (
-                    <Text style={styles.fieldOptions} numberOfLines={1}>
-                      ({field.options.join(", ")})
-                    </Text>
-                  )}
-                </View>
-                <TouchableOpacity onPress={() => handleDeleteField(idx)} style={styles.deleteBtn}>
-                  <Ionicons name="trash-outline" size={14} color="#EF4444" />
-                </TouchableOpacity>
-              </View>
-            ))}
-
-            {/* Add custom field form */}
-            {showAddField ? (
-              <View style={styles.addFieldForm}>
-                <TextInput
-                  style={[
-                    styles.fieldInput,
-                    Platform.OS === "web" ? ({ outlineStyle: "none" } as any) : {},
-                  ]}
-                  value={newFieldName}
-                  onChangeText={setNewFieldName}
-                  placeholder="Field name..."
-                  placeholderTextColor="#9CA3AF"
-                  autoFocus
-                />
-                <View style={styles.typePickerRow}>
-                  {FIELD_TYPES.map((ft) => {
-                    const enabled = canAddType(ft.value);
-                    const isActive = newFieldType === ft.value;
-                    return (
-                      <TouchableOpacity
-                        key={ft.value}
-                        style={[
-                          styles.typeOption,
-                          isActive && { borderColor: themeColor, backgroundColor: `${themeColor}10` },
-                          !enabled && styles.typeOptionDisabled,
-                        ]}
-                        onPress={() => enabled && setNewFieldType(ft.value)}
-                        disabled={!enabled}
-                      >
-                        <Text
-                          style={[
-                            styles.typeOptionText,
-                            isActive && { color: themeColor, fontWeight: "600" as const },
-                            !enabled && styles.typeOptionTextDisabled,
-                          ]}
-                        >
-                          {ft.label}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
+                {/* Capacity indicators */}
+                <View style={styles.capacityRow}>
+                  {Object.entries(SLOT_CAPACITIES).map(([key, info]) => (
+                    <View key={key} style={styles.capacityBadge}>
+                      <Text style={styles.capacityText}>
+                        {info.label}: {capacityInfo[key] ?? 0}/{info.total}
+                      </Text>
+                    </View>
+                  ))}
                 </View>
 
-                {/* Dropdown / multiselect options editor */}
-                {(newFieldType === "dropdown" || newFieldType === "multiselect") && (
-                  <View style={styles.optionsEditor}>
-                    <Text style={styles.optionsLabel}>Options:</Text>
-                    {newFieldOptions.map((opt, i) => (
-                      <View key={i} style={styles.optionRow}>
-                        <TextInput
-                          style={[
-                            styles.optionInput,
-                            Platform.OS === "web" ? ({ outlineStyle: "none" } as any) : {},
-                          ]}
-                          value={opt}
-                          onChangeText={(text) => {
-                            const next = [...newFieldOptions];
-                            next[i] = text.replace(/;/g, "");
-                            setNewFieldOptions(next);
-                          }}
-                          placeholder={`Option ${i + 1}`}
-                          placeholderTextColor="#9CA3AF"
-                        />
-                        <TouchableOpacity
-                          onPress={() => setNewFieldOptions(newFieldOptions.filter((_, j) => j !== i))}
-                          style={styles.optionDeleteBtn}
-                        >
-                          <Ionicons name="close-circle" size={16} color="#9CA3AF" />
-                        </TouchableOpacity>
+                {/* Existing custom fields */}
+                {customFields.map((field, idx) => (
+                  <View key={field.slot} style={styles.fieldRow}>
+                    <View style={styles.fieldInfo}>
+                      <Text style={styles.fieldName}>{field.name}</Text>
+                      <View style={styles.typeBadge}>
+                        <Text style={styles.typeBadgeText}>{field.type}</Text>
                       </View>
-                    ))}
-                    <TouchableOpacity
-                      onPress={() => setNewFieldOptions([...newFieldOptions, ""])}
-                      style={styles.addOptionBtn}
-                    >
-                      <Ionicons name="add" size={12} color={themeColor} />
-                      <Text style={[styles.addOptionText, { color: themeColor }]}>Add option</Text>
+                      {(field.type === "dropdown" || field.type === "multiselect") && field.options && (
+                        <Text style={styles.fieldOptions} numberOfLines={1}>
+                          ({field.options.join(", ")})
+                        </Text>
+                      )}
+                    </View>
+                    <TouchableOpacity onPress={() => handleDeleteField(idx)} style={styles.deleteBtn}>
+                      <Ionicons name="trash-outline" size={14} color="#EF4444" />
                     </TouchableOpacity>
                   </View>
-                )}
+                ))}
 
-                <View style={styles.addFieldActions}>
-                  <TouchableOpacity
-                    onPress={() => {
-                      setShowAddField(false);
-                      setNewFieldName("");
-                      setNewFieldType("text");
-                      setNewFieldOptions([]);
-                    }}
-                    style={styles.cancelFieldBtn}
-                  >
-                    <Text style={styles.cancelFieldText}>Cancel</Text>
+                {/* Add custom field form */}
+                {showAddField ? (
+                  <View style={styles.addFieldForm}>
+                    <TextInput
+                      style={[
+                        styles.fieldInput,
+                        Platform.OS === "web" ? ({ outlineStyle: "none" } as any) : {},
+                      ]}
+                      value={newFieldName}
+                      onChangeText={setNewFieldName}
+                      placeholder="Field name..."
+                      placeholderTextColor="#9CA3AF"
+                      autoFocus
+                    />
+                    <View style={styles.typePickerRow}>
+                      {FIELD_TYPES.map((ft) => {
+                        const enabled = canAddType(ft.value);
+                        const isActive = newFieldType === ft.value;
+                        return (
+                          <TouchableOpacity
+                            key={ft.value}
+                            style={[
+                              styles.typeOption,
+                              isActive && { borderColor: themeColor, backgroundColor: `${themeColor}10` },
+                              !enabled && styles.typeOptionDisabled,
+                            ]}
+                            onPress={() => enabled && setNewFieldType(ft.value)}
+                            disabled={!enabled}
+                          >
+                            <Text
+                              style={[
+                                styles.typeOptionText,
+                                isActive && { color: themeColor, fontWeight: "600" as const },
+                                !enabled && styles.typeOptionTextDisabled,
+                              ]}
+                            >
+                              {ft.label}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+
+                    {/* Dropdown / multiselect options editor */}
+                    {(newFieldType === "dropdown" || newFieldType === "multiselect") && (
+                      <View style={styles.optionsEditor}>
+                        <Text style={styles.optionsLabel}>Options:</Text>
+                        {newFieldOptions.map((opt, i) => (
+                          <View key={i} style={styles.optionRow}>
+                            <TextInput
+                              style={[
+                                styles.optionInput,
+                                Platform.OS === "web" ? ({ outlineStyle: "none" } as any) : {},
+                              ]}
+                              value={opt}
+                              onChangeText={(text) => {
+                                const next = [...newFieldOptions];
+                                next[i] = text.replace(/;/g, "");
+                                setNewFieldOptions(next);
+                              }}
+                              placeholder={`Option ${i + 1}`}
+                              placeholderTextColor="#9CA3AF"
+                            />
+                            <TouchableOpacity
+                              onPress={() => setNewFieldOptions(newFieldOptions.filter((_, j) => j !== i))}
+                              style={styles.optionDeleteBtn}
+                            >
+                              <Ionicons name="close-circle" size={16} color="#9CA3AF" />
+                            </TouchableOpacity>
+                          </View>
+                        ))}
+                        <TouchableOpacity
+                          onPress={() => setNewFieldOptions([...newFieldOptions, ""])}
+                          style={styles.addOptionBtn}
+                        >
+                          <Ionicons name="add" size={12} color={themeColor} />
+                          <Text style={[styles.addOptionText, { color: themeColor }]}>Add option</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+
+                    <View style={styles.addFieldActions}>
+                      <TouchableOpacity
+                        onPress={() => {
+                          setShowAddField(false);
+                          setNewFieldName("");
+                          setNewFieldType("text");
+                          setNewFieldOptions([]);
+                        }}
+                        style={styles.cancelFieldBtn}
+                      >
+                        <Text style={styles.cancelFieldText}>Cancel</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={handleAddField}
+                        style={[
+                          styles.confirmFieldBtn,
+                          { backgroundColor: themeColor },
+                          !canSubmitNewField && styles.btnDisabled,
+                        ]}
+                        disabled={!canSubmitNewField}
+                      >
+                        <Text style={styles.confirmFieldText}>Add Field</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ) : (
+                  <TouchableOpacity onPress={() => setShowAddField(true)} style={styles.addFieldButton}>
+                    <Ionicons name="add-circle-outline" size={16} color={themeColor} />
+                    <Text style={[styles.addFieldButtonText, { color: themeColor }]}>Add Custom Field</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={handleAddField}
-                    style={[
-                      styles.confirmFieldBtn,
-                      { backgroundColor: themeColor },
-                      !canSubmitNewField && styles.btnDisabled,
-                    ]}
-                    disabled={!canSubmitNewField}
-                  >
-                    <Text style={styles.confirmFieldText}>Add Field</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ) : (
-              <TouchableOpacity onPress={() => setShowAddField(true)} style={styles.addFieldButton}>
-                <Ionicons name="add-circle-outline" size={16} color={themeColor} />
-                <Text style={[styles.addFieldButtonText, { color: themeColor }]}>Add Custom Field</Text>
-              </TouchableOpacity>
+                )}
+              </>
             )}
 
             {/* Save columns button */}
@@ -1081,8 +1105,8 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
         )}
 
         {/* ── Section 4: Scores ── */}
-        {renderSectionHeader("Scores", scoresOpen, () => setScoresOpen((p) => !p))}
-        {scoresOpen && (
+        {!crossGroupMode && renderSectionHeader("Scores", scoresOpen, () => setScoresOpen((p) => !p))}
+        {!crossGroupMode && scoresOpen && (
           <View style={styles.sectionBody}>
             {scores.map((score, scoreIndex) => (
               <View key={score.id} style={styles.scoreCard}>
@@ -1219,8 +1243,8 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
         )}
 
         {/* ── Section 5: Alerts ── */}
-        {renderSectionHeader("Alerts", alertsOpen, () => setAlertsOpen((p) => !p))}
-        {alertsOpen && (
+        {!crossGroupMode && renderSectionHeader("Alerts", alertsOpen, () => setAlertsOpen((p) => !p))}
+        {!crossGroupMode && alertsOpen && (
           <View style={styles.sectionBody}>
             <Text style={styles.hintText}>
               Flag members when a variable exceeds a threshold.
@@ -1332,14 +1356,14 @@ export function FollowupSettingsPanel({ groupId, onClose }: FollowupSettingsPane
           </View>
         )}
 
-        {/* ── Section 6: Member Card Subtitle ── */}
-        {renderSectionHeader(
+        {/* ── Section 6: Member Card Subtitle (hidden in cross-group mode) ── */}
+        {!crossGroupMode && renderSectionHeader(
           "Member Card Subtitle",
           subtitleOpen,
           () => setSubtitleOpen((p) => !p),
           <Text style={styles.sectionHeaderExtra}>(Mobile only)</Text>,
         )}
-        {subtitleOpen && (
+        {!crossGroupMode && subtitleOpen && (
           <View style={styles.sectionBody}>
             <Text style={styles.hintText}>
               Choose up to 2 items to show below each member's name.

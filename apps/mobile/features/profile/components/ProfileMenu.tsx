@@ -95,22 +95,40 @@ export function ProfileMenu() {
       </TouchableOpacity>
 
       {hasLeaderAccess === true ? (
-        <TouchableOpacity
-          style={styles.menuItem}
-          onPress={() =>
-            router.push({
-              pathname: "/tasks",
-              params: { returnTo: "/(tabs)/profile" },
-            })
-          }
-          activeOpacity={0.7}
-        >
-          <View style={styles.menuIconContainer}>
-            <Ionicons name="checkmark-done-outline" size={24} color={primaryColor} />
-          </View>
-          <Text style={styles.menuText}>Tasks</Text>
-          <Ionicons name="chevron-forward" size={20} color="#999" />
-        </TouchableOpacity>
+        <>
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() =>
+              router.push({
+                pathname: "/tasks",
+                params: { returnTo: "/(tabs)/profile" },
+              })
+            }
+            activeOpacity={0.7}
+          >
+            <View style={styles.menuIconContainer}>
+              <Ionicons name="checkmark-done-outline" size={24} color={primaryColor} />
+            </View>
+            <Text style={styles.menuText}>Tasks</Text>
+            <Ionicons name="chevron-forward" size={20} color="#999" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() =>
+              router.push({
+                pathname: "/people",
+                params: { returnTo: "/(tabs)/profile" },
+              })
+            }
+            activeOpacity={0.7}
+          >
+            <View style={styles.menuIconContainer}>
+              <Ionicons name="people-outline" size={24} color={primaryColor} />
+            </View>
+            <Text style={styles.menuText}>People</Text>
+            <Ionicons name="chevron-forward" size={20} color="#999" />
+          </TouchableOpacity>
+        </>
       ) : null}
 
       <TouchableOpacity

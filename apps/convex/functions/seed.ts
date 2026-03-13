@@ -17,7 +17,7 @@
  */
 
 import { v } from "convex/values";
-import { internalAction, internalMutation } from "../_generated/server";
+import { action, internalAction, internalMutation, mutation } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
 import { now, generateShortId, normalizePhone, buildSearchText } from "../lib/utils";
@@ -876,6 +876,169 @@ export const seedDemoData = internalAction({
       success: true,
       message: `Seed completed! Use phone ${TEST_PHONE} with code 000000 to log in.`,
       summary,
+    };
+  },
+});
+
+// ============================================================================
+// Seed People Data (cross-group followup scores)
+// ============================================================================
+
+const FAKE_PEOPLE = [
+  { firstName: "Sarah", lastName: "Johnson", email: "sarah.j@example.com", phone: "+12025551001" },
+  { firstName: "Michael", lastName: "Chen", email: "michael.c@example.com", phone: "+12025551002" },
+  { firstName: "Emily", lastName: "Rodriguez", email: "emily.r@example.com", phone: "+12025551003" },
+  { firstName: "James", lastName: "Williams", email: "james.w@example.com", phone: "+12025551004" },
+  { firstName: "Olivia", lastName: "Martinez", email: "olivia.m@example.com", phone: "+12025551005" },
+  { firstName: "David", lastName: "Kim", email: "david.k@example.com", phone: "+12025551006" },
+  { firstName: "Rachel", lastName: "Brown", email: "rachel.b@example.com", phone: "+12025551007" },
+  { firstName: "Daniel", lastName: "Taylor", email: "daniel.t@example.com", phone: "+12025551008" },
+  { firstName: "Jessica", lastName: "Lee", email: "jessica.l@example.com", phone: "+12025551009" },
+  { firstName: "Andrew", lastName: "Garcia", email: "andrew.g@example.com", phone: "+12025551010" },
+  { firstName: "Amanda", lastName: "Wilson", email: "amanda.w@example.com", phone: "+12025551011" },
+  { firstName: "Brian", lastName: "Thomas", email: "brian.t@example.com", phone: "+12025551012" },
+];
+
+export const seedPeopleData = action({
+  args: {},
+  handler: async (ctx): Promise<{ success: boolean; message: string }> => {
+    return await ctx.runMutation(internal.functions.seed._seedPeopleDataMutation, {});
+  },
+});
+
+export const _seedPeopleDataMutation = internalMutation({
+  args: {},
+  returns: v.object({ success: v.boolean(), message: v.string() }),
+  handler: async (ctx) => {
+    // Find the test user
+    const testUser = await ctx.db
+      .query("users")
+      .withIndex("by_phone", (q: any) => q.eq("phone", TEST_PHONE))
+      .first();
+    if (!testUser) throw new Error("Test user not found — run seedDemoData first");
+
+    // Find Demo Community
+    const community = await ctx.db
+      .query("communities")
+      .withIndex("by_slug", (q: any) => q.eq("slug", DEMO_COMMUNITY_SLUG))
+      .first();
+    if (!community) throw new Error("Demo Community not found — run seedDemoData first");
+
+    // Find leader groups for the test user
+    const memberships = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_user", (q: any) => q.eq("userId", testUser._id))
+      .collect();
+    const leaderMemberships = memberships.filter(
+      (m) => m.leftAt === undefined && (m.role === "leader" || m.role === "admin")
+    );
+
+    console.log(`[seedPeople] Found ${leaderMemberships.length} leader groups`);
+
+    let created = 0;
+    const timestamp = now();
+
+    for (let gi = 0; gi < leaderMemberships.length; gi++) {
+      const gm = leaderMemberships[gi];
+      const group = await ctx.db.get(gm.groupId);
+      if (!group) continue;
+
+      // Skip large groups (Demo Community Announcements) to avoid doc read limits
+      if ((group as any).isAnnouncementGroup) {
+        console.log(`[seedPeople] Skipping announcement group "${group.name}"`);
+        continue;
+      }
+
+      // Assign 2-3 people per group from our fake list
+      const startIdx = (gi * 3) % FAKE_PEOPLE.length;
+      const count = gi % 2 === 0 ? 3 : 2;
+
+      for (let pi = 0; pi < count; pi++) {
+        const person = FAKE_PEOPLE[(startIdx + pi) % FAKE_PEOPLE.length];
+
+        // Create a user for this person (or find existing)
+        let personUser = await ctx.db
+          .query("users")
+          .withIndex("by_phone", (q: any) => q.eq("phone", normalizePhone(person.phone)))
+          .first();
+
+        if (!personUser) {
+          const personUserId = await ctx.db.insert("users", {
+            firstName: person.firstName,
+            lastName: person.lastName,
+            email: person.email,
+            phone: normalizePhone(person.phone),
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          });
+          personUser = await ctx.db.get(personUserId);
+        }
+
+        // Create group membership
+        let personGm = await ctx.db
+          .query("groupMembers")
+          .withIndex("by_group_user", (q: any) =>
+            q.eq("groupId", gm.groupId).eq("userId", personUser!._id)
+          )
+          .first();
+
+        if (!personGm) {
+          const gmId = await ctx.db.insert("groupMembers", {
+            groupId: gm.groupId,
+            userId: personUser!._id,
+            role: "member",
+            joinedAt: timestamp,
+            notificationsEnabled: true,
+          });
+          personGm = await ctx.db.get(gmId);
+        }
+
+        // Create memberFollowupScores entry assigned to test user
+        const attendanceScore = Math.floor(Math.random() * 80) + 20;
+        const connectionScore = Math.floor(Math.random() * 70) + 15;
+        const searchText = buildSearchText({
+          firstName: person.firstName,
+          lastName: person.lastName,
+          email: person.email,
+          phone: person.phone,
+        });
+
+        await ctx.db.insert("memberFollowupScores", {
+          groupId: gm.groupId,
+          groupMemberId: personGm!._id,
+          userId: personUser!._id,
+          firstName: person.firstName,
+          lastName: person.lastName,
+          email: person.email,
+          phone: person.phone,
+          score1: attendanceScore / 100,
+          score2: connectionScore / 100,
+          scoreIds: ["attendance", "connection"],
+          alerts: attendanceScore < 30 ? ["Low Attendance"] : [],
+          isSnoozed: false,
+          attendanceScore,
+          connectionScore,
+          followupScore: 0,
+          missedMeetings: Math.floor(Math.random() * 5),
+          consecutiveMissed: Math.floor(Math.random() * 3),
+          assigneeId: testUser._id,
+          assigneeIds: [testUser._id],
+          status: ["new", "active", "needs-followup"][pi % 3],
+          searchText,
+          updatedAt: timestamp,
+          addedAt: timestamp - (pi * 7 * 24 * 60 * 60 * 1000), // staggered dates
+        });
+
+        created++;
+        console.log(
+          `[seedPeople] Created ${person.firstName} ${person.lastName} in "${group.name}"`
+        );
+      }
+    }
+
+    return {
+      success: true,
+      message: `Created ${created} people across ${leaderMemberships.length} leader groups`,
     };
   },
 });

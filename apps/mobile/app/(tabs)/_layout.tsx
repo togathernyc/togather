@@ -90,6 +90,21 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
+        name="people"
+        options={{
+          title: 'People',
+          // Hidden tab — accessed via Profile menu
+          href: null,
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? 'people' : 'people-outline'}
+              size={24}
+              color={color}
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="chat"
         options={{
           title: 'Inbox',
