@@ -1512,22 +1512,33 @@ export function FollowupDesktopTable({
           </Text>
         </View>
         {crossGroupMode && crossGroupConfig?.leaderGroups && crossGroupConfig.leaderGroups.length > 1 ? (
-          <View style={s.crossGroupFilterRow}>
-            <TouchableOpacity
-              style={[s.crossGroupFilterChip, crossGroupFilter === "all" && s.crossGroupFilterChipActive]}
-              onPress={() => setCrossGroupFilter("all")}
-            >
-              <Text style={[s.crossGroupFilterChipText, crossGroupFilter === "all" && s.crossGroupFilterChipTextActive]}>All Groups</Text>
-            </TouchableOpacity>
-            {crossGroupConfig.leaderGroups.map((g: { _id: string; name: string }) => (
-              <TouchableOpacity
-                key={g._id}
-                style={[s.crossGroupFilterChip, crossGroupFilter === g._id && s.crossGroupFilterChipActive]}
-                onPress={() => setCrossGroupFilter(g._id)}
-              >
-                <Text style={[s.crossGroupFilterChipText, crossGroupFilter === g._id && s.crossGroupFilterChipTextActive]}>{g.name}</Text>
-              </TouchableOpacity>
-            ))}
+          <View style={s.crossGroupFilterDropdown}>
+            {React.createElement("select", {
+              value: crossGroupFilter,
+              onChange: (e: any) => setCrossGroupFilter(e.target.value),
+              style: {
+                fontSize: 13,
+                fontWeight: "600",
+                color: "#334155",
+                backgroundColor: "#fff",
+                border: "1px solid #CBD5E1",
+                borderRadius: 8,
+                padding: "6px 28px 6px 10px",
+                appearance: "none",
+                WebkitAppearance: "none",
+                backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%23334155' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E")`,
+                backgroundRepeat: "no-repeat",
+                backgroundPosition: "right 8px center",
+                cursor: "pointer",
+                outline: "none",
+                minWidth: 140,
+              },
+            },
+              React.createElement("option", { value: "all" }, "All Groups"),
+              ...(crossGroupConfig.leaderGroups.map((g: { _id: string; name: string }) =>
+                React.createElement("option", { key: g._id, value: g._id }, g.name)
+              ))
+            )}
           </View>
         ) : null}
         {!crossGroupMode && (
@@ -2143,32 +2154,9 @@ const s = StyleSheet.create({
   settingsButton: {
     padding: 6,
   },
-  crossGroupFilterRow: {
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
-    gap: 6,
-    flexWrap: "wrap" as const,
+  crossGroupFilterDropdown: {
     marginRight: 12,
-  },
-  crossGroupFilterChip: {
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#CBD5E1",
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    backgroundColor: "#fff",
-  },
-  crossGroupFilterChipActive: {
-    borderColor: "#2563EB",
-    backgroundColor: "#EFF6FF",
-  },
-  crossGroupFilterChipText: {
-    color: "#334155",
-    fontSize: 12,
-    fontWeight: "600" as const,
-  },
-  crossGroupFilterChipTextActive: {
-    color: "#1D4ED8",
+    justifyContent: "center" as const,
   },
   importButton: {
     flexDirection: "row" as const,

@@ -268,7 +268,11 @@ export function FollowupSettingsPanel({
 
   // Build allColumnsForPicker from config data
   const allColumnsForPicker = useMemo(() => {
-    const cols: { key: string; label: string }[] = [
+    const cols: { key: string; label: string }[] = [];
+    if (crossGroupMode) {
+      cols.push({ key: "groupName", label: "Group" });
+    }
+    cols.push(
       { key: "addedAt", label: "Date Added" },
       { key: "firstName", label: "First Name" },
       { key: "lastName", label: "Last Name" },
@@ -276,7 +280,7 @@ export function FollowupSettingsPanel({
       { key: "phone", label: "Phone" },
       { key: "zipCode", label: "ZIP Code" },
       { key: "dateOfBirth", label: "Birthday" },
-    ];
+    );
     scoreConfigScores.forEach((sc: { id: string; name: string }, i: number) => {
       cols.push({ key: `score${i + 1}`, label: sc.name });
     });
@@ -294,7 +298,7 @@ export function FollowupSettingsPanel({
       cols.push({ key: cf.slot, label: cf.name });
     }
     return cols;
-  }, [scoreConfigScores, customFields]);
+  }, [crossGroupMode, scoreConfigScores, customFields]);
 
   const configSignature = useMemo(
     () => JSON.stringify(columnConfig ?? { columnOrder: [], hiddenColumns: [], customFields: [] }),
@@ -303,6 +307,7 @@ export function FollowupSettingsPanel({
 
   // Initialize column state from config. Only resync when server config actually changes.
   useEffect(() => {
+    if (crossGroupMode) return; // handled separately below
     if (!config) return;
     if (lastAppliedConfigSignatureRef.current === configSignature) return;
     const allKeys = serverColumnKeys.filter((k) => !SYSTEM_COLUMNS.has(k));
@@ -325,7 +330,32 @@ export function FollowupSettingsPanel({
       }))
     );
     lastAppliedConfigSignatureRef.current = configSignature;
-  }, [config, configSignature, serverColumnKeys, columnConfig, initialCustomFields]);
+  }, [crossGroupMode, config, configSignature, serverColumnKeys, columnConfig, initialCustomFields]);
+
+  // Initialize column state for cross-group mode from localStorage-backed prop
+  const crossGroupInitRef = useRef(false);
+  useEffect(() => {
+    if (!crossGroupMode) return;
+    if (crossGroupInitRef.current) return;
+    crossGroupInitRef.current = true;
+    const defaultKeys = [
+      "groupName", "addedAt", "firstName", "lastName", "email", "phone",
+      "zipCode", "dateOfBirth", "assignee", "notes", "tasks", "status",
+      "lastAttendedAt", "lastFollowupAt", "lastActiveAt", "alerts",
+    ];
+    const savedOrder = crossGroupColConfig?.columnOrder ?? [];
+    if (savedOrder.length > 0) {
+      const orderSet = new Set(savedOrder);
+      const merged = [...savedOrder.filter((k) => defaultKeys.includes(k))];
+      for (const k of defaultKeys) {
+        if (!orderSet.has(k)) merged.push(k);
+      }
+      setColumnOrder(merged);
+    } else {
+      setColumnOrder(defaultKeys);
+    }
+    setHiddenColumns(new Set(crossGroupColConfig?.hiddenColumns ?? []));
+  }, [crossGroupMode, crossGroupColConfig]);
 
   const usedSlots = useMemo(
     () => new Set(customFields.map((f) => f.slot)),
@@ -697,7 +727,7 @@ export function FollowupSettingsPanel({
 
   // ── Loading ──
 
-  if (!config || !groupData || !availableVariables) {
+  if (!crossGroupMode && (!config || !groupData || !availableVariables)) {
     return (
       <View style={styles.container}>
         <View style={styles.header}>
