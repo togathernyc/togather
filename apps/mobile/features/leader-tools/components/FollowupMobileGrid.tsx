@@ -551,10 +551,11 @@ export function FollowupMobileGrid({
   const getMemberGroupId = useCallback(
     (memberId: string): Id<"groups"> => {
       if (!crossGroupMode) return groupId as Id<"groups">;
-      const member = (rawMembers ?? []).find((m: any) => m.groupMemberId === memberId || m._id === memberId);
+      const member = (rawMembers ?? []).find((m: any) => m.groupMemberId === memberId || m._id === memberId)
+        ?? (searchResults ?? []).find((m: any) => m.groupMemberId === memberId || m._id === memberId);
       return ((member as any)?.groupId ?? groupId) as Id<"groups">;
     },
-    [crossGroupMode, groupId, rawMembers]
+    [crossGroupMode, groupId, rawMembers, searchResults]
   );
 
   const getSortFieldValue = useCallback(
@@ -1009,7 +1010,11 @@ export function FollowupMobileGrid({
   };
 
   const handleMemberPress = (memberId: string) => {
-    router.push(`/(user)/leader-tools/${groupId}/followup/${memberId}`);
+    const member = displayMembers.find((m) => m.groupMemberId === memberId);
+    const targetGroupId = crossGroupMode
+      ? ((member as any)?.groupId?.toString() ?? groupId)
+      : groupId;
+    router.push(`/(user)/leader-tools/${targetGroupId}/followup/${memberId}`);
   };
 
   const handleSettingsPress = () => {

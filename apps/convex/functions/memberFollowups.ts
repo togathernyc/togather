@@ -932,16 +932,34 @@ export const listAssignedToMe = query({
       });
     }
 
-    const paginatedResult = await q.paginate(
-      args.paginationOpts ?? { cursor: null, numItems: 50 }
-    );
+    const numItems = args.paginationOpts?.numItems ?? 50;
+    let paginationOpts = args.paginationOpts ?? { cursor: null, numItems };
+    let paginatedResult = await q.paginate(paginationOpts);
 
     // Filter to only leader groups (unless already group-filtered)
-    const filteredPage = args.groupFilter
+    let filteredPage = args.groupFilter
       ? paginatedResult.page
       : paginatedResult.page.filter((doc: any) =>
           leaderGroupIdSet.has(doc.groupId.toString())
         );
+
+    // Continue fetching pages if post-filter result is empty but pagination isn't done.
+    // This prevents returning empty pages due to leader-group filtering.
+    const maxRetries = 5;
+    let retries = 0;
+    while (
+      filteredPage.length === 0 &&
+      !paginatedResult.isDone &&
+      retries < maxRetries &&
+      !args.groupFilter
+    ) {
+      paginationOpts = { cursor: paginatedResult.continueCursor, numItems };
+      paginatedResult = await q.paginate(paginationOpts);
+      filteredPage = paginatedResult.page.filter((doc: any) =>
+        leaderGroupIdSet.has(doc.groupId.toString())
+      );
+      retries++;
+    }
 
     // Enrich with group name
     const groupNameCache = new Map<string, string>();

@@ -17,7 +17,7 @@
  */
 
 import { v } from "convex/values";
-import { action, internalAction, internalMutation, mutation } from "../_generated/server";
+import { internalAction, internalMutation } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
 import { now, generateShortId, normalizePhone, buildSearchText } from "../lib/utils";
@@ -899,7 +899,7 @@ const FAKE_PEOPLE = [
   { firstName: "Brian", lastName: "Thomas", email: "brian.t@example.com", phone: "+12025551012" },
 ];
 
-export const seedPeopleData = action({
+export const seedPeopleData = internalAction({
   args: {},
   handler: async (ctx): Promise<{ success: boolean; message: string }> => {
     return await ctx.runMutation(internal.functions.seed._seedPeopleDataMutation, {});

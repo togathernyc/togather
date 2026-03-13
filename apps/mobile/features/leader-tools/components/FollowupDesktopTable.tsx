@@ -858,10 +858,11 @@ export function FollowupDesktopTable({
   const getMemberGroupId = useCallback(
     (memberId: string): Id<"groups"> => {
       if (!crossGroupMode) return groupId as Id<"groups">;
-      const member = (rawMembers ?? []).find((m: any) => m.groupMemberId === memberId || m._id === memberId);
+      const member = (rawMembers ?? []).find((m: any) => m.groupMemberId === memberId || m._id === memberId)
+        ?? (searchResults ?? []).find((m: any) => m.groupMemberId === memberId || m._id === memberId);
       return ((member as any)?.groupId ?? groupId) as Id<"groups">;
     },
-    [crossGroupMode, groupId, rawMembers]
+    [crossGroupMode, groupId, rawMembers, searchResults]
   );
 
   const enqueueAssigneeUpdate = useCallback(
