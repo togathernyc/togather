@@ -31,6 +31,7 @@ import { now, getMediaUrl, normalizePhone, isValidPhone, buildSearchText, safeSl
 import { requireAuth } from "../lib/auth";
 import { parseDateOptional } from "../lib/validation";
 import { isCommunityAdmin } from "../lib/permissions";
+import { isActiveMembership, isLeaderRole } from "../lib/helpers";
 import { syncUserChannelMembershipsLogic } from "./sync/memberships";
 import {
   DEFAULT_SCORE_CONFIG,
@@ -836,6 +837,289 @@ export const count = query({
       count++;
     }
     return count;
+  },
+});
+
+// ============================================================================
+// Cross-Group Queries (People page in Profile)
+// ============================================================================
+
+/**
+ * Helper: Get IDs of groups where the current user is an active leader/admin.
+ */
+async function getActiveLeaderGroupIds(
+  ctx: { db: any },
+  userId: Id<"users">,
+): Promise<Id<"groups">[]> {
+  const memberships = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_user", (q: any) => q.eq("userId", userId))
+    .collect();
+  return memberships
+    .filter(
+      (membership: any) =>
+        isActiveMembership(membership) && isLeaderRole(membership.role),
+    )
+    .map((membership: any) => membership.groupId);
+}
+
+/**
+ * List all members assigned to the current user across all their leader groups.
+ * Paginated query using the by_assignee index.
+ */
+export const listAssignedToMe = query({
+  args: {
+    token: v.string(),
+    sortBy: v.optional(v.string()),
+    sortDirection: v.optional(v.string()),
+    statusFilter: v.optional(v.string()),
+    assigneeFilter: v.optional(v.id("users")),
+    excludedAssigneeFilters: v.optional(v.array(v.id("users"))),
+    scoreField: v.optional(v.string()),
+    scoreMin: v.optional(v.number()),
+    scoreMax: v.optional(v.number()),
+    addedAtMin: v.optional(v.number()),
+    addedAtMax: v.optional(v.number()),
+    groupFilter: v.optional(v.id("groups")),
+    paginationOpts: v.optional(paginationOptsValidator),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const leaderGroupIds = await getActiveLeaderGroupIds(ctx, userId);
+    if (leaderGroupIds.length === 0) {
+      return {
+        page: [],
+        isDone: true,
+        continueCursor: "",
+      };
+    }
+
+    const leaderGroupIdSet = new Set(leaderGroupIds.map((id) => id.toString()));
+
+    // Use the assignee filter if provided, otherwise default to current user
+    const assigneeId = args.assigneeFilter ?? userId;
+
+    let q = ctx.db
+      .query("memberFollowupScores")
+      .withIndex("by_assignee", (fq: any) => fq.eq("assigneeId", assigneeId));
+
+    // Apply filters
+    const scoreFilterField = (args.scoreField ?? "score1") as "score1" | "score2" | "score3" | "score4";
+    const hasFilters =
+      args.statusFilter ||
+      (args.excludedAssigneeFilters && args.excludedAssigneeFilters.length > 0) ||
+      args.scoreMax !== undefined ||
+      args.scoreMin !== undefined ||
+      args.addedAtMin !== undefined ||
+      args.addedAtMax !== undefined ||
+      args.groupFilter;
+
+    if (hasFilters) {
+      q = q.filter((fq) => {
+        const conds: any[] = [];
+        if (args.statusFilter) conds.push(fq.eq(fq.field("status"), args.statusFilter));
+        if (args.excludedAssigneeFilters?.length) {
+          for (const excludedId of args.excludedAssigneeFilters) {
+            conds.push(fq.neq(fq.field("assigneeId"), excludedId));
+          }
+        }
+        if (args.scoreMax !== undefined) conds.push(fq.lt(fq.field(scoreFilterField), args.scoreMax));
+        if (args.scoreMin !== undefined) conds.push(fq.gt(fq.field(scoreFilterField), args.scoreMin));
+        if (args.addedAtMax !== undefined) conds.push(fq.lte(fq.field("addedAt"), args.addedAtMax));
+        if (args.addedAtMin !== undefined) conds.push(fq.gte(fq.field("addedAt"), args.addedAtMin));
+        if (args.groupFilter) conds.push(fq.eq(fq.field("groupId"), args.groupFilter));
+        return conds.length === 0 ? true : conds.length === 1 ? conds[0] : fq.and(...(conds as [any, any, ...any[]]));
+      });
+    }
+
+    const paginatedResult = await q.paginate(
+      args.paginationOpts ?? { cursor: null, numItems: 50 }
+    );
+
+    // Filter to only leader groups (unless already group-filtered)
+    const filteredPage = args.groupFilter
+      ? paginatedResult.page
+      : paginatedResult.page.filter((doc: any) =>
+          leaderGroupIdSet.has(doc.groupId.toString())
+        );
+
+    // Enrich with group name
+    const groupNameCache = new Map<string, string>();
+    const enrichedPage = await Promise.all(
+      filteredPage.map(async (doc: any) => {
+        const gidStr = doc.groupId.toString();
+        if (!groupNameCache.has(gidStr)) {
+          const group = await ctx.db.get(doc.groupId as Id<"groups">);
+          groupNameCache.set(gidStr, (group as any)?.name ?? "Unknown Group");
+        }
+        return { ...doc, groupName: groupNameCache.get(gidStr) };
+      })
+    );
+
+    return {
+      ...paginatedResult,
+      page: enrichedPage,
+    };
+  },
+});
+
+/**
+ * Search members assigned to the current user across all leader groups.
+ * Uses full-text search index.
+ */
+export const searchAssignedToMe = query({
+  args: {
+    token: v.string(),
+    searchText: v.string(),
+    statusFilter: v.optional(v.string()),
+    assigneeFilter: v.optional(v.id("users")),
+    excludedAssigneeFilters: v.optional(v.array(v.id("users"))),
+    scoreField: v.optional(v.string()),
+    scoreMin: v.optional(v.number()),
+    scoreMax: v.optional(v.number()),
+    addedAtMin: v.optional(v.number()),
+    addedAtMax: v.optional(v.number()),
+    groupFilter: v.optional(v.id("groups")),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const leaderGroupIds = await getActiveLeaderGroupIds(ctx, userId);
+    if (leaderGroupIds.length === 0) return [];
+
+    const leaderGroupIdSet = new Set(leaderGroupIds.map((id) => id.toString()));
+    const assigneeId = args.assigneeFilter ?? userId;
+
+    let results = ctx.db
+      .query("memberFollowupScores")
+      .withSearchIndex("search_followup", (q) => {
+        let sq = q.search("searchText", args.searchText).eq("assigneeId", assigneeId);
+        if (args.statusFilter) sq = sq.eq("status", args.statusFilter);
+        if (args.groupFilter) sq = sq.eq("groupId", args.groupFilter);
+        return sq;
+      });
+
+    // Range filters via .filter()
+    const scoreFilterField = (args.scoreField ?? "score1") as "score1" | "score2" | "score3" | "score4";
+    if (args.scoreMax !== undefined || args.scoreMin !== undefined) {
+      results = results.filter((fq) => {
+        const conds: any[] = [];
+        if (args.scoreMax !== undefined) conds.push(fq.lt(fq.field(scoreFilterField), args.scoreMax));
+        if (args.scoreMin !== undefined) conds.push(fq.gt(fq.field(scoreFilterField), args.scoreMin));
+        return conds.length === 1 ? conds[0] : fq.and(...(conds as [any, any, ...any[]]));
+      });
+    }
+
+    if (
+      (args.excludedAssigneeFilters && args.excludedAssigneeFilters.length > 0) ||
+      args.addedAtMin !== undefined ||
+      args.addedAtMax !== undefined
+    ) {
+      results = results.filter((fq) => {
+        const conds: any[] = [];
+        if (args.excludedAssigneeFilters?.length) {
+          for (const excludedId of args.excludedAssigneeFilters) {
+            conds.push(fq.neq(fq.field("assigneeId"), excludedId));
+          }
+        }
+        if (args.addedAtMax !== undefined) conds.push(fq.lte(fq.field("addedAt"), args.addedAtMax));
+        if (args.addedAtMin !== undefined) conds.push(fq.gte(fq.field("addedAt"), args.addedAtMin));
+        return conds.length === 1 ? conds[0] : fq.and(...(conds as [any, any, ...any[]]));
+      });
+    }
+
+    const allResults = await results.take(200);
+
+    // Filter to leader groups
+    const filtered = args.groupFilter
+      ? allResults
+      : allResults.filter((doc: any) => leaderGroupIdSet.has(doc.groupId.toString()));
+
+    // Enrich with group name
+    const groupNameCache = new Map<string, string>();
+    return Promise.all(
+      filtered.map(async (doc: any) => {
+        const gidStr = doc.groupId.toString();
+        if (!groupNameCache.has(gidStr)) {
+          const group = await ctx.db.get(doc.groupId as Id<"groups">);
+          groupNameCache.set(gidStr, (group as any)?.name ?? "Unknown Group");
+        }
+        return { ...doc, groupName: groupNameCache.get(gidStr) };
+      })
+    );
+  },
+});
+
+/**
+ * Get cross-group config for the People page.
+ * Returns the union of score configs and leaders across all leader groups.
+ */
+export const getCrossGroupConfig = query({
+  args: { token: v.string() },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const leaderGroupIds = await getActiveLeaderGroupIds(ctx, userId);
+    if (leaderGroupIds.length === 0) {
+      return {
+        scoreConfigScores: [],
+        leaderGroups: [],
+        leaders: [],
+      };
+    }
+
+    const groups = await Promise.all(leaderGroupIds.map((id) => ctx.db.get(id)));
+
+    // Use the score config from the first group that has one
+    // (cross-group view uses a single score config for sorting)
+    let scoreConfigScores: Array<{ id: string; name: string }> = [];
+    for (const group of groups) {
+      if (!group) continue;
+      const sc: ScoreConfig = group.followupScoreConfig ?? DEFAULT_SCORE_CONFIG;
+      if (sc.scores.length > 0) {
+        scoreConfigScores = sc.scores.map((s) => ({ id: s.id, name: s.name }));
+        break;
+      }
+    }
+
+    // Build leader groups list
+    const leaderGroupsList = groups
+      .filter((g): g is NonNullable<typeof g> => !!g)
+      .map((g) => ({ _id: g._id.toString(), name: g.name ?? "Unnamed Group" }));
+
+    // Collect all unique leaders across groups
+    const allLeaderMemberships = await Promise.all(
+      leaderGroupIds.map((gid) =>
+        ctx.db
+          .query("groupMembers")
+          .withIndex("by_group_user", (q: any) => q.eq("groupId", gid))
+          .collect()
+      )
+    );
+
+    const leaderUserIds = new Set<string>();
+    const leaders: Array<{ userId: string; firstName: string; lastName: string; profilePhoto?: string }> = [];
+    for (const memberships of allLeaderMemberships) {
+      for (const m of memberships) {
+        if (!isActiveMembership(m) || !isLeaderRole(m.role)) continue;
+        const uid = m.userId.toString();
+        if (leaderUserIds.has(uid)) continue;
+        leaderUserIds.add(uid);
+        const user = await ctx.db.get(m.userId);
+        if (user) {
+          leaders.push({
+            userId: uid,
+            firstName: user.firstName ?? "",
+            lastName: user.lastName ?? "",
+            profilePhoto: user.profilePhoto,
+          });
+        }
+      }
+    }
+
+    return {
+      scoreConfigScores,
+      leaderGroups: leaderGroupsList,
+      leaders,
+    };
   },
 });
 

@@ -918,6 +918,7 @@ export default defineSchema({
     // Lookup indexes
     .index("by_groupMember", ["groupMemberId"])
     .index("by_group", ["groupId"])
+    .index("by_assignee", ["assigneeId"])
     // Full-text search
     .searchIndex("search_followup", {
       searchField: "searchText",

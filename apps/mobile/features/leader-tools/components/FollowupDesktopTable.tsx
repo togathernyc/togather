@@ -204,7 +204,15 @@ function useDebounce<T>(value: T, delay: number): T {
 // Component
 // ============================================================================
 
-export function FollowupDesktopTable({ groupId }: { groupId: string }) {
+export function FollowupDesktopTable({
+  groupId,
+  crossGroupMode,
+  returnTo,
+}: {
+  groupId: string;
+  crossGroupMode?: boolean;
+  returnTo?: string | null;
+}) {
   const router = useRouter();
   const { user } = useAuth();
   const currentUserId = user?.id as Id<"users"> | undefined;
@@ -253,26 +261,56 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
   // Custom field dropdown state
   const [customDropdownFor, setCustomDropdownFor] = useState<{ memberId: string; slot: string } | null>(null);
 
-  // Config query
-  const config = useAuthenticatedQuery(
-    api.functions.memberFollowups.getFollowupConfig,
-    groupId ? { groupId: groupId as Id<"groups"> } : "skip"
+  // Cross-group config query
+  const crossGroupConfig = useAuthenticatedQuery(
+    api.functions.memberFollowups.getCrossGroupConfig,
+    crossGroupMode ? {} : "skip"
   );
-  const scoreConfig: ScoreConfigEntry[] = config?.scoreConfigScores ?? [];
-  const toolDisplayName = config?.toolDisplayName ?? "People";
-  const columnConfig = config?.followupColumnConfig ?? null;
-  const customFields: CustomFieldDef[] = (columnConfig?.customFields ?? []) as CustomFieldDef[];
 
-  // Leaders query (for assignee picker) — needs auth token
-  const leaders = useAuthenticatedQuery(
-    api.functions.groups.members.getLeaders,
-    groupId ? { groupId: groupId as Id<"groups"> } : "skip"
+  // Cross-group local column config (localStorage)
+  const CROSS_GROUP_COL_CONFIG_KEY = "people-cross-group-col-config";
+  const [crossGroupColConfig, setCrossGroupColConfig] = useState<{
+    columnOrder: string[];
+    hiddenColumns: string[];
+  } | null>(null);
+
+  useEffect(() => {
+    if (!crossGroupMode || Platform.OS !== "web") return;
+    try {
+      const stored = localStorage.getItem(CROSS_GROUP_COL_CONFIG_KEY);
+      if (stored) setCrossGroupColConfig(JSON.parse(stored));
+    } catch { /* localStorage unavailable */ }
+  }, [crossGroupMode]);
+
+  // Group filter for cross-group mode
+  const [crossGroupFilter, setCrossGroupFilter] = useState<string>("all");
+
+  // Config query (per-group)
+  const perGroupConfig = useAuthenticatedQuery(
+    api.functions.memberFollowups.getFollowupConfig,
+    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip"
   );
+  const config = crossGroupMode ? crossGroupConfig : perGroupConfig;
+  const scoreConfig: ScoreConfigEntry[] = crossGroupMode
+    ? (crossGroupConfig?.scoreConfigScores ?? [])
+    : (perGroupConfig?.scoreConfigScores ?? []);
+  const toolDisplayName = crossGroupMode ? "People" : (perGroupConfig?.toolDisplayName ?? "People");
+  const columnConfig = crossGroupMode
+    ? (crossGroupColConfig ? { columnOrder: crossGroupColConfig.columnOrder, hiddenColumns: crossGroupColConfig.hiddenColumns, customFields: [] } : null)
+    : (perGroupConfig?.followupColumnConfig ?? null);
+  const customFields: CustomFieldDef[] = crossGroupMode ? [] : ((perGroupConfig?.followupColumnConfig?.customFields ?? []) as CustomFieldDef[]);
+
+  // Leaders query (for assignee picker)
+  const perGroupLeaders = useAuthenticatedQuery(
+    api.functions.groups.members.getLeaders,
+    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip"
+  );
+  const leaders = crossGroupMode ? crossGroupConfig?.leaders : perGroupLeaders;
 
   // Group tasks — used to build per-member task counts for the table
   const groupTasks = useAuthenticatedQuery(
     api.functions.tasks.index.listGroup,
-    groupId ? { groupId: groupId as Id<"groups"> } : "skip"
+    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip"
   );
 
   const tasksByMember = useMemo(() => {
@@ -345,15 +383,22 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
     ];
 
     // All available non-system columns (built-in + score + custom)
-    const allAvailable: ColumnDef[] = [
-      { key: "addedAt", label: "Date Added", defaultWidth: 100, sortable: true, serverSortKey: "addedAt" },
-      { key: "firstName", label: "First Name", defaultWidth: 150, sortable: true, serverSortKey: "firstName" },
-      { key: "lastName", label: "Last Name", defaultWidth: 120, sortable: true, serverSortKey: "lastName" },
+    const allAvailable: ColumnDef[] = [];
+
+    // In cross-group mode, add a Group column at the start
+    if (crossGroupMode) {
+      allAvailable.push({ key: "groupName", label: "Group", defaultWidth: 160, sortable: false });
+    }
+
+    allAvailable.push(
+      { key: "addedAt", label: "Date Added", defaultWidth: 100, sortable: true, serverSortKey: crossGroupMode ? undefined : "addedAt" },
+      { key: "firstName", label: "First Name", defaultWidth: 150, sortable: true, serverSortKey: crossGroupMode ? undefined : "firstName" },
+      { key: "lastName", label: "Last Name", defaultWidth: 120, sortable: true, serverSortKey: crossGroupMode ? undefined : "lastName" },
       { key: "email", label: "Email", defaultWidth: 180, sortable: false },
       { key: "phone", label: "Phone", defaultWidth: 140, sortable: false },
       { key: "zipCode", label: "ZIP Code", defaultWidth: 100, sortable: false },
       { key: "dateOfBirth", label: "Birthday", defaultWidth: 110, sortable: false },
-    ];
+    );
 
     // Score columns — only score1 and score2 have server-side indexes;
     // score3+ are still sortable but use client-side sorting (no serverSortKey).
@@ -364,18 +409,18 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
         label: sc.name,
         defaultWidth: 100,
         sortable: true,
-        serverSortKey: key in SERVER_SORT_KEYS ? key : undefined,
+        serverSortKey: crossGroupMode ? undefined : (key in SERVER_SORT_KEYS ? key : undefined),
       });
     });
 
     allAvailable.push(
-      { key: "assignee", label: "Assignees", defaultWidth: 140, sortable: true, serverSortKey: "assignee" },
+      { key: "assignee", label: "Assignees", defaultWidth: 140, sortable: true, serverSortKey: crossGroupMode ? undefined : "assignee" },
       { key: "notes", label: "Notes", defaultWidth: 200, sortable: false },
       { key: "tasks", label: "Tasks", defaultWidth: 220, sortable: false },
-      { key: "status", label: "Status", defaultWidth: 100, sortable: true, serverSortKey: "status" },
-      { key: "lastAttendedAt", label: "Last Attended", defaultWidth: 120, sortable: true, serverSortKey: "lastAttendedAt" },
-      { key: "lastFollowupAt", label: "Last Contact", defaultWidth: 120, sortable: true, serverSortKey: "lastFollowupAt" },
-      { key: "lastActiveAt", label: "Date Active", defaultWidth: 120, sortable: true, serverSortKey: "lastActiveAt" },
+      { key: "status", label: "Status", defaultWidth: 100, sortable: true, serverSortKey: crossGroupMode ? undefined : "status" },
+      { key: "lastAttendedAt", label: "Last Attended", defaultWidth: 120, sortable: true, serverSortKey: crossGroupMode ? undefined : "lastAttendedAt" },
+      { key: "lastFollowupAt", label: "Last Contact", defaultWidth: 120, sortable: true, serverSortKey: crossGroupMode ? undefined : "lastFollowupAt" },
+      { key: "lastActiveAt", label: "Date Active", defaultWidth: 120, sortable: true, serverSortKey: crossGroupMode ? undefined : "lastActiveAt" },
       { key: "alerts", label: "Alerts", defaultWidth: 120, sortable: false },
     );
 
@@ -416,7 +461,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
     const visible = ordered.filter((c) => !hiddenSet.has(c.key));
 
     return [...systemCols, ...visible];
-  }, [scoreConfig, customFields, columnConfig]);
+  }, [scoreConfig, customFields, columnConfig, crossGroupMode]);
 
   // Editable columns (built-in + all custom field slots)
   const editableColumns = useMemo(() => {
@@ -431,23 +476,24 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
   const [colWidths, setColWidths] = useState<Record<string, number>>({});
 
   // Load from localStorage
+  const colWidthsKey = crossGroupMode ? STORAGE_PREFIX + "cross-group" : STORAGE_PREFIX + groupId;
   useEffect(() => {
     if (Platform.OS !== "web") return;
     try {
-      const stored = localStorage.getItem(STORAGE_PREFIX + groupId);
+      const stored = localStorage.getItem(colWidthsKey);
       if (stored) setColWidths(JSON.parse(stored));
     } catch { /* localStorage unavailable */ }
-  }, [groupId]);
+  }, [colWidthsKey]);
 
   // Save to localStorage
   const saveColWidths = useCallback(
     (widths: Record<string, number>) => {
       if (Platform.OS !== "web") return;
       try {
-        localStorage.setItem(STORAGE_PREFIX + groupId, JSON.stringify(widths));
+        localStorage.setItem(colWidthsKey, JSON.stringify(widths));
       } catch { /* localStorage unavailable */ }
     },
-    [groupId]
+    [colWidthsKey]
   );
 
   const getColWidth = (col: ColumnDef) => colWidths[col.key] ?? col.defaultWidth;
@@ -477,15 +523,20 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
     return args;
   }, [parsedQuery]);
 
+  // Cross-group group filter arg
+  const crossGroupFilterArg = crossGroupMode && crossGroupFilter !== "all"
+    ? { groupFilter: crossGroupFilter as Id<"groups"> }
+    : {};
+
   // Paginated query — used when there's NO text search
   const {
-    results: rawMembers,
-    status: paginationStatus,
-    loadMore,
-    isLoading,
+    results: perGroupRawMembers,
+    status: perGroupPaginationStatus,
+    loadMore: perGroupLoadMore,
+    isLoading: perGroupIsLoading,
   } = useAuthenticatedPaginatedQuery(
     api.functions.memberFollowups.list,
-    !hasTextSearch && groupId
+    !crossGroupMode && !hasTextSearch && groupId
       ? {
           groupId: groupId as Id<"groups">,
           sortBy: serverSortBy,
@@ -496,10 +547,32 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
     { initialNumItems: 50 }
   );
 
+  // Cross-group paginated query
+  const {
+    results: crossGroupRawMembers,
+    status: crossGroupPaginationStatus,
+    loadMore: crossGroupLoadMore,
+    isLoading: crossGroupIsLoading,
+  } = useAuthenticatedPaginatedQuery(
+    api.functions.memberFollowups.listAssignedToMe,
+    crossGroupMode && !hasTextSearch
+      ? {
+          ...listFilterArgs,
+          ...crossGroupFilterArg,
+        }
+      : "skip",
+    { initialNumItems: 50 }
+  );
+
+  const rawMembers = crossGroupMode ? crossGroupRawMembers : perGroupRawMembers;
+  const paginationStatus = crossGroupMode ? crossGroupPaginationStatus : perGroupPaginationStatus;
+  const loadMore = crossGroupMode ? crossGroupLoadMore : perGroupLoadMore;
+  const isLoading = crossGroupMode ? crossGroupIsLoading : perGroupIsLoading;
+
   // Text search query — used when there IS text search
-  const searchResults = useAuthenticatedQuery(
+  const perGroupSearchResults = useAuthenticatedQuery(
     api.functions.memberFollowups.search,
-    hasTextSearch && groupId
+    !crossGroupMode && hasTextSearch && groupId
       ? {
           groupId: groupId as Id<"groups">,
           searchText: parsedQuery.searchText,
@@ -516,10 +589,32 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
       : "skip"
   );
 
-  // Total member count
+  // Cross-group search query
+  const crossGroupSearchResults = useAuthenticatedQuery(
+    api.functions.memberFollowups.searchAssignedToMe,
+    crossGroupMode && hasTextSearch
+      ? {
+          searchText: parsedQuery.searchText,
+          ...(parsedQuery.statusFilter ? { statusFilter: parsedQuery.statusFilter } : {}),
+          ...(parsedQuery.assigneeFilter ? { assigneeFilter: parsedQuery.assigneeFilter as Id<"users"> } : {}),
+          ...(parsedQuery.excludedAssigneeFilters.length > 0
+            ? { excludedAssigneeFilters: parsedQuery.excludedAssigneeFilters as Id<"users">[] }
+            : {}),
+          ...(parsedQuery.scoreField ? { scoreField: parsedQuery.scoreField } : {}),
+          ...(parsedQuery.scoreMax !== undefined ? { scoreMax: parsedQuery.scoreMax } : {}),
+          ...(parsedQuery.scoreMin !== undefined ? { scoreMin: parsedQuery.scoreMin } : {}),
+          ...getDateAddedRangeArgs(parsedQuery.dateAddedFilter),
+          ...crossGroupFilterArg,
+        }
+      : "skip"
+  );
+
+  const searchResults = crossGroupMode ? crossGroupSearchResults : perGroupSearchResults;
+
+  // Total member count (only for per-group mode)
   const totalCount = useAuthenticatedQuery(
     api.functions.memberFollowups.count,
-    groupId ? { groupId: groupId as Id<"groups"> } : "skip"
+    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip"
   );
 
   // Merge: use search results when text search active, otherwise paginated.
@@ -533,18 +628,31 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
 
     if (!isClientSideSort || filtered.length === 0) return filtered;
 
-    // Client-side sort by the score column (e.g. score3, score4)
-    // sortField is like "score3" — find the scoreConfig entry for it
-    const scoreIdx = parseInt(sortField.replace("score", ""), 10) - 1;
-    const scoreId = scoreConfig[scoreIdx]?.id;
-    if (!scoreId) return filtered;
-
     const sorted = [...filtered];
-    sorted.sort((a, b) => {
-      const aVal = getScoreValue(a, scoreId);
-      const bVal = getScoreValue(b, scoreId);
-      return sortDirection === "asc" ? aVal - bVal : bVal - aVal;
-    });
+
+    if (sortField.startsWith("score")) {
+      // Client-side sort by the score column (e.g. score3, score4)
+      const scoreIdx = parseInt(sortField.replace("score", ""), 10) - 1;
+      const scoreId = scoreConfig[scoreIdx]?.id;
+      if (!scoreId) return filtered;
+      sorted.sort((a, b) => {
+        const aVal = getScoreValue(a, scoreId);
+        const bVal = getScoreValue(b, scoreId);
+        return sortDirection === "asc" ? aVal - bVal : bVal - aVal;
+      });
+    } else {
+      // Client-side sort by other fields (cross-group mode)
+      const multiplier = sortDirection === "asc" ? 1 : -1;
+      sorted.sort((a, b) => {
+        const aVal = (a as any)[sortField] ?? "";
+        const bVal = (b as any)[sortField] ?? "";
+        if (typeof aVal === "number" && typeof bVal === "number") {
+          return (aVal - bVal) * multiplier;
+        }
+        return String(aVal).localeCompare(String(bVal)) * multiplier;
+      });
+    }
+
     return sorted;
   }, [
     hasTextSearch,
@@ -635,10 +743,10 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
   const removeGroupMember = useAuthenticatedMutation(api.functions.groupMembers.remove);
   const removeCommunityMember = useAuthenticatedMutation(api.functions.communities.removeMember);
 
-  // Group data for header
+  // Group data for header (per-group mode only)
   const groupData = useQuery(
     api.functions.groups.index.getById,
-    groupId ? { groupId: groupId as Id<"groups"> } : "skip"
+    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip"
   );
 
   // ── Handlers ──
@@ -654,10 +762,14 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
   };
 
   const handleBack = () => {
+    if (returnTo) {
+      router.push(returnTo as any);
+      return;
+    }
     if (router.canGoBack()) {
       router.back();
     } else {
-      router.push("/(tabs)/chat");
+      router.push("/(tabs)/profile");
     }
   };
 
@@ -710,7 +822,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
             });
           } else {
             return removeGroupMember({
-              groupId: groupId as Id<"groups">,
+              groupId: getMemberGroupId(m.groupMemberId),
               userId: m.userId as Id<"users">,
             });
           }
@@ -742,18 +854,28 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
     setSelectedMemberId(null);
   };
 
+  // Helper to resolve groupId for a member (in cross-group mode, read from member data)
+  const getMemberGroupId = useCallback(
+    (memberId: string): Id<"groups"> => {
+      if (!crossGroupMode) return groupId as Id<"groups">;
+      const member = (rawMembers ?? []).find((m: any) => m.groupMemberId === memberId || m._id === memberId);
+      return ((member as any)?.groupId ?? groupId) as Id<"groups">;
+    },
+    [crossGroupMode, groupId, rawMembers]
+  );
+
   const enqueueAssigneeUpdate = useCallback(
     (memberId: string, assigneeIds: string[]) => {
       const previous = assigneeMutationQueueRef.current[memberId] ?? Promise.resolve();
       const next = previous
         .catch(() => undefined)
-        .then(() =>
+        .then(() => {
           setAssigneeMut({
-            groupId: groupId as Id<"groups">,
+            groupId: getMemberGroupId(memberId),
             groupMemberId: memberId as Id<"groupMembers">,
             assigneeIds: assigneeIds as Id<"users">[],
-          })
-        );
+          });
+        });
       assigneeMutationQueueRef.current[memberId] = next.finally(() => {
         if (assigneeMutationQueueRef.current[memberId] === next) {
           delete assigneeMutationQueueRef.current[memberId];
@@ -761,7 +883,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
       });
       return next;
     },
-    [groupId, setAssigneeMut]
+    [getMemberGroupId, setAssigneeMut]
   );
 
   const handleAssigneeSelect = async (memberId: string, assigneeIds: string[]) => {
@@ -792,7 +914,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
     setDropdownPos(null);
     try {
       await setStatusMut({
-        groupId: groupId as Id<"groups">,
+        groupId: getMemberGroupId(memberId),
         groupMemberId: memberId as Id<"groupMembers">,
         status: status || undefined,
       });
@@ -815,7 +937,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
     setDropdownPos(null);
     try {
       await setCustomFieldMut({
-        groupId: groupId as Id<"groups">,
+        groupId: getMemberGroupId(memberId),
         groupMemberId: memberId as Id<"groupMembers">,
         slot,
         value: value ?? undefined,
@@ -854,7 +976,7 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
 
     try {
       await setCustomFieldMut({
-        groupId: groupId as Id<"groups">,
+        groupId: getMemberGroupId(memberId),
         groupMemberId: memberId as Id<"groupMembers">,
         slot,
         value: newValue || undefined,
@@ -1006,6 +1128,9 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
 
       case "rowNum":
         return <Text style={s.rowNumText}>{rowIndex + 1}</Text>;
+
+      case "groupName":
+        return <Text style={s.cellText} numberOfLines={1}>{(item as any).groupName ?? ""}</Text>;
 
       case "addedAt":
         return <Text style={s.cellText}>{formatShortDate(item.addedAt)}</Text>;
@@ -1382,31 +1507,56 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
         </TouchableOpacity>
         <View style={s.headerContent}>
           <Text style={s.headerTitle}>{toolDisplayName}</Text>
-          <Text style={s.headerSubtitle}>{groupData?.name || "Group"}</Text>
+          <Text style={s.headerSubtitle}>
+            {crossGroupMode ? "All assigned people across groups" : (groupData?.name || "Group")}
+          </Text>
         </View>
-        <TouchableOpacity
-          style={s.addButton}
-          onPress={() => {
-            setSelectedMemberId(null);
-            setShowSettingsPanel(false);
-            setShowQuickAddPanel(true);
-          }}
-        >
-          <Ionicons name="person-add-outline" size={16} color="#16A34A" />
-          <Text style={s.addButtonText}>Add Person</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={s.importButton}
-          onPress={() => {
-            setSelectedMemberId(null);
-            setShowSettingsPanel(false);
-            setShowQuickAddPanel(false);
-            setShowCsvImportModal(true);
-          }}
-        >
-          <Ionicons name="cloud-upload-outline" size={16} color="#2563EB" />
-          <Text style={s.importButtonText}>Import CSV</Text>
-        </TouchableOpacity>
+        {crossGroupMode && crossGroupConfig?.leaderGroups && crossGroupConfig.leaderGroups.length > 1 ? (
+          <View style={s.crossGroupFilterRow}>
+            <TouchableOpacity
+              style={[s.crossGroupFilterChip, crossGroupFilter === "all" && s.crossGroupFilterChipActive]}
+              onPress={() => setCrossGroupFilter("all")}
+            >
+              <Text style={[s.crossGroupFilterChipText, crossGroupFilter === "all" && s.crossGroupFilterChipTextActive]}>All Groups</Text>
+            </TouchableOpacity>
+            {crossGroupConfig.leaderGroups.map((g: { _id: string; name: string }) => (
+              <TouchableOpacity
+                key={g._id}
+                style={[s.crossGroupFilterChip, crossGroupFilter === g._id && s.crossGroupFilterChipActive]}
+                onPress={() => setCrossGroupFilter(g._id)}
+              >
+                <Text style={[s.crossGroupFilterChipText, crossGroupFilter === g._id && s.crossGroupFilterChipTextActive]}>{g.name}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        ) : null}
+        {!crossGroupMode && (
+          <>
+            <TouchableOpacity
+              style={s.addButton}
+              onPress={() => {
+                setSelectedMemberId(null);
+                setShowSettingsPanel(false);
+                setShowQuickAddPanel(true);
+              }}
+            >
+              <Ionicons name="person-add-outline" size={16} color="#16A34A" />
+              <Text style={s.addButtonText}>Add Person</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={s.importButton}
+              onPress={() => {
+                setSelectedMemberId(null);
+                setShowSettingsPanel(false);
+                setShowQuickAddPanel(false);
+                setShowCsvImportModal(true);
+              }}
+            >
+              <Ionicons name="cloud-upload-outline" size={16} color="#2563EB" />
+              <Text style={s.importButtonText}>Import CSV</Text>
+            </TouchableOpacity>
+          </>
+        )}
         <TouchableOpacity style={s.settingsButton} onPress={handleSettingsPress}>
           <Ionicons name="settings-outline" size={22} color="#666" />
         </TouchableOpacity>
@@ -1454,7 +1604,9 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
         <Text style={s.memberCount}>
           {hasTextSearch
             ? `${members.length} result${members.length !== 1 ? "s" : ""}`
-            : `${totalCount ?? "\u2014"} members${hasAnyFilter ? " (filtered)" : ""}`}
+            : crossGroupMode
+              ? `${members.length} people${hasAnyFilter || crossGroupFilter !== "all" ? " (filtered)" : ""}`
+              : `${totalCount ?? "\u2014"} members${hasAnyFilter ? " (filtered)" : ""}`}
         </Text>
       </View>
 
@@ -1633,11 +1785,21 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
             <View style={s.sideSheet}>
               <FollowupSettingsPanel
                 groupId={groupId}
+                crossGroupMode={crossGroupMode}
+                crossGroupColConfig={crossGroupColConfig}
+                onCrossGroupColConfigChange={(newConfig) => {
+                  setCrossGroupColConfig(newConfig);
+                  if (Platform.OS === "web") {
+                    try {
+                      localStorage.setItem(CROSS_GROUP_COL_CONFIG_KEY, JSON.stringify(newConfig));
+                    } catch { /* localStorage unavailable */ }
+                  }
+                }}
                 onClose={() => setShowSettingsPanel(false)}
               />
             </View>
           </>
-        ) : showQuickAddPanel ? (
+        ) : !crossGroupMode && showQuickAddPanel ? (
           <>
             <View style={s.divider} />
             <View style={s.sideSheet}>
@@ -1656,20 +1818,27 @@ export function FollowupDesktopTable({ groupId }: { groupId: string }) {
               />
             </View>
           </>
-        ) : selectedMemberId ? (
-          <>
-            <View style={s.divider} />
-            <View style={s.sideSheet}>
-              <FollowupDetailContent
-                groupId={groupId}
-                memberId={selectedMemberId}
-                onClose={() => setSelectedMemberId(null)}
-                scrollToNotes={scrollToNotes}
-                scrollToTasks={scrollToTasks}
-              />
-            </View>
-          </>
-        ) : null}
+        ) : selectedMemberId ? (() => {
+          // In cross-group mode, find the groupId from the selected member's data
+          const selectedMember = displayMembers.find((m) => m.groupMemberId === selectedMemberId);
+          const detailGroupId = crossGroupMode
+            ? ((selectedMember as any)?.groupId?.toString() ?? "")
+            : groupId;
+          return (
+            <>
+              <View style={s.divider} />
+              <View style={s.sideSheet}>
+                <FollowupDetailContent
+                  groupId={detailGroupId}
+                  memberId={selectedMemberId}
+                  onClose={() => setSelectedMemberId(null)}
+                  scrollToNotes={scrollToNotes}
+                  scrollToTasks={scrollToTasks}
+                />
+              </View>
+            </>
+          );
+        })() : null}
       </View>
 
       {/* Dropdown portal — rendered outside the ScrollView at fixed position */}
@@ -1973,6 +2142,33 @@ const s = StyleSheet.create({
   },
   settingsButton: {
     padding: 6,
+  },
+  crossGroupFilterRow: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 6,
+    flexWrap: "wrap" as const,
+    marginRight: 12,
+  },
+  crossGroupFilterChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: "#fff",
+  },
+  crossGroupFilterChipActive: {
+    borderColor: "#2563EB",
+    backgroundColor: "#EFF6FF",
+  },
+  crossGroupFilterChipText: {
+    color: "#334155",
+    fontSize: 12,
+    fontWeight: "600" as const,
+  },
+  crossGroupFilterChipTextActive: {
+    color: "#1D4ED8",
   },
   importButton: {
     flexDirection: "row" as const,
