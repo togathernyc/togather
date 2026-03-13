@@ -53,49 +53,64 @@ export function ProfileMenu() {
   };
 
   return (
-    <Card style={styles.section}>
-      <TouchableOpacity
-        style={styles.menuItem}
-        onPress={() => router.push('/(user)/edit-profile')}
-        activeOpacity={0.7}
-      >
-        <View style={styles.menuIconContainer}>
-          <Ionicons name="create-outline" size={24} color={primaryColor} />
-        </View>
-        <Text style={styles.menuText}>Edit Profile</Text>
-        <Ionicons name="chevron-forward" size={20} color="#999" />
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        style={styles.menuItem}
-        onPress={handleSwitchCommunity}
-        activeOpacity={0.7}
-        disabled={isLoadingCommunities || isRefetching}
-      >
-        <View style={styles.menuIconContainer}>
-          <Ionicons
-            name={community?.id ? "swap-horizontal-outline" : "people-outline"}
-            size={24}
-            color={primaryColor}
-          />
-        </View>
-        <View style={styles.menuTextContainer}>
-          <Text style={styles.menuText}>
-            {community?.id ? "Switch Community" : "Pick a community"}
-          </Text>
-          {community?.name && (
-            <Text style={styles.menuSubtext}>{community.name}</Text>
-          )}
-        </View>
-        {isLoadingCommunities || isRefetching ? (
-          <ActivityIndicator size="small" color={primaryColor} />
-        ) : (
+    <>
+      <Card style={styles.section}>
+        <TouchableOpacity
+          style={styles.menuItem}
+          onPress={() => router.push('/(user)/edit-profile')}
+          activeOpacity={0.7}
+        >
+          <View style={styles.menuIconContainer}>
+            <Ionicons name="create-outline" size={24} color={primaryColor} />
+          </View>
+          <Text style={styles.menuText}>Edit Profile</Text>
           <Ionicons name="chevron-forward" size={20} color="#999" />
-        )}
-      </TouchableOpacity>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.menuItem}
+          onPress={handleSwitchCommunity}
+          activeOpacity={0.7}
+          disabled={isLoadingCommunities || isRefetching}
+        >
+          <View style={styles.menuIconContainer}>
+            <Ionicons
+              name={community?.id ? "swap-horizontal-outline" : "people-outline"}
+              size={24}
+              color={primaryColor}
+            />
+          </View>
+          <View style={styles.menuTextContainer}>
+            <Text style={styles.menuText}>
+              {community?.id ? "Switch Community" : "Pick a community"}
+            </Text>
+            {community?.name && (
+              <Text style={styles.menuSubtext}>{community.name}</Text>
+            )}
+          </View>
+          {isLoadingCommunities || isRefetching ? (
+            <ActivityIndicator size="small" color={primaryColor} />
+          ) : (
+            <Ionicons name="chevron-forward" size={20} color="#999" />
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.menuItem, styles.menuItemLast]}
+          onPress={() => router.push('/(user)/settings')}
+          activeOpacity={0.7}
+        >
+          <View style={styles.menuIconContainer}>
+            <Ionicons name="settings-outline" size={24} color={primaryColor} />
+          </View>
+          <Text style={styles.menuText}>Settings</Text>
+          <Ionicons name="chevron-forward" size={20} color="#999" />
+        </TouchableOpacity>
+      </Card>
 
       {hasLeaderAccess === true ? (
-        <>
+        <Card style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: primaryColor }]}>Leader Tools</Text>
           <TouchableOpacity
             style={styles.menuItem}
             onPress={() =>
@@ -113,7 +128,7 @@ export function ProfileMenu() {
             <Ionicons name="chevron-forward" size={20} color="#999" />
           </TouchableOpacity>
           <TouchableOpacity
-            style={styles.menuItem}
+            style={[styles.menuItem, styles.menuItemLast]}
             onPress={() =>
               router.push({
                 pathname: "/people",
@@ -128,22 +143,9 @@ export function ProfileMenu() {
             <Text style={styles.menuText}>People</Text>
             <Ionicons name="chevron-forward" size={20} color="#999" />
           </TouchableOpacity>
-        </>
+        </Card>
       ) : null}
-
-      <TouchableOpacity
-        style={[styles.menuItem, hasLeaderAccess === true ? undefined : styles.menuItemLast]}
-        onPress={() => router.push('/(user)/settings')}
-        activeOpacity={0.7}
-      >
-        <View style={styles.menuIconContainer}>
-          <Ionicons name="settings-outline" size={24} color={primaryColor} />
-        </View>
-        <Text style={styles.menuText}>Settings</Text>
-        <Ionicons name="chevron-forward" size={20} color="#999" />
-      </TouchableOpacity>
-
-    </Card>
+    </>
   );
 }
 
@@ -185,5 +187,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#666',
     marginTop: 2,
+  },
+  sectionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    marginBottom: 4,
   },
 });
