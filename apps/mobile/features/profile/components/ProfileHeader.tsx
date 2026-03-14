@@ -60,8 +60,8 @@ export function ProfileHeader({ user }: ProfileHeaderProps) {
 const styles = StyleSheet.create({
   profileCard: {
     marginTop: 12,
-    marginHorizontal: 12,
-    padding: 24,
+    marginHorizontal: 16,
+    padding: 20,
   },
   profileHeader: {
     flexDirection: 'row',
@@ -72,15 +72,15 @@ const styles = StyleSheet.create({
     marginLeft: 16,
   },
   name: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#333',
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#1a1a1a',
     marginBottom: 4,
   },
   email: {
     fontSize: 14,
-    color: '#666',
-    marginBottom: 8,
+    color: '#8e8e93',
+    marginBottom: 6,
   },
   phoneContainer: {
     flexDirection: 'row',
@@ -89,13 +89,13 @@ const styles = StyleSheet.create({
   },
   phone: {
     fontSize: 14,
-    color: '#666',
+    color: '#8e8e93',
   },
   linkedEmailsSection: {
-    marginTop: 20,
+    marginTop: 16,
     paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: '#E5E5E5',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#e5e5e5',
   },
   linkedEmailsHeader: {
     flexDirection: 'row',
@@ -104,13 +104,13 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   linkedEmailsTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#666',
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#8e8e93',
   },
   linkedEmail: {
     fontSize: 14,
-    color: '#333',
+    color: '#1a1a1a',
     marginLeft: 24,
     marginBottom: 4,
   },

@@ -5,7 +5,6 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Platform,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
@@ -17,6 +16,10 @@ import { ProfileHeader } from "./ProfileHeader";
 import { ProfileMenu } from "./ProfileMenu";
 import { Environment } from "@/services/environment";
 import { isDevToolsEscapeHatchEnabled } from "@hooks/useDevToolsEscapeHatch";
+
+// Design constants
+const ICON_COLOR = "#1a1a1a";
+const ICON_BG = "#f5f5f5";
 
 
 export function ProfileScreen() {
@@ -54,71 +57,74 @@ export function ProfileScreen() {
         <ProfileHeader user={user} />
         <ProfileMenu />
 
-        <Card style={styles.section}>
-          <TouchableOpacity
-            style={styles.logoutButton}
-            onPress={handleLogout}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="log-out-outline" size={20} color="#fff" />
-            <Text style={styles.logoutText}>Logout</Text>
-          </TouchableOpacity>
-        </Card>
-
         {/* Dev Tools Section - only visible in dev/staging */}
         {showDevTools && (
           <Card style={styles.section}>
-            <Text style={styles.devSectionTitle}>Developer Tools</Text>
+            <Text style={styles.sectionTitle}>Developer Tools</Text>
             <TouchableOpacity
-              style={styles.devMenuItem}
+              style={styles.menuItem}
               onPress={() => router.push("/(user)/dev/feature-flags")}
               activeOpacity={0.7}
             >
-              <View style={styles.devMenuIconContainer}>
-                <Ionicons name="flag-outline" size={20} color="#007AFF" />
+              <View style={styles.menuIconContainer}>
+                <Ionicons name="flag-outline" size={20} color={ICON_COLOR} />
               </View>
-              <View style={styles.devMenuTextContainer}>
-                <Text style={styles.devMenuText}>Feature Flags</Text>
-                <Text style={styles.devMenuSubtext}>
+              <View style={styles.menuTextContainer}>
+                <Text style={styles.menuText}>Feature Flags</Text>
+                <Text style={styles.menuSubtext}>
                   View and override PostHog feature flags
                 </Text>
               </View>
-              <Ionicons name="chevron-forward" size={20} color="#999" />
+              <Ionicons name="chevron-forward" size={18} color="#c7c7cc" />
             </TouchableOpacity>
             <TouchableOpacity
-              style={styles.devMenuItem}
+              style={styles.menuItem}
               onPress={() => router.push("/(user)/dev/notifications")}
               activeOpacity={0.7}
             >
-              <View style={styles.devMenuIconContainer}>
-                <Ionicons name="notifications-outline" size={20} color="#007AFF" />
+              <View style={styles.menuIconContainer}>
+                <Ionicons name="notifications-outline" size={20} color={ICON_COLOR} />
               </View>
-              <View style={styles.devMenuTextContainer}>
-                <Text style={styles.devMenuText}>Notification Tester</Text>
-                <Text style={styles.devMenuSubtext}>
+              <View style={styles.menuTextContainer}>
+                <Text style={styles.menuText}>Notification Tester</Text>
+                <Text style={styles.menuSubtext}>
                   Test push notifications and deep links
                 </Text>
               </View>
-              <Ionicons name="chevron-forward" size={20} color="#999" />
+              <Ionicons name="chevron-forward" size={18} color="#c7c7cc" />
             </TouchableOpacity>
             <TouchableOpacity
-              style={styles.devMenuItem}
+              style={[styles.menuItem, styles.menuItemLast]}
               onPress={() => router.push("/(user)/dev/task-reminder-tester")}
               activeOpacity={0.7}
             >
-              <View style={styles.devMenuIconContainer}>
-                <Ionicons name="clipboard-outline" size={20} color="#007AFF" />
+              <View style={styles.menuIconContainer}>
+                <Ionicons name="clipboard-outline" size={20} color={ICON_COLOR} />
               </View>
-              <View style={styles.devMenuTextContainer}>
-                <Text style={styles.devMenuText}>Task Reminder Tester</Text>
-                <Text style={styles.devMenuSubtext}>
+              <View style={styles.menuTextContainer}>
+                <Text style={styles.menuText}>Task Reminder Tester</Text>
+                <Text style={styles.menuSubtext}>
                   Test task reminder bot with mentions
                 </Text>
               </View>
-              <Ionicons name="chevron-forward" size={20} color="#999" />
+              <Ionicons name="chevron-forward" size={18} color="#c7c7cc" />
             </TouchableOpacity>
           </Card>
         )}
+
+        {/* Logout - subtle row item like Eventbrite/ChatGPT */}
+        <Card style={styles.section}>
+          <TouchableOpacity
+            style={[styles.menuItem, styles.menuItemLast]}
+            onPress={handleLogout}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.menuIconContainer, styles.logoutIconContainer]}>
+              <Ionicons name="log-out-outline" size={20} color="#FF3B30" />
+            </View>
+            <Text style={styles.logoutText}>Log out</Text>
+          </TouchableOpacity>
+        </Card>
       </ScrollView>
     </UserRoute>
   );
@@ -127,83 +133,75 @@ export function ProfileScreen() {
 const styles = StyleSheet.create({
   scrollView: {
     flex: 1,
+    backgroundColor: "#f2f2f7",
   },
   header: {
     paddingHorizontal: 20,
     paddingTop: 16,
     paddingBottom: 16,
-    backgroundColor: "#fff",
+    backgroundColor: "#f2f2f7",
   },
   headerTitle: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: "#333",
+    fontSize: 34,
+    fontWeight: "700",
+    color: "#1a1a1a",
+    letterSpacing: -0.5,
   },
   section: {
     marginTop: 12,
-    marginHorizontal: 12,
-    padding: 20,
+    marginHorizontal: 16,
+    paddingVertical: 4,
+    paddingHorizontal: 16,
   },
-  logoutButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#FF3B30",
-    borderRadius: 12,
-    padding: 16,
-    gap: 8,
-    ...Platform.select({
-      web: {
-        boxShadow: "0px 2px 8px rgba(255, 59, 48, 0.3)",
-        cursor: "pointer",
-      },
-      default: {
-        shadowColor: "#FF3B30",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.3,
-        shadowRadius: 8,
-        elevation: 3,
-      },
-    }),
-  },
-  logoutText: {
-    color: "#fff",
-    fontSize: 16,
+  sectionTitle: {
+    fontSize: 12,
     fontWeight: "600",
-  },
-  devSectionTitle: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#007AFF",
-    marginBottom: 12,
-    textTransform: "uppercase",
     letterSpacing: 0.5,
+    textTransform: "uppercase",
+    color: "#8e8e93",
+    marginTop: 8,
+    marginBottom: 4,
   },
-  devMenuItem: {
+  menuItem: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 12,
+    paddingVertical: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#e5e5e5",
   },
-  devMenuIconContainer: {
+  menuItemLast: {
+    borderBottomWidth: 0,
+  },
+  menuIconContainer: {
     width: 36,
     height: 36,
     borderRadius: 8,
-    backgroundColor: "#e8f4ff",
+    backgroundColor: ICON_BG,
     justifyContent: "center",
     alignItems: "center",
-    marginRight: 12,
+    marginRight: 14,
   },
-  devMenuTextContainer: {
+  logoutIconContainer: {
+    backgroundColor: "#fff0f0",
+  },
+  menuText: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: "400",
+    color: "#1a1a1a",
+  },
+  menuTextContainer: {
     flex: 1,
   },
-  devMenuText: {
-    fontSize: 16,
-    fontWeight: "500",
-    color: "#333",
-  },
-  devMenuSubtext: {
+  menuSubtext: {
     fontSize: 13,
-    color: "#666",
+    color: "#8e8e93",
     marginTop: 2,
+  },
+  logoutText: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: "400",
+    color: "#FF3B30",
   },
 });
