@@ -517,26 +517,18 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
             people-outline
           </Text>
         </View>
-        <View
+        <Text
           style={
             {
+              "color": "#1a1a1a",
               "flex": 1,
+              "fontSize": 16,
+              "fontWeight": "400",
             }
           }
         >
-          <Text
-            style={
-              {
-                "color": "#1a1a1a",
-                "flex": 1,
-                "fontSize": 16,
-                "fontWeight": "400",
-              }
-            }
-          >
-            Pick a community
-          </Text>
-        </View>
+          Pick a community
+        </Text>
         <Text>
           chevron-forward
         </Text>
@@ -1328,26 +1320,18 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
             people-outline
           </Text>
         </View>
-        <View
+        <Text
           style={
             {
+              "color": "#1a1a1a",
               "flex": 1,
+              "fontSize": 16,
+              "fontWeight": "400",
             }
           }
         >
-          <Text
-            style={
-              {
-                "color": "#1a1a1a",
-                "flex": 1,
-                "fontSize": 16,
-                "fontWeight": "400",
-              }
-            }
-          >
-            Pick a community
-          </Text>
-        </View>
+          Pick a community
+        </Text>
         <Text>
           chevron-forward
         </Text>

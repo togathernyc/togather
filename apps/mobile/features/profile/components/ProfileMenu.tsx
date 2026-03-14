@@ -78,14 +78,14 @@ export function ProfileMenu() {
           <View style={styles.menuIconContainer}>
             <Ionicons name="people-outline" size={20} color={ICON_COLOR} />
           </View>
-          <View style={styles.menuTextContainer}>
-            <Text style={styles.menuText}>
-              {community?.id ? "Switch Community" : "Pick a community"}
-            </Text>
-            {community?.name && (
+          {community?.name ? (
+            <View style={styles.menuTextContainer}>
+              <Text style={styles.menuText}>Switch Community</Text>
               <Text style={styles.menuSubtext}>{community.name}</Text>
-            )}
-          </View>
+            </View>
+          ) : (
+            <Text style={styles.menuText}>Pick a community</Text>
+          )}
           {isLoadingCommunities || isRefetching ? (
             <ActivityIndicator size="small" color="#999" />
           ) : (
