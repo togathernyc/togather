@@ -170,7 +170,7 @@ export function PhoneSignInForm({
             <Text style={styles.title}>Enter verification code</Text>
             <Text style={styles.subtitle}>
               We sent a 6-digit code to{"\n"}
-              <Text style={styles.phoneHighlight}>{countryCode} {phone}</Text>
+              <Text style={styles.phoneHighlight}>{phone}</Text>
             </Text>
 
             <View style={styles.otpContainer}>
