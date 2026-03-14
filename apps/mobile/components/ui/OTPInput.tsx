@@ -186,10 +186,10 @@ const styles = StyleSheet.create({
     }),
   },
   inputBoxFocused: {
-    borderColor: "#007AFF",
+    borderColor: "#1a1a1a",
     ...Platform.select({
       web: {
-        filter: "drop-shadow(0px 2px 4px rgba(0, 122, 255, 0.25))",
+        filter: "drop-shadow(0px 2px 4px rgba(0, 0, 0, 0.15))",
       },
     }),
   },

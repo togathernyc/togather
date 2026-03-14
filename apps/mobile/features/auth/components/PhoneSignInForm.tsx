@@ -5,6 +5,8 @@ import {
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
+  Keyboard,
+  TouchableWithoutFeedback,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -88,306 +90,350 @@ export function PhoneSignInForm({
   if (step === "phone") {
     const isSubmitDisabled = isLoading || !termsAccepted;
     return (
-      <View style={styles.container}>
-        <Text style={styles.title}>Sign In</Text>
-        <Text style={styles.subtitle}>
-          Enter your phone number to get started
-        </Text>
-
-        <PhoneInput
-          value={phone}
-          onChangeText={onPhoneChange}
-          countryCode={countryCode}
-          onCountryCodeChange={onCountryCodeChange}
-          error={error}
-          autoFocus
-        />
-
-        <View style={styles.termsContainer}>
-          <TouchableOpacity
-            onPress={() => setTermsAccepted(!termsAccepted)}
-            activeOpacity={0.7}
-            style={styles.checkbox}
-            testID="terms-checkbox"
-          >
-            <Ionicons
-              name={termsAccepted ? "checkbox" : "square-outline"}
-              size={24}
-              color={termsAccepted ? "#007AFF" : "#999"}
-            />
-          </TouchableOpacity>
-          <View style={styles.termsTextContainer}>
-            <Text style={styles.termsText}>I agree to the </Text>
-            <TouchableOpacity onPress={handleTermsPress}>
-              <Text style={styles.termsLink}>Terms of Service</Text>
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+        <View style={styles.container}>
+          {/* Content area */}
+          <View style={styles.content}>
+            {/* Back button */}
+            <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+              <Ionicons name="arrow-back" size={24} color="#1a1a1a" />
             </TouchableOpacity>
-            <Text style={styles.termsText}> and </Text>
-            <TouchableOpacity onPress={handlePrivacyPress}>
-              <Text style={styles.termsLink}>Privacy Policy</Text>
+
+            <Text style={styles.title}>Enter your phone number</Text>
+            <Text style={styles.subtitle}>
+              We'll send you a code to verify your number.
+            </Text>
+
+            <PhoneInput
+              value={phone}
+              onChangeText={onPhoneChange}
+              countryCode={countryCode}
+              onCountryCodeChange={onCountryCodeChange}
+              error={error}
+              autoFocus
+            />
+
+            {/* Terms checkbox */}
+            <TouchableOpacity
+              onPress={() => setTermsAccepted(!termsAccepted)}
+              activeOpacity={0.7}
+              style={styles.termsRow}
+              testID="terms-checkbox"
+            >
+              <Ionicons
+                name={termsAccepted ? "checkbox" : "square-outline"}
+                size={22}
+                color={termsAccepted ? "#1a1a1a" : "#ccc"}
+              />
+              <Text style={styles.termsText}>
+                I agree to the{" "}
+                <Text style={styles.termsLink} onPress={handleTermsPress}>
+                  Terms
+                </Text>
+                {" and "}
+                <Text style={styles.termsLink} onPress={handlePrivacyPress}>
+                  Privacy Policy
+                </Text>
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Bottom button */}
+          <View style={styles.bottomSection}>
+            <TouchableOpacity
+              style={[styles.button, isSubmitDisabled && styles.buttonDisabled]}
+              onPress={onPhoneSubmit}
+              disabled={isSubmitDisabled}
+            >
+              {isLoading ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.buttonText}>Continue</Text>
+              )}
             </TouchableOpacity>
           </View>
         </View>
-
-        <TouchableOpacity
-          style={[styles.button, isSubmitDisabled && styles.buttonDisabled]}
-          onPress={onPhoneSubmit}
-          disabled={isSubmitDisabled}
-        >
-          {isLoading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.buttonText}>Continue</Text>
-          )}
-        </TouchableOpacity>
-      </View>
+      </TouchableWithoutFeedback>
     );
   }
 
   if (step === "otp") {
     return (
-      <View style={styles.container}>
-        <TouchableOpacity style={styles.backButton} onPress={onGoBack}>
-          <Text style={styles.backButtonText}>← Back</Text>
-        </TouchableOpacity>
-
-        <Text style={styles.title}>Enter Code</Text>
-        <Text style={styles.subtitle}>
-          We sent a 6-digit code to {phone}
-        </Text>
-
-        <OTPInput value={otp} onChange={onOtpChange} error={error} autoFocus />
-
-        <TouchableOpacity
-          style={[
-            styles.button,
-            (isLoading || otp.length !== 6) && styles.buttonDisabled,
-          ]}
-          onPress={onOtpSubmit}
-          disabled={isLoading || otp.length !== 6}
-        >
-          {isLoading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.buttonText}>Verify</Text>
-          )}
-        </TouchableOpacity>
-
-        <View style={styles.resendContainer}>
-          {rateLimitRemaining === 0 ? (
-            <Text style={styles.footerText}>
-              Rate limit reached. Please wait before requesting a new code.
-            </Text>
-          ) : (
-            <TouchableOpacity onPress={onResendOtp} disabled={isLoading}>
-              <Text style={styles.linkText}>Resend Code</Text>
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+        <View style={styles.container}>
+          <View style={styles.content}>
+            {/* Back button */}
+            <TouchableOpacity style={styles.backButton} onPress={onGoBack}>
+              <Ionicons name="arrow-back" size={24} color="#1a1a1a" />
             </TouchableOpacity>
-          )}
+
+            <Text style={styles.title}>Enter verification code</Text>
+            <Text style={styles.subtitle}>
+              We sent a 6-digit code to{"\n"}
+              <Text style={styles.phoneHighlight}>{countryCode} {phone}</Text>
+            </Text>
+
+            <View style={styles.otpContainer}>
+              <OTPInput value={otp} onChange={onOtpChange} error={error} autoFocus />
+            </View>
+
+            <View style={styles.resendContainer}>
+              {rateLimitRemaining === 0 ? (
+                <Text style={styles.rateLimitText}>
+                  Too many attempts. Please wait a moment.
+                </Text>
+              ) : (
+                <TouchableOpacity onPress={onResendOtp} disabled={isLoading}>
+                  <Text style={styles.resendText}>Didn't get the code? Resend</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+
+          <View style={styles.bottomSection}>
+            <TouchableOpacity
+              style={[
+                styles.button,
+                (isLoading || otp.length !== 6) && styles.buttonDisabled,
+              ]}
+              onPress={onOtpSubmit}
+              disabled={isLoading || otp.length !== 6}
+            >
+              {isLoading ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.buttonText}>Verify</Text>
+              )}
+            </TouchableOpacity>
+          </View>
         </View>
-      </View>
+      </TouchableWithoutFeedback>
     );
   }
 
   // Legacy login step
   return (
-    <View style={styles.container}>
-      <TouchableOpacity style={styles.backButton} onPress={onSwitchToPhone}>
-        <Text style={styles.backButtonText}>← Back to Phone</Text>
-      </TouchableOpacity>
-
-      <Text style={styles.title}>Sign In with Email</Text>
-      <Text style={styles.subtitle}>
-        Use your email and password to continue
-      </Text>
-
-      {error ? <Text style={styles.errorText}>{error}</Text> : null}
-
-      <View style={styles.inputContainer}>
-        <ProgrammaticTextInput
-          style={styles.input}
-          placeholder="Email"
-          placeholderTextColor="#999"
-          value={email}
-          onChangeText={onEmailChange}
-          keyboardType="email-address"
-          autoCapitalize="none"
-          autoComplete="email"
-          testID="signin-email"
-        />
-      </View>
-
-      <View style={styles.inputContainer}>
-        <ProgrammaticTextInput
-          style={styles.input}
-          placeholder="Password"
-          placeholderTextColor="#999"
-          value={password}
-          onChangeText={onPasswordChange}
-          secureTextEntry
-          autoCapitalize="none"
-          testID="signin-password"
-        />
-      </View>
-
-      <View style={styles.termsContainer}>
-        <TouchableOpacity
-          onPress={() => setTermsAccepted(!termsAccepted)}
-          activeOpacity={0.7}
-          style={styles.checkbox}
-        >
-          <Ionicons
-            name={termsAccepted ? "checkbox" : "square-outline"}
-            size={24}
-            color={termsAccepted ? "#007AFF" : "#999"}
-          />
-        </TouchableOpacity>
-        <View style={styles.termsTextContainer}>
-          <Text style={styles.termsText}>I agree to the </Text>
-          <TouchableOpacity onPress={handleTermsPress}>
-            <Text style={styles.termsLink}>Terms of Service</Text>
+    <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+      <View style={styles.container}>
+        <View style={styles.content}>
+          <TouchableOpacity style={styles.backButton} onPress={onSwitchToPhone}>
+            <Ionicons name="arrow-back" size={24} color="#1a1a1a" />
           </TouchableOpacity>
-          <Text style={styles.termsText}> and </Text>
-          <TouchableOpacity onPress={handlePrivacyPress}>
-            <Text style={styles.termsLink}>Privacy Policy</Text>
+
+          <Text style={styles.title}>Sign in with email</Text>
+          <Text style={styles.subtitle}>
+            Use your email and password to continue
+          </Text>
+
+          {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+          <View style={styles.inputContainer}>
+            <ProgrammaticTextInput
+              style={styles.input}
+              placeholder="Email"
+              placeholderTextColor="#999"
+              value={email}
+              onChangeText={onEmailChange}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoComplete="email"
+              testID="signin-email"
+            />
+          </View>
+
+          <View style={styles.inputContainer}>
+            <ProgrammaticTextInput
+              style={styles.input}
+              placeholder="Password"
+              placeholderTextColor="#999"
+              value={password}
+              onChangeText={onPasswordChange}
+              secureTextEntry
+              autoCapitalize="none"
+              testID="signin-password"
+            />
+          </View>
+
+          <TouchableOpacity onPress={onForgotPassword} style={styles.forgotButton}>
+            <Text style={styles.forgotText}>Forgot password?</Text>
+          </TouchableOpacity>
+
+          {/* Terms checkbox */}
+          <TouchableOpacity
+            onPress={() => setTermsAccepted(!termsAccepted)}
+            activeOpacity={0.7}
+            style={styles.termsRow}
+          >
+            <Ionicons
+              name={termsAccepted ? "checkbox" : "square-outline"}
+              size={22}
+              color={termsAccepted ? "#1a1a1a" : "#ccc"}
+            />
+            <Text style={styles.termsText}>
+              I agree to the{" "}
+              <Text style={styles.termsLink} onPress={handleTermsPress}>
+                Terms
+              </Text>
+              {" and "}
+              <Text style={styles.termsLink} onPress={handlePrivacyPress}>
+                Privacy Policy
+              </Text>
+            </Text>
           </TouchableOpacity>
         </View>
+
+        <View style={styles.bottomSection}>
+          <TouchableOpacity
+            style={[
+              styles.button,
+              (isLoading || !termsAccepted) && styles.buttonDisabled,
+            ]}
+            onPress={onLegacySubmit}
+            disabled={isLoading || !termsAccepted}
+          >
+            {isLoading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.buttonText}>Sign In</Text>
+            )}
+          </TouchableOpacity>
+
+          <View style={styles.footer}>
+            <Text style={styles.footerText}>Don't have an account? </Text>
+            <TouchableOpacity onPress={onSignUp}>
+              <Text style={styles.signUpLink}>Sign up</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </View>
-
-      <TouchableOpacity
-        style={[
-          styles.button,
-          (isLoading || !termsAccepted) && styles.buttonDisabled,
-        ]}
-        onPress={onLegacySubmit}
-        disabled={isLoading || !termsAccepted}
-      >
-        {isLoading ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={styles.buttonText}>Sign In</Text>
-        )}
-      </TouchableOpacity>
-
-      <TouchableOpacity onPress={onForgotPassword} style={styles.forgotButton}>
-        <Text style={styles.linkText}>Forgot Password?</Text>
-      </TouchableOpacity>
-
-      <View style={styles.footer}>
-        <Text style={styles.footerText}>Don't have an account? </Text>
-        <TouchableOpacity onPress={onSignUp}>
-          <Text style={styles.linkText}>Sign up</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
+    </TouchableWithoutFeedback>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 20,
-    maxWidth: 400,
-    alignSelf: "center",
-    width: "100%",
+  },
+  content: {
+    flex: 1,
+    paddingHorizontal: 24,
+    paddingTop: 24,
+  },
+  bottomSection: {
+    paddingHorizontal: 24,
+    paddingBottom: 16,
   },
   backButton: {
+    width: 40,
+    height: 40,
+    justifyContent: "center",
     marginBottom: 16,
   },
-  backButtonText: {
-    fontSize: 16,
-    color: "#007AFF",
-  },
   title: {
-    fontSize: 32,
-    fontWeight: "bold",
-    textAlign: "center",
+    fontSize: 28,
+    fontWeight: "700",
+    color: "#1a1a1a",
     marginBottom: 8,
-    color: "#333",
+    letterSpacing: -0.5,
   },
   subtitle: {
     fontSize: 16,
     color: "#666",
-    textAlign: "center",
-    marginBottom: 32,
+    marginBottom: 28,
+    lineHeight: 24,
+  },
+  phoneHighlight: {
+    color: "#1a1a1a",
+    fontWeight: "600",
+  },
+  otpContainer: {
+    marginTop: 8,
   },
   inputContainer: {
     marginBottom: 16,
-    borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: "#e5e5e5",
+    borderRadius: 12,
+    backgroundColor: "#fff",
   },
   input: {
-    padding: 12,
+    padding: 16,
     fontSize: 16,
+    color: "#1a1a1a",
+  },
+  termsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 24,
+    gap: 12,
+  },
+  termsText: {
+    fontSize: 14,
+    color: "#666",
+    flex: 1,
+    lineHeight: 20,
+  },
+  termsLink: {
+    color: "#1a1a1a",
+    fontWeight: "600",
   },
   button: {
-    backgroundColor: "#007AFF",
-    padding: 16,
-    borderRadius: 12,
+    backgroundColor: "#1a1a1a",
+    paddingVertical: 18,
+    borderRadius: 30,
     alignItems: "center",
-    marginTop: 8,
   },
   buttonDisabled: {
-    opacity: 0.6,
+    backgroundColor: "#ccc",
   },
   buttonText: {
     color: "#fff",
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: "600",
+  },
+  resendContainer: {
+    alignItems: "center",
+    marginTop: 32,
+  },
+  resendText: {
+    fontSize: 15,
+    color: "#1a1a1a",
+    fontWeight: "500",
+  },
+  rateLimitText: {
+    fontSize: 14,
+    color: "#666",
+  },
+  forgotButton: {
+    alignSelf: "flex-start",
+    marginBottom: 8,
+  },
+  forgotText: {
+    fontSize: 14,
+    color: "#1a1a1a",
+    fontWeight: "500",
   },
   footer: {
     flexDirection: "row",
     justifyContent: "center",
-    marginTop: 24,
+    marginTop: 16,
   },
   footerText: {
     fontSize: 14,
     color: "#666",
   },
-  linkText: {
+  signUpLink: {
     fontSize: 14,
-    color: "#007AFF",
-    fontWeight: "500",
-  },
-  resendContainer: {
-    alignItems: "center",
-    marginTop: 24,
-  },
-  forgotButton: {
-    alignItems: "center",
-    marginTop: 16,
+    color: "#1a1a1a",
+    fontWeight: "600",
   },
   errorText: {
-    color: "#FF3B30",
-    textAlign: "center",
+    color: "#DC3545",
+    fontSize: 14,
     marginBottom: 16,
-    fontSize: 14,
-  },
-  termsContainer: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    marginTop: 16,
-    marginBottom: 8,
-    paddingHorizontal: 4,
-  },
-  checkbox: {
-    marginRight: 12,
-    marginTop: 2,
-  },
-  termsTextContainer: {
-    flex: 1,
-    flexDirection: "row",
-    flexWrap: "wrap",
-    alignItems: "center",
-  },
-  termsText: {
-    fontSize: 14,
-    color: "#666",
-    lineHeight: 20,
-  },
-  termsLink: {
-    color: "#007AFF",
-    fontWeight: "500",
-    fontSize: 14,
-    lineHeight: 20,
+    backgroundColor: "rgba(220, 53, 69, 0.08)",
+    padding: 12,
+    borderRadius: 8,
+    overflow: "hidden",
   },
 });
