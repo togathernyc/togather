@@ -994,20 +994,15 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
       >
         <View
           style={
-            [
-              {
-                "alignItems": "center",
-                "backgroundColor": "#f5f5f5",
-                "borderRadius": 8,
-                "height": 36,
-                "justifyContent": "center",
-                "marginRight": 14,
-                "width": 36,
-              },
-              {
-                "backgroundColor": "#fff0f0",
-              },
-            ]
+            {
+              "alignItems": "center",
+              "backgroundColor": "#f5f5f5",
+              "borderRadius": 8,
+              "height": 36,
+              "justifyContent": "center",
+              "marginRight": 14,
+              "width": 36,
+            }
           }
         >
           <Text>
@@ -1017,7 +1012,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
         <Text
           style={
             {
-              "color": "#FF3B30",
+              "color": "#1a1a1a",
               "flex": 1,
               "fontSize": 16,
               "fontWeight": "400",
@@ -1810,20 +1805,15 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
       >
         <View
           style={
-            [
-              {
-                "alignItems": "center",
-                "backgroundColor": "#f5f5f5",
-                "borderRadius": 8,
-                "height": 36,
-                "justifyContent": "center",
-                "marginRight": 14,
-                "width": 36,
-              },
-              {
-                "backgroundColor": "#fff0f0",
-              },
-            ]
+            {
+              "alignItems": "center",
+              "backgroundColor": "#f5f5f5",
+              "borderRadius": 8,
+              "height": 36,
+              "justifyContent": "center",
+              "marginRight": 14,
+              "width": 36,
+            }
           }
         >
           <Text>
@@ -1833,7 +1823,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
         <Text
           style={
             {
-              "color": "#FF3B30",
+              "color": "#1a1a1a",
               "flex": 1,
               "fontSize": 16,
               "fontWeight": "400",

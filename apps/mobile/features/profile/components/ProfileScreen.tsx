@@ -112,17 +112,17 @@ export function ProfileScreen() {
           </Card>
         )}
 
-        {/* Logout - subtle row item like Eventbrite/ChatGPT */}
+        {/* Logout - subtle row item like ChatGPT */}
         <Card style={styles.section}>
           <TouchableOpacity
             style={[styles.menuItem, styles.menuItemLast]}
             onPress={handleLogout}
             activeOpacity={0.7}
           >
-            <View style={[styles.menuIconContainer, styles.logoutIconContainer]}>
-              <Ionicons name="log-out-outline" size={20} color="#FF3B30" />
+            <View style={styles.menuIconContainer}>
+              <Ionicons name="log-out-outline" size={20} color={ICON_COLOR} />
             </View>
-            <Text style={styles.logoutText}>Log out</Text>
+            <Text style={styles.menuText}>Log out</Text>
           </TouchableOpacity>
         </Card>
       </ScrollView>
@@ -181,9 +181,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginRight: 14,
   },
-  logoutIconContainer: {
-    backgroundColor: "#fff0f0",
-  },
   menuText: {
     flex: 1,
     fontSize: 16,
@@ -197,11 +194,5 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "#8e8e93",
     marginTop: 2,
-  },
-  logoutText: {
-    flex: 1,
-    fontSize: 16,
-    fontWeight: "400",
-    color: "#FF3B30",
   },
 });
