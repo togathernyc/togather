@@ -1,7 +1,7 @@
 import { getInitialRouteTarget } from "../initialRouteTarget";
 
 describe("getInitialRouteTarget", () => {
-  it("routes unauthenticated users to signin", () => {
+  it("routes unauthenticated users to landing", () => {
     const route = getInitialRouteTarget({
       isAuthenticated: false,
       hasCommunity: false,
@@ -9,7 +9,7 @@ describe("getInitialRouteTarget", () => {
       hasUserProfile: false,
     });
 
-    expect(route).toBe("/(auth)/signin");
+    expect(route).toBe("/(auth)/landing");
   });
 
   it("routes authenticated users with community to chat", () => {
@@ -45,7 +45,7 @@ describe("getInitialRouteTarget", () => {
     expect(route).toBe("/(tabs)/profile");
   });
 
-  it("routes authenticated users without community but with profile to signin", () => {
+  it("routes authenticated users without community but with profile to landing", () => {
     const route = getInitialRouteTarget({
       isAuthenticated: true,
       hasCommunity: false,
@@ -53,6 +53,6 @@ describe("getInitialRouteTarget", () => {
       hasUserProfile: true,
     });
 
-    expect(route).toBe("/(auth)/signin");
+    expect(route).toBe("/(auth)/landing");
   });
 });
