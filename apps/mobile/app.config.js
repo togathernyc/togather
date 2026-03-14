@@ -123,7 +123,7 @@ export default {
   expo: {
     name: getAppName(),
     slug: "togather",
-    version: "1.0.21",
+    version: "1.0.22",
     orientation: "portrait",
     icon: getAppIcon(),
     userInterfaceStyle: "automatic",
@@ -185,11 +185,11 @@ export default {
       // EAS project ID is required here for OTA updates
       url: `https://u.expo.dev/${process.env.EAS_PROJECT_ID || "bfc79fc8-7066-4386-b9e0-52d0207ad8f4"}`
     },
-    runtimeVersion: "1.0.21",
+    runtimeVersion: "1.0.22",
     extra: {
       // OTA version - set by CI during deployment (format: X.Y.Z.MMDDYY.HHMM)
       // Falls back to binary version for embedded builds
-      otaVersion: process.env.OTA_VERSION || "1.0.21",
+      otaVersion: process.env.OTA_VERSION || "1.0.22",
       // Build variant - used to determine environment at runtime
       // Set by EAS build profiles (staging vs production)
       isStaging: IS_STAGING,
