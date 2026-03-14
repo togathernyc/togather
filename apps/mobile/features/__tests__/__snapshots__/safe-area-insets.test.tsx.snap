@@ -245,9 +245,8 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
         style={
           {
             "color": "#1a1a1a",
-            "fontSize": 34,
-            "fontWeight": "700",
-            "letterSpacing": -0.5,
+            "fontSize": 24,
+            "fontWeight": "bold",
           }
         }
       >
@@ -1048,9 +1047,8 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
         style={
           {
             "color": "#1a1a1a",
-            "fontSize": 34,
-            "fontWeight": "700",
-            "letterSpacing": -0.5,
+            "fontSize": 24,
+            "fontWeight": "bold",
           }
         }
       >

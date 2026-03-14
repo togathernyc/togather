@@ -142,10 +142,9 @@ const styles = StyleSheet.create({
     backgroundColor: "#f2f2f7",
   },
   headerTitle: {
-    fontSize: 34,
-    fontWeight: "700",
+    fontSize: 24,
+    fontWeight: "bold",
     color: "#1a1a1a",
-    letterSpacing: -0.5,
   },
   section: {
     marginTop: 12,
