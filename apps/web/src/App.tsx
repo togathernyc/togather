@@ -5,87 +5,6 @@ import { Link } from "react-router-dom";
 // ICONS
 // ============================================================================
 
-function LogoIcon({ className = "w-8 h-10" }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 100 120"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <ellipse
-        cx="28"
-        cy="70"
-        rx="22"
-        ry="28"
-        stroke="currentColor"
-        strokeWidth="5"
-        fill="none"
-      />
-      <path
-        d="M28 98 L25 103 L31 103 Z"
-        stroke="currentColor"
-        strokeWidth="5"
-        strokeLinejoin="round"
-        fill="none"
-      />
-      <path
-        d="M28 103 Q26 115, 30 120"
-        stroke="currentColor"
-        strokeWidth="5"
-        strokeLinecap="round"
-        fill="none"
-      />
-      <ellipse
-        cx="50"
-        cy="45"
-        rx="24"
-        ry="32"
-        stroke="currentColor"
-        strokeWidth="5"
-        fill="none"
-      />
-      <path
-        d="M50 77 L47 82 L53 82 Z"
-        stroke="currentColor"
-        strokeWidth="5"
-        strokeLinejoin="round"
-        fill="none"
-      />
-      <path
-        d="M50 82 Q48 100, 45 120"
-        stroke="currentColor"
-        strokeWidth="5"
-        strokeLinecap="round"
-        fill="none"
-      />
-      <ellipse
-        cx="72"
-        cy="58"
-        rx="23"
-        ry="30"
-        stroke="currentColor"
-        strokeWidth="5"
-        fill="none"
-      />
-      <path
-        d="M72 88 L69 93 L75 93 Z"
-        stroke="currentColor"
-        strokeWidth="5"
-        strokeLinejoin="round"
-        fill="none"
-      />
-      <path
-        d="M72 93 Q75 108, 68 120"
-        stroke="currentColor"
-        strokeWidth="5"
-        strokeLinecap="round"
-        fill="none"
-      />
-    </svg>
-  );
-}
-
 function IconUsers({ className = "w-5 h-5" }: { className?: string }) {
   return (
     <svg
@@ -393,8 +312,8 @@ function HeroSection() {
         <nav className="relative z-10 px-6 md:px-10 py-5">
           <div className="relative flex items-center justify-between max-w-[1400px] mx-auto">
             {/* Logo - black */}
-            <a href="/" className="flex items-center gap-2 text-neutral-800">
-              <LogoIcon className="w-7 h-9" />
+            <a href="/" className="flex items-center gap-1 text-neutral-800">
+              <img src="/images/togather-logo.png" alt="Togather logo" className="h-8 w-auto object-contain" />
               <span className="text-xl font-semibold text-neutral-800">
                 Togather
               </span>
@@ -954,8 +873,8 @@ function Footer() {
         <div className="flex flex-col md:flex-row justify-between gap-12 mb-10">
           {/* Brand */}
           <div className="max-w-xs">
-            <a href="/" className="flex items-center gap-2 text-white mb-3">
-              <LogoIcon className="w-7 h-9" />
+            <a href="/" className="flex items-center gap-1 text-white mb-3">
+              <img src="/images/togather-logo.png" alt="Togather logo" className="h-8 w-auto object-contain brightness-0 invert" />
               <span className="text-xl font-semibold">Togather</span>
             </a>
             <p className="text-sm text-neutral-400">
