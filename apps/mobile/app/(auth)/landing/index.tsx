@@ -5,14 +5,11 @@ import {
   StyleSheet,
   ImageBackground,
   TouchableOpacity,
-  Dimensions,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { AuthGuard } from "@/components/guards/AuthGuard";
-
-const { height: SCREEN_HEIGHT } = Dimensions.get("window");
 
 export default function LandingPage() {
   const router = useRouter();
@@ -30,9 +27,9 @@ export default function LandingPage() {
           style={styles.backgroundImage}
           resizeMode="cover"
         >
-          {/* Gradient overlay for better text readability */}
+          {/* Gradient overlay for better text readability - only at top */}
           <LinearGradient
-            colors={["rgba(0,0,0,0.3)", "transparent", "rgba(0,0,0,0.5)"]}
+            colors={["rgba(0,0,0,0.3)", "transparent", "transparent"]}
             locations={[0, 0.4, 1]}
             style={styles.gradient}
           >
@@ -43,9 +40,7 @@ export default function LandingPage() {
             </View>
 
             {/* Bottom content - CTA */}
-            <View
-              style={[styles.bottomContent, { paddingBottom: insets.bottom + 40 }]}
-            >
+            <View style={styles.bottomContent}>
               <TouchableOpacity
                 style={styles.getStartedButton}
                 onPress={handleGetStarted}
@@ -64,12 +59,10 @@ export default function LandingPage() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#1a1a1a",
   },
   backgroundImage: {
     flex: 1,
     width: "100%",
-    height: SCREEN_HEIGHT,
   },
   gradient: {
     flex: 1,
@@ -98,7 +91,7 @@ const styles = StyleSheet.create({
   },
   bottomContent: {
     paddingHorizontal: 24,
-    gap: 16,
+    paddingBottom: 40,
   },
   getStartedButton: {
     backgroundColor: "#fff",
