@@ -312,8 +312,8 @@ function HeroSection() {
         <nav className="relative z-10 px-6 md:px-10 py-5">
           <div className="relative flex items-center justify-between max-w-[1400px] mx-auto">
             {/* Logo - black */}
-            <a href="/" className="flex items-center gap-2 text-neutral-800">
-              <img src="/images/togather-logo.png" alt="Togather logo" className="w-7 h-9 object-contain" />
+            <a href="/" className="flex items-center gap-1 text-neutral-800">
+              <img src="/images/togather-logo.png" alt="Togather logo" className="h-8 w-auto object-contain" />
               <span className="text-xl font-semibold text-neutral-800">
                 Togather
               </span>
@@ -873,8 +873,8 @@ function Footer() {
         <div className="flex flex-col md:flex-row justify-between gap-12 mb-10">
           {/* Brand */}
           <div className="max-w-xs">
-            <a href="/" className="flex items-center gap-2 text-white mb-3">
-              <img src="/images/togather-logo.png" alt="Togather logo" className="w-7 h-9 object-contain brightness-0 invert" />
+            <a href="/" className="flex items-center gap-1 text-white mb-3">
+              <img src="/images/togather-logo.png" alt="Togather logo" className="h-8 w-auto object-contain brightness-0 invert" />
               <span className="text-xl font-semibold">Togather</span>
             </a>
             <p className="text-sm text-neutral-400">
