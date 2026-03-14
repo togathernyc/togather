@@ -84,7 +84,9 @@ export function useInitialRouting() {
       currentPathname === "/chat" ||
       currentPathname.includes("/chat") ||
       currentPathname === "/(auth)/signin" ||
-      currentPathname.includes("/signin")
+      currentPathname.includes("/signin") ||
+      currentPathname === "/(auth)/landing" ||
+      currentPathname.includes("/landing")
     ) {
       console.log("📄 Index: Already on target page, skipping redirect");
       hasRedirectedRef.current = true;

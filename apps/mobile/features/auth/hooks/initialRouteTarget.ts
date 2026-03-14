@@ -17,7 +17,7 @@ export function getInitialRouteTarget({
   hasUserProfile,
 }: InitialRouteTargetInput): string {
   if (!isAuthenticated) {
-    return "/(auth)/signin";
+    return "/(auth)/landing";
   }
 
   if (hasCommunity || hasSlugParam) {
@@ -28,5 +28,5 @@ export function getInitialRouteTarget({
     return "/(tabs)/profile";
   }
 
-  return "/(auth)/signin";
+  return "/(auth)/landing";
 }
