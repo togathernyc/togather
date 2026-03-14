@@ -2,7 +2,7 @@
   "expo": {
     "name": "Togather",
     "slug": "togather",
-    "version": "1.0.21",
+    "version": "1.0.22",
     "orientation": "portrait",
     "icon": "./assets/gatherful-logo.png",
     "userInterfaceStyle": "automatic",

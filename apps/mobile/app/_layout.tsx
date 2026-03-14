@@ -11,8 +11,8 @@ if (typeof URL !== 'undefined' && !URL.canParse) {
 }
 
 import React, { useMemo, useEffect, useState } from "react";
-import { Platform, View, ActivityIndicator } from "react-native";
-import { Stack } from "expo-router";
+import { Platform, View, ActivityIndicator, StyleSheet } from "react-native";
+import { Stack, useSegments } from "expo-router";
 import * as Font from "expo-font";
 import { Ionicons } from "@expo/vector-icons";
 import { StatusBar } from "expo-status-bar";
@@ -60,11 +60,21 @@ function PrefetchExecutorRegistration({ children }: { children: React.ReactNode 
 function StatusBarAwareContainer({ children }: { children: React.ReactNode }) {
   const insets = useSafeAreaInsets();
   const isStatusBarVisible = useStatusBarVisible();
+  const segments = useSegments();
+
+  // Landing page needs edge-to-edge design with dark background
+  const isLandingPage = segments.includes("landing") || (segments[0] === "(auth)" && segments[1] === "landing");
+
+  // Keep padding consistent to prevent jank
   const bottomPadding = insets.bottom + (isStatusBarVisible ? STATUS_BAR_CONTENT_HEIGHT : 0);
 
   return (
     <>
-      <View style={{ flex: 1, backgroundColor: '#fff', paddingBottom: bottomPadding }}>
+      {/* Background layer for landing page - matches image bottom fade */}
+      {isLandingPage && (
+        <View style={[StyleSheet.absoluteFillObject, { backgroundColor: "#1a1a1a" }]} />
+      )}
+      <View style={{ flex: 1, backgroundColor: isLandingPage ? "transparent" : "#fff", paddingBottom: bottomPadding }}>
         {children}
       </View>
       <BottomStatusBar />
@@ -202,7 +212,7 @@ export default function RootLayout() {
   }
 
   return (
-    <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#fff' }}>
+    <GestureHandlerRootView style={{ flex: 1 }}>
       <SentryProvider>
         <ErrorBoundary>
           <SafeAreaProvider>

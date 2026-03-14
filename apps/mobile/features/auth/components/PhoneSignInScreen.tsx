@@ -1,5 +1,13 @@
 import React, { useEffect, useRef } from "react";
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Share, Platform } from "react-native";
+import {
+  View,
+  Text,
+  StyleSheet,
+  KeyboardAvoidingView,
+  TouchableOpacity,
+  Share,
+  Platform,
+} from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/providers/AuthProvider";
@@ -12,7 +20,6 @@ import { useStoredAuthToken } from "@services/api/convex";
 import Constants from "expo-constants";
 import * as Updates from "expo-updates";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Environment } from "@services/environment";
 import type { RegisterResult } from "../types";
 
 // Check if there's a pending join intent and return the redirect path
@@ -40,7 +47,6 @@ export function PhoneSignInScreen() {
   const insets = useSafeAreaInsets();
   const { refreshUser } = useAuth();
   const phoneAuth = usePhoneAuth();
-  const currentEnv = Environment.current;
   const authToken = useStoredAuthToken();
   const hasNavigatedRef = useRef(false);
 
@@ -215,19 +221,12 @@ Convex URL: ${convexUrl}
           onBack={handleBackFromProfile}
         />
       ) : (
-        <ScrollView
-          style={styles.scrollView}
-          contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top }]}
-          keyboardShouldPersistTaps="handled"
+        <KeyboardAvoidingView
+          style={styles.keyboardView}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          keyboardVerticalOffset={0}
         >
-          <View style={styles.container}>
-            {/* Logo */}
-            <View style={styles.logoContainer}>
-              <Text style={styles.logoText}>
-                {currentEnv.name === "staging" ? "Togather Staging" : "Togather"}
-              </Text>
-            </View>
-
+          <View style={[styles.container, { paddingTop: insets.top }]}>
             <PhoneSignInForm
               // Phone step
               phone={phoneAuth.phone}
@@ -260,49 +259,36 @@ Convex URL: ${convexUrl}
               isLoading={phoneAuth.isLoading}
             />
 
-            <TouchableOpacity onPress={handleSendDebugLogs} style={styles.debugLink}>
+            <TouchableOpacity
+              onPress={handleSendDebugLogs}
+              style={[styles.debugLink, { paddingBottom: insets.bottom + 8 }]}
+            >
               <Text style={styles.debugLinkText}>Having issues? Send debug logs</Text>
             </TouchableOpacity>
           </View>
-        </ScrollView>
+        </KeyboardAvoidingView>
       )}
     </AuthGuard>
   );
 }
 
 const styles = StyleSheet.create({
-  scrollView: {
+  keyboardView: {
     flex: 1,
     backgroundColor: "#fff",
   },
-  scrollContent: {
-    flexGrow: 1,
-  },
   container: {
     flex: 1,
-    padding: 20,
     maxWidth: 500,
     alignSelf: "center",
     width: "100%",
   },
-  logoContainer: {
-    alignItems: "center",
-    marginTop: 40,
-    marginBottom: 20,
-  },
-  logoText: {
-    fontSize: 32,
-    fontWeight: "bold",
-    color: "#007AFF",
-  },
   debugLink: {
-    marginTop: 40,
-    marginBottom: 20,
     alignItems: "center",
+    paddingVertical: 12,
   },
   debugLinkText: {
-    fontSize: 14,
+    fontSize: 13,
     color: "#999",
-    textDecorationLine: "underline",
   },
 });
