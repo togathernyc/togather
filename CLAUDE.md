@@ -144,6 +144,16 @@ When testing the app (Playwright, iOS Simulator, etc.), use the seeded test cred
 - Don't add features, refactoring, or "improvements" beyond what was asked
 - Don't design for hypothetical future requirements
 
+### Native Dependency Safety
+
+- **Never bump `runtimeVersion`** — it must stay in sync with production native builds
+- New native dependencies must be **gated** behind `NativeModules` runtime checks
+- Add detection functions in `features/chat/utils/fileTypes.ts` (see `isLinearGradientSupported()`)
+- Create safe wrapper components (see `components/ui/SafeLinearGradient.tsx`)
+- Classify all native deps in `apps/mobile/native-deps.json` as `core` or `gated`
+- CI enforces this via `scripts/check-native-imports.js` — static imports of gated deps fail
+- See `docs/architecture/ADR-013-mobile-versioning-and-ota-updates.md` for full details
+
 ### Prefer Framework Features Over Custom Solutions
 
 - **Always prefer built-in framework features** over custom implementations

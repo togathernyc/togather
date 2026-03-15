@@ -224,6 +224,7 @@ export function formatFileSize(bytes: number): string {
 // Cache for module detection results
 let _documentPickerSupported: boolean | null = null;
 let _audioVideoSupported: boolean | null = null;
+let _linearGradientSupported: boolean | null = null;
 
 /**
  * Check if expo-document-picker is available
@@ -295,9 +296,51 @@ export function isAudioVideoSupported(): boolean {
 }
 
 /**
+ * Check if expo-linear-gradient is available
+ *
+ * This module is only available after a native build that includes it.
+ * Returns false for OTA updates on older native builds.
+ */
+export function isLinearGradientSupported(): boolean {
+  if (_linearGradientSupported !== null) {
+    return _linearGradientSupported;
+  }
+
+  // On web, LinearGradient is JS-only and always available
+  if (Platform.OS === 'web') {
+    try {
+      const LinearGradientModule = require('expo-linear-gradient');
+      _linearGradientSupported = !!LinearGradientModule?.LinearGradient;
+      return _linearGradientSupported;
+    } catch {
+      _linearGradientSupported = false;
+      return false;
+    }
+  }
+
+  // Check if the native module is registered
+  const hasNativeModule = !!NativeModules.ExpoLinearGradient;
+
+  if (!hasNativeModule) {
+    _linearGradientSupported = false;
+    return false;
+  }
+
+  try {
+    const LinearGradientModule = require('expo-linear-gradient');
+    _linearGradientSupported = !!LinearGradientModule?.LinearGradient;
+    return _linearGradientSupported;
+  } catch {
+    _linearGradientSupported = false;
+    return false;
+  }
+}
+
+/**
  * Reset cached module detection (for testing)
  */
 export function resetModuleDetectionCache(): void {
   _documentPickerSupported = null;
   _audioVideoSupported = null;
+  _linearGradientSupported = null;
 }
