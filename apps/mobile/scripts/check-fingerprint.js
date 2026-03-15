@@ -340,12 +340,6 @@ async function main() {
   console.log("   Run with --verbose to see which sources changed.");
   console.log("");
 
-  if (isUpdate) {
-    // --update flag was already handled above, but if someone passes both
-    // --update and --verbose, the update happens first.
-    return;
-  }
-
   // Auto-update the stored fingerprint so subsequent checks pass
   saveFingerprint(currentHash, runtimeVersion);
   console.log("   Updated stored fingerprint to match current state.");
