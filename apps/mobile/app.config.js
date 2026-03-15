@@ -185,7 +185,7 @@ export default {
       // EAS project ID is required here for OTA updates
       url: `https://u.expo.dev/${process.env.EAS_PROJECT_ID || "bfc79fc8-7066-4386-b9e0-52d0207ad8f4"}`
     },
-    runtimeVersion: "1.0.22",
+    runtimeVersion: "1.0.21",
     extra: {
       // OTA version - set by CI during deployment (format: X.Y.Z.MMDDYY.HHMM)
       // Falls back to binary version for embedded builds

@@ -8,7 +8,7 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { LinearGradient } from "expo-linear-gradient";
+import { SafeLinearGradient } from "@/components/ui/SafeLinearGradient";
 import { AuthGuard } from "@/components/guards/AuthGuard";
 
 export default function LandingPage() {
@@ -28,7 +28,7 @@ export default function LandingPage() {
           resizeMode="cover"
         >
           {/* Gradient overlay for better text readability - only at top */}
-          <LinearGradient
+          <SafeLinearGradient
             colors={["rgba(0,0,0,0.3)", "transparent", "transparent"]}
             locations={[0, 0.4, 1]}
             style={styles.gradient}
@@ -49,7 +49,7 @@ export default function LandingPage() {
                 <Text style={styles.getStartedText}>Get Started</Text>
               </TouchableOpacity>
             </View>
-          </LinearGradient>
+          </SafeLinearGradient>
         </ImageBackground>
       </View>
     </AuthGuard>

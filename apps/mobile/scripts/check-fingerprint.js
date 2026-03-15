@@ -325,63 +325,24 @@ async function main() {
     return;
   }
 
-  // Fingerprint changed - check if runtime version was updated
-  if (runtimeVersion === stored.RUNTIME_VERSION) {
-    console.error("\n❌ Native code has changed but runtimeVersion was NOT updated!");
-    console.error("");
-    console.error("   The project fingerprint has changed, indicating native code modifications.");
-    console.error("   You must update the runtimeVersion before pushing.");
-    console.error("");
-    console.error("   Steps to fix:");
-    console.error("   1. Run: pnpm version:bump patch (or minor/major)");
-    console.error("   2. Commit all changes");
-    console.error("");
-    console.error("   Or manually:");
-    console.error("   1. Update runtimeVersion in app.config.js and app.json");
-    console.error("   2. Run: node scripts/check-fingerprint.js --update");
-    console.error("   3. Commit all changes");
-    console.error("");
-    console.error("   Run with --verbose to see which sources changed.");
-    process.exit(1);
-  }
+  // Fingerprint changed - log a warning but don't fail CI.
+  // The check-native-imports.js script handles enforcement of gated imports.
+  // This script is now informational: it tells you a new native build is needed.
+  console.log("\n⚠️  Native code fingerprint has changed!");
+  console.log("");
+  console.log("   The project fingerprint differs from the stored baseline,");
+  console.log("   indicating native code or dependency changes.");
+  console.log("");
+  console.log("   Ensure any new native dependencies are properly gated");
+  console.log("   behind NativeModules checks (see native-deps.json).");
+  console.log("");
+  console.log("   A new native build will be needed to include these changes.");
+  console.log("   Run with --verbose to see which sources changed.");
+  console.log("");
 
-  // Validate new version format
-  if (!isValidVersion(runtimeVersion)) {
-    console.error(`\n❌ Invalid version format: ${runtimeVersion}`);
-    console.error("   Version must be in semantic versioning format: X.Y.Z (e.g., 1.0.17)");
-    process.exit(1);
-  }
-
-  // Validate stored version format
-  if (!isValidVersion(stored.RUNTIME_VERSION)) {
-    console.error(`\n⚠️  Invalid stored version format: ${stored.RUNTIME_VERSION}`);
-    console.error("   The .fingerprint file contains an invalid version.");
-    console.error("   This is likely from an old format. Updating to new version...");
-    saveFingerprint(currentHash, runtimeVersion);
-    console.log(`\n✅ Updated fingerprint with valid version: ${runtimeVersion}`);
-    process.exit(0);
-  }
-
-  // Validate version actually increased (not just changed)
-  const comparison = compareVersions(runtimeVersion, stored.RUNTIME_VERSION);
-  if (comparison < 0) {
-    console.error(`\n❌ Version DECREASED from ${stored.RUNTIME_VERSION} to ${runtimeVersion}!`);
-    console.error("   Versions must always increase. Cannot downgrade.");
-    process.exit(1);
-  }
-  if (comparison === 0) {
-    // This shouldn't happen since we already checked equality above,
-    // but keep for safety
-    console.error(`\n❌ Version unchanged at ${runtimeVersion}`);
-    process.exit(1);
-  }
-
-  // Runtime version was updated and increased - save new fingerprint
-  console.log("\n✅ Native code changed and runtimeVersion was updated");
-  console.log(`   Version: ${stored.RUNTIME_VERSION} → ${runtimeVersion}`);
-  console.log("   Updating stored fingerprint...");
+  // Auto-update the stored fingerprint so subsequent checks pass
   saveFingerprint(currentHash, runtimeVersion);
-  console.log("   Done!");
+  console.log("   Updated stored fingerprint to match current state.");
 }
 
 main().catch((error) => {

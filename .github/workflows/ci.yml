@@ -106,6 +106,10 @@ jobs:
         working-directory: apps/mobile
         run: node scripts/check-fingerprint.js
 
+      - name: Check native import gating
+        working-directory: apps/mobile
+        run: node scripts/check-native-imports.js
+
       - name: Verify Metro bundler (catch import errors)
         working-directory: apps/mobile
         run: |
