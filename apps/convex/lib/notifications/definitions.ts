@@ -310,7 +310,7 @@ function getChannelLabel(data: MessageData): string {
       "i"
     );
     const normalizedChannelName = rawChannelName.replace(groupPrefixRegex, "").trim();
-    if (normalizedChannelName) {
+    if (normalizedChannelName && normalizedChannelName.toLowerCase() !== groupName.toLowerCase()) {
       return normalizedChannelName;
     }
 
