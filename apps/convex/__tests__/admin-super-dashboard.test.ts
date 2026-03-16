@@ -198,7 +198,7 @@ describe("getInternalDashboard", () => {
     });
 
     expect(result.overview.messagesSent).toBe(2);
-    expect(result.overview.dailyActiveUsers).toBe(2);
+    expect(result.overview.uniqueActiveSenders).toBe(2);
     expect(result.overview.newMembers).toBeGreaterThanOrEqual(2);
     expect(result.overview.meetingsHeld).toBe(1);
     expect(result.overview.attendanceCheckIns).toBe(2);
