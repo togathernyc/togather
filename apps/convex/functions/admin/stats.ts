@@ -15,11 +15,274 @@ import { internal } from "../../_generated/api";
 import { Id, Doc } from "../../_generated/dataModel";
 import { now, getMediaUrl } from "../../lib/utils";
 import { requireAuth } from "../../lib/auth";
-import { requireCommunityAdmin, checkCommunityAdmin } from "./auth";
+import { requireCommunityAdmin, checkCommunityAdmin, requirePrimaryAdmin } from "./auth";
+
+type SuperAdminRange = "7d" | "30d" | "90d" | "all";
+type SuperAdminGranularity = "day" | "month";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const RANGE_DAYS: Record<Exclude<SuperAdminRange, "all">, number> = {
+  "7d": 7,
+  "30d": 30,
+  "90d": 90,
+};
+
+function utcDayStart(timestamp: number): number {
+  const d = new Date(timestamp);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+}
+
+function utcMonthStart(timestamp: number): number {
+  const d = new Date(timestamp);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
+}
+
+function nextBucketStart(timestamp: number, granularity: SuperAdminGranularity): number {
+  const d = new Date(timestamp);
+  if (granularity === "month") {
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
+  }
+  return timestamp + DAY_MS;
+}
+
+function bucketStartFor(timestamp: number, granularity: SuperAdminGranularity): number {
+  return granularity === "month" ? utcMonthStart(timestamp) : utcDayStart(timestamp);
+}
+
+function formatBucketLabel(timestamp: number, granularity: SuperAdminGranularity): string {
+  return new Date(timestamp).toLocaleDateString("en-US", {
+    month: "short",
+    ...(granularity === "month" ? { year: "numeric" as const } : { day: "numeric" as const }),
+  });
+}
 
 // ============================================================================
 // Stats
 // ============================================================================
+
+/**
+ * Super-admin dashboard analytics.
+ *
+ * IMPORTANT: This endpoint is restricted to Primary Admins only.
+ * It provides a time-series graph plus summary metrics for the selected range.
+ */
+export const getSuperAdminDashboard = query({
+  args: {
+    token: v.string(),
+    communityId: v.id("communities"),
+    range: v.optional(v.union(v.literal("7d"), v.literal("30d"), v.literal("90d"), v.literal("all"))),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await requirePrimaryAdmin(ctx, args.communityId, userId);
+
+    const community = await ctx.db.get(args.communityId);
+    if (!community) {
+      throw new Error("Community not found");
+    }
+
+    const selectedRange: SuperAdminRange = args.range ?? "30d";
+    const endDate = now();
+    const rangeStart =
+      selectedRange === "all"
+        ? utcMonthStart(community.createdAt ?? endDate)
+        : utcDayStart(endDate - (RANGE_DAYS[selectedRange] - 1) * DAY_MS);
+    const granularity: SuperAdminGranularity = selectedRange === "all" ? "month" : "day";
+
+    // Build fixed buckets so graph keeps a stable shape while data loads/recomputes.
+    const buckets: Array<{
+      bucketStart: number;
+      label: string;
+      messagesSent: number;
+      newMembers: number;
+      activeSenders: Set<string>;
+    }> = [];
+    const bucketLookup = new Map<number, (typeof buckets)[number]>();
+    for (
+      let cursor = bucketStartFor(rangeStart, granularity);
+      cursor <= endDate;
+      cursor = nextBucketStart(cursor, granularity)
+    ) {
+      const bucket = {
+        bucketStart: cursor,
+        label: formatBucketLabel(cursor, granularity),
+        messagesSent: 0,
+        newMembers: 0,
+        activeSenders: new Set<string>(),
+      };
+      buckets.push(bucket);
+      bucketLookup.set(cursor, bucket);
+    }
+
+    const groups = await ctx.db
+      .query("groups")
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .collect();
+
+    const activeGroupsCount = groups.filter((g) => !g.isArchived).length;
+
+    const channels: Array<{
+      _id: Id<"chatChannels">;
+      name: string;
+      isArchived: boolean;
+    }> = [];
+    for (const group of groups) {
+      const groupChannels = await ctx.db
+        .query("chatChannels")
+        .withIndex("by_group", (q) => q.eq("groupId", group._id))
+        .collect();
+      channels.push(...groupChannels);
+    }
+
+    const activeChannelCount = channels.filter((c) => !c.isArchived).length;
+    const rangeMessagesByChannel = new Map<string, number>();
+    const uniqueActiveSenders = new Set<string>();
+    let messagesSent = 0;
+
+    for (const channel of channels) {
+      const channelMessages =
+        selectedRange === "all"
+          ? await ctx.db
+              .query("chatMessages")
+              .withIndex("by_channel", (q) => q.eq("channelId", channel._id))
+              .collect()
+          : await ctx.db
+              .query("chatMessages")
+              .withIndex("by_channel_createdAt", (q) =>
+                q.eq("channelId", channel._id).gte("createdAt", rangeStart).lte("createdAt", endDate)
+              )
+              .collect();
+
+      for (const message of channelMessages) {
+        if (message.isDeleted || message.createdAt < rangeStart || message.createdAt > endDate) {
+          continue;
+        }
+
+        messagesSent += 1;
+        if (message.senderId) {
+          uniqueActiveSenders.add(message.senderId);
+        }
+
+        const bucketKey = bucketStartFor(message.createdAt, granularity);
+        const bucket = bucketLookup.get(bucketKey);
+        if (bucket) {
+          bucket.messagesSent += 1;
+          if (message.senderId) {
+            bucket.activeSenders.add(message.senderId);
+          }
+        }
+
+        rangeMessagesByChannel.set(channel._id, (rangeMessagesByChannel.get(channel._id) ?? 0) + 1);
+      }
+    }
+
+    const newMemberships = await ctx.db
+      .query("userCommunities")
+      .withIndex("by_community_createdAt", (q) =>
+        q.eq("communityId", args.communityId).gte("createdAt", rangeStart)
+      )
+      .filter((q) => q.neq(q.field("status"), 3))
+      .collect();
+
+    const inRangeMemberships = newMemberships.filter(
+      (membership) =>
+        !!membership.createdAt && membership.createdAt >= rangeStart && membership.createdAt <= endDate
+    );
+
+    for (const membership of inRangeMemberships) {
+      if (!membership.createdAt) continue;
+      const bucketKey = bucketStartFor(membership.createdAt, granularity);
+      const bucket = bucketLookup.get(bucketKey);
+      if (bucket) {
+        bucket.newMembers += 1;
+      }
+    }
+
+    const activeCommunityMemberships = await ctx.db
+      .query("userCommunities")
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .filter((q) => q.eq(q.field("status"), 1))
+      .collect();
+
+    const thirtyDaysAgo = endDate - 30 * DAY_MS;
+    const activeMembers30d = await ctx.db
+      .query("userCommunities")
+      .withIndex("by_community_lastLogin", (q) =>
+        q.eq("communityId", args.communityId).gte("lastLogin", thirtyDaysAgo)
+      )
+      .filter((q) => q.eq(q.field("status"), 1))
+      .collect();
+
+    let meetingsHeld = 0;
+    let attendanceCheckIns = 0;
+
+    for (const group of groups) {
+      const rangeMeetings = await ctx.db
+        .query("meetings")
+        .withIndex("by_group_scheduledAt", (q) =>
+          q.eq("groupId", group._id).gte("scheduledAt", rangeStart).lte("scheduledAt", endDate)
+        )
+        .collect();
+
+      meetingsHeld += rangeMeetings.length;
+
+      for (const meeting of rangeMeetings) {
+        const attendance = await ctx.db
+          .query("meetingAttendances")
+          .withIndex("by_meeting", (q) => q.eq("meetingId", meeting._id))
+          .filter((q) => q.eq(q.field("status"), 1))
+          .collect();
+        attendanceCheckIns += attendance.length;
+      }
+    }
+
+    const topChannels = channels
+      .map((channel) => ({
+        channelId: channel._id,
+        channelName: channel.name,
+        messagesSent: rangeMessagesByChannel.get(channel._id) ?? 0,
+      }))
+      .filter((channel) => channel.messagesSent > 0)
+      .sort((a, b) => b.messagesSent - a.messagesSent)
+      .slice(0, 5);
+
+    const trend = buckets.map((bucket) => ({
+      bucketStart: bucket.bucketStart,
+      label: bucket.label,
+      messagesSent: bucket.messagesSent,
+      newMembers: bucket.newMembers,
+      dailyActiveUsers: bucket.activeSenders.size,
+    }));
+
+    const activeDaysWithMessages = trend.filter((point) => point.messagesSent > 0).length;
+
+    return {
+      range: {
+        key: selectedRange,
+        granularity,
+        startDate: rangeStart,
+        endDate,
+      },
+      overview: {
+        messagesSent,
+        dailyActiveUsers: uniqueActiveSenders.size,
+        newMembers: inRangeMemberships.length,
+        meetingsHeld,
+        attendanceCheckIns,
+        avgMessagesPerActiveDay:
+          activeDaysWithMessages > 0 ? Math.round(messagesSent / activeDaysWithMessages) : 0,
+      },
+      totals: {
+        totalMembers: activeCommunityMemberships.length,
+        activeMembers30d: activeMembers30d.length,
+        activeGroups: activeGroupsCount,
+        activeChannels: activeChannelCount,
+      },
+      trend,
+      topChannels,
+    };
+  },
+});
 
 /**
  * Get total attendance statistics for a date range

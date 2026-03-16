@@ -6,7 +6,7 @@
  * - Apps: Third-party integrations management
  */
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -21,27 +21,43 @@ import { StatsContent } from "./StatsContent";
 import { PeopleContent } from "./PeopleContent";
 import { SettingsContent } from "./SettingsContent";
 import { LandingPageContent } from "./LandingPageContent";
+import { SuperAdminDashboardContent } from "./SuperAdminDashboardContent";
 
-type TabKey = "requests" | "people" | "stats" | "settings" | "landing";
+type TabKey = "dashboard" | "requests" | "people" | "stats" | "settings" | "landing";
 
 interface Tab {
   key: TabKey;
   label: string;
 }
 
-const TABS: Tab[] = [
-  { key: "requests", label: "Requests" },
-  { key: "people", label: "People" },
-  { key: "stats", label: "Stats" },
-  { key: "settings", label: "Settings" },
-  { key: "landing", label: "Landing" },
-];
-
 export function AdminScreen() {
   const insets = useSafeAreaInsets();
-  const { community } = useAuth();
-  const [activeTab, setActiveTab] = useState<TabKey>("requests");
+  const { community, user } = useAuth();
+  const isPrimaryAdmin = user?.is_primary_admin === true;
+  const tabs: Tab[] = isPrimaryAdmin
+    ? [
+        { key: "dashboard", label: "Dashboard" },
+        { key: "requests", label: "Requests" },
+        { key: "people", label: "People" },
+        { key: "stats", label: "Stats" },
+        { key: "settings", label: "Settings" },
+        { key: "landing", label: "Landing" },
+      ]
+    : [
+        { key: "requests", label: "Requests" },
+        { key: "people", label: "People" },
+        { key: "stats", label: "Stats" },
+        { key: "settings", label: "Settings" },
+        { key: "landing", label: "Landing" },
+      ];
+  const [activeTab, setActiveTab] = useState<TabKey>(isPrimaryAdmin ? "dashboard" : "requests");
   const hasCommunity = !!community?.id;
+
+  useEffect(() => {
+    if (!tabs.some((tab) => tab.key === activeTab)) {
+      setActiveTab(tabs[0].key);
+    }
+  }, [tabs, activeTab]);
 
   // Show message when user has no community context
   if (!hasCommunity) {
@@ -69,7 +85,7 @@ export function AdminScreen() {
 
         {/* Segmented Control */}
         <View style={styles.segmentedControl}>
-          {TABS.map((tab) => (
+          {tabs.map((tab) => (
             <TouchableOpacity
               key={tab.key}
               style={[
@@ -94,7 +110,9 @@ export function AdminScreen() {
 
       {/* Content */}
       <View style={styles.content}>
-        {activeTab === "requests" ? (
+        {activeTab === "dashboard" ? (
+          <SuperAdminDashboardContent />
+        ) : activeTab === "requests" ? (
           <PendingRequestsContent />
         ) : activeTab === "people" ? (
           <PeopleContent />

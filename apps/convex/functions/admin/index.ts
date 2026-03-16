@@ -37,6 +37,7 @@ export {
 
 // Stats - Statistics and analytics
 export {
+  getSuperAdminDashboard,
   getTotalAttendance,
   getNewSignups,
   getActiveMembers,
