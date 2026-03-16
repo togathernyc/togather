@@ -835,11 +835,13 @@ describe("sendMessageNotifications Notification Data", () => {
     expect(recipientNotifications[0]?.data?.groupAvatarUrl).toBe(groupAvatarUrl);
   });
 
-  test("falls back to community branding image when group has no photo", async () => {
+  test("falls back to generated initials avatar when group has no photo", async () => {
     vi.useFakeTimers();
     const t = convexTest(schema, modules);
     const { userId, user2Id, communityId, groupId, channelId } = await seedTestData(t);
     const communityLogoUrl = "https://example.com/community-logo.jpg";
+    const expectedInitialsAvatarUrl =
+      "https://ui-avatars.com/api/?background=123456&color=fff&name=TG&size=128&format=png";
     const now = Date.now();
 
     const fetchMock = vi.fn().mockResolvedValue({
@@ -849,7 +851,11 @@ describe("sendMessageNotifications Notification Data", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await t.run(async (ctx) => {
-      await ctx.db.patch(communityId, { logo: communityLogoUrl, appIcon: undefined });
+      await ctx.db.patch(communityId, {
+        logo: communityLogoUrl,
+        appIcon: undefined,
+        primaryColor: "#123456",
+      });
       await ctx.db.patch(groupId, { preview: undefined });
       await ctx.db.insert("chatReadState", {
         channelId,
@@ -892,8 +898,9 @@ describe("sendMessageNotifications Notification Data", () => {
 
     expect(fetchMock).toHaveBeenCalled();
     const requestBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
-    expect(requestBody[0].richContent.image).toBe(communityLogoUrl);
-    expect(requestBody[0].data.groupAvatarUrl).toBe(communityLogoUrl);
+    expect(requestBody[0].richContent.image).toBe(expectedInitialsAvatarUrl);
+    expect(requestBody[0].data.groupAvatarUrl).toBe(expectedInitialsAvatarUrl);
+    expect(requestBody[0].data.groupAvatarUrl).not.toBe(communityLogoUrl);
   });
 });
 

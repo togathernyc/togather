@@ -16,6 +16,30 @@ import { DOMAIN_CONFIG } from "@togather/shared/config";
 // Internal Helper Queries
 // ============================================================================
 
+const DEFAULT_INITIALS_AVATAR_BG = "007AFF";
+
+function getInitials(name: string | undefined | null): string {
+  if (!name) return "G";
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return "G";
+  if (words.length === 1) {
+    return words[0].substring(0, 2).toUpperCase();
+  }
+  return (words[0][0] + words[1][0]).toUpperCase();
+}
+
+function getInitialsAvatarUrl(
+  groupName: string | undefined,
+  hexColor: string | undefined
+): string {
+  const normalizedColor =
+    hexColor && /^#?[0-9A-Fa-f]{6}$/.test(hexColor)
+      ? hexColor.replace("#", "")
+      : DEFAULT_INITIALS_AVATAR_BG;
+  const initials = getInitials(groupName);
+  return `https://ui-avatars.com/api/?background=${normalizedColor}&color=fff&name=${encodeURIComponent(initials)}&size=128&format=png`;
+}
+
 /**
  * Get community admins (role >= 3)
  * Used to send notifications to community admins
@@ -55,8 +79,7 @@ export const getGroupInfo = internalQuery({
 
     const groupAvatarUrl =
       getMediaUrlWithTransform(group.preview, ImagePresets.avatarSmall) ||
-      getMediaUrlWithTransform(community?.appIcon, ImagePresets.avatarSmall) ||
-      getMediaUrlWithTransform(community?.logo, ImagePresets.avatarSmall);
+      getInitialsAvatarUrl(group.name, community?.primaryColor);
 
     return {
       id: group._id,
