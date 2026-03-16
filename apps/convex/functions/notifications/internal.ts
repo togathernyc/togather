@@ -51,11 +51,12 @@ export const getGroupInfo = internalQuery({
   handler: async (ctx, args) => {
     const group = await ctx.db.get(args.groupId);
     if (!group) return null;
+    const community = await ctx.db.get(group.communityId);
 
-    const groupAvatarUrl = getMediaUrlWithTransform(
-      group.preview,
-      ImagePresets.avatarSmall
-    );
+    const groupAvatarUrl =
+      getMediaUrlWithTransform(group.preview, ImagePresets.avatarSmall) ||
+      getMediaUrlWithTransform(community?.appIcon, ImagePresets.avatarSmall) ||
+      getMediaUrlWithTransform(community?.logo, ImagePresets.avatarSmall);
 
     return {
       id: group._id,
