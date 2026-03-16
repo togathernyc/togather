@@ -98,6 +98,8 @@ export interface SendOptions<TData = Record<string, unknown>> {
   // Optional: community and group for notification record
   communityId?: Id<"communities">;
   groupId?: Id<"groups">;
+  // Optional: pre-fetched notification image URL (avoids redundant queries in batch)
+  prefetchedImageUrl?: string;
 }
 
 // Batch send options
@@ -109,6 +111,8 @@ export interface BatchSendOptions<TData = Record<string, unknown>> {
   channels?: NotificationChannel[];
   communityId?: Id<"communities">;
   groupId?: Id<"groups">;
+  // Optional: pre-fetched notification image URL (avoids redundant queries in batch)
+  prefetchedImageUrl?: string;
 }
 
 // Community admin send options

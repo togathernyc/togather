@@ -133,7 +133,8 @@ export async function notify<TData extends Record<string, unknown>>(
         userId,
         type,
         options.communityId,
-        options.groupId
+        options.groupId,
+        options.prefetchedImageUrl
       );
 
       if (channelResult.success) {
@@ -155,7 +156,8 @@ export async function notify<TData extends Record<string, unknown>>(
         userId,
         type,
         options.communityId,
-        options.groupId
+        options.groupId,
+        options.prefetchedImageUrl
       );
       return { channel, ...channelResult };
     });
@@ -192,7 +194,8 @@ async function sendToChannel<TData extends Record<string, unknown>>(
   userId: Id<"users">,
   notificationType: string,
   communityId?: Id<"communities">,
-  groupId?: Id<"groups">
+  groupId?: Id<"groups">,
+  prefetchedImageUrl?: string
 ): Promise<ChannelSendResult> {
   console.log(`[notify] Attempting to send ${notificationType} via ${channel} to user ${userId}`);
 
@@ -213,7 +216,8 @@ async function sendToChannel<TData extends Record<string, unknown>>(
           userId,
           notificationType,
           communityId,
-          groupId
+          groupId,
+          prefetchedImageUrl
         );
       }
 
@@ -268,24 +272,28 @@ async function sendPushChannel<TData extends Record<string, unknown>>(
   userId: Id<"users">,
   notificationType: string,
   communityId?: Id<"communities">,
-  groupId?: Id<"groups">
+  groupId?: Id<"groups">,
+  prefetchedImageUrl?: string
 ): Promise<ChannelSendResult> {
   const output = formatter(formatterCtx);
-  let notificationImageUrl: string | undefined;
+  let notificationImageUrl: string | undefined = prefetchedImageUrl;
 
-  if (groupId) {
-    const groupInfo = await ctx.runQuery(
-      internal.functions.notifications.internal.getGroupInfo,
-      { groupId }
-    );
-    notificationImageUrl = groupInfo?.groupAvatarUrl;
-  } else if (communityId) {
-    // Community-level notifications (no group context) should use community branding.
-    const communityInfo = await ctx.runQuery(
-      internal.functions.notifications.internal.getCommunityInfo,
-      { communityId }
-    );
-    notificationImageUrl = communityInfo?.communityLogoUrl;
+  // Only query for image URL if not already prefetched (batch optimization)
+  if (!notificationImageUrl) {
+    if (groupId) {
+      const groupInfo = await ctx.runQuery(
+        internal.functions.notifications.internal.getGroupInfo,
+        { groupId }
+      );
+      notificationImageUrl = groupInfo?.groupAvatarUrl;
+    } else if (communityId) {
+      // Community-level notifications (no group context) should use community branding.
+      const communityInfo = await ctx.runQuery(
+        internal.functions.notifications.internal.getCommunityInfo,
+        { communityId }
+      );
+      notificationImageUrl = communityInfo?.communityLogoUrl;
+    }
   }
 
   // Get push tokens for user (filters by environment and active status)
@@ -386,16 +394,43 @@ async function sendEmailChannel<TData extends Record<string, unknown>>(
 
 /**
  * Send notification to multiple users
+ *
+ * Optimizes by pre-fetching group/community image URL once for the entire batch,
+ * avoiding N redundant queries for N users.
  */
 export async function notifyBatch<TData extends Record<string, unknown>>(
   ctx: ActionCtx,
   options: BatchSendOptions<TData>
 ): Promise<SendResult[]> {
-  const { userIds, ...rest } = options;
+  const { userIds, prefetchedImageUrl, groupId, communityId, ...rest } = options;
+
+  // Pre-fetch the notification image URL once for the batch (if not already provided)
+  let imageUrl = prefetchedImageUrl;
+  if (!imageUrl) {
+    if (groupId) {
+      const groupInfo = await ctx.runQuery(
+        internal.functions.notifications.internal.getGroupInfo,
+        { groupId }
+      );
+      imageUrl = groupInfo?.groupAvatarUrl;
+    } else if (communityId) {
+      const communityInfo = await ctx.runQuery(
+        internal.functions.notifications.internal.getCommunityInfo,
+        { communityId }
+      );
+      imageUrl = communityInfo?.communityLogoUrl;
+    }
+  }
 
   const results = await Promise.all(
     userIds.map((userId) =>
-      notify(ctx, { ...rest, userId } as SendOptions<TData>)
+      notify(ctx, {
+        ...rest,
+        userId,
+        groupId,
+        communityId,
+        prefetchedImageUrl: imageUrl,
+      } as SendOptions<TData>)
     )
   );
 

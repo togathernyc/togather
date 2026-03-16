@@ -235,6 +235,38 @@ export const ImagePresets = {
 } as const;
 
 // ============================================================================
+// Initials Avatar Helpers
+// ============================================================================
+
+export const DEFAULT_INITIALS_AVATAR_BG = "007AFF";
+
+/**
+ * Get initials from a name (e.g., "John Doe" -> "JD")
+ */
+export function getInitials(name: string | undefined | null): string {
+  if (!name) return "G";
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return "G";
+  if (words.length === 1) return words[0].substring(0, 2).toUpperCase();
+  return (words[0][0] + words[1][0]).toUpperCase();
+}
+
+/**
+ * Generate a URL for an initials-based avatar using ui-avatars.com
+ */
+export function getInitialsAvatarUrl(
+  groupName: string | undefined,
+  hexColor: string | undefined
+): string {
+  const normalizedColor =
+    hexColor && /^#?[0-9A-Fa-f]{6}$/.test(hexColor)
+      ? hexColor.replace("#", "")
+      : DEFAULT_INITIALS_AVATAR_BG;
+  const initials = getInitials(groupName);
+  return `https://ui-avatars.com/api/?background=${normalizedColor}&color=fff&name=${encodeURIComponent(initials)}&size=128&format=png`;
+}
+
+// ============================================================================
 // OAuth Token Helpers
 // ============================================================================
 
