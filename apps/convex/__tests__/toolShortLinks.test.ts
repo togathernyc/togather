@@ -12,6 +12,7 @@ interface SeedData {
   groupId: Id<"groups">;
   otherGroupId: Id<"groups">;
   taskId: Id<"tasks">;
+  leaderId: Id<"users">;
   leaderToken: string;
   outsiderToken: string;
 }
@@ -110,6 +111,7 @@ async function seedData(t: ReturnType<typeof convexTest>): Promise<SeedData> {
     groupId: ids.groupId,
     otherGroupId: ids.otherGroupId,
     taskId: ids.taskId,
+    leaderId: ids.leaderId,
     leaderToken,
     outsiderToken,
   };
@@ -148,7 +150,17 @@ describe("toolShortLinks task links", () => {
 
   test("rejects creating a task link for a different group", async () => {
     const t = convexTest(schema, modules);
-    const { otherGroupId, taskId, leaderToken } = await seedData(t);
+    const { otherGroupId, taskId, leaderToken, leaderId } = await seedData(t);
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("groupMembers", {
+        groupId: otherGroupId,
+        userId: leaderId,
+        role: "leader",
+        joinedAt: Date.now(),
+        notificationsEnabled: true,
+      });
+    });
 
     await expect(
       t.mutation(api.functions.toolShortLinks.index.getOrCreate, {
