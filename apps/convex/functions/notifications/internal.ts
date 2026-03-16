@@ -77,15 +77,46 @@ export const getGroupInfo = internalQuery({
     if (!group) return null;
     const community = await ctx.db.get(group.communityId);
 
+    const groupPhotoUrl = getMediaUrlWithTransform(
+      group.preview,
+      ImagePresets.avatarSmall
+    );
+    const communityLogoUrl =
+      getMediaUrlWithTransform(community?.appIcon, ImagePresets.avatarSmall) ||
+      getMediaUrlWithTransform(community?.logo, ImagePresets.avatarSmall);
     const groupAvatarUrl =
-      getMediaUrlWithTransform(group.preview, ImagePresets.avatarSmall) ||
-      getInitialsAvatarUrl(group.name, community?.primaryColor);
+      groupPhotoUrl || getInitialsAvatarUrl(group.name, community?.primaryColor);
 
     return {
       id: group._id,
       name: group.name || "Group",
       communityId: group.communityId,
+      groupPhotoUrl,
+      communityLogoUrl,
       groupAvatarUrl,
+    };
+  },
+});
+
+/**
+ * Get community info for community-level notification avatars.
+ */
+export const getCommunityInfo = internalQuery({
+  args: {
+    communityId: v.id("communities"),
+  },
+  handler: async (ctx, args) => {
+    const community = await ctx.db.get(args.communityId);
+    if (!community) return null;
+
+    const communityLogoUrl =
+      getMediaUrlWithTransform(community.appIcon, ImagePresets.avatarSmall) ||
+      getMediaUrlWithTransform(community.logo, ImagePresets.avatarSmall);
+
+    return {
+      id: community._id,
+      name: community.name || "Community",
+      communityLogoUrl,
     };
   },
 });

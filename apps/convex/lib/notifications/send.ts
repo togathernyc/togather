@@ -271,14 +271,21 @@ async function sendPushChannel<TData extends Record<string, unknown>>(
   groupId?: Id<"groups">
 ): Promise<ChannelSendResult> {
   const output = formatter(formatterCtx);
-  let groupAvatarUrl: string | undefined;
+  let notificationImageUrl: string | undefined;
 
   if (groupId) {
     const groupInfo = await ctx.runQuery(
       internal.functions.notifications.internal.getGroupInfo,
       { groupId }
     );
-    groupAvatarUrl = groupInfo?.groupAvatarUrl;
+    notificationImageUrl = groupInfo?.groupAvatarUrl;
+  } else if (communityId) {
+    // Community-level notifications (no group context) should use community branding.
+    const communityInfo = await ctx.runQuery(
+      internal.functions.notifications.internal.getCommunityInfo,
+      { communityId }
+    );
+    notificationImageUrl = communityInfo?.communityLogoUrl;
   }
 
   // Get push tokens for user (filters by environment and active status)
@@ -298,7 +305,7 @@ async function sendPushChannel<TData extends Record<string, unknown>>(
   const notificationData = {
     type: notificationType,
     ...output.data,
-    ...(groupAvatarUrl ? { groupAvatarUrl } : {}),
+    ...(notificationImageUrl ? { groupAvatarUrl: notificationImageUrl } : {}),
   };
   console.log(`[sendPushChannel] Building push notification with data:`, JSON.stringify(notificationData));
 
@@ -307,7 +314,7 @@ async function sendPushChannel<TData extends Record<string, unknown>>(
     title: output.title,
     body: output.body,
     data: notificationData,
-    imageUrl: groupAvatarUrl,
+    imageUrl: notificationImageUrl,
   }));
 
   const result = await ctx.runAction(internal.functions.notifications.internal.sendBatchPushNotifications, {
@@ -324,7 +331,7 @@ async function sendPushChannel<TData extends Record<string, unknown>>(
     body: output.body,
     data: {
       ...(output.data || {}),
-      ...(groupAvatarUrl ? { groupAvatarUrl } : {}),
+      ...(notificationImageUrl ? { groupAvatarUrl: notificationImageUrl } : {}),
     },
     status: result.success ? "sent" : "failed",
   });
