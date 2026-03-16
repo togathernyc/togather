@@ -271,22 +271,33 @@ async function sendPushChannel<TData extends Record<string, unknown>>(
   groupId?: Id<"groups">
 ): Promise<ChannelSendResult> {
   const output = formatter(formatterCtx);
-  let notificationImageUrl: string | undefined;
+  let groupNotificationImageUrl: string | undefined;
 
   if (groupId) {
     const groupInfo = await ctx.runQuery(
       internal.functions.notifications.internal.getGroupInfo,
       { groupId }
     );
-    notificationImageUrl = groupInfo?.groupAvatarUrl;
+    groupNotificationImageUrl = groupInfo?.groupAvatarUrl;
   } else if (communityId) {
     // Community-level notifications (no group context) should use community branding.
     const communityInfo = await ctx.runQuery(
       internal.functions.notifications.internal.getCommunityInfo,
       { communityId }
     );
-    notificationImageUrl = communityInfo?.communityLogoUrl;
+    groupNotificationImageUrl = communityInfo?.communityLogoUrl;
   }
+
+  const senderAvatarFromPayload =
+    output.data &&
+    typeof output.data === "object" &&
+    "senderAvatarUrl" in output.data &&
+    typeof (output.data as { senderAvatarUrl?: unknown }).senderAvatarUrl === "string"
+      ? (output.data as { senderAvatarUrl: string }).senderAvatarUrl
+      : undefined;
+
+  // Prefer sender avatar for chat-like notifications; keep group/community image as fallback.
+  const notificationImageUrl = senderAvatarFromPayload || groupNotificationImageUrl;
 
   // Get push tokens for user (filters by environment and active status)
   // No tokens = user has disabled push or hasn't registered a token
@@ -305,7 +316,8 @@ async function sendPushChannel<TData extends Record<string, unknown>>(
   const notificationData = {
     type: notificationType,
     ...output.data,
-    ...(notificationImageUrl ? { groupAvatarUrl: notificationImageUrl } : {}),
+    ...(senderAvatarFromPayload ? { senderAvatarUrl: senderAvatarFromPayload } : {}),
+    ...(groupNotificationImageUrl ? { groupAvatarUrl: groupNotificationImageUrl } : {}),
   };
   console.log(`[sendPushChannel] Building push notification with data:`, JSON.stringify(notificationData));
 
@@ -331,7 +343,8 @@ async function sendPushChannel<TData extends Record<string, unknown>>(
     body: output.body,
     data: {
       ...(output.data || {}),
-      ...(notificationImageUrl ? { groupAvatarUrl: notificationImageUrl } : {}),
+      ...(senderAvatarFromPayload ? { senderAvatarUrl: senderAvatarFromPayload } : {}),
+      ...(groupNotificationImageUrl ? { groupAvatarUrl: groupNotificationImageUrl } : {}),
     },
     status: result.success ? "sent" : "failed",
   });

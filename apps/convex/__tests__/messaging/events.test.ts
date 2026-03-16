@@ -766,11 +766,12 @@ describe("sendMessageNotifications Notification Data", () => {
     expect(true).toBe(true);
   });
 
-  test("includes group avatar in Expo rich-content payload for push notifications", async () => {
+  test("prefers sender avatar while preserving group avatar metadata for push notifications", async () => {
     vi.useFakeTimers();
     const t = convexTest(schema, modules);
     const { userId, user2Id, groupId, channelId } = await seedTestData(t);
     const groupAvatarUrl = "https://example.com/group-avatar.jpg";
+    const senderAvatarUrl = "https://example.com/sender-avatar.jpg";
     const now = Date.now();
 
     const fetchMock = vi.fn().mockResolvedValue({
@@ -808,6 +809,7 @@ describe("sendMessageNotifications Notification Data", () => {
         createdAt: now,
         isDeleted: false,
         senderName: "Test User",
+        senderProfilePhoto: senderAvatarUrl,
       });
     });
 
@@ -824,8 +826,9 @@ describe("sendMessageNotifications Notification Data", () => {
     const requestBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(requestBody[0].title).toBe("Test User");
     expect(requestBody[0].body).toBe("Test Group: General\nAvatar payload test message");
-    expect(requestBody[0].richContent.image).toBe(groupAvatarUrl);
+    expect(requestBody[0].richContent.image).toBe(senderAvatarUrl);
     expect(requestBody[0].mutableContent).toBe(true);
+    expect(requestBody[0].data.senderAvatarUrl).toBe(senderAvatarUrl);
     expect(requestBody[0].data.groupAvatarUrl).toBe(groupAvatarUrl);
 
     const recipientNotifications = await t.run(async (ctx) => {
@@ -834,7 +837,66 @@ describe("sendMessageNotifications Notification Data", () => {
         .withIndex("by_user", (q) => q.eq("userId", user2Id))
         .collect();
     });
+    expect(recipientNotifications[0]?.data?.senderAvatarUrl).toBe(senderAvatarUrl);
     expect(recipientNotifications[0]?.data?.groupAvatarUrl).toBe(groupAvatarUrl);
+  });
+
+  test("strips duplicated group prefix from channel names in push body", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { userId, user2Id, channelId } = await seedTestData(t);
+    const now = Date.now();
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ id: "ticket-3", status: "ok" }] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(channelId, { name: "Test Group - General" });
+      await ctx.db.insert("chatReadState", {
+        channelId,
+        userId: user2Id,
+        lastReadAt: now,
+        unreadCount: 0,
+      });
+      await ctx.db.insert("pushTokens", {
+        userId: user2Id,
+        token: "ExponentPushToken[channel-name-dedupe-test]",
+        platform: "ios",
+        environment: "staging",
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+        lastUsedAt: now,
+      });
+    });
+
+    const messageId = await t.run(async (ctx) => {
+      return await ctx.db.insert("chatMessages", {
+        channelId,
+        senderId: userId,
+        content: "Deduped body test message",
+        contentType: "text",
+        createdAt: now,
+        isDeleted: false,
+        senderName: "Test User",
+      });
+    });
+
+    await t.mutation(internal.functions.messaging.events.onMessageSent, {
+      messageId,
+      channelId,
+      senderId: userId,
+    });
+
+    vi.runAllTimers();
+    await t.finishInProgressScheduledFunctions();
+
+    expect(fetchMock).toHaveBeenCalled();
+    const requestBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(requestBody[0].body).toBe("Test Group: General\nDeduped body test message");
   });
 
   test("falls back to generated initials avatar when group has no photo", async () => {

@@ -39,6 +39,7 @@ interface GroupCreationApprovedData {
 // Messaging Types
 interface MessageData {
   senderName: string;
+  senderAvatarUrl?: string;
   groupName: string;
   messagePreview: string;
   groupId: string;
@@ -298,8 +299,24 @@ export const groupCreationApproved: NotificationDefinition<GroupCreationApproved
 // ============================================================================
 
 function getChannelLabel(data: MessageData): string {
-  if (data.channelName?.trim()) {
-    return data.channelName.trim();
+  const groupName = data.groupName.trim();
+  const rawChannelName = data.channelName?.trim();
+
+  if (rawChannelName) {
+    // Some channels are stored as "Group Name - General", which causes
+    // duplicated group names in push bodies. Strip that prefix.
+    const groupPrefixRegex = new RegExp(
+      `^${groupName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[-:|]\\s*`,
+      "i"
+    );
+    const normalizedChannelName = rawChannelName.replace(groupPrefixRegex, "").trim();
+    if (normalizedChannelName) {
+      return normalizedChannelName;
+    }
+
+    if (rawChannelName.toLowerCase() !== groupName.toLowerCase()) {
+      return rawChannelName;
+    }
   }
 
   if (data.channelType === "leaders") {
@@ -331,6 +348,7 @@ export const newMessage: NotificationDefinition<MessageData> = {
         channelName: ctx.data.channelName,
         channelType: ctx.data.channelType, // "general" or "leaders" - enables direct routing (Issue #302)
         communityId: ctx.data.communityId,
+        senderAvatarUrl: ctx.data.senderAvatarUrl,
       },
     }),
   },
@@ -351,6 +369,7 @@ export const mention: NotificationDefinition<MessageData> = {
         channelName: ctx.data.channelName,
         channelType: ctx.data.channelType, // "general" or "leaders" - enables direct routing
         communityId: ctx.data.communityId,
+        senderAvatarUrl: ctx.data.senderAvatarUrl,
       },
     }),
     email: (ctx) => {

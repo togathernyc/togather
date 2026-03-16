@@ -114,6 +114,7 @@ export const onMessageSent = internalMutation({
         : sender
           ? `${sender.firstName || ""} ${sender.lastName || ""}`.trim() || "Someone"
           : "Togather Bot";
+      const senderAvatarUrl = message.senderProfilePhoto;
 
       // Schedule the notification action
       console.log(`[onMessageSent] Scheduling notifications for ${mentionRecipients.length} mentions and ${regularRecipients.length} regular recipients`);
@@ -123,6 +124,7 @@ export const onMessageSent = internalMutation({
         messageId: args.messageId,
         senderName,
         messagePreview: preview,
+        senderAvatarUrl,
         groupId: group?._id,
         groupName: group?.name || 'Group Chat',
         communityId: community?._id,
@@ -145,6 +147,7 @@ export const sendMessageNotifications = internalAction({
     messageId: v.id("chatMessages"),
     senderName: v.string(),
     messagePreview: v.string(),
+    senderAvatarUrl: v.optional(v.string()),
     groupId: v.optional(v.id("groups")),
     groupName: v.string(),
     communityId: v.optional(v.id("communities")),
@@ -162,6 +165,7 @@ export const sendMessageNotifications = internalAction({
         userIds: args.mentionRecipients,
         data: {
           senderName: args.senderName,
+          senderAvatarUrl: args.senderAvatarUrl,
           messagePreview: args.messagePreview,
           groupId: args.groupId,
           groupName: args.groupName,
@@ -183,6 +187,7 @@ export const sendMessageNotifications = internalAction({
         userIds: args.regularRecipients,
         data: {
           senderName: args.senderName,
+          senderAvatarUrl: args.senderAvatarUrl,
           messagePreview: args.messagePreview,
           groupId: args.groupId,
           groupName: args.groupName,
