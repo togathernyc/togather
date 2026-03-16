@@ -774,6 +774,11 @@ function generateToolOgHtml(tool, shortId, config) {
     description = `View ${resourceTitle} from ${groupName}`;
     // Resource image > group image > community logo
     imageUrl = tool.resourceImage || tool.groupImage || tool.communityLogo || "";
+  } else if (tool.toolType === "task") {
+    const taskTitle = escapeHtml(tool.taskTitle || "Task");
+    title = `${groupName} - ${taskTitle}`;
+    description = `Open this task from ${groupName}`;
+    imageUrl = tool.groupImage || tool.communityLogo || "";
   } else {
     title = `${groupName} - Tool`;
     description = `View this tool from ${groupName}`;

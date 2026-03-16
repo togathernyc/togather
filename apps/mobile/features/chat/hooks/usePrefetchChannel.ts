@@ -247,12 +247,15 @@ async function fetchToolDataBatch(
       if (data) {
         const toolData: PrefetchedToolData = {
           shortId: data.shortId as string,
-          toolType: data.toolType as "runsheet" | "resource",
+          toolType: data.toolType as "runsheet" | "resource" | "task",
           groupId: data.groupId as string,
           groupName: data.groupName as string,
           resourceId: data.resourceId as string | undefined,
           resourceTitle: data.resourceTitle as string | undefined,
           resourceIcon: data.resourceIcon as string | undefined,
+          taskId: data.taskId as string | undefined,
+          taskTitle: data.taskTitle as string | undefined,
+          taskStatus: data.taskStatus as string | undefined,
         };
         return { shortId, tool: toolData };
       }

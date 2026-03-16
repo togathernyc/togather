@@ -410,20 +410,22 @@ export default defineSchema({
   // TOOL SHORT LINKS
   // =============================================================================
   // Short URLs for sharing direct links to group tools (e.g. togather.nyc/t/abc123).
-  // Supports Run Sheet and Resource tools. A separate table is needed because
+  // Supports Run Sheet, Resource, and Task links. A separate table is needed because
   // Run Sheet is a built-in tool with no DB record to attach a shortId to.
 
   toolShortLinks: defineTable({
     shortId: v.string(),
     groupId: v.id("groups"),
-    toolType: v.string(), // "runsheet" | "resource"
+    toolType: v.string(), // "runsheet" | "resource" | "task"
     resourceId: v.optional(v.id("groupResources")),
+    taskId: v.optional(v.id("tasks")),
     createdAt: v.number(),
     createdBy: v.optional(v.id("users")),
   })
     .index("by_shortId", ["shortId"])
     .index("by_group_toolType", ["groupId", "toolType"])
-    .index("by_group_toolType_resourceId", ["groupId", "toolType", "resourceId"]),
+    .index("by_group_toolType_resourceId", ["groupId", "toolType", "resourceId"])
+    .index("by_group_toolType_taskId", ["groupId", "toolType", "taskId"]),
 
   // =============================================================================
   // COMMUNITY-WIDE EVENTS

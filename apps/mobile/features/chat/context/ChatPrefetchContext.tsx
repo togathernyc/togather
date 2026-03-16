@@ -52,12 +52,15 @@ export interface PrefetchedEventData {
  */
 export interface PrefetchedToolData {
   shortId: string;
-  toolType: "runsheet" | "resource";
+  toolType: "runsheet" | "resource" | "task";
   groupId: string;
   groupName: string;
   resourceId?: string;
   resourceTitle?: string;
   resourceIcon?: string;
+  taskId?: string;
+  taskTitle?: string;
+  taskStatus?: string;
 }
 
 /**

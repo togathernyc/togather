@@ -71,7 +71,18 @@ export default function ToolPageClient() {
           setRunSheetLoading(false);
         });
     }
-  }, [toolLink?.toolType, toolLink?.groupId]);
+  }, [toolLink?.toolType, toolLink?.groupId, shortId, getRunSheetPublic]);
+
+  // Task links should open the authenticated task detail UI.
+  useEffect(() => {
+    if (
+      toolLink?.toolType === "task" &&
+      typeof toolLink.groupId === "string" &&
+      typeof toolLink.taskId === "string"
+    ) {
+      router.replace(`/(user)/leader-tools/${toolLink.groupId}/tasks/${toolLink.taskId}`);
+    }
+  }, [router, toolLink?.toolType, toolLink?.groupId, toolLink?.taskId]);
 
   // Share handler
   const handleShare = async () => {
@@ -115,6 +126,10 @@ export default function ToolPageClient() {
     if (toolLink.toolType === "resource") {
       const resourceTitle = toolLink.resourceTitle as string || "Resource";
       return `${groupName} - ${resourceTitle}`;
+    }
+    if (toolLink.toolType === "task") {
+      const taskTitle = (toolLink.taskTitle as string) || "Task";
+      return `${groupName} - ${taskTitle}`;
     }
     return groupName;
   };
@@ -164,8 +179,18 @@ export default function ToolPageClient() {
     if (toolLink.toolType === "resource") {
       return (toolLink.resourceIcon as keyof typeof Ionicons.glyphMap) || "document-text-outline";
     }
+    if (toolLink.toolType === "task") return "checkmark-circle-outline";
     return "link-outline";
   };
+
+  if (toolLink.toolType === "task") {
+    return (
+      <SafeAreaView style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color={DEFAULT_PRIMARY_COLOR} />
+        <Text style={styles.loadingText}>Opening task...</Text>
+      </SafeAreaView>
+    );
+  }
 
   // Run sheet uses RunSheetScreen directly (no outer ScrollView — it manages its own)
   if (toolLink.toolType === "runsheet") {
