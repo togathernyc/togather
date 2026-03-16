@@ -240,7 +240,7 @@ export const getInternalDashboard = query({
       },
       overview: {
         messagesSent,
-        dailyActiveUsers: uniqueActiveSenders.size,
+        uniqueActiveSenders: uniqueActiveSenders.size,
         newMembers: inRangeUsers.length,
         meetingsHeld,
         attendanceCheckIns,

@@ -50,7 +50,7 @@ describe("SuperAdminDashboardContent", () => {
     (useQuery as jest.Mock).mockReturnValue({
       overview: {
         messagesSent: 42,
-        dailyActiveUsers: 12,
+        uniqueActiveSenders: 12,
         newMembers: 5,
         meetingsHeld: 3,
         attendanceCheckIns: 19,
@@ -86,7 +86,7 @@ describe("SuperAdminDashboardContent", () => {
     (useQuery as jest.Mock).mockReturnValue({
       overview: {
         messagesSent: 0,
-        dailyActiveUsers: 0,
+        uniqueActiveSenders: 0,
         newMembers: 0,
         meetingsHeld: 0,
         attendanceCheckIns: 0,

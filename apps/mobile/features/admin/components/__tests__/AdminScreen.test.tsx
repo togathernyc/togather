@@ -35,16 +35,28 @@ describe("AdminScreen", () => {
     jest.clearAllMocks();
   });
 
-  test("shows Dashboard tab for Togather internal users", () => {
+  test("shows Dashboard tab for Togather internal users who are also community admins", () => {
     (useAuth as jest.Mock).mockReturnValue({
       community: { id: "community-1" },
-      user: { is_staff: true, is_superuser: false },
+      user: { is_staff: true, is_superuser: false, is_admin: true },
     });
 
     const { getByText } = render(<AdminScreen />);
 
     expect(getByText("Dashboard")).toBeTruthy();
     expect(getByText("Requests")).toBeTruthy();
+  });
+
+  test("shows only Dashboard tab for internal users who are not community admins", () => {
+    (useAuth as jest.Mock).mockReturnValue({
+      community: { id: "community-1" },
+      user: { is_staff: true, is_superuser: false, is_admin: false },
+    });
+
+    const { getByText, queryByText } = render(<AdminScreen />);
+
+    expect(getByText("Dashboard")).toBeTruthy();
+    expect(queryByText("Requests")).toBeNull();
   });
 
   test("hides Dashboard tab for non-internal users", () => {

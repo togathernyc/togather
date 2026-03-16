@@ -35,6 +35,7 @@ export function AdminScreen() {
   const { community, user } = useAuth();
   const isInternalDashboardUser =
     user?.is_staff === true || user?.is_superuser === true;
+  const isAdmin = user?.is_admin === true;
   const hasCommunity = !!community?.id;
   const tabs: Tab[] = useMemo(
     () => {
@@ -42,7 +43,7 @@ export function AdminScreen() {
         return [{ key: "dashboard", label: "Dashboard" }];
       }
 
-      if (isInternalDashboardUser) {
+      if (isInternalDashboardUser && isAdmin) {
         return [
           { key: "dashboard", label: "Dashboard" },
           { key: "requests", label: "Requests" },
@@ -53,6 +54,10 @@ export function AdminScreen() {
         ];
       }
 
+      if (isInternalDashboardUser && !isAdmin) {
+        return [{ key: "dashboard", label: "Dashboard" }];
+      }
+
       return [
         { key: "requests", label: "Requests" },
         { key: "people", label: "People" },
@@ -61,7 +66,7 @@ export function AdminScreen() {
         { key: "landing", label: "Landing" },
       ];
     },
-    [hasCommunity, isInternalDashboardUser]
+    [hasCommunity, isInternalDashboardUser, isAdmin]
   );
   const [activeTab, setActiveTab] = useState<TabKey>(
     isInternalDashboardUser ? "dashboard" : "requests"

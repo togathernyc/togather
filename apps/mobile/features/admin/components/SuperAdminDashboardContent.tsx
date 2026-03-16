@@ -152,9 +152,9 @@ export function SuperAdminDashboardContent() {
         />
         <MetricCard
           icon="pulse-outline"
-          title="Daily active users"
-          value={dashboardData.overview.dailyActiveUsers}
-          subtitle="Unique senders"
+          title="Unique active senders"
+          value={dashboardData.overview.uniqueActiveSenders}
+          subtitle={`In ${rangeLabel}`}
           iconColor="#10B981"
         />
         <MetricCard
