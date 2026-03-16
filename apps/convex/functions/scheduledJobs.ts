@@ -1715,11 +1715,14 @@ export const getChannelBySlug = internalQuery({
   },
   handler: async (ctx, { groupId, slug }) => {
     // Try by slug first (for custom channels and migrated channels)
+    // Exclude archived channels — archiving frees up slugs for reuse,
+    // so multiple channels can share the same slug if earlier ones are archived.
     let channel = await ctx.db
       .query("chatChannels")
       .withIndex("by_group_slug", (q) =>
         q.eq("groupId", groupId).eq("slug", slug),
       )
+      .filter((q) => q.eq(q.field("isArchived"), false))
       .first();
 
     if (channel) {
@@ -1740,6 +1743,7 @@ export const getChannelBySlug = internalQuery({
         .withIndex("by_group_type", (q) =>
           q.eq("groupId", groupId).eq("channelType", channelType),
         )
+        .filter((q) => q.eq(q.field("isArchived"), false))
         .first();
     }
 
