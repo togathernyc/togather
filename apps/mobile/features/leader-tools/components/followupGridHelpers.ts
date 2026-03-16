@@ -102,7 +102,8 @@ function resolveLeaderId(nameQuery: string, leaderMap: Map<string, LeaderInfo>):
 export function parseFollowupQuerySyntax(
   query: string,
   leaderMap: Map<string, LeaderInfo>,
-  scoreConfig: ScoreConfigEntry[]
+  scoreConfig: ScoreConfigEntry[],
+  useSystemScores?: boolean,
 ): ParsedFollowupFilters {
   const filters: Omit<ParsedFollowupFilters, "searchText"> = {
     excludedAssigneeFilters: [],
@@ -114,6 +115,12 @@ export function parseFollowupQuerySyntax(
     return "";
   });
 
+  const systemScoreNames: Record<string, string> = {
+    service: "score1",
+    attendance: "score2",
+    togather: "score3",
+  };
+
   const reservedKeywords = new Set(["status", "assignee"]);
   freeText = freeText.replace(/(\w+):([<>])(\d+(?:\.\d+)?)/gi, (match, name, operator, num) => {
     const lowerName = name.toLowerCase();
@@ -121,15 +128,33 @@ export function parseFollowupQuerySyntax(
       return match;
     }
 
-    const scoreIndex = scoreConfig.findIndex((score) =>
-      score.name.toLowerCase().startsWith(lowerName)
-    );
+    let matchedField: string | undefined;
 
-    if (scoreIndex === -1) {
+    if (useSystemScores) {
+      // Use fixed system score name lookup
+      matchedField = systemScoreNames[lowerName];
+      if (!matchedField) {
+        // Also support prefix matching for system score names
+        const fullMatch = Object.keys(systemScoreNames).find((key) =>
+          key.startsWith(lowerName)
+        );
+        if (fullMatch) {
+          matchedField = systemScoreNames[fullMatch];
+        }
+      }
+    } else {
+      const scoreIndex = scoreConfig.findIndex((score) =>
+        score.name.toLowerCase().startsWith(lowerName)
+      );
+      if (scoreIndex !== -1) {
+        matchedField = `score${scoreIndex + 1}`;
+      }
+    }
+
+    if (!matchedField) {
       return match;
     }
 
-    const matchedField = `score${scoreIndex + 1}`;
     if (filters.scoreField && filters.scoreField !== matchedField) {
       return match;
     }
@@ -215,7 +240,8 @@ export function applyParsedFollowupFilters<
 
 export function getFollowupSearchSuggestions(
   query: string,
-  scoreConfig: ScoreConfigEntry[]
+  scoreConfig: ScoreConfigEntry[],
+  useSystemScores?: boolean,
 ): FollowupSearchSuggestion[] {
   const staticSuggestions: FollowupSearchSuggestion[] = [
     {
@@ -256,23 +282,66 @@ export function getFollowupSearchSuggestions(
     },
   ];
 
-  const scoreSuggestions: FollowupSearchSuggestion[] = scoreConfig.flatMap((score) => {
-    const key = score.name.toLowerCase();
-    return [
+  let scoreSuggestions: FollowupSearchSuggestion[];
+
+  if (useSystemScores) {
+    scoreSuggestions = [
       {
-        id: `score-min-${score.id}`,
-        label: `${key}:>50`,
-        insertText: `${key}:>`,
-        helperText: `${score.name} greater than value`,
+        id: "score-min-sys_service",
+        label: "service:>50",
+        insertText: "service:>",
+        helperText: "Service greater than value",
       },
       {
-        id: `score-max-${score.id}`,
-        label: `${key}:<50`,
-        insertText: `${key}:<`,
-        helperText: `${score.name} less than value`,
+        id: "score-max-sys_service",
+        label: "service:<30",
+        insertText: "service:<",
+        helperText: "Service less than value",
+      },
+      {
+        id: "score-min-sys_attendance",
+        label: "attendance:>70",
+        insertText: "attendance:>",
+        helperText: "Attendance greater than value",
+      },
+      {
+        id: "score-max-sys_attendance",
+        label: "attendance:<40",
+        insertText: "attendance:<",
+        helperText: "Attendance less than value",
+      },
+      {
+        id: "score-min-sys_togather",
+        label: "togather:>60",
+        insertText: "togather:>",
+        helperText: "Togather greater than value",
+      },
+      {
+        id: "score-max-sys_togather",
+        label: "togather:<30",
+        insertText: "togather:<",
+        helperText: "Togather less than value",
       },
     ];
-  });
+  } else {
+    scoreSuggestions = scoreConfig.flatMap((score) => {
+      const key = score.name.toLowerCase();
+      return [
+        {
+          id: `score-min-${score.id}`,
+          label: `${key}:>50`,
+          insertText: `${key}:>`,
+          helperText: `${score.name} greater than value`,
+        },
+        {
+          id: `score-max-${score.id}`,
+          label: `${key}:<50`,
+          insertText: `${key}:<`,
+          helperText: `${score.name} less than value`,
+        },
+      ];
+    });
+  }
 
   const allSuggestions = [...staticSuggestions, ...scoreSuggestions];
   const trimmed = query.replace(/\s+$/, "");
@@ -302,7 +371,8 @@ export function applyFollowupSuggestion(query: string, insertText: string): stri
 
 export function getFollowupQueryHelperText(
   query: string,
-  scoreConfig: ScoreConfigEntry[]
+  scoreConfig: ScoreConfigEntry[],
+  useSystemScores?: boolean,
 ): string | null {
   const lower = query.toLowerCase();
   const trimmed = lower.trim();
@@ -325,9 +395,13 @@ export function getFollowupQueryHelperText(
   if (lower.includes("status:") || fragment.startsWith("status")) {
     return "Status filters: status:green, status:orange, status:red.";
   }
+
+  const scoreNames = useSystemScores
+    ? ["service", "attendance", "togather"]
+    : scoreConfig.map((score) => score.name.toLowerCase());
+
   if (
-    scoreConfig.some((score) => {
-      const key = score.name.toLowerCase();
+    scoreNames.some((key) => {
       return lower.includes(`${key}:`) || (fragment.length > 0 && key.startsWith(fragment));
     })
   ) {

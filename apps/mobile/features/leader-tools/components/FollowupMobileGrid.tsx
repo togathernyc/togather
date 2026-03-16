@@ -37,8 +37,12 @@ import {
   SUBTITLE_VARIABLE_MAP,
   type SubtitleVariable,
   getScoreValue,
+  getSystemScoreValue,
+  SYSTEM_SCORE_COLUMNS,
   normalizeSubtitleVariableIds,
 } from "./followupShared";
+import { useFeatureFlag } from "@hooks/useFeatureFlag";
+import { PeopleViewBar } from "./PeopleViewBar";
 import {
   buildSelectOptionsBySlot,
   parseMultiSelectValues,
@@ -222,6 +226,7 @@ export function FollowupMobileGrid({
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { primaryColor } = useCommunityTheme();
+  const useSystemScores = useFeatureFlag("system_scores");
 
   const [sortField, setSortField] = useState("score1");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
@@ -244,6 +249,11 @@ export function FollowupMobileGrid({
   const [showRemoveModal, setShowRemoveModal] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
   const [showQuickAddModal, setShowQuickAddModal] = useState(false);
+
+  // PeopleViewBar state (system_scores feature flag)
+  const [activeViewId, setActiveViewId] = useState<string | null>(null);
+  const [showSaveViewModal, setShowSaveViewModal] = useState(false);
+
   const [localOverrides, setLocalOverrides] = useState<
     Record<
       string,
@@ -350,6 +360,14 @@ export function FollowupMobileGrid({
     if (!sortField.startsWith("score")) return;
     // Don't override the default score sort while config is still loading.
     if (!isConfigLoaded) return;
+    if (useSystemScores) {
+      // System scores always have score1-score3; validate against those.
+      const validSlots = new Set(SYSTEM_SCORE_COLUMNS.map((sc) => sc.slot));
+      if (!validSlots.has(sortField as "score1" | "score2" | "score3")) {
+        setSortField("score1");
+      }
+      return;
+    }
     const scoreIndex = Number.parseInt(sortField.replace("score", ""), 10) - 1;
     if (scoreConfig.length === 0) {
       setSortField("firstName");
@@ -358,11 +376,11 @@ export function FollowupMobileGrid({
     if (scoreIndex < 0 || scoreIndex >= scoreConfig.length) {
       setSortField("score1");
     }
-  }, [isConfigLoaded, scoreConfig, sortField]);
+  }, [isConfigLoaded, scoreConfig, sortField, useSystemScores]);
 
   const parsedQuery = useMemo(
-    () => parseFollowupQuerySyntax(debouncedSearch, leaderMap, scoreConfig),
-    [debouncedSearch, leaderMap, scoreConfig],
+    () => parseFollowupQuerySyntax(debouncedSearch, leaderMap, scoreConfig, useSystemScores),
+    [debouncedSearch, leaderMap, scoreConfig, useSystemScores],
   );
   const hasTextSearch = parsedQuery.searchText.length > 0;
   const hasStructuredFilters =
@@ -373,12 +391,12 @@ export function FollowupMobileGrid({
     parsedQuery.excludedAssigneeFilters.length > 0 ||
     !!parsedQuery.dateAddedFilter;
   const searchSuggestions = useMemo(
-    () => getFollowupSearchSuggestions(searchQuery, scoreConfig),
-    [searchQuery, scoreConfig],
+    () => getFollowupSearchSuggestions(searchQuery, scoreConfig, useSystemScores),
+    [searchQuery, scoreConfig, useSystemScores],
   );
   const searchHelperText = useMemo(
-    () => getFollowupQueryHelperText(searchQuery, scoreConfig),
-    [searchQuery, scoreConfig],
+    () => getFollowupQueryHelperText(searchQuery, scoreConfig, useSystemScores),
+    [searchQuery, scoreConfig, useSystemScores],
   );
   const showSearchSuggestions =
     isSearchFocused &&
@@ -560,6 +578,11 @@ export function FollowupMobileGrid({
   const getSortFieldValue = useCallback(
     (member: FollowupMember, field: string): string | number => {
       if (field.startsWith("score")) {
+        if (useSystemScores) {
+          // System scores: direct slot access (score1, score2, score3)
+          const slot = field as "score1" | "score2" | "score3";
+          return getSystemScoreValue(member, slot) ?? 0;
+        }
         const scoreIndex = Number.parseInt(field.replace("score", ""), 10) - 1;
         const scoreId = scoreConfig[scoreIndex]?.id;
         return scoreId ? getScoreValue(member, scoreId) : 0;
@@ -599,7 +622,7 @@ export function FollowupMobileGrid({
           );
       }
     },
-    [scoreConfig, leaderMap, getAssigneeIds],
+    [scoreConfig, leaderMap, getAssigneeIds, useSystemScores],
   );
 
   const members = useMemo(() => {
@@ -739,14 +762,26 @@ export function FollowupMobileGrid({
   }, [members, localOverrides, getAssigneeIds]);
 
   const dataColumns: GridColumn[] = useMemo(() => {
-    const scoreColumns: GridColumn[] = scoreConfig.map((score, index) => ({
-      key: `score${index + 1}`,
-      label: score.name,
-      width: 72,
-      sortable: true,
-      kind: "score",
-      getValue: (member) => getScoreValue(member, score.id),
-    }));
+    // Score columns — when system_scores is on, use fixed SYSTEM_SCORE_COLUMNS;
+    // otherwise use dynamic per-group scoreConfig.
+    const scoreColumns: GridColumn[] = useSystemScores
+      ? SYSTEM_SCORE_COLUMNS.map((sc) => ({
+          key: sc.slot,
+          label: sc.name,
+          width: 72,
+          sortable: true,
+          kind: "score" as const,
+          getValue: (member: FollowupMember) =>
+            getSystemScoreValue(member, sc.slot) ?? 0,
+        }))
+      : scoreConfig.map((score, index) => ({
+          key: `score${index + 1}`,
+          label: score.name,
+          width: 72,
+          sortable: true,
+          kind: "score" as const,
+          getValue: (member: FollowupMember) => getScoreValue(member, score.id),
+        }));
 
     const baseColumns: GridColumn[] = [
       {
@@ -959,7 +994,7 @@ export function FollowupMobileGrid({
     return ordered
       .filter((column) => !hidden.has(column.key))
       .filter((column) => !HIDE_ON_MOBILE_COLUMNS.has(column.key));
-  }, [scoreConfig, leaderMap, customFields, columnConfig, getAssigneeIds]);
+  }, [scoreConfig, leaderMap, customFields, columnConfig, getAssigneeIds, useSystemScores]);
 
   const dataColumnsWidth = useMemo(
     () => dataColumns.reduce((sum, column) => sum + column.width, 0),
@@ -1132,8 +1167,9 @@ export function FollowupMobileGrid({
     if (parsedQuery.scoreField) {
       const scoreIndex =
         Number.parseInt(parsedQuery.scoreField.replace("score", ""), 10) - 1;
-      const scoreLabel =
-        scoreConfig[scoreIndex]?.name ?? parsedQuery.scoreField;
+      const scoreLabel = useSystemScores
+        ? (SYSTEM_SCORE_COLUMNS[scoreIndex]?.name ?? parsedQuery.scoreField)
+        : (scoreConfig[scoreIndex]?.name ?? parsedQuery.scoreField);
       if (parsedQuery.scoreMin !== undefined)
         badges.push(`${scoreLabel}:>${parsedQuery.scoreMin}`);
       if (parsedQuery.scoreMax !== undefined)
@@ -1150,7 +1186,7 @@ export function FollowupMobileGrid({
     }
     if (parsedQuery.searchText) badges.push(`text:"${parsedQuery.searchText}"`);
     return badges;
-  }, [parsedQuery, leaderMap, scoreConfig]);
+  }, [parsedQuery, leaderMap, scoreConfig, useSystemScores]);
 
   const leaderOptions = useMemo(() => {
     const leaderRows = (leaders ?? []) as LeaderRecord[];
@@ -1920,6 +1956,19 @@ export function FollowupMobileGrid({
             : ""}
         </Text>
       </View>
+
+      {useSystemScores && groupData?.communityId && (
+        <PeopleViewBar
+          communityId={groupData.communityId}
+          activeViewId={activeViewId}
+          onViewSelect={(viewId, view) => {
+            setActiveViewId(viewId);
+            if (view.sortBy) setSortField(view.sortBy);
+            if (view.sortDirection) setSortDirection(view.sortDirection);
+          }}
+          onCreateView={() => setShowSaveViewModal(true)}
+        />
+      )}
 
       <View style={styles.gridContainer}>
         {selectedIds.size > 0 && (

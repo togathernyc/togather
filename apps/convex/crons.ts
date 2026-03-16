@@ -154,4 +154,16 @@ crons.daily(
   internal.functions.followupScoreComputation.dailyRefreshAllScores
 );
 
+// =============================================================================
+// COMMUNITY SCORE REFRESH
+// =============================================================================
+// Runs daily at 7:30 UTC (2:30 AM EST) to refresh community scores.
+// Scheduled 30 minutes after followup-score-refresh to avoid overlap.
+
+crons.daily(
+  "daily community scores refresh",
+  { hourUTC: 7, minuteUTC: 30 },
+  internal.functions.communityScoreComputation.dailyRefreshAllCommunityScores
+);
+
 export default crons;

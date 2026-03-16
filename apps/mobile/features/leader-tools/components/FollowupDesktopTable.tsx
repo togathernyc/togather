@@ -24,7 +24,9 @@ import { FollowupSettingsPanel } from "./FollowupSettingsPanel";
 import { FollowupCsvImportModal } from "./FollowupCsvImportModal";
 import { FollowupQuickAddPanel } from "./FollowupQuickAddPanel";
 import type { CustomFieldDef } from "./ColumnPickerModal";
-import { getScoreValue } from "./followupShared";
+import { getScoreValue, SYSTEM_SCORE_COLUMNS, getSystemScoreValue } from "./followupShared";
+import { useFeatureFlag } from "@hooks/useFeatureFlag";
+import { PeopleViewBar } from "./PeopleViewBar";
 import {
   buildSelectOptionsBySlot,
   parseMultiSelectValues,
@@ -217,6 +219,7 @@ export function FollowupDesktopTable({
   const { user } = useAuth();
   const currentUserId = user?.id as Id<"users"> | undefined;
   const { primaryColor } = useCommunityTheme();
+  const useSystemScores = useFeatureFlag("system_scores");
 
   // Sort state
   const [sortField, setSortField] = useState<string>("score1");
@@ -257,6 +260,10 @@ export function FollowupDesktopTable({
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
   const [showQuickAddPanel, setShowQuickAddPanel] = useState(false);
   const [showCsvImportModal, setShowCsvImportModal] = useState(false);
+
+  // PeopleViewBar state (system_scores feature flag)
+  const [activeViewId, setActiveViewId] = useState<string | null>(null);
+  const [showSaveViewModal, setShowSaveViewModal] = useState(false);
 
   // Custom field dropdown state
   const [customDropdownFor, setCustomDropdownFor] = useState<{ memberId: string; slot: string } | null>(null);
@@ -400,18 +407,31 @@ export function FollowupDesktopTable({
       { key: "dateOfBirth", label: "Birthday", defaultWidth: 110, sortable: false },
     );
 
-    // Score columns — only score1 and score2 have server-side indexes;
-    // score3+ are still sortable but use client-side sorting (no serverSortKey).
-    scoreConfig.forEach((sc, i) => {
-      const key = `score${i + 1}`;
-      allAvailable.push({
-        key,
-        label: sc.name,
-        defaultWidth: 100,
-        sortable: true,
-        serverSortKey: crossGroupMode ? undefined : (key in SERVER_SORT_KEYS ? key : undefined),
+    // Score columns — when system_scores is on, use fixed SYSTEM_SCORE_COLUMNS;
+    // otherwise use dynamic per-group scoreConfig.
+    // score1 and score2 have server-side indexes; score3+ use client-side sorting.
+    if (useSystemScores) {
+      SYSTEM_SCORE_COLUMNS.forEach((sc) => {
+        allAvailable.push({
+          key: sc.slot,
+          label: sc.name,
+          defaultWidth: 100,
+          sortable: true,
+          serverSortKey: crossGroupMode ? undefined : (sc.slot in SERVER_SORT_KEYS ? sc.slot : undefined),
+        });
       });
-    });
+    } else {
+      scoreConfig.forEach((sc, i) => {
+        const key = `score${i + 1}`;
+        allAvailable.push({
+          key,
+          label: sc.name,
+          defaultWidth: 100,
+          sortable: true,
+          serverSortKey: crossGroupMode ? undefined : (key in SERVER_SORT_KEYS ? key : undefined),
+        });
+      });
+    }
 
     allAvailable.push(
       { key: "assignee", label: "Assignees", defaultWidth: 140, sortable: true, serverSortKey: crossGroupMode ? undefined : "assignee" },
@@ -461,7 +481,7 @@ export function FollowupDesktopTable({
     const visible = ordered.filter((c) => !hiddenSet.has(c.key));
 
     return [...systemCols, ...visible];
-  }, [scoreConfig, customFields, columnConfig, crossGroupMode]);
+  }, [scoreConfig, customFields, columnConfig, crossGroupMode, useSystemScores]);
 
   // Editable columns (built-in + all custom field slots)
   const editableColumns = useMemo(() => {
@@ -631,15 +651,25 @@ export function FollowupDesktopTable({
     const sorted = [...filtered];
 
     if (sortField.startsWith("score")) {
-      // Client-side sort by the score column (e.g. score3, score4)
-      const scoreIdx = parseInt(sortField.replace("score", ""), 10) - 1;
-      const scoreId = scoreConfig[scoreIdx]?.id;
-      if (!scoreId) return filtered;
-      sorted.sort((a, b) => {
-        const aVal = getScoreValue(a, scoreId);
-        const bVal = getScoreValue(b, scoreId);
-        return sortDirection === "asc" ? aVal - bVal : bVal - aVal;
-      });
+      if (useSystemScores) {
+        // System scores: sort by direct slot access (e.g. score1, score2, score3)
+        const slot = sortField as "score1" | "score2" | "score3";
+        sorted.sort((a, b) => {
+          const aVal = getSystemScoreValue(a, slot) ?? 0;
+          const bVal = getSystemScoreValue(b, slot) ?? 0;
+          return sortDirection === "asc" ? aVal - bVal : bVal - aVal;
+        });
+      } else {
+        // Client-side sort by the score column (e.g. score3, score4)
+        const scoreIdx = parseInt(sortField.replace("score", ""), 10) - 1;
+        const scoreId = scoreConfig[scoreIdx]?.id;
+        if (!scoreId) return filtered;
+        sorted.sort((a, b) => {
+          const aVal = getScoreValue(a, scoreId);
+          const bVal = getScoreValue(b, scoreId);
+          return sortDirection === "asc" ? aVal - bVal : bVal - aVal;
+        });
+      }
     } else {
       // Client-side sort by other fields (cross-group mode)
       const multiplier = sortDirection === "asc" ? 1 : -1;
@@ -663,6 +693,7 @@ export function FollowupDesktopTable({
     sortDirection,
     scoreConfig,
     parsedQuery,
+    useSystemScores,
   ]);
 
   // Merge optimistic overrides for consistent UI display
@@ -747,6 +778,21 @@ export function FollowupDesktopTable({
   const groupData = useQuery(
     api.functions.groups.index.getById,
     !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip"
+  );
+
+  // Community-level data source config (when system_scores flag is on)
+  const communityPeopleConfig = useAuthenticatedQuery(
+    useSystemScores && !crossGroupMode && groupData?.communityId
+      ? api.functions.communityPeople.getConfig
+      : "skip",
+    useSystemScores && !crossGroupMode && groupData?.communityId
+      ? { communityId: groupData.communityId }
+      : "skip",
+  );
+
+  // Community people custom field mutation (when system_scores flag is on)
+  const setCustomFieldCommunityMut = useAuthenticatedMutation(
+    api.functions.communityPeople.setCustomField
   );
 
   // ── Handlers ──
@@ -936,12 +982,20 @@ export function FollowupDesktopTable({
     setCustomDropdownFor(null);
     setDropdownPos(null);
     try {
-      await setCustomFieldMut({
-        groupId: getMemberGroupId(memberId),
-        groupMemberId: memberId as Id<"groupMembers">,
-        slot,
-        value: value ?? undefined,
-      });
+      if (useSystemScores) {
+        await setCustomFieldCommunityMut({
+          communityPeopleId: memberId as any,
+          field: slot,
+          value: value ?? undefined,
+        });
+      } else {
+        await setCustomFieldMut({
+          groupId: getMemberGroupId(memberId),
+          groupMemberId: memberId as Id<"groupMembers">,
+          slot,
+          value: value ?? undefined,
+        });
+      }
     } catch (err) {
       console.error("[setCustomField] failed:", err);
       setOptimistic((prev) => {
@@ -975,12 +1029,20 @@ export function FollowupDesktopTable({
     });
 
     try {
-      await setCustomFieldMut({
-        groupId: getMemberGroupId(memberId),
-        groupMemberId: memberId as Id<"groupMembers">,
-        slot,
-        value: newValue || undefined,
-      });
+      if (useSystemScores) {
+        await setCustomFieldCommunityMut({
+          communityPeopleId: memberId as any,
+          field: slot,
+          value: newValue || undefined,
+        });
+      } else {
+        await setCustomFieldMut({
+          groupId: getMemberGroupId(memberId),
+          groupMemberId: memberId as Id<"groupMembers">,
+          slot,
+          value: newValue || undefined,
+        });
+      }
     } catch (err) {
       console.error("[setCustomField multiselect] failed:", err);
       // Restore to previous value instead of deleting slot to preserve other in-flight toggles
@@ -1301,10 +1363,17 @@ export function FollowupDesktopTable({
       default: {
         // Score columns
         if (col.key.startsWith("score")) {
-          const scoreIdx = parseInt(col.key.replace("score", ""), 10) - 1;
-          const scoreId = scoreConfig[scoreIdx]?.id;
-          if (!scoreId) return null;
-          const value = getScoreValue(item, scoreId);
+          let value: number;
+          if (useSystemScores) {
+            // System scores: read directly from the slot
+            const slot = col.key as "score1" | "score2" | "score3";
+            value = getSystemScoreValue(item, slot) ?? 0;
+          } else {
+            const scoreIdx = parseInt(col.key.replace("score", ""), 10) - 1;
+            const scoreId = scoreConfig[scoreIdx]?.id;
+            if (!scoreId) return null;
+            value = getScoreValue(item, scoreId);
+          }
           return (
             <View style={[s.scoreCell, { backgroundColor: getScoreBgColor(value) }]}>
               <Text style={[s.scoreCellText, { color: getScoreColor(value) }]}>
@@ -1638,6 +1707,20 @@ export function FollowupDesktopTable({
             <Text style={s.actionBarRemoveText}>Remove from group</Text>
           </TouchableOpacity>
         </View>
+      )}
+
+      {/* People view bar (system_scores feature flag) */}
+      {useSystemScores && groupData?.communityId && (
+        <PeopleViewBar
+          communityId={groupData.communityId}
+          activeViewId={activeViewId}
+          onViewSelect={(viewId, view) => {
+            setActiveViewId(viewId);
+            if (view.sortBy) setSortField(view.sortBy);
+            if (view.sortDirection) setSortDirection(view.sortDirection);
+          }}
+          onCreateView={() => setShowSaveViewModal(true)}
+        />
       )}
 
       {/* Main area: table + side sheet */}

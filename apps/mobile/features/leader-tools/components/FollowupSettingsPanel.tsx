@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useFeatureFlag } from "@hooks/useFeatureFlag";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import {
   SUBTITLE_VARIABLES,
@@ -137,6 +138,7 @@ export function FollowupSettingsPanel({
 }: FollowupSettingsPanelProps) {
   const { primaryColor } = useCommunityTheme();
   const themeColor = primaryColor || DEFAULT_PRIMARY_COLOR;
+  const useSystemScores = useFeatureFlag("system_scores");
 
   // Accordion state — all collapsed by default
   const [displayNameOpen, setDisplayNameOpen] = useState(false);
@@ -968,6 +970,11 @@ export function FollowupSettingsPanel({
               <>
                 <View style={styles.subsectionDivider} />
                 <Text style={styles.subsectionTitle}>Custom Fields</Text>
+                {useSystemScores && (
+                  <Text style={styles.noteText}>
+                    Custom fields are shared across all groups in your community.
+                  </Text>
+                )}
 
                 {/* Capacity indicators */}
                 <View style={styles.capacityRow}>
@@ -1138,143 +1145,169 @@ export function FollowupSettingsPanel({
         {!crossGroupMode && renderSectionHeader("Scores", scoresOpen, () => setScoresOpen((p) => !p))}
         {!crossGroupMode && scoresOpen && (
           <View style={styles.sectionBody}>
-            {scores.map((score, scoreIndex) => (
-              <View key={score.id} style={styles.scoreCard}>
-                {/* Score name */}
-                <View style={styles.scoreNameRow}>
-                  <Text style={styles.scoreIndexLabel}>Score {scoreIndex + 1}</Text>
-                  <View style={styles.scoreNameInputContainer}>
-                    <TextInput
-                      style={[
-                        styles.scoreNameInput,
-                        Platform.OS === "web" ? ({ outlineStyle: "none" } as any) : {},
-                      ]}
-                      value={score.name}
-                      onChangeText={(text) => handleScoreNameChange(scoreIndex, text)}
-                      maxLength={12}
-                      placeholder="Score name"
-                      placeholderTextColor="#9CA3AF"
-                    />
-                    <Text style={styles.charCount}>{score.name.length}/12</Text>
+            {useSystemScores ? (
+              /* Read-only system scores info */
+              <>
+                <Text style={styles.hintText}>
+                  Scores are now computed automatically at the community level.
+                </Text>
+                <View style={styles.scoreInfoList}>
+                  <View style={styles.scoreInfoItem}>
+                    <Text style={styles.scoreInfoName}>Service</Text>
+                    <Text style={styles.scoreInfoDesc}>PCO serving frequency (past 2 months)</Text>
                   </View>
-                  {scores.length > 1 && (
-                    <TouchableOpacity
-                      style={styles.removeScoreBtn}
-                      onPress={() => handleRemoveScore(scoreIndex)}
-                    >
-                      <Ionicons name="trash-outline" size={16} color="#EF4444" />
-                    </TouchableOpacity>
-                  )}
+                  <View style={styles.scoreInfoItem}>
+                    <Text style={styles.scoreInfoName}>Attendance</Text>
+                    <Text style={styles.scoreInfoDesc}>Cross-group attendance percentage</Text>
+                  </View>
+                  <View style={styles.scoreInfoItem}>
+                    <Text style={styles.scoreInfoName}>Togather</Text>
+                    <Text style={styles.scoreInfoDesc}>Composite engagement score</Text>
+                  </View>
                 </View>
-
-                {/* Variables */}
-                {score.variables.map((variable, varIndex) => {
-                  const info = variableMap.get(variable.variableId);
-                  return (
-                    <View key={variable.variableId} style={styles.variableRow}>
-                      <View style={styles.variableInfo}>
-                        <Text style={styles.variableLabel} numberOfLines={1}>
-                          {info?.label ?? variable.variableId}
-                        </Text>
-                        <Text style={styles.variableDesc} numberOfLines={1}>
-                          {info?.description ?? ""}
-                        </Text>
+              </>
+            ) : (
+              /* Existing editable score config UI */
+              <>
+                {scores.map((score, scoreIndex) => (
+                  <View key={score.id} style={styles.scoreCard}>
+                    {/* Score name */}
+                    <View style={styles.scoreNameRow}>
+                      <Text style={styles.scoreIndexLabel}>Score {scoreIndex + 1}</Text>
+                      <View style={styles.scoreNameInputContainer}>
+                        <TextInput
+                          style={[
+                            styles.scoreNameInput,
+                            Platform.OS === "web" ? ({ outlineStyle: "none" } as any) : {},
+                          ]}
+                          value={score.name}
+                          onChangeText={(text) => handleScoreNameChange(scoreIndex, text)}
+                          maxLength={12}
+                          placeholder="Score name"
+                          placeholderTextColor="#9CA3AF"
+                        />
+                        <Text style={styles.charCount}>{score.name.length}/12</Text>
                       </View>
-                      <View style={styles.weightControl}>
+                      {scores.length > 1 && (
                         <TouchableOpacity
-                          style={styles.weightBtn}
-                          onPress={() => handleWeightChange(scoreIndex, varIndex, -1)}
-                          disabled={variable.weight <= 1}
+                          style={styles.removeScoreBtn}
+                          onPress={() => handleRemoveScore(scoreIndex)}
                         >
-                          <Ionicons
-                            name="remove"
-                            size={14}
-                            color={variable.weight <= 1 ? "#D1D5DB" : themeColor}
-                          />
-                        </TouchableOpacity>
-                        <Text style={styles.weightValue}>{variable.weight}</Text>
-                        <TouchableOpacity
-                          style={styles.weightBtn}
-                          onPress={() => handleWeightChange(scoreIndex, varIndex, 1)}
-                          disabled={variable.weight >= 5}
-                        >
-                          <Ionicons
-                            name="add"
-                            size={14}
-                            color={variable.weight >= 5 ? "#D1D5DB" : themeColor}
-                          />
-                        </TouchableOpacity>
-                      </View>
-                      {score.variables.length > 1 && (
-                        <TouchableOpacity
-                          style={styles.removeVarBtn}
-                          onPress={() => handleRemoveVariable(scoreIndex, varIndex)}
-                        >
-                          <Ionicons name="close-circle" size={18} color="#EF4444" />
+                          <Ionicons name="trash-outline" size={16} color="#EF4444" />
                         </TouchableOpacity>
                       )}
                     </View>
-                  );
-                })}
 
-                {/* Add variable */}
-                {addVariableTarget === scoreIndex ? (
-                  renderInlineVariablePicker(
-                    scoreIndex,
-                    (variableId) => handleAddVariable(scoreIndex, variableId),
-                    () => setAddVariableTarget(null),
-                  )
-                ) : (
-                  <TouchableOpacity
-                    style={styles.addVariableBtn}
-                    onPress={() => setAddVariableTarget(scoreIndex)}
-                  >
-                    <Ionicons name="add-circle-outline" size={14} color={themeColor} />
-                    <Text style={[styles.addVariableBtnText, { color: themeColor }]}>Add Variable</Text>
+                    {/* Variables */}
+                    {score.variables.map((variable, varIndex) => {
+                      const info = variableMap.get(variable.variableId);
+                      return (
+                        <View key={variable.variableId} style={styles.variableRow}>
+                          <View style={styles.variableInfo}>
+                            <Text style={styles.variableLabel} numberOfLines={1}>
+                              {info?.label ?? variable.variableId}
+                            </Text>
+                            <Text style={styles.variableDesc} numberOfLines={1}>
+                              {info?.description ?? ""}
+                            </Text>
+                          </View>
+                          <View style={styles.weightControl}>
+                            <TouchableOpacity
+                              style={styles.weightBtn}
+                              onPress={() => handleWeightChange(scoreIndex, varIndex, -1)}
+                              disabled={variable.weight <= 1}
+                            >
+                              <Ionicons
+                                name="remove"
+                                size={14}
+                                color={variable.weight <= 1 ? "#D1D5DB" : themeColor}
+                              />
+                            </TouchableOpacity>
+                            <Text style={styles.weightValue}>{variable.weight}</Text>
+                            <TouchableOpacity
+                              style={styles.weightBtn}
+                              onPress={() => handleWeightChange(scoreIndex, varIndex, 1)}
+                              disabled={variable.weight >= 5}
+                            >
+                              <Ionicons
+                                name="add"
+                                size={14}
+                                color={variable.weight >= 5 ? "#D1D5DB" : themeColor}
+                              />
+                            </TouchableOpacity>
+                          </View>
+                          {score.variables.length > 1 && (
+                            <TouchableOpacity
+                              style={styles.removeVarBtn}
+                              onPress={() => handleRemoveVariable(scoreIndex, varIndex)}
+                            >
+                              <Ionicons name="close-circle" size={18} color="#EF4444" />
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                      );
+                    })}
+
+                    {/* Add variable */}
+                    {addVariableTarget === scoreIndex ? (
+                      renderInlineVariablePicker(
+                        scoreIndex,
+                        (variableId) => handleAddVariable(scoreIndex, variableId),
+                        () => setAddVariableTarget(null),
+                      )
+                    ) : (
+                      <TouchableOpacity
+                        style={styles.addVariableBtn}
+                        onPress={() => setAddVariableTarget(scoreIndex)}
+                      >
+                        <Ionicons name="add-circle-outline" size={14} color={themeColor} />
+                        <Text style={[styles.addVariableBtnText, { color: themeColor }]}>Add Variable</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                ))}
+
+                {/* Add score */}
+                {scores.length < 4 && (
+                  <TouchableOpacity style={styles.addScoreBtn} onPress={handleAddScore}>
+                    <Ionicons name="add-circle-outline" size={16} color={themeColor} />
+                    <Text style={[styles.addScoreBtnText, { color: themeColor }]}>Add Score</Text>
                   </TouchableOpacity>
                 )}
-              </View>
-            ))}
 
-            {/* Add score */}
-            {scores.length < 4 && (
-              <TouchableOpacity style={styles.addScoreBtn} onPress={handleAddScore}>
-                <Ionicons name="add-circle-outline" size={16} color={themeColor} />
-                <Text style={[styles.addScoreBtnText, { color: themeColor }]}>Add Score</Text>
-              </TouchableOpacity>
-            )}
+                {/* Reset to defaults */}
+                <TouchableOpacity style={styles.resetBtn} onPress={handleResetToDefaults}>
+                  <Ionicons name="refresh-outline" size={14} color="#6B7280" />
+                  <Text style={styles.resetBtnText}>Reset to Defaults</Text>
+                </TouchableOpacity>
 
-            {/* Reset to defaults */}
-            <TouchableOpacity style={styles.resetBtn} onPress={handleResetToDefaults}>
-              <Ionicons name="refresh-outline" size={14} color="#6B7280" />
-              <Text style={styles.resetBtnText}>Reset to Defaults</Text>
-            </TouchableOpacity>
-
-            {/* Save scores button */}
-            {hasScoreChanges && (
-              <TouchableOpacity
-                onPress={handleSaveScores}
-                style={[styles.saveButton, { backgroundColor: themeColor }, savingScores && styles.btnDisabled]}
-                disabled={savingScores}
-              >
-                {savingScores ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Text style={styles.saveButtonText}>Save Scores & Alerts</Text>
+                {/* Save scores button */}
+                {hasScoreChanges && (
+                  <TouchableOpacity
+                    onPress={handleSaveScores}
+                    style={[styles.saveButton, { backgroundColor: themeColor }, savingScores && styles.btnDisabled]}
+                    disabled={savingScores}
+                  >
+                    {savingScores ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <Text style={styles.saveButtonText}>Save Scores & Alerts</Text>
+                    )}
+                  </TouchableOpacity>
                 )}
-              </TouchableOpacity>
-            )}
-            {showSavedMessage && (
-              <Text style={styles.savedMessage}>
-                Saved! Scores are recomputing in the background — this may take a few minutes for large groups.
-              </Text>
+                {showSavedMessage && (
+                  <Text style={styles.savedMessage}>
+                    Saved! Scores are recomputing in the background — this may take a few minutes for large groups.
+                  </Text>
+                )}
+              </>
             )}
           </View>
         )}
 
-        {/* ── Section 5: Alerts ── */}
-        {!crossGroupMode && renderSectionHeader("Alerts", alertsOpen, () => setAlertsOpen((p) => !p))}
-        {!crossGroupMode && alertsOpen && (
+        {/* ── Section 5: Alerts (hidden when system scores are active) ── */}
+        {!crossGroupMode && !useSystemScores && renderSectionHeader("Alerts", alertsOpen, () => setAlertsOpen((p) => !p))}
+        {!crossGroupMode && !useSystemScores && alertsOpen && (
           <View style={styles.sectionBody}>
             <Text style={styles.hintText}>
               Flag members when a variable exceeds a threshold.
@@ -1788,6 +1821,38 @@ const styles = StyleSheet.create({
     color: "#6B7280",
     marginTop: 8,
     fontStyle: "italic" as const,
+  },
+  noteText: {
+    fontSize: 11,
+    color: "#6B7280",
+    fontStyle: "italic" as const,
+    lineHeight: 15,
+  },
+
+  // System scores read-only info
+  scoreInfoList: {
+    marginTop: 8,
+    gap: 8,
+  },
+  scoreInfoItem: {
+    flexDirection: "row" as const,
+    justifyContent: "space-between" as const,
+    alignItems: "center" as const,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: "rgba(0,0,0,0.03)",
+    borderRadius: 8,
+  },
+  scoreInfoName: {
+    fontSize: 14,
+    fontWeight: "600" as const,
+  },
+  scoreInfoDesc: {
+    fontSize: 12,
+    color: "#666",
+    flex: 1,
+    marginLeft: 12,
+    textAlign: "right" as const,
   },
 
   // Scores section
