@@ -18,6 +18,7 @@ process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
 // Clean up fake timers after each test to prevent interference
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 // ============================================================================
@@ -763,6 +764,75 @@ describe("sendMessageNotifications Notification Data", () => {
     // The test passes if no errors occurred.
     // Console output confirms channelType=leaders is being passed.
     expect(true).toBe(true);
+  });
+
+  test("includes group avatar in Expo rich-content payload for push notifications", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { userId, user2Id, groupId, channelId } = await seedTestData(t);
+    const groupAvatarUrl = "https://example.com/group-avatar.jpg";
+    const now = Date.now();
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ id: "ticket-1", status: "ok" }] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(groupId, { preview: groupAvatarUrl });
+      await ctx.db.insert("chatReadState", {
+        channelId,
+        userId: user2Id,
+        lastReadAt: now,
+        unreadCount: 0,
+      });
+      await ctx.db.insert("pushTokens", {
+        userId: user2Id,
+        token: "ExponentPushToken[group-avatar-test]",
+        platform: "ios",
+        environment: "staging",
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+        lastUsedAt: now,
+      });
+    });
+
+    const messageId = await t.run(async (ctx) => {
+      return await ctx.db.insert("chatMessages", {
+        channelId,
+        senderId: userId,
+        content: "Avatar payload test message",
+        contentType: "text",
+        createdAt: now,
+        isDeleted: false,
+        senderName: "Test User",
+      });
+    });
+
+    await t.mutation(internal.functions.messaging.events.onMessageSent, {
+      messageId,
+      channelId,
+      senderId: userId,
+    });
+
+    vi.runAllTimers();
+    await t.finishInProgressScheduledFunctions();
+
+    expect(fetchMock).toHaveBeenCalled();
+    const requestBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(requestBody[0].richContent.image).toBe(groupAvatarUrl);
+    expect(requestBody[0].mutableContent).toBe(true);
+    expect(requestBody[0].data.groupAvatarUrl).toBe(groupAvatarUrl);
+
+    const recipientNotifications = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("notifications")
+        .withIndex("by_user", (q) => q.eq("userId", user2Id))
+        .collect();
+    });
+    expect(recipientNotifications[0]?.data?.groupAvatarUrl).toBe(groupAvatarUrl);
   });
 });
 

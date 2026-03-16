@@ -11,6 +11,13 @@ import { internal } from "../../_generated/api";
 import { Id } from "../../_generated/dataModel";
 import { joinRequestApprovedEmail } from "../../lib/notifications/emailTemplates";
 
+type NotificationGroupInfo = {
+  id: string;
+  name: string;
+  communityId: string;
+  groupAvatarUrl?: string;
+};
+
 // ============================================================================
 // Notification Actions for Join Requests
 // ============================================================================
@@ -27,7 +34,7 @@ export const notifyJoinRequestReceived = internalAction({
   handler: async (ctx, args): Promise<{ success: boolean; error?: string; sent?: number }> => {
     try {
       // Get group info
-      const groupInfo: { id: string; name: string; communityId: string } | null = await ctx.runQuery(internal.functions.notifications.internal.getGroupInfo, {
+      const groupInfo: NotificationGroupInfo | null = await ctx.runQuery(internal.functions.notifications.internal.getGroupInfo, {
         groupId: args.groupId,
       });
       if (!groupInfo) {
@@ -65,7 +72,9 @@ export const notifyJoinRequestReceived = internalAction({
             type: "join_request_received",
             groupId: args.groupId,
             communityId: groupInfo.communityId,
+            groupAvatarUrl: groupInfo.groupAvatarUrl,
           },
+          imageUrl: groupInfo.groupAvatarUrl,
         }))
       );
 
@@ -130,7 +139,9 @@ export const notifyJoinRequestApproved = internalAction({
             type: "join_request_approved",
             groupId: args.groupId,
             communityId: groupInfo.communityId,
+            groupAvatarUrl: groupInfo.groupAvatarUrl,
           },
+          imageUrl: groupInfo.groupAvatarUrl,
         }));
 
         // Send push notifications
@@ -162,7 +173,7 @@ export const notifyJoinRequestApproved = internalAction({
       // Create notification record for the user
       await ctx.runMutation(internal.functions.notifications.mutations.createNotification, {
         userId: args.userId,
-        communityId: groupInfo.communityId,
+        communityId: groupInfo.communityId as Id<"communities">,
         groupId: args.groupId,
         notificationType: "join_request_approved",
         title,
@@ -170,6 +181,7 @@ export const notifyJoinRequestApproved = internalAction({
         data: {
           groupId: args.groupId,
           communityId: groupInfo.communityId,
+          groupAvatarUrl: groupInfo.groupAvatarUrl,
         },
         status: pushSent > 0 || emailSent > 0 ? "sent" : "failed",
       });
@@ -263,7 +275,7 @@ export const notifyGroupCreationApproved = internalAction({
   handler: async (ctx, args): Promise<{ success: boolean; error?: string; sent?: number }> => {
     try {
       // Get group info
-      const groupInfo = await ctx.runQuery(internal.functions.notifications.internal.getGroupInfo, {
+      const groupInfo: NotificationGroupInfo | null = await ctx.runQuery(internal.functions.notifications.internal.getGroupInfo, {
         groupId: args.groupId,
       });
       if (!groupInfo) {
@@ -282,7 +294,7 @@ export const notifyGroupCreationApproved = internalAction({
       });
 
       // Build notifications
-      const notifications: Array<{ token: string; title: string; body: string; data: Record<string, unknown> }> = tokenResults.flatMap((result: { userId: string; tokens: string[] }) =>
+      const notifications: Array<{ token: string; title: string; body: string; data: Record<string, unknown>; imageUrl?: string }> = tokenResults.flatMap((result: { userId: string; tokens: string[] }) =>
         result.tokens.map((token: string) => ({
           token,
           title: "Your group has been approved!",
@@ -291,7 +303,9 @@ export const notifyGroupCreationApproved = internalAction({
             type: "group_creation_approved",
             groupId: args.groupId,
             communityId: groupInfo.communityId,
+            groupAvatarUrl: groupInfo.groupAvatarUrl,
           },
+          imageUrl: groupInfo.groupAvatarUrl,
         }))
       );
 
@@ -316,6 +330,7 @@ export const notifyGroupCreationApproved = internalAction({
         data: {
           groupId: args.groupId,
           communityId: groupInfo.communityId,
+          groupAvatarUrl: groupInfo.groupAvatarUrl,
         },
         status: result.success ? "sent" : "failed",
       }));
@@ -349,7 +364,7 @@ export const notifyLeaderPromotion = internalAction({
   handler: async (ctx, args): Promise<{ success: boolean; error?: string; sent?: number }> => {
     try {
       // Get group info
-      const groupInfo = await ctx.runQuery(internal.functions.notifications.internal.getGroupInfo, {
+      const groupInfo: NotificationGroupInfo | null = await ctx.runQuery(internal.functions.notifications.internal.getGroupInfo, {
         groupId: args.groupId,
       });
       if (!groupInfo) {
@@ -368,7 +383,7 @@ export const notifyLeaderPromotion = internalAction({
       }
 
       // Build notifications
-      const notifications: Array<{ token: string; title: string; body: string; data: Record<string, unknown> }> = tokens.map((t: { token: string; platform: string }) => ({
+      const notifications: Array<{ token: string; title: string; body: string; data: Record<string, unknown>; imageUrl?: string }> = tokens.map((t: { token: string; platform: string }) => ({
         token: t.token,
         title: "You're now a leader!",
         body: `You've been promoted to leader of ${groupInfo.name}. Please refresh the app to access leader tools.`,
@@ -377,7 +392,9 @@ export const notifyLeaderPromotion = internalAction({
           groupId: args.groupId,
           communityId: groupInfo.communityId,
           newRole: "leader",
+          groupAvatarUrl: groupInfo.groupAvatarUrl,
         },
+        imageUrl: groupInfo.groupAvatarUrl,
       }));
 
       // Send push notifications
@@ -388,7 +405,7 @@ export const notifyLeaderPromotion = internalAction({
       // Create notification record
       await ctx.runMutation(internal.functions.notifications.mutations.createNotification, {
         userId: args.userId,
-        communityId: groupInfo.communityId,
+        communityId: groupInfo.communityId as Id<"communities">,
         groupId: args.groupId,
         notificationType: "role_changed",
         title: "You're now a leader!",
@@ -397,6 +414,7 @@ export const notifyLeaderPromotion = internalAction({
           groupId: args.groupId,
           communityId: groupInfo.communityId,
           newRole: "leader",
+          groupAvatarUrl: groupInfo.groupAvatarUrl,
         },
         status: result.success ? "sent" : "failed",
       });
@@ -427,7 +445,7 @@ export const notifyFollowupAssigned = internalAction({
   handler: async (ctx, args): Promise<{ success: boolean; error?: string; sent?: number }> => {
     try {
       // Get group info
-      const groupInfo = await ctx.runQuery(internal.functions.notifications.internal.getGroupInfo, {
+      const groupInfo: NotificationGroupInfo | null = await ctx.runQuery(internal.functions.notifications.internal.getGroupInfo, {
         groupId: args.groupId,
       });
       if (!groupInfo) {
@@ -463,7 +481,7 @@ export const notifyFollowupAssigned = internalAction({
       const body = `You've been assigned to follow up with ${memberName} in ${groupInfo.name}`;
 
       // Build notifications
-      const notifications: Array<{ token: string; title: string; body: string; data: Record<string, unknown> }> = tokens.map((t: { token: string; platform: string }) => ({
+      const notifications: Array<{ token: string; title: string; body: string; data: Record<string, unknown>; imageUrl?: string }> = tokens.map((t: { token: string; platform: string }) => ({
         token: t.token,
         title,
         body,
@@ -472,7 +490,9 @@ export const notifyFollowupAssigned = internalAction({
           groupId: args.groupId,
           groupMemberId: args.groupMemberId,
           communityId: groupInfo.communityId,
+          groupAvatarUrl: groupInfo.groupAvatarUrl,
         },
+        imageUrl: groupInfo.groupAvatarUrl,
       }));
 
       // Send push notifications
@@ -483,7 +503,7 @@ export const notifyFollowupAssigned = internalAction({
       // Create notification record
       await ctx.runMutation(internal.functions.notifications.mutations.createNotification, {
         userId: args.assigneeId,
-        communityId: groupInfo.communityId,
+        communityId: groupInfo.communityId as Id<"communities">,
         groupId: args.groupId,
         notificationType: "followup_assigned",
         title,
@@ -492,6 +512,7 @@ export const notifyFollowupAssigned = internalAction({
           groupId: args.groupId,
           groupMemberId: args.groupMemberId,
           communityId: groupInfo.communityId,
+          groupAvatarUrl: groupInfo.groupAvatarUrl,
         },
         status: result.success ? "sent" : "failed",
       });
@@ -528,7 +549,7 @@ export const notifySharedChannelInvite = internalAction({
       });
 
       // Get primary group info
-      const primaryGroupInfo: { id: string; name: string; communityId: string } | null = await ctx.runQuery(internal.functions.notifications.internal.getGroupInfo, {
+      const primaryGroupInfo: NotificationGroupInfo | null = await ctx.runQuery(internal.functions.notifications.internal.getGroupInfo, {
         groupId: args.primaryGroupId,
       });
       if (!primaryGroupInfo) {
@@ -537,7 +558,7 @@ export const notifySharedChannelInvite = internalAction({
       }
 
       // Get invited group info
-      const invitedGroupInfo: { id: string; name: string; communityId: string } | null = await ctx.runQuery(internal.functions.notifications.internal.getGroupInfo, {
+      const invitedGroupInfo: NotificationGroupInfo | null = await ctx.runQuery(internal.functions.notifications.internal.getGroupInfo, {
         groupId: args.invitedGroupId,
       });
       if (!invitedGroupInfo) {
@@ -565,7 +586,7 @@ export const notifySharedChannelInvite = internalAction({
       const body = `${inviterName} invited ${invitedGroupInfo.name} to #${args.channelName} from ${primaryGroupInfo.name}`;
 
       // Build notifications
-      const notifications: Array<{ token: string; title: string; body: string; data: Record<string, unknown> }> = tokenResults.flatMap((result: { userId: string; tokens: string[] }) =>
+      const notifications: Array<{ token: string; title: string; body: string; data: Record<string, unknown>; imageUrl?: string }> = tokenResults.flatMap((result: { userId: string; tokens: string[] }) =>
         result.tokens.map((token: string) => ({
           token,
           title,
@@ -575,7 +596,9 @@ export const notifySharedChannelInvite = internalAction({
             groupId: args.invitedGroupId,
             primaryGroupId: args.primaryGroupId,
             communityId: primaryGroupInfo.communityId,
+            groupAvatarUrl: primaryGroupInfo.groupAvatarUrl,
           },
+          imageUrl: primaryGroupInfo.groupAvatarUrl,
         }))
       );
 
@@ -601,6 +624,7 @@ export const notifySharedChannelInvite = internalAction({
           groupId: args.invitedGroupId,
           primaryGroupId: args.primaryGroupId,
           communityId: primaryGroupInfo.communityId,
+          groupAvatarUrl: primaryGroupInfo.groupAvatarUrl,
         },
         status: result.success ? "sent" : "failed",
       }));

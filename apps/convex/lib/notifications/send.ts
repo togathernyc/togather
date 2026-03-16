@@ -271,6 +271,15 @@ async function sendPushChannel<TData extends Record<string, unknown>>(
   groupId?: Id<"groups">
 ): Promise<ChannelSendResult> {
   const output = formatter(formatterCtx);
+  let groupAvatarUrl: string | undefined;
+
+  if (groupId) {
+    const groupInfo = await ctx.runQuery(
+      internal.functions.notifications.internal.getGroupInfo,
+      { groupId }
+    );
+    groupAvatarUrl = groupInfo?.groupAvatarUrl;
+  }
 
   // Get push tokens for user (filters by environment and active status)
   // No tokens = user has disabled push or hasn't registered a token
@@ -289,6 +298,7 @@ async function sendPushChannel<TData extends Record<string, unknown>>(
   const notificationData = {
     type: notificationType,
     ...output.data,
+    ...(groupAvatarUrl ? { groupAvatarUrl } : {}),
   };
   console.log(`[sendPushChannel] Building push notification with data:`, JSON.stringify(notificationData));
 
@@ -297,6 +307,7 @@ async function sendPushChannel<TData extends Record<string, unknown>>(
     title: output.title,
     body: output.body,
     data: notificationData,
+    imageUrl: groupAvatarUrl,
   }));
 
   const result = await ctx.runAction(internal.functions.notifications.internal.sendBatchPushNotifications, {
@@ -311,7 +322,10 @@ async function sendPushChannel<TData extends Record<string, unknown>>(
     notificationType,
     title: output.title,
     body: output.body,
-    data: output.data || {},
+    data: {
+      ...(output.data || {}),
+      ...(groupAvatarUrl ? { groupAvatarUrl } : {}),
+    },
     status: result.success ? "sent" : "failed",
   });
 

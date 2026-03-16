@@ -9,6 +9,7 @@ import { v } from "convex/values";
 import { internalQuery, internalAction } from "../../_generated/server";
 import { Id } from "../../_generated/dataModel";
 import { COMMUNITY_ADMIN_THRESHOLD } from "../../lib/permissions";
+import { getMediaUrlWithTransform, ImagePresets } from "../../lib/utils";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
 
 // ============================================================================
@@ -51,10 +52,16 @@ export const getGroupInfo = internalQuery({
     const group = await ctx.db.get(args.groupId);
     if (!group) return null;
 
+    const groupAvatarUrl = getMediaUrlWithTransform(
+      group.preview,
+      ImagePresets.avatarSmall
+    );
+
     return {
       id: group._id,
       name: group.name || "Group",
       communityId: group.communityId,
+      groupAvatarUrl,
     };
   },
 });
@@ -291,6 +298,7 @@ export const sendBatchPushNotifications = internalAction({
         title: v.string(),
         body: v.string(),
         data: v.optional(v.any()),
+        imageUrl: v.optional(v.string()),
       })
     ),
   },
@@ -308,12 +316,29 @@ export const sendBatchPushNotifications = internalAction({
           "Content-Type": "application/json",
         },
         body: JSON.stringify(
-          args.notifications.map((n) => ({
-            to: n.token,
-            title: n.title,
-            body: n.body,
-            data: n.data || {},
-          }))
+          args.notifications.map((n) => {
+            const message: {
+              to: string;
+              title: string;
+              body: string;
+              data: unknown;
+              richContent?: { image: string };
+              mutableContent?: boolean;
+            } = {
+              to: n.token,
+              title: n.title,
+              body: n.body,
+              data: n.data || {},
+            };
+
+            if (n.imageUrl) {
+              // Expo maps richContent.image to platform-specific rich media payloads.
+              message.richContent = { image: n.imageUrl };
+              message.mutableContent = true;
+            }
+
+            return message;
+          })
         ),
       });
 
