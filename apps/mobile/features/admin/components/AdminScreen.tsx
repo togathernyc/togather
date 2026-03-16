@@ -39,11 +39,15 @@ export function AdminScreen() {
   const hasCommunity = !!community?.id;
   const tabs: Tab[] = useMemo(
     () => {
+      if (isInternalDashboardUser && !isAdmin) {
+        return [{ key: "dashboard", label: "Dashboard" }];
+      }
+
       if (isInternalDashboardUser && !hasCommunity) {
         return [{ key: "dashboard", label: "Dashboard" }];
       }
 
-      if (isInternalDashboardUser && isAdmin) {
+      if (isInternalDashboardUser) {
         return [
           { key: "dashboard", label: "Dashboard" },
           { key: "requests", label: "Requests" },
@@ -52,10 +56,6 @@ export function AdminScreen() {
           { key: "settings", label: "Settings" },
           { key: "landing", label: "Landing" },
         ];
-      }
-
-      if (isInternalDashboardUser && !isAdmin) {
-        return [{ key: "dashboard", label: "Dashboard" }];
       }
 
       return [
