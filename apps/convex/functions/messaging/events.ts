@@ -126,6 +126,7 @@ export const onMessageSent = internalMutation({
         groupId: group?._id,
         groupName: group?.name || 'Group Chat',
         communityId: community?._id,
+        channelName: channel?.name,
         channelType: channel?.channelType || "main",
         mentionRecipients,
         regularRecipients,
@@ -147,6 +148,7 @@ export const sendMessageNotifications = internalAction({
     groupId: v.optional(v.id("groups")),
     groupName: v.string(),
     communityId: v.optional(v.id("communities")),
+    channelName: v.optional(v.string()),
     channelType: v.optional(v.string()),
     mentionRecipients: v.array(v.id("users")),
     regularRecipients: v.array(v.id("users")),
@@ -164,6 +166,7 @@ export const sendMessageNotifications = internalAction({
           groupId: args.groupId,
           groupName: args.groupName,
           channelId: args.channelId,
+          channelName: args.channelName,
           communityId: args.communityId,
           // Map channel type to expected format: "main" -> "general", "leaders" -> "leaders"
           channelType: args.channelType === "leaders" ? "leaders" : "general",
@@ -184,6 +187,7 @@ export const sendMessageNotifications = internalAction({
           groupId: args.groupId,
           groupName: args.groupName,
           channelId: args.channelId,
+          channelName: args.channelName,
           communityId: args.communityId,
           // Map channel type to expected format: "main" -> "general", "leaders" -> "leaders"
           // This ensures the mobile app navigates to the correct channel tab (Issue #302)

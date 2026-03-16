@@ -822,6 +822,8 @@ describe("sendMessageNotifications Notification Data", () => {
 
     expect(fetchMock).toHaveBeenCalled();
     const requestBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(requestBody[0].title).toBe("Test User");
+    expect(requestBody[0].body).toBe("Test Group: General\nAvatar payload test message");
     expect(requestBody[0].richContent.image).toBe(groupAvatarUrl);
     expect(requestBody[0].mutableContent).toBe(true);
     expect(requestBody[0].data.groupAvatarUrl).toBe(groupAvatarUrl);

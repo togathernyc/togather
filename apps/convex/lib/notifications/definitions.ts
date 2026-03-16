@@ -43,6 +43,7 @@ interface MessageData {
   messagePreview: string;
   groupId: string;
   channelId: string;
+  channelName?: string;
   channelType?: string; // "general" or "leaders" - enables direct routing without extra DB query
   communityId?: string;
 }
@@ -296,17 +297,38 @@ export const groupCreationApproved: NotificationDefinition<GroupCreationApproved
 // Messaging Definitions
 // ============================================================================
 
+function getChannelLabel(data: MessageData): string {
+  if (data.channelName?.trim()) {
+    return data.channelName.trim();
+  }
+
+  if (data.channelType === "leaders") {
+    return "Leaders";
+  }
+
+  if (data.channelType === "main" || data.channelType === "general") {
+    return "General";
+  }
+
+  return "General";
+}
+
+function formatChatPushBody(data: MessageData): string {
+  return `${data.groupName}: ${getChannelLabel(data)}\n${data.messagePreview}`;
+}
+
 export const newMessage: NotificationDefinition<MessageData> = {
   type: 'new_message',
   description: 'Sent when a new message is received in a group chat',
   formatters: {
     push: (ctx) => ({
-      title: `${ctx.data.groupName}`,
-      body: `${ctx.data.senderName}: ${ctx.data.messagePreview}`,
+      title: ctx.data.senderName,
+      body: formatChatPushBody(ctx.data),
       data: {
         type: 'new_message',
         groupId: ctx.data.groupId,
         channelId: ctx.data.channelId,
+        channelName: ctx.data.channelName,
         channelType: ctx.data.channelType, // "general" or "leaders" - enables direct routing (Issue #302)
         communityId: ctx.data.communityId,
       },
@@ -320,12 +342,13 @@ export const mention: NotificationDefinition<MessageData> = {
   description: 'Sent when user is mentioned in a message',
   formatters: {
     push: (ctx) => ({
-      title: `${ctx.data.senderName} mentioned you`,
-      body: ctx.data.messagePreview,
+      title: ctx.data.senderName,
+      body: formatChatPushBody(ctx.data),
       data: {
         type: 'mention',
         groupId: ctx.data.groupId,
         channelId: ctx.data.channelId,
+        channelName: ctx.data.channelName,
         channelType: ctx.data.channelType, // "general" or "leaders" - enables direct routing
         communityId: ctx.data.communityId,
       },
