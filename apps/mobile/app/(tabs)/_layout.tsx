@@ -12,6 +12,7 @@ export default function TabsLayout() {
   const { primaryColor } = useCommunityTheme();
   const isDesktopWeb = useIsDesktopWeb();
   const isAdmin = user?.is_admin === true;
+  const isInternalUser = user?.is_staff === true || user?.is_superuser === true;
 
   // Use stable state for tab visibility to prevent infinite loops
   // Only update when community actually changes (not on every render)
@@ -123,8 +124,8 @@ export default function TabsLayout() {
         name="admin"
         options={{
           title: 'Admin',
-          // Only show Admin tab to community admins with active community context
-          href: isAdmin && hasCommunity ? '/(tabs)/admin' : null,
+          // Show Admin tab for community admins within a community OR Togather internal users.
+          href: (isAdmin && hasCommunity) || isInternalUser ? '/(tabs)/admin' : null,
           tabBarIcon: ({ color, focused }) => (
             <Ionicons
               name={focused ? 'shield-checkmark' : 'shield-checkmark-outline'}

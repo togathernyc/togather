@@ -6,7 +6,7 @@
  * - Apps: Third-party integrations management
  */
 
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -21,30 +21,65 @@ import { StatsContent } from "./StatsContent";
 import { PeopleContent } from "./PeopleContent";
 import { SettingsContent } from "./SettingsContent";
 import { LandingPageContent } from "./LandingPageContent";
+import { SuperAdminDashboardContent } from "./SuperAdminDashboardContent";
 
-type TabKey = "requests" | "people" | "stats" | "settings" | "landing";
+type TabKey = "dashboard" | "requests" | "people" | "stats" | "settings" | "landing";
 
 interface Tab {
   key: TabKey;
   label: string;
 }
 
-const TABS: Tab[] = [
-  { key: "requests", label: "Requests" },
-  { key: "people", label: "People" },
-  { key: "stats", label: "Stats" },
-  { key: "settings", label: "Settings" },
-  { key: "landing", label: "Landing" },
-];
-
 export function AdminScreen() {
   const insets = useSafeAreaInsets();
-  const { community } = useAuth();
-  const [activeTab, setActiveTab] = useState<TabKey>("requests");
+  const { community, user } = useAuth();
+  const isInternalDashboardUser =
+    user?.is_staff === true || user?.is_superuser === true;
+  const isAdmin = user?.is_admin === true;
   const hasCommunity = !!community?.id;
+  const tabs: Tab[] = useMemo(
+    () => {
+      if (isInternalDashboardUser && !isAdmin) {
+        return [{ key: "dashboard", label: "Dashboard" }];
+      }
 
-  // Show message when user has no community context
-  if (!hasCommunity) {
+      if (isInternalDashboardUser && !hasCommunity) {
+        return [{ key: "dashboard", label: "Dashboard" }];
+      }
+
+      if (isInternalDashboardUser) {
+        return [
+          { key: "dashboard", label: "Dashboard" },
+          { key: "requests", label: "Requests" },
+          { key: "people", label: "People" },
+          { key: "stats", label: "Stats" },
+          { key: "settings", label: "Settings" },
+          { key: "landing", label: "Landing" },
+        ];
+      }
+
+      return [
+        { key: "requests", label: "Requests" },
+        { key: "people", label: "People" },
+        { key: "stats", label: "Stats" },
+        { key: "settings", label: "Settings" },
+        { key: "landing", label: "Landing" },
+      ];
+    },
+    [hasCommunity, isInternalDashboardUser, isAdmin]
+  );
+  const [activeTab, setActiveTab] = useState<TabKey>(
+    isInternalDashboardUser ? "dashboard" : "requests"
+  );
+
+  useEffect(() => {
+    if (!tabs.some((tab) => tab.key === activeTab)) {
+      setActiveTab(tabs[0].key);
+    }
+  }, [tabs, activeTab]);
+
+  // Show message when user has no community context (except for internal dashboard users)
+  if (!hasCommunity && !isInternalDashboardUser) {
     return (
       <View style={styles.container}>
         <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
@@ -69,7 +104,7 @@ export function AdminScreen() {
 
         {/* Segmented Control */}
         <View style={styles.segmentedControl}>
-          {TABS.map((tab) => (
+          {tabs.map((tab) => (
             <TouchableOpacity
               key={tab.key}
               style={[
@@ -94,7 +129,9 @@ export function AdminScreen() {
 
       {/* Content */}
       <View style={styles.content}>
-        {activeTab === "requests" ? (
+        {activeTab === "dashboard" ? (
+          <SuperAdminDashboardContent />
+        ) : activeTab === "requests" ? (
           <PendingRequestsContent />
         ) : activeTab === "people" ? (
           <PeopleContent />

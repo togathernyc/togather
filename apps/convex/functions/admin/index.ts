@@ -37,6 +37,7 @@ export {
 
 // Stats - Statistics and analytics
 export {
+  getInternalDashboard,
   getTotalAttendance,
   getNewSignups,
   getActiveMembers,
