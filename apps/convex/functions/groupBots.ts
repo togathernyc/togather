@@ -13,7 +13,7 @@ import { query, mutation, action } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
 import { now } from "../lib/utils";
-import { calculateCommunicationBotNextSchedule, calculateNextScheduledTimeForDayOfWeek } from "../lib/scheduling";
+import { calculateCommunicationBotNextSchedule } from "../lib/scheduling";
 import { requireAuth, requireAuthFromToken } from "../lib/auth";
 import { isActiveMembership, isLeaderRole } from "../lib/helpers";
 
@@ -483,17 +483,16 @@ export const toggle = mutation({
       const timezone = community?.timezone || "America/New_York";
       nextScheduledAt = calculateNext9AMInTimezone(timezone);
     } else if (args.botId === "communication" && args.enabled) {
-      // Communication bot uses custom schedule
+      // Communication bot: recalculate from existing config (supports both
+      // new multi-message format and legacy single-schedule format)
       const group = await ctx.db.get(args.groupId);
       if (!group) {
         throw new Error("Group not found");
       }
       const community = await ctx.db.get(group.communityId);
       const timezone = community?.timezone || "America/New_York";
-      // Use existing schedule from config if available, otherwise use default
-      const existingConfig = existing?.config as { schedule?: { dayOfWeek: number; hour: number; minute: number } } | undefined;
-      const schedule = existingConfig?.schedule || { dayOfWeek: 6, hour: 9, minute: 0 };
-      nextScheduledAt = calculateNextScheduledTimeForDayOfWeek(schedule, timezone);
+      const existingConfig = (existing?.config as Record<string, unknown>) || {};
+      nextScheduledAt = calculateCommunicationBotNextSchedule(existingConfig, timezone);
     }
 
     if (existing) {
@@ -648,7 +647,7 @@ function calculateNext9AMInTimezone(timezone: string): number {
   return result.getTime();
 }
 
-// calculateNextScheduledTimeForDayOfWeek is now imported from ../lib/scheduling
+// calculateCommunicationBotNextSchedule is imported from ../lib/scheduling
 
 // ============================================================================
 // Developer Tools - Test Functions
