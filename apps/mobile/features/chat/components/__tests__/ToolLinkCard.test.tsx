@@ -71,4 +71,24 @@ describe("ToolLinkCard", () => {
 
     expect(mockPush).toHaveBeenCalledWith("/t/task123");
   });
+
+  it("falls back to canonical /r route for non-task links", () => {
+    mockUseQuery.mockImplementation((queryName: unknown) => {
+      if (queryName === api.functions.toolShortLinks.index.getByShortId) {
+        return {
+          shortId: "res123",
+          toolType: "resource",
+          groupId: "group_1",
+          groupName: "Leaders Group",
+          resourceTitle: "Welcome Guide",
+        };
+      }
+      return undefined;
+    });
+
+    const { getByText } = render(<ToolLinkCard shortId="res123" />);
+    fireEvent.press(getByText("Leaders Group | Welcome Guide"));
+
+    expect(mockPush).toHaveBeenCalledWith("/r/res123");
+  });
 });

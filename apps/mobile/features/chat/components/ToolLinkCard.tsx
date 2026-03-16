@@ -86,15 +86,19 @@ export function ToolLinkCard({
       router.push(`/(user)/group/${toolData.groupId}/resource/${toolData.resourceId}`);
     } else if (toolData.toolType === "task" && toolData.groupId && toolData.taskId) {
       router.push(`/(user)/leader-tools/${toolData.groupId}/tasks/${toolData.taskId}`);
-    } else {
-      // Fallback to public tool page
+    } else if (toolData.toolType === "task") {
       router.push(`/t/${shortId}`);
+    } else {
+      // Fallback to canonical resource/tool page
+      router.push(`/r/${shortId}`);
     }
   };
 
   // Handle long press — share action sheet
   const handleLongPress = () => {
-    const toolUrl = DOMAIN_CONFIG.toolShareUrl(shortId);
+    const toolUrl = toolData?.toolType === "task"
+      ? DOMAIN_CONFIG.taskShareUrl(shortId)
+      : DOMAIN_CONFIG.resourceShareUrl(shortId);
 
     if (Platform.OS === "ios") {
       ActionSheetIOS.showActionSheetWithOptions(

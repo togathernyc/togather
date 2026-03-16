@@ -443,7 +443,7 @@ function MessageItemInner({
     );
   };
 
-  // Render tool cards for detected togather.nyc/t/ links
+  // Render tool/task cards for detected togather.nyc/r/ and /t/ links
   const renderToolCards = () => {
     if (toolShortIds.length === 0) return null;
 

@@ -72,10 +72,15 @@ function generateMessagePreview(message: MessageForPreview): string {
     return content.trim() === content.match(DOMAIN_CONFIG.eventLinkRegexSingle())?.[0]
       ? "Shared an event"
       : content.slice(0, MAX_PREVIEW_LENGTH);
+  } else if (DOMAIN_CONFIG.taskLinkRegexSingle().test(content)) {
+    // Task link shared
+    return content.trim() === content.match(DOMAIN_CONFIG.taskLinkRegexSingle())?.[0]
+      ? "Shared a task"
+      : content.slice(0, MAX_PREVIEW_LENGTH);
   } else if (DOMAIN_CONFIG.toolLinkRegexSingle().test(content)) {
-    // Tool link shared (Run Sheet, Resource)
+    // Resource/tool link shared (Run Sheet, Resource)
     return content.trim() === content.match(DOMAIN_CONFIG.toolLinkRegexSingle())?.[0]
-      ? "Shared a tool"
+      ? "Shared a resource"
       : content.slice(0, MAX_PREVIEW_LENGTH);
   } else if (DOMAIN_CONFIG.groupLinkRegexSingle().test(content)) {
     // Group link shared

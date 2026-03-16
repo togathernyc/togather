@@ -25,9 +25,13 @@ export interface DomainConfig {
   eventLinkRegexSingle(): RegExp;
   groupLinkRegex(): RegExp;
   groupLinkRegexSingle(): RegExp;
+  taskShareUrl(shortId: string): string;
+  resourceShareUrl(shortId: string): string;
   toolShareUrl(shortId: string): string;
   toolLinkRegex(): RegExp;
   toolLinkRegexSingle(): RegExp;
+  taskLinkRegex(): RegExp;
+  taskLinkRegexSingle(): RegExp;
 }
 
 export const DOMAIN_CONFIG: DomainConfig = domain.DOMAIN_CONFIG;

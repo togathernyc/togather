@@ -194,7 +194,7 @@ http.route({
  * GET /link-preview/tool?shortId=<shortId>
  *
  * Returns tool data for link preview generation (OG tags).
- * Used by the Cloudflare Worker when bots request /t/[shortId] URLs.
+ * Used by the Cloudflare Worker when bots request /r/[shortId] and /t/[shortId] URLs.
  *
  * Response shape:
  * - shortId, toolType, groupId, groupName

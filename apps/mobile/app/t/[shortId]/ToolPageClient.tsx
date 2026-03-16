@@ -73,22 +73,21 @@ export default function ToolPageClient() {
     }
   }, [toolLink?.toolType, toolLink?.groupId, shortId, getRunSheetPublic]);
 
-  // Task links should open the authenticated task detail UI.
+  // Task links now use /t/[shortId] as canonical route.
   useEffect(() => {
     if (
       toolLink?.toolType === "task" &&
-      typeof toolLink.groupId === "string" &&
-      typeof toolLink.taskId === "string"
+      typeof shortId === "string"
     ) {
-      router.replace(`/(user)/leader-tools/${toolLink.groupId}/tasks/${toolLink.taskId}`);
+      router.replace(`/t/${shortId}`);
     }
-  }, [router, toolLink?.toolType, toolLink?.groupId, toolLink?.taskId]);
+  }, [router, toolLink?.toolType, shortId]);
 
   // Share handler
   const handleShare = async () => {
     if (!shortId) return;
 
-    const toolUrl = DOMAIN_CONFIG.toolShareUrl(shortId);
+    const toolUrl = DOMAIN_CONFIG.resourceShareUrl(shortId);
     const toolName = getToolDisplayName();
 
     if (Platform.OS === "ios") {

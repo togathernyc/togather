@@ -686,7 +686,7 @@ export function RunSheetScreen({
         groupId: group_id as Id<"groups">,
         toolType: "runsheet",
       });
-      const toolUrl = DOMAIN_CONFIG.toolShareUrl(shortId);
+      const toolUrl = DOMAIN_CONFIG.resourceShareUrl(shortId);
 
       if (Platform.OS === "ios") {
         ActionSheetIOS.showActionSheetWithOptions(

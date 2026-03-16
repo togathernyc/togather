@@ -273,7 +273,7 @@ export function TaskDetailScreen() {
         toolType: "task",
         taskId,
       });
-      const taskUrl = DOMAIN_CONFIG.toolShareUrl(shortId);
+      const taskUrl = DOMAIN_CONFIG.taskShareUrl(shortId);
       const shareMessage = `${task.title}\n${taskUrl}`;
 
       if (Platform.OS === "ios") {

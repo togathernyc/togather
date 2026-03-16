@@ -58,10 +58,17 @@ const DOMAIN_CONFIG = {
   groupLinkRegex: () => new RegExp(`(?:https?:\\/\\/)?${COMBINED_DOMAIN_PATTERN}\\/g\\/([a-zA-Z0-9]+)`, 'g'),
   groupLinkRegexSingle: () => new RegExp(`(?:https?:\\/\\/)?${COMBINED_DOMAIN_PATTERN}\\/g\\/([a-zA-Z0-9]+)`),
   // Tool share URLs (Run Sheet, Resources)
-  toolShareUrl: (shortId) => `https://${BASE_DOMAIN}/t/${shortId}`,
-  // Regex helpers for detecting tool links in text
-  toolLinkRegex: () => new RegExp(`(?:https?:\\/\\/)?${COMBINED_DOMAIN_PATTERN}\\/t\\/([a-zA-Z0-9]+)`, 'g'),
-  toolLinkRegexSingle: () => new RegExp(`(?:https?:\\/\\/)?${COMBINED_DOMAIN_PATTERN}\\/t\\/([a-zA-Z0-9]+)`),
+  taskShareUrl: (shortId) => `https://${BASE_DOMAIN}/t/${shortId}`,
+  // Resource/tool share URLs (Run Sheet, Resources) - canonical path
+  resourceShareUrl: (shortId) => `https://${BASE_DOMAIN}/r/${shortId}`,
+  // Backwards-compatible alias retained for existing callers
+  toolShareUrl: (shortId) => `https://${BASE_DOMAIN}/r/${shortId}`,
+  // Regex helpers for detecting canonical tool/resource links in text
+  toolLinkRegex: () => new RegExp(`(?:https?:\\/\\/)?${COMBINED_DOMAIN_PATTERN}\\/r\\/([a-zA-Z0-9]+)`, 'g'),
+  toolLinkRegexSingle: () => new RegExp(`(?:https?:\\/\\/)?${COMBINED_DOMAIN_PATTERN}\\/r\\/([a-zA-Z0-9]+)`),
+  // Regex helpers for detecting task links in text
+  taskLinkRegex: () => new RegExp(`(?:https?:\\/\\/)?${COMBINED_DOMAIN_PATTERN}\\/t\\/([a-zA-Z0-9]+)`, 'g'),
+  taskLinkRegexSingle: () => new RegExp(`(?:https?:\\/\\/)?${COMBINED_DOMAIN_PATTERN}\\/t\\/([a-zA-Z0-9]+)`),
   // Community landing page URL
   communityLandingUrl: (slug) => `https://${BASE_DOMAIN}/c/${slug}`,
   // Domain suffix for subdomain parsing (with leading dot)
