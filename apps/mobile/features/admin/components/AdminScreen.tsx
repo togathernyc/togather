@@ -6,7 +6,7 @@
  * - Apps: Third-party integrations management
  */
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -34,22 +34,26 @@ export function AdminScreen() {
   const insets = useSafeAreaInsets();
   const { community, user } = useAuth();
   const isPrimaryAdmin = user?.is_primary_admin === true;
-  const tabs: Tab[] = isPrimaryAdmin
-    ? [
-        { key: "dashboard", label: "Dashboard" },
-        { key: "requests", label: "Requests" },
-        { key: "people", label: "People" },
-        { key: "stats", label: "Stats" },
-        { key: "settings", label: "Settings" },
-        { key: "landing", label: "Landing" },
-      ]
-    : [
-        { key: "requests", label: "Requests" },
-        { key: "people", label: "People" },
-        { key: "stats", label: "Stats" },
-        { key: "settings", label: "Settings" },
-        { key: "landing", label: "Landing" },
-      ];
+  const tabs: Tab[] = useMemo(
+    () =>
+      isPrimaryAdmin
+        ? [
+            { key: "dashboard", label: "Dashboard" },
+            { key: "requests", label: "Requests" },
+            { key: "people", label: "People" },
+            { key: "stats", label: "Stats" },
+            { key: "settings", label: "Settings" },
+            { key: "landing", label: "Landing" },
+          ]
+        : [
+            { key: "requests", label: "Requests" },
+            { key: "people", label: "People" },
+            { key: "stats", label: "Stats" },
+            { key: "settings", label: "Settings" },
+            { key: "landing", label: "Landing" },
+          ],
+    [isPrimaryAdmin]
+  );
   const [activeTab, setActiveTab] = useState<TabKey>(isPrimaryAdmin ? "dashboard" : "requests");
   const hasCommunity = !!community?.id;
 
