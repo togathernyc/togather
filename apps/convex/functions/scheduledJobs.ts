@@ -24,7 +24,7 @@ import {
 import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
 import { notifyBatch } from "../lib/notifications/send";
-import { now } from "../lib/utils";
+import { now, getMediaUrlWithTransform, ImagePresets } from "../lib/utils";
 import {
   calculateCommunicationBotNextSchedule,
   isScheduleDueNow,
@@ -37,6 +37,27 @@ import { DOMAIN_CONFIG } from "@togather/shared/config";
 
 const APP_URL = process.env.APP_URL || DOMAIN_CONFIG.appUrl;
 const BRAND_NAME = DOMAIN_CONFIG.brandName;
+const DEFAULT_INITIALS_AVATAR_BG = "007AFF";
+
+function getInitials(name: string | undefined | null): string {
+  if (!name) return "G";
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return "G";
+  if (words.length === 1) return words[0].substring(0, 2).toUpperCase();
+  return (words[0][0] + words[1][0]).toUpperCase();
+}
+
+function getInitialsAvatarUrl(
+  groupName: string | undefined,
+  hexColor: string | undefined,
+): string {
+  const normalizedColor =
+    hexColor && /^#?[0-9A-Fa-f]{6}$/.test(hexColor)
+      ? hexColor.replace("#", "")
+      : DEFAULT_INITIALS_AVATAR_BG;
+  const initials = getInitials(groupName);
+  return `https://ui-avatars.com/api/?background=${normalizedColor}&color=fff&name=${encodeURIComponent(initials)}&size=128&format=png`;
+}
 
 type BirthdayReminderLeader = {
   userId: Id<"users">;
@@ -677,9 +698,11 @@ export const sendMeetingReminder = internalAction({
           type: "meeting_reminder",
           meetingId,
           groupId: meeting.groupId,
+          groupAvatarUrl: meeting.groupAvatarUrl,
           shortId: meeting.shortId,
           route: `/e/${meeting.shortId}`,
         },
+        imageUrl: meeting.groupAvatarUrl,
       });
       sentCount = result.sent;
     }
@@ -832,9 +855,11 @@ export const sendAttendanceConfirmation = internalAction({
               type: "attendance_confirmation",
               meetingId,
               groupId: meeting.groupId,
+              groupAvatarUrl: meeting.groupAvatarUrl,
               shortId: meeting.shortId,
               route: `/e/${meeting.shortId}?confirmAttendance=true`,
             },
+            imageUrl: meeting.groupAvatarUrl,
           });
           pushSent += result.sent;
         }
@@ -986,12 +1011,14 @@ export const sendEventUpdateNotification = internalAction({
           type: "event_updated",
           meetingId,
           groupId: meeting.groupId,
+          groupAvatarUrl: meeting.groupAvatarUrl,
           shortId: meeting.shortId,
           changes,
           newTime,
           newLocation,
           route: `/e/${meeting.shortId}`,
         },
+        imageUrl: meeting.groupAvatarUrl,
       });
       sentCount = result.sent;
     }
@@ -1393,19 +1420,30 @@ export const getMeetingForNotification = internalQuery({
     if (!meeting) return null;
 
     const group = await ctx.db.get(meeting.groupId);
+    let community:
+      | {
+          timezone?: string;
+          primaryColor?: string;
+        }
+      | null = null;
 
     // Get community timezone for proper time formatting in notifications
     let timezone = "America/New_York"; // Default fallback
     if (group?.communityId) {
-      const community = await ctx.db.get(group.communityId);
+      community = await ctx.db.get(group.communityId);
       if (community?.timezone) {
         timezone = community.timezone;
       }
     }
 
+    const groupAvatarUrl =
+      getMediaUrlWithTransform(group?.preview, ImagePresets.avatarSmall) ||
+      getInitialsAvatarUrl(group?.name, community?.primaryColor);
+
     return {
       ...meeting,
       groupName: group?.name || "Group",
+      groupAvatarUrl,
       timezone,
     };
   },
@@ -1803,6 +1841,7 @@ interface PushNotificationPayload {
   title: string;
   body: string;
   data: Record<string, unknown>;
+  imageUrl?: string;
 }
 
 /**
@@ -1816,14 +1855,32 @@ async function sendExpoPushNotifications(
     return { sent: 0, failed: 0 };
   }
 
-  const messages = tokens.map((token) => ({
-    to: token,
-    sound: "default" as const,
-    title: notification.title,
-    body: notification.body,
-    data: notification.data,
-    priority: "high" as const,
-  }));
+  const messages = tokens.map((token) => {
+    const message: {
+      to: string;
+      sound: "default";
+      title: string;
+      body: string;
+      data: Record<string, unknown>;
+      priority: "high";
+      richContent?: { image: string };
+      mutableContent?: boolean;
+    } = {
+      to: token,
+      sound: "default" as const,
+      title: notification.title,
+      body: notification.body,
+      data: notification.data,
+      priority: "high" as const,
+    };
+
+    if (notification.imageUrl) {
+      message.richContent = { image: notification.imageUrl };
+      message.mutableContent = true;
+    }
+
+    return message;
+  });
 
   let sent = 0;
   let failed = 0;
