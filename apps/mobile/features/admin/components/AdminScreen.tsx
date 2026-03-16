@@ -33,29 +33,39 @@ interface Tab {
 export function AdminScreen() {
   const insets = useSafeAreaInsets();
   const { community, user } = useAuth();
-  const isPrimaryAdmin = user?.is_primary_admin === true;
-  const tabs: Tab[] = useMemo(
-    () =>
-      isPrimaryAdmin
-        ? [
-            { key: "dashboard", label: "Dashboard" },
-            { key: "requests", label: "Requests" },
-            { key: "people", label: "People" },
-            { key: "stats", label: "Stats" },
-            { key: "settings", label: "Settings" },
-            { key: "landing", label: "Landing" },
-          ]
-        : [
-            { key: "requests", label: "Requests" },
-            { key: "people", label: "People" },
-            { key: "stats", label: "Stats" },
-            { key: "settings", label: "Settings" },
-            { key: "landing", label: "Landing" },
-          ],
-    [isPrimaryAdmin]
-  );
-  const [activeTab, setActiveTab] = useState<TabKey>(isPrimaryAdmin ? "dashboard" : "requests");
+  const isInternalDashboardUser =
+    user?.is_staff === true || user?.is_superuser === true;
   const hasCommunity = !!community?.id;
+  const tabs: Tab[] = useMemo(
+    () => {
+      if (isInternalDashboardUser && !hasCommunity) {
+        return [{ key: "dashboard", label: "Dashboard" }];
+      }
+
+      if (isInternalDashboardUser) {
+        return [
+          { key: "dashboard", label: "Dashboard" },
+          { key: "requests", label: "Requests" },
+          { key: "people", label: "People" },
+          { key: "stats", label: "Stats" },
+          { key: "settings", label: "Settings" },
+          { key: "landing", label: "Landing" },
+        ];
+      }
+
+      return [
+        { key: "requests", label: "Requests" },
+        { key: "people", label: "People" },
+        { key: "stats", label: "Stats" },
+        { key: "settings", label: "Settings" },
+        { key: "landing", label: "Landing" },
+      ];
+    },
+    [hasCommunity, isInternalDashboardUser]
+  );
+  const [activeTab, setActiveTab] = useState<TabKey>(
+    isInternalDashboardUser ? "dashboard" : "requests"
+  );
 
   useEffect(() => {
     if (!tabs.some((tab) => tab.key === activeTab)) {
@@ -63,8 +73,8 @@ export function AdminScreen() {
     }
   }, [tabs, activeTab]);
 
-  // Show message when user has no community context
-  if (!hasCommunity) {
+  // Show message when user has no community context (except for internal dashboard users)
+  if (!hasCommunity && !isInternalDashboardUser) {
     return (
       <View style={styles.container}>
         <View style={[styles.header, { paddingTop: insets.top + 16 }]}>

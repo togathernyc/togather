@@ -14,7 +14,7 @@ jest.mock("@services/api/convex", () => ({
     functions: {
       admin: {
         stats: {
-          getSuperAdminDashboard: "api.functions.admin.stats.getSuperAdminDashboard",
+          getInternalDashboard: "api.functions.admin.stats.getInternalDashboard",
         },
       },
     },
@@ -32,21 +32,19 @@ describe("SuperAdminDashboardContent", () => {
 
   test("renders locked state for non-primary admins", () => {
     (useAuth as jest.Mock).mockReturnValue({
-      user: { is_primary_admin: false },
-      community: { id: "community-1" },
+      user: { is_staff: false, is_superuser: false },
       token: "token",
     });
     (useQuery as jest.Mock).mockReturnValue(undefined);
 
     const { getByText } = render(<SuperAdminDashboardContent />);
 
-    expect(getByText("Super admin only")).toBeTruthy();
+    expect(getByText("Developers and owners only")).toBeTruthy();
   });
 
   test("renders dashboard metrics for primary admins", () => {
     (useAuth as jest.Mock).mockReturnValue({
-      user: { is_primary_admin: true },
-      community: { id: "community-1" },
+      user: { is_staff: true, is_superuser: false },
       token: "token",
     });
     (useQuery as jest.Mock).mockReturnValue({
@@ -63,6 +61,7 @@ describe("SuperAdminDashboardContent", () => {
         activeMembers30d: 80,
         activeGroups: 8,
         activeChannels: 16,
+        totalCommunities: 4,
       },
       trend: [
         { bucketStart: 1, label: "Jan 1", messagesSent: 10, dailyActiveUsers: 6, newMembers: 1 },
@@ -73,7 +72,7 @@ describe("SuperAdminDashboardContent", () => {
 
     const { getByText } = render(<SuperAdminDashboardContent />);
 
-    expect(getByText("Super Admin Dashboard")).toBeTruthy();
+    expect(getByText("Togather Dashboard")).toBeTruthy();
     expect(getByText("Messages sent")).toBeTruthy();
     expect(getByText("Top channels (30D)")).toBeTruthy();
     expect(getByText("General")).toBeTruthy();
@@ -81,8 +80,7 @@ describe("SuperAdminDashboardContent", () => {
 
   test("changes range and re-queries with selected key", () => {
     (useAuth as jest.Mock).mockReturnValue({
-      user: { is_primary_admin: true },
-      community: { id: "community-1" },
+      user: { is_staff: true, is_superuser: false },
       token: "token",
     });
     (useQuery as jest.Mock).mockReturnValue({
@@ -99,6 +97,7 @@ describe("SuperAdminDashboardContent", () => {
         activeMembers30d: 0,
         activeGroups: 0,
         activeChannels: 0,
+        totalCommunities: 0,
       },
       trend: [],
       topChannels: [],

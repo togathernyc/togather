@@ -10,7 +10,6 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@providers/AuthProvider";
 import { useQuery, api } from "@services/api/convex";
-import type { Id } from "@services/api/convex";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 
@@ -57,19 +56,18 @@ function MetricCard({
 }
 
 export function SuperAdminDashboardContent() {
-  const { user, community, token } = useAuth();
+  const { user, token } = useAuth();
   const { primaryColor } = useCommunityTheme();
   const [range, setRange] = useState<DashboardRange>("30d");
   const [chartMetric, setChartMetric] = useState<ChartMetric>("messages");
 
-  const isPrimaryAdmin = user?.is_primary_admin === true;
+  const isInternalUser = user?.is_staff === true || user?.is_superuser === true;
 
   const dashboardData = useQuery(
-    api.functions.admin.stats.getSuperAdminDashboard,
-    community?.id && token && isPrimaryAdmin
+    api.functions.admin.stats.getInternalDashboard,
+    token && isInternalUser
       ? {
           token,
-          communityId: community.id as Id<"communities">,
           range,
         }
       : "skip"
@@ -87,13 +85,13 @@ export function SuperAdminDashboardContent() {
     );
   }, [dashboardData?.trend, chartMetric]);
 
-  if (!isPrimaryAdmin) {
+  if (!isInternalUser) {
     return (
       <View style={styles.emptyState}>
         <Ionicons name="lock-closed-outline" size={28} color="#999" />
-        <Text style={styles.emptyTitle}>Super admin only</Text>
+        <Text style={styles.emptyTitle}>Developers and owners only</Text>
         <Text style={styles.emptySubtitle}>
-          This dashboard is only available to primary admins.
+          This dashboard is only available to Togather internal users.
         </Text>
       </View>
     );
@@ -114,13 +112,13 @@ export function SuperAdminDashboardContent() {
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <View style={styles.hero}>
         <View>
-          <Text style={styles.heroTitle}>Super Admin Dashboard</Text>
+          <Text style={styles.heroTitle}>Togather Dashboard</Text>
           <Text style={styles.heroSubtitle}>
-            Community health, activity, and growth at a glance.
+            App-wide health, activity, and growth at a glance.
           </Text>
         </View>
         <View style={[styles.roleBadge, { borderColor: primaryColor }]}>
-          <Text style={[styles.roleBadgeText, { color: primaryColor }]}>Primary Admin</Text>
+          <Text style={[styles.roleBadgeText, { color: primaryColor }]}>Internal</Text>
         </View>
       </View>
 
@@ -293,6 +291,10 @@ export function SuperAdminDashboardContent() {
           <View style={styles.footprintItem}>
             <Text style={styles.footprintValue}>{formatCompactNumber(dashboardData.totals.activeChannels)}</Text>
             <Text style={styles.footprintLabel}>Channels</Text>
+          </View>
+          <View style={styles.footprintItem}>
+            <Text style={styles.footprintValue}>{formatCompactNumber(dashboardData.totals.totalCommunities)}</Text>
+            <Text style={styles.footprintLabel}>Communities</Text>
           </View>
         </View>
       </View>

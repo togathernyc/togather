@@ -15,7 +15,7 @@ import { internal } from "../../_generated/api";
 import { Id, Doc } from "../../_generated/dataModel";
 import { now, getMediaUrl } from "../../lib/utils";
 import { requireAuth } from "../../lib/auth";
-import { requireCommunityAdmin, checkCommunityAdmin, requirePrimaryAdmin } from "./auth";
+import { requireCommunityAdmin, checkCommunityAdmin } from "./auth";
 
 type SuperAdminRange = "7d" | "30d" | "90d" | "all";
 type SuperAdminGranularity = "day" | "month";
@@ -61,31 +61,37 @@ function formatBucketLabel(timestamp: number, granularity: SuperAdminGranularity
 // ============================================================================
 
 /**
- * Super-admin dashboard analytics.
+ * Internal Togather dashboard analytics (app-wide).
  *
- * IMPORTANT: This endpoint is restricted to Primary Admins only.
+ * IMPORTANT: This endpoint is restricted to Togather internal users only
+ * (developers/owners via isStaff or isSuperuser).
  * It provides a time-series graph plus summary metrics for the selected range.
  */
-export const getSuperAdminDashboard = query({
+export const getInternalDashboard = query({
   args: {
     token: v.string(),
-    communityId: v.id("communities"),
     range: v.optional(v.union(v.literal("7d"), v.literal("30d"), v.literal("90d"), v.literal("all"))),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
-    await requirePrimaryAdmin(ctx, args.communityId, userId);
-
-    const community = await ctx.db.get(args.communityId);
-    if (!community) {
-      throw new Error("Community not found");
+    const user = await ctx.db.get(userId);
+    const isInternalUser = user?.isStaff === true || user?.isSuperuser === true;
+    if (!isInternalUser) {
+      throw new Error("Togather internal access required");
     }
 
     const selectedRange: SuperAdminRange = args.range ?? "30d";
     const endDate = now();
+    const allUsers = await ctx.db.query("users").collect();
+    const earliestUserCreatedAt = allUsers
+      .map((u) => u.createdAt ?? Number.MAX_SAFE_INTEGER)
+      .reduce((min, current) => Math.min(min, current), Number.MAX_SAFE_INTEGER);
+
     const rangeStart =
       selectedRange === "all"
-        ? utcMonthStart(community.createdAt ?? endDate)
+        ? utcMonthStart(
+            earliestUserCreatedAt === Number.MAX_SAFE_INTEGER ? endDate : earliestUserCreatedAt
+          )
         : utcDayStart(endDate - (RANGE_DAYS[selectedRange] - 1) * DAY_MS);
     const granularity: SuperAdminGranularity = selectedRange === "all" ? "month" : "day";
 
@@ -114,126 +120,95 @@ export const getSuperAdminDashboard = query({
       bucketLookup.set(cursor, bucket);
     }
 
-    const groups = await ctx.db
-      .query("groups")
-      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
-      .collect();
+    const communities = await ctx.db.query("communities").collect();
+    const groups = await ctx.db.query("groups").collect();
 
     const activeGroupsCount = groups.filter((g) => !g.isArchived).length;
-
-    const channels: Array<{
-      _id: Id<"chatChannels">;
-      name: string;
-      isArchived: boolean;
-    }> = [];
-    for (const group of groups) {
-      const groupChannels = await ctx.db
-        .query("chatChannels")
-        .withIndex("by_group", (q) => q.eq("groupId", group._id))
-        .collect();
-      channels.push(...groupChannels);
-    }
+    const channels = await ctx.db.query("chatChannels").collect();
 
     const activeChannelCount = channels.filter((c) => !c.isArchived).length;
-    const rangeMessagesByChannel = new Map<string, number>();
+    const rangeMessagesByChannel = new Map<Id<"chatChannels">, number>();
     const uniqueActiveSenders = new Set<string>();
     let messagesSent = 0;
 
-    for (const channel of channels) {
-      const channelMessages =
-        selectedRange === "all"
-          ? await ctx.db
-              .query("chatMessages")
-              .withIndex("by_channel", (q) => q.eq("channelId", channel._id))
-              .collect()
-          : await ctx.db
-              .query("chatMessages")
-              .withIndex("by_channel_createdAt", (q) =>
-                q.eq("channelId", channel._id).gte("createdAt", rangeStart).lte("createdAt", endDate)
-              )
-              .collect();
+    const rangeMessages =
+      selectedRange === "all"
+        ? await ctx.db.query("chatMessages").withIndex("by_createdAt").collect()
+        : await ctx.db
+            .query("chatMessages")
+            .withIndex("by_createdAt", (q) => q.gte("createdAt", rangeStart).lte("createdAt", endDate))
+            .collect();
 
-      for (const message of channelMessages) {
-        if (message.isDeleted || message.createdAt < rangeStart || message.createdAt > endDate) {
-          continue;
-        }
-
-        messagesSent += 1;
-        if (message.senderId) {
-          uniqueActiveSenders.add(message.senderId);
-        }
-
-        const bucketKey = bucketStartFor(message.createdAt, granularity);
-        const bucket = bucketLookup.get(bucketKey);
-        if (bucket) {
-          bucket.messagesSent += 1;
-          if (message.senderId) {
-            bucket.activeSenders.add(message.senderId);
-          }
-        }
-
-        rangeMessagesByChannel.set(channel._id, (rangeMessagesByChannel.get(channel._id) ?? 0) + 1);
+    for (const message of rangeMessages) {
+      if (message.isDeleted || message.createdAt < rangeStart || message.createdAt > endDate) {
+        continue;
       }
+
+      messagesSent += 1;
+      if (message.senderId) {
+        uniqueActiveSenders.add(message.senderId);
+      }
+
+      const bucketKey = bucketStartFor(message.createdAt, granularity);
+      const bucket = bucketLookup.get(bucketKey);
+      if (bucket) {
+        bucket.messagesSent += 1;
+        if (message.senderId) {
+          bucket.activeSenders.add(message.senderId);
+        }
+      }
+
+      rangeMessagesByChannel.set(
+        message.channelId,
+        (rangeMessagesByChannel.get(message.channelId) ?? 0) + 1
+      );
     }
 
-    const newMemberships = await ctx.db
-      .query("userCommunities")
-      .withIndex("by_community_createdAt", (q) =>
-        q.eq("communityId", args.communityId).gte("createdAt", rangeStart)
-      )
-      .filter((q) => q.neq(q.field("status"), 3))
-      .collect();
-
-    const inRangeMemberships = newMemberships.filter(
-      (membership) =>
-        !!membership.createdAt && membership.createdAt >= rangeStart && membership.createdAt <= endDate
+    const inRangeUsers = allUsers.filter(
+      (member) =>
+        member.isActive !== false &&
+        !!member.createdAt &&
+        member.createdAt >= rangeStart &&
+        member.createdAt <= endDate
     );
 
-    for (const membership of inRangeMemberships) {
-      if (!membership.createdAt) continue;
-      const bucketKey = bucketStartFor(membership.createdAt, granularity);
+    for (const member of inRangeUsers) {
+      if (!member.createdAt) continue;
+      const bucketKey = bucketStartFor(member.createdAt, granularity);
       const bucket = bucketLookup.get(bucketKey);
       if (bucket) {
         bucket.newMembers += 1;
       }
     }
 
-    const activeCommunityMemberships = await ctx.db
-      .query("userCommunities")
-      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
-      .filter((q) => q.eq(q.field("status"), 1))
-      .collect();
+    const activeUsers = allUsers.filter((member) => member.isActive !== false);
 
     const thirtyDaysAgo = endDate - 30 * DAY_MS;
-    const activeMembers30d = await ctx.db
-      .query("userCommunities")
-      .withIndex("by_community_lastLogin", (q) =>
-        q.eq("communityId", args.communityId).gte("lastLogin", thirtyDaysAgo)
-      )
-      .filter((q) => q.eq(q.field("status"), 1))
-      .collect();
+    const activeMembers30d = activeUsers.filter(
+      (member) => !!member.lastLogin && member.lastLogin >= thirtyDaysAgo
+    );
 
     let meetingsHeld = 0;
     let attendanceCheckIns = 0;
 
-    for (const group of groups) {
-      const rangeMeetings = await ctx.db
-        .query("meetings")
-        .withIndex("by_group_scheduledAt", (q) =>
-          q.eq("groupId", group._id).gte("scheduledAt", rangeStart).lte("scheduledAt", endDate)
-        )
+    const rangeMeetings =
+      selectedRange === "all"
+        ? await ctx.db.query("meetings").withIndex("by_scheduledAt").collect()
+        : await ctx.db
+            .query("meetings")
+            .withIndex("by_scheduledAt", (q) =>
+              q.gte("scheduledAt", rangeStart).lte("scheduledAt", endDate)
+            )
+            .collect();
+
+    meetingsHeld = rangeMeetings.length;
+
+    for (const meeting of rangeMeetings) {
+      const attendance = await ctx.db
+        .query("meetingAttendances")
+        .withIndex("by_meeting_status", (q) => q.eq("meetingId", meeting._id).eq("status", 1))
         .collect();
-
-      meetingsHeld += rangeMeetings.length;
-
-      for (const meeting of rangeMeetings) {
-        const attendance = await ctx.db
-          .query("meetingAttendances")
-          .withIndex("by_meeting", (q) => q.eq("meetingId", meeting._id))
-          .filter((q) => q.eq(q.field("status"), 1))
-          .collect();
-        attendanceCheckIns += attendance.length;
-      }
+      attendanceCheckIns += attendance.length;
     }
 
     const topChannels = channels
@@ -266,17 +241,18 @@ export const getSuperAdminDashboard = query({
       overview: {
         messagesSent,
         dailyActiveUsers: uniqueActiveSenders.size,
-        newMembers: inRangeMemberships.length,
+        newMembers: inRangeUsers.length,
         meetingsHeld,
         attendanceCheckIns,
         avgMessagesPerActiveDay:
           activeDaysWithMessages > 0 ? Math.round(messagesSent / activeDaysWithMessages) : 0,
       },
       totals: {
-        totalMembers: activeCommunityMemberships.length,
+        totalMembers: activeUsers.length,
         activeMembers30d: activeMembers30d.length,
         activeGroups: activeGroupsCount,
         activeChannels: activeChannelCount,
+        totalCommunities: communities.length,
       },
       trend,
       topChannels,

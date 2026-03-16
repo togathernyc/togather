@@ -35,10 +35,10 @@ describe("AdminScreen", () => {
     jest.clearAllMocks();
   });
 
-  test("shows Dashboard tab for primary admins", () => {
+  test("shows Dashboard tab for Togather internal users", () => {
     (useAuth as jest.Mock).mockReturnValue({
       community: { id: "community-1" },
-      user: { is_primary_admin: true },
+      user: { is_staff: true, is_superuser: false },
     });
 
     const { getByText } = render(<AdminScreen />);
@@ -47,16 +47,28 @@ describe("AdminScreen", () => {
     expect(getByText("Requests")).toBeTruthy();
   });
 
-  test("hides Dashboard tab for non-primary admins", () => {
+  test("hides Dashboard tab for non-internal users", () => {
     (useAuth as jest.Mock).mockReturnValue({
       community: { id: "community-1" },
-      user: { is_primary_admin: false },
+      user: { is_staff: false, is_superuser: false },
     });
 
     const { queryByText, getByText } = render(<AdminScreen />);
 
     expect(queryByText("Dashboard")).toBeNull();
     expect(getByText("Requests")).toBeTruthy();
+  });
+
+  test("shows internal dashboard without requiring a selected community", () => {
+    (useAuth as jest.Mock).mockReturnValue({
+      community: null,
+      user: { is_staff: true, is_superuser: false },
+    });
+
+    const { getByText, queryByText } = render(<AdminScreen />);
+
+    expect(getByText("Dashboard")).toBeTruthy();
+    expect(queryByText("No Community Selected")).toBeNull();
   });
 });
 

@@ -15,9 +15,8 @@ const COMMUNITY_ROLES = {
 } as const;
 
 type SeedData = {
-  communityId: Id<"communities">;
-  primaryAdminId: Id<"users">;
-  adminId: Id<"users">;
+  internalUserId: Id<"users">;
+  adminUserId: Id<"users">;
 };
 
 async function seedDashboardData(t: ReturnType<typeof convexTest>): Promise<SeedData> {
@@ -27,16 +26,17 @@ async function seedDashboardData(t: ReturnType<typeof convexTest>): Promise<Seed
     const twoDaysAgo = now - 2 * 24 * 60 * 60 * 1000;
     const yesterday = now - 24 * 60 * 60 * 1000;
 
-    const primaryAdminId = await ctx.db.insert("users", {
+    const internalUserId = await ctx.db.insert("users", {
       firstName: "Primary",
       lastName: "Admin",
       email: "primary@test.com",
+      isStaff: true,
       isActive: true,
       createdAt: now,
       updatedAt: now,
     });
 
-    const adminId = await ctx.db.insert("users", {
+    const adminUserId = await ctx.db.insert("users", {
       firstName: "Regular",
       lastName: "Admin",
       email: "admin@test.com",
@@ -72,7 +72,7 @@ async function seedDashboardData(t: ReturnType<typeof convexTest>): Promise<Seed
     });
 
     await ctx.db.insert("userCommunities", {
-      userId: primaryAdminId,
+      userId: internalUserId,
       communityId,
       roles: COMMUNITY_ROLES.PRIMARY_ADMIN,
       status: 1,
@@ -81,7 +81,7 @@ async function seedDashboardData(t: ReturnType<typeof convexTest>): Promise<Seed
     });
 
     await ctx.db.insert("userCommunities", {
-      userId: adminId,
+      userId: adminUserId,
       communityId,
       roles: COMMUNITY_ROLES.ADMIN,
       status: 1,
@@ -130,7 +130,7 @@ async function seedDashboardData(t: ReturnType<typeof convexTest>): Promise<Seed
       channelType: "main",
       name: "General",
       slug: "general",
-      createdById: primaryAdminId,
+      createdById: internalUserId,
       createdAt: sixDaysAgo,
       updatedAt: now,
       isArchived: false,
@@ -139,7 +139,7 @@ async function seedDashboardData(t: ReturnType<typeof convexTest>): Promise<Seed
 
     await ctx.db.insert("chatMessages", {
       channelId,
-      senderId: primaryAdminId,
+      senderId: internalUserId,
       content: "Welcome",
       contentType: "text",
       createdAt: twoDaysAgo,
@@ -178,24 +178,22 @@ async function seedDashboardData(t: ReturnType<typeof convexTest>): Promise<Seed
     });
 
     return {
-      communityId,
-      primaryAdminId,
-      adminId,
+      internalUserId,
+      adminUserId,
     };
   });
 
   return ids;
 }
 
-describe("getSuperAdminDashboard", () => {
-  test("returns analytics for primary admins", async () => {
+describe("getInternalDashboard", () => {
+  test("returns app-wide analytics for internal users", async () => {
     const t = convexTest(schema, modules);
     const seed = await seedDashboardData(t);
-    const primaryToken = (await generateTokens(seed.primaryAdminId, seed.communityId)).accessToken;
+    const internalToken = (await generateTokens(seed.internalUserId)).accessToken;
 
-    const result = await t.query(api.functions.admin.stats.getSuperAdminDashboard, {
-      token: primaryToken,
-      communityId: seed.communityId,
+    const result = await t.query(api.functions.admin.stats.getInternalDashboard, {
+      token: internalToken,
       range: "7d",
     });
 
@@ -207,22 +205,22 @@ describe("getSuperAdminDashboard", () => {
     expect(result.totals.totalMembers).toBe(4);
     expect(result.totals.activeGroups).toBe(1);
     expect(result.totals.activeChannels).toBe(1);
+    expect(result.totals.totalCommunities).toBe(1);
     expect(result.trend.length).toBeGreaterThan(0);
     expect(result.topChannels[0]?.channelName).toBe("General");
   });
 
-  test("rejects non-primary admins", async () => {
+  test("rejects non-internal users", async () => {
     const t = convexTest(schema, modules);
     const seed = await seedDashboardData(t);
-    const adminToken = (await generateTokens(seed.adminId, seed.communityId)).accessToken;
+    const adminToken = (await generateTokens(seed.adminUserId)).accessToken;
 
     await expect(
-      t.query(api.functions.admin.stats.getSuperAdminDashboard, {
+      t.query(api.functions.admin.stats.getInternalDashboard, {
         token: adminToken,
-        communityId: seed.communityId,
         range: "7d",
       })
-    ).rejects.toThrow("Primary Admin role required");
+    ).rejects.toThrow("Togather internal access required");
   });
 });
 

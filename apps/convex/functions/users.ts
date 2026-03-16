@@ -345,6 +345,8 @@ export const me = query({
       firstName: user.firstName || "",
       lastName: user.lastName || "",
       email: user.email || "",
+      isStaff: user.isStaff || false,
+      isSuperuser: user.isSuperuser || false,
       phone: user.phone || null,
       phoneVerified: user.phoneVerified || false,
       profilePhoto: getMediaUrl(user.profilePhoto),
