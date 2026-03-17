@@ -138,6 +138,13 @@ export const markAttendance = mutation({
       );
     }
 
+    // Recompute community scores after attendance change
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.communityScoreComputation.recomputeForGroupMember,
+      { groupId: meeting.groupId, userId: args.userId }
+    );
+
     return resultId;
   },
 });
@@ -471,6 +478,13 @@ export const selfReportAttendance = mutation({
       );
     }
 
+    // Recompute community scores after attendance change
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.communityScoreComputation.recomputeForGroupMember,
+      { groupId: meeting.groupId, userId }
+    );
+
     return resultId;
   },
 });
@@ -555,6 +569,13 @@ export const confirmAttendanceWithToken = mutation({
           { groupId: meeting.groupId, groupMemberId: groupMember._id }
         );
       }
+
+      // Recompute community scores after attendance change
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.communityScoreComputation.recomputeForGroupMember,
+        { groupId: meeting.groupId, userId: tokenRecord.userId }
+      );
     }
 
     return resultId;

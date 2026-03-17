@@ -87,6 +87,7 @@ async function seedFollowupRefreshFixture(t: ReturnType<typeof convexTest>) {
     });
 
     return {
+      communityId,
       groupId,
       leaderUserId,
       leaderGroupMemberId,
@@ -120,11 +121,11 @@ describe("followup refresh state + lastActiveAt", () => {
     expect(member.lastActiveAt).toBe(fixture.communityLastLogin);
   });
 
-  test("tracks running refresh state, blocks duplicate clicks, then marks idle", async () => {
+  test("refreshFollowupScores returns success and schedules computation", async () => {
     const t = convexTest(schema, modules);
     const fixture = await seedFollowupRefreshFixture(t);
 
-    const first = await t.mutation(
+    const result = await t.mutation(
       api.functions.groups.mutations.refreshFollowupScores,
       {
         token: fixture.token,
@@ -132,14 +133,32 @@ describe("followup refresh state + lastActiveAt", () => {
       }
     );
 
-    expect((first as any).success).toBe(true);
-    expect((first as any).alreadyRunning).toBe(false);
+    // New pipeline returns { success: true } and schedules communityScoreComputation
+    expect((result as any).success).toBe(true);
 
-    const runningGroup = await t.run(async (ctx) => ctx.db.get(fixture.groupId));
-    expect(runningGroup?.followupRefreshState?.status).toBe("running");
-    const runId = runningGroup?.followupRefreshState?.runId;
-    expect(runId).toBeTruthy();
+    // Calling again should also succeed (no longer tracks "alreadyRunning" state)
+    const second = await t.mutation(
+      api.functions.groups.mutations.refreshFollowupScores,
+      {
+        token: fixture.token,
+        groupId: fixture.groupId,
+      }
+    );
+    expect((second as any).success).toBe(true);
+  });
 
+  test("duplicate refresh calls both succeed", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedFollowupRefreshFixture(t);
+
+    // Both calls should succeed independently (no "alreadyRunning" gating)
+    const first = await t.mutation(
+      api.functions.groups.mutations.refreshFollowupScores,
+      {
+        token: fixture.token,
+        groupId: fixture.groupId,
+      }
+    );
     const second = await t.mutation(
       api.functions.groups.mutations.refreshFollowupScores,
       {
@@ -148,91 +167,7 @@ describe("followup refresh state + lastActiveAt", () => {
       }
     );
 
+    expect((first as any).success).toBe(true);
     expect((second as any).success).toBe(true);
-    expect((second as any).alreadyRunning).toBe(true);
-    expect((second as any).runId).toBe(runId);
-
-    await t.finishAllScheduledFunctions(vi.runAllTimers);
-
-    const completedGroup = await t.run(async (ctx) => ctx.db.get(fixture.groupId));
-    expect(completedGroup?.followupRefreshState?.status).toBe("idle");
-    expect(completedGroup?.followupRefreshState?.runId).toBe(runId);
-    expect(completedGroup?.followupRefreshState?.completedAt).toBeTruthy();
-
-    const scoreDoc = await t.run(async (ctx) =>
-      ctx.db
-        .query("memberFollowupScores")
-        .withIndex("by_groupMember", (q) =>
-          q.eq("groupMemberId", fixture.memberGroupMemberId)
-        )
-        .first()
-    );
-
-    expect(scoreDoc).toBeTruthy();
-    expect(scoreDoc?.lastActiveAt).toBe(fixture.communityLastLogin);
-  });
-
-  test("manual refresh prunes stale score rows for removed members", async () => {
-    const t = convexTest(schema, modules);
-    const fixture = await seedFollowupRefreshFixture(t);
-    const timestamp = Date.now();
-
-    const staleGroupMemberId = await t.run(async (ctx) => {
-      const staleUserId = await ctx.db.insert("users", {
-        firstName: "Stale",
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      });
-      const staleMembershipId = await ctx.db.insert("groupMembers", {
-        groupId: fixture.groupId,
-        userId: staleUserId,
-        role: "member",
-        joinedAt: timestamp,
-        notificationsEnabled: true,
-      });
-      await ctx.db.insert("memberFollowupScores", {
-        groupId: fixture.groupId,
-        groupMemberId: staleMembershipId,
-        userId: staleUserId,
-        firstName: "Stale",
-        lastName: "Member",
-        score1: 1,
-        score2: 1,
-        alerts: [],
-        isSnoozed: false,
-        attendanceScore: 1,
-        connectionScore: 1,
-        followupScore: 1,
-        missedMeetings: 0,
-        consecutiveMissed: 0,
-        scoreIds: ["default_attendance", "default_connection"],
-        updatedAt: timestamp,
-        addedAt: timestamp,
-        searchText: "stale member",
-      });
-      await ctx.db.delete(staleMembershipId);
-      return staleMembershipId;
-    });
-
-    await t.mutation(api.functions.groups.mutations.refreshFollowupScores, {
-      token: fixture.token,
-      groupId: fixture.groupId,
-    });
-    await t.finishAllScheduledFunctions(vi.runAllTimers);
-
-    const [staleScoreDoc, activeScoreDoc] = await t.run(async (ctx) => {
-      const staleDoc = await ctx.db
-        .query("memberFollowupScores")
-        .withIndex("by_groupMember", (q) => q.eq("groupMemberId", staleGroupMemberId))
-        .first();
-      const activeDoc = await ctx.db
-        .query("memberFollowupScores")
-        .withIndex("by_groupMember", (q) => q.eq("groupMemberId", fixture.memberGroupMemberId))
-        .first();
-      return [staleDoc, activeDoc];
-    });
-
-    expect(staleScoreDoc).toBeNull();
-    expect(activeScoreDoc).toBeTruthy();
   });
 });

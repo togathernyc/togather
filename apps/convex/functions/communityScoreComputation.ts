@@ -342,6 +342,7 @@ export const computeCommunityScoresBatch = internalQuery({
 export const upsertCommunityPeopleBatch = internalMutation({
   args: {
     communityId: v.id("communities"),
+    groupId: v.id("groups"),
     scoredMembers: v.array(v.any()),
   },
   handler: async (ctx, args) => {
@@ -350,14 +351,15 @@ export const upsertCommunityPeopleBatch = internalMutation({
     for (const member of args.scoredMembers) {
       const existing = await ctx.db
         .query("communityPeople")
-        .withIndex("by_community_user", (q) =>
-          q.eq("communityId", args.communityId).eq("userId", member.userId)
+        .withIndex("by_group_user", (q) =>
+          q.eq("groupId", args.groupId).eq("userId", member.userId)
         )
         .first();
 
       // Fields updated on every score recomputation
       const scoreDoc = {
         communityId: args.communityId,
+        groupId: args.groupId,
         userId: member.userId,
         firstName: member.firstName,
         lastName: member.lastName,
@@ -383,8 +385,35 @@ export const upsertCommunityPeopleBatch = internalMutation({
         // Patch preserves custom fields, status, assigneeIds, connectionPoint
         await ctx.db.patch(existing._id, scoreDoc);
       } else {
+        // Check if user has a record in another group — copy leader-set fields
+        const siblingRecord = await ctx.db
+          .query("communityPeople")
+          .withIndex("by_community_user", (q) =>
+            q.eq("communityId", args.communityId).eq("userId", member.userId)
+          )
+          .first();
+
         await ctx.db.insert("communityPeople", {
           ...scoreDoc,
+          // Copy leader-set fields from sibling if exists
+          status: siblingRecord?.status,
+          assigneeIds: siblingRecord?.assigneeIds,
+          connectionPoint: siblingRecord?.connectionPoint,
+          customText1: siblingRecord?.customText1,
+          customText2: siblingRecord?.customText2,
+          customText3: siblingRecord?.customText3,
+          customText4: siblingRecord?.customText4,
+          customText5: siblingRecord?.customText5,
+          customNum1: siblingRecord?.customNum1,
+          customNum2: siblingRecord?.customNum2,
+          customNum3: siblingRecord?.customNum3,
+          customNum4: siblingRecord?.customNum4,
+          customNum5: siblingRecord?.customNum5,
+          customBool1: siblingRecord?.customBool1,
+          customBool2: siblingRecord?.customBool2,
+          customBool3: siblingRecord?.customBool3,
+          customBool4: siblingRecord?.customBool4,
+          customBool5: siblingRecord?.customBool5,
           createdAt: nowTs,
         });
       }
@@ -393,8 +422,9 @@ export const upsertCommunityPeopleBatch = internalMutation({
 });
 
 /**
- * Delete communityPeople rows for members who are no longer in the announcement group.
- * Prevents stale rows from lingering after members leave.
+ * Delete communityPeople rows for members who are no longer active in the
+ * record's group. Each communityPeople record is tied to a specific group,
+ * so we verify membership per-group rather than only against the announcement group.
  */
 export const pruneStaleRows = internalMutation({
   args: {
@@ -411,20 +441,24 @@ export const pruneStaleRows = internalMutation({
 
     let deleted = 0;
     for (const doc of docs) {
-      // Check if user is still an active member of the announcement group
+      // Each record has a groupId — check if user is still an active member of that group
+      if (!doc.groupId) {
+        // Legacy record without groupId — prune it
+        await ctx.db.delete(doc._id);
+        deleted++;
+        continue;
+      }
       const membership = await ctx.db
         .query("groupMembers")
         .withIndex("by_group_user", (q) =>
           q
-            .eq("groupId", args.announcementGroupId)
+            .eq("groupId", doc.groupId!)
             .eq("userId", doc.userId)
         )
         .first();
 
       const isStale =
-        !membership ||
-        membership.groupId !== args.announcementGroupId ||
-        membership.leftAt !== undefined;
+        !membership || membership.leftAt !== undefined;
 
       if (isStale) {
         await ctx.db.delete(doc._id);
@@ -539,11 +573,12 @@ export const computeCommunityScores = internalAction({
         }
       );
 
-      // Step 6: Upsert results
+      // Step 6: Upsert results for the announcement group
       await ctx.runMutation(
         internal.functions.communityScoreComputation.upsertCommunityPeopleBatch,
         {
           communityId: args.communityId,
+          groupId: announcementGroupId,
           scoredMembers,
         }
       );
@@ -552,7 +587,43 @@ export const computeCommunityScores = internalAction({
       cursor = page.continueCursor;
     }
 
-    // Step 7: Prune stale rows
+    // Step 7: Create per-group records for all non-announcement groups
+    const allGroups = await ctx.runQuery(
+      internal.functions.communityScoreComputation.getCommunityGroups,
+      { communityId: args.communityId }
+    );
+
+    for (const group of allGroups) {
+      if (group._id === announcementGroupId) continue; // already handled
+
+      // Get active members for this group
+      const groupMemberUserIds: Id<"users">[] = await ctx.runQuery(
+        internal.functions.communityScoreComputation.getGroupMemberUserIds,
+        { groupId: group._id }
+      );
+
+      if (groupMemberUserIds.length === 0) continue;
+
+      // Find scored data for these users from the announcement group records
+      const scoredForGroup = await ctx.runQuery(
+        internal.functions.communityScoreComputation.getScoredDataForUsers,
+        { communityId: args.communityId, userIds: groupMemberUserIds }
+      );
+
+      if (scoredForGroup.length > 0) {
+        await ctx.runMutation(
+          internal.functions.communityScoreComputation
+            .upsertCommunityPeopleBatch,
+          {
+            communityId: args.communityId,
+            groupId: group._id,
+            scoredMembers: scoredForGroup,
+          }
+        );
+      }
+    }
+
+    // Step 8: Prune stale rows
     await ctx.runMutation(
       internal.functions.communityScoreComputation.pruneStaleRows,
       {
@@ -615,14 +686,42 @@ export const computeSingleCommunityMember = internalAction({
 
     if (scoredMembers.length === 0) return;
 
-    // Upsert the result
+    // Upsert the result for the announcement group
     await ctx.runMutation(
       internal.functions.communityScoreComputation.upsertCommunityPeopleBatch,
       {
         communityId: args.communityId,
+        groupId: announcementGroup._id,
         scoredMembers,
       }
     );
+
+    // Also upsert into all other groups this user belongs to
+    const allGroups = await ctx.runQuery(
+      internal.functions.communityScoreComputation.getCommunityGroups,
+      { communityId: args.communityId }
+    );
+
+    for (const group of allGroups) {
+      if (group._id === announcementGroup._id) continue; // already handled
+
+      // Check if user is an active member of this group
+      const groupMembership = await ctx.runQuery(
+        internal.functions.communityScoreComputation.getAnnouncementGroupMember,
+        { announcementGroupId: group._id, userId: args.userId }
+      );
+
+      if (!groupMembership) continue;
+
+      await ctx.runMutation(
+        internal.functions.communityScoreComputation.upsertCommunityPeopleBatch,
+        {
+          communityId: args.communityId,
+          groupId: group._id,
+          scoredMembers,
+        }
+      );
+    }
   },
 });
 
@@ -672,17 +771,98 @@ export const getAnnouncementGroupMember = internalQuery({
   },
 });
 
+/**
+ * Get all groups in a community.
+ * Used to iterate non-announcement groups for per-group record creation.
+ */
+export const getCommunityGroups = internalQuery({
+  args: { communityId: v.id("communities") },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("groups")
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .collect();
+  },
+});
+
+/**
+ * Get active member user IDs for a group.
+ * Returns only users who have not left (leftAt is undefined).
+ */
+export const getGroupMemberUserIds = internalQuery({
+  args: { groupId: v.id("groups") },
+  handler: async (ctx, args) => {
+    const members = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+      .collect();
+    return members
+      .filter((m) => m.leftAt === undefined)
+      .map((m) => m.userId);
+  },
+});
+
+/**
+ * Get scored data for a list of users from existing communityPeople records.
+ * Looks up any existing record for each user in the community (typically
+ * the announcement group record) and returns the score fields needed for
+ * creating per-group records.
+ */
+export const getScoredDataForUsers = internalQuery({
+  args: {
+    communityId: v.id("communities"),
+    userIds: v.array(v.id("users")),
+  },
+  handler: async (ctx, args) => {
+    const results = [];
+    for (const userId of args.userIds) {
+      // Find ANY existing communityPeople record for this user in this community
+      // (the announcement group record will have the scores)
+      const existing = await ctx.db
+        .query("communityPeople")
+        .withIndex("by_community_user", (q) =>
+          q.eq("communityId", args.communityId).eq("userId", userId)
+        )
+        .first();
+      if (existing) {
+        results.push({
+          userId: existing.userId,
+          firstName: existing.firstName,
+          lastName: existing.lastName,
+          avatarUrl: existing.avatarUrl,
+          email: existing.email,
+          phone: existing.phone,
+          searchText: existing.searchText,
+          score1: existing.score1,
+          score2: existing.score2,
+          score3: existing.score3,
+          alerts: existing.alerts,
+          isSnoozed: existing.isSnoozed,
+          snoozedUntil: existing.snoozedUntil,
+          rawValues: existing.rawValues,
+          lastFollowupAt: existing.lastFollowupAt,
+          lastActiveAt: existing.lastActiveAt,
+          lastAttendedAt: existing.lastAttendedAt,
+          addedAt: existing.addedAt,
+        });
+      }
+    }
+    return results;
+  },
+});
+
 // ============================================================================
 // Cross-Table Sync
 // ============================================================================
 
 /**
- * Sync a community-level field change to all per-group memberFollowupScores rows.
+ * Sync a community-level field change to all per-group memberFollowupScores rows
+ * AND all communityPeople sibling records.
  *
  * When a leader updates status, assigneeIds, or custom fields at the community
- * level, this mutation propagates the change to all memberFollowupScores rows
- * for the same user across all groups in the community. This keeps the old
- * table in sync during the transition period.
+ * level, this mutation propagates the change to:
+ * 1. All memberFollowupScores rows for the same user across all groups (legacy table)
+ * 2. All communityPeople rows for the same user across all groups in the community
  */
 export const syncCommunityFieldToGroups = internalMutation({
   args: {
@@ -712,7 +892,7 @@ export const syncCommunityFieldToGroups = internalMutation({
 
       if (!membership || membership.leftAt) continue;
 
-      // Find their score doc
+      // Find their score doc (legacy table)
       const scoreDoc = await ctx.db
         .query("memberFollowupScores")
         .withIndex("by_groupMember", (q) =>
@@ -720,14 +900,28 @@ export const syncCommunityFieldToGroups = internalMutation({
         )
         .first();
 
-      if (!scoreDoc) continue;
+      if (scoreDoc) {
+        await ctx.db.patch(scoreDoc._id, {
+          [args.field]: args.value,
+          updatedAt: Date.now(),
+        });
+        patched++;
+      }
+    }
 
-      // Patch the field
-      await ctx.db.patch(scoreDoc._id, {
+    // Also sync across all communityPeople sibling records for this user
+    const communityPeopleRows = await ctx.db
+      .query("communityPeople")
+      .withIndex("by_community_user", (q) =>
+        q.eq("communityId", args.communityId).eq("userId", args.userId)
+      )
+      .collect();
+
+    for (const row of communityPeopleRows) {
+      await ctx.db.patch(row._id, {
         [args.field]: args.value,
         updatedAt: Date.now(),
       });
-      patched++;
     }
 
     return { patched };
@@ -790,5 +984,32 @@ export const backfillAllCommunities = internalAction({
     }
 
     return { scheduled: communityIds.length };
+  },
+});
+
+// ============================================================================
+// Event-triggered single member recomputation (convenience wrapper)
+// ============================================================================
+
+/**
+ * Recompute community scores for a single member, given a groupId.
+ * Resolves the communityId from the group doc and delegates to
+ * computeSingleCommunityMember. This avoids every call site needing
+ * to look up the community themselves.
+ */
+export const recomputeForGroupMember = internalMutation({
+  args: {
+    groupId: v.id("groups"),
+    userId: v.id("users"),
+  },
+  handler: async (ctx, args) => {
+    const group = await ctx.db.get(args.groupId);
+    if (!group?.communityId) return;
+
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.communityScoreComputation.computeSingleCommunityMember,
+      { communityId: group.communityId, userId: args.userId }
+    );
   },
 });

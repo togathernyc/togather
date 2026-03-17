@@ -367,6 +367,16 @@ export const update = mutation({
         internal.functions.followupScoreComputation.computeGroupScores,
         { groupId: meeting.groupId }
       );
+
+      // Also refresh community-level scores
+      const meetingGroup = await ctx.db.get(meeting.groupId);
+      if (meetingGroup?.communityId) {
+        await ctx.scheduler.runAfter(
+          0,
+          internal.functions.communityScoreComputation.computeCommunityScores,
+          { communityId: meetingGroup.communityId }
+        );
+      }
     }
 
     // Send event update notification if significant changes were made

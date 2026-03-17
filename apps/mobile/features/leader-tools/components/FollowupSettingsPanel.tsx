@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
   View,
   Text,
@@ -13,21 +13,14 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
-import { useFeatureFlag } from "@hooks/useFeatureFlag";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import {
   SUBTITLE_VARIABLES,
   normalizeSubtitleVariableIds,
 } from "./followupShared";
 import {
-  formatFollowupRefreshTimestamp,
-  getFollowupRefreshButtonLabel,
-  type FollowupRefreshStateSnapshot,
-} from "./followupRefreshState";
-import {
   useAuthenticatedQuery,
   useAuthenticatedMutation,
-  useQuery,
   api,
 } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
@@ -40,56 +33,18 @@ import type { CustomFieldDef } from "./ColumnPickerModal";
 interface FollowupSettingsPanelProps {
   groupId: string;
   crossGroupMode?: boolean;
-  crossGroupColConfig?: { columnOrder: string[]; hiddenColumns: string[] } | null;
-  onCrossGroupColConfigChange?: (config: { columnOrder: string[]; hiddenColumns: string[] }) => void;
+  // Current effective column state from parent
+  currentColumnOrder: string[];
+  currentHiddenColumns: string[];
+  columnLabels: Record<string, string>; // key → display label (from table)
+  // Live change callback — parent updates table immediately
+  onColumnChange: (columnOrder: string[], hiddenColumns: string[]) => void;
   onClose: () => void;
-}
-
-interface VariableInfo {
-  id: string;
-  label: string;
-  description: string;
-  category: string;
-}
-
-interface ScoreVariable {
-  variableId: string;
-  weight: number;
-}
-
-interface ScoreDefinition {
-  id: string;
-  name: string;
-  variables: ScoreVariable[];
-}
-
-interface AlertDefinition {
-  id: string;
-  variableId: string;
-  operator: string;
-  threshold: number;
-  label?: string;
 }
 
 // ============================================================================
 // Constants
 // ============================================================================
-
-const DEFAULT_SCORES: ScoreDefinition[] = [
-  {
-    id: "default_attendance",
-    name: "Attendance",
-    variables: [{ variableId: "attendance_pct", weight: 1 }],
-  },
-  {
-    id: "default_connection",
-    name: "Connection",
-    variables: [
-      { variableId: "attendance_streak", weight: 1 },
-      { variableId: "followup_recency", weight: 1 },
-    ],
-  },
-];
 
 const SLOT_CANDIDATES: Record<string, string[]> = {
   text: ["customText1", "customText2", "customText3", "customText4", "customText5"],
@@ -132,20 +87,19 @@ function normalizeSelectFieldOptions(options: string[]): string[] {
 export function FollowupSettingsPanel({
   groupId,
   crossGroupMode,
-  crossGroupColConfig,
-  onCrossGroupColConfigChange,
+  currentColumnOrder,
+  currentHiddenColumns,
+  columnLabels,
+  onColumnChange,
   onClose,
 }: FollowupSettingsPanelProps) {
   const { primaryColor } = useCommunityTheme();
   const themeColor = primaryColor || DEFAULT_PRIMARY_COLOR;
-  const useSystemScores = useFeatureFlag("system_scores");
 
   // Accordion state — all collapsed by default
   const [displayNameOpen, setDisplayNameOpen] = useState(false);
   const [dataOpen, setDataOpen] = useState(false);
   const [columnsOpen, setColumnsOpen] = useState(false);
-  const [scoresOpen, setScoresOpen] = useState(false);
-  const [alertsOpen, setAlertsOpen] = useState(false);
   const [subtitleOpen, setSubtitleOpen] = useState(false);
 
   // ── Data queries ──
@@ -159,10 +113,6 @@ export function FollowupSettingsPanel({
     api.functions.groups.queries.getById,
     !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip"
   ) as any;
-
-  const availableVariables = useQuery(
-    api.functions.followupScoring.getAvailableVariables
-  ) as VariableInfo[] | undefined;
 
   // ── Mutations ──
 
@@ -209,10 +159,10 @@ export function FollowupSettingsPanel({
       const result = await refreshFollowupScoresMut({
         groupId: groupId as Id<"groups">,
       });
-      if ((result as any)?.alreadyRunning) {
-        setRefreshMessage("Refresh already in progress.");
+      if ((result as any)?.success) {
+        setRefreshMessage("Refresh started. Scores are updating now.");
       } else {
-        setRefreshMessage("Refresh started. Scores and denormalized fields are updating now.");
+        setRefreshMessage("Could not start refresh. Please try again.");
       }
     } catch (err) {
       console.error("[refreshFollowupScores] failed:", err);
@@ -224,140 +174,30 @@ export function FollowupSettingsPanel({
 
   // ── Columns state ──
 
-  const scoreConfigScores = config?.scoreConfigScores ?? [];
   const columnConfig = config?.followupColumnConfig ?? null;
-  const refreshState = (config as any)?.followupRefreshState as FollowupRefreshStateSnapshot;
-  const refreshInProgress = refreshState?.status === "running";
-  const refreshStartedLabel = formatFollowupRefreshTimestamp(refreshState?.startedAt);
-  const refreshCompletedLabel = formatFollowupRefreshTimestamp(refreshState?.completedAt);
   const initialCustomFields: CustomFieldDef[] = (columnConfig?.customFields ?? []) as CustomFieldDef[];
 
-  const [columnOrder, setColumnOrder] = useState<string[]>([]);
-  const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(new Set());
+  // Use props directly for column order and visibility (single source of truth is parent)
+  const hiddenColumnsSet = useMemo(() => new Set(currentHiddenColumns), [currentHiddenColumns]);
   const [customFields, setCustomFields] = useState<CustomFieldDef[]>([]);
   const [showAddField, setShowAddField] = useState(false);
   const [newFieldName, setNewFieldName] = useState("");
   const [newFieldType, setNewFieldType] = useState<"text" | "number" | "boolean" | "dropdown" | "multiselect">("text");
   const [newFieldOptions, setNewFieldOptions] = useState<string[]>([]);
   const [isSavingColumns, setIsSavingColumns] = useState(false);
-  const lastAppliedConfigSignatureRef = useRef<string | null>(null);
 
-  const serverColumnKeys = useMemo(() => {
-    const keys = [
-      "addedAt",
-      "firstName",
-      "lastName",
-      "email",
-      "phone",
-      "zipCode",
-      "dateOfBirth",
-    ];
-    scoreConfigScores.forEach((_, i) => {
-      keys.push(`score${i + 1}`);
-    });
-    keys.push(
-      "assignee",
-      "notes",
-      "status",
-      "lastAttendedAt",
-      "lastFollowupAt",
-      "lastActiveAt",
-      "alerts",
-    );
-    initialCustomFields.forEach((field) => keys.push(field.slot));
-    return keys;
-  }, [scoreConfigScores, initialCustomFields]);
-
-  // Build allColumnsForPicker from config data
-  const allColumnsForPicker = useMemo(() => {
-    const cols: { key: string; label: string }[] = [];
-    if (crossGroupMode) {
-      cols.push({ key: "groupName", label: "Group" });
-    }
-    cols.push(
-      { key: "addedAt", label: "Date Added" },
-      { key: "firstName", label: "First Name" },
-      { key: "lastName", label: "Last Name" },
-      { key: "email", label: "Email" },
-      { key: "phone", label: "Phone" },
-      { key: "zipCode", label: "ZIP Code" },
-      { key: "dateOfBirth", label: "Birthday" },
-    );
-    scoreConfigScores.forEach((sc: { id: string; name: string }, i: number) => {
-      cols.push({ key: `score${i + 1}`, label: sc.name });
-    });
-    cols.push(
-      { key: "assignee", label: "Assignee" },
-      { key: "notes", label: "Notes" },
-      { key: "tasks", label: "Tasks" },
-      { key: "status", label: "Status" },
-      { key: "lastAttendedAt", label: "Last Attended" },
-      { key: "lastFollowupAt", label: "Last Contact" },
-      { key: "lastActiveAt", label: "Date Active" },
-      { key: "alerts", label: "Alerts" },
-    );
-    for (const cf of customFields) {
-      cols.push({ key: cf.slot, label: cf.name });
-    }
-    return cols;
-  }, [crossGroupMode, scoreConfigScores, customFields]);
-
-  const configSignature = useMemo(
-    () => JSON.stringify(columnConfig ?? { columnOrder: [], hiddenColumns: [], customFields: [] }),
-    [columnConfig]
-  );
-
-  // Initialize column state from config. Only resync when server config actually changes.
+  // Initialize custom fields from config (only internal state that matters)
+  const [customFieldsInitialized, setCustomFieldsInitialized] = useState(false);
   useEffect(() => {
-    if (crossGroupMode) return; // handled separately below
-    if (!config) return;
-    if (lastAppliedConfigSignatureRef.current === configSignature) return;
-    const allKeys = serverColumnKeys.filter((k) => !SYSTEM_COLUMNS.has(k));
-    const savedOrder = columnConfig?.columnOrder ?? [];
-    if (savedOrder.length > 0) {
-      const orderSet = new Set(savedOrder);
-      const merged = [...savedOrder.filter((k: string) => allKeys.includes(k))];
-      for (const k of allKeys) {
-        if (!orderSet.has(k)) merged.push(k);
-      }
-      setColumnOrder(merged);
-    } else {
-      setColumnOrder(allKeys);
-    }
-    setHiddenColumns(new Set(columnConfig?.hiddenColumns ?? []));
+    if (customFieldsInitialized || initialCustomFields.length === 0) return;
+    setCustomFieldsInitialized(true);
     setCustomFields(
       initialCustomFields.map((field) => ({
         ...field,
         ...(field.options ? { options: [...field.options] } : {}),
       }))
     );
-    lastAppliedConfigSignatureRef.current = configSignature;
-  }, [crossGroupMode, config, configSignature, serverColumnKeys, columnConfig, initialCustomFields]);
-
-  // Initialize column state for cross-group mode from localStorage-backed prop
-  const crossGroupInitRef = useRef(false);
-  useEffect(() => {
-    if (!crossGroupMode) return;
-    if (crossGroupInitRef.current) return;
-    crossGroupInitRef.current = true;
-    const defaultKeys = [
-      "groupName", "addedAt", "firstName", "lastName", "email", "phone",
-      "zipCode", "dateOfBirth", "assignee", "notes", "tasks", "status",
-      "lastAttendedAt", "lastFollowupAt", "lastActiveAt", "alerts",
-    ];
-    const savedOrder = crossGroupColConfig?.columnOrder ?? [];
-    if (savedOrder.length > 0) {
-      const orderSet = new Set(savedOrder);
-      const merged = [...savedOrder.filter((k) => defaultKeys.includes(k))];
-      for (const k of defaultKeys) {
-        if (!orderSet.has(k)) merged.push(k);
-      }
-      setColumnOrder(merged);
-    } else {
-      setColumnOrder(defaultKeys);
-    }
-    setHiddenColumns(new Set(crossGroupColConfig?.hiddenColumns ?? []));
-  }, [crossGroupMode, crossGroupColConfig]);
+  }, [initialCustomFields, customFieldsInitialized]);
 
   const usedSlots = useMemo(
     () => new Set(customFields.map((f) => f.slot)),
@@ -365,31 +205,28 @@ export function FollowupSettingsPanel({
   );
 
   const labelMap = useMemo(() => {
-    const map = new Map(allColumnsForPicker.map((c) => [c.key, c.label]));
+    const map = new Map(Object.entries(columnLabels));
+    // Custom fields added in settings override parent labels
     for (const f of customFields) {
       map.set(f.slot, f.name);
     }
     return map;
-  }, [allColumnsForPicker, customFields]);
+  }, [columnLabels, customFields]);
 
   const moveColumn = useCallback((idx: number, direction: -1 | 1) => {
-    setColumnOrder((prev) => {
-      const newOrder = [...prev];
-      const targetIdx = idx + direction;
-      if (targetIdx < 0 || targetIdx >= newOrder.length) return prev;
-      [newOrder[idx], newOrder[targetIdx]] = [newOrder[targetIdx], newOrder[idx]];
-      return newOrder;
-    });
-  }, []);
+    const newOrder = [...currentColumnOrder];
+    const targetIdx = idx + direction;
+    if (targetIdx < 0 || targetIdx >= newOrder.length) return;
+    [newOrder[idx], newOrder[targetIdx]] = [newOrder[targetIdx], newOrder[idx]];
+    onColumnChange(newOrder, currentHiddenColumns);
+  }, [currentColumnOrder, currentHiddenColumns, onColumnChange]);
 
   const toggleVisibility = useCallback((key: string) => {
-    setHiddenColumns((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }, []);
+    const nextHidden = new Set(currentHiddenColumns);
+    if (nextHidden.has(key)) nextHidden.delete(key);
+    else nextHidden.add(key);
+    onColumnChange(currentColumnOrder, [...nextHidden]);
+  }, [currentColumnOrder, currentHiddenColumns, onColumnChange]);
 
   const handleAddField = useCallback(() => {
     if (!newFieldName.trim()) {
@@ -418,25 +255,25 @@ export function FollowupSettingsPanel({
     };
 
     setCustomFields((prev) => [...prev, newField]);
-    setColumnOrder((prev) => (prev.includes(slot) ? prev : [...prev, slot]));
+    const newOrder = currentColumnOrder.includes(slot)
+      ? currentColumnOrder
+      : [...currentColumnOrder, slot];
+    onColumnChange(newOrder, currentHiddenColumns);
     setNewFieldName("");
     setNewFieldType("text");
     setNewFieldOptions([]);
     setShowAddField(false);
-  }, [newFieldName, newFieldType, newFieldOptions, usedSlots]);
+  }, [newFieldName, newFieldType, newFieldOptions, usedSlots, currentColumnOrder, currentHiddenColumns, onColumnChange]);
 
   const handleDeleteField = useCallback((idx: number) => {
     setCustomFields((prev) => {
       const field = prev[idx];
-      setColumnOrder((order) => order.filter((k) => k !== field.slot));
-      setHiddenColumns((hidden) => {
-        const next = new Set(hidden);
-        next.delete(field.slot);
-        return next;
-      });
+      const newOrder = currentColumnOrder.filter((k) => k !== field.slot);
+      const newHidden = currentHiddenColumns.filter((k) => k !== field.slot);
+      onColumnChange(newOrder, newHidden);
       return prev.filter((_, i) => i !== idx);
     });
-  }, []);
+  }, [currentColumnOrder, currentHiddenColumns, onColumnChange]);
 
   const canAddType = useCallback(
     (type: string): boolean => getNextAvailableSlot(type, usedSlots) !== null,
@@ -465,18 +302,11 @@ export function FollowupSettingsPanel({
     return slotsByPrefix;
   }, [customFields]);
 
-  const handleSaveColumns = useCallback(async () => {
-    if (crossGroupMode) {
-      // In cross-group mode, save to localStorage via callback
-      onCrossGroupColConfigChange?.({
-        columnOrder,
-        hiddenColumns: [...hiddenColumns],
-      });
-      Alert.alert("Columns saved", "Column preferences were saved.");
-      return;
-    }
+  // Save custom fields only (structural change, group-level)
+  const handleSaveCustomFields = useCallback(async () => {
+    if (crossGroupMode) return;
     if (showAddField) {
-      Alert.alert("Finish adding field", "Click Add Field or Cancel before saving columns.");
+      Alert.alert("Finish adding field", "Click Add Field or Cancel before saving.");
       return;
     }
     setIsSavingColumns(true);
@@ -484,16 +314,16 @@ export function FollowupSettingsPanel({
       await saveColumnConfigMut({
         groupId: groupId as Id<"groups">,
         followupColumnConfig: {
-          columnOrder,
-          hiddenColumns: [...hiddenColumns],
+          columnOrder: currentColumnOrder,
+          hiddenColumns: currentHiddenColumns,
           customFields,
         },
       });
-      Alert.alert("Columns saved", "People columns were saved.");
+      Alert.alert("Custom fields saved", "Custom field changes were saved.");
     } catch (err) {
       console.error("[saveFollowupColumnConfig] failed:", err);
       Alert.alert(
-        "Could not save columns",
+        "Could not save",
         err instanceof Error ? err.message : "Please try again."
       );
     } finally {
@@ -501,220 +331,25 @@ export function FollowupSettingsPanel({
     }
   }, [
     crossGroupMode,
-    onCrossGroupColConfigChange,
     groupId,
-    columnOrder,
-    hiddenColumns,
+    currentColumnOrder,
+    currentHiddenColumns,
     customFields,
     saveColumnConfigMut,
     showAddField,
   ]);
 
-  // ── Scores state ──
+  // ── Subtitle state ──
 
-  const [scores, setScores] = useState<ScoreDefinition[]>(DEFAULT_SCORES);
-  const [alerts, setAlerts] = useState<AlertDefinition[]>([]);
   const [subtitleVars, setSubtitleVars] = useState<string[]>([]);
-  const [hasScoreChanges, setHasScoreChanges] = useState(false);
-  const [savingScores, setSavingScores] = useState(false);
-  const [showSavedMessage, setShowSavedMessage] = useState(false);
+  const [hasSubtitleChanges, setHasSubtitleChanges] = useState(false);
+  const [savingSubtitle, setSavingSubtitle] = useState(false);
 
-  // Inline variable picker state
-  const [addVariableTarget, setAddVariableTarget] = useState<number | null>(null);
-  const [alertVariablePickerIndex, setAlertVariablePickerIndex] = useState<number | null>(null);
-
-  // Initialize scores from group data
+  // Initialize subtitle from group data
   useEffect(() => {
-    if (groupData?.followupScoreConfig?.scores) {
-      setScores(groupData.followupScoreConfig.scores);
-    }
     const savedSubtitle = groupData?.followupScoreConfig?.memberSubtitle ?? "";
     setSubtitleVars(normalizeSubtitleVariableIds(savedSubtitle));
-    setAlerts(groupData?.followupScoreConfig?.alerts ?? []);
   }, [groupData?.followupScoreConfig]);
-
-  const variableMap = useMemo(() => {
-    if (!availableVariables) return new Map<string, VariableInfo>();
-    return new Map(availableVariables.map((v) => [v.id, v]));
-  }, [availableVariables]);
-
-  const variablesByCategory = useMemo(() => {
-    if (!availableVariables) return new Map<string, VariableInfo[]>();
-    const map = new Map<string, VariableInfo[]>();
-    for (const v of availableVariables) {
-      const list = map.get(v.category) || [];
-      list.push(v);
-      map.set(v.category, list);
-    }
-    return map;
-  }, [availableVariables]);
-
-  const handleScoreNameChange = useCallback((scoreIndex: number, name: string) => {
-    const trimmed = name.slice(0, 12);
-    setScores((prev) => {
-      const updated = [...prev];
-      updated[scoreIndex] = { ...updated[scoreIndex], name: trimmed };
-      return updated;
-    });
-    setHasScoreChanges(true);
-  }, []);
-
-  const handleWeightChange = useCallback((scoreIndex: number, varIndex: number, delta: number) => {
-    setScores((prev) => {
-      const updated = [...prev];
-      const score = { ...updated[scoreIndex] };
-      const variables = [...score.variables];
-      const newWeight = Math.max(1, Math.min(5, variables[varIndex].weight + delta));
-      variables[varIndex] = { ...variables[varIndex], weight: newWeight };
-      score.variables = variables;
-      updated[scoreIndex] = score;
-      return updated;
-    });
-    setHasScoreChanges(true);
-  }, []);
-
-  const handleRemoveVariable = useCallback((scoreIndex: number, varIndex: number) => {
-    setScores((prev) => {
-      const updated = [...prev];
-      const score = { ...updated[scoreIndex] };
-      score.variables = score.variables.filter((_, i) => i !== varIndex);
-      updated[scoreIndex] = score;
-      return updated;
-    });
-    setHasScoreChanges(true);
-  }, []);
-
-  const handleAddVariable = useCallback((scoreIndex: number, variableId: string) => {
-    setScores((prev) => {
-      const updated = [...prev];
-      const score = { ...updated[scoreIndex] };
-      if (score.variables.some((v) => v.variableId === variableId)) return prev;
-      score.variables = [...score.variables, { variableId, weight: 1 }];
-      updated[scoreIndex] = score;
-      return updated;
-    });
-    setHasScoreChanges(true);
-    setAddVariableTarget(null);
-  }, []);
-
-  const handleAddScore = useCallback(() => {
-    setScores((prev) => {
-      if (prev.length >= 4) return prev;
-      const newId = `custom_score_${Date.now()}`;
-      return [
-        ...prev,
-        { id: newId, name: `Score ${prev.length + 1}`, variables: [{ variableId: "attendance_pct", weight: 1 }] },
-      ];
-    });
-    setHasScoreChanges(true);
-  }, []);
-
-  const handleRemoveScore = useCallback((scoreIndex: number) => {
-    setScores((prev) => {
-      if (prev.length <= 1) return prev;
-      return prev.filter((_, i) => i !== scoreIndex);
-    });
-    setHasScoreChanges(true);
-  }, []);
-
-  const getUsedVariableIds = useCallback(
-    (scoreIndex: number) => new Set(scores[scoreIndex]?.variables.map((v) => v.variableId) ?? []),
-    [scores]
-  );
-
-  // ── Alert handlers ──
-
-  const handleAddAlert = useCallback(() => {
-    const firstVar = availableVariables?.[0]?.id ?? "attendance_pct";
-    setAlerts((prev) => [
-      ...prev,
-      { id: `alert_${Date.now()}`, variableId: firstVar, operator: "above", threshold: 0 },
-    ]);
-    setHasScoreChanges(true);
-  }, [availableVariables]);
-
-  const handleRemoveAlert = useCallback((index: number) => {
-    setAlerts((prev) => prev.filter((_, i) => i !== index));
-    setHasScoreChanges(true);
-  }, []);
-
-  const handleAlertVariableChange = useCallback((index: number, variableId: string) => {
-    setAlerts((prev) => {
-      const updated = [...prev];
-      updated[index] = { ...updated[index], variableId };
-      return updated;
-    });
-    setHasScoreChanges(true);
-    setAlertVariablePickerIndex(null);
-  }, []);
-
-  const handleAlertOperatorToggle = useCallback((index: number) => {
-    setAlerts((prev) => {
-      const updated = [...prev];
-      updated[index] = {
-        ...updated[index],
-        operator: updated[index].operator === "above" ? "below" : "above",
-      };
-      return updated;
-    });
-    setHasScoreChanges(true);
-  }, []);
-
-  const handleAlertThresholdChange = useCallback((index: number, text: string) => {
-    const num = parseFloat(text);
-    setAlerts((prev) => {
-      const updated = [...prev];
-      updated[index] = { ...updated[index], threshold: isNaN(num) ? 0 : num };
-      return updated;
-    });
-    setHasScoreChanges(true);
-  }, []);
-
-  const handleAlertLabelChange = useCallback((index: number, label: string) => {
-    setAlerts((prev) => {
-      const updated = [...prev];
-      updated[index] = { ...updated[index], label: label || undefined };
-      return updated;
-    });
-    setHasScoreChanges(true);
-  }, []);
-
-  const handleResetToDefaults = useCallback(() => {
-    setScores(DEFAULT_SCORES);
-    setAlerts([]);
-    setSubtitleVars([]);
-    setHasScoreChanges(true);
-  }, []);
-
-  const handleSaveScores = useCallback(async () => {
-    setSavingScores(true);
-    try {
-      const isDefault =
-        JSON.stringify(scores) === JSON.stringify(DEFAULT_SCORES) &&
-        subtitleVars.length === 0 &&
-        alerts.length === 0;
-
-      await updateScoreConfig({
-        groupId: groupId as Id<"groups">,
-        followupScoreConfig: isDefault
-          ? undefined
-          : {
-              scores,
-              memberSubtitle: subtitleVars.length > 0 ? subtitleVars.join(",") : undefined,
-              alerts: alerts.length > 0 ? alerts : undefined,
-            },
-      });
-      setHasScoreChanges(false);
-      setShowSavedMessage(true);
-      setTimeout(() => setShowSavedMessage(false), 8000);
-    } catch (err) {
-      console.error("[updateFollowupScoreConfig] failed:", err);
-    } finally {
-      setSavingScores(false);
-    }
-  }, [groupId, scores, alerts, subtitleVars, updateScoreConfig]);
-
-  // ── Subtitle handler ──
 
   const handleSubtitleToggle = useCallback((varId: string) => {
     setSubtitleVars((prev) => {
@@ -724,12 +359,29 @@ export function FollowupSettingsPanel({
       if (prev.length >= 2) return prev;
       return [...prev, varId];
     });
-    setHasScoreChanges(true);
+    setHasSubtitleChanges(true);
   }, []);
+
+  const handleSaveSubtitle = useCallback(async () => {
+    setSavingSubtitle(true);
+    try {
+      await updateScoreConfig({
+        groupId: groupId as Id<"groups">,
+        followupScoreConfig: subtitleVars.length > 0
+          ? { scores: groupData?.followupScoreConfig?.scores ?? [], memberSubtitle: subtitleVars.join(",") }
+          : undefined,
+      });
+      setHasSubtitleChanges(false);
+    } catch (err) {
+      console.error("[updateFollowupScoreConfig] failed:", err);
+    } finally {
+      setSavingSubtitle(false);
+    }
+  }, [groupId, subtitleVars, groupData?.followupScoreConfig?.scores, updateScoreConfig]);
 
   // ── Loading ──
 
-  if (!crossGroupMode && (!config || !groupData || !availableVariables)) {
+  if (!crossGroupMode && (!config || !groupData)) {
     return (
       <View style={styles.container}>
         <View style={styles.header}>
@@ -762,78 +414,6 @@ export function FollowupSettingsPanel({
       <Text style={styles.sectionHeaderText}>{title}</Text>
       {extra}
     </TouchableOpacity>
-  );
-
-  const renderInlineVariablePicker = (
-    scoreIndex: number,
-    onSelect: (variableId: string) => void,
-    onClose: () => void,
-  ) => {
-    const usedIds = getUsedVariableIds(scoreIndex);
-    return (
-      <View style={styles.inlinePicker}>
-        <View style={styles.inlinePickerHeader}>
-          <Text style={styles.inlinePickerTitle}>Add Variable</Text>
-          <TouchableOpacity onPress={onClose}>
-            <Ionicons name="close" size={18} color="#6B7280" />
-          </TouchableOpacity>
-        </View>
-        <ScrollView style={styles.inlinePickerScroll} nestedScrollEnabled bounces={false}>
-          {Array.from(variablesByCategory.entries()).map(([category, variables]) => (
-            <View key={category}>
-              <Text style={styles.categoryHeader}>
-                {category.charAt(0).toUpperCase() + category.slice(1)}
-              </Text>
-              {variables.map((v) => {
-                const isUsed = usedIds.has(v.id);
-                return (
-                  <Pressable
-                    key={v.id}
-                    style={[styles.pickerRow, isUsed && styles.pickerRowDisabled]}
-                    onPress={() => !isUsed && onSelect(v.id)}
-                    disabled={isUsed}
-                  >
-                    <Text style={[styles.pickerLabel, isUsed && styles.pickerLabelDisabled]}>
-                      {v.label}
-                    </Text>
-                    <Text style={styles.pickerDesc}>{v.description}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          ))}
-        </ScrollView>
-      </View>
-    );
-  };
-
-  const renderAlertVariablePicker = (
-    onSelect: (variableId: string) => void,
-    onClose: () => void,
-  ) => (
-    <View style={styles.inlinePicker}>
-      <View style={styles.inlinePickerHeader}>
-        <Text style={styles.inlinePickerTitle}>Select Variable</Text>
-        <TouchableOpacity onPress={onClose}>
-          <Ionicons name="close" size={18} color="#6B7280" />
-        </TouchableOpacity>
-      </View>
-      <ScrollView style={styles.inlinePickerScroll} nestedScrollEnabled bounces={false}>
-        {Array.from(variablesByCategory.entries()).map(([category, variables]) => (
-          <View key={category}>
-            <Text style={styles.categoryHeader}>
-              {category.charAt(0).toUpperCase() + category.slice(1)}
-            </Text>
-            {variables.map((v) => (
-              <Pressable key={v.id} style={styles.pickerRow} onPress={() => onSelect(v.id)}>
-                <Text style={styles.pickerLabel}>{v.label}</Text>
-                <Text style={styles.pickerDesc}>{v.description}</Text>
-              </Pressable>
-            ))}
-          </View>
-        ))}
-      </ScrollView>
-    </View>
   );
 
   return (
@@ -878,40 +458,23 @@ export function FollowupSettingsPanel({
               style={[
                 styles.saveButton,
                 { backgroundColor: themeColor },
-                (isRefreshingScores || refreshInProgress) && styles.btnDisabled,
+                isRefreshingScores && styles.btnDisabled,
               ]}
-              disabled={isRefreshingScores || refreshInProgress}
+              disabled={isRefreshingScores}
             >
-              {isRefreshingScores || refreshInProgress ? (
+              {isRefreshingScores ? (
                 <View style={styles.refreshButtonBusy}>
                   <ActivityIndicator size="small" color="#fff" />
-                  <Text style={styles.saveButtonText}>
-                    {getFollowupRefreshButtonLabel(isRefreshingScores, refreshInProgress)}
-                  </Text>
+                  <Text style={styles.saveButtonText}>Starting Refresh...</Text>
                 </View>
               ) : (
                 <Text style={styles.saveButtonText}>Refresh People Table Now</Text>
               )}
             </TouchableOpacity>
             <Text style={styles.hintText}>
-              Rebuilds this group's denormalized people rows immediately.
+              Recalculates all scores for this community.
             </Text>
             {refreshMessage && <Text style={styles.hintText}>{refreshMessage}</Text>}
-            {refreshInProgress && (
-              <Text style={styles.hintText}>
-                {refreshStartedLabel
-                  ? `A refresh is currently underway (started ${refreshStartedLabel}).`
-                  : "A refresh is currently underway."}
-              </Text>
-            )}
-            {refreshState?.status === "idle" && refreshCompletedLabel && (
-              <Text style={styles.hintText}>Last refresh completed {refreshCompletedLabel}.</Text>
-            )}
-            {refreshState?.status === "failed" && (
-              <Text style={styles.hintError}>
-                Refresh failed{refreshState.error ? `: ${refreshState.error}` : "."}
-              </Text>
-            )}
           </View>
         )}
 
@@ -921,9 +484,9 @@ export function FollowupSettingsPanel({
           <View style={styles.sectionBody}>
             {/* Column order & visibility */}
             <View style={styles.columnList}>
-              {columnOrder.map((key, idx) => {
+              {currentColumnOrder.map((key, idx) => {
                 const label = labelMap.get(key) ?? key;
-                const isHidden = hiddenColumns.has(key);
+                const isHidden = hiddenColumnsSet.has(key);
                 return (
                   <View key={key} style={styles.columnRow}>
                     <View style={styles.columnArrows}>
@@ -940,13 +503,13 @@ export function FollowupSettingsPanel({
                       </TouchableOpacity>
                       <TouchableOpacity
                         onPress={() => moveColumn(idx, 1)}
-                        disabled={idx === columnOrder.length - 1}
+                        disabled={idx === currentColumnOrder.length - 1}
                         style={styles.arrowBtn}
                       >
                         <Ionicons
                           name="chevron-down"
                           size={14}
-                          color={idx === columnOrder.length - 1 ? "#D1D5DB" : "#6B7280"}
+                          color={idx === currentColumnOrder.length - 1 ? "#D1D5DB" : "#6B7280"}
                         />
                       </TouchableOpacity>
                     </View>
@@ -970,11 +533,9 @@ export function FollowupSettingsPanel({
               <>
                 <View style={styles.subsectionDivider} />
                 <Text style={styles.subsectionTitle}>Custom Fields</Text>
-                {useSystemScores && (
-                  <Text style={styles.noteText}>
-                    Custom fields are shared across all groups in your community.
-                  </Text>
-                )}
+                <Text style={styles.noteText}>
+                  Custom fields are shared across all groups in your community.
+                </Text>
 
                 {/* Capacity indicators */}
                 <View style={styles.capacityRow}>
@@ -1122,304 +683,33 @@ export function FollowupSettingsPanel({
               </>
             )}
 
-            {/* Save columns button */}
-            <TouchableOpacity
-              onPress={handleSaveColumns}
-              style={[
-                styles.saveButton,
-                { backgroundColor: themeColor },
-                (isSavingColumns || showAddField) && styles.btnDisabled,
-              ]}
-              disabled={isSavingColumns || showAddField}
-            >
-              {isSavingColumns ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <Text style={styles.saveButtonText}>Save Columns</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {/* ── Section 4: Scores ── */}
-        {!crossGroupMode && renderSectionHeader("Scores", scoresOpen, () => setScoresOpen((p) => !p))}
-        {!crossGroupMode && scoresOpen && (
-          <View style={styles.sectionBody}>
-            {useSystemScores ? (
-              /* Read-only system scores info */
-              <>
-                <Text style={styles.hintText}>
-                  Scores are now computed automatically at the community level.
-                </Text>
-                <View style={styles.scoreInfoList}>
-                  <View style={styles.scoreInfoItem}>
-                    <Text style={styles.scoreInfoName}>Service</Text>
-                    <Text style={styles.scoreInfoDesc}>PCO serving frequency (past 2 months)</Text>
-                  </View>
-                  <View style={styles.scoreInfoItem}>
-                    <Text style={styles.scoreInfoName}>Attendance</Text>
-                    <Text style={styles.scoreInfoDesc}>Cross-group attendance percentage</Text>
-                  </View>
-                  <View style={styles.scoreInfoItem}>
-                    <Text style={styles.scoreInfoName}>Togather</Text>
-                    <Text style={styles.scoreInfoDesc}>Composite engagement score</Text>
-                  </View>
-                </View>
-              </>
-            ) : (
-              /* Existing editable score config UI */
-              <>
-                {scores.map((score, scoreIndex) => (
-                  <View key={score.id} style={styles.scoreCard}>
-                    {/* Score name */}
-                    <View style={styles.scoreNameRow}>
-                      <Text style={styles.scoreIndexLabel}>Score {scoreIndex + 1}</Text>
-                      <View style={styles.scoreNameInputContainer}>
-                        <TextInput
-                          style={[
-                            styles.scoreNameInput,
-                            Platform.OS === "web" ? ({ outlineStyle: "none" } as any) : {},
-                          ]}
-                          value={score.name}
-                          onChangeText={(text) => handleScoreNameChange(scoreIndex, text)}
-                          maxLength={12}
-                          placeholder="Score name"
-                          placeholderTextColor="#9CA3AF"
-                        />
-                        <Text style={styles.charCount}>{score.name.length}/12</Text>
-                      </View>
-                      {scores.length > 1 && (
-                        <TouchableOpacity
-                          style={styles.removeScoreBtn}
-                          onPress={() => handleRemoveScore(scoreIndex)}
-                        >
-                          <Ionicons name="trash-outline" size={16} color="#EF4444" />
-                        </TouchableOpacity>
-                      )}
-                    </View>
-
-                    {/* Variables */}
-                    {score.variables.map((variable, varIndex) => {
-                      const info = variableMap.get(variable.variableId);
-                      return (
-                        <View key={variable.variableId} style={styles.variableRow}>
-                          <View style={styles.variableInfo}>
-                            <Text style={styles.variableLabel} numberOfLines={1}>
-                              {info?.label ?? variable.variableId}
-                            </Text>
-                            <Text style={styles.variableDesc} numberOfLines={1}>
-                              {info?.description ?? ""}
-                            </Text>
-                          </View>
-                          <View style={styles.weightControl}>
-                            <TouchableOpacity
-                              style={styles.weightBtn}
-                              onPress={() => handleWeightChange(scoreIndex, varIndex, -1)}
-                              disabled={variable.weight <= 1}
-                            >
-                              <Ionicons
-                                name="remove"
-                                size={14}
-                                color={variable.weight <= 1 ? "#D1D5DB" : themeColor}
-                              />
-                            </TouchableOpacity>
-                            <Text style={styles.weightValue}>{variable.weight}</Text>
-                            <TouchableOpacity
-                              style={styles.weightBtn}
-                              onPress={() => handleWeightChange(scoreIndex, varIndex, 1)}
-                              disabled={variable.weight >= 5}
-                            >
-                              <Ionicons
-                                name="add"
-                                size={14}
-                                color={variable.weight >= 5 ? "#D1D5DB" : themeColor}
-                              />
-                            </TouchableOpacity>
-                          </View>
-                          {score.variables.length > 1 && (
-                            <TouchableOpacity
-                              style={styles.removeVarBtn}
-                              onPress={() => handleRemoveVariable(scoreIndex, varIndex)}
-                            >
-                              <Ionicons name="close-circle" size={18} color="#EF4444" />
-                            </TouchableOpacity>
-                          )}
-                        </View>
-                      );
-                    })}
-
-                    {/* Add variable */}
-                    {addVariableTarget === scoreIndex ? (
-                      renderInlineVariablePicker(
-                        scoreIndex,
-                        (variableId) => handleAddVariable(scoreIndex, variableId),
-                        () => setAddVariableTarget(null),
-                      )
-                    ) : (
-                      <TouchableOpacity
-                        style={styles.addVariableBtn}
-                        onPress={() => setAddVariableTarget(scoreIndex)}
-                      >
-                        <Ionicons name="add-circle-outline" size={14} color={themeColor} />
-                        <Text style={[styles.addVariableBtnText, { color: themeColor }]}>Add Variable</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                ))}
-
-                {/* Add score */}
-                {scores.length < 4 && (
-                  <TouchableOpacity style={styles.addScoreBtn} onPress={handleAddScore}>
-                    <Ionicons name="add-circle-outline" size={16} color={themeColor} />
-                    <Text style={[styles.addScoreBtnText, { color: themeColor }]}>Add Score</Text>
-                  </TouchableOpacity>
+            {/* Save custom fields button (only when custom fields exist or were modified) */}
+            {!crossGroupMode && customFields.length > 0 && (
+              <TouchableOpacity
+                onPress={handleSaveCustomFields}
+                style={[
+                  styles.saveButton,
+                  { backgroundColor: themeColor },
+                  (isSavingColumns || showAddField) && styles.btnDisabled,
+                ]}
+                disabled={isSavingColumns || showAddField}
+              >
+                {isSavingColumns ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.saveButtonText}>Save Custom Fields</Text>
                 )}
-
-                {/* Reset to defaults */}
-                <TouchableOpacity style={styles.resetBtn} onPress={handleResetToDefaults}>
-                  <Ionicons name="refresh-outline" size={14} color="#6B7280" />
-                  <Text style={styles.resetBtnText}>Reset to Defaults</Text>
-                </TouchableOpacity>
-
-                {/* Save scores button */}
-                {hasScoreChanges && (
-                  <TouchableOpacity
-                    onPress={handleSaveScores}
-                    style={[styles.saveButton, { backgroundColor: themeColor }, savingScores && styles.btnDisabled]}
-                    disabled={savingScores}
-                  >
-                    {savingScores ? (
-                      <ActivityIndicator size="small" color="#fff" />
-                    ) : (
-                      <Text style={styles.saveButtonText}>Save Scores & Alerts</Text>
-                    )}
-                  </TouchableOpacity>
-                )}
-                {showSavedMessage && (
-                  <Text style={styles.savedMessage}>
-                    Saved! Scores are recomputing in the background — this may take a few minutes for large groups.
-                  </Text>
-                )}
-              </>
+              </TouchableOpacity>
             )}
-          </View>
-        )}
 
-        {/* ── Section 5: Alerts (hidden when system scores are active) ── */}
-        {!crossGroupMode && !useSystemScores && renderSectionHeader("Alerts", alertsOpen, () => setAlertsOpen((p) => !p))}
-        {!crossGroupMode && !useSystemScores && alertsOpen && (
-          <View style={styles.sectionBody}>
+            {/* Hint text about live preview */}
             <Text style={styles.hintText}>
-              Flag members when a variable exceeds a threshold.
-            </Text>
-
-            {alerts.map((alert, index) => {
-              const varInfo = variableMap.get(alert.variableId);
-              return (
-                <View key={alert.id} style={styles.alertCard}>
-                  {/* Variable picker */}
-                  {alertVariablePickerIndex === index ? (
-                    renderAlertVariablePicker(
-                      (variableId) => handleAlertVariableChange(index, variableId),
-                      () => setAlertVariablePickerIndex(null),
-                    )
-                  ) : (
-                    <Pressable
-                      style={styles.alertVariablePicker}
-                      onPress={() => setAlertVariablePickerIndex(index)}
-                    >
-                      <Text style={styles.alertVariableText} numberOfLines={1}>
-                        {varInfo?.label ?? alert.variableId}
-                      </Text>
-                      <Ionicons name="chevron-down" size={12} color="#6B7280" />
-                    </Pressable>
-                  )}
-
-                  {/* Controls row */}
-                  <View style={styles.alertControlsRow}>
-                    {/* Direction toggle */}
-                    <View style={styles.alertDirectionToggle}>
-                      <Pressable
-                        style={[
-                          styles.alertDirectionBtn,
-                          alert.operator === "above" && { backgroundColor: themeColor },
-                        ]}
-                        onPress={() => alert.operator !== "above" && handleAlertOperatorToggle(index)}
-                      >
-                        <Text
-                          style={[
-                            styles.alertDirectionText,
-                            alert.operator === "above" && styles.alertDirectionTextActive,
-                          ]}
-                        >
-                          Above
-                        </Text>
-                      </Pressable>
-                      <Pressable
-                        style={[
-                          styles.alertDirectionBtn,
-                          alert.operator === "below" && { backgroundColor: themeColor },
-                        ]}
-                        onPress={() => alert.operator !== "below" && handleAlertOperatorToggle(index)}
-                      >
-                        <Text
-                          style={[
-                            styles.alertDirectionText,
-                            alert.operator === "below" && styles.alertDirectionTextActive,
-                          ]}
-                        >
-                          Below
-                        </Text>
-                      </Pressable>
-                    </View>
-
-                    {/* Threshold */}
-                    <TextInput
-                      style={[
-                        styles.alertThresholdInput,
-                        Platform.OS === "web" ? ({ outlineStyle: "none" } as any) : {},
-                      ]}
-                      value={alert.threshold === 0 ? "" : String(alert.threshold)}
-                      onChangeText={(text) => handleAlertThresholdChange(index, text)}
-                      keyboardType="numeric"
-                      placeholder="0"
-                      placeholderTextColor="#D1D5DB"
-                    />
-
-                    {/* Delete */}
-                    <TouchableOpacity style={styles.alertDeleteBtn} onPress={() => handleRemoveAlert(index)}>
-                      <Ionicons name="trash-outline" size={16} color="#EF4444" />
-                    </TouchableOpacity>
-                  </View>
-
-                  {/* Label input */}
-                  <TextInput
-                    style={[
-                      styles.alertLabelInput,
-                      Platform.OS === "web" ? ({ outlineStyle: "none" } as any) : {},
-                    ]}
-                    value={alert.label ?? ""}
-                    onChangeText={(text) => handleAlertLabelChange(index, text)}
-                    placeholder={`${varInfo?.label ?? alert.variableId} ${alert.operator === "above" ? "high" : "low"}`}
-                    placeholderTextColor="#D1D5DB"
-                    maxLength={30}
-                  />
-                </View>
-              );
-            })}
-
-            <TouchableOpacity style={styles.addAlertBtn} onPress={handleAddAlert}>
-              <Ionicons name="add-circle-outline" size={14} color={themeColor} />
-              <Text style={[styles.addAlertBtnText, { color: themeColor }]}>Add Alert</Text>
-            </TouchableOpacity>
-
-            <Text style={styles.hintText}>
-              Alerts save together with Scores. Use the Save button in the Scores section.
+              Changes preview live. Save as a view to keep them.
             </Text>
           </View>
         )}
 
-        {/* ── Section 6: Member Card Subtitle (hidden in cross-group mode) ── */}
+        {/* ── Section 4: Member Card Subtitle (hidden in cross-group mode) ── */}
         {!crossGroupMode && renderSectionHeader(
           "Member Card Subtitle",
           subtitleOpen,
@@ -1471,9 +761,19 @@ export function FollowupSettingsPanel({
             {subtitleVars.length >= 2 && (
               <Text style={styles.hintText}>Maximum of 2 selected</Text>
             )}
-            <Text style={[styles.hintText, { marginTop: 8 }]}>
-              Subtitle saves together with Scores. Use the Save button in the Scores section.
-            </Text>
+            {hasSubtitleChanges && (
+              <TouchableOpacity
+                onPress={handleSaveSubtitle}
+                style={[styles.saveButton, { backgroundColor: themeColor }, savingSubtitle && styles.btnDisabled]}
+                disabled={savingSubtitle}
+              >
+                {savingSubtitle ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.saveButtonText}>Save Subtitle</Text>
+                )}
+              </TouchableOpacity>
+            )}
           </View>
         )}
       </ScrollView>
@@ -1816,319 +1116,11 @@ const styles = StyleSheet.create({
     color: "#B91C1C",
     lineHeight: 15,
   },
-  savedMessage: {
-    fontSize: 12,
-    color: "#6B7280",
-    marginTop: 8,
-    fontStyle: "italic" as const,
-  },
   noteText: {
     fontSize: 11,
     color: "#6B7280",
     fontStyle: "italic" as const,
     lineHeight: 15,
-  },
-
-  // System scores read-only info
-  scoreInfoList: {
-    marginTop: 8,
-    gap: 8,
-  },
-  scoreInfoItem: {
-    flexDirection: "row" as const,
-    justifyContent: "space-between" as const,
-    alignItems: "center" as const,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    backgroundColor: "rgba(0,0,0,0.03)",
-    borderRadius: 8,
-  },
-  scoreInfoName: {
-    fontSize: 14,
-    fontWeight: "600" as const,
-  },
-  scoreInfoDesc: {
-    fontSize: 12,
-    color: "#666",
-    flex: 1,
-    marginLeft: 12,
-    textAlign: "right" as const,
-  },
-
-  // Scores section
-  scoreCard: {
-    backgroundColor: "#F9FAFB",
-    borderRadius: 8,
-    padding: 10,
-    gap: 6,
-    borderWidth: 1,
-    borderColor: "#F3F4F6",
-  },
-  scoreNameRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  scoreIndexLabel: {
-    fontSize: 11,
-    fontWeight: "600" as const,
-    color: "#6B7280",
-  },
-  scoreNameInputContainer: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#D1D5DB",
-    borderRadius: 5,
-    paddingHorizontal: 8,
-    backgroundColor: "#fff",
-  },
-  scoreNameInput: {
-    flex: 1,
-    fontSize: 13,
-    fontWeight: "600" as const,
-    paddingVertical: 5,
-    color: "#374151",
-  },
-  charCount: {
-    fontSize: 10,
-    color: "#9CA3AF",
-  },
-  removeScoreBtn: {
-    padding: 4,
-  },
-
-  // Variable rows
-  variableRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 6,
-    borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
-  },
-  variableInfo: {
-    flex: 1,
-    minWidth: 0,
-  },
-  variableLabel: {
-    fontSize: 12,
-    fontWeight: "500" as const,
-    color: "#374151",
-  },
-  variableDesc: {
-    fontSize: 10,
-    color: "#9CA3AF",
-    marginTop: 1,
-  },
-  weightControl: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#fff",
-    borderRadius: 6,
-    paddingHorizontal: 2,
-    marginLeft: 6,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-  },
-  weightBtn: {
-    padding: 4,
-  },
-  weightValue: {
-    fontSize: 13,
-    fontWeight: "700" as const,
-    color: "#374151",
-    minWidth: 16,
-    textAlign: "center",
-  },
-  removeVarBtn: {
-    padding: 3,
-    marginLeft: 4,
-  },
-
-  // Add variable
-  addVariableBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingTop: 6,
-  },
-  addVariableBtnText: {
-    fontSize: 12,
-    fontWeight: "500" as const,
-  },
-
-  // Add score
-  addScoreBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 5,
-    paddingVertical: 10,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderStyle: "dashed",
-    borderColor: "#D1D5DB",
-  },
-  addScoreBtnText: {
-    fontSize: 13,
-    fontWeight: "600" as const,
-  },
-
-  // Reset
-  resetBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 4,
-    paddingVertical: 8,
-  },
-  resetBtnText: {
-    fontSize: 12,
-    color: "#6B7280",
-  },
-
-  // Inline picker (used for variable/alert variable selection)
-  inlinePicker: {
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderRadius: 6,
-    padding: 8,
-    maxHeight: 260,
-  },
-  inlinePickerScroll: {
-    flexGrow: 0,
-  },
-  inlinePickerHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 6,
-  },
-  inlinePickerTitle: {
-    fontSize: 12,
-    fontWeight: "600" as const,
-    color: "#374151",
-  },
-  categoryHeader: {
-    fontSize: 10,
-    fontWeight: "600" as const,
-    color: "#9CA3AF",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    marginTop: 6,
-    marginBottom: 3,
-  },
-  pickerRow: {
-    paddingVertical: 6,
-    borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
-  },
-  pickerRowDisabled: {
-    opacity: 0.35,
-  },
-  pickerLabel: {
-    fontSize: 12,
-    fontWeight: "500" as const,
-    color: "#374151",
-  },
-  pickerLabelDisabled: {
-    color: "#9CA3AF",
-  },
-  pickerDesc: {
-    fontSize: 10,
-    color: "#9CA3AF",
-    marginTop: 1,
-  },
-
-  // Alerts section
-  alertCard: {
-    backgroundColor: "#F9FAFB",
-    borderRadius: 6,
-    padding: 8,
-    gap: 6,
-    borderWidth: 1,
-    borderColor: "#F3F4F6",
-  },
-  alertVariablePicker: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#fff",
-    borderRadius: 5,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    gap: 4,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-  },
-  alertVariableText: {
-    fontSize: 12,
-    fontWeight: "500" as const,
-    color: "#374151",
-    flex: 1,
-  },
-  alertControlsRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  alertDirectionToggle: {
-    flexDirection: "row",
-    borderRadius: 5,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "#D1D5DB",
-  },
-  alertDirectionBtn: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    backgroundColor: "#F3F4F6",
-  },
-  alertDirectionText: {
-    fontSize: 11,
-    fontWeight: "600" as const,
-    color: "#6B7280",
-  },
-  alertDirectionTextActive: {
-    color: "#fff",
-  },
-  alertThresholdInput: {
-    borderWidth: 1,
-    borderColor: "#D1D5DB",
-    borderRadius: 5,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    fontSize: 12,
-    color: "#374151",
-    width: 50,
-    textAlign: "center",
-    backgroundColor: "#fff",
-  },
-  alertDeleteBtn: {
-    padding: 3,
-  },
-  alertLabelInput: {
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderRadius: 5,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    fontSize: 11,
-    color: "#374151",
-    backgroundColor: "#fff",
-  },
-
-  // Add alert
-  addAlertBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingVertical: 6,
-  },
-  addAlertBtnText: {
-    fontSize: 12,
-    fontWeight: "500" as const,
   },
 
   // Subtitle section

@@ -159,6 +159,14 @@ export const create = mutation({
     // Verify community membership
     await requireCommunityMember(ctx, userId, args.communityId);
 
+    // Only admins can create shared views
+    if (args.visibility === "shared") {
+      const isAdmin = await isCommunityAdmin(ctx, args.communityId, userId);
+      if (!isAdmin) {
+        throw new ConvexError("Only admins can create shared views");
+      }
+    }
+
     // Validate name length
     if (args.name.trim().length === 0) {
       throw new ConvexError("View name cannot be empty");

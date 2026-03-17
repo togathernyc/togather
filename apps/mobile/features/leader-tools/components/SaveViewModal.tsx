@@ -21,6 +21,7 @@ import { CustomModal } from "@/components/ui/Modal";
 interface SaveViewModalProps {
   visible: boolean;
   onClose: () => void;
+  onSave?: () => void;
   communityId: Id<"communities">;
   // Current table state to capture
   currentSortBy?: string;
@@ -41,6 +42,8 @@ interface SaveViewModalProps {
     name: string;
     visibility: "personal" | "shared";
   } | null;
+  // Only admins can create/edit shared views
+  isAdmin?: boolean;
 }
 
 // ============================================================================
@@ -56,6 +59,7 @@ const MAX_VIEW_NAME_LENGTH = 30;
 export function SaveViewModal({
   visible,
   onClose,
+  onSave,
   communityId,
   currentSortBy,
   currentSortDirection,
@@ -63,14 +67,21 @@ export function SaveViewModal({
   currentHiddenColumns,
   currentFilters,
   editingView,
+  isAdmin,
 }: SaveViewModalProps) {
   const { primaryColor } = useCommunityTheme();
   const [name, setName] = useState("");
-  const [visibility, setVisibility] = useState<"personal" | "shared">("personal");
+  const [visibility, setVisibility] = useState<"personal" | "shared">(
+    "personal",
+  );
   const [isSaving, setIsSaving] = useState(false);
 
-  const createView = useAuthenticatedMutation(api.functions.peopleSavedViews.create);
-  const updateView = useAuthenticatedMutation(api.functions.peopleSavedViews.update);
+  const createView = useAuthenticatedMutation(
+    api.functions.peopleSavedViews.create,
+  );
+  const updateView = useAuthenticatedMutation(
+    api.functions.peopleSavedViews.update,
+  );
 
   const isEditMode = !!editingView;
 
@@ -123,6 +134,7 @@ export function SaveViewModal({
           filters: currentFilters,
         });
       }
+      onSave?.();
       onClose();
     } catch (error: any) {
       const message =
@@ -150,7 +162,9 @@ export function SaveViewModal({
           <TextInput
             style={styles.input}
             value={name}
-            onChangeText={(text) => setName(text.slice(0, MAX_VIEW_NAME_LENGTH))}
+            onChangeText={(text) =>
+              setName(text.slice(0, MAX_VIEW_NAME_LENGTH))
+            }
             placeholder="e.g. New Members, Active Leaders..."
             placeholderTextColor="#9CA3AF"
             autoFocus
@@ -188,36 +202,44 @@ export function SaveViewModal({
               <Text
                 style={[
                   styles.visibilityText,
-                  visibility === "personal" && { color: primaryColor, fontWeight: "600" as const },
+                  visibility === "personal" && {
+                    color: primaryColor,
+                    fontWeight: "600" as const,
+                  },
                 ]}
               >
                 Just me
               </Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                styles.visibilityOption,
-                visibility === "shared" && {
-                  borderColor: primaryColor,
-                  backgroundColor: primaryColor + "10",
-                },
-              ]}
-              onPress={() => setVisibility("shared")}
-            >
-              <Ionicons
-                name="people-outline"
-                size={16}
-                color={visibility === "shared" ? primaryColor : "#6B7280"}
-              />
-              <Text
+            {isAdmin && (
+              <TouchableOpacity
                 style={[
-                  styles.visibilityText,
-                  visibility === "shared" && { color: primaryColor, fontWeight: "600" as const },
+                  styles.visibilityOption,
+                  visibility === "shared" && {
+                    borderColor: primaryColor,
+                    backgroundColor: primaryColor + "10",
+                  },
                 ]}
+                onPress={() => setVisibility("shared")}
               >
-                Everyone
-              </Text>
-            </TouchableOpacity>
+                <Ionicons
+                  name="people-outline"
+                  size={16}
+                  color={visibility === "shared" ? primaryColor : "#6B7280"}
+                />
+                <Text
+                  style={[
+                    styles.visibilityText,
+                    visibility === "shared" && {
+                      color: primaryColor,
+                      fontWeight: "600" as const,
+                    },
+                  ]}
+                >
+                  Everyone
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 

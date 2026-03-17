@@ -111,12 +111,11 @@ export function FollowupDetailContent({
   const member_id = memberId;
 
   // Fetch member history using Convex
-  const historyData = useQuery(
-    api.functions.memberFollowups.history,
-    group_id && member_id
+  const historyData = useAuthenticatedQuery(
+    api.functions.communityPeople.history,
+    member_id
       ? {
-          groupId: group_id as Id<"groups">,
-          memberId: member_id as Id<"groupMembers">,
+          communityPeopleId: member_id as Id<"communityPeople">,
           currentUserId: currentUserId,
         }
       : "skip"
@@ -216,8 +215,8 @@ export function FollowupDetailContent({
   }, [historyData]);
 
   // Convex mutations (auto-inject token)
-  const addFollowup = useAuthenticatedMutation(api.functions.memberFollowups.add);
-  const snoozeMember = useAuthenticatedMutation(api.functions.memberFollowups.snooze);
+  const addFollowup = useAuthenticatedMutation(api.functions.communityPeople.addFollowup);
+  const snoozeMember = useAuthenticatedMutation(api.functions.communityPeople.snooze);
   const updateAttendance = useAuthenticatedMutation(api.functions.memberFollowups.updateAttendance);
   const deleteFollowupMut = useAuthenticatedMutation(api.functions.memberFollowups.deleteFollowup);
 
@@ -225,8 +224,7 @@ export function FollowupDetailContent({
   const { setPendingAction } = useContactConfirmation({
     onConfirm: (type) => {
       addFollowupMutation.mutate({
-        groupId: group_id || "",
-        memberId: member_id || "",
+        communityPeopleId: member_id || "",
         type,
         content: type === "call" ? "Made a phone call" : "Sent a text message",
       });
@@ -235,13 +233,12 @@ export function FollowupDetailContent({
 
   // Mutation wrapper objects for backward compatibility
   const addFollowupMutation = {
-    mutate: async (args: { groupId: string; memberId: string; type: string; content?: string }) => {
+    mutate: async (args: { communityPeopleId: string; type: string; content?: string }) => {
       setIsAddingFollowup(true);
       try {
         await addFollowup({
-          groupId: args.groupId as Id<"groups">,
-          memberId: args.memberId as Id<"groupMembers">,
-          type: args.type as "note" | "call" | "text" | "snooze" | "followed_up",
+          communityPeopleId: args.communityPeopleId as Id<"communityPeople">,
+          type: args.type as "note" | "call" | "text" | "followed_up",
           content: args.content,
         });
         setNoteText("");
@@ -256,12 +253,11 @@ export function FollowupDetailContent({
   };
 
   const snoozeMutation = {
-    mutate: async (args: { groupId: string; memberId: string; duration: SnoozeDuration; note?: string }) => {
+    mutate: async (args: { communityPeopleId: string; duration: SnoozeDuration; note?: string }) => {
       setIsSnoozing(true);
       try {
         await snoozeMember({
-          groupId: args.groupId as Id<"groups">,
-          memberId: args.memberId as Id<"groupMembers">,
+          communityPeopleId: args.communityPeopleId as Id<"communityPeople">,
           duration: args.duration,
           note: args.note,
         });
@@ -327,8 +323,7 @@ export function FollowupDetailContent({
 
   const handleMarkFollowedUp = () => {
     addFollowupMutation.mutate({
-      groupId: group_id || "",
-      memberId: member_id || "",
+      communityPeopleId: member_id || "",
       type: "followed_up",
       content: "Marked as followed up",
     });
@@ -337,8 +332,7 @@ export function FollowupDetailContent({
   const handleAddNote = () => {
     if (!noteText.trim()) return;
     addFollowupMutation.mutate({
-      groupId: group_id || "",
-      memberId: member_id || "",
+      communityPeopleId: member_id || "",
       type: "note",
       content: noteText.trim(),
     });
@@ -346,8 +340,7 @@ export function FollowupDetailContent({
 
   const handleSnooze = (duration: SnoozeDuration) => {
     snoozeMutation.mutate({
-      groupId: group_id || "",
-      memberId: member_id || "",
+      communityPeopleId: member_id || "",
       duration,
       note: snoozeNote.trim() || undefined,
     });

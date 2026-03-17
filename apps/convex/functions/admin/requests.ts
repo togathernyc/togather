@@ -244,6 +244,12 @@ export const reviewPendingRequest = mutation({
         { groupId: request.groupId, groupMemberId: args.membershipId }
       );
 
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.communityScoreComputation.recomputeForGroupMember,
+        { groupId: request.groupId, userId: request.userId }
+      );
+
       // Check if this is a returning member (had a previous membership before this join request)
       // When a new member creates a join request, joinedAt, leftAt, and requestedAt are all set
       // to the same timestamp. When a returning member creates a join request, their original

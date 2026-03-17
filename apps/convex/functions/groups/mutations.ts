@@ -508,6 +508,13 @@ export const join = mutation({
           internal.functions.followupScoreComputation.computeSingleMemberScore,
           { groupId: args.groupId, groupMemberId: existing._id }
         );
+
+        // Recompute community-level scores for reactivated member
+        await ctx.scheduler.runAfter(
+          0,
+          internal.functions.communityScoreComputation.recomputeForGroupMember,
+          { groupId: args.groupId, userId }
+        );
       }
       return existing._id;
     }
@@ -537,6 +544,13 @@ export const join = mutation({
       0,
       internal.functions.followupScoreComputation.computeSingleMemberScore,
       { groupId: args.groupId, groupMemberId: membershipId }
+    );
+
+    // Recompute community-level scores for new member
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.communityScoreComputation.recomputeForGroupMember,
+      { groupId: args.groupId, userId }
     );
 
     return membershipId;
@@ -889,13 +903,23 @@ export const updateFollowupScoreConfig = mutation({
       { groupId: args.groupId, trigger: "score_config_update" }
     );
 
+    // Also recompute community-level scores
+    const scoreConfigGroup = await ctx.db.get(args.groupId);
+    if (scoreConfigGroup?.communityId) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.communityScoreComputation.computeCommunityScores,
+        { communityId: scoreConfigGroup.communityId }
+      );
+    }
+
     return { success: true };
   },
 });
 
 /**
- * Manually refresh the follow-up denormalized table for a group.
- * Useful when leaders want an immediate recomputation instead of waiting for cron/event updates.
+ * Manually refresh the community people table for a group's community.
+ * Triggers a full recomputation of the communityPeople table which the UI reads from.
  */
 export const refreshFollowupScores = mutation({
   args: {
@@ -909,39 +933,20 @@ export const refreshFollowupScores = mutation({
       ctx,
       args.groupId,
       userId,
-      "refresh follow-up scores"
+      "refresh people table"
     );
 
-    if (group.followupRefreshState?.status === "running") {
-      return {
-        success: true,
-        alreadyRunning: true,
-        runId: group.followupRefreshState.runId,
-        startedAt: group.followupRefreshState.startedAt,
-      };
+    if (!group.communityId) {
+      return { success: false };
     }
-
-    const startedAt = now();
-    const runId = `manual_${startedAt}_${Math.random().toString(36).slice(2, 8)}`;
-
-    await ctx.db.patch(args.groupId, {
-      followupRefreshState: {
-        status: "running",
-        runId,
-        startedAt,
-        requestedById: userId,
-        trigger: "manual",
-      },
-      updatedAt: startedAt,
-    });
 
     await ctx.scheduler.runAfter(
       0,
-      internal.functions.followupScoreComputation.computeGroupScores,
-      { groupId: args.groupId, runId, requestedById: userId, trigger: "manual" }
+      internal.functions.communityScoreComputation.computeCommunityScores,
+      { communityId: group.communityId }
     );
 
-    return { success: true, alreadyRunning: false, runId, startedAt };
+    return { success: true };
   },
 });
 

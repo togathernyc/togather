@@ -20,7 +20,10 @@ interface PeopleViewBarProps {
   communityId: Id<"communities">;
   activeViewId: string | null;
   onViewSelect: (viewId: string, view: any) => void;
+  onViewDeselect: () => void;
+  onDeleteView: (viewId: string, viewName: string, isShared: boolean) => void;
   onCreateView: () => void;
+  isAdmin?: boolean;
 }
 
 // ============================================================================
@@ -31,7 +34,10 @@ export function PeopleViewBar({
   communityId,
   activeViewId,
   onViewSelect,
+  onViewDeselect,
+  onDeleteView,
   onCreateView,
+  isAdmin,
 }: PeopleViewBarProps) {
   const { primaryColor } = useCommunityTheme();
 
@@ -60,42 +66,61 @@ export function PeopleViewBar({
         {views.map((view: any) => {
           const isActive = activeViewId === view._id;
           return (
-            <Pressable
-              key={view._id}
-              onPress={() => onViewSelect(view._id, view)}
-              style={[
-                styles.chip,
-                isActive
-                  ? { backgroundColor: primaryColor, borderColor: primaryColor }
-                  : styles.chipInactive,
-              ]}
-            >
-              {view.isDefault && (
-                <Ionicons
-                  name="lock-closed"
-                  size={12}
-                  color={isActive ? "#FFFFFF" : "#9CA3AF"}
-                  style={styles.lockIcon}
-                />
-              )}
-              <Text
+            <View key={view._id} style={styles.chipWrapper}>
+              <Pressable
+                onPress={() => {
+                  if (isActive) {
+                    onViewDeselect();
+                  } else {
+                    onViewSelect(view._id, view);
+                  }
+                }}
                 style={[
-                  styles.chipText,
-                  isActive ? styles.chipTextActive : styles.chipTextInactive,
+                  styles.chip,
+                  isActive
+                    ? { backgroundColor: primaryColor, borderColor: primaryColor }
+                    : styles.chipInactive,
                 ]}
-                numberOfLines={1}
               >
-                {view.name}
-              </Text>
-              {view.visibility === "shared" && !view.isDefault && (
-                <Ionicons
-                  name="people-outline"
-                  size={12}
-                  color={isActive ? "#FFFFFF" : "#9CA3AF"}
-                  style={styles.sharedIcon}
-                />
+                {view.isDefault && (
+                  <Ionicons
+                    name="lock-closed"
+                    size={12}
+                    color={isActive ? "#FFFFFF" : "#9CA3AF"}
+                    style={styles.lockIcon}
+                  />
+                )}
+                <Text
+                  style={[
+                    styles.chipText,
+                    isActive ? styles.chipTextActive : styles.chipTextInactive,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {view.name}
+                </Text>
+                {view.visibility === "shared" && !view.isDefault && (
+                  <Ionicons
+                    name="people-outline"
+                    size={12}
+                    color={isActive ? "#FFFFFF" : "#9CA3AF"}
+                    style={styles.sharedIcon}
+                  />
+                )}
+              </Pressable>
+              {!view.isDefault && (view.visibility !== "shared" || isAdmin) && (
+                <Pressable
+                  onPress={() => onDeleteView(view._id, view.name, view.visibility === "shared")}
+                  style={styles.deleteIcon}
+                >
+                  <Ionicons
+                    name="close-circle"
+                    size={14}
+                    color={isActive ? primaryColor : "#9CA3AF"}
+                  />
+                </Pressable>
               )}
-            </Pressable>
+            </View>
           );
         })}
 
@@ -121,6 +146,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
     paddingHorizontal: 4,
+  },
+  chipWrapper: {
+    flexDirection: "row",
+    alignItems: "center",
   },
   chip: {
     flexDirection: "row",
@@ -149,6 +178,10 @@ const styles = StyleSheet.create({
   },
   sharedIcon: {
     marginLeft: 4,
+  },
+  deleteIcon: {
+    marginLeft: -4,
+    padding: 2,
   },
   addButton: {
     width: 32,

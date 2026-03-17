@@ -537,6 +537,12 @@ export const setCustomFieldsAndNotes = internalMutation({
         }
       }
     }
+
+    // Schedule communityPeople upsert so the People table is immediately populated
+    await ctx.scheduler.runAfter(0, internal.functions.communityPeople.upsertFromSubmission, {
+      communityId: args.communityId,
+      userId: args.userId,
+    });
   },
 });
 
@@ -802,6 +808,27 @@ export const saveConfig = mutation({
         },
         updatedAt: timestamp,
       });
+    }
+
+    // Also sync to community-level peopleCustomFields for the People table
+    const community = await ctx.db.get(args.communityId);
+    if (community) {
+      const existingPeopleFields = (community as any).peopleCustomFields ?? [];
+      const peopleLandingSlots = new Set(
+        args.formFields.filter((f) => f.slot).map((f) => f.slot!)
+      );
+      const mergedPeopleFields = [
+        ...existingPeopleFields.filter((f: any) => !peopleLandingSlots.has(f.slot)),
+        ...args.formFields
+          .filter((f) => f.slot)
+          .map((f) => ({
+            slot: f.slot!,
+            name: f.label,
+            type: f.type,
+            ...((f.options?.length ?? 0) > 0 ? { options: f.options } : {}),
+          })),
+      ];
+      await ctx.db.patch(args.communityId, { peopleCustomFields: mergedPeopleFields });
     }
 
     return { success: true };

@@ -93,3 +93,55 @@ export function getSystemScoreValue(
 ): number | undefined {
   return member[scoreSlot] ?? undefined;
 }
+
+/**
+ * Adapt a communityPeople record into the FollowupMember shape
+ * expected by FollowupDesktopTable and FollowupMobileGrid.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function adaptCommunityPerson(cp: any) {
+  return {
+    _id: cp._id,
+    groupMemberId: cp._id,
+    userId: cp.userId,
+    firstName: cp.firstName,
+    lastName: cp.lastName,
+    avatarUrl: cp.avatarUrl,
+    email: cp.email,
+    phone: cp.phone,
+    score1: cp.score1 ?? 0,
+    score2: cp.score2 ?? 0,
+    score3: cp.score3 ?? 0,
+    scoreIds: ["sys_service", "sys_attendance", "sys_togather"],
+    alerts: cp.alerts ?? [],
+    isSnoozed: cp.isSnoozed ?? false,
+    snoozedUntil: cp.snoozedUntil,
+    attendanceScore: 0,
+    connectionScore: 0,
+    followupScore: 0,
+    missedMeetings: 0,
+    consecutiveMissed: 0,
+    lastAttendedAt: cp.lastAttendedAt,
+    lastFollowupAt: cp.lastFollowupAt,
+    lastActiveAt: cp.lastActiveAt,
+    addedAt: cp.addedAt,
+    status: cp.status,
+    assigneeId: cp.assigneeIds?.[0],
+    assigneeIds: cp.assigneeIds,
+    customText1: cp.customText1,
+    customText2: cp.customText2,
+    customText3: cp.customText3,
+    customText4: cp.customText4,
+    customText5: cp.customText5,
+    customNum1: cp.customNum1,
+    customNum2: cp.customNum2,
+    customNum3: cp.customNum3,
+    customNum4: cp.customNum4,
+    customNum5: cp.customNum5,
+    customBool1: cp.customBool1,
+    customBool2: cp.customBool2,
+    customBool3: cp.customBool3,
+    customBool4: cp.customBool4,
+    customBool5: cp.customBool5,
+  };
+}

@@ -28,6 +28,7 @@ import { paginationOptsValidator } from "convex/server";
 import { Doc, Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
 import { now, getMediaUrl, normalizePhone, isValidPhone, buildSearchText, safeSliceForJson } from "../lib/utils";
+import { addUserToAnnouncementGroup } from "./communities";
 import { requireAuth } from "../lib/auth";
 import { parseDateOptional } from "../lib/validation";
 import { isCommunityAdmin } from "../lib/permissions";
@@ -1095,25 +1096,30 @@ export const getCrossGroupConfig = query({
       )
     );
 
-    const leaderUserIds = new Set<string>();
-    const leaders: Array<{ userId: string; firstName: string; lastName: string; profilePhoto?: string }> = [];
-    for (const memberships of allLeaderMemberships) {
-      for (const m of memberships) {
+    const leadersByUserId = new Map<string, { userId: string; firstName: string; lastName: string; profilePhoto?: string; groupIds: string[] }>();
+    for (let i = 0; i < allLeaderMemberships.length; i++) {
+      const gid = leaderGroupIds[i].toString();
+      for (const m of allLeaderMemberships[i]) {
         if (!isActiveMembership(m) || !isLeaderRole(m.role)) continue;
         const uid = m.userId.toString();
-        if (leaderUserIds.has(uid)) continue;
-        leaderUserIds.add(uid);
+        const existing = leadersByUserId.get(uid);
+        if (existing) {
+          existing.groupIds.push(gid);
+          continue;
+        }
         const user = await ctx.db.get(m.userId);
         if (user) {
-          leaders.push({
+          leadersByUserId.set(uid, {
             userId: uid,
             firstName: user.firstName ?? "",
             lastName: user.lastName ?? "",
             profilePhoto: user.profilePhoto,
+            groupIds: [gid],
           });
         }
       }
     }
+    const leaders = Array.from(leadersByUserId.values());
 
     return {
       scoreConfigScores,
@@ -1632,6 +1638,11 @@ async function ensureUserAndMembership(
 
   if (needsChannelSync) {
     await syncUserChannelMembershipsLogic(ctx, userId, group._id);
+  }
+
+  // Ensure user is in the announcement group (required for scores/followups)
+  if (!group.isAnnouncementGroup) {
+    await addUserToAnnouncementGroup(ctx, group.communityId, userId, 1);
   }
 
   return { userId, groupMemberId, createdUser };
@@ -2510,7 +2521,7 @@ export const applyCsvImportBatch = internalMutation({
         },
       };
 
-      const { groupMemberId } = await ensureUserAndMembership(ctx, prepared, group, args.timestamp);
+      const { userId, groupMemberId } = await ensureUserAndMembership(ctx, prepared, group, args.timestamp);
 
       if (batchRow.notes) {
         const existingCsvNote = await getExistingCsvImportNote(ctx, groupMemberId);
@@ -2588,6 +2599,19 @@ export const applyCsvImportBatch = internalMutation({
           assigneeIds: batchRow.parsedAssigneeIds,
         }
       );
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.communityScoreComputation.recomputeForGroupMember,
+        { groupId: group._id, userId }
+      );
+
+      // Schedule communityPeople upsert so the People table is immediately populated
+      if (group.communityId) {
+        await ctx.scheduler.runAfter(0, internal.functions.communityPeople.upsertFromSubmission, {
+          communityId: group.communityId,
+          userId,
+        });
+      }
     }
   },
 });
@@ -2903,6 +2927,11 @@ export const quickAddRow = mutation({
         assigneeIds: normalizedAssigneeIds.length > 0 ? normalizedAssigneeIds : undefined,
       }
     );
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.communityScoreComputation.recomputeForGroupMember,
+      { groupId: group._id, userId }
+    );
 
     if (normalizedStatus || normalizedAssigneeIds.length > 0) {
       // Patch serves as fallback (if action races) and triggers notification
@@ -2917,6 +2946,14 @@ export const quickAddRow = mutation({
           assigneeIds: normalizedAssigneeIds.length > 0 ? normalizedAssigneeIds : undefined,
         }
       );
+    }
+
+    // Schedule communityPeople upsert so the People table is immediately populated
+    if (group.communityId) {
+      await ctx.scheduler.runAfter(0, internal.functions.communityPeople.upsertFromSubmission, {
+        communityId: group.communityId,
+        userId,
+      });
     }
 
     return {
@@ -2965,6 +3002,11 @@ export const add = mutation({
       0,
       internal.functions.followupScoreComputation.computeSingleMemberScore,
       { groupId: args.groupId, groupMemberId: args.memberId }
+    );
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.communityScoreComputation.recomputeForGroupMember,
+      { groupId: args.groupId, userId: member.userId }
     );
 
     return {
@@ -3053,6 +3095,11 @@ export const snooze = mutation({
       internal.functions.followupScoreComputation.computeSingleMemberScore,
       { groupId: args.groupId, groupMemberId: args.memberId }
     );
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.communityScoreComputation.recomputeForGroupMember,
+      { groupId: args.groupId, userId: member.userId }
+    );
 
     return {
       id: followupId,
@@ -3130,6 +3177,11 @@ export const updateAttendance = mutation({
         internal.functions.followupScoreComputation.computeSingleMemberScore,
         { groupId: args.groupId, groupMemberId: groupMember._id }
       );
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.communityScoreComputation.recomputeForGroupMember,
+        { groupId: args.groupId, userId: args.targetUserId }
+      );
     }
 
     return {
@@ -3187,6 +3239,11 @@ export const unsnooze = mutation({
       internal.functions.followupScoreComputation.computeSingleMemberScore,
       { groupId: args.groupId, groupMemberId: args.memberId }
     );
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.communityScoreComputation.recomputeForGroupMember,
+      { groupId: args.groupId, userId: member.userId }
+    );
 
     return { success: true };
   },
@@ -3222,6 +3279,11 @@ export const deleteFollowup = mutation({
         0,
         internal.functions.followupScoreComputation.computeSingleMemberScore,
         { groupId: groupMember.groupId, groupMemberId: followup.groupMemberId }
+      );
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.communityScoreComputation.recomputeForGroupMember,
+        { groupId: groupMember.groupId, userId: groupMember.userId }
       );
     }
 
