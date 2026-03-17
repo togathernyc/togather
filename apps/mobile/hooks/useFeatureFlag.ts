@@ -15,6 +15,19 @@ import { Environment } from "@/services/environment";
 
 const OVERRIDE_STORAGE_KEY = "togather_feature_flag_overrides";
 
+/**
+ * Check URL params for feature flag overrides (web only, all environments).
+ * Format: ?ff_<flagKey>=true|1|false|0
+ */
+function getUrlParamOverride(flagKey: string): boolean | undefined {
+  if (typeof window === "undefined") return undefined;
+  const params = new URLSearchParams(window.location.search);
+  const value = params.get(`ff_${flagKey}`);
+  if (value === "true" || value === "1") return true;
+  if (value === "false" || value === "0") return false;
+  return undefined;
+}
+
 // Cache for overrides to avoid async reads on every render
 let overrideCache: Record<string, boolean> | null = null;
 
@@ -125,6 +138,12 @@ export function useFeatureFlag(flagKey: string): boolean {
 
   if (canUseOverrides && loaded && override !== undefined) {
     return override;
+  }
+
+  // Check URL param overrides (web only, all environments)
+  const urlOverride = getUrlParamOverride(flagKey);
+  if (urlOverride !== undefined) {
+    return urlOverride;
   }
 
   // Fall back to PostHog
