@@ -36,11 +36,13 @@ import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { FollowupSettingsPanel } from "./FollowupSettingsPanel";
 import { FollowupCsvImportModal } from "./FollowupCsvImportModal";
 import { FollowupQuickAddPanel } from "./FollowupQuickAddPanel";
+import { FollowupMapView, FOLLOWUP_MAP_VIEW_ID } from "./FollowupMapView";
 import type { CustomFieldDef } from "./ColumnPickerModal";
 import {
   SYSTEM_SCORE_COLUMNS,
   getSystemScoreValue,
   adaptCommunityPerson,
+  applyDevZipCodeSample,
 } from "./followupShared";
 import { PeopleViewBar } from "./PeopleViewBar";
 import { SaveViewModal } from "./SaveViewModal";
@@ -927,7 +929,7 @@ export function FollowupDesktopTable({
     // Adapt community people records to FollowupMember shape
     const adapted: FollowupMember[] = crossGroupMode
       ? (raw as FollowupMember[])
-      : raw.map((r: any) => adaptCommunityPerson(r));
+      : applyDevZipCodeSample(raw.map((r: any) => adaptCommunityPerson(r)));
     const filtered = applyParsedFollowupFilters(adapted, parsedQuery);
 
     if (!isClientSideSort || filtered.length === 0) return filtered;
@@ -2075,6 +2077,7 @@ export function FollowupDesktopTable({
   const hasEverLoadedRef = useRef(false);
   if (members.length > 0) hasEverLoadedRef.current = true;
   const showInitialLoading = effectiveIsLoading && !hasEverLoadedRef.current;
+  const isMapViewActive = activeViewId === FOLLOWUP_MAP_VIEW_ID;
 
   // Preserve horizontal scroll position across re-renders (sort/filter changes)
   const horizontalScrollRef = useRef<ScrollView>(null);
@@ -2244,7 +2247,7 @@ export function FollowupDesktopTable({
       </View>
 
       {/* Bulk action bar */}
-      {selectedIds.size > 0 && (
+      {selectedIds.size > 0 && !isMapViewActive && (
         <View style={s.actionBar}>
           <View style={s.actionBarLeft}>
             <Text style={s.actionBarCount}>{selectedIds.size} selected</Text>
@@ -2268,6 +2271,10 @@ export function FollowupDesktopTable({
           communityId={groupData.communityId}
           activeViewId={activeViewId}
           onViewSelect={(viewId, view) => {
+            if (view?.isSpecial) {
+              setActiveViewId(viewId);
+              return;
+            }
             setActiveViewId(viewId);
             // Apply sort
             if (view.sortBy) setSortField(view.sortBy);
@@ -2302,6 +2309,10 @@ export function FollowupDesktopTable({
             setSearchQuery(filterParts.join(" "));
           }}
           onViewDeselect={() => {
+            if (activeViewId === FOLLOWUP_MAP_VIEW_ID) {
+              setActiveViewId(null);
+              return;
+            }
             setActiveViewId(null);
             setLocalColumnOrder(null);
             setLocalHiddenColumns(null);
@@ -2314,11 +2325,13 @@ export function FollowupDesktopTable({
           }}
           onCreateView={() => setShowSaveViewModal(true)}
           isAdmin={groupData?.userRole === "admin"}
+          specialViews={[{ id: FOLLOWUP_MAP_VIEW_ID, name: "Map", icon: "map-outline" }]}
         />
       )}
 
       {/* Unsaved column changes bar */}
-      {(localColumnOrder !== null || localHiddenColumns !== null) &&
+      {!isMapViewActive &&
+        (localColumnOrder !== null || localHiddenColumns !== null) &&
         activeViewId === null && (
           <View style={s.unsavedBar}>
             <Text style={s.unsavedText}>Unsaved column changes</Text>
@@ -2342,7 +2355,27 @@ export function FollowupDesktopTable({
       <View style={s.mainArea}>
         {/* Table */}
         <View style={s.tableContainer}>
-          {showInitialLoading ? (
+          {isMapViewActive ? (
+            <FollowupMapView
+              members={displayMembers.map((member) => ({
+                groupMemberId: member.groupMemberId,
+                firstName: member.firstName,
+                lastName: member.lastName,
+                avatarUrl: member.avatarUrl,
+                zipCode: member.zipCode,
+                status: member.status,
+                groupName: (member as any).groupName,
+              }))}
+              loading={showInitialLoading}
+              onOpenMember={(memberId) => {
+                setShowSettingsPanel(false);
+                setShowQuickAddPanel(false);
+                setSelectedMemberId(memberId);
+                setScrollToNotes(false);
+                setScrollToTasks(false);
+              }}
+            />
+          ) : showInitialLoading ? (
             <View style={s.loadingContainer}>
               <ActivityIndicator size="large" color={primaryColor} />
               <Text style={s.loadingText}>Loading...</Text>

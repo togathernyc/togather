@@ -1706,6 +1706,7 @@ export default defineSchema({
     avatarUrl: v.optional(v.string()),
     email: v.optional(v.string()),
     phone: v.optional(v.string()),
+    zipCode: v.optional(v.string()),
     searchText: v.optional(v.string()),
 
     // System scores (always computed)

@@ -1061,6 +1061,7 @@ export const upsertFromSubmission = internalMutation({
     const lastName = user?.lastName || (scoreDoc as any).lastName || "";
     const email = user?.email || (scoreDoc as any).email;
     const phone = user?.phone || (scoreDoc as any).phone;
+    const zipCode = user?.zipCode || (scoreDoc as any).zipCode;
     const searchText = [firstName, lastName, email, phone]
       .filter(Boolean)
       .join(" ");
@@ -1081,6 +1082,7 @@ export const upsertFromSubmission = internalMutation({
       avatarUrl: getMediaUrl(user?.profilePhoto) || (scoreDoc as any).avatarUrl,
       email,
       phone,
+      zipCode,
       searchText,
       score1: (scoreDoc as any).score1,
       score2: (scoreDoc as any).score2,

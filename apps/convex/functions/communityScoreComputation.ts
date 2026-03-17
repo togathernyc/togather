@@ -123,6 +123,7 @@ export const getCommunityMembers = internalQuery({
           avatarUrl: getMediaUrl(user?.profilePhoto),
           email: user?.email,
           phone: user?.phone,
+          zipCode: user?.zipCode,
           lastActiveAt: communityMembership?.lastLogin ?? user?.lastLogin,
         };
       })
@@ -160,6 +161,7 @@ export const computeCommunityScoresBatch = internalQuery({
         avatarUrl: v.optional(v.string()),
         email: v.optional(v.string()),
         phone: v.optional(v.string()),
+        zipCode: v.optional(v.string()),
         lastActiveAt: v.optional(v.number()),
       })
     ),
@@ -308,6 +310,7 @@ export const computeCommunityScoresBatch = internalQuery({
           avatarUrl: member.avatarUrl,
           email: member.email,
           phone: member.phone,
+          zipCode: member.zipCode,
           searchText,
           score1: scores.score1,
           score2: scores.score2,
@@ -366,6 +369,7 @@ export const upsertCommunityPeopleBatch = internalMutation({
         avatarUrl: member.avatarUrl,
         email: member.email,
         phone: member.phone,
+        zipCode: member.zipCode,
         searchText: member.searchText,
         score1: member.score1,
         score2: member.score2,
@@ -766,6 +770,7 @@ export const getAnnouncementGroupMember = internalQuery({
       avatarUrl: getMediaUrl(user?.profilePhoto),
       email: user?.email,
       phone: user?.phone,
+      zipCode: user?.zipCode,
       lastActiveAt: communityMembership?.lastLogin ?? user?.lastLogin,
     };
   },
@@ -832,6 +837,7 @@ export const getScoredDataForUsers = internalQuery({
           avatarUrl: existing.avatarUrl,
           email: existing.email,
           phone: existing.phone,
+          zipCode: existing.zipCode,
           searchText: existing.searchText,
           score1: existing.score1,
           score2: existing.score2,

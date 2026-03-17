@@ -1,13 +1,13 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { View, StyleSheet, Platform, Text } from 'react-native';
 import { Group } from '@features/groups/types';
-import { MAP_CONFIG, MAP_STYLE, COLORS, getGroupTypeColor } from '../constants';
+import { MAP_CONFIG, MAP_STYLE, getGroupTypeColor } from '../constants';
 
-// Only import maplibre-gl on web
+// Only import mapbox-gl on web
 let mapboxgl: any = null;
 if (Platform.OS === 'web') {
-  mapboxgl = require('maplibre-gl');
-  require('maplibre-gl/dist/maplibre-gl.css');
+  mapboxgl = require('mapbox-gl');
+  require('mapbox-gl/dist/mapbox-gl.css');
 }
 
 // Import native map component for iOS/Android
@@ -174,8 +174,6 @@ export function ExploreMap({
 
   const [mapLoaded, setMapLoaded] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
-
-  // Validate token format
   const isValidToken = mapboxToken && mapboxToken.startsWith('pk.');
 
   // Get image name for a group
@@ -304,8 +302,7 @@ export function ExploreMap({
 
     if (!isValidToken) {
       setMapError(
-        'Invalid Mapbox token. Please use a public access token (pk.*) instead of a secret token (sk.*). ' +
-        'Get one at https://account.mapbox.com/access-tokens/'
+        'Invalid Mapbox token. Please use a public access token (pk.*) instead of a secret token (sk.*).'
       );
       return;
     }
@@ -323,7 +320,14 @@ export function ExploreMap({
       maxZoom: MAP_CONFIG.maxZoom,
     });
 
+    mapInstance.on('error', (event: any) => {
+      const message = event?.error?.message || 'Failed to load the map.';
+      console.warn('[ExploreMap] Web map error:', event?.error || event);
+      setMapError(message);
+    });
+
     mapInstance.on('load', () => {
+      setMapError(null);
       // Add 3D buildings layer
       const layers = mapInstance.getStyle()?.layers;
       if (layers) {
@@ -474,7 +478,7 @@ export function ExploreMap({
       mapInstance.remove();
       map.current = null;
     };
-  }, [mapboxToken, isValidToken, onGroupSelect]);
+  }, [isValidToken, mapboxToken, onGroupSelect]);
 
   // Update GeoJSON source with current zoom level
   const updateGeoJSONSource = useCallback(() => {
@@ -637,6 +641,33 @@ export function ExploreMap({
       return () => clearTimeout(timeoutId);
     }
   }, [mapLoaded]); // Only run once when map loads
+
+  // Resize the web map when its container becomes visible or changes size.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !map.current || !mapContainer.current) return;
+
+    const resizeMap = () => {
+      if (!map.current) return;
+      map.current.resize();
+    };
+
+    const rafId = requestAnimationFrame(resizeMap);
+    const timeoutId = window.setTimeout(resizeMap, 150);
+
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(() => {
+        resizeMap();
+      });
+      observer.observe(mapContainer.current);
+    }
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      window.clearTimeout(timeoutId);
+      observer?.disconnect();
+    };
+  }, [mapLoaded, groups.length, selectedGroupId]);
 
   // Notify bounds change when groups list changes (e.g., from filtering)
   useEffect(() => {
