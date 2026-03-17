@@ -76,8 +76,14 @@ export function AttendanceConfirmationModal({
     }
   }, [visible]);
 
-  // Check if already confirmed when token is validated
+  // Check if already confirmed when token is validated.
+  // Skip if we're already in a terminal state (success/already_confirmed) to
+  // prevent Convex reactive re-query from overwriting the success screen after
+  // the token is marked as used by confirmAttendanceWithToken.
   useEffect(() => {
+    if (step === "success" || step === "already_confirmed") {
+      return;
+    }
     if (tokenData?.valid && tokenData.alreadyConfirmed) {
       setStep("already_confirmed");
       setConfirmedStatus(tokenData.existingStatus ?? null);
@@ -85,7 +91,7 @@ export function AttendanceConfirmationModal({
       setStep("error");
       setError(tokenData.error || "Invalid or expired link");
     }
-  }, [tokenData]);
+  }, [tokenData, step]);
 
   const showConfirmDialog = (status: number, onConfirm: () => void) => {
     const statusText = status === 1 ? "attended" : "did not attend";
