@@ -195,40 +195,40 @@ export function extractSystemRawValues(params: {
 // ============================================================================
 
 /**
- * Evaluate hardcoded alert thresholds against raw values.
- *
- * Returns human-readable alert labels for any triggered conditions:
- * - `"3+ missed"` — 3 or more consecutive meetings missed
- * - `"No followup 14d+"` — no followup action in 14+ days (but not if never followed up)
- * - `"Low service"` — zero PCO services in the past 2 months
- * - `"Inactive"` — attendance below 10% AND no followup in 30+ days
+ * Evaluate custom community alert thresholds against raw values.
  *
  * @param rawValues - The raw metric values for the member
+ * @param customAlerts - Community-configured alert rules
  * @returns Array of triggered alert label strings (may be empty)
  */
-export function evaluateSystemAlerts(rawValues: SystemRawValues): string[] {
+export function evaluateSystemAlerts(
+  rawValues: SystemRawValues,
+  customAlerts?: Array<{
+    id: string;
+    variableId: string;
+    operator: string;
+    threshold: number;
+    label?: string;
+  }>,
+): string[] {
   const alerts: string[] = [];
 
-  if (rawValues.consecutive_missed >= 3) {
-    alerts.push("3+ missed");
-  }
-
-  if (
-    rawValues.days_since_last_followup >= 14 &&
-    rawValues.days_since_last_followup < 9999
-  ) {
-    alerts.push("No followup 14d+");
-  }
-
-  if (rawValues.pco_services_past_2mo === 0) {
-    alerts.push("Low service");
-  }
-
-  if (
-    rawValues.attendance_all_groups_pct < 10 &&
-    rawValues.days_since_last_followup >= 30
-  ) {
-    alerts.push("Inactive");
+  if (customAlerts && customAlerts.length > 0) {
+    const rawMap = rawValues as unknown as Record<string, number>;
+    for (const alert of customAlerts) {
+      const raw = rawMap[alert.variableId];
+      if (raw === undefined) continue;
+      const fired =
+        alert.operator === "above"
+          ? raw > alert.threshold
+          : raw < alert.threshold;
+      if (fired) {
+        alerts.push(
+          alert.label ||
+            `${alert.variableId} ${alert.operator === "above" ? "high" : "low"}`,
+        );
+      }
+    }
   }
 
   return alerts;

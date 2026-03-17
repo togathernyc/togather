@@ -33,6 +33,8 @@ import type { CustomFieldDef } from "./ColumnPickerModal";
 interface FollowupSettingsPanelProps {
   groupId: string;
   crossGroupMode?: boolean;
+  communityId?: string;
+  isAdmin?: boolean;
   // Current effective column state from parent
   currentColumnOrder: string[];
   currentHiddenColumns: string[];
@@ -40,6 +42,22 @@ interface FollowupSettingsPanelProps {
   // Live change callback — parent updates table immediately
   onColumnChange: (columnOrder: string[], hiddenColumns: string[]) => void;
   onClose: () => void;
+}
+
+// Alert definition matching backend schema
+interface AlertRule {
+  id: string;
+  variableId: string;
+  operator: string;
+  threshold: number;
+  label?: string;
+}
+
+// Variable info for the picker
+interface VariableOption {
+  id: string;
+  label: string;
+  description: string;
 }
 
 // ============================================================================
@@ -84,9 +102,23 @@ function normalizeSelectFieldOptions(options: string[]): string[] {
 // Component
 // ============================================================================
 
+// Available variables for alert picker (kept in sync with backend VARIABLE_REGISTRY)
+const ALERT_VARIABLES: VariableOption[] = [
+  { id: "attendance_pct", label: "Attendance %", description: "Meeting attendance percentage" },
+  { id: "consecutive_missed", label: "Consecutive Missed", description: "Consecutive missed meetings" },
+  { id: "days_since_last_followup", label: "Days Since Follow-up", description: "Days since any follow-up" },
+  { id: "days_since_last_text", label: "Days Since Text", description: "Days since last text" },
+  { id: "days_since_last_call", label: "Days Since Call", description: "Days since last call" },
+  { id: "days_since_last_in_person", label: "Days Since In-Person", description: "Days since last visit" },
+  { id: "attendance_all_groups_pct", label: "All Groups Attendance %", description: "Cross-group attendance" },
+  { id: "pco_services_past_2mo", label: "Services (2mo)", description: "PCO services in past 2 months" },
+];
+
 export function FollowupSettingsPanel({
   groupId,
   crossGroupMode,
+  communityId,
+  isAdmin,
   currentColumnOrder,
   currentHiddenColumns,
   columnLabels,
@@ -101,6 +133,8 @@ export function FollowupSettingsPanel({
   const [dataOpen, setDataOpen] = useState(false);
   const [columnsOpen, setColumnsOpen] = useState(false);
   const [subtitleOpen, setSubtitleOpen] = useState(false);
+  const [alertsOpen, setAlertsOpen] = useState(false);
+  const [scoresOpen, setScoresOpen] = useState(false);
 
   // ── Data queries ──
 
@@ -127,6 +161,16 @@ export function FollowupSettingsPanel({
   );
   const refreshFollowupScoresMut = useAuthenticatedMutation(
     api.functions.groups.mutations.refreshFollowupScores
+  );
+  const updateCommunityAlertsMut = useAuthenticatedMutation(
+    api.functions.communityPeople.updateCommunityAlerts
+  );
+
+  // ── Alert queries ──
+
+  const communityAlerts = useAuthenticatedQuery(
+    api.functions.communityPeople.getCommunityAlerts,
+    communityId ? { communityId: communityId as Id<"communities"> } : "skip"
   );
 
   // ── Display Name state ──
@@ -378,6 +422,75 @@ export function FollowupSettingsPanel({
       setSavingSubtitle(false);
     }
   }, [groupId, subtitleVars, groupData?.followupScoreConfig?.scores, updateScoreConfig]);
+
+  // ── Alerts state ──
+
+  const [alertRules, setAlertRules] = useState<AlertRule[]>([]);
+  const [alertsInitialized, setAlertsInitialized] = useState(false);
+  const [showAddAlert, setShowAddAlert] = useState(false);
+  const [newAlertVariable, setNewAlertVariable] = useState(ALERT_VARIABLES[0].id);
+  const [newAlertOperator, setNewAlertOperator] = useState<"above" | "below">("above");
+  const [newAlertThreshold, setNewAlertThreshold] = useState("");
+  const [newAlertLabel, setNewAlertLabel] = useState("");
+  const [isSavingAlerts, setIsSavingAlerts] = useState(false);
+  const [hasAlertChanges, setHasAlertChanges] = useState(false);
+
+  // Initialize alerts from community data
+  useEffect(() => {
+    if (alertsInitialized || !communityAlerts) return;
+    setAlertsInitialized(true);
+    setAlertRules(communityAlerts as AlertRule[]);
+  }, [communityAlerts, alertsInitialized]);
+
+  const handleAddAlert = useCallback(() => {
+    const threshold = parseFloat(newAlertThreshold);
+    if (isNaN(threshold)) {
+      Alert.alert("Invalid threshold", "Enter a valid number for the threshold.");
+      return;
+    }
+
+    const newAlert: AlertRule = {
+      id: `alert_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      variableId: newAlertVariable,
+      operator: newAlertOperator,
+      threshold,
+      label: newAlertLabel.trim() || undefined,
+    };
+
+    setAlertRules((prev) => [...prev, newAlert]);
+    setHasAlertChanges(true);
+    setNewAlertVariable(ALERT_VARIABLES[0].id);
+    setNewAlertOperator("above");
+    setNewAlertThreshold("");
+    setNewAlertLabel("");
+    setShowAddAlert(false);
+  }, [newAlertVariable, newAlertOperator, newAlertThreshold, newAlertLabel]);
+
+  const handleDeleteAlert = useCallback((id: string) => {
+    setAlertRules((prev) => prev.filter((a) => a.id !== id));
+    setHasAlertChanges(true);
+  }, []);
+
+  const handleSaveAlerts = useCallback(async () => {
+    if (!communityId) return;
+    setIsSavingAlerts(true);
+    try {
+      await updateCommunityAlertsMut({
+        communityId: communityId as Id<"communities">,
+        alerts: alertRules,
+      });
+      setHasAlertChanges(false);
+      Alert.alert("Alerts saved", "Alert rules have been saved. Refresh scores to apply.");
+    } catch (err) {
+      console.error("[updateCommunityAlerts] failed:", err);
+      Alert.alert(
+        "Could not save",
+        err instanceof Error ? err.message : "Please try again."
+      );
+    } finally {
+      setIsSavingAlerts(false);
+    }
+  }, [communityId, alertRules, updateCommunityAlertsMut]);
 
   // ── Loading ──
 
@@ -776,6 +889,231 @@ export function FollowupSettingsPanel({
             )}
           </View>
         )}
+        {/* ── Section 5: Scores (read-only, all users) ── */}
+        {renderSectionHeader("Scores", scoresOpen, () => setScoresOpen((p) => !p))}
+        {scoresOpen && (
+          <View style={styles.sectionBody}>
+            <View style={styles.scoreExplainer}>
+              <Text style={styles.scoreExplainerTitle}>Service (Score 1)</Text>
+              <Text style={styles.scoreExplainerText}>
+                Measures PCO serving engagement over the past 2 months. Each service adds 20 points (max 100 at 5+ services).
+              </Text>
+            </View>
+            <View style={styles.scoreExplainer}>
+              <Text style={styles.scoreExplainerTitle}>Attendance (Score 2)</Text>
+              <Text style={styles.scoreExplainerText}>
+                Percentage of meetings attended across all groups in the community. Shows as a direct 0-100% score.
+              </Text>
+            </View>
+            <View style={styles.scoreExplainer}>
+              <Text style={styles.scoreExplainerTitle}>Togather (Score 3)</Text>
+              <Text style={styles.scoreExplainerText}>
+                Composite engagement score combining attendance consistency and followup recency. Attendance starts at 100 and drops 15 points per consecutive miss. Followup score is based on the most recent contact: in-person (100), call (85), or text (70), decaying by 1 point per day. The two components are averaged.
+              </Text>
+            </View>
+            <View style={styles.subsectionDivider} />
+            <View style={styles.colorLegendRow}>
+              <View style={[styles.colorDot, { backgroundColor: "#22C55E" }]} />
+              <Text style={styles.colorLegendText}>Green: 70+</Text>
+              <View style={[styles.colorDot, { backgroundColor: "#F59E0B" }]} />
+              <Text style={styles.colorLegendText}>Orange: 40-69</Text>
+              <View style={[styles.colorDot, { backgroundColor: "#EF4444" }]} />
+              <Text style={styles.colorLegendText}>Red: &lt;40</Text>
+            </View>
+          </View>
+        )}
+
+        {/* ── Section 6: Alerts (admin-only) ── */}
+        {isAdmin && communityId && renderSectionHeader("Alerts", alertsOpen, () => setAlertsOpen((p) => !p))}
+        {isAdmin && communityId && alertsOpen && (
+          <View style={styles.sectionBody}>
+            <Text style={styles.hintText}>
+              Custom alert rules trigger when a member's metric crosses a threshold.
+              Alerts appear in the Alerts column of the people table.
+            </Text>
+
+            {/* Existing alert rules */}
+            {alertRules.map((alert) => {
+              const varDef = ALERT_VARIABLES.find((v) => v.id === alert.variableId);
+              return (
+                <View key={alert.id} style={styles.alertCard}>
+                  <View style={styles.alertCardInfo}>
+                    <Text style={styles.alertCardLabel}>
+                      {alert.label || `${varDef?.label ?? alert.variableId} ${alert.operator} ${alert.threshold}`}
+                    </Text>
+                    <Text style={styles.alertCardDetail}>
+                      {varDef?.label ?? alert.variableId} {alert.operator} {alert.threshold}
+                    </Text>
+                  </View>
+                  <TouchableOpacity onPress={() => handleDeleteAlert(alert.id)} style={styles.deleteBtn}>
+                    <Ionicons name="trash-outline" size={14} color="#EF4444" />
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
+
+            {/* Add alert form */}
+            {showAddAlert ? (
+              <View style={styles.addFieldForm}>
+                <Text style={styles.optionsLabel}>Variable</Text>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  style={styles.alertPickerScroll}
+                >
+                  <View style={styles.typePickerRow}>
+                    {ALERT_VARIABLES.map((v) => (
+                      <TouchableOpacity
+                        key={v.id}
+                        style={[
+                          styles.typeOption,
+                          newAlertVariable === v.id && {
+                            borderColor: themeColor,
+                            backgroundColor: `${themeColor}10`,
+                          },
+                        ]}
+                        onPress={() => setNewAlertVariable(v.id)}
+                      >
+                        <Text
+                          style={[
+                            styles.typeOptionText,
+                            newAlertVariable === v.id && {
+                              color: themeColor,
+                              fontWeight: "600" as const,
+                            },
+                          ]}
+                        >
+                          {v.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </ScrollView>
+
+                <Text style={styles.optionsLabel}>Condition</Text>
+                <View style={styles.typePickerRow}>
+                  <TouchableOpacity
+                    style={[
+                      styles.typeOption,
+                      newAlertOperator === "above" && {
+                        borderColor: themeColor,
+                        backgroundColor: `${themeColor}10`,
+                      },
+                    ]}
+                    onPress={() => setNewAlertOperator("above")}
+                  >
+                    <Text
+                      style={[
+                        styles.typeOptionText,
+                        newAlertOperator === "above" && {
+                          color: themeColor,
+                          fontWeight: "600" as const,
+                        },
+                      ]}
+                    >
+                      Above
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.typeOption,
+                      newAlertOperator === "below" && {
+                        borderColor: themeColor,
+                        backgroundColor: `${themeColor}10`,
+                      },
+                    ]}
+                    onPress={() => setNewAlertOperator("below")}
+                  >
+                    <Text
+                      style={[
+                        styles.typeOptionText,
+                        newAlertOperator === "below" && {
+                          color: themeColor,
+                          fontWeight: "600" as const,
+                        },
+                      ]}
+                    >
+                      Below
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                <Text style={styles.optionsLabel}>Threshold</Text>
+                <TextInput
+                  style={[
+                    styles.fieldInput,
+                    Platform.OS === "web" ? ({ outlineStyle: "none" } as any) : {},
+                  ]}
+                  value={newAlertThreshold}
+                  onChangeText={setNewAlertThreshold}
+                  placeholder="e.g. 3"
+                  placeholderTextColor="#9CA3AF"
+                  keyboardType="numeric"
+                />
+
+                <Text style={styles.optionsLabel}>Label (optional)</Text>
+                <TextInput
+                  style={[
+                    styles.fieldInput,
+                    Platform.OS === "web" ? ({ outlineStyle: "none" } as any) : {},
+                  ]}
+                  value={newAlertLabel}
+                  onChangeText={setNewAlertLabel}
+                  placeholder="e.g. High miss count"
+                  placeholderTextColor="#9CA3AF"
+                />
+
+                <View style={styles.addFieldActions}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setShowAddAlert(false);
+                      setNewAlertThreshold("");
+                      setNewAlertLabel("");
+                    }}
+                    style={styles.cancelFieldBtn}
+                  >
+                    <Text style={styles.cancelFieldText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={handleAddAlert}
+                    style={[
+                      styles.confirmFieldBtn,
+                      { backgroundColor: themeColor },
+                      !newAlertThreshold.trim() && styles.btnDisabled,
+                    ]}
+                    disabled={!newAlertThreshold.trim()}
+                  >
+                    <Text style={styles.confirmFieldText}>Add Alert</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              <TouchableOpacity onPress={() => setShowAddAlert(true)} style={styles.addFieldButton}>
+                <Ionicons name="add-circle-outline" size={16} color={themeColor} />
+                <Text style={[styles.addFieldButtonText, { color: themeColor }]}>Add Alert Rule</Text>
+              </TouchableOpacity>
+            )}
+
+            {/* Save alerts button */}
+            {hasAlertChanges && (
+              <TouchableOpacity
+                onPress={handleSaveAlerts}
+                style={[
+                  styles.saveButton,
+                  { backgroundColor: themeColor },
+                  isSavingAlerts && styles.btnDisabled,
+                ]}
+                disabled={isSavingAlerts}
+              >
+                {isSavingAlerts ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.saveButtonText}>Save Alerts</Text>
+                )}
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
       </ScrollView>
     </View>
   );
@@ -1151,5 +1489,65 @@ const styles = StyleSheet.create({
   subtitleOptionText: {
     fontSize: 12,
     color: "#374151",
+  },
+
+  // Score explanation section
+  scoreExplainer: {
+    gap: 2,
+  },
+  scoreExplainerTitle: {
+    fontSize: 12,
+    fontWeight: "600" as const,
+    color: "#374151",
+  },
+  scoreExplainerText: {
+    fontSize: 11,
+    color: "#6B7280",
+    lineHeight: 16,
+  },
+  colorLegendRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    flexWrap: "wrap",
+  },
+  colorDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  colorLegendText: {
+    fontSize: 11,
+    color: "#6B7280",
+    marginRight: 6,
+  },
+
+  // Alert section
+  alertCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    backgroundColor: "#F9FAFB",
+    borderRadius: 6,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  alertCardInfo: {
+    flex: 1,
+    gap: 1,
+  },
+  alertCardLabel: {
+    fontSize: 12,
+    fontWeight: "500" as const,
+    color: "#374151",
+  },
+  alertCardDetail: {
+    fontSize: 10,
+    color: "#9CA3AF",
+  },
+  alertPickerScroll: {
+    maxHeight: 36,
   },
 });

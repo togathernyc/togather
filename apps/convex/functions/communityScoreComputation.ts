@@ -81,6 +81,17 @@ export const getAllCommunityIds = internalQuery({
 });
 
 /**
+ * Get the community's custom alert configuration.
+ */
+export const getCommunityAlertConfig = internalQuery({
+  args: { communityId: v.id("communities") },
+  handler: async (ctx, args) => {
+    const community = await ctx.db.get(args.communityId);
+    return community?.alertConfig ?? null;
+  },
+});
+
+/**
  * Get a paginated list of community members via the announcement group.
  * Returns member data with denormalized user info for upsert.
  */
@@ -166,6 +177,17 @@ export const computeCommunityScoresBatch = internalQuery({
       })
     ),
     crossGroupAttendanceMap: v.optional(v.any()),
+    customAlerts: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          variableId: v.string(),
+          operator: v.string(),
+          threshold: v.number(),
+          label: v.optional(v.string()),
+        }),
+      ),
+    ),
   },
   handler: async (ctx, args) => {
     const currentTime = now();
@@ -290,7 +312,7 @@ export const computeCommunityScoresBatch = internalQuery({
 
         // Calculate scores and alerts
         const scores = calculateAllSystemScores(rawValues);
-        const alerts = evaluateSystemAlerts(rawValues);
+        const alerts = evaluateSystemAlerts(rawValues, args.customAlerts);
 
         // Build search text
         const searchText = [
@@ -506,6 +528,13 @@ export const computeCommunityScores = internalAction({
 
     const announcementGroupId = announcementGroup._id;
 
+    // Step 1b: Fetch community alert config
+    const community = await ctx.runQuery(
+      internal.functions.communityScoreComputation.getCommunityAlertConfig,
+      { communityId: args.communityId }
+    );
+    const customAlerts = community ?? undefined;
+
     // Step 2: Refresh PCO serving data for the announcement group
     try {
       await ctx.runAction(
@@ -574,6 +603,7 @@ export const computeCommunityScores = internalAction({
           announcementGroupId,
           members: page.members,
           crossGroupAttendanceMap,
+          customAlerts,
         }
       );
 
@@ -671,6 +701,13 @@ export const computeSingleCommunityMember = internalAction({
 
     if (!membership) return;
 
+    // Fetch community alert config
+    const communityAlerts = await ctx.runQuery(
+      internal.functions.communityScoreComputation.getCommunityAlertConfig,
+      { communityId: args.communityId }
+    );
+    const customAlerts = communityAlerts ?? undefined;
+
     // Compute cross-group attendance for this single user
     const crossGroupAttendanceMap: Record<string, number> = await ctx.runQuery(
       internal.functions.memberFollowups.internalCrossGroupAttendance,
@@ -685,6 +722,7 @@ export const computeSingleCommunityMember = internalAction({
         announcementGroupId: announcementGroup._id,
         members: [membership],
         crossGroupAttendanceMap,
+        customAlerts,
       }
     );
 
