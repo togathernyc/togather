@@ -997,31 +997,19 @@ export const backfillAllCommunities = internalAction({
  * computeSingleCommunityMember. This avoids every call site needing
  * to look up the community themselves.
  */
-export const recomputeForGroupMember = internalAction({
+export const recomputeForGroupMember = internalMutation({
   args: {
     groupId: v.id("groups"),
     userId: v.id("users"),
   },
   handler: async (ctx, args) => {
-    const group = await ctx.runQuery(
-      internal.functions.communityScoreComputation.getGroupForRecompute,
-      { groupId: args.groupId }
-    );
+    const group = await ctx.db.get(args.groupId);
     if (!group?.communityId) return;
 
-    await ctx.runAction(
+    await ctx.scheduler.runAfter(
+      0,
       internal.functions.communityScoreComputation.computeSingleCommunityMember,
       { communityId: group.communityId, userId: args.userId }
     );
-  },
-});
-
-/**
- * Simple internal query to get a group doc for the recompute wrapper.
- */
-export const getGroupForRecompute = internalQuery({
-  args: { groupId: v.id("groups") },
-  handler: async (ctx, args) => {
-    return await ctx.db.get(args.groupId);
   },
 });

@@ -15,14 +15,11 @@ export default defineConfig({
   test: {
     environment: "edge-runtime",
     include: ["__tests__/**/*.test.ts"],
+    setupFiles: ["./vitest.setup.ts"],
     server: { deps: { inline: ["convex-test"] } },
     env: {
       // Test JWT secret - must be at least 32 characters
       JWT_SECRET: "test-jwt-secret-for-convex-testing-at-least-32-chars",
     },
-    // Ignore "Write outside of transaction" errors from convex-test
-    // when running finishAllScheduledFunctions(). These are expected
-    // warnings in the test framework and don't indicate actual test failures.
-    dangerouslyIgnoreUnhandledErrors: true,
   },
 });
