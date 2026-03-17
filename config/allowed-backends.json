@@ -6,5 +6,13 @@
   "togather-agent-2": {
     "CONVEX_DEPLOYMENT": "dev:togather-agent-2",
     "EXPO_PUBLIC_CONVEX_URL": "https://togather-agent-2.convex.cloud"
+  },
+  "togather-agent-3": {
+    "CONVEX_DEPLOYMENT": "dev:togather-agent-3",
+    "EXPO_PUBLIC_CONVEX_URL": "https://togather-agent-3.convex.cloud"
+  },
+  "togather-agent-4": {
+    "CONVEX_DEPLOYMENT": "dev:togather-agent-4",
+    "EXPO_PUBLIC_CONVEX_URL": "https://togather-agent-4.convex.cloud"
   }
 }

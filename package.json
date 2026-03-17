@@ -9,6 +9,8 @@
     "dev:backend": "node scripts/dev-backend.js",
     "dev:agent1": "node scripts/dev-backend.js --backend=togather-agent-1",
     "dev:agent2": "node scripts/dev-backend.js --backend=togather-agent-2",
+    "dev:agent3": "node scripts/dev-backend.js --backend=togather-agent-3",
+    "dev:agent4": "node scripts/dev-backend.js --backend=togather-agent-4",
     "dev:mobile": "node scripts/dev.js --mobile",
     "dev:convex": "node scripts/dev.js --convex",
     "dev:agent": "node scripts/agent-dev.js",
