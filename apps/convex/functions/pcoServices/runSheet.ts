@@ -728,7 +728,7 @@ export const getRunSheet = action({
 
 /**
  * Public version of getRunSheet — no auth required.
- * Used by tool short link pages (togather.nyc/t/[shortId]).
+ * Used by resource short link pages (togather.nyc/r/[shortId]).
  * Requires a valid shortLinkId to verify access originates from a short link.
  * Looks up the group's community directly to get PCO credentials.
  */

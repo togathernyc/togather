@@ -56,7 +56,7 @@ export default function ResourcePage() {
         toolType: "resource",
         resourceId: resource_id as Id<"groupResources">,
       });
-      const toolUrl = DOMAIN_CONFIG.toolShareUrl(shortId);
+      const toolUrl = DOMAIN_CONFIG.resourceShareUrl(shortId);
       const title = resource?.title || "Resource";
 
       if (Platform.OS === "ios") {

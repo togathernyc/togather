@@ -23,6 +23,13 @@ export const DOMAIN_CONFIG: {
   eventLinkRegexSingle(): RegExp;
   groupLinkRegex(): RegExp;
   groupLinkRegexSingle(): RegExp;
+  taskShareUrl(shortId: string): string;
+  resourceShareUrl(shortId: string): string;
   readonly convexDeployment: string;
   readonly convexHttpUrl: string | null;
+  toolShareUrl(shortId: string): string;
+  toolLinkRegex(): RegExp;
+  toolLinkRegexSingle(): RegExp;
+  taskLinkRegex(): RegExp;
+  taskLinkRegexSingle(): RegExp;
 };

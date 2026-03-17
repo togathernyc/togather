@@ -69,6 +69,16 @@ const getAndroidIntentFilters = () => {
           {
             scheme: "https",
             host: "staging.togather.nyc",
+            pathPrefix: "/t/",
+          },
+          {
+            scheme: "https",
+            host: "staging.togather.nyc",
+            pathPrefix: "/r/",
+          },
+          {
+            scheme: "https",
+            host: "staging.togather.nyc",
             pathPrefix: "/nearme",
           },
         ],
@@ -95,6 +105,16 @@ const getAndroidIntentFilters = () => {
         {
           scheme: "https",
           host: "togather.nyc",
+          pathPrefix: "/t/",
+        },
+        {
+          scheme: "https",
+          host: "togather.nyc",
+          pathPrefix: "/r/",
+        },
+        {
+          scheme: "https",
+          host: "togather.nyc",
           pathPrefix: "/nearme",
         },
         // Wildcard for community subdomains (e.g., fount.togather.nyc)
@@ -107,6 +127,16 @@ const getAndroidIntentFilters = () => {
           scheme: "https",
           host: "*.togather.nyc",
           pathPrefix: "/g/",
+        },
+        {
+          scheme: "https",
+          host: "*.togather.nyc",
+          pathPrefix: "/t/",
+        },
+        {
+          scheme: "https",
+          host: "*.togather.nyc",
+          pathPrefix: "/r/",
         },
         {
           scheme: "https",

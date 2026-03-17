@@ -1,14 +1,14 @@
 "use client";
 
 /**
- * Tool Page Route Component
+ * Task Short Link Route Component
  *
- * Handles CLIENT-SIDE routing for shared tool links (togather.nyc/t/[shortId]).
- * Resolves the shortId to a tool type (Run Sheet or Resource) and renders accordingly.
+ * Handles CLIENT-SIDE routing for shared task links (togather.nyc/t/[shortId]).
+ * Legacy tool links now redirect to /r/[shortId] during migration.
  */
 
-import ToolPageClient from "./ToolPageClient";
+import TaskPageClient from "./TaskPageClient";
 
 export default function ToolPage() {
-  return <ToolPageClient />;
+  return <TaskPageClient />;
 }

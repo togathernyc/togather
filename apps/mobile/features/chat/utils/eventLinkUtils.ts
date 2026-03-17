@@ -59,25 +59,29 @@ export function stripEventLinksFromText(text: string | undefined): string {
 }
 
 // ============================================================================
-// Tool Link Detection (Run Sheet, Resources)
+// Shared Link Detection (Tasks + Resources/Tools)
 // ============================================================================
 
 /**
- * Extract tool short IDs from message text
+ * Extract short IDs from task (/t) and resource/tool (/r) links.
+ * During migration, this catches both link families so chat cards keep rendering.
  */
 export function extractToolShortIds(text: string | undefined): string[] {
   if (!text) return [];
-  const regex = DOMAIN_CONFIG.toolLinkRegex();
-  const matches = [...text.matchAll(regex)];
-  return matches.map(m => m[1]);
+  const taskMatches = [...text.matchAll(DOMAIN_CONFIG.taskLinkRegex())].map(m => m[1]);
+  const resourceMatches = [...text.matchAll(DOMAIN_CONFIG.toolLinkRegex())].map(m => m[1]);
+  return [...new Set([...taskMatches, ...resourceMatches])];
 }
 
 /**
- * Remove tool links from message text for display
+ * Remove task (/t) and resource/tool (/r) links from message text for display.
  */
 export function stripToolLinksFromText(text: string | undefined): string {
   if (!text) return '';
-  return text.replace(DOMAIN_CONFIG.toolLinkRegex(), '').trim();
+  return text
+    .replace(DOMAIN_CONFIG.taskLinkRegex(), '')
+    .replace(DOMAIN_CONFIG.toolLinkRegex(), '')
+    .trim();
 }
 
 // ============================================================================

@@ -1,11 +1,10 @@
 import { Stack } from "expo-router";
 
 /**
- * Layout for public task short links (/t/[shortId])
+ * Layout for public resource/tool pages (/r/[shortId]).
  * These pages are accessible without authentication.
- * Legacy tool short links are redirected to /r/[shortId].
  */
-export default function ToolLayout() {
+export default function ResourceLayout() {
   return (
     <Stack
       screenOptions={{

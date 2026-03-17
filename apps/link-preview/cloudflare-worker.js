@@ -756,8 +756,9 @@ function generateGroupErrorHtml(shortId, config) {
  * @param {Object} tool - Tool data from Convex
  * @param {string} shortId - Tool short ID
  * @param {Object} config - Environment-specific configuration
+ * @param {string} routePrefix - Canonical route prefix ("/t" or "/r")
  */
-function generateToolOgHtml(tool, shortId, config) {
+function generateToolOgHtml(tool, shortId, config, routePrefix = "/r") {
   const groupName = escapeHtml(tool.groupName || "Group");
   const communityName = escapeHtml(tool.communityName || BRAND_NAME);
 
@@ -774,13 +775,18 @@ function generateToolOgHtml(tool, shortId, config) {
     description = `View ${resourceTitle} from ${groupName}`;
     // Resource image > group image > community logo
     imageUrl = tool.resourceImage || tool.groupImage || tool.communityLogo || "";
+  } else if (tool.toolType === "task") {
+    const taskTitle = escapeHtml(tool.taskTitle || "Task");
+    title = `${groupName} - ${taskTitle}`;
+    description = `Open this task from ${groupName}`;
+    imageUrl = tool.groupImage || tool.communityLogo || "";
   } else {
     title = `${groupName} - Tool`;
     description = `View this tool from ${groupName}`;
     imageUrl = tool.groupImage || tool.communityLogo || "";
   }
 
-  const toolUrl = `${config.baseUrl}/t/${shortId}`;
+  const toolUrl = `${config.baseUrl}${routePrefix}/${shortId}`;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -843,9 +849,10 @@ function generateToolOgHtml(tool, shortId, config) {
  * Generate tool error HTML (fallback when API fails)
  * @param {string} shortId - Tool short ID
  * @param {Object} config - Environment-specific configuration
+ * @param {string} routePrefix - Canonical route prefix ("/t" or "/r")
  */
-function generateToolErrorHtml(shortId, config) {
-  const toolUrl = `${config.baseUrl}/t/${shortId}`;
+function generateToolErrorHtml(shortId, config, routePrefix = "/r") {
+  const toolUrl = `${config.baseUrl}${routePrefix}/${shortId}`;
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1255,9 +1262,9 @@ export default {
       return passToApp(request, config);
     }
 
-    // 5. Handle /t/:shortId (tool pages)
-    if (pathname.startsWith("/t/")) {
-      const shortIdMatch = pathname.match(/^\/t\/([a-zA-Z0-9]+)\/?$/);
+    // 5. Handle /r/:shortId (resource/tool pages)
+    if (pathname.startsWith("/r/")) {
+      const shortIdMatch = pathname.match(/^\/r\/([a-zA-Z0-9]+)\/?$/);
       if (shortIdMatch && isBot(userAgent)) {
         const shortId = shortIdMatch[1];
 
@@ -1265,19 +1272,20 @@ export default {
           const tool = await fetchToolData(shortId, convexSiteUrl);
 
           if (!tool) {
-            return new Response(generateToolErrorHtml(shortId, config), {
+            return new Response(generateToolErrorHtml(shortId, config, "/r"), {
               status: 200,
               headers: { "Content-Type": "text/html; charset=utf-8" },
             });
           }
 
-          return new Response(generateToolOgHtml(tool, shortId, config), {
+          const canonicalPrefix = tool.toolType === "task" ? "/t" : "/r";
+          return new Response(generateToolOgHtml(tool, shortId, config, canonicalPrefix), {
             status: 200,
             headers: { "Content-Type": "text/html; charset=utf-8" },
           });
         } catch (error) {
-          console.error(`Error fetching tool ${shortId}:`, error);
-          return new Response(generateToolErrorHtml(shortId, config), {
+          console.error(`Error fetching resource/tool ${shortId}:`, error);
+          return new Response(generateToolErrorHtml(shortId, config, "/r"), {
             status: 200,
             headers: { "Content-Type": "text/html; charset=utf-8" },
           });
@@ -1287,7 +1295,40 @@ export default {
       return passToApp(request, config);
     }
 
-    // 6. Handle /nearme routes
+    // 6. Handle /t/:shortId (task pages + legacy tool links)
+    if (pathname.startsWith("/t/")) {
+      const shortIdMatch = pathname.match(/^\/t\/([a-zA-Z0-9]+)\/?$/);
+      if (shortIdMatch && isBot(userAgent)) {
+        const shortId = shortIdMatch[1];
+
+        try {
+          const tool = await fetchToolData(shortId, convexSiteUrl);
+
+          if (!tool) {
+            return new Response(generateToolErrorHtml(shortId, config, "/t"), {
+              status: 200,
+              headers: { "Content-Type": "text/html; charset=utf-8" },
+            });
+          }
+
+          const canonicalPrefix = tool.toolType === "task" ? "/t" : "/r";
+          return new Response(generateToolOgHtml(tool, shortId, config, canonicalPrefix), {
+            status: 200,
+            headers: { "Content-Type": "text/html; charset=utf-8" },
+          });
+        } catch (error) {
+          console.error(`Error fetching tool ${shortId}:`, error);
+          return new Response(generateToolErrorHtml(shortId, config, "/t"), {
+            status: 200,
+            headers: { "Content-Type": "text/html; charset=utf-8" },
+          });
+        }
+      }
+      // Pass through for humans or invalid format
+      return passToApp(request, config);
+    }
+
+    // 7. Handle /nearme routes
     if (pathname === "/nearme" || pathname === "/nearme/") {
       if (isBot(userAgent)) {
         const subdomain = getSubdomain(url.hostname);

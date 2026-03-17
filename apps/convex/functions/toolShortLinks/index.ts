@@ -1,8 +1,8 @@
 /**
  * Tool Short Links Functions
  *
- * Manages short URLs for sharing direct links to group tools (Run Sheet, Resources).
- * Example: togather.nyc/t/abc123 → Run Sheet for "Production Team"
+ * Manages short URLs for sharing direct links to group tools (Run Sheet, Resources, Tasks).
+ * Example: togather.nyc/t/abc123 → Task for "Production Team"
  *
  * - getByShortId: Public query (no auth) to resolve a short link
  * - getOrCreate: Authenticated mutation to generate or retrieve a short link
@@ -70,6 +70,16 @@ export const getByShortId = query({
       }
     }
 
+    // If task, include task details
+    if (link.toolType === "task" && link.taskId) {
+      const task = await ctx.db.get(link.taskId);
+      if (!task) return null; // Task was deleted
+      if (task.groupId.toString() !== link.groupId.toString()) return null;
+      result.taskId = link.taskId;
+      result.taskTitle = task.title;
+      result.taskStatus = task.status;
+    }
+
     return result;
   },
 });
@@ -111,8 +121,9 @@ export const verifyShortLink = internalQuery({
 export const getOrCreate = mutation({
   args: {
     groupId: v.id("groups"),
-    toolType: v.string(), // "runsheet" | "resource"
+    toolType: v.string(), // "runsheet" | "resource" | "task"
     resourceId: v.optional(v.id("groupResources")),
+    taskId: v.optional(v.id("tasks")),
     token: v.string(),
   },
   handler: async (ctx, args) => {
@@ -134,9 +145,30 @@ export const getOrCreate = mutation({
       throw new Error("You must be a member of this group to share tools");
     }
 
-    // Validate resourceId is provided for resource tool type
+    // Validate shape for each link type
     if (args.toolType === "resource" && !args.resourceId) {
       throw new Error("resourceId is required when toolType is 'resource'");
+    }
+    if (args.toolType === "task" && !args.taskId) {
+      throw new Error("taskId is required when toolType is 'task'");
+    }
+    if (args.toolType === "runsheet" && (args.resourceId || args.taskId)) {
+      throw new Error("runsheet links cannot include resourceId or taskId");
+    }
+    if (args.toolType === "resource" && args.taskId) {
+      throw new Error("resource links cannot include taskId");
+    }
+    if (args.toolType === "task" && args.resourceId) {
+      throw new Error("task links cannot include resourceId");
+    }
+
+    // Verify shared task belongs to this group
+    if (args.toolType === "task" && args.taskId) {
+      const task = await ctx.db.get(args.taskId);
+      if (!task) throw new Error("Task not found");
+      if (task.groupId.toString() !== args.groupId.toString()) {
+        throw new Error("Task does not belong to this group");
+      }
     }
 
     // Check for existing link
@@ -150,6 +182,16 @@ export const getOrCreate = mutation({
             .eq("groupId", args.groupId)
             .eq("toolType", args.toolType)
             .eq("resourceId", args.resourceId)
+        )
+        .first();
+    } else if (args.toolType === "task" && args.taskId) {
+      existingLink = await ctx.db
+        .query("toolShortLinks")
+        .withIndex("by_group_toolType_taskId", (q) =>
+          q
+            .eq("groupId", args.groupId)
+            .eq("toolType", args.toolType)
+            .eq("taskId", args.taskId)
         )
         .first();
     } else {
@@ -173,6 +215,7 @@ export const getOrCreate = mutation({
       groupId: args.groupId,
       toolType: args.toolType,
       resourceId: args.resourceId,
+      taskId: args.taskId,
       createdAt: Date.now(),
       createdBy: userId,
     });

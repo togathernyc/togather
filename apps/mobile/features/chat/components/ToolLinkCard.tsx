@@ -55,6 +55,9 @@ export function ToolLinkCard({
         resourceId: prefetchedData.resourceId,
         resourceTitle: prefetchedData.resourceTitle,
         resourceIcon: prefetchedData.resourceIcon,
+        taskId: prefetchedData.taskId,
+        taskTitle: prefetchedData.taskTitle,
+        taskStatus: prefetchedData.taskStatus,
       }
     : fetchedData
     ? {
@@ -64,6 +67,9 @@ export function ToolLinkCard({
         resourceId: fetchedData.resourceId as string | undefined,
         resourceTitle: fetchedData.resourceTitle as string | undefined,
         resourceIcon: fetchedData.resourceIcon as string | undefined,
+        taskId: fetchedData.taskId as string | undefined,
+        taskTitle: fetchedData.taskTitle as string | undefined,
+        taskStatus: fetchedData.taskStatus as string | undefined,
       }
     : null;
 
@@ -78,15 +84,21 @@ export function ToolLinkCard({
       router.push(`/(user)/leader-tools/${toolData.groupId}/run-sheet`);
     } else if (toolData.toolType === "resource" && toolData.groupId && toolData.resourceId) {
       router.push(`/(user)/group/${toolData.groupId}/resource/${toolData.resourceId}`);
-    } else {
-      // Fallback to public tool page
+    } else if (toolData.toolType === "task" && toolData.groupId && toolData.taskId) {
+      router.push(`/(user)/leader-tools/${toolData.groupId}/tasks/${toolData.taskId}`);
+    } else if (toolData.toolType === "task") {
       router.push(`/t/${shortId}`);
+    } else {
+      // Fallback to canonical resource/tool page
+      router.push(`/r/${shortId}`);
     }
   };
 
   // Handle long press — share action sheet
   const handleLongPress = () => {
-    const toolUrl = DOMAIN_CONFIG.toolShareUrl(shortId);
+    const toolUrl = toolData?.toolType === "task"
+      ? DOMAIN_CONFIG.taskShareUrl(shortId)
+      : DOMAIN_CONFIG.resourceShareUrl(shortId);
 
     if (Platform.OS === "ios") {
       ActionSheetIOS.showActionSheetWithOptions(
@@ -120,6 +132,10 @@ export function ToolLinkCard({
     if (toolData.toolType === "resource") {
       return `${toolData.groupName} | ${toolData.resourceTitle || "Resource"}`;
     }
+    if (toolData.toolType === "task") {
+      const status = toolData.taskStatus ? ` (${toolData.taskStatus})` : "";
+      return `${toolData.groupName} | Task: ${toolData.taskTitle || "Task"}${status}`;
+    }
     return toolData.groupName || "Tool";
   };
 
@@ -130,6 +146,7 @@ export function ToolLinkCard({
     if (toolData.toolType === "resource") {
       return (toolData.resourceIcon as keyof typeof Ionicons.glyphMap) || "document-text-outline";
     }
+    if (toolData.toolType === "task") return "checkmark-circle-outline";
     return "link-outline";
   };
 

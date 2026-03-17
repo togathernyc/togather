@@ -1,8 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
+  ActionSheetIOS,
   ActivityIndicator,
+  Alert,
+  Platform,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -20,6 +24,8 @@ import {
 } from "@services/api/convex";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { parseTagsInput } from "./taskHelpers";
+import { DOMAIN_CONFIG } from "@togather/shared";
+import * as Clipboard from "expo-clipboard";
 
 type TaskDetail = {
   _id: Id<"tasks">;
@@ -189,6 +195,9 @@ export function TaskDetailScreen() {
   const markDone = useAuthenticatedMutation(api.functions.tasks.index.markDone);
   const snoozeTask = useAuthenticatedMutation(api.functions.tasks.index.snooze);
   const cancelTask = useAuthenticatedMutation(api.functions.tasks.index.cancel);
+  const getOrCreateTaskLink = useAuthenticatedMutation(
+    api.functions.toolShortLinks.index.getOrCreate,
+  );
 
   const originalAssigneeId = task?.assignedToId?.toString() ?? null;
 
@@ -256,6 +265,43 @@ export function TaskDetailScreen() {
     }
   }
 
+  async function handleShareTask() {
+    if (!taskId || !groupId) return;
+    try {
+      const shortId = await getOrCreateTaskLink({
+        groupId,
+        toolType: "task",
+        taskId,
+      });
+      const taskUrl = DOMAIN_CONFIG.taskShareUrl(shortId);
+      const shareMessage = `${task.title}\n${taskUrl}`;
+
+      if (Platform.OS === "ios") {
+        ActionSheetIOS.showActionSheetWithOptions(
+          {
+            options: ["Cancel", "Copy Link", "Share"],
+            cancelButtonIndex: 0,
+          },
+          async (buttonIndex) => {
+            if (buttonIndex === 1) {
+              await Clipboard.setStringAsync(taskUrl);
+              Alert.alert("Link Copied", "Task link copied to clipboard.");
+            } else if (buttonIndex === 2) {
+              await Share.share({
+                message: shareMessage,
+                url: taskUrl,
+              });
+            }
+          },
+        );
+      } else {
+        await Share.share({ message: shareMessage });
+      }
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Failed to create share link");
+    }
+  }
+
   if (!taskId || !groupId) {
     return (
       <UserRoute>
@@ -299,6 +345,13 @@ export function TaskDetailScreen() {
               Edit fields and review full history
             </Text>
           </View>
+          <Pressable
+            style={styles.shareButton}
+            onPress={handleShareTask}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Ionicons name="share-outline" size={20} color="#475569" />
+          </Pressable>
           <View style={[styles.statusBadge, { backgroundColor: `${statusColor(task.status)}20` }]}>
             <Text style={[styles.statusBadgeText, { color: statusColor(task.status) }]}>
               {task.status.toUpperCase()}
@@ -545,6 +598,10 @@ const styles = StyleSheet.create({
   backButton: {
     borderRadius: 999,
     padding: 4,
+  },
+  shareButton: {
+    borderRadius: 999,
+    padding: 6,
   },
   headerCopy: {
     flex: 1,
