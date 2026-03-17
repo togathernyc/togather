@@ -20,7 +20,7 @@ import {
   internalQuery,
 } from "../../_generated/server";
 import { internal } from "../../_generated/api";
-import { Id } from "../../_generated/dataModel";
+import { Doc, Id } from "../../_generated/dataModel";
 import { getMediaUrl } from "../../lib/utils";
 
 // ============================================================================
@@ -78,6 +78,16 @@ export const getAnnouncementGroup = internalQuery({
       )
       .filter((q) => q.eq(q.field("isAnnouncementGroup"), true))
       .first();
+  },
+});
+
+/**
+ * Get a single group by ID.
+ */
+export const getGroupById = internalQuery({
+  args: { groupId: v.id("groups") },
+  handler: async (ctx, args) => {
+    return ctx.db.get(args.groupId);
   },
 });
 
@@ -166,6 +176,7 @@ export const enrichScoreBatch = internalQuery({
         const lastName = user?.lastName || row.lastName || "";
         const email = user?.email || row.email;
         const phone = user?.phone || row.phone;
+        const zipCode = user?.zipCode || row.zipCode;
         const searchText = [firstName, lastName, email, phone]
           .filter(Boolean)
           .join(" ");
@@ -177,6 +188,7 @@ export const enrichScoreBatch = internalQuery({
           avatarUrl: getMediaUrl(user?.profilePhoto) || row.avatarUrl,
           email,
           phone,
+          zipCode,
           searchText,
 
           // Scores from existing data (will be overwritten on next recomputation)
@@ -307,6 +319,7 @@ export const upsertMigratedBatch = internalMutation({
           avatarUrl: member.avatarUrl,
           email: member.email,
           phone: member.phone,
+          zipCode: member.zipCode,
           searchText: member.searchText,
           score1: member.score1,
           score2: member.score2,
@@ -567,6 +580,92 @@ export const migrateCommunity = internalAction({
     console.log(
       `[migration] Done: community ${args.communityId}`
     );
+  },
+});
+
+/**
+ * Repair a single group's communityPeople rows directly from that group's
+ * memberFollowupScores rows.
+ *
+ * This is useful for targeted staging/dev recovery when the source score rows
+ * are present but the community-wide backfill has not completed for a group.
+ */
+export const repairGroupFromScores = internalAction({
+  args: { groupId: v.id("groups") },
+  handler: async (
+    ctx,
+    args
+  ): Promise<{
+    success: true;
+    groupId: Id<"groups">;
+    communityId: Id<"communities">;
+    recordsUpserted: number;
+  }> => {
+    const group: Doc<"groups"> | null = await ctx.runQuery(
+      internal.functions.migrations.migrateToCommunityPeople.getGroupById,
+      { groupId: args.groupId }
+    );
+
+    if (!group) {
+      throw new Error(`[migration] Group not found: ${args.groupId}`);
+    }
+
+    console.log(
+      `[migration] Repairing group ${args.groupId} in community ${group.communityId}`
+    );
+
+    let cursor: string | undefined = undefined;
+    let isDone = false;
+    let totalRecords = 0;
+
+    while (!isDone) {
+      const page: { scores: any[]; isDone: boolean; continueCursor: string } =
+        await ctx.runQuery(
+          internal.functions.migrations.migrateToCommunityPeople
+            .getFollowupScoresForGroup,
+          {
+            groupId: args.groupId,
+            cursor,
+            limit: BATCH_SIZE,
+          }
+        );
+
+      if (page.scores.length > 0) {
+        const enrichedMembers = await ctx.runQuery(
+          internal.functions.migrations.migrateToCommunityPeople.enrichScoreBatch,
+          {
+            communityId: group.communityId,
+            scoreRows: page.scores,
+          }
+        );
+
+        await ctx.runMutation(
+          internal.functions.migrations.migrateToCommunityPeople
+            .upsertMigratedBatch,
+          {
+            communityId: group.communityId,
+            groupId: args.groupId,
+            members: enrichedMembers,
+          }
+        );
+
+        totalRecords += enrichedMembers.length;
+      }
+
+      isDone = page.isDone;
+      cursor = page.continueCursor;
+    }
+
+    console.log(
+      `[migration] Repaired ${totalRecords} communityPeople rows for group ${args.groupId}`
+    );
+
+    return {
+      success: true,
+      groupId: args.groupId,
+      communityId: group.communityId,
+      recordsUpserted: totalRecords,
+    };
   },
 });
 

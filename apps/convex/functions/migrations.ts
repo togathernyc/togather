@@ -8,7 +8,45 @@
 
 import { internalQuery, internalMutation } from "../_generated/server";
 import { internal } from "../_generated/api";
+import { Id } from "../_generated/dataModel";
 import { v } from "convex/values";
+
+const NYC_METRO_ZIP_CODES = [
+  "10001", "10002", "10003", "10009", "10010", "10011", "10012", "10013",
+  "10014", "10016", "10018", "10019", "10021", "10022", "10023", "10024",
+  "10025", "10026", "10027", "10028", "10029", "10030", "10031", "10032",
+  "10033", "10034", "10035", "10036", "10037", "10038", "10039", "10040",
+  "10128", "10280", "10301", "10304", "10305", "10306", "10310", "10314",
+  "10451", "10452", "10453", "10454", "10455", "10456", "10457", "10458",
+  "10459", "10460", "10461", "10462", "10463", "10464", "10465", "10466",
+  "10467", "10468", "10469", "10470", "10471", "10472", "10473", "10474",
+  "10475", "11101", "11102", "11103", "11104", "11105", "11106", "11201",
+  "11203", "11204", "11205", "11206", "11207", "11208", "11209", "11210",
+  "11211", "11212", "11213", "11214", "11215", "11216", "11217", "11218",
+  "11219", "11220", "11221", "11222", "11223", "11224", "11225", "11226",
+  "11228", "11229", "11230", "11231", "11232", "11233", "11234", "11235",
+  "11236", "11354", "11355", "11356", "11357", "11358", "11360", "11361",
+  "11362", "11363", "11364", "11365", "11366", "11367", "11368", "11369",
+  "11370", "11372", "11373", "11374", "11375", "11377", "11378", "11379",
+  "11385", "11411", "11412", "11413", "11414", "11415", "11416", "11417",
+  "11418", "11419", "11420", "11421", "11422", "11423", "11426", "11427",
+  "11428", "11429", "11432", "11433", "11434", "11435", "11436", "11530",
+  "11550", "11561", "11691", "11692", "11693", "11694", "11697", "07030",
+  "07086", "07102", "07103", "07104", "07105", "07302", "07304", "07305",
+  "07306", "07307", "07601", "07631", "07666",
+] as const;
+
+function hashString(value: string): number {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+  }
+  return hash;
+}
+
+function zipCodeForId(value: string): string {
+  return NYC_METRO_ZIP_CODES[hashString(value) % NYC_METRO_ZIP_CODES.length];
+}
 
 /**
  * Count all images across all tables
@@ -257,6 +295,99 @@ export const getImagesToMigrate = internalQuery({
     }
 
     return imagesToMigrate;
+  },
+});
+
+/**
+ * Seed missing ZIP codes for dev followup testing without overwriting existing values.
+ *
+ * Run via:
+ *   CONVEX_DEPLOYMENT=dev:... npx convex run functions/migrations:seedDevZipCodes '{"count":1000}'
+ */
+export const seedDevZipCodes = internalMutation({
+  args: {
+    count: v.optional(v.number()),
+    groupId: v.optional(v.id("groups")),
+    groupShortId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const targetCount = Math.max(1, Math.min(args.count ?? 1000, 5000));
+    const nowTs = Date.now();
+    let targetGroupId = args.groupId;
+
+    if (!targetGroupId && args.groupShortId) {
+      const group = await ctx.db
+        .query("groups")
+        .withIndex("by_shortId", (q) => q.eq("shortId", args.groupShortId!))
+        .first();
+      if (!group) {
+        throw new Error(`Group not found for shortId ${args.groupShortId}`);
+      }
+      targetGroupId = group._id;
+    }
+
+    if (!targetGroupId) {
+      throw new Error("groupId or groupShortId is required");
+    }
+
+    const communityPeopleRows = await ctx.db
+      .query("communityPeople")
+      .withIndex("by_group", (q) => q.eq("groupId", targetGroupId!))
+      .collect();
+    const memberFollowupScoreRows = await ctx.db
+      .query("memberFollowupScores")
+      .withIndex("by_group", (q) => q.eq("groupId", targetGroupId!))
+      .collect();
+
+    const candidateUsers = new Map<string, Id<"users">>();
+    for (const row of communityPeopleRows) {
+      if (row.zipCode) continue;
+      candidateUsers.set(row.userId.toString(), row.userId);
+    }
+
+    const selectedUserIds = Array.from(candidateUsers.entries())
+      .sort(([a], [b]) => hashString(a) - hashString(b))
+      .slice(0, targetCount)
+      .map(([, userId]) => userId);
+
+    let usersUpdated = 0;
+    let communityPeopleUpdated = 0;
+    let followupScoresUpdated = 0;
+
+    for (const userId of selectedUserIds) {
+      const zipCode = zipCodeForId(userId.toString());
+      const user = await ctx.db.get(userId);
+
+      if (user && !user.zipCode) {
+        await ctx.db.patch(userId, { zipCode });
+        usersUpdated += 1;
+      }
+
+      for (const row of communityPeopleRows) {
+        if (row.userId.toString() !== userId.toString() || row.zipCode) continue;
+        await ctx.db.patch(row._id, {
+          zipCode,
+          updatedAt: nowTs,
+        });
+        communityPeopleUpdated += 1;
+      }
+
+      for (const row of memberFollowupScoreRows) {
+        if (row.userId.toString() !== userId.toString() || row.zipCode) continue;
+        await ctx.db.patch(row._id, { zipCode });
+        followupScoresUpdated += 1;
+      }
+    }
+
+    return {
+      requested: targetCount,
+      groupId: targetGroupId,
+      selectedUsers: selectedUserIds.length,
+      usersUpdated,
+      communityPeopleRowsUpdated: communityPeopleUpdated,
+      memberFollowupScoresUpdated: followupScoresUpdated,
+      zipPoolSize: NYC_METRO_ZIP_CODES.length,
+    };
   },
 });
 

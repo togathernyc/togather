@@ -24,6 +24,11 @@ interface PeopleViewBarProps {
   onDeleteView: (viewId: string, viewName: string, isShared: boolean) => void;
   onCreateView: () => void;
   isAdmin?: boolean;
+  specialViews?: Array<{
+    id: string;
+    name: string;
+    icon?: keyof typeof Ionicons.glyphMap;
+  }>;
 }
 
 // ============================================================================
@@ -38,6 +43,7 @@ export function PeopleViewBar({
   onDeleteView,
   onCreateView,
   isAdmin,
+  specialViews = [],
 }: PeopleViewBarProps) {
   const { primaryColor } = useCommunityTheme();
 
@@ -63,6 +69,47 @@ export function PeopleViewBar({
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
       >
+        {specialViews.map((view) => {
+          const isActive = activeViewId === view.id;
+          return (
+            <View key={view.id} style={styles.chipWrapper}>
+              <Pressable
+                onPress={() => {
+                  if (isActive) {
+                    onViewDeselect();
+                  } else {
+                    onViewSelect(view.id, { ...view, isSpecial: true });
+                  }
+                }}
+                style={[
+                  styles.chip,
+                  isActive
+                    ? { backgroundColor: primaryColor, borderColor: primaryColor }
+                    : styles.chipInactive,
+                ]}
+              >
+                {view.icon ? (
+                  <Ionicons
+                    name={view.icon}
+                    size={12}
+                    color={isActive ? "#FFFFFF" : "#9CA3AF"}
+                    style={styles.lockIcon}
+                  />
+                ) : null}
+                <Text
+                  style={[
+                    styles.chipText,
+                    isActive ? styles.chipTextActive : styles.chipTextInactive,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {view.name}
+                </Text>
+              </Pressable>
+            </View>
+          );
+        })}
+
         {views.map((view: any) => {
           const isActive = activeViewId === view._id;
           return (

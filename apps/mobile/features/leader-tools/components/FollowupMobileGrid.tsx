@@ -60,6 +60,7 @@ import {
 } from "./followupGridHelpers";
 import type { CustomFieldDef } from "./ColumnPickerModal";
 import { FollowupQuickAddPanel } from "./FollowupQuickAddPanel";
+import { FollowupMapView, FOLLOWUP_MAP_VIEW_ID } from "./FollowupMapView";
 
 type SortDirection = "asc" | "desc";
 
@@ -257,6 +258,7 @@ export function FollowupMobileGrid({
   const [viewToDelete, setViewToDelete] = useState<{
     id: string; name: string; isShared: boolean;
   } | null>(null);
+  const isMapViewActive = activeViewId === FOLLOWUP_MAP_VIEW_ID;
 
   const [localOverrides, setLocalOverrides] = useState<
     Record<
@@ -1939,6 +1941,10 @@ export function FollowupMobileGrid({
           communityId={groupData.communityId}
           activeViewId={activeViewId}
           onViewSelect={(viewId, view) => {
+            if (view?.isSpecial) {
+              setActiveViewId(viewId);
+              return;
+            }
             setActiveViewId(viewId);
             if (view.sortBy) setSortField(view.sortBy);
             if (view.sortDirection) setSortDirection(view.sortDirection);
@@ -1958,6 +1964,10 @@ export function FollowupMobileGrid({
             setSearchQuery(filterParts.join(" "));
           }}
           onViewDeselect={() => {
+            if (activeViewId === FOLLOWUP_MAP_VIEW_ID) {
+              setActiveViewId(null);
+              return;
+            }
             setActiveViewId(null);
             setSortField("score1");
             setSortDirection("desc");
@@ -1968,11 +1978,12 @@ export function FollowupMobileGrid({
           }}
           onCreateView={() => setShowSaveViewModal(true)}
           isAdmin={groupData?.userRole === "admin"}
+          specialViews={[{ id: FOLLOWUP_MAP_VIEW_ID, name: "Map", icon: "map-outline" }]}
         />
       )}
 
       <View style={styles.gridContainer}>
-        {selectedIds.size > 0 && (
+        {selectedIds.size > 0 && !isMapViewActive && (
           <View style={styles.actionBar}>
             <View style={styles.actionBarLeft}>
               <Text style={styles.actionBarCount}>
@@ -1992,6 +2003,23 @@ export function FollowupMobileGrid({
           </View>
         )}
 
+        {isMapViewActive ? (
+          <FollowupMapView
+            members={displayMembers.map((member) => ({
+              groupMemberId: member.groupMemberId,
+              firstName: member.firstName,
+              lastName: member.lastName,
+              avatarUrl: member.avatarUrl,
+              zipCode: member.zipCode,
+              status: member.status,
+              groupName: (member as any).groupName,
+            }))}
+            loading={isInitialLoading}
+            onOpenMember={(memberId) => {
+              router.push(`/(user)/leader-tools/${groupId}/followup/${memberId}`);
+            }}
+          />
+        ) : (
         <View style={styles.pinnedGridWrapper}>
           <View style={[styles.pinnedLeft, { width: pinnedWidth }]}>
             <View style={styles.headerRow}>
@@ -2087,6 +2115,7 @@ export function FollowupMobileGrid({
             </View>
           </ScrollView>
         </View>
+        )}
       </View>
 
       <Modal

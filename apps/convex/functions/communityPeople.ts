@@ -19,7 +19,7 @@ import { requireAuth } from "../lib/auth";
 import { isCommunityAdmin } from "../lib/permissions";
 import { isActiveMembership, isLeaderRole } from "../lib/helpers";
 import { VALID_CUSTOM_SLOTS } from "../lib/followupConstants";
-import { SYSTEM_SCORES } from "./systemScoring";
+import { SYSTEM_SCORES, SYSTEM_VARIABLE_IDS } from "./systemScoring";
 import { getMediaUrl } from "../lib/utils";
 
 // ============================================================================
@@ -1148,5 +1148,71 @@ export const upsertFromSubmission = internalMutation({
         });
       }
     }
+  },
+});
+
+// ============================================================================
+// Community Alert Config
+// ============================================================================
+
+/**
+ * Get the community's custom alert configuration.
+ */
+export const getCommunityAlerts = query({
+  args: {
+    token: v.optional(v.string()),
+    communityId: v.id("communities"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token ?? "");
+    await requireCommunityMember(ctx, args.communityId, userId);
+    const community = await ctx.db.get(args.communityId);
+    return community?.alertConfig ?? [];
+  },
+});
+
+/**
+ * Update the community's custom alert configuration (admin-only).
+ */
+export const updateCommunityAlerts = mutation({
+  args: {
+    token: v.string(),
+    communityId: v.id("communities"),
+    alerts: v.array(
+      v.object({
+        id: v.string(),
+        variableId: v.string(),
+        operator: v.string(),
+        threshold: v.number(),
+        label: v.optional(v.string()),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const isAdmin = await isCommunityAdmin(ctx, args.communityId, userId);
+    if (!isAdmin) {
+      throw new ConvexError("Only community admins can manage alerts");
+    }
+
+    // Validate alerts against system-level variables only
+    for (const alert of args.alerts) {
+      if (!SYSTEM_VARIABLE_IDS.has(alert.variableId)) {
+        throw new ConvexError(`Unknown variable: ${alert.variableId}`);
+      }
+      if (alert.operator !== "above" && alert.operator !== "below") {
+        throw new ConvexError(`Operator must be "above" or "below"`);
+      }
+      if (!Number.isFinite(alert.threshold)) {
+        throw new ConvexError("Threshold must be a finite number");
+      }
+    }
+
+    await ctx.db.patch(args.communityId, {
+      alertConfig: args.alerts,
+      updatedAt: Date.now(),
+    });
+
+    return { success: true };
   },
 });
