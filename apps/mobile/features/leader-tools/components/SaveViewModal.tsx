@@ -21,6 +21,7 @@ import { CustomModal } from "@/components/ui/Modal";
 interface SaveViewModalProps {
   visible: boolean;
   onClose: () => void;
+  onSave?: () => void;
   communityId: Id<"communities">;
   // Current table state to capture
   currentSortBy?: string;
@@ -58,6 +59,7 @@ const MAX_VIEW_NAME_LENGTH = 30;
 export function SaveViewModal({
   visible,
   onClose,
+  onSave,
   communityId,
   currentSortBy,
   currentSortDirection,
@@ -69,11 +71,17 @@ export function SaveViewModal({
 }: SaveViewModalProps) {
   const { primaryColor } = useCommunityTheme();
   const [name, setName] = useState("");
-  const [visibility, setVisibility] = useState<"personal" | "shared">("personal");
+  const [visibility, setVisibility] = useState<"personal" | "shared">(
+    "personal",
+  );
   const [isSaving, setIsSaving] = useState(false);
 
-  const createView = useAuthenticatedMutation(api.functions.peopleSavedViews.create);
-  const updateView = useAuthenticatedMutation(api.functions.peopleSavedViews.update);
+  const createView = useAuthenticatedMutation(
+    api.functions.peopleSavedViews.create,
+  );
+  const updateView = useAuthenticatedMutation(
+    api.functions.peopleSavedViews.update,
+  );
 
   const isEditMode = !!editingView;
 
@@ -126,6 +134,7 @@ export function SaveViewModal({
           filters: currentFilters,
         });
       }
+      onSave?.();
       onClose();
     } catch (error: any) {
       const message =
@@ -153,7 +162,9 @@ export function SaveViewModal({
           <TextInput
             style={styles.input}
             value={name}
-            onChangeText={(text) => setName(text.slice(0, MAX_VIEW_NAME_LENGTH))}
+            onChangeText={(text) =>
+              setName(text.slice(0, MAX_VIEW_NAME_LENGTH))
+            }
             placeholder="e.g. New Members, Active Leaders..."
             placeholderTextColor="#9CA3AF"
             autoFocus
@@ -191,7 +202,10 @@ export function SaveViewModal({
               <Text
                 style={[
                   styles.visibilityText,
-                  visibility === "personal" && { color: primaryColor, fontWeight: "600" as const },
+                  visibility === "personal" && {
+                    color: primaryColor,
+                    fontWeight: "600" as const,
+                  },
                 ]}
               >
                 Just me
@@ -216,7 +230,10 @@ export function SaveViewModal({
                 <Text
                   style={[
                     styles.visibilityText,
-                    visibility === "shared" && { color: primaryColor, fontWeight: "600" as const },
+                    visibility === "shared" && {
+                      color: primaryColor,
+                      fontWeight: "600" as const,
+                    },
                   ]}
                 >
                   Everyone

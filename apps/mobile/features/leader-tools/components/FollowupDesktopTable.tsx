@@ -1,4 +1,10 @@
-import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
+import React, {
+  useState,
+  useMemo,
+  useEffect,
+  useCallback,
+  useRef,
+} from "react";
 import {
   View,
   Text,
@@ -13,7 +19,13 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { useQuery, useAuthenticatedQuery, useAuthenticatedPaginatedQuery, useAuthenticatedMutation, api } from "@services/api/convex";
+import {
+  useQuery,
+  useAuthenticatedQuery,
+  useAuthenticatedPaginatedQuery,
+  useAuthenticatedMutation,
+  api,
+} from "@services/api/convex";
 import { Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
@@ -25,7 +37,11 @@ import { FollowupSettingsPanel } from "./FollowupSettingsPanel";
 import { FollowupCsvImportModal } from "./FollowupCsvImportModal";
 import { FollowupQuickAddPanel } from "./FollowupQuickAddPanel";
 import type { CustomFieldDef } from "./ColumnPickerModal";
-import { SYSTEM_SCORE_COLUMNS, getSystemScoreValue, adaptCommunityPerson } from "./followupShared";
+import {
+  SYSTEM_SCORE_COLUMNS,
+  getSystemScoreValue,
+  adaptCommunityPerson,
+} from "./followupShared";
 import { PeopleViewBar } from "./PeopleViewBar";
 import { SaveViewModal } from "./SaveViewModal";
 import {
@@ -236,12 +252,18 @@ export function FollowupDesktopTable({
   const [scrollToTasks, setScrollToTasks] = useState(false);
 
   // Inline editing
-  const [editingInlineField, setEditingInlineField] = useState<string | null>(null);
+  const [editingInlineField, setEditingInlineField] = useState<string | null>(
+    null,
+  );
   const [inlineFieldValue, setInlineFieldValue] = useState("");
 
   // Dropdowns — portal-based
-  const [assigneeDropdownFor, setAssigneeDropdownFor] = useState<string | null>(null);
-  const [statusDropdownFor, setStatusDropdownFor] = useState<string | null>(null);
+  const [assigneeDropdownFor, setAssigneeDropdownFor] = useState<string | null>(
+    null,
+  );
+  const [statusDropdownFor, setStatusDropdownFor] = useState<string | null>(
+    null,
+  );
   const [assigneeSearch, setAssigneeSearch] = useState("");
   const [dropdownPos, setDropdownPos] = useState<DropdownPosition | null>(null);
 
@@ -251,7 +273,16 @@ export function FollowupDesktopTable({
   const [hoveredCellId, setHoveredCellId] = useState<string | null>(null);
 
   // Optimistic updates — instant UI while mutation round-trips
-  const [optimistic, setOptimistic] = useState<Record<string, { assigneeIds?: string[] | null; status?: string | null; [key: string]: any }>>({});
+  const [optimistic, setOptimistic] = useState<
+    Record<
+      string,
+      {
+        assigneeIds?: string[] | null;
+        status?: string | null;
+        [key: string]: any;
+      }
+    >
+  >({});
 
   // Bulk selection state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -269,7 +300,9 @@ export function FollowupDesktopTable({
 
   // Delete confirmation state
   const [viewToDelete, setViewToDelete] = useState<{
-    id: string; name: string; isShared: boolean;
+    id: string;
+    name: string;
+    isShared: boolean;
   } | null>(null);
 
   // Column header context menu state (web only)
@@ -281,8 +314,12 @@ export function FollowupDesktopTable({
   } | null>(null);
 
   // Local column order override (set when view is selected or columns are dragged)
-  const [localColumnOrder, setLocalColumnOrder] = useState<string[] | null>(null);
-  const [localHiddenColumns, setLocalHiddenColumns] = useState<string[] | null>(null);
+  const [localColumnOrder, setLocalColumnOrder] = useState<string[] | null>(
+    null,
+  );
+  const [localHiddenColumns, setLocalHiddenColumns] = useState<string[] | null>(
+    null,
+  );
 
   // Snapshot of column state before opening settings (for revert on close)
   const [preSettingsSnapshot, setPreSettingsSnapshot] = useState<{
@@ -292,15 +329,20 @@ export function FollowupDesktopTable({
 
   // Drag-to-reorder state (web only)
   const [dragColumnKey, setDragColumnKey] = useState<string | null>(null);
-  const [dragOverColumnKey, setDragOverColumnKey] = useState<string | null>(null);
+  const [dragOverColumnKey, setDragOverColumnKey] = useState<string | null>(
+    null,
+  );
 
   // Custom field dropdown state
-  const [customDropdownFor, setCustomDropdownFor] = useState<{ memberId: string; slot: string } | null>(null);
+  const [customDropdownFor, setCustomDropdownFor] = useState<{
+    memberId: string;
+    slot: string;
+  } | null>(null);
 
   // Cross-group config query — always fetch so we have community-wide leaders for assignee display
   const crossGroupConfig = useAuthenticatedQuery(
     api.functions.memberFollowups.getCrossGroupConfig,
-    {}
+    {},
   );
 
   // Cross-group local column config (localStorage)
@@ -315,7 +357,9 @@ export function FollowupDesktopTable({
     try {
       const stored = localStorage.getItem(CROSS_GROUP_COL_CONFIG_KEY);
       if (stored) setCrossGroupColConfig(JSON.parse(stored));
-    } catch { /* localStorage unavailable */ }
+    } catch {
+      /* localStorage unavailable */
+    }
   }, [crossGroupMode]);
 
   // Group filter for cross-group mode
@@ -324,14 +368,14 @@ export function FollowupDesktopTable({
   // Config query (per-group)
   const perGroupConfig = useAuthenticatedQuery(
     api.functions.memberFollowups.getFollowupConfig,
-    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip"
+    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip",
   );
   const config = crossGroupMode ? crossGroupConfig : perGroupConfig;
 
   // Group data for header (per-group mode only)
   const groupData = useQuery(
     api.functions.groups.index.getById,
-    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip"
+    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip",
   );
 
   // Community-level data source config
@@ -344,12 +388,23 @@ export function FollowupDesktopTable({
 
   const scoreConfig: ScoreConfigEntry[] = crossGroupMode
     ? (crossGroupConfig?.scoreConfigScores ?? [])
-    : (communityPeopleConfig?.scores?.map((s: any) => ({ id: s.id, name: s.name })) ?? []);
-  const toolDisplayName = crossGroupMode ? "People" : (perGroupConfig?.toolDisplayName ?? "People");
+    : (communityPeopleConfig?.scores?.map((s: any) => ({
+        id: s.id,
+        name: s.name,
+      })) ?? []);
+  const toolDisplayName = crossGroupMode
+    ? "People"
+    : (perGroupConfig?.toolDisplayName ?? "People");
   // Views are now the only way to persist column preferences.
   // Per-group followupColumnConfig is ignored — no view selected = all columns visible.
   const baseColumnConfig = crossGroupMode
-    ? (crossGroupColConfig ? { columnOrder: crossGroupColConfig.columnOrder, hiddenColumns: crossGroupColConfig.hiddenColumns, customFields: [] } : null)
+    ? crossGroupColConfig
+      ? {
+          columnOrder: crossGroupColConfig.columnOrder,
+          hiddenColumns: crossGroupColConfig.hiddenColumns,
+          customFields: [],
+        }
+      : null
     : null;
   // Local overrides take priority (from view selection or drag-reorder)
   const columnConfig = useMemo(() => {
@@ -357,29 +412,43 @@ export function FollowupDesktopTable({
     return {
       ...(baseColumnConfig ?? {}),
       columnOrder: localColumnOrder ?? baseColumnConfig?.columnOrder ?? [],
-      hiddenColumns: localHiddenColumns ?? baseColumnConfig?.hiddenColumns ?? [],
+      hiddenColumns:
+        localHiddenColumns ?? baseColumnConfig?.hiddenColumns ?? [],
     };
   }, [baseColumnConfig, localColumnOrder, localHiddenColumns]);
-  const customFields: CustomFieldDef[] = crossGroupMode ? [] : ((communityPeopleConfig?.customFields ?? []) as CustomFieldDef[]);
+  const customFields: CustomFieldDef[] = crossGroupMode
+    ? []
+    : ((communityPeopleConfig?.customFields ?? []) as CustomFieldDef[]);
 
   // Leaders query (for assignee picker — current group only)
   const perGroupLeaders = useAuthenticatedQuery(
     api.functions.groups.members.getLeaders,
-    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip"
+    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip",
   );
   // Picker options: current-group leaders only (cross-group mode uses crossGroupConfig leaders)
-  const pickerLeaders = crossGroupMode ? crossGroupConfig?.leaders : perGroupLeaders;
+  const pickerLeaders = crossGroupMode
+    ? crossGroupConfig?.leaders
+    : perGroupLeaders;
   // Display: cross-group leaders so assignees from other groups render correctly
   const allLeaders = crossGroupConfig?.leaders ?? perGroupLeaders;
 
   // Group tasks — used to build per-member task counts for the table
   const groupTasks = useAuthenticatedQuery(
     api.functions.tasks.index.listGroup,
-    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip"
+    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip",
   );
 
   const tasksByMember = useMemo(() => {
-    const map = new Map<string, Array<{ _id: string; title: string; status: string; assignedToName?: string; groupName?: string }>>();
+    const map = new Map<
+      string,
+      Array<{
+        _id: string;
+        title: string;
+        status: string;
+        assignedToName?: string;
+        groupName?: string;
+      }>
+    >();
     if (!groupTasks) return map;
     for (const task of groupTasks as any[]) {
       if (task.status !== "open" || !task.targetMemberId) continue;
@@ -402,13 +471,18 @@ export function FollowupDesktopTable({
     return new Map(
       (allLeaders as any[]).map((l: any) => [
         l.userId?.toString?.() ?? l._id?.toString?.() ?? "",
-        { firstName: l.firstName ?? "", lastName: l.lastName ?? "", profilePhoto: l.profilePhoto },
-      ])
+        {
+          firstName: l.firstName ?? "",
+          lastName: l.lastName ?? "",
+          profilePhoto: l.profilePhoto,
+        },
+      ]),
     );
   }, [allLeaders]);
   // Assignee picker options — current group leaders only
   const leaderOptions = useMemo(() => {
-    if (!pickerLeaders) return [] as Array<{ id: string; firstName: string; lastName: string }>;
+    if (!pickerLeaders)
+      return [] as Array<{ id: string; firstName: string; lastName: string }>;
     return (pickerLeaders as any[])
       .map((leader: any) => ({
         id: leader.userId?.toString?.() ?? leader._id?.toString?.() ?? "",
@@ -424,21 +498,25 @@ export function FollowupDesktopTable({
     [debouncedSearch, leaderMap, scoreConfig],
   );
   const hasTextSearch = !!parsedQuery.searchText;
-  const hasAnyFilter = !!parsedQuery.statusFilter || !!parsedQuery.assigneeFilter ||
+  const hasAnyFilter =
+    !!parsedQuery.statusFilter ||
+    !!parsedQuery.assigneeFilter ||
     parsedQuery.scoreMin !== undefined ||
     parsedQuery.scoreMax !== undefined ||
     parsedQuery.excludedAssigneeFilters.length > 0 ||
     !!parsedQuery.dateAddedFilter;
   const searchSuggestions = useMemo(
     () => getFollowupSearchSuggestions(searchQuery, scoreConfig),
-    [searchQuery, scoreConfig]
+    [searchQuery, scoreConfig],
   );
   const searchHelperText = useMemo(
     () => getFollowupQueryHelperText(searchQuery, scoreConfig),
-    [searchQuery, scoreConfig]
+    [searchQuery, scoreConfig],
   );
   const showSearchSuggestions =
-    isSearchFocused && searchQuery.trim().length > 0 && searchSuggestions.length > 0;
+    isSearchFocused &&
+    searchQuery.trim().length > 0 &&
+    searchSuggestions.length > 0;
 
   // Build columns dynamically based on score config + column config
   const columns: ColumnDef[] = useMemo(() => {
@@ -453,17 +531,45 @@ export function FollowupDesktopTable({
 
     // In cross-group mode, add a Group column at the start
     if (crossGroupMode) {
-      allAvailable.push({ key: "groupName", label: "Group", defaultWidth: 160, sortable: false });
+      allAvailable.push({
+        key: "groupName",
+        label: "Group",
+        defaultWidth: 160,
+        sortable: false,
+      });
     }
 
     allAvailable.push(
-      { key: "addedAt", label: "Date Added", defaultWidth: 100, sortable: true, serverSortKey: crossGroupMode ? undefined : "addedAt" },
-      { key: "firstName", label: "First Name", defaultWidth: 150, sortable: true, serverSortKey: crossGroupMode ? undefined : "firstName" },
-      { key: "lastName", label: "Last Name", defaultWidth: 120, sortable: true, serverSortKey: crossGroupMode ? undefined : "lastName" },
+      {
+        key: "addedAt",
+        label: "Date Added",
+        defaultWidth: 100,
+        sortable: true,
+        serverSortKey: crossGroupMode ? undefined : "addedAt",
+      },
+      {
+        key: "firstName",
+        label: "First Name",
+        defaultWidth: 150,
+        sortable: true,
+        serverSortKey: crossGroupMode ? undefined : "firstName",
+      },
+      {
+        key: "lastName",
+        label: "Last Name",
+        defaultWidth: 120,
+        sortable: true,
+        serverSortKey: crossGroupMode ? undefined : "lastName",
+      },
       { key: "email", label: "Email", defaultWidth: 180, sortable: false },
       { key: "phone", label: "Phone", defaultWidth: 140, sortable: false },
       { key: "zipCode", label: "ZIP Code", defaultWidth: 100, sortable: false },
-      { key: "dateOfBirth", label: "Birthday", defaultWidth: 110, sortable: false },
+      {
+        key: "dateOfBirth",
+        label: "Birthday",
+        defaultWidth: 110,
+        sortable: false,
+      },
     );
 
     // Score columns — use fixed SYSTEM_SCORE_COLUMNS.
@@ -474,24 +580,59 @@ export function FollowupDesktopTable({
         label: sc.name,
         defaultWidth: 100,
         sortable: true,
-        serverSortKey: crossGroupMode ? undefined : (sc.slot in SERVER_SORT_KEYS ? sc.slot : undefined),
+        serverSortKey: crossGroupMode
+          ? undefined
+          : sc.slot in SERVER_SORT_KEYS
+            ? sc.slot
+            : undefined,
       });
     });
 
     allAvailable.push(
-      { key: "assignee", label: "Assignees", defaultWidth: 140, sortable: true, serverSortKey: crossGroupMode ? undefined : "assignee" },
+      {
+        key: "assignee",
+        label: "Assignees",
+        defaultWidth: 140,
+        sortable: true,
+        serverSortKey: crossGroupMode ? undefined : "assignee",
+      },
       { key: "notes", label: "Notes", defaultWidth: 200, sortable: false },
       { key: "tasks", label: "Tasks", defaultWidth: 220, sortable: false },
-      { key: "status", label: "Status", defaultWidth: 100, sortable: true, serverSortKey: crossGroupMode ? undefined : "status" },
-      { key: "lastAttendedAt", label: "Last Attended", defaultWidth: 120, sortable: true, serverSortKey: crossGroupMode ? undefined : "lastAttendedAt" },
-      { key: "lastFollowupAt", label: "Last Contact", defaultWidth: 120, sortable: true, serverSortKey: crossGroupMode ? undefined : "lastFollowupAt" },
-      { key: "lastActiveAt", label: "Date Active", defaultWidth: 120, sortable: true, serverSortKey: crossGroupMode ? undefined : "lastActiveAt" },
+      {
+        key: "status",
+        label: "Status",
+        defaultWidth: 100,
+        sortable: true,
+        serverSortKey: crossGroupMode ? undefined : "status",
+      },
+      {
+        key: "lastAttendedAt",
+        label: "Last Attended",
+        defaultWidth: 120,
+        sortable: true,
+        serverSortKey: crossGroupMode ? undefined : "lastAttendedAt",
+      },
+      {
+        key: "lastFollowupAt",
+        label: "Last Contact",
+        defaultWidth: 120,
+        sortable: true,
+        serverSortKey: crossGroupMode ? undefined : "lastFollowupAt",
+      },
+      {
+        key: "lastActiveAt",
+        label: "Date Active",
+        defaultWidth: 120,
+        sortable: true,
+        serverSortKey: crossGroupMode ? undefined : "lastActiveAt",
+      },
       { key: "alerts", label: "Alerts", defaultWidth: 120, sortable: false },
     );
 
     // Custom field columns
     for (const cf of customFields) {
-      const sortKey = cf.slot in SERVER_SORT_KEYS ? SERVER_SORT_KEYS[cf.slot] : undefined;
+      const sortKey =
+        cf.slot in SERVER_SORT_KEYS ? SERVER_SORT_KEYS[cf.slot] : undefined;
       allAvailable.push({
         key: cf.slot,
         label: cf.name,
@@ -540,7 +681,9 @@ export function FollowupDesktopTable({
     map["phone"] = "Phone";
     map["zipCode"] = "ZIP Code";
     map["dateOfBirth"] = "Birthday";
-    SYSTEM_SCORE_COLUMNS.forEach((sc) => { map[sc.slot] = sc.name; });
+    SYSTEM_SCORE_COLUMNS.forEach((sc) => {
+      map[sc.slot] = sc.name;
+    });
     map["assignee"] = "Assignees";
     map["notes"] = "Notes";
     map["tasks"] = "Tasks";
@@ -549,7 +692,9 @@ export function FollowupDesktopTable({
     map["lastFollowupAt"] = "Last Contact";
     map["lastActiveAt"] = "Date Active";
     map["alerts"] = "Alerts";
-    for (const cf of customFields) { map[cf.slot] = cf.name; }
+    for (const cf of customFields) {
+      map[cf.slot] = cf.name;
+    }
     return map;
   }, [customFields, crossGroupMode]);
 
@@ -557,9 +702,26 @@ export function FollowupDesktopTable({
   const allColumnKeys = useMemo(() => {
     const keys: string[] = [];
     if (crossGroupMode) keys.push("groupName");
-    keys.push("addedAt", "firstName", "lastName", "email", "phone", "zipCode", "dateOfBirth");
+    keys.push(
+      "addedAt",
+      "firstName",
+      "lastName",
+      "email",
+      "phone",
+      "zipCode",
+      "dateOfBirth",
+    );
     SYSTEM_SCORE_COLUMNS.forEach((sc) => keys.push(sc.slot));
-    keys.push("assignee", "notes", "tasks", "status", "lastAttendedAt", "lastFollowupAt", "lastActiveAt", "alerts");
+    keys.push(
+      "assignee",
+      "notes",
+      "tasks",
+      "status",
+      "lastAttendedAt",
+      "lastFollowupAt",
+      "lastActiveAt",
+      "alerts",
+    );
     for (const cf of customFields) keys.push(cf.slot);
     return keys;
   }, [customFields, crossGroupMode]);
@@ -577,13 +739,17 @@ export function FollowupDesktopTable({
   const [colWidths, setColWidths] = useState<Record<string, number>>({});
 
   // Load from localStorage
-  const colWidthsKey = crossGroupMode ? STORAGE_PREFIX + "cross-group" : STORAGE_PREFIX + groupId;
+  const colWidthsKey = crossGroupMode
+    ? STORAGE_PREFIX + "cross-group"
+    : STORAGE_PREFIX + groupId;
   useEffect(() => {
     if (Platform.OS !== "web") return;
     try {
       const stored = localStorage.getItem(colWidthsKey);
       if (stored) setColWidths(JSON.parse(stored));
-    } catch { /* localStorage unavailable */ }
+    } catch {
+      /* localStorage unavailable */
+    }
   }, [colWidthsKey]);
 
   // Save to localStorage
@@ -592,12 +758,15 @@ export function FollowupDesktopTable({
       if (Platform.OS !== "web") return;
       try {
         localStorage.setItem(colWidthsKey, JSON.stringify(widths));
-      } catch { /* localStorage unavailable */ }
+      } catch {
+        /* localStorage unavailable */
+      }
     },
-    [colWidthsKey]
+    [colWidthsKey],
   );
 
-  const getColWidth = (col: ColumnDef) => colWidths[col.key] ?? col.defaultWidth;
+  const getColWidth = (col: ColumnDef) =>
+    colWidths[col.key] ?? col.defaultWidth;
 
   // Server sort key — score3+ have no server index, use client-side sorting
   const isClientSideSort = !(sortField in SERVER_SORT_KEYS);
@@ -608,26 +777,26 @@ export function FollowupDesktopTable({
   }, [sortField]);
 
   // Build filter args for list query (structured filters only, no text search)
+  // Note: communityPeople.list only supports statusFilter, scoreField, scoreMin, scoreMax, assigneeFilter.
+  // excludedAssigneeFilters and date range filters are applied client-side via applyParsedFollowupFilters.
   const listFilterArgs = useMemo(() => {
     const args: any = {};
-    const dateRangeArgs = getDateAddedRangeArgs(parsedQuery.dateAddedFilter);
     if (parsedQuery.statusFilter) args.statusFilter = parsedQuery.statusFilter;
-    if (parsedQuery.assigneeFilter) args.assigneeFilter = parsedQuery.assigneeFilter as Id<"users">;
-    if (parsedQuery.excludedAssigneeFilters.length > 0) {
-      args.excludedAssigneeFilters = parsedQuery.excludedAssigneeFilters as Id<"users">[];
-    }
+    if (parsedQuery.assigneeFilter)
+      args.assigneeFilter = parsedQuery.assigneeFilter as Id<"users">;
     if (parsedQuery.scoreField) args.scoreField = parsedQuery.scoreField;
-    if (parsedQuery.scoreMax !== undefined) args.scoreMax = parsedQuery.scoreMax;
-    if (parsedQuery.scoreMin !== undefined) args.scoreMin = parsedQuery.scoreMin;
-    if (dateRangeArgs.addedAtMin !== undefined) args.addedAtMin = dateRangeArgs.addedAtMin;
-    if (dateRangeArgs.addedAtMax !== undefined) args.addedAtMax = dateRangeArgs.addedAtMax;
+    if (parsedQuery.scoreMax !== undefined)
+      args.scoreMax = parsedQuery.scoreMax;
+    if (parsedQuery.scoreMin !== undefined)
+      args.scoreMin = parsedQuery.scoreMin;
     return args;
   }, [parsedQuery]);
 
   // Cross-group group filter arg
-  const crossGroupFilterArg = crossGroupMode && crossGroupFilter !== "all"
-    ? { groupFilter: crossGroupFilter as Id<"groups"> }
-    : {};
+  const crossGroupFilterArg =
+    crossGroupMode && crossGroupFilter !== "all"
+      ? { groupFilter: crossGroupFilter as Id<"groups"> }
+      : {};
 
   // Paginated query — used when there's NO text search
   const {
@@ -645,7 +814,7 @@ export function FollowupDesktopTable({
           ...listFilterArgs,
         }
       : "skip",
-    { initialNumItems: 50 }
+    { initialNumItems: 50 },
   );
 
   // Cross-group paginated query
@@ -662,11 +831,13 @@ export function FollowupDesktopTable({
           ...crossGroupFilterArg,
         }
       : "skip",
-    { initialNumItems: 50 }
+    { initialNumItems: 50 },
   );
 
   const rawMembers = crossGroupMode ? crossGroupRawMembers : perGroupRawMembers;
-  const paginationStatus = crossGroupMode ? crossGroupPaginationStatus : perGroupPaginationStatus;
+  const paginationStatus = crossGroupMode
+    ? crossGroupPaginationStatus
+    : perGroupPaginationStatus;
   const loadMore = crossGroupMode ? crossGroupLoadMore : perGroupLoadMore;
   const isLoading = crossGroupMode ? crossGroupIsLoading : perGroupIsLoading;
 
@@ -677,8 +848,30 @@ export function FollowupDesktopTable({
       ? {
           groupId: groupId as Id<"groups">,
           searchTerm: parsedQuery.searchText,
+          ...(parsedQuery.statusFilter
+            ? { statusFilter: parsedQuery.statusFilter }
+            : {}),
+          ...(parsedQuery.assigneeFilter
+            ? { assigneeFilter: parsedQuery.assigneeFilter as Id<"users"> }
+            : {}),
+          ...(parsedQuery.excludedAssigneeFilters.length > 0
+            ? {
+                excludedAssigneeFilters:
+                  parsedQuery.excludedAssigneeFilters as Id<"users">[],
+              }
+            : {}),
+          ...(parsedQuery.scoreField
+            ? { scoreField: parsedQuery.scoreField }
+            : {}),
+          ...(parsedQuery.scoreMax !== undefined
+            ? { scoreMax: parsedQuery.scoreMax }
+            : {}),
+          ...(parsedQuery.scoreMin !== undefined
+            ? { scoreMin: parsedQuery.scoreMin }
+            : {}),
+          ...getDateAddedRangeArgs(parsedQuery.dateAddedFilter),
         }
-      : "skip"
+      : "skip",
   );
 
   // Cross-group search query
@@ -687,26 +880,41 @@ export function FollowupDesktopTable({
     crossGroupMode && hasTextSearch
       ? {
           searchText: parsedQuery.searchText,
-          ...(parsedQuery.statusFilter ? { statusFilter: parsedQuery.statusFilter } : {}),
-          ...(parsedQuery.assigneeFilter ? { assigneeFilter: parsedQuery.assigneeFilter as Id<"users"> } : {}),
-          ...(parsedQuery.excludedAssigneeFilters.length > 0
-            ? { excludedAssigneeFilters: parsedQuery.excludedAssigneeFilters as Id<"users">[] }
+          ...(parsedQuery.statusFilter
+            ? { statusFilter: parsedQuery.statusFilter }
             : {}),
-          ...(parsedQuery.scoreField ? { scoreField: parsedQuery.scoreField } : {}),
-          ...(parsedQuery.scoreMax !== undefined ? { scoreMax: parsedQuery.scoreMax } : {}),
-          ...(parsedQuery.scoreMin !== undefined ? { scoreMin: parsedQuery.scoreMin } : {}),
+          ...(parsedQuery.assigneeFilter
+            ? { assigneeFilter: parsedQuery.assigneeFilter as Id<"users"> }
+            : {}),
+          ...(parsedQuery.excludedAssigneeFilters.length > 0
+            ? {
+                excludedAssigneeFilters:
+                  parsedQuery.excludedAssigneeFilters as Id<"users">[],
+              }
+            : {}),
+          ...(parsedQuery.scoreField
+            ? { scoreField: parsedQuery.scoreField }
+            : {}),
+          ...(parsedQuery.scoreMax !== undefined
+            ? { scoreMax: parsedQuery.scoreMax }
+            : {}),
+          ...(parsedQuery.scoreMin !== undefined
+            ? { scoreMin: parsedQuery.scoreMin }
+            : {}),
           ...getDateAddedRangeArgs(parsedQuery.dateAddedFilter),
           ...crossGroupFilterArg,
         }
-      : "skip"
+      : "skip",
   );
 
-  const searchResults = crossGroupMode ? crossGroupSearchResults : perGroupSearchResults;
+  const searchResults = crossGroupMode
+    ? crossGroupSearchResults
+    : perGroupSearchResults;
 
   // Total member count (only for per-group mode)
   const totalCount = useAuthenticatedQuery(
     api.functions.communityPeople.count,
-    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip"
+    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip",
   );
 
   // Merge: use search results when text search active, otherwise paginated.
@@ -715,8 +923,7 @@ export function FollowupDesktopTable({
   const members = useMemo(() => {
     const raw = (hasTextSearch
       ? (searchResults ?? [])
-      : (rawMembers ?? [])
-    ) as unknown as any[];
+      : (rawMembers ?? [])) as unknown as any[];
     // Adapt community people records to FollowupMember shape
     const adapted: FollowupMember[] = crossGroupMode
       ? (raw as FollowupMember[])
@@ -760,12 +967,18 @@ export function FollowupDesktopTable({
   ]);
 
   // Merge optimistic overrides for consistent UI display
-  const getAssigneeIds = useCallback((member: { assigneeId?: string; assigneeIds?: string[] }) => {
-    const ids = (member.assigneeIds && member.assigneeIds.length > 0)
-      ? member.assigneeIds
-      : (member.assigneeId ? [member.assigneeId] : []);
-    return Array.from(new Set(ids));
-  }, []);
+  const getAssigneeIds = useCallback(
+    (member: { assigneeId?: string; assigneeIds?: string[] }) => {
+      const ids =
+        member.assigneeIds && member.assigneeIds.length > 0
+          ? member.assigneeIds
+          : member.assigneeId
+            ? [member.assigneeId]
+            : [];
+      return Array.from(new Set(ids));
+    },
+    [],
+  );
 
   const displayMembers = useMemo(() => {
     if (Object.keys(optimistic).length === 0) return members;
@@ -787,8 +1000,12 @@ export function FollowupDesktopTable({
   }, [members, optimistic]);
 
   const selectOptionsBySlot = useMemo(
-    () => buildSelectOptionsBySlot(customFields, displayMembers as unknown as Record<string, unknown>[]),
-    [customFields, displayMembers]
+    () =>
+      buildSelectOptionsBySlot(
+        customFields,
+        displayMembers as unknown as Record<string, unknown>[],
+      ),
+    [customFields, displayMembers],
   );
 
   // Clear optimistic overrides once server data catches up
@@ -799,13 +1016,18 @@ export function FollowupDesktopTable({
     let changed = false;
     for (const [id, overrides] of Object.entries(optimistic)) {
       const server = memberMap.get(id);
-      if (!server) { next[id] = overrides; continue; }
+      if (!server) {
+        next[id] = overrides;
+        continue;
+      }
       const remaining: typeof overrides = {};
       for (const [key, val] of Object.entries(overrides)) {
         if (key === "assigneeIds") {
           const serverAssigneeIds = getAssigneeIds(server);
           const overrideAssigneeIds = val ?? [];
-          const sameAssignees = JSON.stringify(serverAssigneeIds) === JSON.stringify(overrideAssigneeIds);
+          const sameAssignees =
+            JSON.stringify(serverAssigneeIds) ===
+            JSON.stringify(overrideAssigneeIds);
           if (!sameAssignees) {
             (remaining as any)[key] = val;
           } else {
@@ -827,17 +1049,29 @@ export function FollowupDesktopTable({
   }, [members, optimistic, getAssigneeIds]);
 
   // Mutations
-  const setAssigneeMut = useAuthenticatedMutation(api.functions.communityPeople.setAssignees);
-  const setStatusMut = useAuthenticatedMutation(api.functions.communityPeople.setStatus);
+  const setAssigneeMut = useAuthenticatedMutation(
+    api.functions.communityPeople.setAssignees,
+  );
+  const setStatusMut = useAuthenticatedMutation(
+    api.functions.communityPeople.setStatus,
+  );
   // Custom field mutation
-  const setCustomFieldMut = useAuthenticatedMutation(api.functions.communityPeople.setCustomField);
+  const setCustomFieldMut = useAuthenticatedMutation(
+    api.functions.communityPeople.setCustomField,
+  );
   const assigneeMutationQueueRef = useRef<Record<string, Promise<void>>>({});
 
   // Bulk remove mutations
-  const removeGroupMember = useAuthenticatedMutation(api.functions.groupMembers.remove);
-  const removeCommunityMember = useAuthenticatedMutation(api.functions.communities.removeMember);
+  const removeGroupMember = useAuthenticatedMutation(
+    api.functions.groupMembers.remove,
+  );
+  const removeCommunityMember = useAuthenticatedMutation(
+    api.functions.communities.removeMember,
+  );
   // View delete mutation
-  const deleteViewMut = useAuthenticatedMutation(api.functions.peopleSavedViews.remove);
+  const deleteViewMut = useAuthenticatedMutation(
+    api.functions.peopleSavedViews.remove,
+  );
 
   // ── Handlers ──
 
@@ -900,7 +1134,9 @@ export function FollowupDesktopTable({
     setIsRemoving(true);
 
     const isAnnouncement = !!groupData?.isAnnouncementGroup;
-    const selectedMembers = members.filter((m) => selectedIds.has(m.groupMemberId));
+    const selectedMembers = members.filter((m) =>
+      selectedIds.has(m.groupMemberId),
+    );
 
     try {
       const results = await Promise.allSettled(
@@ -916,7 +1152,7 @@ export function FollowupDesktopTable({
               userId: m.userId as Id<"users">,
             });
           }
-        })
+        }),
       );
 
       const succeeded = results.filter((r) => r.status === "fulfilled").length;
@@ -925,7 +1161,7 @@ export function FollowupDesktopTable({
       if (failed > 0) {
         Alert.alert(
           "Partial Failure",
-          `${succeeded} removed successfully, ${failed} failed.`
+          `${succeeded} removed successfully, ${failed} failed.`,
         );
       }
     } catch (err) {
@@ -953,15 +1189,18 @@ export function FollowupDesktopTable({
   const getMemberGroupId = useCallback(
     (memberId: string): Id<"groups"> => {
       if (!crossGroupMode) return groupId as Id<"groups">;
-      const member = (rawMembers ?? []).find((m: any) => m.groupMemberId === memberId || m._id === memberId);
+      const member = (rawMembers ?? []).find(
+        (m: any) => m.groupMemberId === memberId || m._id === memberId,
+      );
       return ((member as any)?.groupId ?? groupId) as Id<"groups">;
     },
-    [crossGroupMode, groupId, rawMembers]
+    [crossGroupMode, groupId, rawMembers],
   );
 
   const enqueueAssigneeUpdate = useCallback(
     (memberId: string, assigneeIds: string[]) => {
-      const previous = assigneeMutationQueueRef.current[memberId] ?? Promise.resolve();
+      const previous =
+        assigneeMutationQueueRef.current[memberId] ?? Promise.resolve();
       const next = previous
         .catch(() => undefined)
         .then(() => {
@@ -977,14 +1216,20 @@ export function FollowupDesktopTable({
       });
       return next;
     },
-    [setAssigneeMut]
+    [setAssigneeMut],
   );
 
-  const handleAssigneeSelect = async (memberId: string, assigneeIds: string[]) => {
+  const handleAssigneeSelect = async (
+    memberId: string,
+    assigneeIds: string[],
+  ) => {
     const normalizedAssigneeIds = Array.from(new Set(assigneeIds));
     // Optimistic: update UI instantly
     setOptimistic((prev) => {
-      return { ...prev, [memberId]: { ...prev[memberId], assigneeIds: normalizedAssigneeIds } };
+      return {
+        ...prev,
+        [memberId]: { ...prev[memberId], assigneeIds: normalizedAssigneeIds },
+      };
     });
     try {
       await enqueueAssigneeUpdate(memberId, normalizedAssigneeIds);
@@ -1003,7 +1248,10 @@ export function FollowupDesktopTable({
   };
 
   const handleStatusSelect = async (memberId: string, status?: string) => {
-    setOptimistic((prev) => ({ ...prev, [memberId]: { ...prev[memberId], status: status ?? null } }));
+    setOptimistic((prev) => ({
+      ...prev,
+      [memberId]: { ...prev[memberId], status: status ?? null },
+    }));
     setStatusDropdownFor(null);
     setDropdownPos(null);
     try {
@@ -1024,8 +1272,15 @@ export function FollowupDesktopTable({
     }
   };
 
-  const handleCustomFieldSave = async (memberId: string, slot: string, value: any) => {
-    setOptimistic((prev) => ({ ...prev, [memberId]: { ...prev[memberId], [slot]: value ?? null } }));
+  const handleCustomFieldSave = async (
+    memberId: string,
+    slot: string,
+    value: any,
+  ) => {
+    setOptimistic((prev) => ({
+      ...prev,
+      [memberId]: { ...prev[memberId], [slot]: value ?? null },
+    }));
     setCustomDropdownFor(null);
     setDropdownPos(null);
     try {
@@ -1047,7 +1302,12 @@ export function FollowupDesktopTable({
     }
   };
 
-  const handleMultiSelectToggle = async (memberId: string, slot: string, rawServerValue: string | undefined | null, toggledOption: string) => {
+  const handleMultiSelectToggle = async (
+    memberId: string,
+    slot: string,
+    rawServerValue: string | undefined | null,
+    toggledOption: string,
+  ) => {
     // Track values for rollback - set synchronously within setOptimistic
     let previousValue: string | null = null;
     let newValue: string | null = null;
@@ -1055,10 +1315,13 @@ export function FollowupDesktopTable({
     // Optimistic update WITHOUT closing dropdown
     // Compute value from current optimistic state (via prev) to avoid stale closure issues
     setOptimistic((prev) => {
-      const existingOptimistic = (prev[memberId] as Record<string, any> | undefined)?.[slot];
-      const currentValue = existingOptimistic !== undefined
-        ? String(existingOptimistic ?? "")
-        : String(rawServerValue ?? "");
+      const existingOptimistic = (
+        prev[memberId] as Record<string, any> | undefined
+      )?.[slot];
+      const currentValue =
+        existingOptimistic !== undefined
+          ? String(existingOptimistic ?? "")
+          : String(rawServerValue ?? "");
 
       previousValue = currentValue || null;
 
@@ -1091,26 +1354,37 @@ export function FollowupDesktopTable({
   };
 
   // Open dropdown at fixed position from cell rect
-  const openDropdownAtCell = useCallback((e: any, memberId: string, type: "assignee" | "status") => {
-    if (Platform.OS !== "web") return;
-    setCustomDropdownFor(null);  // Close any open custom dropdown
-    const target = e.currentTarget ?? e.target;
-    const rect = target?.getBoundingClientRect?.();
-    if (rect) {
-      setDropdownPos({ top: rect.bottom + 2, left: rect.left, width: Math.max(rect.width, 200) });
-    }
-    if (type === "assignee") {
-      setAssigneeDropdownFor(memberId);
-      setStatusDropdownFor(null);
-      setAssigneeSearch("");
-    } else {
-      setStatusDropdownFor(memberId);
-      setAssigneeDropdownFor(null);
-    }
-  }, []);
+  const openDropdownAtCell = useCallback(
+    (e: any, memberId: string, type: "assignee" | "status") => {
+      if (Platform.OS !== "web") return;
+      setCustomDropdownFor(null); // Close any open custom dropdown
+      const target = e.currentTarget ?? e.target;
+      const rect = target?.getBoundingClientRect?.();
+      if (rect) {
+        setDropdownPos({
+          top: rect.bottom + 2,
+          left: rect.left,
+          width: Math.max(rect.width, 200),
+        });
+      }
+      if (type === "assignee") {
+        setAssigneeDropdownFor(memberId);
+        setStatusDropdownFor(null);
+        setAssigneeSearch("");
+      } else {
+        setStatusDropdownFor(memberId);
+        setAssigneeDropdownFor(null);
+      }
+    },
+    [],
+  );
 
   // Column resize handler
-  const resizeRef = useRef<{ key: string; startX: number; startWidth: number } | null>(null);
+  const resizeRef = useRef<{
+    key: string;
+    startX: number;
+    startWidth: number;
+  } | null>(null);
 
   const handleResizeStart = useCallback(
     (key: string, e: any) => {
@@ -1124,8 +1398,14 @@ export function FollowupDesktopTable({
       const onMove = (ev: any) => {
         if (!resizeRef.current) return;
         const dx = (ev.clientX ?? ev.pageX) - resizeRef.current.startX;
-        const newWidth = Math.max(MIN_COL_WIDTH, resizeRef.current.startWidth + dx);
-        setColWidths((prev) => ({ ...prev, [resizeRef.current!.key]: newWidth }));
+        const newWidth = Math.max(
+          MIN_COL_WIDTH,
+          resizeRef.current.startWidth + dx,
+        );
+        setColWidths((prev) => ({
+          ...prev,
+          [resizeRef.current!.key]: newWidth,
+        }));
       };
       const onUp = () => {
         if (resizeRef.current) {
@@ -1141,7 +1421,7 @@ export function FollowupDesktopTable({
       document.addEventListener("mousemove", onMove);
       document.addEventListener("mouseup", onUp);
     },
-    [columns, colWidths, saveColWidths]
+    [columns, colWidths, saveColWidths],
   );
 
   // Column drag-to-reorder handlers (web only)
@@ -1163,29 +1443,34 @@ export function FollowupDesktopTable({
     setDragOverColumnKey(null);
   }, []);
 
-  const handleDrop = useCallback((targetKey: string, e: any) => {
-    e.preventDefault();
-    const sourceKey = dragColumnKey;
-    setDragColumnKey(null);
-    setDragOverColumnKey(null);
-    if (!sourceKey || sourceKey === targetKey) return;
+  const handleDrop = useCallback(
+    (targetKey: string, e: any) => {
+      e.preventDefault();
+      const sourceKey = dragColumnKey;
+      setDragColumnKey(null);
+      setDragOverColumnKey(null);
+      if (!sourceKey || sourceKey === targetKey) return;
 
-    // Get current non-system column order
-    const nonSystemCols = columns.filter((c) => c.key !== "checkbox" && c.key !== "rowNum");
-    const currentOrder = nonSystemCols.map((c) => c.key);
+      // Get current non-system column order
+      const nonSystemCols = columns.filter(
+        (c) => c.key !== "checkbox" && c.key !== "rowNum",
+      );
+      const currentOrder = nonSystemCols.map((c) => c.key);
 
-    const sourceIdx = currentOrder.indexOf(sourceKey);
-    const targetIdx = currentOrder.indexOf(targetKey);
-    if (sourceIdx === -1 || targetIdx === -1) return;
+      const sourceIdx = currentOrder.indexOf(sourceKey);
+      const targetIdx = currentOrder.indexOf(targetKey);
+      if (sourceIdx === -1 || targetIdx === -1) return;
 
-    // Move source to target position
-    const newOrder = [...currentOrder];
-    newOrder.splice(sourceIdx, 1);
-    newOrder.splice(targetIdx, 0, sourceKey);
+      // Move source to target position
+      const newOrder = [...currentOrder];
+      newOrder.splice(sourceIdx, 1);
+      newOrder.splice(targetIdx, 0, sourceKey);
 
-    setLocalColumnOrder(newOrder);
-    setActiveViewId(null); // Clear active view since user customized
-  }, [dragColumnKey, columns]);
+      setLocalColumnOrder(newOrder);
+      setActiveViewId(null); // Clear active view since user customized
+    },
+    [dragColumnKey, columns],
+  );
 
   // Close dropdowns on outside click
   // Use "click" (not "mousedown") so onPress handlers on dropdown items fire before cleanup
@@ -1214,10 +1499,16 @@ export function FollowupDesktopTable({
 
   // Find the member associated with the currently open dropdown (for portal rendering)
   const activeDropdownMember = useMemo(() => {
-    const id = assigneeDropdownFor ?? statusDropdownFor ?? customDropdownFor?.memberId;
+    const id =
+      assigneeDropdownFor ?? statusDropdownFor ?? customDropdownFor?.memberId;
     if (!id) return null;
     return displayMembers.find((m) => m.groupMemberId === id) ?? null;
-  }, [assigneeDropdownFor, statusDropdownFor, customDropdownFor, displayMembers]);
+  }, [
+    assigneeDropdownFor,
+    statusDropdownFor,
+    customDropdownFor,
+    displayMembers,
+  ]);
 
   // Cross-group assigned leaders — assigned to this member but not in the current group's picker
   const crossGroupAssignees = useMemo(() => {
@@ -1229,18 +1520,35 @@ export function FollowupDesktopTable({
     if (crossIds.length === 0) return [];
 
     const allLeadersList = (crossGroupConfig?.leaders ?? []) as any[];
-    const groupsList = (crossGroupConfig?.leaderGroups ?? []) as Array<{ _id: string; name: string }>;
+    const groupsList = (crossGroupConfig?.leaderGroups ?? []) as Array<{
+      _id: string;
+      name: string;
+    }>;
     const groupNameMap = new Map(groupsList.map((g) => [g._id, g.name]));
     const currentGroupId = groupId ?? "";
 
     // Group cross-group assignees by their group
-    const byGroup = new Map<string, Array<{ userId: string; firstName: string; lastName: string; profilePhoto?: string }>>();
+    const byGroup = new Map<
+      string,
+      Array<{
+        userId: string;
+        firstName: string;
+        lastName: string;
+        profilePhoto?: string;
+      }>
+    >();
     for (const uid of crossIds) {
-      const leader = allLeadersList.find((l: any) => (l.userId?.toString?.() ?? l._id?.toString?.() ?? "") === uid);
+      const leader = allLeadersList.find(
+        (l: any) =>
+          (l.userId?.toString?.() ?? l._id?.toString?.() ?? "") === uid,
+      );
       if (!leader) continue;
       const leaderGroupIds: string[] = leader.groupIds ?? [];
       // Pick the first group that isn't the current one
-      const otherGroupId = leaderGroupIds.find((gid: string) => gid !== currentGroupId) ?? leaderGroupIds[0] ?? "";
+      const otherGroupId =
+        leaderGroupIds.find((gid: string) => gid !== currentGroupId) ??
+        leaderGroupIds[0] ??
+        "";
       if (!otherGroupId) continue;
       if (!byGroup.has(otherGroupId)) byGroup.set(otherGroupId, []);
       byGroup.get(otherGroupId)!.push({
@@ -1256,11 +1564,22 @@ export function FollowupDesktopTable({
       groupName: groupNameMap.get(gid) ?? "Other Group",
       leaders: members,
     }));
-  }, [activeDropdownMember, crossGroupMode, leaderOptions, crossGroupConfig, groupId, getAssigneeIds]);
+  }, [
+    activeDropdownMember,
+    crossGroupMode,
+    leaderOptions,
+    crossGroupConfig,
+    groupId,
+    getAssigneeIds,
+  ]);
 
   // ── Render helpers ──
 
-  const renderCellContent = (col: ColumnDef, rawItem: FollowupMember, rowIndex: number) => {
+  const renderCellContent = (
+    col: ColumnDef,
+    rawItem: FollowupMember,
+    rowIndex: number,
+  ) => {
     // Apply optimistic overrides for instant UI feedback
     const opt = optimistic[rawItem.groupMemberId];
     let item = rawItem;
@@ -1303,7 +1622,11 @@ export function FollowupDesktopTable({
         return <Text style={s.rowNumText}>{rowIndex + 1}</Text>;
 
       case "groupName":
-        return <Text style={s.cellText} numberOfLines={1}>{(item as any).groupName ?? ""}</Text>;
+        return (
+          <Text style={s.cellText} numberOfLines={1}>
+            {(item as any).groupName ?? ""}
+          </Text>
+        );
 
       case "addedAt":
         return <Text style={s.cellText}>{formatShortDate(item.addedAt)}</Text>;
@@ -1311,7 +1634,11 @@ export function FollowupDesktopTable({
       case "firstName":
         return (
           <View style={s.nameCellRow}>
-            <Avatar name={`${item.firstName} ${item.lastName ?? ""}`} imageUrl={item.avatarUrl} size={24} />
+            <Avatar
+              name={`${item.firstName} ${item.lastName ?? ""}`}
+              imageUrl={item.avatarUrl}
+              size={24}
+            />
             <Text style={s.cellText}>{item.firstName}</Text>
           </View>
         );
@@ -1320,7 +1647,11 @@ export function FollowupDesktopTable({
         return <Text style={s.cellText}>{item.lastName ?? ""}</Text>;
 
       case "email":
-        return <Text style={[s.cellText, s.cellTextSmall]} numberOfLines={1}>{item.email ?? ""}</Text>;
+        return (
+          <Text style={[s.cellText, s.cellTextSmall]} numberOfLines={1}>
+            {item.email ?? ""}
+          </Text>
+        );
 
       case "phone":
         return <Text style={s.cellText}>{item.phone ?? ""}</Text>;
@@ -1329,16 +1660,33 @@ export function FollowupDesktopTable({
         return <Text style={s.cellText}>{item.zipCode ?? ""}</Text>;
 
       case "dateOfBirth":
-        return <Text style={s.cellText}>{item.dateOfBirth ? new Date(item.dateOfBirth).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }) : ""}</Text>;
+        return (
+          <Text style={s.cellText}>
+            {item.dateOfBirth
+              ? new Date(item.dateOfBirth).toLocaleDateString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                  timeZone: "UTC",
+                })
+              : ""}
+          </Text>
+        );
 
       case "lastAttendedAt":
-        return <Text style={s.cellText}>{formatShortDate(item.lastAttendedAt)}</Text>;
+        return (
+          <Text style={s.cellText}>{formatShortDate(item.lastAttendedAt)}</Text>
+        );
 
       case "lastFollowupAt":
-        return <Text style={s.cellText}>{formatShortDate(item.lastFollowupAt)}</Text>;
+        return (
+          <Text style={s.cellText}>{formatShortDate(item.lastFollowupAt)}</Text>
+        );
 
       case "lastActiveAt":
-        return <Text style={s.cellText}>{formatShortDate(item.lastActiveAt)}</Text>;
+        return (
+          <Text style={s.cellText}>{formatShortDate(item.lastActiveAt)}</Text>
+        );
 
       case "alerts":
         return (
@@ -1408,7 +1756,10 @@ export function FollowupDesktopTable({
         const isOpen = assigneeDropdownFor === item.groupMemberId;
         const assigneeIds = getAssigneeIds(item);
         const assignees = assigneeIds
-          .map((assigneeId) => ({ assigneeId, leader: leaderMap.get(assigneeId) }))
+          .map((assigneeId) => ({
+            assigneeId,
+            leader: leaderMap.get(assigneeId),
+          }))
           .filter((entry) => !!entry.leader);
         return (
           <TouchableOpacity
@@ -1432,13 +1783,13 @@ export function FollowupDesktopTable({
                       imageUrl={leader!.profilePhoto}
                       size={20}
                     />
-                    <Text style={s.assigneeBadgeText}>
-                      {leader!.firstName}
-                    </Text>
+                    <Text style={s.assigneeBadgeText}>{leader!.firstName}</Text>
                   </View>
                 ))}
                 {assignees.length > 2 && (
-                  <Text style={s.assigneeMoreText}>+{assignees.length - 2}</Text>
+                  <Text style={s.assigneeMoreText}>
+                    +{assignees.length - 2}
+                  </Text>
                 )}
               </View>
             ) : (
@@ -1453,7 +1804,10 @@ export function FollowupDesktopTable({
         const statusStyle = getStatusColor(item.status);
         return (
           <TouchableOpacity
-            style={[s.editableCellTouchable, { backgroundColor: statusStyle.bg, borderRadius: 6 }]}
+            style={[
+              s.editableCellTouchable,
+              { backgroundColor: statusStyle.bg, borderRadius: 6 },
+            ]}
             data-dropdown="true"
             onPress={(e) => {
               if (isOpen) {
@@ -1465,7 +1819,9 @@ export function FollowupDesktopTable({
             }}
           >
             <Text style={[s.statusText, { color: statusStyle.text }]}>
-              {item.status ? item.status.charAt(0).toUpperCase() + item.status.slice(1) : "\u2014"}
+              {item.status
+                ? item.status.charAt(0).toUpperCase() + item.status.slice(1)
+                : "\u2014"}
             </Text>
           </TouchableOpacity>
         );
@@ -1477,7 +1833,9 @@ export function FollowupDesktopTable({
           const slot = col.key as "score1" | "score2" | "score3";
           const value = getSystemScoreValue(item, slot) ?? 0;
           return (
-            <View style={[s.scoreCell, { backgroundColor: getScoreBgColor(value) }]}>
+            <View
+              style={[s.scoreCell, { backgroundColor: getScoreBgColor(value) }]}
+            >
               <Text style={[s.scoreCellText, { color: getScoreColor(value) }]}>
                 {value}%
               </Text>
@@ -1514,7 +1872,7 @@ export function FollowupDesktopTable({
             const options = selectOptionsBySlot.get(cf.slot) ?? [];
             const hasOptions = options.length > 0;
             const selectedValues = parseMultiSelectValues(
-              rawValue ? String(rawValue) : ""
+              rawValue ? String(rawValue) : "",
             );
             return (
               <TouchableOpacity
@@ -1523,18 +1881,27 @@ export function FollowupDesktopTable({
                 disabled={!hasOptions}
                 onPress={(e) => {
                   if (!hasOptions) return;
-                  setCustomDropdownFor({ memberId: item.groupMemberId, slot: cf.slot });
+                  setCustomDropdownFor({
+                    memberId: item.groupMemberId,
+                    slot: cf.slot,
+                  });
                   setAssigneeDropdownFor(null);
                   setStatusDropdownFor(null);
                   const target = (e as any).currentTarget ?? (e as any).target;
                   const rect = target?.getBoundingClientRect?.();
                   if (rect) {
-                    setDropdownPos({ top: rect.bottom + 2, left: rect.left, width: Math.max(rect.width, 160) });
+                    setDropdownPos({
+                      top: rect.bottom + 2,
+                      left: rect.left,
+                      width: Math.max(rect.width, 160),
+                    });
                   }
                 }}
               >
                 {selectedValues.length > 0 ? (
-                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 2 }}>
+                  <View
+                    style={{ flexDirection: "row", flexWrap: "wrap", gap: 2 }}
+                  >
                     {selectedValues.map((val) => (
                       <View key={val} style={s.multiSelectChip}>
                         <Text style={s.multiSelectChipText}>{val}</Text>
@@ -1554,7 +1921,9 @@ export function FollowupDesktopTable({
           if (cf.type === "dropdown") {
             const options = selectOptionsBySlot.get(cf.slot) ?? [];
             const hasOptions = options.length > 0;
-            const isOpen = customDropdownFor?.memberId === item.groupMemberId && customDropdownFor?.slot === cf.slot;
+            const isOpen =
+              customDropdownFor?.memberId === item.groupMemberId &&
+              customDropdownFor?.slot === cf.slot;
             return (
               <TouchableOpacity
                 style={s.editableCellTouchable}
@@ -1566,19 +1935,28 @@ export function FollowupDesktopTable({
                     setCustomDropdownFor(null);
                     setDropdownPos(null);
                   } else {
-                    const target = (e as any).currentTarget ?? (e as any).target;
+                    const target =
+                      (e as any).currentTarget ?? (e as any).target;
                     const rect = target?.getBoundingClientRect?.();
                     if (rect) {
-                      setDropdownPos({ top: rect.bottom + 2, left: rect.left, width: Math.max(rect.width, 180) });
+                      setDropdownPos({
+                        top: rect.bottom + 2,
+                        left: rect.left,
+                        width: Math.max(rect.width, 180),
+                      });
                     }
-                    setCustomDropdownFor({ memberId: item.groupMemberId, slot: cf.slot });
+                    setCustomDropdownFor({
+                      memberId: item.groupMemberId,
+                      slot: cf.slot,
+                    });
                     setAssigneeDropdownFor(null);
                     setStatusDropdownFor(null);
                   }
                 }}
               >
                 <Text style={[s.cellText, !rawValue && s.cellPlaceholder]}>
-                  {rawValue || (hasOptions ? "Select..." : "No options configured")}
+                  {rawValue ||
+                    (hasOptions ? "Select..." : "No options configured")}
                 </Text>
               </TouchableOpacity>
             );
@@ -1593,13 +1971,25 @@ export function FollowupDesktopTable({
                   value={inlineFieldValue}
                   onChangeText={setInlineFieldValue}
                   onBlur={() => {
-                    const num = inlineFieldValue.trim() ? Number(inlineFieldValue) : undefined;
-                    handleCustomFieldSave(item.groupMemberId, cf.slot, isNaN(num as number) ? undefined : num);
+                    const num = inlineFieldValue.trim()
+                      ? Number(inlineFieldValue)
+                      : undefined;
+                    handleCustomFieldSave(
+                      item.groupMemberId,
+                      cf.slot,
+                      isNaN(num as number) ? undefined : num,
+                    );
                     setEditingInlineField(null);
                   }}
                   onSubmitEditing={() => {
-                    const num = inlineFieldValue.trim() ? Number(inlineFieldValue) : undefined;
-                    handleCustomFieldSave(item.groupMemberId, cf.slot, isNaN(num as number) ? undefined : num);
+                    const num = inlineFieldValue.trim()
+                      ? Number(inlineFieldValue)
+                      : undefined;
+                    handleCustomFieldSave(
+                      item.groupMemberId,
+                      cf.slot,
+                      isNaN(num as number) ? undefined : num,
+                    );
                     setEditingInlineField(null);
                   }}
                   keyboardType="numeric"
@@ -1616,7 +2006,9 @@ export function FollowupDesktopTable({
                   setInlineFieldValue(rawValue != null ? String(rawValue) : "");
                 }}
               >
-                <Text style={[s.cellText, rawValue == null && s.cellPlaceholder]}>
+                <Text
+                  style={[s.cellText, rawValue == null && s.cellPlaceholder]}
+                >
                   {rawValue != null ? String(rawValue) : "Click to add"}
                 </Text>
               </TouchableOpacity>
@@ -1631,11 +2023,19 @@ export function FollowupDesktopTable({
                 value={inlineFieldValue}
                 onChangeText={setInlineFieldValue}
                 onBlur={() => {
-                  handleCustomFieldSave(item.groupMemberId, cf.slot, inlineFieldValue.trim() || undefined);
+                  handleCustomFieldSave(
+                    item.groupMemberId,
+                    cf.slot,
+                    inlineFieldValue.trim() || undefined,
+                  );
                   setEditingInlineField(null);
                 }}
                 onSubmitEditing={() => {
-                  handleCustomFieldSave(item.groupMemberId, cf.slot, inlineFieldValue.trim() || undefined);
+                  handleCustomFieldSave(
+                    item.groupMemberId,
+                    cf.slot,
+                    inlineFieldValue.trim() || undefined,
+                  );
                   setEditingInlineField(null);
                 }}
                 autoFocus
@@ -1680,10 +2080,17 @@ export function FollowupDesktopTable({
   const horizontalScrollRef = useRef<ScrollView>(null);
   const scrollXRef = useRef(0);
   useEffect(() => {
-    if (Platform.OS === "web" && horizontalScrollRef.current && scrollXRef.current > 0) {
+    if (
+      Platform.OS === "web" &&
+      horizontalScrollRef.current &&
+      scrollXRef.current > 0
+    ) {
       // Restore after React re-renders the ScrollView contents
       requestAnimationFrame(() => {
-        horizontalScrollRef.current?.scrollTo({ x: scrollXRef.current, animated: false });
+        horizontalScrollRef.current?.scrollTo({
+          x: scrollXRef.current,
+          animated: false,
+        });
       });
     }
   });
@@ -1698,36 +2105,47 @@ export function FollowupDesktopTable({
         <View style={s.headerContent}>
           <Text style={s.headerTitle}>{toolDisplayName}</Text>
           <Text style={s.headerSubtitle}>
-            {crossGroupMode ? "All assigned people across groups" : (groupData?.name || "Group")}
+            {crossGroupMode
+              ? "All assigned people across groups"
+              : groupData?.name || "Group"}
           </Text>
         </View>
-        {crossGroupMode && crossGroupConfig?.leaderGroups && crossGroupConfig.leaderGroups.length > 1 ? (
+        {crossGroupMode &&
+        crossGroupConfig?.leaderGroups &&
+        crossGroupConfig.leaderGroups.length > 1 ? (
           <View style={s.crossGroupFilterDropdown}>
-            {React.createElement("select", {
-              value: crossGroupFilter,
-              onChange: (e: any) => setCrossGroupFilter(e.target.value),
-              style: {
-                fontSize: 13,
-                fontWeight: "600",
-                color: "#334155",
-                backgroundColor: "#fff",
-                border: "1px solid #CBD5E1",
-                borderRadius: 8,
-                padding: "6px 28px 6px 10px",
-                appearance: "none",
-                WebkitAppearance: "none",
-                backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%23334155' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E")`,
-                backgroundRepeat: "no-repeat",
-                backgroundPosition: "right 8px center",
-                cursor: "pointer",
-                outline: "none",
-                minWidth: 140,
+            {React.createElement(
+              "select",
+              {
+                value: crossGroupFilter,
+                onChange: (e: any) => setCrossGroupFilter(e.target.value),
+                style: {
+                  fontSize: 13,
+                  fontWeight: "600",
+                  color: "#334155",
+                  backgroundColor: "#fff",
+                  border: "1px solid #CBD5E1",
+                  borderRadius: 8,
+                  padding: "6px 28px 6px 10px",
+                  appearance: "none",
+                  WebkitAppearance: "none",
+                  backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%23334155' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E")`,
+                  backgroundRepeat: "no-repeat",
+                  backgroundPosition: "right 8px center",
+                  cursor: "pointer",
+                  outline: "none",
+                  minWidth: 140,
+                },
               },
-            },
               React.createElement("option", { value: "all" }, "All Groups"),
-              ...(crossGroupConfig.leaderGroups.map((g: { _id: string; name: string }) =>
-                React.createElement("option", { key: g._id, value: g._id }, g.name)
-              ))
+              ...crossGroupConfig.leaderGroups.map(
+                (g: { _id: string; name: string }) =>
+                  React.createElement(
+                    "option",
+                    { key: g._id, value: g._id },
+                    g.name,
+                  ),
+              ),
             )}
           </View>
         ) : null}
@@ -1758,7 +2176,10 @@ export function FollowupDesktopTable({
             </TouchableOpacity>
           </>
         )}
-        <TouchableOpacity style={s.settingsButton} onPress={handleSettingsPress}>
+        <TouchableOpacity
+          style={s.settingsButton}
+          onPress={handleSettingsPress}
+        >
           <Ionicons name="settings-outline" size={22} color="#666" />
         </TouchableOpacity>
       </View>
@@ -1783,7 +2204,9 @@ export function FollowupDesktopTable({
               </TouchableOpacity>
             )}
           </View>
-          {searchHelperText && <Text style={s.searchHelperText}>{searchHelperText}</Text>}
+          {searchHelperText && (
+            <Text style={s.searchHelperText}>{searchHelperText}</Text>
+          )}
           {showSearchSuggestions && (
             <View style={s.searchSuggestionBox}>
               {searchSuggestions.map((suggestion) => (
@@ -1791,12 +2214,21 @@ export function FollowupDesktopTable({
                   key={suggestion.id}
                   style={s.searchSuggestionRow}
                   onPress={() => {
-                    setSearchQuery(applyFollowupSuggestion(searchQuery, suggestion.insertText));
+                    setSearchQuery(
+                      applyFollowupSuggestion(
+                        searchQuery,
+                        suggestion.insertText,
+                      ),
+                    );
                     setIsSearchFocused(false);
                   }}
                 >
-                  <Text style={s.searchSuggestionLabel}>{suggestion.label}</Text>
-                  <Text style={s.searchSuggestionHelp}>{suggestion.helperText}</Text>
+                  <Text style={s.searchSuggestionLabel}>
+                    {suggestion.label}
+                  </Text>
+                  <Text style={s.searchSuggestionHelp}>
+                    {suggestion.helperText}
+                  </Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -1845,16 +2277,27 @@ export function FollowupDesktopTable({
             setLocalHiddenColumns(view.hiddenColumns ?? null);
             // Apply filters as search query
             const filterParts: string[] = [];
-            if (view.filters?.statusFilter) filterParts.push(`status:${view.filters.statusFilter}`);
+            if (view.filters?.statusFilter)
+              filterParts.push(`status:${view.filters.statusFilter}`);
             if (view.filters?.assigneeFilter) {
               const leader = leaderMap.get(view.filters.assigneeFilter);
               if (leader) filterParts.push(`assignee:${leader.firstName}`);
             }
-            if (view.filters?.scoreField && view.filters?.scoreMin !== undefined) {
-              filterParts.push(`${view.filters.scoreField}:>${view.filters.scoreMin}`);
+            if (
+              view.filters?.scoreField &&
+              view.filters?.scoreMin !== undefined
+            ) {
+              filterParts.push(
+                `${view.filters.scoreField}:>${view.filters.scoreMin}`,
+              );
             }
-            if (view.filters?.scoreField && view.filters?.scoreMax !== undefined) {
-              filterParts.push(`${view.filters.scoreField}:<${view.filters.scoreMax}`);
+            if (
+              view.filters?.scoreField &&
+              view.filters?.scoreMax !== undefined
+            ) {
+              filterParts.push(
+                `${view.filters.scoreField}:<${view.filters.scoreMax}`,
+              );
             }
             setSearchQuery(filterParts.join(" "));
           }}
@@ -1875,20 +2318,25 @@ export function FollowupDesktopTable({
       )}
 
       {/* Unsaved column changes bar */}
-      {(localColumnOrder !== null || localHiddenColumns !== null) && activeViewId === null && (
-        <View style={s.unsavedBar}>
-          <Text style={s.unsavedText}>Unsaved column changes</Text>
-          <TouchableOpacity onPress={() => setShowSaveViewModal(true)}>
-            <Text style={[s.unsavedAction, { color: primaryColor }]}>Save as View</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => {
-            setLocalColumnOrder(null);
-            setLocalHiddenColumns(null);
-          }}>
-            <Text style={s.unsavedDiscard}>Discard</Text>
-          </TouchableOpacity>
-        </View>
-      )}
+      {(localColumnOrder !== null || localHiddenColumns !== null) &&
+        activeViewId === null && (
+          <View style={s.unsavedBar}>
+            <Text style={s.unsavedText}>Unsaved column changes</Text>
+            <TouchableOpacity onPress={() => setShowSaveViewModal(true)}>
+              <Text style={[s.unsavedAction, { color: primaryColor }]}>
+                Save as View
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                setLocalColumnOrder(null);
+                setLocalHiddenColumns(null);
+              }}
+            >
+              <Text style={s.unsavedDiscard}>Discard</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
       {/* Main area: table + side sheet */}
       <View style={s.mainArea}>
@@ -1913,15 +2361,21 @@ export function FollowupDesktopTable({
                 {/* Sticky header row */}
                 <View style={s.headerRow}>
                   {columns.map((col) => {
-                    const isSystemCol = col.key === "checkbox" || col.key === "rowNum";
+                    const isSystemCol =
+                      col.key === "checkbox" || col.key === "rowNum";
                     const isDraggable = Platform.OS === "web" && !isSystemCol;
-                    const isDragOver = dragOverColumnKey === col.key && dragColumnKey !== col.key;
+                    const isDragOver =
+                      dragOverColumnKey === col.key &&
+                      dragColumnKey !== col.key;
 
                     const cellStyle = StyleSheet.flatten([
                       s.headerCell,
                       { width: getColWidth(col) },
                       dragColumnKey === col.key && { opacity: 0.4 },
-                      isDragOver && { borderLeftWidth: 2, borderLeftColor: primaryColor },
+                      isDragOver && {
+                        borderLeftWidth: 2,
+                        borderLeftColor: primaryColor,
+                      },
                     ]);
 
                     const cellChildren = (
@@ -1933,38 +2387,55 @@ export function FollowupDesktopTable({
                           >
                             <Ionicons
                               name={
-                                members.length > 0 && selectedIds.size === members.length
+                                members.length > 0 &&
+                                selectedIds.size === members.length
                                   ? "checkbox"
                                   : selectedIds.size > 0
                                     ? "remove-outline"
                                     : "square-outline"
                               }
                               size={18}
-                              color={selectedIds.size > 0 ? primaryColor : "#9CA3AF"}
+                              color={
+                                selectedIds.size > 0 ? primaryColor : "#9CA3AF"
+                              }
                             />
                           </TouchableOpacity>
                         ) : (
                           <TouchableOpacity
-                            style={[s.headerCellInner, isDraggable && { cursor: "grab" } as any]}
-                            onPress={() => col.sortable && handleSort(col.key, col.serverSortKey)}
+                            style={[
+                              s.headerCellInner,
+                              isDraggable && ({ cursor: "grab" } as any),
+                            ]}
+                            onPress={() =>
+                              col.sortable &&
+                              handleSort(col.key, col.serverSortKey)
+                            }
                             disabled={!col.sortable}
                           >
                             <Text
                               style={[
                                 s.headerText,
-                                (sortField === col.serverSortKey || sortField === col.key) && s.headerTextActive,
+                                (sortField === col.serverSortKey ||
+                                  sortField === col.key) &&
+                                  s.headerTextActive,
                               ]}
                               numberOfLines={1}
                             >
                               {col.label}
                             </Text>
-                            {col.sortable && (sortField === col.serverSortKey || sortField === col.key) && (
-                              <Ionicons
-                                name={sortDirection === "asc" ? "arrow-up" : "arrow-down"}
-                                size={12}
-                                color={primaryColor}
-                              />
-                            )}
+                            {col.sortable &&
+                              (sortField === col.serverSortKey ||
+                                sortField === col.key) && (
+                                <Ionicons
+                                  name={
+                                    sortDirection === "asc"
+                                      ? "arrow-up"
+                                      : "arrow-down"
+                                  }
+                                  size={12}
+                                  color={primaryColor}
+                                />
+                              )}
                           </TouchableOpacity>
                         )}
                         {/* Resize handle */}
@@ -1973,7 +2444,10 @@ export function FollowupDesktopTable({
                             style={s.resizeHandle}
                             onStartShouldSetResponder={() => true}
                             {...(Platform.OS === "web"
-                              ? { onMouseDown: (e: any) => handleResizeStart(col.key, e) }
+                              ? {
+                                  onMouseDown: (e: any) =>
+                                    handleResizeStart(col.key, e),
+                                }
                               : {})}
                           />
                         )}
@@ -1983,24 +2457,28 @@ export function FollowupDesktopTable({
                     // On web, use React.createElement('div') so HTML5 drag attributes work
                     // (RN Web View strips unknown DOM attributes like draggable)
                     if (isDraggable) {
-                      return React.createElement('div', {
-                        key: col.key,
-                        style: cellStyle,
-                        draggable: true,
-                        onDragStart: (e: any) => handleDragStart(col.key, e),
-                        onDragOver: (e: any) => handleDragOver(col.key, e),
-                        onDragEnd: handleDragEnd,
-                        onDrop: (e: any) => handleDrop(col.key, e),
-                        onContextMenu: (e: any) => {
-                          e.preventDefault();
-                          setHeaderContextMenu({
-                            colKey: col.key,
-                            colLabel: col.label,
-                            top: e.clientY,
-                            left: e.clientX,
-                          });
+                      return React.createElement(
+                        "div",
+                        {
+                          key: col.key,
+                          style: cellStyle,
+                          draggable: true,
+                          onDragStart: (e: any) => handleDragStart(col.key, e),
+                          onDragOver: (e: any) => handleDragOver(col.key, e),
+                          onDragEnd: handleDragEnd,
+                          onDrop: (e: any) => handleDrop(col.key, e),
+                          onContextMenu: (e: any) => {
+                            e.preventDefault();
+                            setHeaderContextMenu({
+                              colKey: col.key,
+                              colLabel: col.label,
+                              top: e.clientY,
+                              left: e.clientX,
+                            });
+                          },
                         },
-                      }, cellChildren);
+                        cellChildren,
+                      );
                     }
 
                     return (
@@ -2016,9 +2494,11 @@ export function FollowupDesktopTable({
                   style={s.dataScroll}
                   onScroll={(e) => {
                     if (hasTextSearch) return; // No pagination for search results
-                    const { layoutMeasurement, contentOffset, contentSize } = e.nativeEvent;
+                    const { layoutMeasurement, contentOffset, contentSize } =
+                      e.nativeEvent;
                     if (
-                      layoutMeasurement.height + contentOffset.y >= contentSize.height - 100 &&
+                      layoutMeasurement.height + contentOffset.y >=
+                        contentSize.height - 100 &&
                       paginationStatus === "CanLoadMore"
                     ) {
                       loadMore(50);
@@ -2032,7 +2512,8 @@ export function FollowupDesktopTable({
                       style={[
                         s.dataRow,
                         selectedIds.has(item.groupMemberId) && s.dataRowChecked,
-                        selectedMemberId === item.groupMemberId && s.dataRowSelected,
+                        selectedMemberId === item.groupMemberId &&
+                          s.dataRowSelected,
                         hoveredRowId === item._id && s.dataRowHovered,
                       ]}
                       onPress={(e: any) => {
@@ -2063,7 +2544,9 @@ export function FollowupDesktopTable({
                               s.dataCell,
                               { width: getColWidth(col) },
                               isEditable && s.dataCellEditable,
-                              isEditable && hoveredCellId === cellId && s.dataCellEditableHovered,
+                              isEditable &&
+                                hoveredCellId === cellId &&
+                                s.dataCellEditableHovered,
                             ]}
                             {...(Platform.OS === "web" && isEditable
                               ? {
@@ -2085,9 +2568,15 @@ export function FollowupDesktopTable({
                   )}
                   {members.length === 0 && !effectiveIsLoading && (
                     <View style={s.emptyRow}>
-                      <Ionicons name="checkmark-circle-outline" size={32} color="#4CAF50" />
+                      <Ionicons
+                        name="checkmark-circle-outline"
+                        size={32}
+                        color="#4CAF50"
+                      />
                       <Text style={s.emptyText}>
-                        {debouncedSearch ? "No matching members" : "No members found"}
+                        {debouncedSearch
+                          ? "No matching members"
+                          : "No members found"}
                       </Text>
                     </View>
                   )}
@@ -2105,17 +2594,19 @@ export function FollowupDesktopTable({
               <FollowupSettingsPanel
                 groupId={groupId}
                 crossGroupMode={crossGroupMode}
-                currentColumnOrder={localColumnOrder ?? columnConfig?.columnOrder ?? allColumnKeys}
-                currentHiddenColumns={localHiddenColumns ?? columnConfig?.hiddenColumns ?? []}
+                currentColumnOrder={
+                  localColumnOrder ?? columnConfig?.columnOrder ?? allColumnKeys
+                }
+                currentHiddenColumns={
+                  localHiddenColumns ?? columnConfig?.hiddenColumns ?? []
+                }
                 columnLabels={columnLabelMap}
                 onColumnChange={(order, hidden) => {
                   setLocalColumnOrder(order);
                   setLocalHiddenColumns(hidden);
                 }}
                 onClose={() => {
-                  // Revert to pre-settings column state
-                  setLocalColumnOrder(preSettingsSnapshot?.columnOrder ?? null);
-                  setLocalHiddenColumns(preSettingsSnapshot?.hiddenColumns ?? null);
+                  // Keep column changes made in settings (unsaved changes bar will show)
                   setPreSettingsSnapshot(null);
                   setShowSettingsPanel(false);
                 }}
@@ -2141,53 +2632,65 @@ export function FollowupDesktopTable({
               />
             </View>
           </>
-        ) : selectedMemberId ? (() => {
-          // In cross-group mode, find the groupId from the selected member's data
-          const selectedMember = displayMembers.find((m) => m.groupMemberId === selectedMemberId);
-          const detailGroupId = crossGroupMode
-            ? ((selectedMember as any)?.groupId?.toString() ?? "")
-            : groupId;
-          return (
-            <>
-              <View style={s.divider} />
-              <View style={s.sideSheet}>
-                <FollowupDetailContent
-                  groupId={detailGroupId}
-                  memberId={selectedMemberId}
-                  onClose={() => setSelectedMemberId(null)}
-                  scrollToNotes={scrollToNotes}
-                  scrollToTasks={scrollToTasks}
-                />
-              </View>
-            </>
-          );
-        })() : null}
+        ) : selectedMemberId ? (
+          (() => {
+            // In cross-group mode, find the groupId from the selected member's data
+            const selectedMember = displayMembers.find(
+              (m) => m.groupMemberId === selectedMemberId,
+            );
+            const detailGroupId = crossGroupMode
+              ? ((selectedMember as any)?.groupId?.toString() ?? "")
+              : groupId;
+            return (
+              <>
+                <View style={s.divider} />
+                <View style={s.sideSheet}>
+                  <FollowupDetailContent
+                    groupId={detailGroupId}
+                    memberId={selectedMemberId}
+                    onClose={() => setSelectedMemberId(null)}
+                    scrollToNotes={scrollToNotes}
+                    scrollToTasks={scrollToTasks}
+                  />
+                </View>
+              </>
+            );
+          })()
+        ) : null}
       </View>
 
       {/* Backdrop to dismiss dropdowns */}
-      {dropdownPos && (assigneeDropdownFor || statusDropdownFor || customDropdownFor) && (
-        <TouchableOpacity
-          style={{
-            position: "fixed" as any,
-            top: 0, left: 0, right: 0, bottom: 0,
-            zIndex: 9998,
-          }}
-          activeOpacity={1}
-          onPress={() => {
-            setAssigneeDropdownFor(null);
-            setStatusDropdownFor(null);
-            setCustomDropdownFor(null);
-            setDropdownPos(null);
-          }}
-        />
-      )}
+      {dropdownPos &&
+        (assigneeDropdownFor || statusDropdownFor || customDropdownFor) && (
+          <TouchableOpacity
+            style={{
+              position: "fixed" as any,
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 9998,
+            }}
+            activeOpacity={1}
+            onPress={() => {
+              setAssigneeDropdownFor(null);
+              setStatusDropdownFor(null);
+              setCustomDropdownFor(null);
+              setDropdownPos(null);
+            }}
+          />
+        )}
 
       {/* Dropdown portal — rendered outside the ScrollView at fixed position */}
       {dropdownPos && assigneeDropdownFor && activeDropdownMember && (
         <View
           style={[
             s.dropdownPortal,
-            { top: dropdownPos.top, left: dropdownPos.left, minWidth: dropdownPos.width },
+            {
+              top: dropdownPos.top,
+              left: dropdownPos.left,
+              minWidth: dropdownPos.width,
+            },
           ]}
           data-dropdown="true"
         >
@@ -2196,18 +2699,29 @@ export function FollowupDesktopTable({
               style={s.dropdownItem}
               onPress={() => {
                 const currentAssigneeIds = getAssigneeIds(activeDropdownMember);
-                const nextAssigneeIds = currentAssigneeIds.includes(currentUserId)
+                const nextAssigneeIds = currentAssigneeIds.includes(
+                  currentUserId,
+                )
                   ? currentAssigneeIds.filter((id) => id !== currentUserId)
                   : [...currentAssigneeIds, currentUserId];
-                handleAssigneeSelect(activeDropdownMember.groupMemberId, nextAssigneeIds);
+                handleAssigneeSelect(
+                  activeDropdownMember.groupMemberId,
+                  nextAssigneeIds,
+                );
               }}
             >
               <Ionicons
-                name={getAssigneeIds(activeDropdownMember).includes(currentUserId) ? "checkbox" : "square-outline"}
+                name={
+                  getAssigneeIds(activeDropdownMember).includes(currentUserId)
+                    ? "checkbox"
+                    : "square-outline"
+                }
                 size={16}
                 color={primaryColor}
               />
-              <Text style={[s.dropdownItemText, { color: primaryColor }]}>Assign to me</Text>
+              <Text style={[s.dropdownItemText, { color: primaryColor }]}>
+                Assign to me
+              </Text>
             </TouchableOpacity>
           )}
           <TextInput
@@ -2219,18 +2733,24 @@ export function FollowupDesktopTable({
           />
           <ScrollView style={s.dropdownList} nestedScrollEnabled>
             {filteredLeaders.map((leader: any) => {
-              const lid = leader.userId?.toString?.() ?? leader._id?.toString?.() ?? "";
-              const isChecked = getAssigneeIds(activeDropdownMember).includes(lid);
+              const lid =
+                leader.userId?.toString?.() ?? leader._id?.toString?.() ?? "";
+              const isChecked =
+                getAssigneeIds(activeDropdownMember).includes(lid);
               return (
                 <TouchableOpacity
                   key={lid}
                   style={s.dropdownItem}
                   onPress={() => {
-                    const currentAssigneeIds = getAssigneeIds(activeDropdownMember);
+                    const currentAssigneeIds =
+                      getAssigneeIds(activeDropdownMember);
                     const nextAssigneeIds = isChecked
                       ? currentAssigneeIds.filter((id) => id !== lid)
                       : [...currentAssigneeIds, lid];
-                    handleAssigneeSelect(activeDropdownMember.groupMemberId, nextAssigneeIds);
+                    handleAssigneeSelect(
+                      activeDropdownMember.groupMemberId,
+                      nextAssigneeIds,
+                    );
                   }}
                 >
                   <Ionicons
@@ -2252,10 +2772,15 @@ export function FollowupDesktopTable({
             {crossGroupAssignees.map((group) => (
               <View key={group.groupId}>
                 <View style={s.dropdownGroupHeader}>
-                  <Text style={s.dropdownGroupHeaderText}>{group.groupName}</Text>
+                  <Text style={s.dropdownGroupHeaderText}>
+                    {group.groupName}
+                  </Text>
                 </View>
                 {group.leaders.map((leader) => (
-                  <View key={leader.userId} style={[s.dropdownItem, { opacity: 0.5 }]}>
+                  <View
+                    key={leader.userId}
+                    style={[s.dropdownItem, { opacity: 0.5 }]}
+                  >
                     <Ionicons name="checkbox" size={16} color="#9CA3AF" />
                     <Avatar
                       name={`${leader.firstName} ${leader.lastName}`}
@@ -2275,11 +2800,18 @@ export function FollowupDesktopTable({
               style={[s.dropdownItem, s.dropdownItemDanger]}
               onPress={() => {
                 // Preserve cross-group assignees — only clear current group's assignments
-                const crossIds = crossGroupAssignees.flatMap((g) => g.leaders.map((l) => l.userId));
-                handleAssigneeSelect(activeDropdownMember.groupMemberId, crossIds);
+                const crossIds = crossGroupAssignees.flatMap((g) =>
+                  g.leaders.map((l) => l.userId),
+                );
+                handleAssigneeSelect(
+                  activeDropdownMember.groupMemberId,
+                  crossIds,
+                );
               }}
             >
-              <Text style={[s.dropdownItemText, { color: "#FF3B30" }]}>Clear all assignees</Text>
+              <Text style={[s.dropdownItemText, { color: "#FF3B30" }]}>
+                Clear all assignees
+              </Text>
             </TouchableOpacity>
           )}
         </View>
@@ -2289,7 +2821,11 @@ export function FollowupDesktopTable({
         <View
           style={[
             s.dropdownPortal,
-            { top: dropdownPos.top, left: dropdownPos.left, minWidth: dropdownPos.width },
+            {
+              top: dropdownPos.top,
+              left: dropdownPos.left,
+              minWidth: dropdownPos.width,
+            },
           ]}
           data-dropdown="true"
         >
@@ -2297,7 +2833,12 @@ export function FollowupDesktopTable({
             <TouchableOpacity
               key={opt.label}
               style={[s.dropdownItem, { backgroundColor: opt.color }]}
-              onPress={() => handleStatusSelect(activeDropdownMember.groupMemberId, opt.value)}
+              onPress={() =>
+                handleStatusSelect(
+                  activeDropdownMember.groupMemberId,
+                  opt.value,
+                )
+              }
             >
               <Text style={s.dropdownItemText}>{opt.label}</Text>
             </TouchableOpacity>
@@ -2306,141 +2847,213 @@ export function FollowupDesktopTable({
       )}
 
       {/* Custom field dropdown portal */}
-      {dropdownPos && customDropdownFor && (() => {
-        const cf = customFields.find((f) => f.slot === customDropdownFor.slot);
-        const member = displayMembers.find((m) => m.groupMemberId === customDropdownFor.memberId);
-        if (!cf || !member) return null;
-
-        if (cf.type === "multiselect") {
-          const options = selectOptionsBySlot.get(cf.slot) ?? [];
-          const hasOptions = options.length > 0;
-          const optState = optimistic[member.groupMemberId] as Record<string, any> | undefined;
-          const currentValue = String(
-            optState?.[cf.slot] !== undefined
-              ? (optState[cf.slot] ?? "")
-              : ((member as any)[cf.slot] ?? "")
+      {dropdownPos &&
+        customDropdownFor &&
+        (() => {
+          const cf = customFields.find(
+            (f) => f.slot === customDropdownFor.slot,
           );
-          const selectedValues = parseMultiSelectValues(currentValue);
+          const member = displayMembers.find(
+            (m) => m.groupMemberId === customDropdownFor.memberId,
+          );
+          if (!cf || !member) return null;
 
-          return (
-            <View
-              style={[
-                s.dropdownPortal,
-                { top: dropdownPos.top, left: dropdownPos.left, minWidth: dropdownPos.width },
-              ]}
-              data-dropdown="true"
-            >
-              {hasOptions ? (
-                options.map((opt) => {
-                  const isChecked = selectedValues.includes(opt);
-                  return (
+          if (cf.type === "multiselect") {
+            const options = selectOptionsBySlot.get(cf.slot) ?? [];
+            const hasOptions = options.length > 0;
+            const optState = optimistic[member.groupMemberId] as
+              | Record<string, any>
+              | undefined;
+            const currentValue = String(
+              optState?.[cf.slot] !== undefined
+                ? (optState[cf.slot] ?? "")
+                : ((member as any)[cf.slot] ?? ""),
+            );
+            const selectedValues = parseMultiSelectValues(currentValue);
+
+            return (
+              <View
+                style={[
+                  s.dropdownPortal,
+                  {
+                    top: dropdownPos.top,
+                    left: dropdownPos.left,
+                    minWidth: dropdownPos.width,
+                  },
+                ]}
+                data-dropdown="true"
+              >
+                {hasOptions ? (
+                  options.map((opt) => {
+                    const isChecked = selectedValues.includes(opt);
+                    return (
+                      <TouchableOpacity
+                        key={opt}
+                        style={[
+                          s.dropdownItem,
+                          isChecked && { backgroundColor: "#F3F4F6" },
+                        ]}
+                        onPress={() =>
+                          handleMultiSelectToggle(
+                            member.groupMemberId,
+                            cf.slot,
+                            currentValue,
+                            opt,
+                          )
+                        }
+                      >
+                        <View
+                          style={{
+                            flexDirection: "row",
+                            alignItems: "center",
+                            gap: 8,
+                          }}
+                        >
+                          <Ionicons
+                            name={isChecked ? "checkbox" : "square-outline"}
+                            size={16}
+                            color={isChecked ? "#6B21A8" : "#9CA3AF"}
+                          />
+                          <Text style={s.dropdownItemText}>{opt}</Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })
+                ) : (
+                  <View style={s.dropdownItem}>
+                    <Text style={s.dropdownItemText}>
+                      No options configured
+                    </Text>
+                  </View>
+                )}
+                {selectedValues.length > 0 && (
+                  <TouchableOpacity
+                    style={[s.dropdownItem, s.dropdownItemDanger]}
+                    onPress={() => {
+                      handleCustomFieldSave(
+                        member.groupMemberId,
+                        cf.slot,
+                        undefined,
+                      );
+                    }}
+                  >
+                    <Text style={[s.dropdownItemText, { color: "#FF3B30" }]}>
+                      Clear all
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            );
+          }
+
+          if (cf.type === "dropdown") {
+            const options = selectOptionsBySlot.get(cf.slot) ?? [];
+            const hasOptions = options.length > 0;
+            const optState = optimistic[member.groupMemberId] as
+              | Record<string, any>
+              | undefined;
+            const currentValue = String(
+              optState?.[cf.slot] !== undefined
+                ? (optState[cf.slot] ?? "")
+                : ((member as any)[cf.slot] ?? ""),
+            );
+            return (
+              <View
+                style={[
+                  s.dropdownPortal,
+                  {
+                    top: dropdownPos.top,
+                    left: dropdownPos.left,
+                    minWidth: dropdownPos.width,
+                  },
+                ]}
+                data-dropdown="true"
+              >
+                {hasOptions ? (
+                  options.map((opt) => (
                     <TouchableOpacity
                       key={opt}
-                      style={[s.dropdownItem, isChecked && { backgroundColor: "#F3F4F6" }]}
-                      onPress={() => handleMultiSelectToggle(member.groupMemberId, cf.slot, currentValue, opt)}
+                      style={s.dropdownItem}
+                      onPress={() =>
+                        handleCustomFieldSave(
+                          member.groupMemberId,
+                          cf.slot,
+                          opt,
+                        )
+                      }
                     >
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                        <Ionicons
-                          name={isChecked ? "checkbox" : "square-outline"}
-                          size={16}
-                          color={isChecked ? "#6B21A8" : "#9CA3AF"}
-                        />
-                        <Text style={s.dropdownItemText}>{opt}</Text>
-                      </View>
+                      <Text style={s.dropdownItemText}>{opt}</Text>
                     </TouchableOpacity>
-                  );
-                })
-              ) : (
-                <View style={s.dropdownItem}>
-                  <Text style={s.dropdownItemText}>No options configured</Text>
-                </View>
-              )}
-              {selectedValues.length > 0 && (
-                <TouchableOpacity
-                  style={[s.dropdownItem, s.dropdownItemDanger]}
-                  onPress={() => {
-                    handleCustomFieldSave(member.groupMemberId, cf.slot, undefined);
-                  }}
-                >
-                  <Text style={[s.dropdownItemText, { color: "#FF3B30" }]}>Clear all</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          );
-        }
+                  ))
+                ) : (
+                  <View style={s.dropdownItem}>
+                    <Text style={s.dropdownItemText}>
+                      No options configured
+                    </Text>
+                  </View>
+                )}
+                {currentValue && (
+                  <TouchableOpacity
+                    style={[s.dropdownItem, s.dropdownItemDanger]}
+                    onPress={() =>
+                      handleCustomFieldSave(
+                        member.groupMemberId,
+                        cf.slot,
+                        undefined,
+                      )
+                    }
+                  >
+                    <Text style={[s.dropdownItemText, { color: "#FF3B30" }]}>
+                      Clear
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            );
+          }
 
-        if (cf.type === "dropdown") {
-          const options = selectOptionsBySlot.get(cf.slot) ?? [];
-          const hasOptions = options.length > 0;
-          const optState = optimistic[member.groupMemberId] as Record<string, any> | undefined;
-          const currentValue = String(
-            optState?.[cf.slot] !== undefined
-              ? (optState[cf.slot] ?? "")
-              : ((member as any)[cf.slot] ?? "")
-          );
+          if (!cf.options) return null;
+
           return (
             <View
               style={[
                 s.dropdownPortal,
-                { top: dropdownPos.top, left: dropdownPos.left, minWidth: dropdownPos.width },
+                {
+                  top: dropdownPos.top,
+                  left: dropdownPos.left,
+                  minWidth: dropdownPos.width,
+                },
               ]}
               data-dropdown="true"
             >
-              {hasOptions ? (
-                options.map((opt) => (
-                  <TouchableOpacity
-                    key={opt}
-                    style={s.dropdownItem}
-                    onPress={() => handleCustomFieldSave(member.groupMemberId, cf.slot, opt)}
-                  >
-                    <Text style={s.dropdownItemText}>{opt}</Text>
-                  </TouchableOpacity>
-                ))
-              ) : (
-                <View style={s.dropdownItem}>
-                  <Text style={s.dropdownItemText}>No options configured</Text>
-                </View>
-              )}
-              {currentValue && (
+              {cf.options.map((opt) => (
                 <TouchableOpacity
-                  style={[s.dropdownItem, s.dropdownItemDanger]}
-                  onPress={() => handleCustomFieldSave(member.groupMemberId, cf.slot, undefined)}
+                  key={opt}
+                  style={s.dropdownItem}
+                  onPress={() =>
+                    handleCustomFieldSave(member.groupMemberId, cf.slot, opt)
+                  }
                 >
-                  <Text style={[s.dropdownItemText, { color: "#FF3B30" }]}>Clear</Text>
+                  <Text style={s.dropdownItemText}>{opt}</Text>
                 </TouchableOpacity>
-              )}
+              ))}
+              <TouchableOpacity
+                style={[s.dropdownItem, s.dropdownItemDanger]}
+                onPress={() =>
+                  handleCustomFieldSave(
+                    member.groupMemberId,
+                    cf.slot,
+                    undefined,
+                  )
+                }
+              >
+                <Text style={[s.dropdownItemText, { color: "#FF3B30" }]}>
+                  Clear
+                </Text>
+              </TouchableOpacity>
             </View>
           );
-        }
-
-        if (!cf.options) return null;
-
-        return (
-          <View
-            style={[
-              s.dropdownPortal,
-              { top: dropdownPos.top, left: dropdownPos.left, minWidth: dropdownPos.width },
-            ]}
-            data-dropdown="true"
-          >
-            {cf.options.map((opt) => (
-              <TouchableOpacity
-                key={opt}
-                style={s.dropdownItem}
-                onPress={() => handleCustomFieldSave(member.groupMemberId, cf.slot, opt)}
-              >
-                <Text style={s.dropdownItemText}>{opt}</Text>
-              </TouchableOpacity>
-            ))}
-            <TouchableOpacity
-              style={[s.dropdownItem, s.dropdownItemDanger]}
-              onPress={() => handleCustomFieldSave(member.groupMemberId, cf.slot, undefined)}
-            >
-              <Text style={[s.dropdownItemText, { color: "#FF3B30" }]}>Clear</Text>
-            </TouchableOpacity>
-          </View>
-        );
-      })()}
+        })()}
 
       {/* Bulk remove confirmation modal */}
       <ConfirmModal
@@ -2474,7 +3087,8 @@ export function FollowupDesktopTable({
           visible={showSaveViewModal}
           onClose={() => {
             setShowSaveViewModal(false);
-            // Clear unsaved column changes after saving
+          }}
+          onSave={() => {
             setLocalColumnOrder(null);
             setLocalHiddenColumns(null);
           }}
@@ -2482,7 +3096,9 @@ export function FollowupDesktopTable({
           currentSortBy={sortField}
           currentSortDirection={sortDirection}
           currentColumnOrder={localColumnOrder ?? columnConfig?.columnOrder}
-          currentHiddenColumns={localHiddenColumns ?? columnConfig?.hiddenColumns}
+          currentHiddenColumns={
+            localHiddenColumns ?? columnConfig?.hiddenColumns
+          }
           currentFilters={{
             groupId: groupId as any,
             statusFilter: parsedQuery.statusFilter,
@@ -2514,7 +3130,10 @@ export function FollowupDesktopTable({
                 const currentOrder = localColumnOrder ?? allColumnKeys;
                 const currentHidden = localHiddenColumns ?? [];
                 setLocalColumnOrder(currentOrder);
-                setLocalHiddenColumns([...currentHidden, headerContextMenu.colKey]);
+                setLocalHiddenColumns([
+                  ...currentHidden,
+                  headerContextMenu.colKey,
+                ]);
                 setActiveViewId(null);
                 setHeaderContextMenu(null);
               }}
@@ -2544,7 +3163,9 @@ export function FollowupDesktopTable({
             setLocalColumnOrder(null);
             setLocalHiddenColumns(null);
           }
-          await deleteViewMut({ viewId: viewToDelete.id as Id<"peopleSavedViews"> });
+          await deleteViewMut({
+            viewId: viewToDelete.id as Id<"peopleSavedViews">,
+          });
           setViewToDelete(null);
         }}
         onCancel={() => setViewToDelete(null)}
@@ -2724,7 +3345,9 @@ const s = StyleSheet.create({
     borderBottomWidth: 2,
     borderBottomColor: "#E5E7EB",
     // Sticky on web
-    ...(Platform.OS === "web" ? { position: "sticky" as any, top: 0, zIndex: 10 } : {}),
+    ...(Platform.OS === "web"
+      ? { position: "sticky" as any, top: 0, zIndex: 10 }
+      : {}),
   },
   headerCell: {
     flexDirection: "row" as const,
@@ -3099,30 +3722,34 @@ const s = StyleSheet.create({
 
   // Column header context menu
   contextMenuBackdrop: {
-    ...(Platform.OS === "web" ? {
-      position: "fixed" as any,
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      zIndex: 9998,
-    } : {}),
+    ...(Platform.OS === "web"
+      ? {
+          position: "fixed" as any,
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: 9998,
+        }
+      : {}),
   },
   contextMenu: {
-    ...(Platform.OS === "web" ? {
-      position: "fixed" as any,
-      zIndex: 9999,
-      backgroundColor: "#fff",
-      borderRadius: 8,
-      borderWidth: 1,
-      borderColor: "#E5E7EB",
-      shadowColor: "#000",
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.15,
-      shadowRadius: 12,
-      paddingVertical: 4,
-      minWidth: 180,
-    } : {}),
+    ...(Platform.OS === "web"
+      ? {
+          position: "fixed" as any,
+          zIndex: 9999,
+          backgroundColor: "#fff",
+          borderRadius: 8,
+          borderWidth: 1,
+          borderColor: "#E5E7EB",
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.15,
+          shadowRadius: 12,
+          paddingVertical: 4,
+          minWidth: 180,
+        }
+      : {}),
   },
   contextMenuItem: {
     flexDirection: "row" as const,

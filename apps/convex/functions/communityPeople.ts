@@ -152,9 +152,7 @@ export const list = query({
 
     let q = ctx.db
       .query("communityPeople")
-      .withIndex(indexName as any, (fq: any) =>
-        fq.eq("groupId", args.groupId),
-      )
+      .withIndex(indexName as any, (fq: any) => fq.eq("groupId", args.groupId))
       .order(direction);
 
     // Apply optional filters
@@ -200,13 +198,22 @@ export const list = query({
 
 /**
  * Search community people by name/email/phone using full-text search index.
- * Returns up to 50 results ordered by relevance.
+ * Returns up to 200 results ordered by relevance.
+ * Supports optional filters to narrow results server-side.
  */
 export const search = query({
   args: {
     groupId: v.id("groups"),
     token: v.optional(v.string()),
     searchTerm: v.string(),
+    statusFilter: v.optional(v.string()),
+    assigneeFilter: v.optional(v.id("users")),
+    excludedAssigneeFilters: v.optional(v.array(v.id("users"))),
+    scoreField: v.optional(v.string()),
+    scoreMin: v.optional(v.number()),
+    scoreMax: v.optional(v.number()),
+    addedAtMin: v.optional(v.number()),
+    addedAtMax: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token ?? "");
@@ -218,16 +225,67 @@ export const search = query({
     }
     await requireCommunityMember(ctx, group.communityId, userId);
 
-    const results = await ctx.db
+    let results = ctx.db
       .query("communityPeople")
-      .withSearchIndex("search_communityPeople", (q: any) =>
-        q
+      .withSearchIndex("search_communityPeople", (q: any) => {
+        let sq = q
           .search("searchText", args.searchTerm)
-          .eq("groupId", args.groupId),
-      )
-      .take(50);
+          .eq("groupId", args.groupId);
+        if (args.statusFilter) sq = sq.eq("status", args.statusFilter);
+        return sq;
+      });
 
-    return results;
+    // Range filters via .filter() - score, assignee, and date filters
+    const scoreFilterField = (args.scoreField ?? "score1") as
+      | "score1"
+      | "score2"
+      | "score3";
+    if (args.scoreMax !== undefined || args.scoreMin !== undefined) {
+      results = results.filter((fq: any) => {
+        const conds: any[] = [];
+        if (args.scoreMax !== undefined)
+          conds.push(fq.lt(fq.field(scoreFilterField), args.scoreMax));
+        if (args.scoreMin !== undefined)
+          conds.push(fq.gt(fq.field(scoreFilterField), args.scoreMin));
+        return conds.length === 1
+          ? conds[0]
+          : fq.and(...(conds as [any, any, ...any[]]));
+      });
+    }
+
+    // Assignee and date range filters
+    const hasExcludedAssignees =
+      args.excludedAssigneeFilters && args.excludedAssigneeFilters.length > 0;
+    const hasAssigneeFilter = args.assigneeFilter !== undefined;
+    const hasDateFilters =
+      args.addedAtMin !== undefined || args.addedAtMax !== undefined;
+
+    if (hasExcludedAssignees || hasAssigneeFilter || hasDateFilters) {
+      results = results.filter((fq: any) => {
+        const conds: any[] = [];
+        // assigneeFilter checks if assignee is in assigneeIds array
+        // Since Convex filter doesn't support array contains directly,
+        // we'll skip assigneeFilter here and apply it client-side
+        if (args.excludedAssigneeFilters?.length) {
+          for (const excludedAssigneeId of args.excludedAssigneeFilters) {
+            // Check that excluded assignee is not in the array
+            // This is an approximation - client-side filtering handles it more precisely
+            conds.push(
+              fq.neq(fq.field("assigneeIds"), [excludedAssigneeId] as any),
+            );
+          }
+        }
+        if (args.addedAtMax !== undefined)
+          conds.push(fq.lte(fq.field("addedAt"), args.addedAtMax));
+        if (args.addedAtMin !== undefined)
+          conds.push(fq.gte(fq.field("addedAt"), args.addedAtMin));
+        return conds.length === 1
+          ? conds[0]
+          : fq.and(...(conds as [any, any, ...any[]]));
+      });
+    }
+
+    return await results.take(200);
   },
 });
 
@@ -363,7 +421,9 @@ export const setStatus = mutation({
 
     await requireCommunityLeader(ctx, cpRecord.communityId, userId);
 
-    const patchFields = { status: args.status === null ? undefined : args.status };
+    const patchFields = {
+      status: args.status === null ? undefined : args.status,
+    };
     await ctx.db.patch(args.communityPeopleId, {
       ...patchFields,
       updatedAt: Date.now(),
@@ -396,7 +456,9 @@ export const setAssignees = mutation({
 
     await requireCommunityLeader(ctx, cpRecord.communityId, userId);
 
-    const patchFields = { assigneeIds: args.assigneeIds.length > 0 ? args.assigneeIds : undefined };
+    const patchFields = {
+      assigneeIds: args.assigneeIds.length > 0 ? args.assigneeIds : undefined,
+    };
     await ctx.db.patch(args.communityPeopleId, {
       ...patchFields,
       updatedAt: Date.now(),
@@ -513,7 +575,9 @@ export const history = query({
       : [];
 
     // Batch fetch createdBy users
-    const createdByIds = Array.from(new Set(followups.map((f: any) => f.createdById)));
+    const createdByIds = Array.from(
+      new Set(followups.map((f: any) => f.createdById)),
+    );
     const createdByUsers = await Promise.all(
       createdByIds.map((id: any) => ctx.db.get(id)),
     );
@@ -543,7 +607,8 @@ export const history = query({
 
     // Check for active snooze
     const activeSnooze = followups.find(
-      (f: any) => f.type === "snooze" && f.snoozeUntil && f.snoozeUntil > currentTime,
+      (f: any) =>
+        f.type === "snooze" && f.snoozeUntil && f.snoozeUntil > currentTime,
     );
 
     // Build cross-group attendance
@@ -553,7 +618,12 @@ export const history = query({
       groupId: string;
       groupName: string;
       canEdit: boolean;
-      meetings: Array<{ meetingId: string; title: string; date: number; status: number }>;
+      meetings: Array<{
+        meetingId: string;
+        title: string;
+        date: number;
+        status: number;
+      }>;
     }> = [];
 
     let allGroupsAttended = 0;
@@ -569,7 +639,11 @@ export const history = query({
             q.eq("groupId", group._id).eq("userId", args.currentUserId!),
           )
           .first();
-        if (callerMembership && (callerMembership.role === "leader" || callerMembership.role === "admin")) {
+        if (
+          callerMembership &&
+          (callerMembership.role === "leader" ||
+            callerMembership.role === "admin")
+        ) {
           canEdit = true;
         }
       }
@@ -578,7 +652,8 @@ export const history = query({
       const meetings = await ctx.db
         .query("meetings")
         .withIndex("by_group_scheduledAt", (q: any) =>
-          q.eq("groupId", group._id)
+          q
+            .eq("groupId", group._id)
             .gte("scheduledAt", attendanceCutoff)
             .lt("scheduledAt", currentTime),
         )
@@ -605,7 +680,9 @@ export const history = query({
       }));
 
       allGroupsTotal += meetings.length;
-      allGroupsAttended += meetingData.filter((m: any) => m.status === 1).length;
+      allGroupsAttended += meetingData.filter(
+        (m: any) => m.status === 1,
+      ).length;
 
       crossGroupAttendance.push({
         groupId: group._id.toString(),
@@ -621,14 +698,15 @@ export const history = query({
       id: scoreDef.id,
       name: scoreDef.name,
       value: (cpRecord as any)[scoreDef.slot] ?? 0,
-      variables: scoreDef.variables?.map((v: any) => ({
-        id: v.variableId,
-        label: v.label ?? v.variableId,
-        normHint: v.normHint ?? "",
-        rawValue: (rawValues as any)[v.variableId] ?? 0,
-        normalizedValue: 0,
-        weight: v.weight ?? 1,
-      })) ?? [],
+      variables:
+        scoreDef.variables?.map((v: any) => ({
+          id: v.variableId,
+          label: v.label ?? v.variableId,
+          normHint: v.normHint ?? "",
+          rawValue: (rawValues as any)[v.variableId] ?? 0,
+          normalizedValue: 0,
+          weight: v.weight ?? 1,
+        })) ?? [],
     }));
 
     // Serving history from announcement group's PCO data
@@ -640,7 +718,8 @@ export const history = query({
     }> = [];
 
     if (announcementGroup) {
-      const allDetails = (announcementGroup as any)?.pcoServingCounts?.servingDetails ?? [];
+      const allDetails =
+        (announcementGroup as any)?.pcoServingCounts?.servingDetails ?? [];
       const userDetails = allDetails
         .filter((d: any) => d.userId.toString() === cpRecord.userId.toString())
         .sort((a: any, b: any) => b.date.localeCompare(a.date));
@@ -674,14 +753,15 @@ export const history = query({
         profileImage,
         joinedAt: cpRecord.addedAt,
       },
-      attendanceHistory: crossGroupAttendance.length > 0
-        ? crossGroupAttendance[0].meetings.map((m: any) => ({
-            meetingId: m.meetingId,
-            title: m.title,
-            date: m.date,
-            status: m.status,
-          }))
-        : [],
+      attendanceHistory:
+        crossGroupAttendance.length > 0
+          ? crossGroupAttendance[0].meetings.map((m: any) => ({
+              meetingId: m.meetingId,
+              title: m.title,
+              date: m.date,
+              status: m.status,
+            }))
+          : [],
       followups: followupsWithUsers,
       isSnoozed: !!activeSnooze,
       snoozedUntil: activeSnooze?.snoozeUntil,
@@ -713,7 +793,10 @@ export const setConnectionPoint = mutation({
 
     await requireCommunityLeader(ctx, cpRecord.communityId, userId);
 
-    const patchFields = { connectionPoint: args.connectionPoint === null ? undefined : args.connectionPoint };
+    const patchFields = {
+      connectionPoint:
+        args.connectionPoint === null ? undefined : args.connectionPoint,
+    };
     await ctx.db.patch(args.communityPeopleId, {
       ...patchFields,
       updatedAt: Date.now(),
@@ -781,7 +864,10 @@ export const snooze = mutation({
     });
 
     // Sync to sibling records in the same community
-    await syncToSiblingRecords(ctx, cpRecord, { isSnoozed: true, snoozedUntil: snoozeUntil });
+    await syncToSiblingRecords(ctx, cpRecord, {
+      isSnoozed: true,
+      snoozedUntil: snoozeUntil,
+    });
 
     // Find announcement group membership to store the followup entry
     const announcementGroup = await ctx.db

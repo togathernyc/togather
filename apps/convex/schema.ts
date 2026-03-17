@@ -56,12 +56,16 @@ export default defineSchema({
     exploreDefaultGroupTypes: v.optional(v.array(v.id("groupTypes"))),
     exploreDefaultMeetingType: v.optional(v.number()), // 1=Online, 2=In-Person
     // Community-level custom field definitions for People tab
-    peopleCustomFields: v.optional(v.array(v.object({
-      slot: v.string(),        // e.g. "customText1", "customBool2"
-      name: v.string(),        // display label
-      type: v.string(),        // "text" | "number" | "boolean" | "dropdown" | "multiselect"
-      options: v.optional(v.array(v.string())),
-    }))),
+    peopleCustomFields: v.optional(
+      v.array(
+        v.object({
+          slot: v.string(), // e.g. "customText1", "customBool2"
+          name: v.string(), // display label
+          type: v.string(), // "text" | "number" | "boolean" | "dropdown" | "multiselect"
+          options: v.optional(v.array(v.string())),
+        }),
+      ),
+    ),
 
     // Denormalized field for full-text search (combines name and subdomain)
     searchText: v.optional(v.string()),
@@ -139,9 +143,11 @@ export default defineSchema({
     lastLogin: v.optional(v.number()), // Unix timestamp ms - updated when user switches to this community
     // External integrations - stores IDs from external systems per community membership
     // e.g., { planningCenterId: "12345" }
-    externalIds: v.optional(v.object({
-      planningCenterId: v.optional(v.string()),
-    })),
+    externalIds: v.optional(
+      v.object({
+        planningCenterId: v.optional(v.string()),
+      }),
+    ),
     // Denormalized PCO person ID for efficient indexed lookups
     // This mirrors externalIds.planningCenterId but is top-level for indexing
     pcoPersonId: v.optional(v.string()),
@@ -222,7 +228,7 @@ export default defineSchema({
       v.object({
         latitude: v.number(),
         longitude: v.number(),
-      })
+      }),
     ),
 
     // Channel pinning - ordered array of channel slugs that should appear pinned
@@ -249,66 +255,90 @@ export default defineSchema({
     // Follow-up score configuration
     // Allows group admins to define custom scoring formulas with weighted variables
     // If undefined, uses default Attendance + Connection scores
-    followupScoreConfig: v.optional(v.object({
-      scores: v.array(v.object({
-        id: v.string(),
-        name: v.string(),        // max 12 chars, displayed in UI
-        variables: v.array(v.object({
-          variableId: v.string(),
-          weight: v.number(),    // positive, relative weight
-        })),
-      })),
-      memberSubtitle: v.optional(v.string()), // custom subtitle for member cards, e.g. "Last follow-up: {lastFollowup}"
-      alerts: v.optional(v.array(v.object({
-        id: v.string(),
-        variableId: v.string(),
-        operator: v.string(),   // "above" | "below"
-        threshold: v.number(),
-        label: v.optional(v.string()),
-      }))),
-    })),
+    followupScoreConfig: v.optional(
+      v.object({
+        scores: v.array(
+          v.object({
+            id: v.string(),
+            name: v.string(), // max 12 chars, displayed in UI
+            variables: v.array(
+              v.object({
+                variableId: v.string(),
+                weight: v.number(), // positive, relative weight
+              }),
+            ),
+          }),
+        ),
+        memberSubtitle: v.optional(v.string()), // custom subtitle for member cards, e.g. "Last follow-up: {lastFollowup}"
+        alerts: v.optional(
+          v.array(
+            v.object({
+              id: v.string(),
+              variableId: v.string(),
+              operator: v.string(), // "above" | "below"
+              threshold: v.number(),
+              label: v.optional(v.string()),
+            }),
+          ),
+        ),
+      }),
+    ),
 
     // Follow-up column configuration (column order, visibility, custom fields)
-    followupColumnConfig: v.optional(v.object({
-      columnOrder: v.array(v.string()),
-      hiddenColumns: v.array(v.string()),
-      customFields: v.array(v.object({
-        slot: v.string(),        // e.g. "customText1", "customBool2"
-        name: v.string(),        // display label
-        type: v.string(),        // "text" | "number" | "boolean" | "dropdown"
-        options: v.optional(v.array(v.string())),
-      })),
-    })),
+    followupColumnConfig: v.optional(
+      v.object({
+        columnOrder: v.array(v.string()),
+        hiddenColumns: v.array(v.string()),
+        customFields: v.array(
+          v.object({
+            slot: v.string(), // e.g. "customText1", "customBool2"
+            name: v.string(), // display label
+            type: v.string(), // "text" | "number" | "boolean" | "dropdown"
+            options: v.optional(v.array(v.string())),
+          }),
+        ),
+      }),
+    ),
 
     // Follow-up refresh status (for manual/automated denormalized table rebuilds)
-    followupRefreshState: v.optional(v.object({
-      status: v.string(), // "running" | "idle" | "failed"
-      runId: v.string(),
-      startedAt: v.number(),
-      completedAt: v.optional(v.number()),
-      failedAt: v.optional(v.number()),
-      error: v.optional(v.string()),
-      requestedById: v.optional(v.id("users")),
-      trigger: v.optional(v.string()), // "manual" | "score_config_update" | "scheduled"
-    })),
+    followupRefreshState: v.optional(
+      v.object({
+        status: v.string(), // "running" | "idle" | "failed"
+        runId: v.string(),
+        startedAt: v.number(),
+        completedAt: v.optional(v.number()),
+        failedAt: v.optional(v.number()),
+        error: v.optional(v.string()),
+        requestedById: v.optional(v.id("users")),
+        trigger: v.optional(v.string()), // "manual" | "score_config_update" | "scheduled"
+      }),
+    ),
 
     // PCO serving counts — written by the getServingCounts action,
     // read by the follow-up scoring query. Lightweight alternative to a cache table.
-    pcoServingCounts: v.optional(v.object({
-      updatedAt: v.number(),
-      counts: v.array(v.object({
-        userId: v.id("users"),
-        count: v.number(),
-      })),
-      // Per-user serving detail records (date, team, position) from PCO
-      servingDetails: v.optional(v.array(v.object({
-        userId: v.id("users"),
-        date: v.string(),        // ISO date string from plan sort_date
-        serviceTypeName: v.string(),
-        teamName: v.string(),
-        position: v.optional(v.string()),
-      }))),
-    })),
+    pcoServingCounts: v.optional(
+      v.object({
+        updatedAt: v.number(),
+        counts: v.array(
+          v.object({
+            userId: v.id("users"),
+            count: v.number(),
+          }),
+        ),
+        // Per-user serving detail records (date, team, position) from PCO
+        servingDetails: v.optional(
+          v.array(
+            v.object({
+              userId: v.id("users"),
+              date: v.string(), // ISO date string from plan sort_date
+              serviceTypeName: v.string(),
+              teamName: v.string(),
+              position: v.optional(v.string()),
+            }),
+          ),
+        ),
+      }),
+    ),
 
     // Run Sheet configuration for PCO integration
     // Stores default service type filters and view preferences
@@ -321,16 +351,18 @@ export default defineSchema({
           v.object({
             hidden: v.array(v.string()), // category names to hide
             order: v.array(v.string()), // ordered visible category names
-          })
+          }),
         ),
-      })
+      }),
     ),
 
     // Reach Out channel configuration
-    reachOutConfig: v.optional(v.object({
-      enabled: v.boolean(),
-      channelName: v.optional(v.string()), // Default: "Reach Out"
-    })),
+    reachOutConfig: v.optional(
+      v.object({
+        enabled: v.boolean(),
+        channelName: v.optional(v.string()), // Default: "Reach Out"
+      }),
+    ),
   })
     .index("by_legacyId", ["legacyId"])
     .index("by_community", ["communityId"])
@@ -391,7 +423,7 @@ export default defineSchema({
       type: v.union(
         v.literal("everyone"),
         v.literal("joined_within"),
-        v.literal("channel_members")
+        v.literal("channel_members"),
       ),
       // For "joined_within" type - number of days
       daysWithin: v.optional(v.number()),
@@ -406,7 +438,7 @@ export default defineSchema({
         imageUrls: v.optional(v.array(v.string())),
         linkUrl: v.optional(v.string()),
         order: v.number(),
-      })
+      }),
     ),
     order: v.number(), // Order in toolbar
     createdAt: v.number(),
@@ -431,7 +463,11 @@ export default defineSchema({
   })
     .index("by_shortId", ["shortId"])
     .index("by_group_toolType", ["groupId", "toolType"])
-    .index("by_group_toolType_resourceId", ["groupId", "toolType", "resourceId"]),
+    .index("by_group_toolType_resourceId", [
+      "groupId",
+      "toolType",
+      "resourceId",
+    ]),
 
   // =============================================================================
   // COMMUNITY-WIDE EVENTS
@@ -487,8 +523,8 @@ export default defineSchema({
           id: v.number(),
           label: v.string(),
           enabled: v.boolean(),
-        })
-      )
+        }),
+      ),
     ),
 
     // Visibility
@@ -999,14 +1035,14 @@ export default defineSchema({
                   teamName: v.optional(v.string()),
                   serviceTypeId: v.optional(v.string()),
                   serviceTypeName: v.optional(v.string()),
-                })
-              )
-            )
+                }),
+              ),
+            ),
           ), // e.g., ["Director"] or [{ name: "Worship Leader", teamId: "manhattan-worship" }]
 
           // Schedule status filter
           statuses: v.optional(v.array(v.string())), // "C" (confirmed), "U" (unconfirmed), etc.
-        })
+        }),
       ),
 
       // LEGACY: Keep existing fields for backward compatibility
@@ -1045,10 +1081,10 @@ export default defineSchema({
               teamName: v.optional(v.string()), // Team from PCO for display
               position: v.optional(v.string()), // Position from PCO for display
               reason: v.string(), // "not_in_community" | "not_in_group" | "no_contact_info" | "phone_mismatch" | "email_mismatch"
-            })
-          )
+            }),
+          ),
         ),
-      })
+      }),
     ),
 
     isActive: v.boolean(),
@@ -1172,15 +1208,19 @@ export default defineSchema({
     memberCount: v.number(),
     // Shared channel fields
     isShared: v.optional(v.boolean()), // Quick flag to identify shared channels
-    sharedGroups: v.optional(v.array(v.object({
-      groupId: v.id("groups"),           // The secondary group
-      status: v.union(v.literal("pending"), v.literal("accepted")),
-      invitedById: v.id("users"),        // Primary group leader who sent invite
-      invitedAt: v.number(),              // Unix timestamp ms
-      respondedById: v.optional(v.id("users")), // Secondary group leader who responded
-      respondedAt: v.optional(v.number()),      // Unix timestamp ms
-      sortOrder: v.optional(v.number()),        // How this group orders the channel
-    }))),
+    sharedGroups: v.optional(
+      v.array(
+        v.object({
+          groupId: v.id("groups"), // The secondary group
+          status: v.union(v.literal("pending"), v.literal("accepted")),
+          invitedById: v.id("users"), // Primary group leader who sent invite
+          invitedAt: v.number(), // Unix timestamp ms
+          respondedById: v.optional(v.id("users")), // Secondary group leader who responded
+          respondedAt: v.optional(v.number()), // Unix timestamp ms
+          sortOrder: v.optional(v.number()), // How this group orders the channel
+        }),
+      ),
+    ),
   })
     .index("by_group", ["groupId"])
     .index("by_group_type", ["groupId", "channelType"])
@@ -1217,7 +1257,7 @@ export default defineSchema({
         position: v.optional(v.string()), // e.g. "Lead Vocals", "Drums"
         serviceDate: v.optional(v.number()), // Unix timestamp ms
         serviceName: v.optional(v.string()), // e.g. "Sunday Service"
-      })
+      }),
     ),
   })
     .index("by_channel", ["channelId"])
@@ -1244,8 +1284,8 @@ export default defineSchema({
           size: v.optional(v.number()),
           mimeType: v.optional(v.string()),
           thumbnailUrl: v.optional(v.string()),
-        })
-      )
+        }),
+      ),
     ),
     // Threading
     parentMessageId: v.optional(v.id("chatMessages")),
@@ -1441,7 +1481,7 @@ export default defineSchema({
         slackUserId: v.string(),
         roles: v.array(v.string()),
         locations: v.array(v.string()),
-      })
+      }),
     ),
     threadMentions: v.record(v.string(), v.array(v.string())), // location -> slackUserIds
 
@@ -1452,7 +1492,7 @@ export default defineSchema({
         hourET: v.number(),
         urgency: v.string(),
         label: v.string(),
-      })
+      }),
     ),
     threadCreation: v.object({ dayOfWeek: v.number(), hourET: v.number() }),
 
@@ -1462,18 +1502,22 @@ export default defineSchema({
     itemResponsibleRoles: v.record(v.string(), v.array(v.string())),
 
     // V2: Unified service plan items with action configuration
-    servicePlanItemsV2: v.optional(v.array(v.object({
-      id: v.string(),
-      label: v.string(),
-      responsibleRoles: v.array(v.string()),
-      actionType: v.string(), // "assign_role" | "update_plan_item" | "none"
-      pcoTeamNamePattern: v.optional(v.string()),
-      pcoPositionName: v.optional(v.string()),
-      pcoItemTitlePattern: v.optional(v.string()),
-      pcoItemField: v.optional(v.string()), // "description" | "notes"
-      preserveSections: v.optional(v.array(v.string())),
-      aiInstructions: v.optional(v.string()),
-    }))),
+    servicePlanItemsV2: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          label: v.string(),
+          responsibleRoles: v.array(v.string()),
+          actionType: v.string(), // "assign_role" | "update_plan_item" | "none"
+          pcoTeamNamePattern: v.optional(v.string()),
+          pcoPositionName: v.optional(v.string()),
+          pcoItemTitlePattern: v.optional(v.string()),
+          pcoItemField: v.optional(v.string()), // "description" | "notes"
+          preserveSections: v.optional(v.array(v.string())),
+          aiInstructions: v.optional(v.string()),
+        }),
+      ),
+    ),
 
     // PCO config
     pcoConfig: v.object({
@@ -1484,7 +1528,7 @@ export default defineSchema({
         v.object({
           teamNamePattern: v.string(),
           positionName: v.string(),
-        })
+        }),
       ),
     }),
 
@@ -1498,28 +1542,34 @@ export default defineSchema({
     }),
 
     // Activity log: structured trace of bot interactions (circular buffer, last 50)
-    activityLog: v.optional(v.array(v.object({
-      trigger: v.string(), // "thread_reply" | "nag_check" | "thread_creation"
-      location: v.optional(v.string()),
-      threadTs: v.optional(v.string()),
-      messageTs: v.optional(v.string()),
-      userId: v.optional(v.string()),
-      nagUrgency: v.optional(v.string()),
-      nagLabel: v.optional(v.string()),
-      toolCalls: v.array(v.object({
-        tool: v.string(),
-        args: v.any(),
-        result: v.any(),
-        durationMs: v.number(),
-      })),
-      agentResponse: v.optional(v.string()),
-      iterations: v.number(),
-      status: v.string(), // "success" | "error" | "skipped"
-      error: v.optional(v.string()),
-      skipReason: v.optional(v.string()),
-      durationMs: v.number(),
-      timestamp: v.number(),
-    }))),
+    activityLog: v.optional(
+      v.array(
+        v.object({
+          trigger: v.string(), // "thread_reply" | "nag_check" | "thread_creation"
+          location: v.optional(v.string()),
+          threadTs: v.optional(v.string()),
+          messageTs: v.optional(v.string()),
+          userId: v.optional(v.string()),
+          nagUrgency: v.optional(v.string()),
+          nagLabel: v.optional(v.string()),
+          toolCalls: v.array(
+            v.object({
+              tool: v.string(),
+              args: v.any(),
+              result: v.any(),
+              durationMs: v.number(),
+            }),
+          ),
+          agentResponse: v.optional(v.string()),
+          iterations: v.number(),
+          status: v.string(), // "success" | "error" | "skipped"
+          error: v.optional(v.string()),
+          skipReason: v.optional(v.string()),
+          durationMs: v.number(),
+          timestamp: v.number(),
+        }),
+      ),
+    ),
 
     // Dedup: recent processed message timestamps (circular buffer, last ~100)
     processedMessageTs: v.array(v.string()),
@@ -1552,25 +1602,29 @@ export default defineSchema({
 
   reachOutRequests: defineTable({
     groupId: v.id("groups"),
-    channelId: v.id("chatChannels"),           // The reach_out channel
-    leadersChannelId: v.id("chatChannels"),     // The leaders channel
+    channelId: v.id("chatChannels"), // The reach_out channel
+    leadersChannelId: v.id("chatChannels"), // The leaders channel
     submittedById: v.id("users"),
-    groupMemberId: v.id("groupMembers"),        // For followup integration
+    groupMemberId: v.id("groupMembers"), // For followup integration
     content: v.string(),
-    status: v.string(),                          // "pending" | "assigned" | "contacted" | "resolved" | "revoked"
+    status: v.string(), // "pending" | "assigned" | "contacted" | "resolved" | "revoked"
     assignedToId: v.optional(v.id("users")),
     assignedAt: v.optional(v.number()),
-    contactActions: v.optional(v.array(v.object({
-      id: v.string(),
-      type: v.string(),                          // "call" | "text" | "email"
-      performedById: v.id("users"),
-      performedAt: v.number(),
-      notes: v.optional(v.string()),
-    }))),
+    contactActions: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          type: v.string(), // "call" | "text" | "email"
+          performedById: v.id("users"),
+          performedAt: v.number(),
+          notes: v.optional(v.string()),
+        }),
+      ),
+    ),
     resolvedById: v.optional(v.id("users")),
     resolvedAt: v.optional(v.number()),
     resolutionNotes: v.optional(v.string()),
-    leadersMessageId: v.optional(v.id("chatMessages")),  // Card in leaders channel
+    leadersMessageId: v.optional(v.id("chatMessages")), // Card in leaders channel
     taskId: v.optional(v.id("tasks")), // Linked canonical task (migration path)
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -1598,34 +1652,38 @@ export default defineSchema({
     requireZipCode: v.optional(v.boolean()),
     requireBirthday: v.optional(v.boolean()),
     // Form fields — maps to followup custom field slots
-    formFields: v.array(v.object({
-      slot: v.optional(v.string()),  // "customText1", "customBool3", etc. If null, field only appears in notes summary
-      label: v.string(),
-      type: v.string(),              // "text" | "number" | "boolean" | "dropdown" | "multiselect" | "section_header" | "subtitle" | "button"
-      placeholder: v.optional(v.string()),
-      options: v.optional(v.array(v.string())),
-      buttonUrl: v.optional(v.string()),
-      required: v.boolean(),
-      order: v.number(),
-      includeInNotes: v.optional(v.boolean()),
-      showOnLanding: v.optional(v.boolean()),
-    })),
+    formFields: v.array(
+      v.object({
+        slot: v.optional(v.string()), // "customText1", "customBool3", etc. If null, field only appears in notes summary
+        label: v.string(),
+        type: v.string(), // "text" | "number" | "boolean" | "dropdown" | "multiselect" | "section_header" | "subtitle" | "button"
+        placeholder: v.optional(v.string()),
+        options: v.optional(v.array(v.string())),
+        buttonUrl: v.optional(v.string()),
+        required: v.boolean(),
+        order: v.number(),
+        includeInNotes: v.optional(v.boolean()),
+        showOnLanding: v.optional(v.boolean()),
+      }),
+    ),
     // Automation rules
-    automationRules: v.array(v.object({
-      id: v.string(),
-      name: v.string(),
-      isEnabled: v.boolean(),
-      condition: v.object({
-        field: v.string(),       // Slot name or form field label
-        operator: v.string(),    // "equals" | "contains" | "not_equals" | "is_true" | "is_false"
-        value: v.optional(v.string()),
+    automationRules: v.array(
+      v.object({
+        id: v.string(),
+        name: v.string(),
+        isEnabled: v.boolean(),
+        condition: v.object({
+          field: v.string(), // Slot name or form field label
+          operator: v.string(), // "equals" | "contains" | "not_equals" | "is_true" | "is_false"
+          value: v.optional(v.string()),
+        }),
+        action: v.object({
+          type: v.string(), // "set_assignee"
+          assigneePhone: v.optional(v.string()),
+          assigneeUserId: v.optional(v.id("users")),
+        }),
       }),
-      action: v.object({
-        type: v.string(),        // "set_assignee"
-        assigneePhone: v.optional(v.string()),
-        assigneeUserId: v.optional(v.id("users")),
-      }),
-    })),
+    ),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_community", ["communityId"]),
@@ -1639,7 +1697,7 @@ export default defineSchema({
 
   communityPeople: defineTable({
     communityId: v.id("communities"),
-    groupId: v.optional(v.id("groups")),
+    groupId: v.id("groups"),
     userId: v.id("users"),
 
     // Denormalized member info
@@ -1727,7 +1785,7 @@ export default defineSchema({
     .index("by_group_customBool5", ["groupId", "customBool5"])
     .searchIndex("search_communityPeople", {
       searchField: "searchText",
-      filterFields: ["groupId"],
+      filterFields: ["groupId", "status"],
     }),
 
   // =============================================================================
@@ -1745,14 +1803,16 @@ export default defineSchema({
     sortDirection: v.optional(v.union(v.literal("asc"), v.literal("desc"))),
     columnOrder: v.optional(v.array(v.string())),
     hiddenColumns: v.optional(v.array(v.string())),
-    filters: v.optional(v.object({
-      groupId: v.optional(v.id("groups")),
-      statusFilter: v.optional(v.string()),
-      assigneeFilter: v.optional(v.string()),
-      scoreField: v.optional(v.string()),
-      scoreMin: v.optional(v.number()),
-      scoreMax: v.optional(v.number()),
-    })),
+    filters: v.optional(
+      v.object({
+        groupId: v.optional(v.id("groups")),
+        statusFilter: v.optional(v.string()),
+        assigneeFilter: v.optional(v.string()),
+        scoreField: v.optional(v.string()),
+        scoreMin: v.optional(v.number()),
+        scoreMax: v.optional(v.number()),
+      }),
+    ),
     isDefault: v.optional(v.boolean()),
     createdAt: v.number(),
     updatedAt: v.number(),
