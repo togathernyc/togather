@@ -5,13 +5,12 @@
  * Returns safe defaults when PostHog is not initialized.
  *
  * Developer overrides (stored in AsyncStorage) take precedence over PostHog
- * when in dev/staging mode or when the dev tools escape hatch is enabled.
+ * in all environments.
  */
 
 import { useCallback, useEffect, useState } from "react";
 import { usePostHog } from "posthog-react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Environment } from "@/services/environment";
 
 const OVERRIDE_STORAGE_KEY = "togather_feature_flag_overrides";
 
@@ -133,10 +132,8 @@ export function useFeatureFlag(flagKey: string): boolean {
     return unsubscribe;
   }, [flagKey]);
 
-  // In dev/staging, check for local override first
-  const canUseOverrides = __DEV__ || Environment.isStaging();
-
-  if (canUseOverrides && loaded && override !== undefined) {
+  // Check for local override first (AsyncStorage, all environments)
+  if (loaded && override !== undefined) {
     return override;
   }
 
