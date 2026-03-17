@@ -41,7 +41,7 @@ const STAGGER_INTERVAL_MS = 3000;
  * Get all memberFollowupScores rows for a given announcement group.
  * Returns them in batches for processing.
  */
-const getFollowupScoresForGroup = internalQuery({
+export const getFollowupScoresForGroup = internalQuery({
   args: {
     groupId: v.id("groups"),
     cursor: v.optional(v.string()),
@@ -68,7 +68,7 @@ const getFollowupScoresForGroup = internalQuery({
 /**
  * Get announcement group for a community.
  */
-const getAnnouncementGroup = internalQuery({
+export const getAnnouncementGroup = internalQuery({
   args: { communityId: v.id("communities") },
   handler: async (ctx, args) => {
     return ctx.db
@@ -84,7 +84,7 @@ const getAnnouncementGroup = internalQuery({
 /**
  * Get all community IDs from the communities table.
  */
-const getAllCommunityIds = internalQuery({
+export const getAllCommunityIds = internalQuery({
   args: {},
   handler: async (ctx) => {
     const communities = await ctx.db.query("communities").collect();
@@ -95,7 +95,7 @@ const getAllCommunityIds = internalQuery({
 /**
  * Get the community doc (for checking existing peopleCustomFields).
  */
-const getCommunity = internalQuery({
+export const getCommunity = internalQuery({
   args: { communityId: v.id("communities") },
   handler: async (ctx, args) => {
     return ctx.db.get(args.communityId);
@@ -106,7 +106,7 @@ const getCommunity = internalQuery({
  * Enrich a batch of memberFollowupScores with user data for denormalization.
  * Fetches fresh user info (firstName, lastName, avatarUrl, email, phone).
  */
-const enrichScoreBatch = internalQuery({
+export const enrichScoreBatch = internalQuery({
   args: {
     communityId: v.id("communities"),
     scoreRows: v.array(v.any()),
@@ -193,7 +193,7 @@ const enrichScoreBatch = internalQuery({
 /**
  * Get all groups for a community that have followupColumnConfig.
  */
-const getGroupsWithColumnConfig = internalQuery({
+export const getGroupsWithColumnConfig = internalQuery({
   args: { communityId: v.id("communities") },
   handler: async (ctx, args) => {
     const groups = await ctx.db
@@ -217,7 +217,7 @@ const getGroupsWithColumnConfig = internalQuery({
 /**
  * Get the first leader of a group (for createdById on saved views).
  */
-const getGroupFirstLeader = internalQuery({
+export const getGroupFirstLeader = internalQuery({
   args: { groupId: v.id("groups") },
   handler: async (ctx, args) => {
     const leader = await ctx.db
@@ -243,7 +243,7 @@ const getGroupFirstLeader = internalQuery({
  * Upsert a batch of migrated members into communityPeople.
  * Checks for existing rows by communityId+userId to avoid duplicates.
  */
-const upsertMigratedBatch = internalMutation({
+export const upsertMigratedBatch = internalMutation({
   args: {
     communityId: v.id("communities"),
     members: v.array(v.any()),
@@ -321,7 +321,7 @@ const upsertMigratedBatch = internalMutation({
 /**
  * Set community-level peopleCustomFields from a group's followupColumnConfig.
  */
-const setCommunityPeopleCustomFields = internalMutation({
+export const setCommunityPeopleCustomFields = internalMutation({
   args: {
     communityId: v.id("communities"),
     customFields: v.array(
@@ -343,7 +343,7 @@ const setCommunityPeopleCustomFields = internalMutation({
 /**
  * Create a peopleSavedViews entry from a group's followupColumnConfig.
  */
-const createSavedView = internalMutation({
+export const createSavedView = internalMutation({
   args: {
     communityId: v.id("communities"),
     createdById: v.id("users"),
@@ -407,7 +407,7 @@ export const migrateCommunity = internalAction({
     let totalMigrated = 0;
 
     while (!isDone) {
-      const page = await ctx.runQuery(
+      const page: { scores: any[]; isDone: boolean; continueCursor: string } = await ctx.runQuery(
         internal.functions.migrations.migrateToCommunityPeople
           .getFollowupScoresForGroup,
         {
@@ -460,7 +460,8 @@ export const migrateCommunity = internalAction({
         (g: any) => g._id === announcementGroup._id
       ) ?? groupsWithConfig[0];
 
-    if (sourceGroup?.followupColumnConfig?.customFields?.length > 0) {
+    const customFields = sourceGroup?.followupColumnConfig?.customFields;
+    if (customFields && customFields.length > 0) {
       const community = await ctx.runQuery(
         internal.functions.migrations.migrateToCommunityPeople.getCommunity,
         { communityId: args.communityId }
@@ -473,11 +474,11 @@ export const migrateCommunity = internalAction({
             .setCommunityPeopleCustomFields,
           {
             communityId: args.communityId,
-            customFields: sourceGroup.followupColumnConfig.customFields,
+            customFields,
           }
         );
         console.log(
-          `[migration] Copied ${sourceGroup.followupColumnConfig.customFields.length} custom field definitions to community ${args.communityId}`
+          `[migration] Copied ${customFields.length} custom field definitions to community ${args.communityId}`
         );
       }
     }
