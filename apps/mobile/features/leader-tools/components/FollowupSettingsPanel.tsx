@@ -102,9 +102,8 @@ function normalizeSelectFieldOptions(options: string[]): string[] {
 // Component
 // ============================================================================
 
-// Available variables for alert picker (kept in sync with backend VARIABLE_REGISTRY)
+// Available variables for alert picker (must match SystemRawValues keys used at evaluation time)
 const ALERT_VARIABLES: VariableOption[] = [
-  { id: "attendance_pct", label: "Attendance %", description: "Meeting attendance percentage" },
   { id: "consecutive_missed", label: "Consecutive Missed", description: "Consecutive missed meetings" },
   { id: "days_since_last_followup", label: "Days Since Follow-up", description: "Days since any follow-up" },
   { id: "days_since_last_text", label: "Days Since Text", description: "Days since last text" },
