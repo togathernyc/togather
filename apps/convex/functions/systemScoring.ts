@@ -64,12 +64,26 @@ export const SYSTEM_SCORES: SystemScoreDefinition[] = [
 ];
 
 export const SYSTEM_SCORE_BY_ID = Object.fromEntries(
-  SYSTEM_SCORES.map((s) => [s.id, s])
+  SYSTEM_SCORES.map((s) => [s.id, s]),
 ) as Record<string, SystemScoreDefinition>;
 
 export const SYSTEM_SCORE_BY_SLOT = Object.fromEntries(
-  SYSTEM_SCORES.map((s) => [s.slot, s])
+  SYSTEM_SCORES.map((s) => [s.slot, s]),
 ) as Record<string, SystemScoreDefinition>;
+
+/**
+ * Set of variable IDs valid for community-level alerts.
+ * These must match the keys of SystemRawValues.
+ */
+export const SYSTEM_VARIABLE_IDS: ReadonlySet<string> = new Set([
+  "attendance_all_groups_pct",
+  "consecutive_missed",
+  "days_since_last_followup",
+  "days_since_last_in_person",
+  "days_since_last_call",
+  "days_since_last_text",
+  "pco_services_past_2mo",
+]);
 
 // ============================================================================
 // Score Calculation
@@ -89,7 +103,7 @@ export const SYSTEM_SCORE_BY_SLOT = Object.fromEntries(
  */
 export function calculateSystemScore(
   scoreId: string,
-  rawValues: SystemRawValues
+  rawValues: SystemRawValues,
 ): number {
   switch (scoreId) {
     case "sys_service":
@@ -97,14 +111,14 @@ export function calculateSystemScore(
 
     case "sys_attendance":
       return Math.round(
-        Math.max(0, Math.min(100, rawValues.attendance_all_groups_pct))
+        Math.max(0, Math.min(100, rawValues.attendance_all_groups_pct)),
       );
 
     case "sys_togather": {
       // Attendance component: penalize consecutive misses at -15 per miss
       const attendanceComponent = Math.max(
         0,
-        100 - 15 * rawValues.consecutive_missed
+        100 - 15 * rawValues.consecutive_missed,
       );
 
       // Followup component: best of face-to-face, call, or text recency
@@ -119,7 +133,7 @@ export function calculateSystemScore(
       if (hasFollowupData) {
         const faceToFace = Math.max(
           0,
-          100 - rawValues.days_since_last_in_person
+          100 - rawValues.days_since_last_in_person,
         );
         const phoneCall = Math.max(0, 85 - rawValues.days_since_last_call);
         const text = Math.max(0, 70 - rawValues.days_since_last_text);

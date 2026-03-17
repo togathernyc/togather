@@ -19,8 +19,7 @@ import { requireAuth } from "../lib/auth";
 import { isCommunityAdmin } from "../lib/permissions";
 import { isActiveMembership, isLeaderRole } from "../lib/helpers";
 import { VALID_CUSTOM_SLOTS } from "../lib/followupConstants";
-import { SYSTEM_SCORES } from "./systemScoring";
-import { VARIABLE_MAP } from "./followupScoring";
+import { SYSTEM_SCORES, SYSTEM_VARIABLE_IDS } from "./systemScoring";
 import { getMediaUrl } from "../lib/utils";
 
 // ============================================================================
@@ -1196,9 +1195,9 @@ export const updateCommunityAlerts = mutation({
       throw new ConvexError("Only community admins can manage alerts");
     }
 
-    // Validate alerts
+    // Validate alerts against system-level variables only
     for (const alert of args.alerts) {
-      if (!VARIABLE_MAP.has(alert.variableId)) {
+      if (!SYSTEM_VARIABLE_IDS.has(alert.variableId)) {
         throw new ConvexError(`Unknown variable: ${alert.variableId}`);
       }
       if (alert.operator !== "above" && alert.operator !== "below") {
