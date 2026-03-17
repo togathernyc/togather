@@ -54,7 +54,7 @@ export default defineSchema({
     isPublic: v.optional(v.boolean()), // Whether community is publicly listed
     // Explore page default filters (admin-configurable)
     exploreDefaultGroupTypes: v.optional(v.array(v.id("groupTypes"))),
-    exploreDefaultMeetingType: v.optional(v.number()), // 1=Online, 2=In-Person
+    exploreDefaultMeetingType: v.optional(v.number()), // 1=In-Person, 2=Online
     // Community-level custom field definitions for People tab
     peopleCustomFields: v.optional(v.array(v.object({
       slot: v.string(),        // e.g. "customText1", "customBool2"

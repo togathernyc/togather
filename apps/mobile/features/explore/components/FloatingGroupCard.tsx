@@ -149,11 +149,10 @@ export function FloatingGroupCard({ group, onClose }: FloatingGroupCardProps) {
 
   const scheduleString = getScheduleString();
 
-  // Get meeting type string
-  // Backend: ONLINE = 1, IN_PERSON = 2
+  // Get meeting type string (groups schema: 1=In-Person, 2=Online)
   const getMeetingTypeString = () => {
-    if (group.meeting_type === 1) return 'Online';
-    if (group.meeting_type === 2) return 'In-person';
+    if (group.meeting_type === 1) return 'In-person';
+    if (group.meeting_type === 2) return 'Online';
     return null;
   };
 
@@ -276,7 +275,7 @@ export function FloatingGroupCard({ group, onClose }: FloatingGroupCardProps) {
           {meetingTypeString && (
             <View style={styles.infoRow}>
               <Ionicons
-                name={group.meeting_type === 1 ? 'videocam-outline' : 'people-outline'}
+                name={group.meeting_type === 2 ? 'videocam-outline' : 'people-outline'}
                 size={16}
                 color={COLORS.textMuted}
               />

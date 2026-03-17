@@ -536,8 +536,8 @@ export function SettingsContent() {
             <View style={styles.exploreChipsGrid}>
               {[
                 { label: "All", value: null },
-                { label: "In-Person", value: 2, icon: "people-outline" as const },
-                { label: "Online", value: 1, icon: "videocam-outline" as const },
+                { label: "In-Person", value: 1, icon: "people-outline" as const },
+                { label: "Online", value: 2, icon: "videocam-outline" as const },
               ].map((option) => {
                 const isSelected = exploreDefaultMeetingType === option.value;
 

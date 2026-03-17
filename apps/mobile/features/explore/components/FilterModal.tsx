@@ -10,11 +10,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { COLORS, DEFAULT_GROUP_COLOR, getGroupTypeColor } from '../constants';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
 
-// Meeting type options - Backend: ONLINE = 1, IN_PERSON = 2
+// Meeting type options (groups schema: 1=In-Person, 2=Online)
 const MEETING_TYPE_OPTIONS = [
   { label: 'All', value: null },
-  { label: 'In-Person', value: 2 },
-  { label: 'Online', value: 1 },
+  { label: 'In-Person', value: 1 },
+  { label: 'Online', value: 2 },
 ];
 
 // Group type option from API (Convex returns string IDs)
@@ -152,7 +152,7 @@ export function FilterModal({
                   onPress={() => handleMeetingTypeSelect(option.value)}
                   activeOpacity={0.7}
                 >
-                  {option.value === 2 && (
+                  {option.value === 1 && (
                     <Ionicons
                       name="people-outline"
                       size={16}
@@ -160,7 +160,7 @@ export function FilterModal({
                       style={styles.optionIcon}
                     />
                   )}
-                  {option.value === 1 && (
+                  {option.value === 2 && (
                     <Ionicons
                       name="videocam-outline"
                       size={16}
