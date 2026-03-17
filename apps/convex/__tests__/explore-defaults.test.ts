@@ -202,7 +202,7 @@ describe("getExploreDefaults query", () => {
     const t = convexTest(schema, modules);
     const setup = await seedTestData(t);
 
-    // Set meeting type to In-Person (2)
+    // Set meeting type to Online (2)
     await t.run(async (ctx) => {
       await ctx.db.patch(setup.communityId, {
         exploreDefaultMeetingType: 2,
@@ -226,7 +226,7 @@ describe("getExploreDefaults query", () => {
     await t.run(async (ctx) => {
       await ctx.db.patch(setup.communityId, {
         exploreDefaultGroupTypes: [setup.groupType1Id],
-        exploreDefaultMeetingType: 1, // Online
+        exploreDefaultMeetingType: 1, // In-Person
       });
     });
 
@@ -311,7 +311,7 @@ describe("updateCommunitySettings mutation - explore defaults", () => {
     expect(result?.exploreDefaultGroupTypes).toEqual([setup.groupType1Id, setup.groupType2Id]);
   });
 
-  test("can set exploreDefaultMeetingType to Online (1)", async () => {
+  test("can set exploreDefaultMeetingType to In-Person (1)", async () => {
     const t = convexTest(schema, modules);
     const setup = await seedTestData(t);
 
@@ -325,7 +325,7 @@ describe("updateCommunitySettings mutation - explore defaults", () => {
     expect(result?.exploreDefaultMeetingType).toBe(1);
   });
 
-  test("can set exploreDefaultMeetingType to In-Person (2)", async () => {
+  test("can set exploreDefaultMeetingType to Online (2)", async () => {
     const t = convexTest(schema, modules);
     const setup = await seedTestData(t);
 
