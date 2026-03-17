@@ -1,5 +1,6 @@
 import React from "react";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react-native";
+import { Alert } from "react-native";
 import { AttendanceConfirmationModal } from "../AttendanceConfirmationModal";
 
 const mockUseQuery = jest.fn();
@@ -128,14 +129,17 @@ describe("AttendanceConfirmationModal", () => {
   });
 
   it("shows success after confirming attendance and does NOT revert to error when token reactivity fires", async () => {
+    // Auto-confirm the Alert dialog
+    jest.spyOn(Alert, "alert").mockImplementation((_title, _message, buttons) => {
+      const confirmBtn = buttons?.find((b) => b.text === "Confirm");
+      confirmBtn?.onPress?.();
+    });
+
     // Start with a valid token
     mockUseQuery.mockReturnValue(validTokenData);
     const { rerender } = renderModal();
 
     expect(screen.getByText("Did you attend?")).toBeTruthy();
-
-    // Simulate the platform confirm dialog
-    jest.spyOn(window, "confirm").mockReturnValue(true);
 
     // Click "I Attended"
     await act(async () => {
@@ -173,10 +177,13 @@ describe("AttendanceConfirmationModal", () => {
   });
 
   it("shows success for 'did not attend' and stays on success when token re-validates", async () => {
+    jest.spyOn(Alert, "alert").mockImplementation((_title, _message, buttons) => {
+      const confirmBtn = buttons?.find((b) => b.text === "Confirm");
+      confirmBtn?.onPress?.();
+    });
+
     mockUseQuery.mockReturnValue(validTokenData);
     const { rerender } = renderModal();
-
-    jest.spyOn(window, "confirm").mockReturnValue(true);
 
     await act(async () => {
       fireEvent.press(screen.getByText("I Didn't Attend"));
@@ -207,11 +214,14 @@ describe("AttendanceConfirmationModal", () => {
   });
 
   it("shows error when mutation fails", async () => {
+    jest.spyOn(Alert, "alert").mockImplementation((_title, _message, buttons) => {
+      const confirmBtn = buttons?.find((b) => b.text === "Confirm");
+      confirmBtn?.onPress?.();
+    });
+
     mockUseQuery.mockReturnValue(validTokenData);
     mockConfirmWithToken.mockRejectedValue(new Error("Network error"));
     renderModal();
-
-    jest.spyOn(window, "confirm").mockReturnValue(true);
 
     await act(async () => {
       fireEvent.press(screen.getByText("I Attended"));
