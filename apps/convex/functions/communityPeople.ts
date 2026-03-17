@@ -279,6 +279,7 @@ export const search = query({
           conds.push(fq.lte(fq.field("addedAt"), args.addedAtMax));
         if (args.addedAtMin !== undefined)
           conds.push(fq.gte(fq.field("addedAt"), args.addedAtMin));
+        if (conds.length === 0) return true;
         return conds.length === 1
           ? conds[0]
           : fq.and(...(conds as [any, any, ...any[]]));
@@ -1061,6 +1062,7 @@ export const upsertFromSubmission = internalMutation({
     const lastName = user?.lastName || (scoreDoc as any).lastName || "";
     const email = user?.email || (scoreDoc as any).email;
     const phone = user?.phone || (scoreDoc as any).phone;
+    const zipCode = user?.zipCode || (scoreDoc as any).zipCode;
     const searchText = [firstName, lastName, email, phone]
       .filter(Boolean)
       .join(" ");
@@ -1081,6 +1083,7 @@ export const upsertFromSubmission = internalMutation({
       avatarUrl: getMediaUrl(user?.profilePhoto) || (scoreDoc as any).avatarUrl,
       email,
       phone,
+      zipCode,
       searchText,
       score1: (scoreDoc as any).score1,
       score2: (scoreDoc as any).score2,
