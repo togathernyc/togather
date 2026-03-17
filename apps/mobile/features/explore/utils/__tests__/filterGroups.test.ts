@@ -100,7 +100,7 @@ describe('filterExploreGroups - session group type defaults', () => {
 
 describe('filterExploreGroups - meeting type filter', () => {
   it('filters by meeting type when set in filters', () => {
-    const filters: FilterState = { groupType: null, meetingType: 1 }; // Online
+    const filters: FilterState = { groupType: null, meetingType: 1 }; // In-Person
     const result = filterExploreGroups(mockGroups, filters, null);
 
     // meeting_type=1: Group A, Group D, Group E
@@ -108,8 +108,8 @@ describe('filterExploreGroups - meeting type filter', () => {
     expect(result.map(g => g.name)).toEqual(['Group A', 'Group D', 'Group E']);
   });
 
-  it('filters In-Person (2) correctly', () => {
-    const filters: FilterState = { groupType: null, meetingType: 2 }; // In-Person
+  it('filters Online (2) correctly', () => {
+    const filters: FilterState = { groupType: null, meetingType: 2 }; // Online
     const result = filterExploreGroups(mockGroups, filters, null);
 
     // meeting_type=2: Group B, Group C
@@ -166,7 +166,7 @@ describe('filterExploreGroups - user filters with session defaults', () => {
     const filters: FilterState = { groupType: null, meetingType: 1 };
     const result = filterExploreGroups(mockGroups, filters, null);
 
-    // User chose Online (1)
+    // User chose In-Person (1)
     expect(result).toHaveLength(3);
     expect(result.every(g => g.meeting_type === 1)).toBe(true);
   });
@@ -263,9 +263,9 @@ describe('filterExploreGroups - integration scenarios', () => {
     expect(result.map(g => g.name)).toEqual(['Alpha Small Group', 'Gamma Small Group']);
   });
 
-  it('scenario: user overrides meeting type (admin set In-Person, user picks Online)', () => {
+  it('scenario: user overrides meeting type (admin set Online, user picks In-Person)', () => {
     // Meeting type is already in the URL filter state (seeded from admin, then user changed it)
-    const filters: FilterState = { groupType: null, meetingType: 1 };
+    const filters: FilterState = { groupType: null, meetingType: 1 }; // 1=In-Person
     const result = filterExploreGroups(mockGroups, filters, null);
     expect(result.every(g => g.meeting_type === 1)).toBe(true);
   });
