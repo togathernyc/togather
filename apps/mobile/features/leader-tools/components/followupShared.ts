@@ -6,6 +6,17 @@ export type FollowupMemberForScore = {
   scoreIds: string[];
 };
 
+/**
+ * System score column definitions for the new community-level scoring.
+ * These replace the dynamic per-group score configurations.
+ * Used when the `system_scores` feature flag is enabled.
+ */
+export const SYSTEM_SCORE_COLUMNS = [
+  { id: "sys_service", name: "Service", slot: "score1" as const },
+  { id: "sys_attendance", name: "Attendance", slot: "score2" as const },
+  { id: "sys_togather", name: "Togather", slot: "score3" as const },
+] as const;
+
 export type SubtitleVariable = {
   id: string;
   label: string;
@@ -70,4 +81,15 @@ export function getScoreValue(member: FollowupMemberForScore, scoreId: string): 
   if (scoreIndex === 2) return member.score3 ?? 0;
   if (scoreIndex === 3) return member.score4 ?? 0;
   return 0;
+}
+
+/**
+ * Get the score value for a system score from a communityPeople record.
+ * Unlike `getScoreValue` which maps dynamic scoreIds, this uses direct slot access.
+ */
+export function getSystemScoreValue(
+  member: { score1?: number; score2?: number; score3?: number },
+  scoreSlot: "score1" | "score2" | "score3",
+): number | undefined {
+  return member[scoreSlot] ?? undefined;
 }

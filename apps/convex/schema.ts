@@ -55,6 +55,14 @@ export default defineSchema({
     // Explore page default filters (admin-configurable)
     exploreDefaultGroupTypes: v.optional(v.array(v.id("groupTypes"))),
     exploreDefaultMeetingType: v.optional(v.number()), // 1=Online, 2=In-Person
+    // Community-level custom field definitions for People tab
+    peopleCustomFields: v.optional(v.array(v.object({
+      slot: v.string(),        // e.g. "customText1", "customBool2"
+      name: v.string(),        // display label
+      type: v.string(),        // "text" | "number" | "boolean" | "dropdown" | "multiselect"
+      options: v.optional(v.array(v.string())),
+    }))),
+
     // Denormalized field for full-text search (combines name and subdomain)
     searchText: v.optional(v.string()),
   })
@@ -1621,6 +1629,133 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_community", ["communityId"]),
+
+  // =============================================================================
+  // COMMUNITY PEOPLE (community-level followup scores)
+  // =============================================================================
+  // Pre-computed community-level view of all members. System scores are
+  // always computed; custom fields are defined at the community level.
+  // Coexists with memberFollowupScores during transition.
+
+  communityPeople: defineTable({
+    communityId: v.id("communities"),
+    userId: v.id("users"),
+
+    // Denormalized member info
+    firstName: v.optional(v.string()),
+    lastName: v.optional(v.string()),
+    avatarUrl: v.optional(v.string()),
+    email: v.optional(v.string()),
+    phone: v.optional(v.string()),
+    searchText: v.optional(v.string()),
+
+    // System scores (always computed)
+    score1: v.optional(v.number()), // Service (PCO)
+    score2: v.optional(v.number()), // Attendance (all groups)
+    score3: v.optional(v.number()), // Togather
+
+    // Leader actions (community-level)
+    status: v.optional(v.string()),
+    assigneeIds: v.optional(v.array(v.id("users"))),
+    connectionPoint: v.optional(v.string()),
+
+    // Followup metadata
+    lastFollowupAt: v.optional(v.number()),
+    lastActiveAt: v.optional(v.number()),
+    lastAttendedAt: v.optional(v.number()),
+    addedAt: v.optional(v.number()),
+
+    // Alerts
+    alerts: v.optional(v.array(v.string())),
+
+    // Snooze
+    isSnoozed: v.optional(v.boolean()),
+    snoozedUntil: v.optional(v.number()),
+
+    // Custom field slots (5 text + 5 number + 5 boolean)
+    customText1: v.optional(v.string()),
+    customText2: v.optional(v.string()),
+    customText3: v.optional(v.string()),
+    customText4: v.optional(v.string()),
+    customText5: v.optional(v.string()),
+    customNum1: v.optional(v.number()),
+    customNum2: v.optional(v.number()),
+    customNum3: v.optional(v.number()),
+    customNum4: v.optional(v.number()),
+    customNum5: v.optional(v.number()),
+    customBool1: v.optional(v.boolean()),
+    customBool2: v.optional(v.boolean()),
+    customBool3: v.optional(v.boolean()),
+    customBool4: v.optional(v.boolean()),
+    customBool5: v.optional(v.boolean()),
+
+    // Raw values (for detail view breakdown)
+    rawValues: v.optional(v.any()),
+
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_community", ["communityId"])
+    .index("by_community_user", ["communityId", "userId"])
+    .index("by_community_score1", ["communityId", "score1"])
+    .index("by_community_score2", ["communityId", "score2"])
+    .index("by_community_score3", ["communityId", "score3"])
+    .index("by_community_firstName", ["communityId", "firstName"])
+    .index("by_community_lastName", ["communityId", "lastName"])
+    .index("by_community_addedAt", ["communityId", "addedAt"])
+    .index("by_community_lastAttendedAt", ["communityId", "lastAttendedAt"])
+    .index("by_community_lastFollowupAt", ["communityId", "lastFollowupAt"])
+    .index("by_community_lastActiveAt", ["communityId", "lastActiveAt"])
+    .index("by_community_status", ["communityId", "status"])
+    .index("by_community_customText1", ["communityId", "customText1"])
+    .index("by_community_customText2", ["communityId", "customText2"])
+    .index("by_community_customText3", ["communityId", "customText3"])
+    .index("by_community_customText4", ["communityId", "customText4"])
+    .index("by_community_customText5", ["communityId", "customText5"])
+    .index("by_community_customNum1", ["communityId", "customNum1"])
+    .index("by_community_customNum2", ["communityId", "customNum2"])
+    .index("by_community_customNum3", ["communityId", "customNum3"])
+    .index("by_community_customNum4", ["communityId", "customNum4"])
+    .index("by_community_customNum5", ["communityId", "customNum5"])
+    .index("by_community_customBool1", ["communityId", "customBool1"])
+    .index("by_community_customBool2", ["communityId", "customBool2"])
+    .index("by_community_customBool3", ["communityId", "customBool3"])
+    .index("by_community_customBool4", ["communityId", "customBool4"])
+    .index("by_community_customBool5", ["communityId", "customBool5"])
+    .searchIndex("search_communityPeople", {
+      searchField: "searchText",
+      filterFields: ["communityId"],
+    }),
+
+  // =============================================================================
+  // PEOPLE SAVED VIEWS
+  // =============================================================================
+  // Saved column/sort/filter configurations for the People tab.
+  // Personal or shared views per community.
+
+  peopleSavedViews: defineTable({
+    communityId: v.id("communities"),
+    createdById: v.id("users"),
+    visibility: v.union(v.literal("personal"), v.literal("shared")),
+    name: v.string(),
+    sortBy: v.optional(v.string()),
+    sortDirection: v.optional(v.union(v.literal("asc"), v.literal("desc"))),
+    columnOrder: v.optional(v.array(v.string())),
+    hiddenColumns: v.optional(v.array(v.string())),
+    filters: v.optional(v.object({
+      groupId: v.optional(v.id("groups")),
+      statusFilter: v.optional(v.string()),
+      assigneeFilter: v.optional(v.string()),
+      scoreField: v.optional(v.string()),
+      scoreMin: v.optional(v.number()),
+      scoreMax: v.optional(v.number()),
+    })),
+    isDefault: v.optional(v.boolean()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_community", ["communityId"])
+    .index("by_user_community", ["createdById", "communityId"]),
 
   // =============================================================================
 });

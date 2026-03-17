@@ -154,4 +154,15 @@ crons.daily(
   internal.functions.followupScoreComputation.dailyRefreshAllScores
 );
 
+// =============================================================================
+// COMMUNITY SCORE REFRESH (disabled until system_scores feature flag is enabled)
+// =============================================================================
+// When ready, uncomment to run daily at 7:30 UTC (2:30 AM EST):
+//
+// crons.daily(
+//   "daily community scores refresh",
+//   { hourUTC: 7, minuteUTC: 30 },
+//   internal.functions.communityScoreComputation.dailyRefreshAllCommunityScores
+// );
+
 export default crons;
