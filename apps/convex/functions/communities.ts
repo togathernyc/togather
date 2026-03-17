@@ -65,7 +65,7 @@ async function getOrCreateAnnouncementGroupType(
  * - If already a member, updates role if needed (e.g., promoted to admin)
  * - If no announcement group exists, one is created automatically (defensive creation)
  */
-async function addUserToAnnouncementGroup(
+export async function addUserToAnnouncementGroup(
   ctx: any,
   communityId: Id<"communities">,
   userId: Id<"users">,
@@ -583,9 +583,21 @@ async function removeUserFromCommunity(
     await ctx.db.delete(gm._id);
   }
 
+  // Clean up communityPeople records for this user in this community
+  const cpRecords = await ctx.db
+    .query("communityPeople")
+    .withIndex("by_community_user", (q: any) =>
+      q.eq("communityId", communityId).eq("userId", userId)
+    )
+    .collect();
+  for (const cp of cpRecords) {
+    await ctx.db.delete(cp._id);
+  }
+
   console.log(`${logPrefix} Removed follow-up artifacts`, {
     followupsDeleted,
     followupScoresDeleted,
+    communityPeopleDeleted: cpRecords.length,
   });
 
   // 4. Find all meetings in these groups and delete RSVPs

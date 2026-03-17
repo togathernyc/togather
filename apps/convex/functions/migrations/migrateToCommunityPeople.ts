@@ -82,6 +82,43 @@ export const getAnnouncementGroup = internalQuery({
 });
 
 /**
+ * Get all groups for a community.
+ */
+export const getAllGroupsForCommunity = internalQuery({
+  args: { communityId: v.id("communities") },
+  handler: async (ctx, args) => {
+    const groups = await ctx.db
+      .query("groups")
+      .withIndex("by_community", (q) =>
+        q.eq("communityId", args.communityId)
+      )
+      .collect();
+    return groups.map((g) => ({ _id: g._id, name: g.name }));
+  },
+});
+
+/**
+ * Get the group IDs a user is an active member of within a community.
+ */
+export const getUserGroupIdsInCommunity = internalQuery({
+  args: {
+    userId: v.id("users"),
+    communityGroupIds: v.array(v.id("groups")),
+  },
+  handler: async (ctx, args) => {
+    const groupIdSet = new Set(args.communityGroupIds.map((id) => id.toString()));
+    const memberships = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .collect();
+
+    return memberships
+      .filter((m) => m.leftAt === undefined && groupIdSet.has(m.groupId.toString()))
+      .map((m) => m.groupId);
+  },
+});
+
+/**
  * Get all community IDs from the communities table.
  */
 export const getAllCommunityIds = internalQuery({
@@ -246,6 +283,7 @@ export const getGroupFirstLeader = internalQuery({
 export const upsertMigratedBatch = internalMutation({
   args: {
     communityId: v.id("communities"),
+    groupId: v.id("groups"),
     members: v.array(v.any()),
   },
   handler: async (ctx, args) => {
@@ -255,13 +293,14 @@ export const upsertMigratedBatch = internalMutation({
       try {
         const existing = await ctx.db
           .query("communityPeople")
-          .withIndex("by_community_user", (q) =>
-            q.eq("communityId", args.communityId).eq("userId", member.userId)
+          .withIndex("by_group_user", (q) =>
+            q.eq("groupId", args.groupId).eq("userId", member.userId)
           )
           .first();
 
         const doc = {
           communityId: args.communityId,
+          groupId: args.groupId,
           userId: member.userId,
           firstName: member.firstName,
           lastName: member.lastName,
@@ -373,12 +412,15 @@ export const createSavedView = internalMutation({
 /**
  * Migrate a single community's memberFollowupScores to communityPeople.
  *
+ * Uses the announcement group's memberFollowupScores as the canonical source.
+ * Creates identical communityPeople records for EVERY group in the community,
+ * so all groups see the same data ("one shared database" illusion).
+ *
  * Steps:
- * 1. Find announcement group
- * 2. Paginate through all memberFollowupScores for that group
- * 3. Enrich with user data and map fields
- * 4. Upsert into communityPeople in batches
- * 5. Copy followupColumnConfig.customFields to communities.peopleCustomFields
+ * 1. Find announcement group → read its memberFollowupScores (canonical data)
+ * 2. Get all groups in the community
+ * 3. For each user, upsert a communityPeople record per group with identical values
+ * 4. Copy followupColumnConfig.customFields to communities.peopleCustomFields
  */
 export const migrateCommunity = internalAction({
   args: { communityId: v.id("communities") },
@@ -387,7 +429,7 @@ export const migrateCommunity = internalAction({
       `[migration] Starting migration for community ${args.communityId}`
     );
 
-    // Step 1: Find announcement group
+    // Step 1: Find announcement group (canonical data source)
     const announcementGroup = await ctx.runQuery(
       internal.functions.migrations.migrateToCommunityPeople
         .getAnnouncementGroup,
@@ -401,10 +443,10 @@ export const migrateCommunity = internalAction({
       return;
     }
 
-    // Step 2: Paginate through memberFollowupScores
+    // Read ALL memberFollowupScores from announcement group
+    const enrichedMembers: any[] = [];
     let cursor: string | undefined = undefined;
     let isDone = false;
-    let totalMigrated = 0;
 
     while (!isDone) {
       const page: { scores: any[]; isDone: boolean; continueCursor: string } = await ctx.runQuery(
@@ -417,44 +459,84 @@ export const migrateCommunity = internalAction({
         }
       );
 
-      if (page.scores.length === 0) {
-        isDone = page.isDone;
-        cursor = page.continueCursor;
-        continue;
+      if (page.scores.length > 0) {
+        const batch = await ctx.runQuery(
+          internal.functions.migrations.migrateToCommunityPeople.enrichScoreBatch,
+          {
+            communityId: args.communityId,
+            scoreRows: page.scores,
+          }
+        );
+        enrichedMembers.push(...batch);
       }
 
-      // Step 3: Enrich with user data
-      const enrichedMembers = await ctx.runQuery(
-        internal.functions.migrations.migrateToCommunityPeople.enrichScoreBatch,
-        {
-          communityId: args.communityId,
-          scoreRows: page.scores,
-        }
-      );
-
-      // Step 4: Upsert batch
-      await ctx.runMutation(
-        internal.functions.migrations.migrateToCommunityPeople
-          .upsertMigratedBatch,
-        {
-          communityId: args.communityId,
-          members: enrichedMembers,
-        }
-      );
-
-      totalMigrated += enrichedMembers.length;
       isDone = page.isDone;
       cursor = page.continueCursor;
     }
 
-    // Step 5: Copy followupColumnConfig.customFields to community
+    if (enrichedMembers.length === 0) {
+      console.log(
+        `[migration] No memberFollowupScores in announcement group for community ${args.communityId}, skipping`
+      );
+      return;
+    }
+
+    console.log(
+      `[migration] Loaded ${enrichedMembers.length} canonical members from announcement group`
+    );
+
+    // Step 2: Get ALL groups in this community (for membership lookup)
+    const allGroups: { _id: Id<"groups">; name: string }[] = await ctx.runQuery(
+      internal.functions.migrations.migrateToCommunityPeople
+        .getAllGroupsForCommunity,
+      { communityId: args.communityId }
+    );
+
+    const allGroupIds = allGroups.map((g) => g._id);
+
+    // Step 3: For each user, find their actual group memberships and upsert only those
+    let totalRecords = 0;
+    for (let i = 0; i < enrichedMembers.length; i += BATCH_SIZE) {
+      const batch = enrichedMembers.slice(i, i + BATCH_SIZE);
+
+      for (const member of batch) {
+        // Find which groups this user is actually a member of
+        const userGroupIds: Id<"groups">[] = await ctx.runQuery(
+          internal.functions.migrations.migrateToCommunityPeople
+            .getUserGroupIdsInCommunity,
+          {
+            userId: member.userId,
+            communityGroupIds: allGroupIds,
+          }
+        );
+
+        // Upsert communityPeople for each group the user is in
+        for (const groupId of userGroupIds) {
+          await ctx.runMutation(
+            internal.functions.migrations.migrateToCommunityPeople
+              .upsertMigratedBatch,
+            {
+              communityId: args.communityId,
+              groupId,
+              members: [member],
+            }
+          );
+          totalRecords++;
+        }
+      }
+    }
+
+    console.log(
+      `[migration] Created ${totalRecords} communityPeople records for ${enrichedMembers.length} users (per-user group memberships)`
+    );
+
+    // Step 4: Copy followupColumnConfig.customFields to community
     const groupsWithConfig = await ctx.runQuery(
       internal.functions.migrations.migrateToCommunityPeople
         .getGroupsWithColumnConfig,
       { communityId: args.communityId }
     );
 
-    // Use the announcement group's config first, or the first group that has one
     const sourceGroup =
       groupsWithConfig.find(
         (g: any) => g._id === announcementGroup._id
@@ -467,7 +549,6 @@ export const migrateCommunity = internalAction({
         { communityId: args.communityId }
       );
 
-      // Only set if community doesn't already have peopleCustomFields
       if (!community?.peopleCustomFields?.length) {
         await ctx.runMutation(
           internal.functions.migrations.migrateToCommunityPeople
@@ -484,7 +565,7 @@ export const migrateCommunity = internalAction({
     }
 
     console.log(
-      `[migration] Migrated ${totalMigrated} members for community ${args.communityId}`
+      `[migration] Done: community ${args.communityId}`
     );
   },
 });

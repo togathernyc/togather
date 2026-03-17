@@ -218,6 +218,17 @@ export const deleteScoreDoc = internalMutation({
 
     if (existing) {
       await ctx.db.delete(existing._id);
+
+      // Also delete the matching communityPeople record for this group+user
+      const cpRecord = await ctx.db
+        .query("communityPeople")
+        .withIndex("by_group_user", (q) =>
+          q.eq("groupId", existing.groupId).eq("userId", existing.userId)
+        )
+        .first();
+      if (cpRecord) {
+        await ctx.db.delete(cpRecord._id);
+      }
     }
   },
 });

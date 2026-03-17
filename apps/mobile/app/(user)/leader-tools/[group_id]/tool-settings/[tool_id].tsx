@@ -20,6 +20,10 @@ export default function ToolSettingsScreen() {
         return (
           <FollowupSettingsPanel
             groupId={group_id}
+            currentColumnOrder={[]}
+            currentHiddenColumns={[]}
+            columnLabels={{}}
+            onColumnChange={() => {}}
             onClose={() => {
               if (router.canGoBack()) {
                 router.back();

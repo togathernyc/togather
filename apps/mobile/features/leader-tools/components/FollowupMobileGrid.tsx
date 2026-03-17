@@ -36,13 +36,13 @@ import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import {
   SUBTITLE_VARIABLE_MAP,
   type SubtitleVariable,
-  getScoreValue,
   getSystemScoreValue,
   SYSTEM_SCORE_COLUMNS,
   normalizeSubtitleVariableIds,
+  adaptCommunityPerson,
 } from "./followupShared";
-import { useFeatureFlag } from "@hooks/useFeatureFlag";
 import { PeopleViewBar } from "./PeopleViewBar";
+import { SaveViewModal } from "./SaveViewModal";
 import {
   buildSelectOptionsBySlot,
   parseMultiSelectValues,
@@ -226,7 +226,6 @@ export function FollowupMobileGrid({
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { primaryColor } = useCommunityTheme();
-  const useSystemScores = useFeatureFlag("system_scores");
 
   const [sortField, setSortField] = useState("score1");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
@@ -254,6 +253,11 @@ export function FollowupMobileGrid({
   const [activeViewId, setActiveViewId] = useState<string | null>(null);
   const [showSaveViewModal, setShowSaveViewModal] = useState(false);
 
+  // Delete confirmation state
+  const [viewToDelete, setViewToDelete] = useState<{
+    id: string; name: string; isShared: boolean;
+  } | null>(null);
+
   const [localOverrides, setLocalOverrides] = useState<
     Record<
       string,
@@ -279,10 +283,26 @@ export function FollowupMobileGrid({
     !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip",
   );
   const config = crossGroupMode ? crossGroupConfig : perGroupConfig;
-  const scoreConfigScores = crossGroupMode ? (crossGroupConfig?.scoreConfigScores ?? []) : (perGroupConfig?.scoreConfigScores ?? []);
+
+  const groupData = useQuery(
+    api.functions.groups.index.getById,
+    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip",
+  );
+
+  const communityPeopleConfig = useAuthenticatedQuery(
+    !crossGroupMode && groupData?.communityId
+      ? api.functions.communityPeople.getConfig
+      : ("skip" as any),
+    !crossGroupMode && groupData?.communityId
+      ? { communityId: groupData.communityId }
+      : "skip",
+  );
+
   const scoreConfig = useMemo<ScoreConfigEntry[]>(
-    () => scoreConfigScores ?? [],
-    [scoreConfigScores],
+    () => crossGroupMode
+      ? (crossGroupConfig?.scoreConfigScores ?? [])
+      : (communityPeopleConfig?.scores?.map((s: any) => ({ id: s.id, name: s.name })) ?? []),
+    [crossGroupMode, crossGroupConfig?.scoreConfigScores, communityPeopleConfig?.scores],
   );
   const isConfigLoaded = config !== undefined;
   const toolDisplayName = crossGroupMode ? "People" : (typeof perGroupConfig?.toolDisplayName === "string" ? perGroupConfig.toolDisplayName : "People");
@@ -296,8 +316,8 @@ export function FollowupMobileGrid({
   );
   const columnConfig = crossGroupMode ? null : (perGroupConfig?.followupColumnConfig ?? null);
   const customFields = useMemo<CustomFieldDef[]>(
-    () => crossGroupMode ? [] : ((columnConfig?.customFields ?? []) as CustomFieldDef[]),
-    [crossGroupMode, columnConfig?.customFields],
+    () => crossGroupMode ? [] : ((communityPeopleConfig?.customFields ?? []) as CustomFieldDef[]),
+    [crossGroupMode, communityPeopleConfig?.customFields],
   );
 
   const perGroupLeaders = useAuthenticatedQuery(
@@ -360,27 +380,16 @@ export function FollowupMobileGrid({
     if (!sortField.startsWith("score")) return;
     // Don't override the default score sort while config is still loading.
     if (!isConfigLoaded) return;
-    if (useSystemScores) {
-      // System scores always have score1-score3; validate against those.
-      const validSlots = new Set(SYSTEM_SCORE_COLUMNS.map((sc) => sc.slot));
-      if (!validSlots.has(sortField as "score1" | "score2" | "score3")) {
-        setSortField("score1");
-      }
-      return;
-    }
-    const scoreIndex = Number.parseInt(sortField.replace("score", ""), 10) - 1;
-    if (scoreConfig.length === 0) {
-      setSortField("firstName");
-      return;
-    }
-    if (scoreIndex < 0 || scoreIndex >= scoreConfig.length) {
+    // System scores always have score1-score3; validate against those.
+    const validSlots = new Set(SYSTEM_SCORE_COLUMNS.map((sc) => sc.slot));
+    if (!validSlots.has(sortField as "score1" | "score2" | "score3")) {
       setSortField("score1");
     }
-  }, [isConfigLoaded, scoreConfig, sortField, useSystemScores]);
+  }, [isConfigLoaded, scoreConfig, sortField]);
 
   const parsedQuery = useMemo(
-    () => parseFollowupQuerySyntax(debouncedSearch, leaderMap, scoreConfig, useSystemScores),
-    [debouncedSearch, leaderMap, scoreConfig, useSystemScores],
+    () => parseFollowupQuerySyntax(debouncedSearch, leaderMap, scoreConfig, true),
+    [debouncedSearch, leaderMap, scoreConfig],
   );
   const hasTextSearch = parsedQuery.searchText.length > 0;
   const hasStructuredFilters =
@@ -391,12 +400,12 @@ export function FollowupMobileGrid({
     parsedQuery.excludedAssigneeFilters.length > 0 ||
     !!parsedQuery.dateAddedFilter;
   const searchSuggestions = useMemo(
-    () => getFollowupSearchSuggestions(searchQuery, scoreConfig, useSystemScores),
-    [searchQuery, scoreConfig, useSystemScores],
+    () => getFollowupSearchSuggestions(searchQuery, scoreConfig, true),
+    [searchQuery, scoreConfig],
   );
   const searchHelperText = useMemo(
-    () => getFollowupQueryHelperText(searchQuery, scoreConfig, useSystemScores),
-    [searchQuery, scoreConfig, useSystemScores],
+    () => getFollowupQueryHelperText(searchQuery, scoreConfig, true),
+    [searchQuery, scoreConfig],
   );
   const showSearchSuggestions =
     isSearchFocused &&
@@ -437,12 +446,12 @@ export function FollowupMobileGrid({
     : {};
 
   const {
-    results: perGroupRawMembers,
+    results: perGroupRawMembersRaw,
     status: perGroupPaginationStatus,
     loadMore: perGroupLoadMore,
     isLoading: perGroupIsLoading,
   } = useAuthenticatedPaginatedQuery(
-    api.functions.memberFollowups.list,
+    api.functions.communityPeople.list,
     !crossGroupMode && !hasTextSearch && groupId
       ? {
           groupId: groupId as Id<"groups">,
@@ -452,6 +461,10 @@ export function FollowupMobileGrid({
         }
       : "skip",
     { initialNumItems: 50 },
+  );
+  const perGroupRawMembers = useMemo(
+    () => perGroupRawMembersRaw.map(adaptCommunityPerson),
+    [perGroupRawMembersRaw],
   );
 
   const {
@@ -475,36 +488,18 @@ export function FollowupMobileGrid({
   const loadMore = crossGroupMode ? crossGroupLoadMore : perGroupLoadMore;
   const isLoading = crossGroupMode ? crossGroupIsLoading : perGroupIsLoading;
 
-  const perGroupSearchResults = useAuthenticatedQuery(
-    api.functions.memberFollowups.search,
+  const perGroupSearchResultsRaw = useAuthenticatedQuery(
+    api.functions.communityPeople.search,
     !crossGroupMode && hasTextSearch && groupId
       ? {
           groupId: groupId as Id<"groups">,
-          searchText: parsedQuery.searchText,
-          ...(parsedQuery.statusFilter
-            ? { statusFilter: parsedQuery.statusFilter }
-            : {}),
-          ...(parsedQuery.assigneeFilter
-            ? { assigneeFilter: parsedQuery.assigneeFilter as Id<"users"> }
-            : {}),
-          ...(parsedQuery.excludedAssigneeFilters.length > 0
-            ? {
-                excludedAssigneeFilters:
-                  parsedQuery.excludedAssigneeFilters as Id<"users">[],
-              }
-            : {}),
-          ...(parsedQuery.scoreField
-            ? { scoreField: parsedQuery.scoreField }
-            : {}),
-          ...(parsedQuery.scoreMax !== undefined
-            ? { scoreMax: parsedQuery.scoreMax }
-            : {}),
-          ...(parsedQuery.scoreMin !== undefined
-            ? { scoreMin: parsedQuery.scoreMin }
-            : {}),
-          ...getDateAddedRangeArgs(parsedQuery.dateAddedFilter),
+          searchTerm: parsedQuery.searchText,
         }
       : "skip",
+  );
+  const perGroupSearchResults = useMemo(
+    () => perGroupSearchResultsRaw?.map(adaptCommunityPerson) ?? undefined,
+    [perGroupSearchResultsRaw],
   );
 
   const crossGroupSearchResults = useAuthenticatedQuery(
@@ -542,17 +537,17 @@ export function FollowupMobileGrid({
   const searchResults = crossGroupMode ? crossGroupSearchResults : perGroupSearchResults;
 
   const totalCount = useAuthenticatedQuery(
-    api.functions.memberFollowups.count,
+    api.functions.communityPeople.count,
     !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip",
   );
   const setAssigneeMut = useAuthenticatedMutation(
-    api.functions.memberFollowups.setAssignee,
+    api.functions.communityPeople.setAssignees,
   );
   const setStatusMut = useAuthenticatedMutation(
-    api.functions.memberFollowups.setStatus,
+    api.functions.communityPeople.setStatus,
   );
   const setCustomFieldMut = useAuthenticatedMutation(
-    api.functions.memberFollowups.setCustomField,
+    api.functions.communityPeople.setCustomField,
   );
   const removeGroupMember = useAuthenticatedMutation(
     api.functions.groupMembers.remove,
@@ -560,10 +555,8 @@ export function FollowupMobileGrid({
   const removeCommunityMember = useAuthenticatedMutation(
     api.functions.communities.removeMember,
   );
-
-  const groupData = useQuery(
-    api.functions.groups.index.getById,
-    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip",
+  const deleteViewMut = useAuthenticatedMutation(
+    api.functions.peopleSavedViews.remove,
   );
 
   const getMemberGroupId = useCallback(
@@ -578,14 +571,9 @@ export function FollowupMobileGrid({
   const getSortFieldValue = useCallback(
     (member: FollowupMember, field: string): string | number => {
       if (field.startsWith("score")) {
-        if (useSystemScores) {
-          // System scores: direct slot access (score1, score2, score3)
-          const slot = field as "score1" | "score2" | "score3";
-          return getSystemScoreValue(member, slot) ?? 0;
-        }
-        const scoreIndex = Number.parseInt(field.replace("score", ""), 10) - 1;
-        const scoreId = scoreConfig[scoreIndex]?.id;
-        return scoreId ? getScoreValue(member, scoreId) : 0;
+        // System scores: direct slot access (score1, score2, score3)
+        const slot = field as "score1" | "score2" | "score3";
+        return getSystemScoreValue(member, slot) ?? 0;
       }
 
       switch (field) {
@@ -622,7 +610,7 @@ export function FollowupMobileGrid({
           );
       }
     },
-    [scoreConfig, leaderMap, getAssigneeIds, useSystemScores],
+    [leaderMap, getAssigneeIds],
   );
 
   const members = useMemo(() => {
@@ -762,26 +750,16 @@ export function FollowupMobileGrid({
   }, [members, localOverrides, getAssigneeIds]);
 
   const dataColumns: GridColumn[] = useMemo(() => {
-    // Score columns — when system_scores is on, use fixed SYSTEM_SCORE_COLUMNS;
-    // otherwise use dynamic per-group scoreConfig.
-    const scoreColumns: GridColumn[] = useSystemScores
-      ? SYSTEM_SCORE_COLUMNS.map((sc) => ({
-          key: sc.slot,
-          label: sc.name,
-          width: 72,
-          sortable: true,
-          kind: "score" as const,
-          getValue: (member: FollowupMember) =>
-            getSystemScoreValue(member, sc.slot) ?? 0,
-        }))
-      : scoreConfig.map((score, index) => ({
-          key: `score${index + 1}`,
-          label: score.name,
-          width: 72,
-          sortable: true,
-          kind: "score" as const,
-          getValue: (member: FollowupMember) => getScoreValue(member, score.id),
-        }));
+    // Always use fixed SYSTEM_SCORE_COLUMNS for score columns.
+    const scoreColumns: GridColumn[] = SYSTEM_SCORE_COLUMNS.map((sc) => ({
+      key: sc.slot,
+      label: sc.name,
+      width: 72,
+      sortable: true,
+      kind: "score" as const,
+      getValue: (member: FollowupMember) =>
+        getSystemScoreValue(member, sc.slot) ?? 0,
+    }));
 
     const baseColumns: GridColumn[] = [
       {
@@ -994,7 +972,7 @@ export function FollowupMobileGrid({
     return ordered
       .filter((column) => !hidden.has(column.key))
       .filter((column) => !HIDE_ON_MOBILE_COLUMNS.has(column.key));
-  }, [scoreConfig, leaderMap, customFields, columnConfig, getAssigneeIds, useSystemScores]);
+  }, [scoreConfig, leaderMap, customFields, columnConfig, getAssigneeIds]);
 
   const dataColumnsWidth = useMemo(
     () => dataColumns.reduce((sum, column) => sum + column.width, 0),
@@ -1167,9 +1145,8 @@ export function FollowupMobileGrid({
     if (parsedQuery.scoreField) {
       const scoreIndex =
         Number.parseInt(parsedQuery.scoreField.replace("score", ""), 10) - 1;
-      const scoreLabel = useSystemScores
-        ? (SYSTEM_SCORE_COLUMNS[scoreIndex]?.name ?? parsedQuery.scoreField)
-        : (scoreConfig[scoreIndex]?.name ?? parsedQuery.scoreField);
+      const scoreLabel =
+        SYSTEM_SCORE_COLUMNS[scoreIndex]?.name ?? parsedQuery.scoreField;
       if (parsedQuery.scoreMin !== undefined)
         badges.push(`${scoreLabel}:>${parsedQuery.scoreMin}`);
       if (parsedQuery.scoreMax !== undefined)
@@ -1186,7 +1163,7 @@ export function FollowupMobileGrid({
     }
     if (parsedQuery.searchText) badges.push(`text:"${parsedQuery.searchText}"`);
     return badges;
-  }, [parsedQuery, leaderMap, scoreConfig, useSystemScores]);
+  }, [parsedQuery, leaderMap, scoreConfig]);
 
   const leaderOptions = useMemo(() => {
     const leaderRows = (leaders ?? []) as LeaderRecord[];
@@ -1223,10 +1200,9 @@ export function FollowupMobileGrid({
       setIsUpdatingField(true);
       try {
         await setCustomFieldMut({
-          groupId: getMemberGroupId(memberId),
-          groupMemberId: memberId as Id<"groupMembers">,
-          slot,
-          value: value ?? undefined,
+          communityPeopleId: memberId as Id<"communityPeople">,
+          field: slot,
+          value: value ?? null,
         });
       } catch (err) {
         console.error("[FollowupMobileGrid] setCustomField failed:", err);
@@ -1235,7 +1211,7 @@ export function FollowupMobileGrid({
         setIsUpdatingField(false);
       }
     },
-    [setCustomFieldMut, getMemberGroupId],
+    [setCustomFieldMut],
   );
 
   const handleCustomTextSubmit = useCallback(async () => {
@@ -1296,10 +1272,9 @@ export function FollowupMobileGrid({
       setIsUpdatingField(true);
       try {
         await setCustomFieldMut({
-          groupId: getMemberGroupId(memberId),
-          groupMemberId: memberId as Id<"groupMembers">,
-          slot,
-          value: newValue || undefined,
+          communityPeopleId: memberId as Id<"communityPeople">,
+          field: slot,
+          value: newValue || null,
         });
       } catch (err) {
         console.error("[FollowupMobileGrid] multiselect toggle failed:", err);
@@ -1323,7 +1298,7 @@ export function FollowupMobileGrid({
       }
       // Don't close sheet — allow multiple toggles
     },
-    [editSheet, activeEditMember, setCustomFieldMut, getMemberGroupId],
+    [editSheet, activeEditMember, setCustomFieldMut],
   );
 
   const handleMultiselectClear = useCallback(async () => {
@@ -1350,10 +1325,9 @@ export function FollowupMobileGrid({
     setEditSheet(null);
     try {
       await setCustomFieldMut({
-        groupId: getMemberGroupId(memberId),
-        groupMemberId: memberId as Id<"groupMembers">,
-        slot,
-        value: undefined,
+        communityPeopleId: memberId as Id<"communityPeople">,
+        field: slot,
+        value: null,
       });
     } catch (err) {
       console.error("[FollowupMobileGrid] multiselect clear failed:", err);
@@ -1372,7 +1346,7 @@ export function FollowupMobileGrid({
       });
       Alert.alert("Could not update field", "Please try again.");
     }
-  }, [editSheet, activeEditMember, setCustomFieldMut, getMemberGroupId]);
+  }, [editSheet, activeEditMember, setCustomFieldMut]);
 
   const handleAssignChange = async (assigneeIds: string[]) => {
     if (!editSheet || !activeEditMember) return;
@@ -1390,8 +1364,7 @@ export function FollowupMobileGrid({
     }));
     try {
       await setAssigneeMut({
-        groupId: getMemberGroupId(memberId),
-        groupMemberId: memberId as Id<"groupMembers">,
+        communityPeopleId: memberId as Id<"communityPeople">,
         assigneeIds: normalizedAssigneeIds as Id<"users">[],
       });
     } catch (error) {
@@ -1433,9 +1406,8 @@ export function FollowupMobileGrid({
     }));
     try {
       await setStatusMut({
-        groupId: getMemberGroupId(memberId),
-        groupMemberId: memberId as Id<"groupMembers">,
-        status: status ?? undefined,
+        communityPeopleId: memberId as Id<"communityPeople">,
+        status: status ?? null,
       });
       setEditSheet(null);
     } catch (error) {
@@ -1462,8 +1434,13 @@ export function FollowupMobileGrid({
     }
   };
 
+  // Track whether we've ever loaded data — once true, never show the full-page
+  // loading spinner again (prevents scroll position reset on sort/filter changes)
+  const hasEverLoadedRef = useRef(false);
+  if (members.length > 0) hasEverLoadedRef.current = true;
   const isInitialLoading =
-    (!hasTextSearch && isLoading && members.length === 0) || isSearchLoading;
+    ((!hasTextSearch && isLoading && members.length === 0) || isSearchLoading) &&
+    !hasEverLoadedRef.current;
 
   const renderColumnHeader = (column: GridColumn) => {
     const isActiveSort = sortField === column.key;
@@ -1957,7 +1934,7 @@ export function FollowupMobileGrid({
         </Text>
       </View>
 
-      {useSystemScores && groupData?.communityId && (
+      {groupData?.communityId && (
         <PeopleViewBar
           communityId={groupData.communityId}
           activeViewId={activeViewId}
@@ -1965,8 +1942,32 @@ export function FollowupMobileGrid({
             setActiveViewId(viewId);
             if (view.sortBy) setSortField(view.sortBy);
             if (view.sortDirection) setSortDirection(view.sortDirection);
+            // Apply filters as search query
+            const filterParts: string[] = [];
+            if (view.filters?.statusFilter) filterParts.push(`status:${view.filters.statusFilter}`);
+            if (view.filters?.assigneeFilter) {
+              const leader = leaderMap.get(view.filters.assigneeFilter);
+              if (leader) filterParts.push(`assignee:${leader.firstName}`);
+            }
+            if (view.filters?.scoreField && view.filters?.scoreMin !== undefined) {
+              filterParts.push(`${view.filters.scoreField}:>${view.filters.scoreMin}`);
+            }
+            if (view.filters?.scoreField && view.filters?.scoreMax !== undefined) {
+              filterParts.push(`${view.filters.scoreField}:<${view.filters.scoreMax}`);
+            }
+            setSearchQuery(filterParts.join(" "));
+          }}
+          onViewDeselect={() => {
+            setActiveViewId(null);
+            setSortField("score1");
+            setSortDirection("desc");
+            setSearchQuery("");
+          }}
+          onDeleteView={(viewId, viewName, isShared) => {
+            setViewToDelete({ id: viewId, name: viewName, isShared });
           }}
           onCreateView={() => setShowSaveViewModal(true)}
+          isAdmin={groupData?.userRole === "admin"}
         />
       )}
 
@@ -2364,6 +2365,48 @@ export function FollowupMobileGrid({
         onCancel={() => setShowRemoveModal(false)}
         confirmText="Remove"
         isLoading={isRemoving}
+        destructive
+      />
+
+      {/* Save view modal */}
+      {groupData?.communityId && (
+        <SaveViewModal
+          visible={showSaveViewModal}
+          onClose={() => setShowSaveViewModal(false)}
+          communityId={groupData.communityId}
+          currentSortBy={sortField}
+          currentSortDirection={sortDirection}
+          currentFilters={{
+            groupId: groupId as any,
+            statusFilter: parsedQuery.statusFilter,
+            assigneeFilter: parsedQuery.assigneeFilter,
+            scoreField: parsedQuery.scoreField,
+            scoreMin: parsedQuery.scoreMin,
+            scoreMax: parsedQuery.scoreMax,
+          }}
+          isAdmin={groupData?.userRole === "admin"}
+        />
+      )}
+
+      {/* Delete view confirmation modal */}
+      <ConfirmModal
+        visible={!!viewToDelete}
+        title={`Delete "${viewToDelete?.name ?? ""}"?`}
+        message={
+          viewToDelete?.isShared
+            ? `"${viewToDelete.name}" is shared with your team. Deleting it will remove it for everybody.`
+            : "This view will be permanently deleted."
+        }
+        onConfirm={async () => {
+          if (!viewToDelete) return;
+          if (activeViewId === viewToDelete.id) {
+            setActiveViewId(null);
+          }
+          await deleteViewMut({ viewId: viewToDelete.id as Id<"peopleSavedViews"> });
+          setViewToDelete(null);
+        }}
+        onCancel={() => setViewToDelete(null)}
+        confirmText="Delete"
         destructive
       />
     </View>

@@ -1639,6 +1639,7 @@ export default defineSchema({
 
   communityPeople: defineTable({
     communityId: v.id("communities"),
+    groupId: v.optional(v.id("groups")),
     userId: v.id("users"),
 
     // Denormalized member info
@@ -1697,34 +1698,36 @@ export default defineSchema({
   })
     .index("by_community", ["communityId"])
     .index("by_community_user", ["communityId", "userId"])
-    .index("by_community_score1", ["communityId", "score1"])
-    .index("by_community_score2", ["communityId", "score2"])
-    .index("by_community_score3", ["communityId", "score3"])
-    .index("by_community_firstName", ["communityId", "firstName"])
-    .index("by_community_lastName", ["communityId", "lastName"])
-    .index("by_community_addedAt", ["communityId", "addedAt"])
-    .index("by_community_lastAttendedAt", ["communityId", "lastAttendedAt"])
-    .index("by_community_lastFollowupAt", ["communityId", "lastFollowupAt"])
-    .index("by_community_lastActiveAt", ["communityId", "lastActiveAt"])
-    .index("by_community_status", ["communityId", "status"])
-    .index("by_community_customText1", ["communityId", "customText1"])
-    .index("by_community_customText2", ["communityId", "customText2"])
-    .index("by_community_customText3", ["communityId", "customText3"])
-    .index("by_community_customText4", ["communityId", "customText4"])
-    .index("by_community_customText5", ["communityId", "customText5"])
-    .index("by_community_customNum1", ["communityId", "customNum1"])
-    .index("by_community_customNum2", ["communityId", "customNum2"])
-    .index("by_community_customNum3", ["communityId", "customNum3"])
-    .index("by_community_customNum4", ["communityId", "customNum4"])
-    .index("by_community_customNum5", ["communityId", "customNum5"])
-    .index("by_community_customBool1", ["communityId", "customBool1"])
-    .index("by_community_customBool2", ["communityId", "customBool2"])
-    .index("by_community_customBool3", ["communityId", "customBool3"])
-    .index("by_community_customBool4", ["communityId", "customBool4"])
-    .index("by_community_customBool5", ["communityId", "customBool5"])
+    .index("by_group", ["groupId"])
+    .index("by_group_user", ["groupId", "userId"])
+    .index("by_group_score1", ["groupId", "score1"])
+    .index("by_group_score2", ["groupId", "score2"])
+    .index("by_group_score3", ["groupId", "score3"])
+    .index("by_group_firstName", ["groupId", "firstName"])
+    .index("by_group_lastName", ["groupId", "lastName"])
+    .index("by_group_addedAt", ["groupId", "addedAt"])
+    .index("by_group_lastAttendedAt", ["groupId", "lastAttendedAt"])
+    .index("by_group_lastFollowupAt", ["groupId", "lastFollowupAt"])
+    .index("by_group_lastActiveAt", ["groupId", "lastActiveAt"])
+    .index("by_group_status", ["groupId", "status"])
+    .index("by_group_customText1", ["groupId", "customText1"])
+    .index("by_group_customText2", ["groupId", "customText2"])
+    .index("by_group_customText3", ["groupId", "customText3"])
+    .index("by_group_customText4", ["groupId", "customText4"])
+    .index("by_group_customText5", ["groupId", "customText5"])
+    .index("by_group_customNum1", ["groupId", "customNum1"])
+    .index("by_group_customNum2", ["groupId", "customNum2"])
+    .index("by_group_customNum3", ["groupId", "customNum3"])
+    .index("by_group_customNum4", ["groupId", "customNum4"])
+    .index("by_group_customNum5", ["groupId", "customNum5"])
+    .index("by_group_customBool1", ["groupId", "customBool1"])
+    .index("by_group_customBool2", ["groupId", "customBool2"])
+    .index("by_group_customBool3", ["groupId", "customBool3"])
+    .index("by_group_customBool4", ["groupId", "customBool4"])
+    .index("by_group_customBool5", ["groupId", "customBool5"])
     .searchIndex("search_communityPeople", {
       searchField: "searchText",
-      filterFields: ["communityId"],
+      filterFields: ["groupId"],
     }),
 
   // =============================================================================

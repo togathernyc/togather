@@ -5,6 +5,7 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
+  Pressable,
   TextInput,
   ActivityIndicator,
   Platform,
@@ -24,9 +25,9 @@ import { FollowupSettingsPanel } from "./FollowupSettingsPanel";
 import { FollowupCsvImportModal } from "./FollowupCsvImportModal";
 import { FollowupQuickAddPanel } from "./FollowupQuickAddPanel";
 import type { CustomFieldDef } from "./ColumnPickerModal";
-import { getScoreValue, SYSTEM_SCORE_COLUMNS, getSystemScoreValue } from "./followupShared";
-import { useFeatureFlag } from "@hooks/useFeatureFlag";
+import { SYSTEM_SCORE_COLUMNS, getSystemScoreValue, adaptCommunityPerson } from "./followupShared";
 import { PeopleViewBar } from "./PeopleViewBar";
+import { SaveViewModal } from "./SaveViewModal";
 import {
   buildSelectOptionsBySlot,
   parseMultiSelectValues,
@@ -219,7 +220,6 @@ export function FollowupDesktopTable({
   const { user } = useAuth();
   const currentUserId = user?.id as Id<"users"> | undefined;
   const { primaryColor } = useCommunityTheme();
-  const useSystemScores = useFeatureFlag("system_scores");
 
   // Sort state
   const [sortField, setSortField] = useState<string>("score1");
@@ -247,6 +247,8 @@ export function FollowupDesktopTable({
 
   // Row hover (web only)
   const [hoveredRowId, setHoveredRowId] = useState<string | null>(null);
+  // Cell hover for editable cells (web only)
+  const [hoveredCellId, setHoveredCellId] = useState<string | null>(null);
 
   // Optimistic updates — instant UI while mutation round-trips
   const [optimistic, setOptimistic] = useState<Record<string, { assigneeIds?: string[] | null; status?: string | null; [key: string]: any }>>({});
@@ -261,17 +263,44 @@ export function FollowupDesktopTable({
   const [showQuickAddPanel, setShowQuickAddPanel] = useState(false);
   const [showCsvImportModal, setShowCsvImportModal] = useState(false);
 
-  // PeopleViewBar state (system_scores feature flag)
+  // PeopleViewBar state
   const [activeViewId, setActiveViewId] = useState<string | null>(null);
   const [showSaveViewModal, setShowSaveViewModal] = useState(false);
+
+  // Delete confirmation state
+  const [viewToDelete, setViewToDelete] = useState<{
+    id: string; name: string; isShared: boolean;
+  } | null>(null);
+
+  // Column header context menu state (web only)
+  const [headerContextMenu, setHeaderContextMenu] = useState<{
+    colKey: string;
+    colLabel: string;
+    top: number;
+    left: number;
+  } | null>(null);
+
+  // Local column order override (set when view is selected or columns are dragged)
+  const [localColumnOrder, setLocalColumnOrder] = useState<string[] | null>(null);
+  const [localHiddenColumns, setLocalHiddenColumns] = useState<string[] | null>(null);
+
+  // Snapshot of column state before opening settings (for revert on close)
+  const [preSettingsSnapshot, setPreSettingsSnapshot] = useState<{
+    columnOrder: string[] | null;
+    hiddenColumns: string[] | null;
+  } | null>(null);
+
+  // Drag-to-reorder state (web only)
+  const [dragColumnKey, setDragColumnKey] = useState<string | null>(null);
+  const [dragOverColumnKey, setDragOverColumnKey] = useState<string | null>(null);
 
   // Custom field dropdown state
   const [customDropdownFor, setCustomDropdownFor] = useState<{ memberId: string; slot: string } | null>(null);
 
-  // Cross-group config query
+  // Cross-group config query — always fetch so we have community-wide leaders for assignee display
   const crossGroupConfig = useAuthenticatedQuery(
     api.functions.memberFollowups.getCrossGroupConfig,
-    crossGroupMode ? {} : "skip"
+    {}
   );
 
   // Cross-group local column config (localStorage)
@@ -298,21 +327,50 @@ export function FollowupDesktopTable({
     !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip"
   );
   const config = crossGroupMode ? crossGroupConfig : perGroupConfig;
+
+  // Group data for header (per-group mode only)
+  const groupData = useQuery(
+    api.functions.groups.index.getById,
+    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip"
+  );
+
+  // Community-level data source config
+  const communityPeopleConfig = useAuthenticatedQuery(
+    api.functions.communityPeople.getConfig,
+    !crossGroupMode && groupData?.communityId
+      ? { communityId: groupData.communityId }
+      : "skip",
+  );
+
   const scoreConfig: ScoreConfigEntry[] = crossGroupMode
     ? (crossGroupConfig?.scoreConfigScores ?? [])
-    : (perGroupConfig?.scoreConfigScores ?? []);
+    : (communityPeopleConfig?.scores?.map((s: any) => ({ id: s.id, name: s.name })) ?? []);
   const toolDisplayName = crossGroupMode ? "People" : (perGroupConfig?.toolDisplayName ?? "People");
-  const columnConfig = crossGroupMode
+  // Views are now the only way to persist column preferences.
+  // Per-group followupColumnConfig is ignored — no view selected = all columns visible.
+  const baseColumnConfig = crossGroupMode
     ? (crossGroupColConfig ? { columnOrder: crossGroupColConfig.columnOrder, hiddenColumns: crossGroupColConfig.hiddenColumns, customFields: [] } : null)
-    : (perGroupConfig?.followupColumnConfig ?? null);
-  const customFields: CustomFieldDef[] = crossGroupMode ? [] : ((perGroupConfig?.followupColumnConfig?.customFields ?? []) as CustomFieldDef[]);
+    : null;
+  // Local overrides take priority (from view selection or drag-reorder)
+  const columnConfig = useMemo(() => {
+    if (!localColumnOrder && !localHiddenColumns) return baseColumnConfig;
+    return {
+      ...(baseColumnConfig ?? {}),
+      columnOrder: localColumnOrder ?? baseColumnConfig?.columnOrder ?? [],
+      hiddenColumns: localHiddenColumns ?? baseColumnConfig?.hiddenColumns ?? [],
+    };
+  }, [baseColumnConfig, localColumnOrder, localHiddenColumns]);
+  const customFields: CustomFieldDef[] = crossGroupMode ? [] : ((communityPeopleConfig?.customFields ?? []) as CustomFieldDef[]);
 
-  // Leaders query (for assignee picker)
+  // Leaders query (for assignee picker — current group only)
   const perGroupLeaders = useAuthenticatedQuery(
     api.functions.groups.members.getLeaders,
     !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip"
   );
-  const leaders = crossGroupMode ? crossGroupConfig?.leaders : perGroupLeaders;
+  // Picker options: current-group leaders only (cross-group mode uses crossGroupConfig leaders)
+  const pickerLeaders = crossGroupMode ? crossGroupConfig?.leaders : perGroupLeaders;
+  // Display: cross-group leaders so assignees from other groups render correctly
+  const allLeaders = crossGroupConfig?.leaders ?? perGroupLeaders;
 
   // Group tasks — used to build per-member task counts for the table
   const groupTasks = useAuthenticatedQuery(
@@ -338,26 +396,27 @@ export function FollowupDesktopTable({
     return map;
   }, [groupTasks]);
 
-  // Assignee lookup
+  // Assignee display lookup — uses all leaders across groups
   const leaderMap = useMemo(() => {
-    if (!leaders) return new Map<string, LeaderInfo>();
+    if (!allLeaders) return new Map<string, LeaderInfo>();
     return new Map(
-      (leaders as any[]).map((l: any) => [
+      (allLeaders as any[]).map((l: any) => [
         l.userId?.toString?.() ?? l._id?.toString?.() ?? "",
         { firstName: l.firstName ?? "", lastName: l.lastName ?? "", profilePhoto: l.profilePhoto },
       ])
     );
-  }, [leaders]);
+  }, [allLeaders]);
+  // Assignee picker options — current group leaders only
   const leaderOptions = useMemo(() => {
-    if (!leaders) return [] as Array<{ id: string; firstName: string; lastName: string }>;
-    return (leaders as any[])
+    if (!pickerLeaders) return [] as Array<{ id: string; firstName: string; lastName: string }>;
+    return (pickerLeaders as any[])
       .map((leader: any) => ({
         id: leader.userId?.toString?.() ?? leader._id?.toString?.() ?? "",
         firstName: leader.firstName ?? "",
         lastName: leader.lastName ?? "",
       }))
       .filter((leader: any) => leader.id.length > 0);
-  }, [leaders]);
+  }, [pickerLeaders]);
 
   // Parse search query
   const parsedQuery = useMemo(
@@ -407,31 +466,17 @@ export function FollowupDesktopTable({
       { key: "dateOfBirth", label: "Birthday", defaultWidth: 110, sortable: false },
     );
 
-    // Score columns — when system_scores is on, use fixed SYSTEM_SCORE_COLUMNS;
-    // otherwise use dynamic per-group scoreConfig.
+    // Score columns — use fixed SYSTEM_SCORE_COLUMNS.
     // score1 and score2 have server-side indexes; score3+ use client-side sorting.
-    if (useSystemScores) {
-      SYSTEM_SCORE_COLUMNS.forEach((sc) => {
-        allAvailable.push({
-          key: sc.slot,
-          label: sc.name,
-          defaultWidth: 100,
-          sortable: true,
-          serverSortKey: crossGroupMode ? undefined : (sc.slot in SERVER_SORT_KEYS ? sc.slot : undefined),
-        });
+    SYSTEM_SCORE_COLUMNS.forEach((sc) => {
+      allAvailable.push({
+        key: sc.slot,
+        label: sc.name,
+        defaultWidth: 100,
+        sortable: true,
+        serverSortKey: crossGroupMode ? undefined : (sc.slot in SERVER_SORT_KEYS ? sc.slot : undefined),
       });
-    } else {
-      scoreConfig.forEach((sc, i) => {
-        const key = `score${i + 1}`;
-        allAvailable.push({
-          key,
-          label: sc.name,
-          defaultWidth: 100,
-          sortable: true,
-          serverSortKey: crossGroupMode ? undefined : (key in SERVER_SORT_KEYS ? key : undefined),
-        });
-      });
-    }
+    });
 
     allAvailable.push(
       { key: "assignee", label: "Assignees", defaultWidth: 140, sortable: true, serverSortKey: crossGroupMode ? undefined : "assignee" },
@@ -481,7 +526,43 @@ export function FollowupDesktopTable({
     const visible = ordered.filter((c) => !hiddenSet.has(c.key));
 
     return [...systemCols, ...visible];
-  }, [scoreConfig, customFields, columnConfig, crossGroupMode, useSystemScores]);
+  }, [scoreConfig, customFields, columnConfig, crossGroupMode]);
+
+  // Column label map — maps column keys to display labels (same labels as table header)
+  // Used by FollowupSettingsPanel for consistent naming
+  const columnLabelMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    if (crossGroupMode) map["groupName"] = "Group";
+    map["addedAt"] = "Date Added";
+    map["firstName"] = "First Name";
+    map["lastName"] = "Last Name";
+    map["email"] = "Email";
+    map["phone"] = "Phone";
+    map["zipCode"] = "ZIP Code";
+    map["dateOfBirth"] = "Birthday";
+    SYSTEM_SCORE_COLUMNS.forEach((sc) => { map[sc.slot] = sc.name; });
+    map["assignee"] = "Assignees";
+    map["notes"] = "Notes";
+    map["tasks"] = "Tasks";
+    map["status"] = "Status";
+    map["lastAttendedAt"] = "Last Attended";
+    map["lastFollowupAt"] = "Last Contact";
+    map["lastActiveAt"] = "Date Active";
+    map["alerts"] = "Alerts";
+    for (const cf of customFields) { map[cf.slot] = cf.name; }
+    return map;
+  }, [customFields, crossGroupMode]);
+
+  // All non-system column keys (for passing to settings when no saved config exists)
+  const allColumnKeys = useMemo(() => {
+    const keys: string[] = [];
+    if (crossGroupMode) keys.push("groupName");
+    keys.push("addedAt", "firstName", "lastName", "email", "phone", "zipCode", "dateOfBirth");
+    SYSTEM_SCORE_COLUMNS.forEach((sc) => keys.push(sc.slot));
+    keys.push("assignee", "notes", "tasks", "status", "lastAttendedAt", "lastFollowupAt", "lastActiveAt", "alerts");
+    for (const cf of customFields) keys.push(cf.slot);
+    return keys;
+  }, [customFields, crossGroupMode]);
 
   // Editable columns (built-in + all custom field slots)
   const editableColumns = useMemo(() => {
@@ -555,7 +636,7 @@ export function FollowupDesktopTable({
     loadMore: perGroupLoadMore,
     isLoading: perGroupIsLoading,
   } = useAuthenticatedPaginatedQuery(
-    api.functions.memberFollowups.list,
+    api.functions.communityPeople.list,
     !crossGroupMode && !hasTextSearch && groupId
       ? {
           groupId: groupId as Id<"groups">,
@@ -591,20 +672,11 @@ export function FollowupDesktopTable({
 
   // Text search query — used when there IS text search
   const perGroupSearchResults = useAuthenticatedQuery(
-    api.functions.memberFollowups.search,
+    api.functions.communityPeople.search,
     !crossGroupMode && hasTextSearch && groupId
       ? {
           groupId: groupId as Id<"groups">,
-          searchText: parsedQuery.searchText,
-          ...(parsedQuery.statusFilter ? { statusFilter: parsedQuery.statusFilter } : {}),
-          ...(parsedQuery.assigneeFilter ? { assigneeFilter: parsedQuery.assigneeFilter as Id<"users"> } : {}),
-          ...(parsedQuery.excludedAssigneeFilters.length > 0
-            ? { excludedAssigneeFilters: parsedQuery.excludedAssigneeFilters as Id<"users">[] }
-            : {}),
-          ...(parsedQuery.scoreField ? { scoreField: parsedQuery.scoreField } : {}),
-          ...(parsedQuery.scoreMax !== undefined ? { scoreMax: parsedQuery.scoreMax } : {}),
-          ...(parsedQuery.scoreMin !== undefined ? { scoreMin: parsedQuery.scoreMin } : {}),
-          ...getDateAddedRangeArgs(parsedQuery.dateAddedFilter),
+          searchTerm: parsedQuery.searchText,
         }
       : "skip"
   );
@@ -633,43 +705,35 @@ export function FollowupDesktopTable({
 
   // Total member count (only for per-group mode)
   const totalCount = useAuthenticatedQuery(
-    api.functions.memberFollowups.count,
+    api.functions.communityPeople.count,
     !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip"
   );
 
   // Merge: use search results when text search active, otherwise paginated.
   // Apply client-side sorting for score3+ (no server index).
+  // Map community people records through adaptCommunityPerson for per-group mode.
   const members = useMemo(() => {
     const raw = (hasTextSearch
       ? (searchResults ?? [])
       : (rawMembers ?? [])
-    ) as unknown as FollowupMember[];
-    const filtered = applyParsedFollowupFilters(raw, parsedQuery);
+    ) as unknown as any[];
+    // Adapt community people records to FollowupMember shape
+    const adapted: FollowupMember[] = crossGroupMode
+      ? (raw as FollowupMember[])
+      : raw.map((r: any) => adaptCommunityPerson(r));
+    const filtered = applyParsedFollowupFilters(adapted, parsedQuery);
 
     if (!isClientSideSort || filtered.length === 0) return filtered;
 
     const sorted = [...filtered];
 
     if (sortField.startsWith("score")) {
-      if (useSystemScores) {
-        // System scores: sort by direct slot access (e.g. score1, score2, score3)
-        const slot = sortField as "score1" | "score2" | "score3";
-        sorted.sort((a, b) => {
-          const aVal = getSystemScoreValue(a, slot) ?? 0;
-          const bVal = getSystemScoreValue(b, slot) ?? 0;
-          return sortDirection === "asc" ? aVal - bVal : bVal - aVal;
-        });
-      } else {
-        // Client-side sort by the score column (e.g. score3, score4)
-        const scoreIdx = parseInt(sortField.replace("score", ""), 10) - 1;
-        const scoreId = scoreConfig[scoreIdx]?.id;
-        if (!scoreId) return filtered;
-        sorted.sort((a, b) => {
-          const aVal = getScoreValue(a, scoreId);
-          const bVal = getScoreValue(b, scoreId);
-          return sortDirection === "asc" ? aVal - bVal : bVal - aVal;
-        });
-      }
+      const slot = sortField as "score1" | "score2" | "score3";
+      sorted.sort((a, b) => {
+        const aVal = getSystemScoreValue(a, slot) ?? 0;
+        const bVal = getSystemScoreValue(b, slot) ?? 0;
+        return sortDirection === "asc" ? aVal - bVal : bVal - aVal;
+      });
     } else {
       // Client-side sort by other fields (cross-group mode)
       const multiplier = sortDirection === "asc" ? 1 : -1;
@@ -688,12 +752,11 @@ export function FollowupDesktopTable({
     hasTextSearch,
     searchResults,
     rawMembers,
+    crossGroupMode,
     isClientSideSort,
     sortField,
     sortDirection,
-    scoreConfig,
     parsedQuery,
-    useSystemScores,
   ]);
 
   // Merge optimistic overrides for consistent UI display
@@ -764,36 +827,17 @@ export function FollowupDesktopTable({
   }, [members, optimistic, getAssigneeIds]);
 
   // Mutations
-  const setAssigneeMut = useAuthenticatedMutation(api.functions.memberFollowups.setAssignee);
-  const setStatusMut = useAuthenticatedMutation(api.functions.memberFollowups.setStatus);
+  const setAssigneeMut = useAuthenticatedMutation(api.functions.communityPeople.setAssignees);
+  const setStatusMut = useAuthenticatedMutation(api.functions.communityPeople.setStatus);
   // Custom field mutation
-  const setCustomFieldMut = useAuthenticatedMutation(api.functions.memberFollowups.setCustomField);
+  const setCustomFieldMut = useAuthenticatedMutation(api.functions.communityPeople.setCustomField);
   const assigneeMutationQueueRef = useRef<Record<string, Promise<void>>>({});
 
   // Bulk remove mutations
   const removeGroupMember = useAuthenticatedMutation(api.functions.groupMembers.remove);
   const removeCommunityMember = useAuthenticatedMutation(api.functions.communities.removeMember);
-
-  // Group data for header (per-group mode only)
-  const groupData = useQuery(
-    api.functions.groups.index.getById,
-    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip"
-  );
-
-  // Community-level data source config (when system_scores flag is on)
-  const communityPeopleConfig = useAuthenticatedQuery(
-    useSystemScores && !crossGroupMode && groupData?.communityId
-      ? api.functions.communityPeople.getConfig
-      : "skip",
-    useSystemScores && !crossGroupMode && groupData?.communityId
-      ? { communityId: groupData.communityId }
-      : "skip",
-  );
-
-  // Community people custom field mutation (when system_scores flag is on)
-  const setCustomFieldCommunityMut = useAuthenticatedMutation(
-    api.functions.communityPeople.setCustomField
-  );
+  // View delete mutation
+  const deleteViewMut = useAuthenticatedMutation(api.functions.peopleSavedViews.remove);
 
   // ── Handlers ──
 
@@ -895,6 +939,11 @@ export function FollowupDesktopTable({
   };
 
   const handleSettingsPress = () => {
+    // Snapshot current column state before opening settings (for revert on close)
+    setPreSettingsSnapshot({
+      columnOrder: localColumnOrder,
+      hiddenColumns: localHiddenColumns,
+    });
     setShowSettingsPanel(true);
     setShowQuickAddPanel(false);
     setSelectedMemberId(null);
@@ -917,9 +966,8 @@ export function FollowupDesktopTable({
         .catch(() => undefined)
         .then(() => {
           setAssigneeMut({
-            groupId: getMemberGroupId(memberId),
-            groupMemberId: memberId as Id<"groupMembers">,
-            assigneeIds: assigneeIds as Id<"users">[],
+            communityPeopleId: memberId as any,
+            assigneeIds: assigneeIds as any[],
           });
         });
       assigneeMutationQueueRef.current[memberId] = next.finally(() => {
@@ -929,7 +977,7 @@ export function FollowupDesktopTable({
       });
       return next;
     },
-    [getMemberGroupId, setAssigneeMut]
+    [setAssigneeMut]
   );
 
   const handleAssigneeSelect = async (memberId: string, assigneeIds: string[]) => {
@@ -960,9 +1008,8 @@ export function FollowupDesktopTable({
     setDropdownPos(null);
     try {
       await setStatusMut({
-        groupId: getMemberGroupId(memberId),
-        groupMemberId: memberId as Id<"groupMembers">,
-        status: status || undefined,
+        communityPeopleId: memberId as any,
+        status: status || null,
       });
     } catch (err) {
       console.error("[setStatus] failed:", err);
@@ -982,20 +1029,11 @@ export function FollowupDesktopTable({
     setCustomDropdownFor(null);
     setDropdownPos(null);
     try {
-      if (useSystemScores) {
-        await setCustomFieldCommunityMut({
-          communityPeopleId: memberId as any,
-          field: slot,
-          value: value ?? undefined,
-        });
-      } else {
-        await setCustomFieldMut({
-          groupId: getMemberGroupId(memberId),
-          groupMemberId: memberId as Id<"groupMembers">,
-          slot,
-          value: value ?? undefined,
-        });
-      }
+      await setCustomFieldMut({
+        communityPeopleId: memberId as any,
+        field: slot,
+        value: value ?? null,
+      });
     } catch (err) {
       console.error("[setCustomField] failed:", err);
       setOptimistic((prev) => {
@@ -1029,20 +1067,11 @@ export function FollowupDesktopTable({
     });
 
     try {
-      if (useSystemScores) {
-        await setCustomFieldCommunityMut({
-          communityPeopleId: memberId as any,
-          field: slot,
-          value: newValue || undefined,
-        });
-      } else {
-        await setCustomFieldMut({
-          groupId: getMemberGroupId(memberId),
-          groupMemberId: memberId as Id<"groupMembers">,
-          slot,
-          value: newValue || undefined,
-        });
-      }
+      await setCustomFieldMut({
+        communityPeopleId: memberId as any,
+        field: slot,
+        value: newValue || null,
+      });
     } catch (err) {
       console.error("[setCustomField multiselect] failed:", err);
       // Restore to previous value instead of deleting slot to preserve other in-flight toggles
@@ -1115,6 +1144,49 @@ export function FollowupDesktopTable({
     [columns, colWidths, saveColWidths]
   );
 
+  // Column drag-to-reorder handlers (web only)
+  const handleDragStart = useCallback((colKey: string, e: any) => {
+    if (Platform.OS !== "web") return;
+    setDragColumnKey(colKey);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", colKey);
+  }, []);
+
+  const handleDragOver = useCallback((colKey: string, e: any) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDragOverColumnKey(colKey);
+  }, []);
+
+  const handleDragEnd = useCallback(() => {
+    setDragColumnKey(null);
+    setDragOverColumnKey(null);
+  }, []);
+
+  const handleDrop = useCallback((targetKey: string, e: any) => {
+    e.preventDefault();
+    const sourceKey = dragColumnKey;
+    setDragColumnKey(null);
+    setDragOverColumnKey(null);
+    if (!sourceKey || sourceKey === targetKey) return;
+
+    // Get current non-system column order
+    const nonSystemCols = columns.filter((c) => c.key !== "checkbox" && c.key !== "rowNum");
+    const currentOrder = nonSystemCols.map((c) => c.key);
+
+    const sourceIdx = currentOrder.indexOf(sourceKey);
+    const targetIdx = currentOrder.indexOf(targetKey);
+    if (sourceIdx === -1 || targetIdx === -1) return;
+
+    // Move source to target position
+    const newOrder = [...currentOrder];
+    newOrder.splice(sourceIdx, 1);
+    newOrder.splice(targetIdx, 0, sourceKey);
+
+    setLocalColumnOrder(newOrder);
+    setActiveViewId(null); // Clear active view since user customized
+  }, [dragColumnKey, columns]);
+
   // Close dropdowns on outside click
   // Use "click" (not "mousedown") so onPress handlers on dropdown items fire before cleanup
   useEffect(() => {
@@ -1132,13 +1204,13 @@ export function FollowupDesktopTable({
   }, []);
 
   const filteredLeaders = useMemo(() => {
-    if (!leaders) return [];
+    if (!pickerLeaders) return [];
     const search = assigneeSearch.toLowerCase();
-    return (leaders as any[]).filter((l: any) => {
+    return (pickerLeaders as any[]).filter((l: any) => {
       const name = `${l.firstName ?? ""} ${l.lastName ?? ""}`.toLowerCase();
       return name.includes(search);
     });
-  }, [leaders, assigneeSearch]);
+  }, [pickerLeaders, assigneeSearch]);
 
   // Find the member associated with the currently open dropdown (for portal rendering)
   const activeDropdownMember = useMemo(() => {
@@ -1146,6 +1218,45 @@ export function FollowupDesktopTable({
     if (!id) return null;
     return displayMembers.find((m) => m.groupMemberId === id) ?? null;
   }, [assigneeDropdownFor, statusDropdownFor, customDropdownFor, displayMembers]);
+
+  // Cross-group assigned leaders — assigned to this member but not in the current group's picker
+  const crossGroupAssignees = useMemo(() => {
+    if (!activeDropdownMember || crossGroupMode) return [];
+    const assigneeIds = getAssigneeIds(activeDropdownMember);
+    if (assigneeIds.length === 0) return [];
+    const pickerIds = new Set(leaderOptions.map((l) => l.id));
+    const crossIds = assigneeIds.filter((id) => !pickerIds.has(id));
+    if (crossIds.length === 0) return [];
+
+    const allLeadersList = (crossGroupConfig?.leaders ?? []) as any[];
+    const groupsList = (crossGroupConfig?.leaderGroups ?? []) as Array<{ _id: string; name: string }>;
+    const groupNameMap = new Map(groupsList.map((g) => [g._id, g.name]));
+    const currentGroupId = groupId ?? "";
+
+    // Group cross-group assignees by their group
+    const byGroup = new Map<string, Array<{ userId: string; firstName: string; lastName: string; profilePhoto?: string }>>();
+    for (const uid of crossIds) {
+      const leader = allLeadersList.find((l: any) => (l.userId?.toString?.() ?? l._id?.toString?.() ?? "") === uid);
+      if (!leader) continue;
+      const leaderGroupIds: string[] = leader.groupIds ?? [];
+      // Pick the first group that isn't the current one
+      const otherGroupId = leaderGroupIds.find((gid: string) => gid !== currentGroupId) ?? leaderGroupIds[0] ?? "";
+      if (!otherGroupId) continue;
+      if (!byGroup.has(otherGroupId)) byGroup.set(otherGroupId, []);
+      byGroup.get(otherGroupId)!.push({
+        userId: uid,
+        firstName: leader.firstName ?? "",
+        lastName: leader.lastName ?? "",
+        profilePhoto: leader.profilePhoto,
+      });
+    }
+
+    return Array.from(byGroup.entries()).map(([gid, members]) => ({
+      groupId: gid,
+      groupName: groupNameMap.get(gid) ?? "Other Group",
+      leaders: members,
+    }));
+  }, [activeDropdownMember, crossGroupMode, leaderOptions, crossGroupConfig, groupId, getAssigneeIds]);
 
   // ── Render helpers ──
 
@@ -1363,17 +1474,8 @@ export function FollowupDesktopTable({
       default: {
         // Score columns
         if (col.key.startsWith("score")) {
-          let value: number;
-          if (useSystemScores) {
-            // System scores: read directly from the slot
-            const slot = col.key as "score1" | "score2" | "score3";
-            value = getSystemScoreValue(item, slot) ?? 0;
-          } else {
-            const scoreIdx = parseInt(col.key.replace("score", ""), 10) - 1;
-            const scoreId = scoreConfig[scoreIdx]?.id;
-            if (!scoreId) return null;
-            value = getScoreValue(item, scoreId);
-          }
+          const slot = col.key as "score1" | "score2" | "score3";
+          const value = getSystemScoreValue(item, slot) ?? 0;
           return (
             <View style={[s.scoreCell, { backgroundColor: getScoreBgColor(value) }]}>
               <Text style={[s.scoreCellText, { color: getScoreColor(value) }]}>
@@ -1567,6 +1669,25 @@ export function FollowupDesktopTable({
   const isSearchLoading = hasTextSearch && searchResults === undefined;
   const effectiveIsLoading = hasTextSearch ? isSearchLoading : isLoading;
 
+  // Track whether we've ever loaded data — once true, never show the full-page
+  // loading spinner again (prevents horizontal scroll position from resetting
+  // when sort/filter changes cause the query to briefly return [])
+  const hasEverLoadedRef = useRef(false);
+  if (members.length > 0) hasEverLoadedRef.current = true;
+  const showInitialLoading = effectiveIsLoading && !hasEverLoadedRef.current;
+
+  // Preserve horizontal scroll position across re-renders (sort/filter changes)
+  const horizontalScrollRef = useRef<ScrollView>(null);
+  const scrollXRef = useRef(0);
+  useEffect(() => {
+    if (Platform.OS === "web" && horizontalScrollRef.current && scrollXRef.current > 0) {
+      // Restore after React re-renders the ScrollView contents
+      requestAnimationFrame(() => {
+        horizontalScrollRef.current?.scrollTo({ x: scrollXRef.current, animated: false });
+      });
+    }
+  });
+
   return (
     <View style={s.container}>
       {/* Header */}
@@ -1709,92 +1830,185 @@ export function FollowupDesktopTable({
         </View>
       )}
 
-      {/* People view bar (system_scores feature flag) */}
-      {useSystemScores && groupData?.communityId && (
+      {/* People view bar */}
+      {groupData?.communityId && (
         <PeopleViewBar
           communityId={groupData.communityId}
           activeViewId={activeViewId}
           onViewSelect={(viewId, view) => {
             setActiveViewId(viewId);
+            // Apply sort
             if (view.sortBy) setSortField(view.sortBy);
             if (view.sortDirection) setSortDirection(view.sortDirection);
+            // Apply column order & hidden columns
+            setLocalColumnOrder(view.columnOrder ?? null);
+            setLocalHiddenColumns(view.hiddenColumns ?? null);
+            // Apply filters as search query
+            const filterParts: string[] = [];
+            if (view.filters?.statusFilter) filterParts.push(`status:${view.filters.statusFilter}`);
+            if (view.filters?.assigneeFilter) {
+              const leader = leaderMap.get(view.filters.assigneeFilter);
+              if (leader) filterParts.push(`assignee:${leader.firstName}`);
+            }
+            if (view.filters?.scoreField && view.filters?.scoreMin !== undefined) {
+              filterParts.push(`${view.filters.scoreField}:>${view.filters.scoreMin}`);
+            }
+            if (view.filters?.scoreField && view.filters?.scoreMax !== undefined) {
+              filterParts.push(`${view.filters.scoreField}:<${view.filters.scoreMax}`);
+            }
+            setSearchQuery(filterParts.join(" "));
+          }}
+          onViewDeselect={() => {
+            setActiveViewId(null);
+            setLocalColumnOrder(null);
+            setLocalHiddenColumns(null);
+            setSortField("score1");
+            setSortDirection("desc");
+            setSearchQuery("");
+          }}
+          onDeleteView={(viewId, viewName, isShared) => {
+            setViewToDelete({ id: viewId, name: viewName, isShared });
           }}
           onCreateView={() => setShowSaveViewModal(true)}
+          isAdmin={groupData?.userRole === "admin"}
         />
+      )}
+
+      {/* Unsaved column changes bar */}
+      {(localColumnOrder !== null || localHiddenColumns !== null) && activeViewId === null && (
+        <View style={s.unsavedBar}>
+          <Text style={s.unsavedText}>Unsaved column changes</Text>
+          <TouchableOpacity onPress={() => setShowSaveViewModal(true)}>
+            <Text style={[s.unsavedAction, { color: primaryColor }]}>Save as View</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => {
+            setLocalColumnOrder(null);
+            setLocalHiddenColumns(null);
+          }}>
+            <Text style={s.unsavedDiscard}>Discard</Text>
+          </TouchableOpacity>
+        </View>
       )}
 
       {/* Main area: table + side sheet */}
       <View style={s.mainArea}>
         {/* Table */}
         <View style={s.tableContainer}>
-          {effectiveIsLoading && members.length === 0 ? (
+          {showInitialLoading ? (
             <View style={s.loadingContainer}>
               <ActivityIndicator size="large" color={primaryColor} />
               <Text style={s.loadingText}>Loading...</Text>
             </View>
           ) : (
-            <ScrollView horizontal style={s.horizontalScroll}>
+            <ScrollView
+              ref={horizontalScrollRef}
+              horizontal
+              style={s.horizontalScroll}
+              scrollEventThrottle={16}
+              onScroll={(e) => {
+                scrollXRef.current = e.nativeEvent.contentOffset.x;
+              }}
+            >
               <View style={{ width: totalWidth }}>
                 {/* Sticky header row */}
                 <View style={s.headerRow}>
-                  {columns.map((col) => (
-                    <View
-                      key={col.key}
-                      style={[s.headerCell, { width: getColWidth(col) }]}
-                    >
-                      {col.key === "checkbox" ? (
-                        <TouchableOpacity
-                          style={s.headerCellInner}
-                          onPress={handleSelectAll}
-                        >
-                          <Ionicons
-                            name={
-                              members.length > 0 && selectedIds.size === members.length
-                                ? "checkbox"
-                                : selectedIds.size > 0
-                                  ? "remove-outline"
-                                  : "square-outline"
-                            }
-                            size={18}
-                            color={selectedIds.size > 0 ? primaryColor : "#9CA3AF"}
-                          />
-                        </TouchableOpacity>
-                      ) : (
-                        <TouchableOpacity
-                          style={s.headerCellInner}
-                          onPress={() => col.sortable && handleSort(col.key, col.serverSortKey)}
-                          disabled={!col.sortable}
-                        >
-                          <Text
-                            style={[
-                              s.headerText,
-                              (sortField === col.serverSortKey || sortField === col.key) && s.headerTextActive,
-                            ]}
-                            numberOfLines={1}
+                  {columns.map((col) => {
+                    const isSystemCol = col.key === "checkbox" || col.key === "rowNum";
+                    const isDraggable = Platform.OS === "web" && !isSystemCol;
+                    const isDragOver = dragOverColumnKey === col.key && dragColumnKey !== col.key;
+
+                    const cellStyle = StyleSheet.flatten([
+                      s.headerCell,
+                      { width: getColWidth(col) },
+                      dragColumnKey === col.key && { opacity: 0.4 },
+                      isDragOver && { borderLeftWidth: 2, borderLeftColor: primaryColor },
+                    ]);
+
+                    const cellChildren = (
+                      <>
+                        {col.key === "checkbox" ? (
+                          <TouchableOpacity
+                            style={s.headerCellInner}
+                            onPress={handleSelectAll}
                           >
-                            {col.label}
-                          </Text>
-                          {col.sortable && (sortField === col.serverSortKey || sortField === col.key) && (
                             <Ionicons
-                              name={sortDirection === "asc" ? "arrow-up" : "arrow-down"}
-                              size={12}
-                              color={primaryColor}
+                              name={
+                                members.length > 0 && selectedIds.size === members.length
+                                  ? "checkbox"
+                                  : selectedIds.size > 0
+                                    ? "remove-outline"
+                                    : "square-outline"
+                              }
+                              size={18}
+                              color={selectedIds.size > 0 ? primaryColor : "#9CA3AF"}
                             />
-                          )}
-                        </TouchableOpacity>
-                      )}
-                      {/* Resize handle */}
-                      {col.key !== "checkbox" && (
-                        <View
-                          style={s.resizeHandle}
-                          onStartShouldSetResponder={() => true}
-                          {...(Platform.OS === "web"
-                            ? { onMouseDown: (e: any) => handleResizeStart(col.key, e) }
-                            : {})}
-                        />
-                      )}
-                    </View>
-                  ))}
+                          </TouchableOpacity>
+                        ) : (
+                          <TouchableOpacity
+                            style={[s.headerCellInner, isDraggable && { cursor: "grab" } as any]}
+                            onPress={() => col.sortable && handleSort(col.key, col.serverSortKey)}
+                            disabled={!col.sortable}
+                          >
+                            <Text
+                              style={[
+                                s.headerText,
+                                (sortField === col.serverSortKey || sortField === col.key) && s.headerTextActive,
+                              ]}
+                              numberOfLines={1}
+                            >
+                              {col.label}
+                            </Text>
+                            {col.sortable && (sortField === col.serverSortKey || sortField === col.key) && (
+                              <Ionicons
+                                name={sortDirection === "asc" ? "arrow-up" : "arrow-down"}
+                                size={12}
+                                color={primaryColor}
+                              />
+                            )}
+                          </TouchableOpacity>
+                        )}
+                        {/* Resize handle */}
+                        {col.key !== "checkbox" && (
+                          <View
+                            style={s.resizeHandle}
+                            onStartShouldSetResponder={() => true}
+                            {...(Platform.OS === "web"
+                              ? { onMouseDown: (e: any) => handleResizeStart(col.key, e) }
+                              : {})}
+                          />
+                        )}
+                      </>
+                    );
+
+                    // On web, use React.createElement('div') so HTML5 drag attributes work
+                    // (RN Web View strips unknown DOM attributes like draggable)
+                    if (isDraggable) {
+                      return React.createElement('div', {
+                        key: col.key,
+                        style: cellStyle,
+                        draggable: true,
+                        onDragStart: (e: any) => handleDragStart(col.key, e),
+                        onDragOver: (e: any) => handleDragOver(col.key, e),
+                        onDragEnd: handleDragEnd,
+                        onDrop: (e: any) => handleDrop(col.key, e),
+                        onContextMenu: (e: any) => {
+                          e.preventDefault();
+                          setHeaderContextMenu({
+                            colKey: col.key,
+                            colLabel: col.label,
+                            top: e.clientY,
+                            left: e.clientX,
+                          });
+                        },
+                      }, cellChildren);
+                    }
+
+                    return (
+                      <View key={col.key} style={cellStyle}>
+                        {cellChildren}
+                      </View>
+                    );
+                  })}
                 </View>
 
                 {/* Data rows */}
@@ -1839,18 +2053,29 @@ export function FollowupDesktopTable({
                           }
                         : {})}
                     >
-                      {columns.map((col) => (
-                        <View
-                          key={col.key}
-                          style={[
-                            s.dataCell,
-                            { width: getColWidth(col) },
-                            editableColumns.has(col.key) && s.dataCellEditable,
-                          ]}
-                        >
-                          {renderCellContent(col, item, rowIndex)}
-                        </View>
-                      ))}
+                      {columns.map((col) => {
+                        const isEditable = editableColumns.has(col.key);
+                        const cellId = `${item._id}:${col.key}`;
+                        return (
+                          <View
+                            key={col.key}
+                            style={[
+                              s.dataCell,
+                              { width: getColWidth(col) },
+                              isEditable && s.dataCellEditable,
+                              isEditable && hoveredCellId === cellId && s.dataCellEditableHovered,
+                            ]}
+                            {...(Platform.OS === "web" && isEditable
+                              ? {
+                                  onMouseEnter: () => setHoveredCellId(cellId),
+                                  onMouseLeave: () => setHoveredCellId(null),
+                                }
+                              : {})}
+                          >
+                            {renderCellContent(col, item, rowIndex)}
+                          </View>
+                        );
+                      })}
                     </TouchableOpacity>
                   ))}
                   {!hasTextSearch && paginationStatus === "LoadingMore" && (
@@ -1880,16 +2105,20 @@ export function FollowupDesktopTable({
               <FollowupSettingsPanel
                 groupId={groupId}
                 crossGroupMode={crossGroupMode}
-                crossGroupColConfig={crossGroupColConfig}
-                onCrossGroupColConfigChange={(newConfig) => {
-                  setCrossGroupColConfig(newConfig);
-                  if (Platform.OS === "web") {
-                    try {
-                      localStorage.setItem(CROSS_GROUP_COL_CONFIG_KEY, JSON.stringify(newConfig));
-                    } catch { /* localStorage unavailable */ }
-                  }
+                currentColumnOrder={localColumnOrder ?? columnConfig?.columnOrder ?? allColumnKeys}
+                currentHiddenColumns={localHiddenColumns ?? columnConfig?.hiddenColumns ?? []}
+                columnLabels={columnLabelMap}
+                onColumnChange={(order, hidden) => {
+                  setLocalColumnOrder(order);
+                  setLocalHiddenColumns(hidden);
                 }}
-                onClose={() => setShowSettingsPanel(false)}
+                onClose={() => {
+                  // Revert to pre-settings column state
+                  setLocalColumnOrder(preSettingsSnapshot?.columnOrder ?? null);
+                  setLocalHiddenColumns(preSettingsSnapshot?.hiddenColumns ?? null);
+                  setPreSettingsSnapshot(null);
+                  setShowSettingsPanel(false);
+                }}
               />
             </View>
           </>
@@ -1934,6 +2163,24 @@ export function FollowupDesktopTable({
           );
         })() : null}
       </View>
+
+      {/* Backdrop to dismiss dropdowns */}
+      {dropdownPos && (assigneeDropdownFor || statusDropdownFor || customDropdownFor) && (
+        <TouchableOpacity
+          style={{
+            position: "fixed" as any,
+            top: 0, left: 0, right: 0, bottom: 0,
+            zIndex: 9998,
+          }}
+          activeOpacity={1}
+          onPress={() => {
+            setAssigneeDropdownFor(null);
+            setStatusDropdownFor(null);
+            setCustomDropdownFor(null);
+            setDropdownPos(null);
+          }}
+        />
+      )}
 
       {/* Dropdown portal — rendered outside the ScrollView at fixed position */}
       {dropdownPos && assigneeDropdownFor && activeDropdownMember && (
@@ -2002,11 +2249,35 @@ export function FollowupDesktopTable({
                 </TouchableOpacity>
               );
             })}
+            {crossGroupAssignees.map((group) => (
+              <View key={group.groupId}>
+                <View style={s.dropdownGroupHeader}>
+                  <Text style={s.dropdownGroupHeaderText}>{group.groupName}</Text>
+                </View>
+                {group.leaders.map((leader) => (
+                  <View key={leader.userId} style={[s.dropdownItem, { opacity: 0.5 }]}>
+                    <Ionicons name="checkbox" size={16} color="#9CA3AF" />
+                    <Avatar
+                      name={`${leader.firstName} ${leader.lastName}`}
+                      imageUrl={leader.profilePhoto}
+                      size={24}
+                    />
+                    <Text style={[s.dropdownItemText, { color: "#9CA3AF" }]}>
+                      {leader.firstName} {leader.lastName}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            ))}
           </ScrollView>
           {getAssigneeIds(activeDropdownMember).length > 0 && (
             <TouchableOpacity
               style={[s.dropdownItem, s.dropdownItemDanger]}
-              onPress={() => handleAssigneeSelect(activeDropdownMember.groupMemberId, [])}
+              onPress={() => {
+                // Preserve cross-group assignees — only clear current group's assignments
+                const crossIds = crossGroupAssignees.flatMap((g) => g.leaders.map((l) => l.userId));
+                handleAssigneeSelect(activeDropdownMember.groupMemberId, crossIds);
+              }}
             >
               <Text style={[s.dropdownItemText, { color: "#FF3B30" }]}>Clear all assignees</Text>
             </TouchableOpacity>
@@ -2195,6 +2466,90 @@ export function FollowupDesktopTable({
           setShowCsvImportModal(false);
           setSelectedIds(new Set());
         }}
+      />
+
+      {/* Save view modal */}
+      {groupData?.communityId && (
+        <SaveViewModal
+          visible={showSaveViewModal}
+          onClose={() => {
+            setShowSaveViewModal(false);
+            // Clear unsaved column changes after saving
+            setLocalColumnOrder(null);
+            setLocalHiddenColumns(null);
+          }}
+          communityId={groupData.communityId}
+          currentSortBy={sortField}
+          currentSortDirection={sortDirection}
+          currentColumnOrder={localColumnOrder ?? columnConfig?.columnOrder}
+          currentHiddenColumns={localHiddenColumns ?? columnConfig?.hiddenColumns}
+          currentFilters={{
+            groupId: groupId as any,
+            statusFilter: parsedQuery.statusFilter,
+            assigneeFilter: parsedQuery.assigneeFilter,
+            scoreField: parsedQuery.scoreField,
+            scoreMin: parsedQuery.scoreMin,
+            scoreMax: parsedQuery.scoreMax,
+          }}
+          isAdmin={groupData?.userRole === "admin"}
+        />
+      )}
+
+      {/* Column header context menu (web only) */}
+      {headerContextMenu && Platform.OS === "web" && (
+        <>
+          <Pressable
+            style={s.contextMenuBackdrop}
+            onPress={() => setHeaderContextMenu(null)}
+          />
+          <View
+            style={[
+              s.contextMenu,
+              { top: headerContextMenu.top, left: headerContextMenu.left },
+            ]}
+          >
+            <TouchableOpacity
+              style={s.contextMenuItem}
+              onPress={() => {
+                const currentOrder = localColumnOrder ?? allColumnKeys;
+                const currentHidden = localHiddenColumns ?? [];
+                setLocalColumnOrder(currentOrder);
+                setLocalHiddenColumns([...currentHidden, headerContextMenu.colKey]);
+                setActiveViewId(null);
+                setHeaderContextMenu(null);
+              }}
+            >
+              <Ionicons name="eye-off-outline" size={14} color="#374151" />
+              <Text style={s.contextMenuText}>
+                Hide "{headerContextMenu.colLabel}"
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </>
+      )}
+
+      {/* Delete view confirmation modal */}
+      <ConfirmModal
+        visible={!!viewToDelete}
+        title={`Delete "${viewToDelete?.name ?? ""}"?`}
+        message={
+          viewToDelete?.isShared
+            ? `"${viewToDelete.name}" is shared with your team. Deleting it will remove it for everybody.`
+            : "This view will be permanently deleted."
+        }
+        onConfirm={async () => {
+          if (!viewToDelete) return;
+          if (activeViewId === viewToDelete.id) {
+            setActiveViewId(null);
+            setLocalColumnOrder(null);
+            setLocalHiddenColumns(null);
+          }
+          await deleteViewMut({ viewId: viewToDelete.id as Id<"peopleSavedViews"> });
+          setViewToDelete(null);
+        }}
+        onCancel={() => setViewToDelete(null)}
+        confirmText="Delete"
+        destructive
       />
     </View>
   );
@@ -2432,6 +2787,10 @@ const s = StyleSheet.create({
   },
   dataCellEditable: {
     backgroundColor: "#F0F7FF",
+    ...(Platform.OS === "web" ? { cursor: "cell" as any } : {}),
+  },
+  dataCellEditableHovered: {
+    backgroundColor: "#DBEAFE",
   },
   rowNumText: {
     fontSize: 12,
@@ -2623,6 +2982,21 @@ const s = StyleSheet.create({
     fontSize: 13,
     color: "#374151",
   },
+  dropdownGroupHeader: {
+    paddingHorizontal: 10,
+    paddingTop: 10,
+    paddingBottom: 4,
+    borderTopWidth: 1,
+    borderTopColor: "#F3F4F6",
+    marginTop: 4,
+  },
+  dropdownGroupHeaderText: {
+    fontSize: 11,
+    fontWeight: "600" as const,
+    color: "#9CA3AF",
+    textTransform: "uppercase" as const,
+    letterSpacing: 0.5,
+  },
 
   // Side sheet
   divider: {
@@ -2696,5 +3070,69 @@ const s = StyleSheet.create({
     fontSize: 13,
     fontWeight: "600" as const,
     color: "#fff",
+  },
+
+  // Unsaved column changes bar
+  unsavedBar: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    backgroundColor: "#F9FAFB",
+    borderBottomWidth: 1,
+    borderBottomColor: "#E5E7EB",
+  },
+  unsavedText: {
+    fontSize: 12,
+    color: "#6B7280",
+    flex: 1,
+  },
+  unsavedAction: {
+    fontSize: 12,
+    fontWeight: "600" as const,
+  },
+  unsavedDiscard: {
+    fontSize: 12,
+    color: "#9CA3AF",
+  },
+
+  // Column header context menu
+  contextMenuBackdrop: {
+    ...(Platform.OS === "web" ? {
+      position: "fixed" as any,
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      zIndex: 9998,
+    } : {}),
+  },
+  contextMenu: {
+    ...(Platform.OS === "web" ? {
+      position: "fixed" as any,
+      zIndex: 9999,
+      backgroundColor: "#fff",
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: "#E5E7EB",
+      shadowColor: "#000",
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.15,
+      shadowRadius: 12,
+      paddingVertical: 4,
+      minWidth: 180,
+    } : {}),
+  },
+  contextMenuItem: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  contextMenuText: {
+    fontSize: 13,
+    color: "#374151",
   },
 });

@@ -399,6 +399,13 @@ export const add = mutation({
         { groupId: args.groupId, groupMemberId: existingMember._id }
       );
 
+      // Recompute community score for reactivated member
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.communityScoreComputation.recomputeForGroupMember,
+        { groupId: args.groupId, userId: args.userId }
+      );
+
       // userToAdd was already fetched and validated above
       return {
         id: existingMember._id,
@@ -452,6 +459,13 @@ export const add = mutation({
       0,
       internal.functions.followupScoreComputation.computeSingleMemberScore,
       { groupId: args.groupId, groupMemberId: memberId }
+    );
+
+    // Recompute community score for new member
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.communityScoreComputation.recomputeForGroupMember,
+      { groupId: args.groupId, userId: args.userId }
     );
 
     return {

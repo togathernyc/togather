@@ -155,14 +155,15 @@ crons.daily(
 );
 
 // =============================================================================
-// COMMUNITY SCORE REFRESH (disabled until system_scores feature flag is enabled)
+// COMMUNITY SCORE REFRESH
 // =============================================================================
-// When ready, uncomment to run daily at 7:30 UTC (2:30 AM EST):
-//
-// crons.daily(
-//   "daily community scores refresh",
-//   { hourUTC: 7, minuteUTC: 30 },
-//   internal.functions.communityScoreComputation.dailyRefreshAllCommunityScores
-// );
+// Runs daily at 7:30 UTC (2:30 AM EST) to refresh community-level scores
+// (Service, Attendance, Togather) for all communityPeople rows.
+
+crons.daily(
+  "daily community scores refresh",
+  { hourUTC: 7, minuteUTC: 30 },
+  internal.functions.communityScoreComputation.dailyRefreshAllCommunityScores
+);
 
 export default crons;

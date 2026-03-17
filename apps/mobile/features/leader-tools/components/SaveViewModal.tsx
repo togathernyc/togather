@@ -41,6 +41,8 @@ interface SaveViewModalProps {
     name: string;
     visibility: "personal" | "shared";
   } | null;
+  // Only admins can create/edit shared views
+  isAdmin?: boolean;
 }
 
 // ============================================================================
@@ -63,6 +65,7 @@ export function SaveViewModal({
   currentHiddenColumns,
   currentFilters,
   editingView,
+  isAdmin,
 }: SaveViewModalProps) {
   const { primaryColor } = useCommunityTheme();
   const [name, setName] = useState("");
@@ -194,30 +197,32 @@ export function SaveViewModal({
                 Just me
               </Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                styles.visibilityOption,
-                visibility === "shared" && {
-                  borderColor: primaryColor,
-                  backgroundColor: primaryColor + "10",
-                },
-              ]}
-              onPress={() => setVisibility("shared")}
-            >
-              <Ionicons
-                name="people-outline"
-                size={16}
-                color={visibility === "shared" ? primaryColor : "#6B7280"}
-              />
-              <Text
+            {isAdmin && (
+              <TouchableOpacity
                 style={[
-                  styles.visibilityText,
-                  visibility === "shared" && { color: primaryColor, fontWeight: "600" as const },
+                  styles.visibilityOption,
+                  visibility === "shared" && {
+                    borderColor: primaryColor,
+                    backgroundColor: primaryColor + "10",
+                  },
                 ]}
+                onPress={() => setVisibility("shared")}
               >
-                Everyone
-              </Text>
-            </TouchableOpacity>
+                <Ionicons
+                  name="people-outline"
+                  size={16}
+                  color={visibility === "shared" ? primaryColor : "#6B7280"}
+                />
+                <Text
+                  style={[
+                    styles.visibilityText,
+                    visibility === "shared" && { color: primaryColor, fontWeight: "600" as const },
+                  ]}
+                >
+                  Everyone
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 
