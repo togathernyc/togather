@@ -94,59 +94,6 @@ export function getSystemScoreValue(
   return member[scoreSlot] ?? undefined;
 }
 
-const DEV_FAKE_ZIP_CODES = [
-  "10001", "10003", "10011", "10019", "10025", "10027", "10032", "10039",
-  "10128", "10314", "10458", "10467", "11101", "11106", "11201", "11205",
-  "11215", "11218", "11221", "11226", "11233", "11238", "11354", "11368",
-  "11372", "11375", "11385", "11415", "11432", "11691", "07030", "07302",
-] as const;
-
-function hashString(value: string): number {
-  let hash = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
-  }
-  return hash;
-}
-
-function getSyntheticZipCode(seed: string): string {
-  return DEV_FAKE_ZIP_CODES[hashString(seed) % DEV_FAKE_ZIP_CODES.length];
-}
-
-type MemberWithZipCode = {
-  _id?: string;
-  userId?: string;
-  zipCode?: string | null;
-};
-
-export function applyDevZipCodeSample<T extends MemberWithZipCode>(members: T[]): T[] {
-  if (!__DEV__ || members.length === 0) return members;
-
-  const selectedIds = new Set(
-    members
-      .filter((member) => !member.zipCode)
-      .map((member) => ({
-        key: String(member.userId ?? member._id ?? ""),
-        rank: hashString(String(member._id ?? member.userId ?? "")),
-      }))
-      .sort((a, b) => a.rank - b.rank)
-      .slice(0, 1000)
-      .map((member) => member.key),
-  );
-
-  if (selectedIds.size === 0) return members;
-
-  return members.map((member) => {
-    if (member.zipCode) return member;
-    const key = String(member.userId ?? member._id ?? "");
-    if (!selectedIds.has(key)) return member;
-    return {
-      ...member,
-      zipCode: getSyntheticZipCode(key),
-    };
-  });
-}
-
 /**
  * Adapt a communityPeople record into the FollowupMember shape
  * expected by FollowupDesktopTable and FollowupMobileGrid.
@@ -162,7 +109,6 @@ export function adaptCommunityPerson(cp: any) {
     avatarUrl: cp.avatarUrl,
     email: cp.email,
     phone: cp.phone,
-    zipCode: cp.zipCode,
     score1: cp.score1 ?? 0,
     score2: cp.score2 ?? 0,
     score3: cp.score3 ?? 0,

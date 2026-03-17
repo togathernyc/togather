@@ -16,11 +16,14 @@ pnpm dev
 
 ---
 
-## Agent Backend Selection Policy
+## Agent Backend Selection Policy (Maintainer CI Agents Only)
 
-- Allowed backend names: `togather-agent-1`, `togather-agent-2`.
+> **Open-source contributors**: This section does not apply to you. Create your own personal Convex deployment via `npx convex dev` — see `CLAUDE.md` for setup instructions.
+
+- Allowed backend names are defined in `config/allowed-backends.json`.
 - Required launcher command: `pnpm dev:backend --backend=<choice>`.
 - Startup fails fast if `CONVEX_DEPLOYMENT` or `EXPO_PUBLIC_CONVEX_URL` conflicts with the selected backend mapping.
+- Each concurrent agent must use a different backend to avoid data conflicts.
 
 ---
 

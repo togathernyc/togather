@@ -875,7 +875,6 @@ export const getScoredDataForUsers = internalQuery({
           avatarUrl: existing.avatarUrl,
           email: existing.email,
           phone: existing.phone,
-          zipCode: existing.zipCode,
           searchText: existing.searchText,
           score1: existing.score1,
           score2: existing.score2,

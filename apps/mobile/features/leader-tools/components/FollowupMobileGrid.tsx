@@ -40,7 +40,6 @@ import {
   SYSTEM_SCORE_COLUMNS,
   normalizeSubtitleVariableIds,
   adaptCommunityPerson,
-  applyDevZipCodeSample,
 } from "./followupShared";
 import { PeopleViewBar } from "./PeopleViewBar";
 import { SaveViewModal } from "./SaveViewModal";
@@ -466,7 +465,7 @@ export function FollowupMobileGrid({
     { initialNumItems: 50 },
   );
   const perGroupRawMembers = useMemo(
-    () => applyDevZipCodeSample(perGroupRawMembersRaw.map(adaptCommunityPerson)),
+    () => perGroupRawMembersRaw.map(adaptCommunityPerson),
     [perGroupRawMembersRaw],
   );
 
@@ -501,10 +500,7 @@ export function FollowupMobileGrid({
       : "skip",
   );
   const perGroupSearchResults = useMemo(
-    () =>
-      perGroupSearchResultsRaw
-        ? applyDevZipCodeSample(perGroupSearchResultsRaw.map(adaptCommunityPerson))
-        : undefined,
+    () => perGroupSearchResultsRaw?.map(adaptCommunityPerson) ?? undefined,
     [perGroupSearchResultsRaw],
   );
 

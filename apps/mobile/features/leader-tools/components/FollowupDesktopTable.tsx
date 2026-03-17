@@ -42,7 +42,6 @@ import {
   SYSTEM_SCORE_COLUMNS,
   getSystemScoreValue,
   adaptCommunityPerson,
-  applyDevZipCodeSample,
 } from "./followupShared";
 import { PeopleViewBar } from "./PeopleViewBar";
 import { SaveViewModal } from "./SaveViewModal";
@@ -929,7 +928,7 @@ export function FollowupDesktopTable({
     // Adapt community people records to FollowupMember shape
     const adapted: FollowupMember[] = crossGroupMode
       ? (raw as FollowupMember[])
-      : applyDevZipCodeSample(raw.map((r: any) => adaptCommunityPerson(r)));
+      : raw.map((r: any) => adaptCommunityPerson(r));
     const filtered = applyParsedFollowupFilters(adapted, parsedQuery);
 
     if (!isClientSideSort || filtered.length === 0) return filtered;
