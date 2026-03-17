@@ -1,18 +1,18 @@
 {
   "togather-agent-1": {
-    "CONVEX_DEPLOYMENT": "dev:togather-agent-1",
-    "EXPO_PUBLIC_CONVEX_URL": "https://togather-agent-1.convex.cloud"
+    "CONVEX_DEPLOYMENT": "dev:deafening-iguana-337",
+    "EXPO_PUBLIC_CONVEX_URL": "https://deafening-iguana-337.convex.cloud"
   },
   "togather-agent-2": {
-    "CONVEX_DEPLOYMENT": "dev:togather-agent-2",
-    "EXPO_PUBLIC_CONVEX_URL": "https://togather-agent-2.convex.cloud"
+    "CONVEX_DEPLOYMENT": "dev:notable-eagle-238",
+    "EXPO_PUBLIC_CONVEX_URL": "https://notable-eagle-238.convex.cloud"
   },
   "togather-agent-3": {
-    "CONVEX_DEPLOYMENT": "dev:togather-agent-3",
-    "EXPO_PUBLIC_CONVEX_URL": "https://togather-agent-3.convex.cloud"
+    "CONVEX_DEPLOYMENT": "dev:good-duck-511",
+    "EXPO_PUBLIC_CONVEX_URL": "https://good-duck-511.convex.cloud"
   },
   "togather-agent-4": {
-    "CONVEX_DEPLOYMENT": "dev:togather-agent-4",
-    "EXPO_PUBLIC_CONVEX_URL": "https://togather-agent-4.convex.cloud"
+    "CONVEX_DEPLOYMENT": "dev:proficient-echidna-950",
+    "EXPO_PUBLIC_CONVEX_URL": "https://proficient-echidna-950.convex.cloud"
   }
 }
