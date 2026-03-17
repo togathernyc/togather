@@ -684,6 +684,33 @@ export function ExploreMap({
     };
   }, [mapLoaded, groups.length, selectedGroupId]);
 
+  // Resize the web map when its container becomes visible or changes size.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !map.current || !mapContainer.current) return;
+
+    const resizeMap = () => {
+      if (!map.current) return;
+      map.current.resize();
+    };
+
+    const rafId = requestAnimationFrame(resizeMap);
+    const timeoutId = window.setTimeout(resizeMap, 150);
+
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(() => {
+        resizeMap();
+      });
+      observer.observe(mapContainer.current);
+    }
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      window.clearTimeout(timeoutId);
+      observer?.disconnect();
+    };
+  }, [mapLoaded, groups.length, selectedGroupId]);
+
   // Notify bounds change when groups list changes (e.g., from filtering)
   useEffect(() => {
     if (mapLoaded) {

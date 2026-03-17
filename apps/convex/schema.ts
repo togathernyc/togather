@@ -67,6 +67,20 @@ export default defineSchema({
       ),
     ),
 
+
+    // Community-level custom alert definitions for People tab
+    alertConfig: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          variableId: v.string(),
+          operator: v.string(), // "above" | "below"
+          threshold: v.number(),
+          label: v.optional(v.string()),
+        }),
+      ),
+    ),
+
     // Denormalized field for full-text search (combines name and subdomain)
     searchText: v.optional(v.string()),
   })

@@ -2324,7 +2324,7 @@ export function FollowupDesktopTable({
             setViewToDelete({ id: viewId, name: viewName, isShared });
           }}
           onCreateView={() => setShowSaveViewModal(true)}
-          isAdmin={groupData?.userRole === "admin"}
+          isAdmin={user?.is_admin === true}
           specialViews={[{ id: FOLLOWUP_MAP_VIEW_ID, name: "Map", icon: "map-outline" }]}
         />
       )}
@@ -2627,6 +2627,8 @@ export function FollowupDesktopTable({
               <FollowupSettingsPanel
                 groupId={groupId}
                 crossGroupMode={crossGroupMode}
+                communityId={groupData?.communityId}
+                isAdmin={user?.is_admin === true}
                 currentColumnOrder={
                   localColumnOrder ?? columnConfig?.columnOrder ?? allColumnKeys
                 }
@@ -3140,7 +3142,7 @@ export function FollowupDesktopTable({
             scoreMin: parsedQuery.scoreMin,
             scoreMax: parsedQuery.scoreMax,
           }}
-          isAdmin={groupData?.userRole === "admin"}
+          isAdmin={user?.is_admin === true}
         />
       )}
 
