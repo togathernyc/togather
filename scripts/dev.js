@@ -96,7 +96,7 @@ function enforceAgentBackendSelection(env) {
     console.error('Allowed backends:');
     console.error(formatAllowedBackends());
     console.error('');
-    console.error('Ask the user: "Which backend should I use: togather-agent-1 or togather-agent-2?"');
+    console.error(`Ask the user: "Which backend should I use: ${getAllowedBackendNames().join(', ')}?"`);
     console.error('Then rerun: pnpm dev:backend --backend=<choice>');
     console.error('');
     process.exit(1);
@@ -490,7 +490,7 @@ function main() {
       console.error('');
       console.error('❌ Missing EXPO_PUBLIC_CONVEX_URL for selected backend in agent mode.');
       console.error('   Run with explicit backend selection:');
-      console.error('   pnpm dev:backend --backend=<togather-agent-1|togather-agent-2>');
+      console.error(`   pnpm dev:backend --backend=<${getAllowedBackendNames().join('|')}>`);
       console.error('');
       process.exit(1);
     }

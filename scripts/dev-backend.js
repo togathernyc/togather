@@ -69,7 +69,7 @@ function failMissingSelection(allowedNames) {
   console.error('Allowed backends:');
   console.error(allowedBackendLines(allowedNames));
   console.error('');
-  console.error('Ask the user: "Which backend should I use: togather-agent-1 or togather-agent-2?"');
+  console.error(`Ask the user: "Which backend should I use: ${allowedNames.join(', ')}?"`);
   console.error('Then rerun: pnpm dev:backend --backend=<choice>');
   console.error('');
   process.exit(1);
