@@ -35,6 +35,8 @@ import type * as functions_authInternal from "../functions/authInternal.js";
 import type * as functions_communities from "../functions/communities.js";
 import type * as functions_communityLandingPage from "../functions/communityLandingPage.js";
 import type * as functions_communityLandingPageActions from "../functions/communityLandingPageActions.js";
+import type * as functions_communityPeople from "../functions/communityPeople.js";
+import type * as functions_communityScoreComputation from "../functions/communityScoreComputation.js";
 import type * as functions_communityWideEvents from "../functions/communityWideEvents.js";
 import type * as functions_followupScoreComputation from "../functions/followupScoreComputation.js";
 import type * as functions_followupScoring from "../functions/followupScoring.js";
@@ -71,6 +73,7 @@ import type * as functions_messaging_readState from "../functions/messaging/read
 import type * as functions_messaging_sharedChannels from "../functions/messaging/sharedChannels.js";
 import type * as functions_messaging_typing from "../functions/messaging/typing.js";
 import type * as functions_migrations from "../functions/migrations.js";
+import type * as functions_migrations_migrateToCommunityPeople from "../functions/migrations/migrateToCommunityPeople.js";
 import type * as functions_notifications_actions from "../functions/notifications/actions.js";
 import type * as functions_notifications_debug from "../functions/notifications/debug.js";
 import type * as functions_notifications_index from "../functions/notifications/index.js";
@@ -91,6 +94,7 @@ import type * as functions_pcoServices_queries from "../functions/pcoServices/qu
 import type * as functions_pcoServices_rotation from "../functions/pcoServices/rotation.js";
 import type * as functions_pcoServices_runSheet from "../functions/pcoServices/runSheet.js";
 import type * as functions_pcoServices_servingHistory from "../functions/pcoServices/servingHistory.js";
+import type * as functions_peopleSavedViews from "../functions/peopleSavedViews.js";
 import type * as functions_resources from "../functions/resources.js";
 import type * as functions_scheduledJobs from "../functions/scheduledJobs.js";
 import type * as functions_seed from "../functions/seed.js";
@@ -110,6 +114,7 @@ import type * as functions_slackServiceBot_slack from "../functions/slackService
 import type * as functions_slackServiceBot_tools from "../functions/slackServiceBot/tools.js";
 import type * as functions_sync_memberships from "../functions/sync/memberships.js";
 import type * as functions_syncHelpers from "../functions/syncHelpers.js";
+import type * as functions_systemScoring from "../functions/systemScoring.js";
 import type * as functions_tasks_index from "../functions/tasks/index.js";
 import type * as functions_toolShortLinks_index from "../functions/toolShortLinks/index.js";
 import type * as functions_uploads from "../functions/uploads.js";
@@ -176,6 +181,8 @@ declare const fullApi: ApiFromModules<{
   "functions/communities": typeof functions_communities;
   "functions/communityLandingPage": typeof functions_communityLandingPage;
   "functions/communityLandingPageActions": typeof functions_communityLandingPageActions;
+  "functions/communityPeople": typeof functions_communityPeople;
+  "functions/communityScoreComputation": typeof functions_communityScoreComputation;
   "functions/communityWideEvents": typeof functions_communityWideEvents;
   "functions/followupScoreComputation": typeof functions_followupScoreComputation;
   "functions/followupScoring": typeof functions_followupScoring;
@@ -212,6 +219,7 @@ declare const fullApi: ApiFromModules<{
   "functions/messaging/sharedChannels": typeof functions_messaging_sharedChannels;
   "functions/messaging/typing": typeof functions_messaging_typing;
   "functions/migrations": typeof functions_migrations;
+  "functions/migrations/migrateToCommunityPeople": typeof functions_migrations_migrateToCommunityPeople;
   "functions/notifications/actions": typeof functions_notifications_actions;
   "functions/notifications/debug": typeof functions_notifications_debug;
   "functions/notifications/index": typeof functions_notifications_index;
@@ -232,6 +240,7 @@ declare const fullApi: ApiFromModules<{
   "functions/pcoServices/rotation": typeof functions_pcoServices_rotation;
   "functions/pcoServices/runSheet": typeof functions_pcoServices_runSheet;
   "functions/pcoServices/servingHistory": typeof functions_pcoServices_servingHistory;
+  "functions/peopleSavedViews": typeof functions_peopleSavedViews;
   "functions/resources": typeof functions_resources;
   "functions/scheduledJobs": typeof functions_scheduledJobs;
   "functions/seed": typeof functions_seed;
@@ -251,6 +260,7 @@ declare const fullApi: ApiFromModules<{
   "functions/slackServiceBot/tools": typeof functions_slackServiceBot_tools;
   "functions/sync/memberships": typeof functions_sync_memberships;
   "functions/syncHelpers": typeof functions_syncHelpers;
+  "functions/systemScoring": typeof functions_systemScoring;
   "functions/tasks/index": typeof functions_tasks_index;
   "functions/toolShortLinks/index": typeof functions_toolShortLinks_index;
   "functions/uploads": typeof functions_uploads;
