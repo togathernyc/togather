@@ -6,6 +6,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TouchableOpacity,
   View,
 } from "react-native";
 import Constants from "expo-constants";
@@ -42,6 +43,9 @@ interface FollowupMapViewProps {
   onOpenMember: (memberId: string) => void;
   loading?: boolean;
   emptyText?: string;
+  allMembers?: FollowupMapMember[];
+  onLoadAll?: () => void;
+  isLoadingAll?: boolean;
 }
 
 function toNumericId(input: string): number {
@@ -62,6 +66,9 @@ export function FollowupMapView({
   onOpenMember,
   loading = false,
   emptyText = "No members with ZIP codes are available for map view.",
+  allMembers,
+  onLoadAll,
+  isLoadingAll = false,
 }: FollowupMapViewProps) {
   const { primaryColor } = useCommunityTheme();
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
@@ -69,9 +76,11 @@ export function FollowupMapView({
   const [placementsLoading, setPlacementsLoading] = useState(false);
   const [markerGroups, setMarkerGroups] = useState<MarkerGroup[]>([]);
 
+  const effectiveMembers = allMembers && allMembers.length > 0 ? allMembers : members;
+
   useEffect(() => {
     let cancelled = false;
-    const membersWithZip = members.filter((member) => member.zipCode?.trim());
+    const membersWithZip = effectiveMembers.filter((member) => member.zipCode?.trim());
 
     if (membersWithZip.length === 0) {
       setMarkerGroups([]);
@@ -126,12 +135,12 @@ export function FollowupMapView({
     return () => {
       cancelled = true;
     };
-  }, [members]);
+  }, [effectiveMembers]);
 
   const mappedMembers = useMemo(() => {
     const markerMemberIds = new Set(markerGroups.map((marker) => marker._memberId));
-    return members.filter((member) => markerMemberIds.has(member.groupMemberId));
-  }, [markerGroups, members]);
+    return effectiveMembers.filter((member) => markerMemberIds.has(member.groupMemberId));
+  }, [markerGroups, effectiveMembers]);
 
   const visibleMembers = useMemo(() => {
     if (visibleMemberIds.size === 0) return mappedMembers;
@@ -162,7 +171,7 @@ export function FollowupMapView({
   }, []);
 
   const loadingState = loading || placementsLoading;
-  const unmappedCount = members.length - mappedMembers.length;
+  const unmappedCount = effectiveMembers.length - mappedMembers.length;
   const isDesktopWeb = Platform.OS === "web";
 
   return (
@@ -179,6 +188,26 @@ export function FollowupMapView({
           <Ionicons name="eye-outline" size={14} color="#475569" />
           <Text style={styles.summaryText}>{visibleMembers.length} visible</Text>
         </View>
+        {onLoadAll && !allMembers && (
+          <TouchableOpacity
+            onPress={onLoadAll}
+            disabled={isLoadingAll}
+            style={[
+              styles.summaryChip,
+              { backgroundColor: primaryColor, borderColor: primaryColor },
+              isLoadingAll && { opacity: 0.6 },
+            ]}
+          >
+            {isLoadingAll ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Ionicons name="globe-outline" size={14} color="#FFFFFF" />
+            )}
+            <Text style={[styles.summaryText, { color: "#FFFFFF" }]}>
+              {isLoadingAll ? "Loading..." : "Load all ZIP codes"}
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       <View style={[styles.contentRow, isDesktopWeb ? styles.contentRowDesktop : null]}>

@@ -64,6 +64,7 @@ export interface User {
   phone_verified?: boolean;
   associated_emails?: string[];
   timezone?: string;
+  zip_code?: string;
   [key: string]: any; // Allow additional user properties
 }
 

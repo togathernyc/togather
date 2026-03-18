@@ -182,6 +182,7 @@ export function adaptCommunityPerson(cp: any) {
     status: cp.status,
     assigneeId: cp.assigneeIds?.[0],
     assigneeIds: cp.assigneeIds,
+    zipCode: cp.zipCode,
     customText1: cp.customText1,
     customText2: cp.customText2,
     customText3: cp.customText3,

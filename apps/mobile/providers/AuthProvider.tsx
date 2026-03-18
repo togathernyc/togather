@@ -332,6 +332,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         is_staff: convexUser.isStaff ?? false,
         is_superuser: convexUser.isSuperuser ?? false,
         timezone: convexUser.timezone,
+        zip_code: convexUser.zipCode ?? undefined,
         date_of_birth: convexUser.dateOfBirth ?? undefined,
         community_primary_color: convexUser.activeCommunityPrimaryColor ?? undefined,
         community_secondary_color: convexUser.activeCommunitySecondaryColor ?? undefined,

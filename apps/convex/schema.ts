@@ -1798,6 +1798,8 @@ export default defineSchema({
     .index("by_group_customBool3", ["groupId", "customBool3"])
     .index("by_group_customBool4", ["groupId", "customBool4"])
     .index("by_group_customBool5", ["groupId", "customBool5"])
+    .index("by_group_zipCode", ["groupId", "zipCode"])
+    .index("by_user", ["userId"])
     .searchIndex("search_communityPeople", {
       searchField: "searchText",
       filterFields: ["groupId", "status"],
