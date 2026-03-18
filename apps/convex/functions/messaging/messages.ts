@@ -209,24 +209,36 @@ export const getMessages = query({
       (m) => !m.isDeleted && (!m.senderId || !blockedUserIds.has(m.senderId)) && !m.parentMessageId
     );
 
+    // Compute last activity at query time (no storage): for each parent with replies,
+    // lastActivity = max(createdAt, latest reply's createdAt). Build from existing allMessages.
+    const lastReplyByParent = new Map<string, number>();
+    for (const m of allMessages) {
+      if (m.parentMessageId && !m.isDeleted) {
+        const parentId = m.parentMessageId.toString();
+        const existing = lastReplyByParent.get(parentId);
+        if (!existing || m.createdAt > existing) {
+          lastReplyByParent.set(parentId, m.createdAt);
+        }
+      }
+    }
+
+    const getLastActivity = (msg: { _id: Id<"chatMessages">; createdAt: number }) => {
+      const latestReply = lastReplyByParent.get(msg._id.toString());
+      return latestReply ?? msg.createdAt;
+    };
+
     // Sort by last activity (threads with new replies bump to top)
-    // Use lastActivityAt ?? createdAt so messages without lastActivityAt (legacy) sort by createdAt
     const sortedByActivity = [...topLevelMessages].sort((a, b) => {
-      const aTime = a.lastActivityAt ?? a.createdAt;
-      const bTime = b.lastActivityAt ?? b.createdAt;
-      return bTime - aTime; // Desc: most recent first
+      return getLastActivity(b) - getLastActivity(a); // Desc: most recent first
     });
 
-    // Apply cursor: skip messages with lastActivityAt >= cursor message's lastActivityAt
+    // Apply cursor: skip messages older than cursor (by last activity)
     let afterCursor = sortedByActivity;
     if (args.cursor) {
       const cursorMsg = sortedByActivity.find((m) => m._id === args.cursor);
       if (cursorMsg) {
-        const cursorTime = cursorMsg.lastActivityAt ?? cursorMsg.createdAt;
-        afterCursor = sortedByActivity.filter((m) => {
-          const mTime = m.lastActivityAt ?? m.createdAt;
-          return mTime < cursorTime;
-        });
+        const cursorTime = getLastActivity(cursorMsg);
+        afterCursor = sortedByActivity.filter((m) => getLastActivity(m) < cursorTime);
       }
     }
 
@@ -377,8 +389,6 @@ export const sendMessage = mutation({
       senderProfilePhoto,
       mentionedUserIds: args.mentionedUserIds,
       hideLinkPreview: args.hideLinkPreview,
-      // For top-level messages: lastActivityAt = createdAt (bumps when replies arrive)
-      ...(args.parentMessageId ? {} : { lastActivityAt: now }),
     });
 
     // Update channel with last message info (for inbox preview)
@@ -396,13 +406,12 @@ export const sendMessage = mutation({
       updatedAt: now,
     });
 
-    // If this is a thread reply, bump parent thread to top (update lastActivityAt)
+    // If this is a thread reply, increment parent's reply count
     if (args.parentMessageId) {
       const parentMessage = await ctx.db.get(args.parentMessageId);
       if (parentMessage) {
         await ctx.db.patch(args.parentMessageId, {
           threadReplyCount: (parentMessage.threadReplyCount || 0) + 1,
-          lastActivityAt: now, // Bump thread to most recent position in main feed
         });
       }
     }

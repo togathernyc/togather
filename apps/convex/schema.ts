@@ -1304,8 +1304,6 @@ export default defineSchema({
     // Threading
     parentMessageId: v.optional(v.id("chatMessages")),
     threadReplyCount: v.optional(v.number()),
-    /** For top-level messages: max(createdAt, latest reply time). Used to bump threads to top when replied. */
-    lastActivityAt: v.optional(v.number()),
     // Timestamps
     createdAt: v.number(), // Unix timestamp ms
     updatedAt: v.optional(v.number()), // Unix timestamp ms
