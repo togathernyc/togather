@@ -3,17 +3,17 @@
  *
  * Displays a prioritized status overlay at the bottom of the screen:
  * - Connection issues take highest priority (disconnected > no internet > slow > reconnecting > reconnected)
- * - OTA update states shown when connection is healthy (downloading > ready > checking > error)
+ * - OTA update states shown when connection is healthy (checking > error)
  * - Hidden when everything is nominal (connected + OTA idle)
+ *
+ * Note: OTA "downloading" and "ready" states are handled by OTAUpdateModal instead.
  *
  * The bar sits at the very bottom of the screen, filling through the safe area.
  * The tab bar uses useStatusBarVisible() to add extra padding when the bar is shown,
  * keeping tab icons and labels above the banner.
- *
- * When an OTA update is ready, the bar is tappable to restart the app.
  */
 import React from 'react';
-import { Text, Pressable, StyleSheet } from 'react-native';
+import { Text, View, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
@@ -21,7 +21,6 @@ import Animated, {
   useAnimatedStyle,
   withTiming,
 } from 'react-native-reanimated';
-import * as Updates from 'expo-updates';
 import { useConnectionStatus } from '@providers/ConnectionProvider';
 import { useOTAUpdateStatus } from '@providers/OTAUpdateProvider';
 
@@ -32,7 +31,6 @@ interface StatusConfig {
   backgroundColor: string;
   icon: keyof typeof Ionicons.glyphMap;
   text: string;
-  tappable?: boolean;
 }
 
 /**
@@ -92,26 +90,7 @@ function getActiveConfig(
     };
   }
 
-  // Priority 6: OTA downloading
-  if (otaStatus.status === 'downloading') {
-    return {
-      backgroundColor: '#007AFF',
-      icon: 'cloud-download-outline',
-      text: 'Downloading update...',
-    };
-  }
-
-  // Priority 7: OTA ready (tappable to restart)
-  if (otaStatus.status === 'ready') {
-    return {
-      backgroundColor: '#007AFF',
-      icon: 'checkmark-done-outline',
-      text: 'Update ready — tap to restart',
-      tappable: true,
-    };
-  }
-
-  // Priority 8: OTA checking
+  // Priority 6: OTA checking
   if (otaStatus.status === 'checking') {
     return {
       backgroundColor: '#8E8E93',
@@ -120,7 +99,7 @@ function getActiveConfig(
     };
   }
 
-  // Priority 9: OTA error (auto-dismisses via provider transitioning to idle)
+  // Priority 7: OTA error (auto-dismisses via provider transitioning to idle)
   if (otaStatus.status === 'error') {
     return {
       backgroundColor: '#8E8E93',
@@ -171,16 +150,6 @@ export function StatusBar() {
     transform: [{ translateY: translateY.value }],
   }));
 
-  // Allow taps only when the displayed config is explicitly tappable (i.e. OTA ready).
-  // This prevents tap-to-restart when a higher-priority connection error is shown.
-  const isTappable = config?.tappable === true;
-
-  const handlePress = () => {
-    if (isTappable && !__DEV__) {
-      Updates.reloadAsync();
-    }
-  };
-
   return (
     <Animated.View
       testID="status-bar"
@@ -193,13 +162,9 @@ export function StatusBar() {
         { backgroundColor: displayConfig?.backgroundColor ?? '#FF3B30' },
         animatedStyle,
       ]}
-      pointerEvents={isTappable ? 'auto' : 'none'}
+      pointerEvents="none"
     >
-      <Pressable
-        style={styles.pressableContent}
-        onPress={handlePress}
-        disabled={!isTappable}
-      >
+      <View style={styles.content}>
         {displayConfig && (
           <>
             <Ionicons
@@ -211,7 +176,7 @@ export function StatusBar() {
             <Text style={styles.text}>{displayConfig.text}</Text>
           </>
         )}
-      </Pressable>
+      </View>
     </Animated.View>
   );
 }
@@ -224,7 +189,7 @@ const styles = StyleSheet.create({
     right: 0,
     zIndex: 999,
   },
-  pressableContent: {
+  content: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',

@@ -32,6 +32,7 @@ import { TestFlightBanner } from "@components/ui/TestFlightBanner";
 import { StatusBar as BottomStatusBar, useStatusBarVisible, STATUS_BAR_CONTENT_HEIGHT } from "@components/ui/StatusBar";
 import { ConnectionProvider } from "@providers/ConnectionProvider";
 import { NativeUpdateModal } from "@components/ui/NativeUpdateModal";
+import { OTAUpdateModal } from "@components/ui/OTAUpdateModal";
 import { OTAUpdateProvider } from "@providers/OTAUpdateProvider";
 import { BirthdayCollectionModal } from "@components/legal/BirthdayCollectionModal";
 import { initializeMobileApiClient } from "@services/api/init";
@@ -121,6 +122,7 @@ function AppLayout() {
                 <PrefetchExecutorRegistration>
                   <StatusBarAwareContainer>
                     <NativeUpdateModal />
+                    <OTAUpdateModal />
                     <BirthdayCollectionModal />
                     <TestFlightBanner />
                     <Stack
