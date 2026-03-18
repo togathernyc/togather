@@ -55,7 +55,7 @@ export const OTAUpdateProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   // --- Background update check ---
   const checkForUpdates = useCallback(async () => {
-    console.log('[OTAUpdate] Starting update check...');
+    console.log('[OTAUpdate] Starting update check (v2)...');
     setStatus('checking');
     setErrorMessage(null);
 
