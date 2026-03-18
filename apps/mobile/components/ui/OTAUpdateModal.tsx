@@ -24,13 +24,22 @@ import { useOTAUpdateStatus } from '@providers/OTAUpdateProvider';
 
 export function OTAUpdateModal() {
   const { status } = useOTAUpdateStatus();
+  const [isRestarting, setIsRestarting] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
 
   // Only block on downloading or ready — never checking, error, or idle
   const isVisible = !__DEV__ && (status === 'downloading' || status === 'ready');
   const isReady = status === 'ready';
 
-  const handleInstall = () => {
-    Updates.reloadAsync();
+  const handleInstall = async () => {
+    setError(null);
+    setIsRestarting(true);
+    try {
+      await Updates.reloadAsync();
+    } catch (e) {
+      setIsRestarting(false);
+      setError('Failed to restart. Please close and reopen the app.');
+    }
   };
 
   if (!isVisible) return null;
@@ -62,14 +71,23 @@ export function OTAUpdateModal() {
               : 'Downloading the latest update. This will only take a moment.'}
           </Text>
 
+          {error && <Text style={styles.errorText}>{error}</Text>}
+
           {isReady && (
             <TouchableOpacity
-              style={styles.installButton}
+              style={[styles.installButton, isRestarting && styles.installButtonDisabled]}
               onPress={handleInstall}
               activeOpacity={0.8}
+              disabled={isRestarting}
             >
-              <Ionicons name="refresh-outline" size={20} color="#fff" />
-              <Text style={styles.installButtonText}>Restart Now</Text>
+              {isRestarting ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <>
+                  <Ionicons name="refresh-outline" size={20} color="#fff" />
+                  <Text style={styles.installButtonText}>{error ? 'Retry' : 'Restart Now'}</Text>
+                </>
+              )}
             </TouchableOpacity>
           )}
         </View>
@@ -133,9 +151,18 @@ const styles = StyleSheet.create({
     width: '100%',
     gap: 8,
   },
+  installButtonDisabled: {
+    opacity: 0.7,
+  },
   installButtonText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  errorText: {
+    color: '#FF3B30',
+    fontSize: 14,
+    textAlign: 'center',
+    marginBottom: 12,
   },
 });

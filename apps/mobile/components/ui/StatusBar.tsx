@@ -13,7 +13,7 @@
  * keeping tab icons and labels above the banner.
  */
 import React from 'react';
-import { Text, Pressable, StyleSheet } from 'react-native';
+import { Text, View, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
@@ -21,7 +21,6 @@ import Animated, {
   useAnimatedStyle,
   withTiming,
 } from 'react-native-reanimated';
-import * as Updates from 'expo-updates';
 import { useConnectionStatus } from '@providers/ConnectionProvider';
 import { useOTAUpdateStatus } from '@providers/OTAUpdateProvider';
 
@@ -32,7 +31,6 @@ interface StatusConfig {
   backgroundColor: string;
   icon: keyof typeof Ionicons.glyphMap;
   text: string;
-  tappable?: boolean;
 }
 
 /**
@@ -152,16 +150,6 @@ export function StatusBar() {
     transform: [{ translateY: translateY.value }],
   }));
 
-  // Allow taps only when the displayed config is explicitly tappable (i.e. OTA ready).
-  // This prevents tap-to-restart when a higher-priority connection error is shown.
-  const isTappable = config?.tappable === true;
-
-  const handlePress = () => {
-    if (isTappable && !__DEV__) {
-      Updates.reloadAsync();
-    }
-  };
-
   return (
     <Animated.View
       testID="status-bar"
@@ -174,13 +162,9 @@ export function StatusBar() {
         { backgroundColor: displayConfig?.backgroundColor ?? '#FF3B30' },
         animatedStyle,
       ]}
-      pointerEvents={isTappable ? 'auto' : 'none'}
+      pointerEvents="none"
     >
-      <Pressable
-        style={styles.pressableContent}
-        onPress={handlePress}
-        disabled={!isTappable}
-      >
+      <View style={styles.content}>
         {displayConfig && (
           <>
             <Ionicons
@@ -192,7 +176,7 @@ export function StatusBar() {
             <Text style={styles.text}>{displayConfig.text}</Text>
           </>
         )}
-      </Pressable>
+      </View>
     </Animated.View>
   );
 }
@@ -205,7 +189,7 @@ const styles = StyleSheet.create({
     right: 0,
     zIndex: 999,
   },
-  pressableContent: {
+  content: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
