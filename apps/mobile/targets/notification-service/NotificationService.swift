@@ -2,6 +2,39 @@ import Intents
 import UserNotifications
 
 final class NotificationService: UNNotificationServiceExtension {
+  private enum PayloadKey {
+    static let notificationType = "type"
+    static let communicationEnabled = "communicationNotification"
+    static let notificationStyle = "notificationStyle"
+    static let notificationIntent = "notificationIntent"
+    static let senderName = "senderName"
+    static let senderDisplayName = "senderDisplayName"
+    static let communicationSenderName = "communicationSenderName"
+    static let communicationAvatarUrl = "communicationAvatarUrl"
+    static let notificationImageUrl = "notificationImageUrl"
+    static let senderAvatarUrl = "senderAvatarUrl"
+    static let groupAvatarUrl = "groupAvatarUrl"
+    static let imageUrl = "imageUrl"
+    static let communicationBody = "communicationBody"
+    static let messagePreview = "messagePreview"
+    static let communicationConversationId = "communicationConversationId"
+    static let channelId = "channelId"
+    static let groupId = "groupId"
+    static let communicationGroupName = "communicationGroupName"
+    static let groupName = "groupName"
+  }
+
+  private struct CommunicationContent {
+    let senderDisplayName: String
+    let avatarImageUrl: String?
+    let messageBody: String
+    let conversationIdentifier: String?
+    let groupName: String?
+  }
+
+  // Backward compatibility for existing server payloads.
+  private let legacyCommunicationTypes: Set<String> = ["new_message", "mention"]
+
   private var contentHandler: ((UNNotificationContent) -> Void)?
   private var bestAttemptContent: UNMutableNotificationContent?
 
@@ -23,32 +56,26 @@ final class NotificationService: UNNotificationServiceExtension {
     }
 
     let payload = extractPayload(from: request.content.userInfo)
-    guard let notificationType = payloadString(for: "type", in: payload),
-          notificationType == "new_message" || notificationType == "mention" else {
+    guard shouldPromoteToCommunication(payload: payload) else {
       contentHandler(bestAttemptContent)
       return
     }
 
-    Task {
-      let senderDisplayName = request.content.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        ? "Someone"
-        : request.content.title
-      let senderAvatarUrl = payloadString(for: "senderAvatarUrl", in: payload)
-      let conversationIdentifier =
-        payloadString(for: "channelId", in: payload) ??
-        payloadString(for: "groupId", in: payload)
-      let groupName = payloadString(for: "groupName", in: payload)
-      let messageBody = request.content.body
+    let communicationContent = buildCommunicationContent(
+      payload: payload,
+      fallbackContent: request.content
+    )
 
+    Task {
       do {
-        let senderImage = try await fetchSenderImage(from: senderAvatarUrl)
+        let senderImage = try await fetchSenderImage(from: communicationContent.avatarImageUrl)
         let updatedContent = try await createCommunicationNotification(
           from: bestAttemptContent,
-          senderDisplayName: senderDisplayName,
+          senderDisplayName: communicationContent.senderDisplayName,
           senderImage: senderImage,
-          messageBody: messageBody,
-          conversationIdentifier: conversationIdentifier,
-          groupName: groupName
+          messageBody: communicationContent.messageBody,
+          conversationIdentifier: communicationContent.conversationIdentifier,
+          groupName: communicationContent.groupName
         )
         self.bestAttemptContent = updatedContent
         contentHandler(updatedContent)
@@ -171,6 +198,120 @@ final class NotificationService: UNNotificationServiceExtension {
     }
 
     return payload
+  }
+
+  private func shouldPromoteToCommunication(payload: [String: Any]) -> Bool {
+    if let explicit = payloadBool(for: PayloadKey.communicationEnabled, in: payload) {
+      return explicit
+    }
+
+    if let style = payloadString(for: PayloadKey.notificationStyle, in: payload)?.lowercased() {
+      if style == "communication" {
+        return true
+      }
+      if style == "standard" || style == "default" {
+        return false
+      }
+    }
+
+    if let intent = payloadString(for: PayloadKey.notificationIntent, in: payload)?.lowercased() {
+      if intent == "communication" || intent == "in_send_message" {
+        return true
+      }
+    }
+
+    guard let notificationType = payloadString(for: PayloadKey.notificationType, in: payload) else {
+      return false
+    }
+    return legacyCommunicationTypes.contains(notificationType)
+  }
+
+  private func buildCommunicationContent(
+    payload: [String: Any],
+    fallbackContent: UNNotificationContent
+  ) -> CommunicationContent {
+    let fallbackTitle = fallbackContent.title.trimmingCharacters(in: .whitespacesAndNewlines)
+    let senderDisplayName =
+      payloadString(for: PayloadKey.communicationSenderName, in: payload) ??
+      payloadString(for: PayloadKey.senderDisplayName, in: payload) ??
+      (!fallbackTitle.isEmpty ? fallbackTitle : nil) ??
+      payloadString(for: PayloadKey.senderName, in: payload) ??
+      "Someone"
+
+    let avatarImageUrl =
+      payloadString(for: PayloadKey.communicationAvatarUrl, in: payload) ??
+      payloadString(for: PayloadKey.notificationImageUrl, in: payload) ??
+      payloadString(for: PayloadKey.senderAvatarUrl, in: payload) ??
+      payloadString(for: PayloadKey.groupAvatarUrl, in: payload) ??
+      payloadString(for: PayloadKey.imageUrl, in: payload) ??
+      nestedPayloadString(keys: ["richContent", "image"], in: payload)
+
+    let messageBody =
+      payloadString(for: PayloadKey.communicationBody, in: payload) ??
+      payloadString(for: PayloadKey.messagePreview, in: payload) ??
+      fallbackContent.body
+
+    let conversationIdentifier =
+      payloadString(for: PayloadKey.communicationConversationId, in: payload) ??
+      payloadString(for: PayloadKey.channelId, in: payload) ??
+      payloadString(for: PayloadKey.groupId, in: payload)
+
+    let groupName =
+      payloadString(for: PayloadKey.communicationGroupName, in: payload) ??
+      payloadString(for: PayloadKey.groupName, in: payload)
+
+    return CommunicationContent(
+      senderDisplayName: senderDisplayName,
+      avatarImageUrl: avatarImageUrl,
+      messageBody: messageBody,
+      conversationIdentifier: conversationIdentifier,
+      groupName: groupName
+    )
+  }
+
+  private func nestedPayloadString(keys: [String], in payload: [String: Any]) -> String? {
+    guard !keys.isEmpty else {
+      return nil
+    }
+
+    var current: Any? = payload
+    for key in keys {
+      guard let dictionary = current as? [String: Any] else {
+        return nil
+      }
+      current = dictionary[key]
+    }
+
+    if let value = current as? String {
+      let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+      return trimmed.isEmpty ? nil : trimmed
+    }
+    if let value = current as? NSNumber {
+      return value.stringValue
+    }
+    return nil
+  }
+
+  private func payloadBool(for key: String, in payload: [String: Any]) -> Bool? {
+    if let value = payload[key] as? Bool {
+      return value
+    }
+
+    if let value = payload[key] as? NSNumber {
+      return value.boolValue
+    }
+
+    if let value = payload[key] as? String {
+      let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+      if ["true", "1", "yes", "y"].contains(normalized) {
+        return true
+      }
+      if ["false", "0", "no", "n"].contains(normalized) {
+        return false
+      }
+    }
+
+    return nil
   }
 
   private func payloadString(for key: String, in payload: [String: Any]) -> String? {
