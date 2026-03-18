@@ -1734,6 +1734,7 @@ export default defineSchema({
     // Leader actions (community-level)
     status: v.optional(v.string()),
     assigneeIds: v.optional(v.array(v.id("users"))),
+    assigneeSortKey: v.optional(v.string()),
     connectionPoint: v.optional(v.string()),
 
     // Followup metadata
@@ -1802,6 +1803,7 @@ export default defineSchema({
     .index("by_group_customBool4", ["groupId", "customBool4"])
     .index("by_group_customBool5", ["groupId", "customBool5"])
     .index("by_group_zipCode", ["groupId", "zipCode"])
+    .index("by_group_assigneeSortKey", ["groupId", "assigneeSortKey"])
     .index("by_user", ["userId"])
     .searchIndex("search_communityPeople", {
       searchField: "searchText",

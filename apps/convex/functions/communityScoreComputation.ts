@@ -424,6 +424,7 @@ export const upsertCommunityPeopleBatch = internalMutation({
           // Copy leader-set fields from sibling if exists
           status: siblingRecord?.status,
           assigneeIds: siblingRecord?.assigneeIds,
+          assigneeSortKey: siblingRecord?.assigneeSortKey,
           connectionPoint: siblingRecord?.connectionPoint,
           customText1: siblingRecord?.customText1,
           customText2: siblingRecord?.customText2,
