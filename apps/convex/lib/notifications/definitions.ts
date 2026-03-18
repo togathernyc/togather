@@ -344,6 +344,7 @@ export const newMessage: NotificationDefinition<MessageData> = {
       data: {
         type: 'new_message',
         groupId: ctx.data.groupId,
+        groupName: ctx.data.groupName,
         channelId: ctx.data.channelId,
         channelName: ctx.data.channelName,
         channelType: ctx.data.channelType, // "general" or "leaders" - enables direct routing (Issue #302)
@@ -365,6 +366,7 @@ export const mention: NotificationDefinition<MessageData> = {
       data: {
         type: 'mention',
         groupId: ctx.data.groupId,
+        groupName: ctx.data.groupName,
         channelId: ctx.data.channelId,
         channelName: ctx.data.channelName,
         channelType: ctx.data.channelType, // "general" or "leaders" - enables direct routing
