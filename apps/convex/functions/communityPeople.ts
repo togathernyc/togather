@@ -14,6 +14,7 @@
 import { v, ConvexError } from "convex/values";
 import { paginationOptsValidator } from "convex/server";
 import { query, mutation, internalMutation } from "../_generated/server";
+import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
 import { requireAuth } from "../lib/auth";
 import { isCommunityAdmin } from "../lib/permissions";
@@ -1351,7 +1352,8 @@ export const updateCommunityAlerts = mutation({
 
 /**
  * Backfill assigneeSortKey for existing communityPeople records that have
- * assigneeIds but no assigneeSortKey. Run via:
+ * assigneeIds but no assigneeSortKey. Processes in batches of 100 and
+ * auto-schedules continuation until all records are processed. Run via:
  *   npx convex run functions/communityPeople:backfillAssigneeSortKey
  */
 export const backfillAssigneeSortKey = internalMutation({
@@ -1374,6 +1376,14 @@ export const backfillAssigneeSortKey = internalMutation({
           updated++;
         }
       }
+    }
+
+    // Auto-continue with next batch if there are more records
+    if (!results.isDone) {
+      await ctx.scheduler.runAfter(0, internal.functions.communityPeople.backfillAssigneeSortKey, {
+        cursor: results.continueCursor,
+        batchSize,
+      });
     }
 
     return {
