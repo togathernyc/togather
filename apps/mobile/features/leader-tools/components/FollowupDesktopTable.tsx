@@ -2164,6 +2164,11 @@ export function FollowupDesktopTable({
 
   // Load-all state for map view — fetches all members with ZIP codes via a dedicated query
   const [loadAllMapMembers, setLoadAllMapMembers] = useState(false);
+
+  // Reset load-all state when switching groups to avoid auto-loading for new groups
+  useEffect(() => {
+    setLoadAllMapMembers(false);
+  }, [groupId]);
   const allMapMembersRaw = useAuthenticatedQuery(
     api.functions.communityPeople.listForMap,
     loadAllMapMembers && isMapViewActive && groupId
