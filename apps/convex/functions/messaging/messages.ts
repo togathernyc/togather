@@ -188,40 +188,44 @@ export const getMessages = query({
 
     const blockedUserIds = new Set(blockedUsers.map((b) => b.blockedId));
 
-    // Get messages
+    // Get all messages for this channel
     let allMessages = await ctx.db
       .query("chatMessages")
       .withIndex("by_channel_createdAt", (q) => q.eq("channelId", args.channelId))
-      .order("desc")
       .collect();
-
-    // If cursor provided, filter messages older than cursor
-    if (args.cursor) {
-      const cursorIndex = allMessages.findIndex((m) => m._id === args.cursor);
-      if (cursorIndex >= 0) {
-        allMessages = allMessages.slice(cursorIndex + 1);
-      }
-    }
 
     // Filter out deleted, blocked users, and thread replies
     // Bot messages (no senderId) are never blocked
-    const filteredMessages = allMessages
-      .filter((m) => !m.isDeleted && (!m.senderId || !blockedUserIds.has(m.senderId)) && !m.parentMessageId)
-      .slice(0, limit);
-
-    // Determine if there are more messages
-    const remainingMessages = allMessages
+    let topLevelMessages = allMessages
       .filter((m) => !m.isDeleted && (!m.senderId || !blockedUserIds.has(m.senderId)) && !m.parentMessageId);
-    const hasMore = remainingMessages.length > limit;
 
-    // Get cursor for pagination (oldest message in this batch, for loading older messages)
-    const cursor = filteredMessages.length > 0
-      ? filteredMessages[filteredMessages.length - 1]._id
+    // Sort by lastActivityAt descending (thread bump ordering)
+    // Fall back to createdAt for messages without lastActivityAt (pre-migration)
+    topLevelMessages.sort((a, b) => {
+      const aTime = a.lastActivityAt ?? a.createdAt;
+      const bTime = b.lastActivityAt ?? b.createdAt;
+      return bTime - aTime;
+    });
+
+    // If cursor provided, find cursor position and slice after it
+    if (args.cursor) {
+      const cursorIndex = topLevelMessages.findIndex((m) => m._id === args.cursor);
+      if (cursorIndex >= 0) {
+        topLevelMessages = topLevelMessages.slice(cursorIndex + 1);
+      }
+    }
+
+    const hasMore = topLevelMessages.length > limit;
+    const pageMessages = topLevelMessages.slice(0, limit);
+
+    // Get cursor for pagination (oldest-activity message in this batch)
+    const cursor = pageMessages.length > 0
+      ? pageMessages[pageMessages.length - 1]._id
       : undefined;
 
     // Reverse to chronological order (oldest first, newest at bottom)
     // This is the expected order for chat UIs
-    const chronologicalMessages = [...filteredMessages].reverse();
+    const chronologicalMessages = [...pageMessages].reverse();
 
     return {
       messages: chronologicalMessages,
@@ -358,6 +362,8 @@ export const sendMessage = mutation({
       senderProfilePhoto,
       mentionedUserIds: args.mentionedUserIds,
       hideLinkPreview: args.hideLinkPreview,
+      // Set lastActivityAt for top-level messages (used for thread bump ordering)
+      ...(!args.parentMessageId ? { lastActivityAt: now } : {}),
     });
 
     // Update channel with last message info (for inbox preview)
@@ -381,6 +387,7 @@ export const sendMessage = mutation({
       if (parentMessage) {
         await ctx.db.patch(args.parentMessageId, {
           threadReplyCount: (parentMessage.threadReplyCount || 0) + 1,
+          lastActivityAt: now,
         });
       }
     }
@@ -567,6 +574,7 @@ export const sendSystemMessage = internalMutation({
       createdAt: now,
       updatedAt: now,
       isDeleted: false,
+      lastActivityAt: now,
     });
 
     // Update channel metadata

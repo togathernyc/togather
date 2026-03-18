@@ -1317,6 +1317,9 @@ export default defineSchema({
     senderProfilePhoto: v.optional(v.string()),
     // Mentions
     mentionedUserIds: v.optional(v.array(v.id("users"))),
+    // Thread bump: tracks when thread last had activity (reply or creation)
+    // Used for sorting top-level messages so threads with new replies float up
+    lastActivityAt: v.optional(v.number()),
     // Link preview control
     hideLinkPreview: v.optional(v.boolean()),
     // Reach Out request reference (for request cards in leaders channel)

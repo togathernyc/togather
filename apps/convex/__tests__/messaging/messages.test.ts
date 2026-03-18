@@ -1432,3 +1432,109 @@ describe("Thread Reply Count in Message List", () => {
     expect(message?.threadReplyCount ?? 0).toBe(0);
   });
 });
+
+// ============================================================================
+// Thread Bump Tests
+// ============================================================================
+
+describe("Thread Bump (lastActivityAt)", () => {
+  test("replying to a thread bumps it to most recent position", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { channelId, accessToken } = await seedTestData(t);
+
+    // Send message A
+    const msgA = await t.mutation(api.functions.messaging.messages.sendMessage, {
+      token: accessToken,
+      channelId,
+      content: "Message A",
+    });
+    vi.runAllTimers();
+    await t.finishInProgressScheduledFunctions();
+
+    vi.advanceTimersByTime(100);
+
+    // Send message B (now B is more recent than A)
+    const msgB = await t.mutation(api.functions.messaging.messages.sendMessage, {
+      token: accessToken,
+      channelId,
+      content: "Message B",
+    });
+    vi.runAllTimers();
+    await t.finishInProgressScheduledFunctions();
+
+    vi.advanceTimersByTime(100);
+
+    // Reply to A — should bump A's lastActivityAt
+    await t.mutation(api.functions.messaging.messages.sendMessage, {
+      token: accessToken,
+      channelId,
+      content: "Reply to A",
+      parentMessageId: msgA,
+    });
+    vi.runAllTimers();
+    await t.finishInProgressScheduledFunctions();
+
+    // Fetch messages — A should appear AFTER B (most recent) in chronological order
+    const result = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+    });
+
+    // Chronological order (oldest activity first): B first, then A (bumped)
+    expect(result.messages).toHaveLength(2);
+    expect(result.messages[0]._id).toBe(msgB);
+    expect(result.messages[1]._id).toBe(msgA);
+  });
+
+  test("lastActivityAt is set on parent message after a reply", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { channelId, accessToken } = await seedTestData(t);
+
+    const parentId = await t.mutation(api.functions.messaging.messages.sendMessage, {
+      token: accessToken,
+      channelId,
+      content: "Parent message",
+    });
+    vi.runAllTimers();
+    await t.finishInProgressScheduledFunctions();
+
+    const parentBefore = await t.run(async (ctx) => ctx.db.get(parentId));
+    const originalActivityAt = parentBefore?.lastActivityAt;
+    expect(originalActivityAt).toBeDefined();
+
+    vi.advanceTimersByTime(500);
+
+    // Send a reply
+    await t.mutation(api.functions.messaging.messages.sendMessage, {
+      token: accessToken,
+      channelId,
+      content: "A reply",
+      parentMessageId: parentId,
+    });
+    vi.runAllTimers();
+    await t.finishInProgressScheduledFunctions();
+
+    const parentAfter = await t.run(async (ctx) => ctx.db.get(parentId));
+    expect(parentAfter?.lastActivityAt).toBeDefined();
+    expect(parentAfter!.lastActivityAt!).toBeGreaterThan(originalActivityAt!);
+  });
+
+  test("top-level message without replies uses lastActivityAt equal to createdAt", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { channelId, accessToken } = await seedTestData(t);
+
+    const msgId = await t.mutation(api.functions.messaging.messages.sendMessage, {
+      token: accessToken,
+      channelId,
+      content: "Standalone message",
+    });
+    vi.runAllTimers();
+    await t.finishInProgressScheduledFunctions();
+
+    const msg = await t.run(async (ctx) => ctx.db.get(msgId));
+    expect(msg?.lastActivityAt).toBe(msg?.createdAt);
+  });
+});
