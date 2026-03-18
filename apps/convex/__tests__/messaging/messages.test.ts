@@ -1431,4 +1431,58 @@ describe("Thread Reply Count in Message List", () => {
     // Message without replies should have undefined or 0 threadReplyCount
     expect(message?.threadReplyCount ?? 0).toBe(0);
   });
+
+  test("should bump thread to most recent position when reply is added (Issue #93)", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { channelId, accessToken } = await seedTestData(t);
+
+    // Send message A (older)
+    const msgAId = await t.mutation(api.functions.messaging.messages.sendMessage, {
+      token: accessToken,
+      channelId,
+      content: "Message A - will get a reply",
+    });
+
+    vi.advanceTimersByTime(100);
+    vi.runAllTimers();
+    await t.finishInProgressScheduledFunctions();
+
+    // Send message B (newer, no replies)
+    await t.mutation(api.functions.messaging.messages.sendMessage, {
+      token: accessToken,
+      channelId,
+      content: "Message B - no replies",
+    });
+
+    vi.runAllTimers();
+    await t.finishInProgressScheduledFunctions();
+
+    // Advance time so the reply gets a newer timestamp than message B
+    vi.advanceTimersByTime(100);
+
+    // Reply to message A - this should bump A's thread to the top
+    await t.mutation(api.functions.messaging.messages.sendMessage, {
+      token: accessToken,
+      channelId,
+      content: "Reply to A",
+      parentMessageId: msgAId,
+    });
+
+    vi.runAllTimers();
+    await t.finishInProgressScheduledFunctions();
+
+    // Fetch messages - last message (most recent by lastActivityAt) should be A's thread
+    const result = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+    });
+
+    expect(result.messages).toHaveLength(2);
+
+    // Last message in chronological order = most recent activity = should be A (got a reply)
+    const lastMessage = result.messages[result.messages.length - 1];
+    expect(lastMessage._id).toBe(msgAId);
+    expect(lastMessage.content).toBe("Message A - will get a reply");
+  });
 });

@@ -205,14 +205,33 @@ export const getMessages = query({
 
     // Filter out deleted, blocked users, and thread replies
     // Bot messages (no senderId) are never blocked
-    const filteredMessages = allMessages
-      .filter((m) => !m.isDeleted && (!m.senderId || !blockedUserIds.has(m.senderId)) && !m.parentMessageId)
-      .slice(0, limit);
+    const topLevelMessages = allMessages.filter(
+      (m) => !m.isDeleted && (!m.senderId || !blockedUserIds.has(m.senderId)) && !m.parentMessageId
+    );
 
-    // Determine if there are more messages
-    const remainingMessages = allMessages
-      .filter((m) => !m.isDeleted && (!m.senderId || !blockedUserIds.has(m.senderId)) && !m.parentMessageId);
-    const hasMore = remainingMessages.length > limit;
+    // Sort by last activity (threads with new replies bump to top)
+    // Use lastActivityAt ?? createdAt so messages without lastActivityAt (legacy) sort by createdAt
+    const sortedByActivity = [...topLevelMessages].sort((a, b) => {
+      const aTime = a.lastActivityAt ?? a.createdAt;
+      const bTime = b.lastActivityAt ?? b.createdAt;
+      return bTime - aTime; // Desc: most recent first
+    });
+
+    // Apply cursor: skip messages with lastActivityAt >= cursor message's lastActivityAt
+    let afterCursor = sortedByActivity;
+    if (args.cursor) {
+      const cursorMsg = sortedByActivity.find((m) => m._id === args.cursor);
+      if (cursorMsg) {
+        const cursorTime = cursorMsg.lastActivityAt ?? cursorMsg.createdAt;
+        afterCursor = sortedByActivity.filter((m) => {
+          const mTime = m.lastActivityAt ?? m.createdAt;
+          return mTime < cursorTime;
+        });
+      }
+    }
+
+    const filteredMessages = afterCursor.slice(0, limit);
+    const hasMore = afterCursor.length > limit;
 
     // Get cursor for pagination (oldest message in this batch, for loading older messages)
     const cursor = filteredMessages.length > 0
@@ -358,6 +377,8 @@ export const sendMessage = mutation({
       senderProfilePhoto,
       mentionedUserIds: args.mentionedUserIds,
       hideLinkPreview: args.hideLinkPreview,
+      // For top-level messages: lastActivityAt = createdAt (bumps when replies arrive)
+      ...(args.parentMessageId ? {} : { lastActivityAt: now }),
     });
 
     // Update channel with last message info (for inbox preview)
@@ -375,12 +396,13 @@ export const sendMessage = mutation({
       updatedAt: now,
     });
 
-    // If this is a thread reply, update parent message
+    // If this is a thread reply, bump parent thread to top (update lastActivityAt)
     if (args.parentMessageId) {
       const parentMessage = await ctx.db.get(args.parentMessageId);
       if (parentMessage) {
         await ctx.db.patch(args.parentMessageId, {
           threadReplyCount: (parentMessage.threadReplyCount || 0) + 1,
+          lastActivityAt: now, // Bump thread to most recent position in main feed
         });
       }
     }
