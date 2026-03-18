@@ -189,6 +189,7 @@ export const update = mutation({
     profilePhoto: v.optional(v.string()),
     timezone: v.optional(v.string()),
     dateOfBirth: v.optional(v.string()), // YYYY-MM-DD format
+    zipCode: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -204,6 +205,7 @@ export const update = mutation({
       // Convert YYYY-MM-DD string to timestamp for storage
       updates.dateOfBirth = parseDate(args.dateOfBirth, "dateOfBirth");
     }
+    if (args.zipCode !== undefined) updates.zipCode = args.zipCode;
 
     // If name changed, rebuild searchText for full-text search
     if (args.firstName !== undefined || args.lastName !== undefined) {
@@ -227,6 +229,17 @@ export const update = mutation({
       await ctx.scheduler.runAfter(0, internal.functions.sync.memberships.syncUserProfileToChannels, {
         userId,
       });
+    }
+
+    // If zipCode changed, sync to all communityPeople records for this user
+    if (args.zipCode !== undefined) {
+      const cpRecords = await ctx.db
+        .query("communityPeople")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .collect();
+      for (const cp of cpRecords) {
+        await ctx.db.patch(cp._id, { zipCode: args.zipCode, updatedAt: now() });
+      }
     }
 
     return await ctx.db.get(userId);
@@ -354,6 +367,7 @@ export const me = query({
         ? new Date(user.dateOfBirth).toISOString().split("T")[0]
         : null,
       timezone: user.timezone || "America/New_York",
+      zipCode: user.zipCode || null,
       activeCommunityId: user.activeCommunityId || null,
       activeCommunityName,
       activeCommunityPrimaryColor,

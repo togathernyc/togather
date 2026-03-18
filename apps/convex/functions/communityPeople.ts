@@ -96,6 +96,7 @@ const INDEX_MAP: Record<string, string> = {
   lastFollowupAt: "by_group_lastFollowupAt",
   lastActiveAt: "by_group_lastActiveAt",
   status: "by_group_status",
+  zipCode: "by_group_zipCode",
   customText1: "by_group_customText1",
   customText2: "by_group_customText2",
   customText3: "by_group_customText3",
@@ -290,6 +291,58 @@ export const search = query({
 });
 
 /**
+ * List community people with zip codes for map display.
+ * Returns a lean shape with only the fields needed for map pins.
+ * Uses the by_group_zipCode index in desc order so non-null zip codes come first;
+ * stops collecting once a record with no zipCode is encountered.
+ */
+export const listForMap = query({
+  args: {
+    groupId: v.id("groups"),
+    token: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const group = await ctx.db.get(args.groupId);
+    if (!group) {
+      throw new ConvexError("Group not found");
+    }
+    await requireCommunityMember(ctx, group.communityId, userId);
+
+    const MAX_RESULTS = 5000;
+    const results: Array<{
+      _id: Id<"communityPeople">;
+      firstName: string;
+      lastName: string;
+      avatarUrl: string | undefined;
+      zipCode: string;
+      status: string | undefined;
+    }> = [];
+
+    for await (const record of ctx.db
+      .query("communityPeople")
+      .withIndex("by_group_zipCode", (q: any) =>
+        q.eq("groupId", args.groupId),
+      )
+      .order("desc")) {
+      if (!record.zipCode) break;
+      if (results.length >= MAX_RESULTS) break;
+      results.push({
+        _id: record._id,
+        firstName: record.firstName ?? "",
+        lastName: record.lastName ?? "",
+        avatarUrl: record.avatarUrl,
+        zipCode: record.zipCode,
+        status: record.status,
+      });
+    }
+
+    return results;
+  },
+});
+
+/**
  * Get score configuration and custom field definitions for the community.
  * Called once per page load, not per page of results.
  */
@@ -431,6 +484,46 @@ export const setStatus = mutation({
 
     // Sync to sibling records in the same community
     await syncToSiblingRecords(ctx, cpRecord, patchFields);
+
+    return { success: true };
+  },
+});
+
+/**
+ * Set or clear the zipCode on a community person.
+ * Syncs the value to sibling communityPeople records and to the users table.
+ */
+export const setZipCode = mutation({
+  args: {
+    token: v.string(),
+    communityPeopleId: v.id("communityPeople"),
+    zipCode: v.union(v.string(), v.null()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const cpRecord = await ctx.db.get(args.communityPeopleId);
+    if (!cpRecord) {
+      throw new ConvexError("Community person record not found");
+    }
+
+    await requireCommunityLeader(ctx, cpRecord.communityId, userId);
+
+    const patchFields = {
+      zipCode: args.zipCode === null ? undefined : args.zipCode,
+    };
+    await ctx.db.patch(args.communityPeopleId, {
+      ...patchFields,
+      updatedAt: Date.now(),
+    });
+
+    // Sync to sibling records in the same community
+    await syncToSiblingRecords(ctx, cpRecord, patchFields);
+
+    // Sync to the users table
+    await ctx.db.patch(cpRecord.userId, {
+      zipCode: args.zipCode === null ? undefined : args.zipCode,
+    });
 
     return { success: true };
   },
@@ -1061,6 +1154,7 @@ export const upsertFromSubmission = internalMutation({
     const lastName = user?.lastName || (scoreDoc as any).lastName || "";
     const email = user?.email || (scoreDoc as any).email;
     const phone = user?.phone || (scoreDoc as any).phone;
+    const zipCode = user?.zipCode || (scoreDoc as any).zipCode;
     const searchText = [firstName, lastName, email, phone]
       .filter(Boolean)
       .join(" ");
@@ -1081,6 +1175,7 @@ export const upsertFromSubmission = internalMutation({
       avatarUrl: getMediaUrl(user?.profilePhoto) || (scoreDoc as any).avatarUrl,
       email,
       phone,
+      zipCode,
       searchText,
       score1: (scoreDoc as any).score1,
       score2: (scoreDoc as any).score2,

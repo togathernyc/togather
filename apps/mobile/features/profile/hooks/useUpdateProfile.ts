@@ -27,6 +27,7 @@ export function useUpdateProfile() {
         firstName: data.first_name,
         lastName: data.last_name,
         dateOfBirth: data.date_of_birth,
+        zipCode: data.zip_code || undefined,
       });
 
       // Refresh user data in auth context

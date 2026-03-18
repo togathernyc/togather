@@ -138,6 +138,7 @@ const SERVER_SORT_KEYS: Record<string, string> = {
   customBool1: "customBool1",
   customBool2: "customBool2",
   customBool3: "customBool3",
+  zipCode: "zipCode",
 };
 
 type ColumnDef = {
@@ -149,7 +150,7 @@ type ColumnDef = {
 };
 
 // Built-in editable columns that get a visual highlight
-const BUILTIN_EDITABLE_COLUMNS = new Set(["assignee", "status"]);
+const BUILTIN_EDITABLE_COLUMNS = new Set(["assignee", "status", "zipCode"]);
 
 type DropdownPosition = {
   top: number;
@@ -564,7 +565,13 @@ export function FollowupDesktopTable({
       },
       { key: "email", label: "Email", defaultWidth: 180, sortable: false },
       { key: "phone", label: "Phone", defaultWidth: 140, sortable: false },
-      { key: "zipCode", label: "ZIP Code", defaultWidth: 100, sortable: false },
+      {
+        key: "zipCode",
+        label: "ZIP Code",
+        defaultWidth: 100,
+        sortable: true,
+        serverSortKey: crossGroupMode ? undefined : "zipCode",
+      },
       {
         key: "dateOfBirth",
         label: "Birthday",
@@ -810,8 +817,14 @@ export function FollowupDesktopTable({
     !crossGroupMode && !hasTextSearch && groupId
       ? {
           groupId: groupId as Id<"groups">,
-          sortBy: serverSortBy,
-          sortDirection: isClientSideSort ? "desc" : sortDirection,
+          sortBy:
+            activeViewId === FOLLOWUP_MAP_VIEW_ID ? "zipCode" : serverSortBy,
+          sortDirection:
+            activeViewId === FOLLOWUP_MAP_VIEW_ID
+              ? "desc"
+              : isClientSideSort
+                ? "desc"
+                : sortDirection,
           ...listFilterArgs,
         }
       : "skip",
@@ -993,6 +1006,8 @@ export function FollowupDesktopTable({
         overrides.assigneeId = nextIds[0];
       }
       if (opt.status !== undefined) overrides.status = opt.status ?? undefined;
+      if ((opt as any).zipCode !== undefined)
+        overrides.zipCode = (opt as any).zipCode ?? undefined;
       for (const [key, val] of Object.entries(opt)) {
         if (key.startsWith("custom")) overrides[key] = val ?? undefined;
       }
@@ -1059,6 +1074,10 @@ export function FollowupDesktopTable({
   // Custom field mutation
   const setCustomFieldMut = useAuthenticatedMutation(
     api.functions.communityPeople.setCustomField,
+  );
+  // Zip code mutation
+  const setZipCodeMut = useAuthenticatedMutation(
+    api.functions.communityPeople.setZipCode,
   );
   const assigneeMutationQueueRef = useRef<Record<string, Promise<void>>>({});
 
@@ -1296,6 +1315,30 @@ export function FollowupDesktopTable({
         const next = { ...prev };
         if (next[memberId]) {
           delete (next[memberId] as any)[slot];
+          if (Object.keys(next[memberId]).length === 0) delete next[memberId];
+        }
+        return next;
+      });
+    }
+  };
+
+  const handleZipCodeSave = async (memberId: string, zipCode: string) => {
+    const trimmed = zipCode.trim();
+    setOptimistic((prev) => ({
+      ...prev,
+      [memberId]: { ...prev[memberId], zipCode: trimmed || null },
+    }));
+    try {
+      await setZipCodeMut({
+        communityPeopleId: memberId as any,
+        zipCode: trimmed || null,
+      });
+    } catch (err) {
+      console.error("[setZipCode] failed:", err);
+      setOptimistic((prev) => {
+        const next = { ...prev };
+        if (next[memberId]) {
+          delete (next[memberId] as any).zipCode;
           if (Object.keys(next[memberId]).length === 0) delete next[memberId];
         }
         return next;
@@ -1657,8 +1700,49 @@ export function FollowupDesktopTable({
       case "phone":
         return <Text style={s.cellText}>{item.phone ?? ""}</Text>;
 
-      case "zipCode":
-        return <Text style={s.cellText}>{item.zipCode ?? ""}</Text>;
+      case "zipCode": {
+        const zipEditKey = `${item.groupMemberId}:zipCode`;
+        if (editingInlineField === zipEditKey) {
+          return (
+            <TextInput
+              style={s.inlineInput}
+              value={inlineFieldValue}
+              onChangeText={setInlineFieldValue}
+              onBlur={() => {
+                handleZipCodeSave(
+                  item.groupMemberId,
+                  inlineFieldValue,
+                );
+                setEditingInlineField(null);
+              }}
+              onSubmitEditing={() => {
+                handleZipCodeSave(
+                  item.groupMemberId,
+                  inlineFieldValue,
+                );
+                setEditingInlineField(null);
+              }}
+              autoFocus
+              placeholder="Enter ZIP..."
+            />
+          );
+        }
+        return (
+          <TouchableOpacity
+            style={s.editableCellTouchable}
+            onPress={() => {
+              setEditingInlineField(zipEditKey);
+              setInlineFieldValue(item.zipCode ?? "");
+            }}
+          >
+            <Text
+              style={[s.cellText, !item.zipCode && s.cellPlaceholder]}
+            >
+              {item.zipCode || "Click to add"}
+            </Text>
+          </TouchableOpacity>
+        );
+      }
 
       case "dateOfBirth":
         return (
@@ -2078,6 +2162,26 @@ export function FollowupDesktopTable({
   const showInitialLoading = effectiveIsLoading && !hasEverLoadedRef.current;
   const isMapViewActive = activeViewId === FOLLOWUP_MAP_VIEW_ID;
 
+  // Load-all state for map view — fetches all members with ZIP codes via a dedicated query
+  const [loadAllMapMembers, setLoadAllMapMembers] = useState(false);
+  const allMapMembersRaw = useAuthenticatedQuery(
+    api.functions.communityPeople.listForMap,
+    loadAllMapMembers && isMapViewActive && groupId
+      ? { groupId: groupId as Id<"groups"> }
+      : "skip",
+  );
+  const allMapMembers = useMemo(() => {
+    if (!allMapMembersRaw) return undefined;
+    return allMapMembersRaw.map((m: any) => ({
+      groupMemberId: m._id,
+      firstName: m.firstName,
+      lastName: m.lastName,
+      avatarUrl: m.avatarUrl,
+      zipCode: m.zipCode,
+      status: m.status,
+    }));
+  }, [allMapMembersRaw]);
+
   // Preserve horizontal scroll position across re-renders (sort/filter changes)
   const horizontalScrollRef = useRef<ScrollView>(null);
   const scrollXRef = useRef(0);
@@ -2366,6 +2470,9 @@ export function FollowupDesktopTable({
                 groupName: (member as any).groupName,
               }))}
               loading={showInitialLoading}
+              allMembers={allMapMembers}
+              onLoadAll={() => setLoadAllMapMembers(true)}
+              isLoadingAll={loadAllMapMembers && allMapMembers === undefined}
               onOpenMember={(memberId) => {
                 setShowSettingsPanel(false);
                 setShowQuickAddPanel(false);

@@ -14,6 +14,7 @@ export const profileSchema = z.object({
       message: 'Please enter a valid date (MM/DD/YYYY)',
     })
     .optional(),
+  zip_code: z.string().regex(/^\d{5}$/, "Must be a 5-digit ZIP code").or(z.literal("")).optional(),
 });
 
 export type ProfileFormData = z.infer<typeof profileSchema>;

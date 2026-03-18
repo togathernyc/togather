@@ -83,6 +83,7 @@ export function EditProfileForm({ onCancel }: EditProfileFormProps) {
       email: user?.email || '',
       phone: user?.phone || '',
       date_of_birth: formatDateForDisplay(user?.date_of_birth),
+      zip_code: user?.zip_code || '',
     },
   });
 
@@ -200,6 +201,15 @@ export function EditProfileForm({ onCancel }: EditProfileFormProps) {
           error={errors.phone}
           placeholder="Enter your phone number"
           keyboardType="phone-pad"
+        />
+
+        <FormInput
+          control={control}
+          name="zip_code"
+          label="ZIP Code"
+          placeholder="Enter ZIP code"
+          keyboardType="number-pad"
+          maxLength={5}
         />
 
         <FormInput
