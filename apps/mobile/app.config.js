@@ -141,6 +141,7 @@ export default {
         "com.apple.developer.usernotifications.communication": true
       },
       infoPlist: {
+        ITSAppUsesNonExemptEncryption: false,
         NSUserActivityTypes: ["INSendMessageIntent"],
         NSCameraUsageDescription:
           "Togather uses your camera to take a profile photo that will be visible to other community members (for example, when you RSVP to events or appear in group member lists), and to capture photos to share in group chat conversations.",
