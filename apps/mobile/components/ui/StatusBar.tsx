@@ -3,14 +3,14 @@
  *
  * Displays a prioritized status overlay at the bottom of the screen:
  * - Connection issues take highest priority (disconnected > no internet > slow > reconnecting > reconnected)
- * - OTA update states shown when connection is healthy (downloading > ready > checking > error)
+ * - OTA update states shown when connection is healthy (checking > error)
  * - Hidden when everything is nominal (connected + OTA idle)
+ *
+ * Note: OTA "downloading" and "ready" states are handled by OTAUpdateModal instead.
  *
  * The bar sits at the very bottom of the screen, filling through the safe area.
  * The tab bar uses useStatusBarVisible() to add extra padding when the bar is shown,
  * keeping tab icons and labels above the banner.
- *
- * When an OTA update is ready, the bar is tappable to restart the app.
  */
 import React from 'react';
 import { Text, Pressable, StyleSheet } from 'react-native';
@@ -92,26 +92,7 @@ function getActiveConfig(
     };
   }
 
-  // Priority 6: OTA downloading
-  if (otaStatus.status === 'downloading') {
-    return {
-      backgroundColor: '#007AFF',
-      icon: 'cloud-download-outline',
-      text: 'Downloading update...',
-    };
-  }
-
-  // Priority 7: OTA ready (tappable to restart)
-  if (otaStatus.status === 'ready') {
-    return {
-      backgroundColor: '#007AFF',
-      icon: 'checkmark-done-outline',
-      text: 'Update ready — tap to restart',
-      tappable: true,
-    };
-  }
-
-  // Priority 8: OTA checking
+  // Priority 6: OTA checking
   if (otaStatus.status === 'checking') {
     return {
       backgroundColor: '#8E8E93',
@@ -120,7 +101,7 @@ function getActiveConfig(
     };
   }
 
-  // Priority 9: OTA error (auto-dismisses via provider transitioning to idle)
+  // Priority 7: OTA error (auto-dismisses via provider transitioning to idle)
   if (otaStatus.status === 'error') {
     return {
       backgroundColor: '#8E8E93',

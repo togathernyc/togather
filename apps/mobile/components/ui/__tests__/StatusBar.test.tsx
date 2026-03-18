@@ -99,18 +99,16 @@ describe('StatusBar', () => {
     expect(getByText('Connected')).toBeTruthy();
   });
 
-  it('shows OTA downloading state', () => {
+  it('does not show OTA downloading state (handled by OTAUpdateModal)', () => {
     mockOTAStatus = { status: 'downloading', errorMessage: null };
-    const { getByText, getByTestId } = render(<StatusBar />);
-    expect(getByTestId('status-bar')).toBeTruthy();
-    expect(getByText('Downloading update...')).toBeTruthy();
+    const { queryByText } = render(<StatusBar />);
+    expect(queryByText('Downloading update...')).toBeNull();
   });
 
-  it('shows OTA ready state', () => {
+  it('does not show OTA ready state (handled by OTAUpdateModal)', () => {
     mockOTAStatus = { status: 'ready', errorMessage: null };
-    const { getByText, getByTestId } = render(<StatusBar />);
-    expect(getByTestId('status-bar')).toBeTruthy();
-    expect(getByText('Update ready — tap to restart')).toBeTruthy();
+    const { queryByText } = render(<StatusBar />);
+    expect(queryByText('Update ready')).toBeNull();
   });
 
   it('shows OTA checking state', () => {
@@ -133,9 +131,9 @@ describe('StatusBar', () => {
       isNetworkAvailable: false,
       isInternetReachable: false,
     };
-    mockOTAStatus = { status: 'downloading', errorMessage: null };
+    mockOTAStatus = { status: 'checking', errorMessage: null };
     const { getByText, queryByText } = render(<StatusBar />);
     expect(getByText('No internet connection')).toBeTruthy();
-    expect(queryByText('Downloading update...')).toBeNull();
+    expect(queryByText('Checking for updates...')).toBeNull();
   });
 });
