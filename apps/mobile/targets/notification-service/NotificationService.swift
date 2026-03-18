@@ -100,8 +100,9 @@ final class NotificationService: UNNotificationServiceExtension {
     conversationIdentifier: String?,
     groupName: String?
   ) async throws -> UNMutableNotificationContent {
+    let senderHandle = INPersonHandle(value: senderDisplayName, type: .unknown)
     let sender = INPerson(
-      personHandle: nil,
+      personHandle: senderHandle,
       nameComponents: nil,
       displayName: senderDisplayName,
       image: senderImage,
@@ -111,8 +112,9 @@ final class NotificationService: UNNotificationServiceExtension {
       suggestionType: .none
     )
 
+    let meHandle = INPersonHandle(value: "me", type: .unknown)
     let me = INPerson(
-      personHandle: nil,
+      personHandle: meHandle,
       nameComponents: nil,
       displayName: nil,
       image: nil,
