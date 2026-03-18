@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Platform,
@@ -158,12 +158,17 @@ export function FollowupMapView({
   );
   const selectedMarkerId = markerByMemberId.get(selectedMemberId ?? "")?.id;
 
-  const handleBoundsChange = (_bounds: MapBounds, visibleGroups: Group[]) => {
+  const handleGroupSelect = useCallback((group: Group | null) => {
+    const selected = group as MarkerGroup | null;
+    setSelectedMemberId(selected?._memberId ?? null);
+  }, []);
+
+  const handleBoundsChange = useCallback((_bounds: MapBounds, visibleGroups: Group[]) => {
     const nextVisibleIds = new Set(
       (visibleGroups as MarkerGroup[]).map((group) => group._memberId),
     );
     setVisibleMemberIds(nextVisibleIds);
-  };
+  }, []);
 
   const loadingState = loading || placementsLoading;
   const unmappedCount = effectiveMembers.length - mappedMembers.length;
@@ -208,28 +213,24 @@ export function FollowupMapView({
       <View style={[styles.contentRow, isDesktopWeb ? styles.contentRowDesktop : null]}>
         <View style={styles.mapColumn}>
           <View style={styles.mapCard}>
+            <ExploreMap
+              groups={markerGroups}
+              selectedGroupId={typeof selectedMarkerId === "number" ? selectedMarkerId : null}
+              onGroupSelect={handleGroupSelect}
+              onBoundsChange={handleBoundsChange}
+              mapboxToken={mapboxToken}
+            />
             {loadingState ? (
-              <View style={styles.loadingContainer}>
+              <View style={styles.overlayContainer}>
                 <ActivityIndicator size="large" color={primaryColor} />
                 <Text style={styles.loadingText}>Loading map…</Text>
               </View>
             ) : markerGroups.length === 0 ? (
-              <View style={styles.emptyContainer}>
+              <View style={styles.overlayContainer}>
                 <Ionicons name="map-outline" size={36} color="#94A3B8" />
                 <Text style={styles.emptyText}>{emptyText}</Text>
               </View>
-            ) : (
-              <ExploreMap
-                groups={markerGroups}
-                selectedGroupId={typeof selectedMarkerId === "number" ? selectedMarkerId : null}
-                onGroupSelect={(group) => {
-                  const selected = group as MarkerGroup | null;
-                  setSelectedMemberId(selected?._memberId ?? null);
-                }}
-                onBoundsChange={handleBoundsChange}
-                mapboxToken={mapboxToken}
-              />
-            )}
+            ) : null}
           </View>
 
           {!isDesktopWeb && selectedMember ? (
@@ -352,11 +353,13 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 12,
   },
-  loadingContainer: {
-    flex: 1,
+  overlayContainer: {
+    ...StyleSheet.absoluteFillObject,
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.85)",
     gap: 12,
+    zIndex: 10,
   },
   loadingText: {
     fontSize: 14,

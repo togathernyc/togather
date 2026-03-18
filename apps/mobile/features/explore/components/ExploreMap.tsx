@@ -156,6 +156,7 @@ export function ExploreMap({
   onBoundsChange,
   mapboxToken,
 }: ExploreMapProps) {
+  const mapWrapperRef = useRef<HTMLDivElement | null>(null);
   const mapContainer = useRef<HTMLDivElement | null>(null);
   const map = useRef<any>(null);
   const loadedImagesRef = useRef<Set<string>>(new Set());
@@ -296,9 +297,11 @@ export function ExploreMap({
 
   // Initialize map (web only)
   useEffect(() => {
-    if (Platform.OS !== 'web' || !mapboxgl || !mapContainer.current || map.current) {
+    if (Platform.OS !== 'web' || !mapboxgl || !mapWrapperRef.current) {
       return;
     }
+
+    if (map.current) return;
 
     if (!isValidToken) {
       setMapError(
@@ -309,8 +312,15 @@ export function ExploreMap({
 
     mapboxgl.accessToken = mapboxToken;
 
+    // Create a fresh container div for each map instance to avoid
+    // stale DOM state after React StrictMode cleanup/remount cycles.
+    const container = document.createElement('div');
+    container.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;';
+    mapWrapperRef.current.appendChild(container);
+    mapContainer.current = container;
+
     const mapInstance = new mapboxgl.Map({
-      container: mapContainer.current,
+      container,
       style: MAP_STYLE,
       center: [MAP_CONFIG.defaultCenter.lng, MAP_CONFIG.defaultCenter.lat],
       zoom: MAP_CONFIG.defaultZoom,
@@ -475,8 +485,12 @@ export function ExploreMap({
 
     return () => {
       loadedImagesRef.current.clear();
+      hasFittedRef.current = false;
+      setMapLoaded(false);
       mapInstance.remove();
       map.current = null;
+      mapContainer.current = null;
+      container.remove();
     };
   }, [isValidToken, mapboxToken, onGroupSelect]);
 
@@ -558,7 +572,7 @@ export function ExploreMap({
     );
   }, [selectedGroupId, mapLoaded]);
 
-  // Calculate groups visible within current map bounds
+  // Calculate groups visible within current map bounds (uses ref for stable reference)
   const getVisibleGroups = useCallback((mapInstance: any): Group[] => {
     if (!mapInstance) return [];
 
@@ -570,7 +584,7 @@ export function ExploreMap({
     const east = bounds.getEast();
     const west = bounds.getWest();
 
-    return groups.filter((group) => {
+    return groupsRef.current.filter((group) => {
       if (group.latitude == null || group.longitude == null) return false;
       return (
         group.latitude >= south &&
@@ -579,11 +593,11 @@ export function ExploreMap({
         group.longitude <= east
       );
     });
-  }, [groups]);
+  }, []);
 
-  // Notify parent of bounds change
+  // Notify parent of bounds change (uses ref to avoid re-creating on prop changes)
   const notifyBoundsChange = useCallback(() => {
-    if (!map.current || !onBoundsChange) return;
+    if (!map.current || !onBoundsChangeRef.current) return;
 
     const bounds = map.current.getBounds();
     if (!bounds) return;
@@ -596,14 +610,14 @@ export function ExploreMap({
     };
 
     const visibleGroups = getVisibleGroups(map.current);
-    onBoundsChange(mapBounds, visibleGroups);
-  }, [onBoundsChange, getVisibleGroups]);
+    onBoundsChangeRef.current(mapBounds, visibleGroups);
+  }, [getVisibleGroups]);
 
-  // Fit bounds to show all groups
+  // Fit bounds to show all groups (uses ref for stable reference)
   const fitToGroups = useCallback(() => {
     if (!map.current || !mapboxgl) return;
 
-    const groupsWithLocation = groups.filter(
+    const groupsWithLocation = groupsRef.current.filter(
       (g) => g.latitude != null && g.longitude != null
     );
 
@@ -625,22 +639,50 @@ export function ExploreMap({
     });
 
     map.current.fitBounds(bounds, {
-      padding: { top: 50, bottom: 200, left: 50, right: 50 },
+      padding: { top: 50, bottom: 50, left: 50, right: 50 },
       duration: 1000,
     });
-  }, [groups]);
+  }, []);
 
-  // Fit to groups when they first load
+  // Fit to groups when they first load or when groups first become available.
+  // Uses a ref flag so the auto-fit only happens once per mount.
+  const hasFittedRef = useRef(false);
   useEffect(() => {
-    if (mapLoaded && groups.length > 0) {
-      fitToGroups();
-      // Delay the bounds notification to ensure the map has settled
-      const timeoutId = setTimeout(() => {
-        notifyBoundsChange();
-      }, 1100); // Slightly after the fitBounds animation duration
-      return () => clearTimeout(timeoutId);
+    if (!mapLoaded || groups.length === 0 || hasFittedRef.current) return;
+    hasFittedRef.current = true;
+    fitToGroups();
+    const timeoutId = setTimeout(() => {
+      notifyBoundsChange();
+    }, 1100);
+    return () => clearTimeout(timeoutId);
+  }, [mapLoaded, groups, fitToGroups, notifyBoundsChange]);
+
+  // Resize the web map when its container becomes visible or changes size.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !map.current || !mapWrapperRef.current) return;
+
+    const resizeMap = () => {
+      if (!map.current) return;
+      map.current.resize();
+    };
+
+    const rafId = requestAnimationFrame(resizeMap);
+    const timeoutId = window.setTimeout(resizeMap, 150);
+
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(() => {
+        resizeMap();
+      });
+      observer.observe(mapWrapperRef.current);
     }
-  }, [mapLoaded]); // Only run once when map loads
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      window.clearTimeout(timeoutId);
+      observer?.disconnect();
+    };
+  }, [mapLoaded, groups.length, selectedGroupId]);
 
   // Resize the web map when its container becomes visible or changes size.
   useEffect(() => {
@@ -717,7 +759,7 @@ export function ExploreMap({
   return (
     <View style={styles.container}>
       <div
-        ref={mapContainer}
+        ref={mapWrapperRef}
         style={{
           width: '100%',
           height: '100%',

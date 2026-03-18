@@ -280,6 +280,7 @@ export const search = query({
           conds.push(fq.lte(fq.field("addedAt"), args.addedAtMax));
         if (args.addedAtMin !== undefined)
           conds.push(fq.gte(fq.field("addedAt"), args.addedAtMin));
+        if (conds.length === 0) return true;
         return conds.length === 1
           ? conds[0]
           : fq.and(...(conds as [any, any, ...any[]]));
