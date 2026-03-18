@@ -377,8 +377,8 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
           )}
         </View>
 
-        {/* Join Community Card for non-members */}
-        {isAuthenticated && !isInCommunity && groupData.communityId && (
+        {/* Join Community Card for non-members (web only — native has its own navigation) */}
+        {Platform.OS === "web" && isAuthenticated && !isInCommunity && groupData.communityId && (
           <View style={styles.joinCommunityContainer}>
             <JoinCommunityCard
               communityLogo={groupData.communityLogo || null}
@@ -442,8 +442,8 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
         )}
       </View>
 
-      {/* Tab bar for authenticated users */}
-      {isAuthenticated && (
+      {/* Tab bar for authenticated users (web only — native has its own tab bar) */}
+      {Platform.OS === "web" && isAuthenticated && (
         <SharedPageTabBar
           hasActiveCommunity={hasActiveCommunity}
           isAdmin={isAdmin}

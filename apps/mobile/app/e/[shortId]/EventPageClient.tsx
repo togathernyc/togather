@@ -401,10 +401,10 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
 
   // Show Join Community card on shared links for authenticated users not in the community
   // Wait for user data to load before showing card to avoid flash of incorrect state
-  const shouldShowJoinCommunityCard = !isInAppNavigation && isAuthenticated && !isLoadingUser && !isUserInCommunity;
+  const shouldShowJoinCommunityCard = Platform.OS === "web" && !isInAppNavigation && isAuthenticated && !isLoadingUser && !isUserInCommunity;
 
-  // Show tab bar for authenticated users on shared links
-  const shouldShowTabBar = !isInAppNavigation && isAuthenticated;
+  // Show tab bar for authenticated users on shared links (web only — native has its own tab bar)
+  const shouldShowTabBar = Platform.OS === "web" && !isInAppNavigation && isAuthenticated;
   // Use community from auth context (JWT) not userData (database)
   // This ensures we only show tabs that work with the current token
   const hasActiveCommunity = !!community?.id;

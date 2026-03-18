@@ -152,13 +152,13 @@ final class NotificationService: UNNotificationServiceExtension {
   }
 
   private func donate(interaction: INInteraction) async throws {
-    try await withCheckedThrowingContinuation { continuation in
+    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
       interaction.donate { error in
         if let error {
           continuation.resume(throwing: error)
           return
         }
-        continuation.resume()
+        continuation.resume(returning: ())
       }
     }
   }
