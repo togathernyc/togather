@@ -201,26 +201,42 @@ export const getMessages = query({
 
     // Sort by lastActivityAt descending (thread bump ordering)
     // Fall back to createdAt for messages without lastActivityAt (pre-migration)
+    // Use message ID as secondary sort for stable ordering of messages with same timestamp
     topLevelMessages.sort((a, b) => {
       const aTime = a.lastActivityAt ?? a.createdAt;
       const bTime = b.lastActivityAt ?? b.createdAt;
-      return bTime - aTime;
+      if (bTime !== aTime) return bTime - aTime;
+      // For same timestamp, sort by ID descending for stable ordering
+      return b._id.localeCompare(a._id);
     });
 
-    // If cursor provided, find cursor position and slice after it
+    // If cursor provided, use timestamp-based cursor to find position
+    // Cursor format: "<lastActivityAt>:<messageId>" - provides stable pagination
+    // even if the cursor message is deleted/blocked or its lastActivityAt changes
     if (args.cursor) {
-      const cursorIndex = topLevelMessages.findIndex((m) => m._id === args.cursor);
-      if (cursorIndex >= 0) {
-        topLevelMessages = topLevelMessages.slice(cursorIndex + 1);
+      const [cursorTimestampStr, cursorMessageId] = args.cursor.split(":");
+      const cursorTimestamp = parseInt(cursorTimestampStr, 10);
+      if (!isNaN(cursorTimestamp) && cursorMessageId) {
+        // Filter to messages that come after the cursor position in sorted order
+        topLevelMessages = topLevelMessages.filter((m) => {
+          const mTime = m.lastActivityAt ?? m.createdAt;
+          // Messages with older timestamp come after in desc order
+          if (mTime < cursorTimestamp) return true;
+          // For same timestamp, use ID comparison for stable ordering
+          if (mTime === cursorTimestamp) return m._id.localeCompare(cursorMessageId) < 0;
+          return false;
+        });
       }
     }
 
     const hasMore = topLevelMessages.length > limit;
     const pageMessages = topLevelMessages.slice(0, limit);
 
-    // Get cursor for pagination (oldest-activity message in this batch)
-    const cursor = pageMessages.length > 0
-      ? pageMessages[pageMessages.length - 1]._id
+    // Get cursor for pagination using timestamp-based format for stability
+    // Format: "<lastActivityAt>:<messageId>"
+    const lastMessage = pageMessages.length > 0 ? pageMessages[pageMessages.length - 1] : null;
+    const cursor = lastMessage
+      ? `${lastMessage.lastActivityAt ?? lastMessage.createdAt}:${lastMessage._id}`
       : undefined;
 
     // Reverse to chronological order (oldest first, newest at bottom)
