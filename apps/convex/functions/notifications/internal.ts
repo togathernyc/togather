@@ -384,12 +384,12 @@ export const sendBatchPushNotifications = internalAction({
               title: n.title,
               body: n.body,
               data: n.data || {},
+              mutableContent: true,
             };
 
             if (n.imageUrl) {
               // Expo maps richContent.image to platform-specific rich media payloads.
               message.richContent = { image: n.imageUrl };
-              message.mutableContent = true;
             }
 
             return message;

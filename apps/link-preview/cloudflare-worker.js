@@ -34,7 +34,7 @@ const ENVIRONMENTS = {
 // Universal Links / App Links configuration
 // Apple Team ID - required for Universal Links AASA file generation.
 // For forks, set APPLE_TEAM_ID as a wrangler secret and use env.APPLE_TEAM_ID instead.
-const APPLE_TEAM_ID = "YOUR_APPLE_TEAM_ID";
+const APPLE_TEAM_ID = "647N4W6575";
 
 // iOS Bundle Identifiers
 const IOS_BUNDLE_IDS = {

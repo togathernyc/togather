@@ -830,6 +830,7 @@ describe("sendMessageNotifications Notification Data", () => {
     expect(requestBody[0].mutableContent).toBe(true);
     expect(requestBody[0].data.senderAvatarUrl).toBe(senderAvatarUrl);
     expect(requestBody[0].data.groupAvatarUrl).toBe(groupAvatarUrl);
+    expect(requestBody[0].data.groupName).toBe("Test Group");
 
     const recipientNotifications = await t.run(async (ctx) => {
       return await ctx.db
@@ -839,6 +840,66 @@ describe("sendMessageNotifications Notification Data", () => {
     });
     expect(recipientNotifications[0]?.data?.senderAvatarUrl).toBe(senderAvatarUrl);
     expect(recipientNotifications[0]?.data?.groupAvatarUrl).toBe(groupAvatarUrl);
+  });
+
+  test("includes groupName in mention notification payload", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { userId, user2Id, channelId } = await seedTestData(t);
+    const now = Date.now();
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ id: "ticket-mention-1", status: "ok" }] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("chatReadState", {
+        channelId,
+        userId: user2Id,
+        lastReadAt: now,
+        unreadCount: 0,
+      });
+      await ctx.db.insert("pushTokens", {
+        userId: user2Id,
+        token: "ExponentPushToken[mention-group-name-test]",
+        platform: "ios",
+        environment: "staging",
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+        lastUsedAt: now,
+      });
+    });
+
+    const messageId = await t.run(async (ctx) => {
+      return await ctx.db.insert("chatMessages", {
+        channelId,
+        senderId: userId,
+        content: "Mention payload test message",
+        contentType: "text",
+        createdAt: now,
+        isDeleted: false,
+        senderName: "Test User",
+        mentionedUserIds: [user2Id],
+      });
+    });
+
+    await t.mutation(internal.functions.messaging.events.onMessageSent, {
+      messageId,
+      channelId,
+      senderId: userId,
+    });
+
+    vi.runAllTimers();
+    await t.finishInProgressScheduledFunctions();
+
+    expect(fetchMock).toHaveBeenCalled();
+    const requestBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(requestBody[0].data.type).toBe("mention");
+    expect(requestBody[0].data.groupName).toBe("Test Group");
+    expect(requestBody[0].mutableContent).toBe(true);
   });
 
   test("strips duplicated group prefix from channel names in push body", async () => {

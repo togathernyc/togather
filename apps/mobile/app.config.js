@@ -137,7 +137,11 @@ export default {
       supportsTablet: false,
       bundleIdentifier: getBundleIdentifier(),
       associatedDomains: getAssociatedDomains(),
+      entitlements: {
+        "com.apple.developer.usernotifications.communication": true
+      },
       infoPlist: {
+        NSUserActivityTypes: ["INSendMessageIntent"],
         NSCameraUsageDescription:
           "Togather uses your camera to take a profile photo that will be visible to other community members (for example, when you RSVP to events or appear in group member lists), and to capture photos to share in group chat conversations.",
         NSPhotoLibraryUsageDescription:
@@ -164,6 +168,7 @@ export default {
     // Note: experiments.reactServerFunctions removed - it causes React version
     // mismatch with Expo Go. API routes (+api.ts) work with just output: "server".
     plugins: [
+      "@bacons/apple-targets",
       "expo-router",
       "expo-web-browser",
       "expo-sensors",
@@ -197,7 +202,22 @@ export default {
       mapboxAccessToken: process.env.EXPO_PUBLIC_MAPBOX_TOKEN || "",
       eas: {
         // TODO: Move EAS project ID to env var (EXPO_PUBLIC_PROJECT_ID) once all CI workflows are updated
-        projectId: process.env.EAS_PROJECT_ID || "bfc79fc8-7066-4386-b9e0-52d0207ad8f4"
+        projectId: process.env.EAS_PROJECT_ID || "bfc79fc8-7066-4386-b9e0-52d0207ad8f4",
+        build: {
+          experimental: {
+            ios: {
+              appExtensions: [
+                {
+                  targetName: "NotificationServiceExtension",
+                  bundleIdentifier: `${getBundleIdentifier()}.NotificationServiceExtension`,
+                  entitlements: {
+                    "com.apple.developer.usernotifications.communication": true
+                  }
+                }
+              ]
+            }
+          }
+        }
       },
       router: {}
     },
