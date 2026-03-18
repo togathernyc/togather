@@ -14,6 +14,7 @@
 import { v, ConvexError } from "convex/values";
 import { paginationOptsValidator } from "convex/server";
 import { query, mutation, internalMutation } from "../_generated/server";
+import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
 import { requireAuth } from "../lib/auth";
 import { isCommunityAdmin } from "../lib/permissions";
@@ -96,6 +97,7 @@ const INDEX_MAP: Record<string, string> = {
   lastFollowupAt: "by_group_lastFollowupAt",
   lastActiveAt: "by_group_lastActiveAt",
   status: "by_group_status",
+  assignee: "by_group_assigneeSortKey",
   zipCode: "by_group_zipCode",
   customText1: "by_group_customText1",
   customText2: "by_group_customText2",
@@ -369,6 +371,31 @@ export const getConfig = query({
 });
 
 // ============================================================================
+// Assignee Sort Key Helper
+// ============================================================================
+
+/**
+ * Build a sort key string from assignee IDs by resolving user names.
+ * Returns undefined if no assignees, otherwise concatenated "FirstName LastName" strings.
+ */
+async function buildAssigneeSortKey(
+  ctx: any,
+  assigneeIds: string[] | undefined,
+): Promise<string | undefined> {
+  if (!assigneeIds || assigneeIds.length === 0) return undefined;
+  const names: string[] = [];
+  for (const id of assigneeIds) {
+    const user = await ctx.db.get(id);
+    if (user) {
+      names.push(
+        `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() || id,
+      );
+    }
+  }
+  return names.length > 0 ? names.join(", ") : undefined;
+}
+
+// ============================================================================
 // Sibling Sync Helper
 // ============================================================================
 
@@ -550,8 +577,12 @@ export const setAssignees = mutation({
 
     await requireCommunityLeader(ctx, cpRecord.communityId, userId);
 
+    const normalizedIds =
+      args.assigneeIds.length > 0 ? args.assigneeIds : undefined;
+    const assigneeSortKey = await buildAssigneeSortKey(ctx, normalizedIds as string[] | undefined);
     const patchFields = {
-      assigneeIds: args.assigneeIds.length > 0 ? args.assigneeIds : undefined,
+      assigneeIds: normalizedIds,
+      assigneeSortKey,
     };
     await ctx.db.patch(args.communityPeopleId, {
       ...patchFields,
@@ -1167,6 +1198,7 @@ export const upsertFromSubmission = internalMutation({
     } else if ((scoreDoc as any).assigneeId) {
       assigneeIds = [(scoreDoc as any).assigneeId];
     }
+    const assigneeSortKey = await buildAssigneeSortKey(ctx, assigneeIds as string[] | undefined);
 
     const canonicalFields = {
       communityId: args.communityId,
@@ -1183,6 +1215,7 @@ export const upsertFromSubmission = internalMutation({
       score3: (scoreDoc as any).score3,
       status: (scoreDoc as any).status,
       assigneeIds,
+      assigneeSortKey,
       connectionPoint: (scoreDoc as any).connectionPoint,
       lastFollowupAt: (scoreDoc as any).lastFollowupAt,
       lastActiveAt: (scoreDoc as any).lastActiveAt,
@@ -1310,5 +1343,53 @@ export const updateCommunityAlerts = mutation({
     });
 
     return { success: true };
+  },
+});
+
+// ============================================================================
+// Backfill: assigneeSortKey
+// ============================================================================
+
+/**
+ * Backfill assigneeSortKey for existing communityPeople records that have
+ * assigneeIds but no assigneeSortKey. Processes in batches of 100 and
+ * auto-schedules continuation until all records are processed. Run via:
+ *   npx convex run functions/communityPeople:backfillAssigneeSortKey
+ */
+export const backfillAssigneeSortKey = internalMutation({
+  args: {
+    cursor: v.optional(v.string()),
+    batchSize: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const batchSize = args.batchSize ?? 100;
+    const results = await ctx.db
+      .query("communityPeople")
+      .paginate({ numItems: batchSize, cursor: args.cursor ?? null });
+
+    let updated = 0;
+    for (const row of results.page) {
+      if (row.assigneeIds && row.assigneeIds.length > 0 && !row.assigneeSortKey) {
+        const sortKey = await buildAssigneeSortKey(ctx, row.assigneeIds as string[]);
+        if (sortKey) {
+          await ctx.db.patch(row._id, { assigneeSortKey: sortKey });
+          updated++;
+        }
+      }
+    }
+
+    // Auto-continue with next batch if there are more records
+    if (!results.isDone) {
+      await ctx.scheduler.runAfter(0, internal.functions.communityPeople.backfillAssigneeSortKey, {
+        cursor: results.continueCursor,
+        batchSize,
+      });
+    }
+
+    return {
+      updated,
+      isDone: results.isDone,
+      continueCursor: results.isDone ? null : results.continueCursor,
+    };
   },
 });
