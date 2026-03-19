@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, TextInput, TextInputProps, Platform } from 'react-native';
 import { Controller, Control, FieldError } from 'react-hook-form';
+import { useTheme } from '@hooks/useTheme';
 
 interface FormInputProps extends Omit<TextInputProps, 'style'> {
   name: string;
@@ -22,6 +23,7 @@ export function FormInput({
   inputStyle,
   ...textInputProps
 }: FormInputProps) {
+  const { colors } = useTheme();
   const errorMessage = typeof error === 'string' ? error : error?.message;
 
   return (
@@ -35,28 +37,29 @@ export function FormInput({
         return (
           <View style={[styles.container, containerStyle]}>
             {label && (
-              <Text style={styles.label}>
+              <Text style={[styles.label, { color: colors.text }]}>
                 {label}
-                {required && <Text style={styles.required}> *</Text>}
+                {required && <Text style={[styles.required, { color: colors.error }]}> *</Text>}
               </Text>
             )}
             <View
               style={[
                 styles.inputContainer,
-                isError && styles.inputContainerError,
+                { borderColor: colors.border, backgroundColor: colors.inputBackground },
+                isError && { borderColor: colors.error },
               ]}
             >
               <TextInput
-                style={[styles.input, inputStyle]}
+                style={[styles.input, { color: colors.text }, inputStyle]}
                 value={value || ''}
                 onChangeText={onChange}
                 onBlur={onBlur}
-                placeholderTextColor="#bdbdc1"
+                placeholderTextColor={colors.inputPlaceholder}
                 {...textInputProps}
               />
             </View>
             {displayError && (
-              <Text style={styles.errorText}>{displayError}</Text>
+              <Text style={[styles.errorText, { color: colors.error }]}>{displayError}</Text>
             )}
           </View>
         );
@@ -72,30 +75,21 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#333',
     marginBottom: 8,
   },
-  required: {
-    color: '#FF3B30',
-  },
+  required: {},
   inputContainer: {
     borderWidth: 1,
-    borderColor: '#e0e0e0',
     borderRadius: 8,
-    backgroundColor: '#fff',
     ...Platform.select({
       web: {
         boxShadow: '0px 1px 2px rgba(0, 0, 0, 0.05)',
       },
     }),
   },
-  inputContainerError: {
-    borderColor: '#FF3B30',
-  },
   input: {
     padding: 12,
     fontSize: 16,
-    color: '#333',
     letterSpacing: 0,
     ...Platform.select({
       web: {
@@ -105,7 +99,6 @@ const styles = StyleSheet.create({
   },
   errorText: {
     fontSize: 12,
-    color: '#FF3B30',
     marginTop: 4,
   },
 });

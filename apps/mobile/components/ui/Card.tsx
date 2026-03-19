@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, StyleSheet, Platform } from 'react-native';
+import { useTheme } from '@hooks/useTheme';
 
 interface CardProps {
   children: React.ReactNode;
@@ -8,11 +9,12 @@ interface CardProps {
 }
 
 export function Card({ children, style, onPress }: CardProps) {
+  const { colors } = useTheme();
   const CardComponent = onPress ? require('react-native').TouchableOpacity : View;
 
   return (
     <CardComponent
-      style={[styles.card, style]}
+      style={[styles.card, { backgroundColor: colors.surface }, style]}
       onPress={onPress}
       activeOpacity={onPress ? 0.7 : 1}
     >
@@ -23,7 +25,6 @@ export function Card({ children, style, onPress }: CardProps) {
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#fff',
     borderRadius: 16,
     ...Platform.select({
       web: {
@@ -39,4 +40,3 @@ const styles = StyleSheet.create({
     }),
   },
 });
-

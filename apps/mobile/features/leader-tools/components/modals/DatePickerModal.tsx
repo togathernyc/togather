@@ -10,6 +10,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { format } from "date-fns";
 import { DatePicker } from "@components/ui/DatePicker";
+import { useTheme } from "@hooks/useTheme";
 
 interface DatePickerModalProps {
   visible: boolean;
@@ -28,6 +29,7 @@ export function DatePickerModal({
   minimumDate,
   maximumDate,
 }: DatePickerModalProps) {
+  const { colors } = useTheme();
   const [selectedDate, setSelectedDate] = useState(currentDate);
 
   const handleSelect = () => {
@@ -64,17 +66,17 @@ export function DatePickerModal({
       animationType="slide"
       onRequestClose={handleClose}
     >
-      <View style={styles.overlay}>
+      <View style={[styles.overlay, { backgroundColor: colors.overlay }]}>
         <TouchableOpacity
           style={styles.backdrop}
           activeOpacity={1}
           onPress={handleClose}
         />
-        <View style={styles.modalContent}>
-          <View style={styles.header}>
-            <Text style={styles.headerTitle}>Select Date</Text>
+        <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
+          <View style={[styles.header, { borderBottomColor: colors.border }]}>
+            <Text style={[styles.headerTitle, { color: colors.text }]}>Select Date</Text>
             <TouchableOpacity onPress={handleClose} style={styles.closeButton}>
-              <Ionicons name="close" size={24} color="#333" />
+              <Ionicons name="close" size={24} color={colors.text} />
             </TouchableOpacity>
           </View>
 
@@ -104,20 +106,20 @@ export function DatePickerModal({
             />
           </View>
 
-          <View style={styles.buttonContainer}>
+          <View style={[styles.buttonContainer, { borderTopColor: colors.border }]}>
             <TouchableOpacity
-              style={[styles.button, styles.submitButton]}
+              style={[styles.button, { backgroundColor: colors.buttonPrimary }]}
               onPress={handleSelect}
             >
-              <Text style={[styles.buttonText, styles.submitButtonText]}>
+              <Text style={[styles.buttonText, { color: colors.textInverse }]}>
                 Select Date
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.button, styles.cancelButton]}
+              style={[styles.button, { backgroundColor: colors.surfaceSecondary }]}
               onPress={handleClose}
             >
-              <Text style={[styles.buttonText, styles.cancelButtonText]}>Cancel</Text>
+              <Text style={[styles.buttonText, { color: colors.textSecondary }]}>Cancel</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -129,14 +131,12 @@ export function DatePickerModal({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
     justifyContent: "flex-end",
   },
   backdrop: {
     flex: 1,
   },
   modalContent: {
-    backgroundColor: "#fff",
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     maxHeight: "90%",
@@ -148,12 +148,10 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   headerTitle: {
     fontSize: 20,
     fontWeight: "bold",
-    color: "#333",
   },
   closeButton: {
     padding: 4,
@@ -164,7 +162,6 @@ const styles = StyleSheet.create({
   buttonContainer: {
     padding: 16,
     borderTopWidth: 1,
-    borderTopColor: "#e0e0e0",
   },
   button: {
     borderRadius: 100,
@@ -173,21 +170,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginBottom: 12,
   },
-  submitButton: {
-    backgroundColor: "#222224",
-  },
-  cancelButton: {
-    backgroundColor: "#ecedf0",
-  },
   buttonText: {
     fontSize: 18,
     fontWeight: "600",
-  },
-  submitButtonText: {
-    color: "#fff",
-  },
-  cancelButtonText: {
-    color: "#4b4b4d",
   },
 });
 

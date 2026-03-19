@@ -21,6 +21,7 @@ import {
   Modal,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useTheme } from "@hooks/useTheme";
 import { useLandingPageConfig } from "../hooks/useLandingPageConfig";
 import { DOMAIN_CONFIG } from "@togather/shared";
 import * as Clipboard from "expo-clipboard";
@@ -95,6 +96,7 @@ type AutomationRule = {
 };
 
 export function LandingPageContent() {
+  const { colors, isDark } = useTheme();
   const { config, communitySlug, followupCustomFields, isLoading, isSaving, saveConfig } =
     useLandingPageConfig();
 
@@ -253,7 +255,7 @@ export function LandingPageContent() {
   if (isLoading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#666" />
+        <ActivityIndicator size="large" color={colors.textSecondary} />
       </View>
     );
   }
@@ -266,11 +268,11 @@ export function LandingPageContent() {
       {/* ================================================================ */}
       {/* Section 1: Page Settings */}
       {/* ================================================================ */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Page Settings</Text>
+      <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Page Settings</Text>
 
-        <View style={styles.row}>
-          <Text style={styles.rowLabel}>Enabled</Text>
+        <View style={[styles.row, { borderBottomColor: colors.borderLight }]}>
+          <Text style={[styles.rowLabel, { color: colors.text }]}>Enabled</Text>
           <Switch
             value={isEnabled}
             onValueChange={(v) => {
@@ -281,18 +283,18 @@ export function LandingPageContent() {
         </View>
 
         {communitySlug && (
-          <TouchableOpacity style={styles.linkRow} onPress={handleCopyLink}>
-            <Text style={styles.linkText}>
+          <TouchableOpacity style={[styles.linkRow, { backgroundColor: colors.surfaceSecondary }]} onPress={handleCopyLink}>
+            <Text style={[styles.linkText, { color: colors.link }]}>
               {getCommunityLandingLink(communitySlug)}
             </Text>
-            <Ionicons name="copy-outline" size={18} color="#666" />
+            <Ionicons name="copy-outline" size={18} color={colors.icon} />
           </TouchableOpacity>
         )}
 
         <View style={styles.field}>
-          <Text style={styles.fieldLabel}>Title</Text>
+          <Text style={[styles.fieldLabel, { color: colors.text }]}>Title</Text>
           <TextInput
-            style={styles.textInput}
+            style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
             value={title}
             onChangeText={(v) => {
               setTitle(v);
@@ -303,9 +305,9 @@ export function LandingPageContent() {
         </View>
 
         <View style={styles.field}>
-          <Text style={styles.fieldLabel}>Description</Text>
+          <Text style={[styles.fieldLabel, { color: colors.text }]}>Description</Text>
           <TextInput
-            style={[styles.textInput, styles.multilineInput]}
+            style={[styles.textInput, styles.multilineInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
             value={description}
             onChangeText={(v) => {
               setDescription(v);
@@ -317,9 +319,9 @@ export function LandingPageContent() {
         </View>
 
         <View style={styles.field}>
-          <Text style={styles.fieldLabel}>Submit Button Text</Text>
+          <Text style={[styles.fieldLabel, { color: colors.text }]}>Submit Button Text</Text>
           <TextInput
-            style={styles.textInput}
+            style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
             value={submitButtonText}
             onChangeText={(v) => {
               setSubmitButtonText(v);
@@ -330,9 +332,9 @@ export function LandingPageContent() {
         </View>
 
         <View style={styles.field}>
-          <Text style={styles.fieldLabel}>Success Message</Text>
+          <Text style={[styles.fieldLabel, { color: colors.text }]}>Success Message</Text>
           <TextInput
-            style={[styles.textInput, styles.multilineInput]}
+            style={[styles.textInput, styles.multilineInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
             value={successMessage}
             onChangeText={(v) => {
               setSuccessMessage(v);
@@ -343,10 +345,10 @@ export function LandingPageContent() {
           />
         </View>
 
-        <View style={styles.row}>
+        <View style={[styles.row, { borderBottomColor: colors.borderLight }]}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.rowLabel}>Generate Notes Summary</Text>
-            <Text style={styles.rowHint}>
+            <Text style={[styles.rowLabel, { color: colors.text }]}>Generate Notes Summary</Text>
+            <Text style={[styles.rowHint, { color: colors.textTertiary }]}>
               Save all responses as a follow-up note
             </Text>
           </View>
@@ -363,11 +365,11 @@ export function LandingPageContent() {
       {/* ================================================================ */}
       {/* Section 2: Form Fields */}
       {/* ================================================================ */}
-      <View style={styles.section}>
+      <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}>
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Form Fields</Text>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Form Fields</Text>
           <TouchableOpacity
-            style={styles.addButton}
+            style={[styles.addButton, { backgroundColor: colors.buttonPrimary }]}
             onPress={() => {
               setEditingFieldIndex(null);
               setShowFieldModal(true);
@@ -378,54 +380,54 @@ export function LandingPageContent() {
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.sectionHint}>
+        <Text style={[styles.sectionHint, { color: colors.textTertiary }]}>
           Built-in fields are always included. Add custom fields below.
         </Text>
 
         {/* Fixed built-in fields (always included, non-editable) */}
         {FIXED_BUILT_IN_FIELDS.map((field) => (
-          <View key={field.label} style={[styles.listItem, { opacity: 0.5 }]}>
+          <View key={field.label} style={[styles.listItem, { opacity: 0.5, borderBottomColor: colors.borderLight }]}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.listItemTitle}>{field.label}</Text>
-              <Text style={styles.listItemSubtitle}>
+              <Text style={[styles.listItemTitle, { color: colors.text }]}>{field.label}</Text>
+              <Text style={[styles.listItemSubtitle, { color: colors.textTertiary }]}>
                 {field.type}{field.required ? " · required" : " · optional"}
               </Text>
             </View>
-            <Ionicons name="lock-closed" size={16} color="#999" style={{ padding: 8 }} />
+            <Ionicons name="lock-closed" size={16} color={colors.textTertiary} style={{ padding: 8 }} />
           </View>
         ))}
 
         {/* Configurable built-in fields (ZIP Code, Birthday) */}
-        <View style={styles.listItem}>
+        <View style={[styles.listItem, { borderBottomColor: colors.borderLight }]}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.listItemTitle}>ZIP Code</Text>
-            <Text style={styles.listItemSubtitle}>
+            <Text style={[styles.listItemTitle, { color: colors.text }]}>ZIP Code</Text>
+            <Text style={[styles.listItemSubtitle, { color: colors.textTertiary }]}>
               text{requireZipCode ? " · required" : " · optional"}
             </Text>
           </View>
           <Switch
             value={requireZipCode}
             onValueChange={(val) => { setRequireZipCode(val); markDirty(); }}
-            trackColor={{ false: "#ddd", true: "#4CAF50" }}
+            trackColor={{ false: colors.border, true: colors.success }}
           />
         </View>
-        <View style={styles.listItem}>
+        <View style={[styles.listItem, { borderBottomColor: colors.borderLight }]}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.listItemTitle}>Birthday</Text>
-            <Text style={styles.listItemSubtitle}>
+            <Text style={[styles.listItemTitle, { color: colors.text }]}>Birthday</Text>
+            <Text style={[styles.listItemSubtitle, { color: colors.textTertiary }]}>
               date{requireBirthday ? " · required" : " · optional"}
             </Text>
           </View>
           <Switch
             value={requireBirthday}
             onValueChange={(val) => { setRequireBirthday(val); markDirty(); }}
-            trackColor={{ false: "#ddd", true: "#4CAF50" }}
+            trackColor={{ false: colors.border, true: colors.success }}
           />
         </View>
 
 
         {formFields.length === 0 ? (
-          <Text style={styles.emptyText}>No custom fields configured</Text>
+          <Text style={[styles.emptyText, { color: colors.textTertiary }]}>No custom fields configured</Text>
         ) : (
           (() => {
             const sorted = [...formFields].sort((a, b) => a.order - b.order);
@@ -433,7 +435,7 @@ export function LandingPageContent() {
               const originalIndex = formFields.indexOf(field);
               const isDecorative = DECORATIVE_TYPES.has(field.type);
               return (
-                <View key={field.slot || field.label || originalIndex} style={styles.listItem}>
+                <View key={field.slot || field.label || originalIndex} style={[styles.listItem, { borderBottomColor: colors.borderLight }]}>
                   <View style={styles.reorderButtons}>
                     <TouchableOpacity
                       onPress={() => moveField(sortedIndex, -1)}
@@ -443,7 +445,7 @@ export function LandingPageContent() {
                       <Ionicons
                         name="chevron-up"
                         size={18}
-                        color={sortedIndex === 0 ? "#ccc" : "#666"}
+                        color={sortedIndex === 0 ? colors.iconSecondary : colors.icon}
                       />
                     </TouchableOpacity>
                     <TouchableOpacity
@@ -454,7 +456,7 @@ export function LandingPageContent() {
                       <Ionicons
                         name="chevron-down"
                         size={18}
-                        color={sortedIndex === sorted.length - 1 ? "#ccc" : "#666"}
+                        color={sortedIndex === sorted.length - 1 ? colors.iconSecondary : colors.icon}
                       />
                     </TouchableOpacity>
                   </View>
@@ -470,18 +472,19 @@ export function LandingPageContent() {
                                 : "information-circle-outline"
                           }
                           size={16}
-                          color="#999"
+                          color={colors.textTertiary}
                         />
                       )}
                       <Text style={[
                         styles.listItemTitle,
+                        { color: colors.text },
                         field.type === "section_header" && { fontWeight: "700" },
-                        field.type === "subtitle" && { fontStyle: "italic", color: "#666" },
+                        field.type === "subtitle" && { fontStyle: "italic", color: colors.textSecondary },
                       ]}>
                         {field.label}
                       </Text>
                     </View>
-                    <Text style={styles.listItemSubtitle}>
+                    <Text style={[styles.listItemSubtitle, { color: colors.textTertiary }]}>
                       {field.type === "section_header" ? "section header" :
                        field.type === "subtitle" ? "subtitle" :
                        field.type === "button" ? "button" :
@@ -508,7 +511,7 @@ export function LandingPageContent() {
                     <Ionicons
                       name={field.showOnLanding === false ? "eye-off-outline" : "eye-outline"}
                       size={18}
-                      color={field.showOnLanding === false ? "#999" : "#2563EB"}
+                      color={field.showOnLanding === false ? colors.textTertiary : colors.link}
                     />
                   </TouchableOpacity>
                   <TouchableOpacity
@@ -518,7 +521,7 @@ export function LandingPageContent() {
                     }}
                     style={styles.iconButton}
                   >
-                    <Ionicons name="pencil" size={18} color="#666" />
+                    <Ionicons name="pencil" size={18} color={colors.icon} />
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={() => {
@@ -533,7 +536,7 @@ export function LandingPageContent() {
                     }}
                     style={styles.iconButton}
                   >
-                    <Ionicons name="trash-outline" size={18} color="#dc2626" />
+                    <Ionicons name="trash-outline" size={18} color={colors.destructive} />
                   </TouchableOpacity>
                 </View>
               );
@@ -545,11 +548,11 @@ export function LandingPageContent() {
       {/* ================================================================ */}
       {/* Section 3: Automation Rules */}
       {/* ================================================================ */}
-      <View style={styles.section}>
+      <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}>
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Automation Rules</Text>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Automation Rules</Text>
           <TouchableOpacity
-            style={styles.addButton}
+            style={[styles.addButton, { backgroundColor: colors.buttonPrimary }]}
             onPress={() => {
               setEditingRuleIndex(null);
               setShowRuleModal(true);
@@ -561,10 +564,10 @@ export function LandingPageContent() {
         </View>
 
         {automationRules.length === 0 ? (
-          <Text style={styles.emptyText}>No rules configured</Text>
+          <Text style={[styles.emptyText, { color: colors.textTertiary }]}>No rules configured</Text>
         ) : (
           automationRules.map((rule, index) => (
-            <View key={rule.id} style={styles.listItem}>
+            <View key={rule.id} style={[styles.listItem, { borderBottomColor: colors.borderLight }]}>
               <Switch
                 value={rule.isEnabled}
                 onValueChange={(v) => {
@@ -577,8 +580,8 @@ export function LandingPageContent() {
                 }}
               />
               <View style={{ flex: 1, marginLeft: 12 }}>
-                <Text style={styles.listItemTitle}>{rule.name}</Text>
-                <Text style={styles.listItemSubtitle}>
+                <Text style={[styles.listItemTitle, { color: colors.text }]}>{rule.name}</Text>
+                <Text style={[styles.listItemSubtitle, { color: colors.textTertiary }]}>
                   If {rule.condition.field} {rule.condition.operator}
                   {rule.condition.value ? ` "${rule.condition.value}"` : ""} →{" "}
                   {rule.action.type === "set_assignee"
@@ -593,7 +596,7 @@ export function LandingPageContent() {
                 }}
                 style={styles.iconButton}
               >
-                <Ionicons name="pencil" size={18} color="#666" />
+                <Ionicons name="pencil" size={18} color={colors.icon} />
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => {
@@ -602,7 +605,7 @@ export function LandingPageContent() {
                 }}
                 style={styles.iconButton}
               >
-                <Ionicons name="trash-outline" size={18} color="#dc2626" />
+                <Ionicons name="trash-outline" size={18} color={colors.destructive} />
               </TouchableOpacity>
             </View>
           ))
@@ -612,7 +615,7 @@ export function LandingPageContent() {
       {/* Save Button */}
       {isDirty && (
         <TouchableOpacity
-          style={[styles.saveButton, isSaving && { opacity: 0.6 }]}
+          style={[styles.saveButton, { backgroundColor: colors.buttonPrimary }, isSaving && { opacity: 0.6 }]}
           onPress={handleSave}
           disabled={isSaving}
         >
@@ -695,6 +698,7 @@ function FieldEditorModal({
   onSave: (field: FormField) => void;
   onClose: () => void;
 }) {
+  const { colors, isDark } = useTheme();
   const [label, setLabel] = useState("");
   const [type, setType] = useState("text");
   const [slot, setSlot] = useState("");
@@ -783,22 +787,22 @@ function FieldEditorModal({
 
   return (
     <Modal visible={visible} animationType="slide" transparent>
-      <View style={modalStyles.overlay}>
-        <View style={modalStyles.container}>
-          <View style={modalStyles.header}>
-            <Text style={modalStyles.title}>
+      <View style={[modalStyles.overlay, { backgroundColor: colors.overlay }]}>
+        <View style={[modalStyles.container, { backgroundColor: colors.modalBackground }]}>
+          <View style={[modalStyles.header, { borderBottomColor: colors.borderLight }]}>
+            <Text style={[modalStyles.title, { color: colors.text }]}>
               {field ? "Edit Field" : "Add Field"}
             </Text>
             <TouchableOpacity onPress={onClose}>
-              <Ionicons name="close" size={24} color="#333" />
+              <Ionicons name="close" size={24} color={colors.text} />
             </TouchableOpacity>
           </View>
 
           <ScrollView style={modalStyles.content}>
             <View style={styles.field}>
-              <Text style={styles.fieldLabel}>Label</Text>
+              <Text style={[styles.fieldLabel, { color: colors.text }]}>Label</Text>
               <TextInput
-                style={styles.textInput}
+                style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
                 value={label}
                 onChangeText={setLabel}
                 placeholder="e.g., Neighborhood"
@@ -807,12 +811,12 @@ function FieldEditorModal({
 
             {!isDecorative && (
               <View style={styles.field}>
-                <Text style={styles.fieldLabel}>Placeholder Text</Text>
-                <Text style={styles.fieldHint}>
+                <Text style={[styles.fieldLabel, { color: colors.text }]}>Placeholder Text</Text>
+                <Text style={[styles.fieldHint, { color: colors.textTertiary }]}>
                   Hint text shown inside the field when empty
                 </Text>
                 <TextInput
-                  style={styles.textInput}
+                  style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
                   value={placeholder}
                   onChangeText={setPlaceholder}
                   placeholder="e.g., Enter your neighborhood"
@@ -822,12 +826,12 @@ function FieldEditorModal({
 
             {type === "button" && (
               <View style={styles.field}>
-                <Text style={styles.fieldLabel}>Button Link URL</Text>
-                <Text style={styles.fieldHint}>
+                <Text style={[styles.fieldLabel, { color: colors.text }]}>Button Link URL</Text>
+                <Text style={[styles.fieldHint, { color: colors.textTertiary }]}>
                   Full URL beginning with https://
                 </Text>
                 <TextInput
-                  style={styles.textInput}
+                  style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
                   value={buttonUrl}
                   onChangeText={setButtonUrl}
                   placeholder="https://example.com"
@@ -837,14 +841,14 @@ function FieldEditorModal({
             )}
 
             <View style={styles.field}>
-              <Text style={styles.fieldLabel}>Type</Text>
+              <Text style={[styles.fieldLabel, { color: colors.text }]}>Type</Text>
               <View style={modalStyles.chipContainer}>
                 {FIELD_TYPES.map((t) => (
                   <TouchableOpacity
                     key={t.value}
                     style={[
-                      modalStyles.chip,
-                      type === t.value && modalStyles.chipSelected,
+                      modalStyles.chip, { borderColor: colors.inputBorder, backgroundColor: colors.buttonSecondary },
+                      type === t.value && { borderColor: colors.success, backgroundColor: colors.selectedBackground },
                     ]}
                     onPress={() => {
                       setType(t.value);
@@ -863,8 +867,8 @@ function FieldEditorModal({
                   >
                     <Text
                       style={[
-                        modalStyles.chipText,
-                        type === t.value && modalStyles.chipTextSelected,
+                        modalStyles.chipText, { color: colors.textSecondary },
+                        type === t.value && { color: colors.success },
                       ]}
                     >
                       {t.label}
@@ -875,15 +879,15 @@ function FieldEditorModal({
             </View>
 
             {type === "subtitle" && (
-              <Text style={styles.fieldHint}>
+              <Text style={[styles.fieldHint, { color: colors.textTertiary }]}>
                 Supports links using [label](https://url) or plain https:// URLs.
               </Text>
             )}
 
             {!isDecorative && (
               <View style={styles.field}>
-                <Text style={styles.fieldLabel}>Custom Field Slot</Text>
-                <Text style={styles.fieldHint}>
+                <Text style={[styles.fieldLabel, { color: colors.text }]}>Custom Field Slot</Text>
+                <Text style={[styles.fieldHint, { color: colors.textTertiary }]}>
                   Maps to a follow-up column. Leave empty for notes-only.
                 </Text>
                 <ScrollView
@@ -905,15 +909,15 @@ function FieldEditorModal({
                         <TouchableOpacity
                           key={s.value}
                           style={[
-                            modalStyles.chip,
-                            slot === s.value && modalStyles.chipSelected,
+                            modalStyles.chip, { borderColor: colors.inputBorder, backgroundColor: colors.buttonSecondary },
+                            slot === s.value && { borderColor: colors.success, backgroundColor: colors.selectedBackground },
                           ]}
                           onPress={() => setSlot(s.value)}
                         >
                           <Text
                             style={[
-                              modalStyles.chipText,
-                              slot === s.value && modalStyles.chipTextSelected,
+                              modalStyles.chipText, { color: colors.textSecondary },
+                              slot === s.value && { color: colors.success },
                             ]}
                           >
                             {s.label}
@@ -927,9 +931,9 @@ function FieldEditorModal({
 
             {!isDecorative && (type === "dropdown" || type === "multiselect") && (
               <View style={styles.field}>
-                <Text style={styles.fieldLabel}>Options (comma-separated)</Text>
+                <Text style={[styles.fieldLabel, { color: colors.text }]}>Options (comma-separated)</Text>
                 <TextInput
-                  style={styles.textInput}
+                  style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
                   value={options}
                   onChangeText={setOptions}
                   placeholder="Option 1, Option 2, Option 3"
@@ -938,14 +942,14 @@ function FieldEditorModal({
             )}
 
             {!isDecorative && (
-              <View style={styles.row}>
-                <Text style={styles.rowLabel}>Required</Text>
+              <View style={[styles.row, { borderBottomColor: colors.borderLight }]}>
+                <Text style={[styles.rowLabel, { color: colors.text }]}>Required</Text>
                 <Switch value={required} onValueChange={setRequired} />
               </View>
             )}
           </ScrollView>
 
-          <TouchableOpacity style={modalStyles.saveButton} onPress={handleSave}>
+          <TouchableOpacity style={[modalStyles.saveButton, { backgroundColor: colors.buttonPrimary }]} onPress={handleSave}>
             <Text style={modalStyles.saveButtonText}>
               {field ? "Update" : "Add"} Field
             </Text>
@@ -973,6 +977,7 @@ function RuleEditorModal({
   onSave: (rule: AutomationRule) => void;
   onClose: () => void;
 }) {
+  const { colors, isDark } = useTheme();
   const [name, setName] = useState("");
   const [conditionField, setConditionField] = useState("");
   const [conditionOperator, setConditionOperator] = useState("is_true");
@@ -1020,47 +1025,47 @@ function RuleEditorModal({
 
   return (
     <Modal visible={visible} animationType="slide" transparent>
-      <View style={modalStyles.overlay}>
-        <View style={modalStyles.container}>
-          <View style={modalStyles.header}>
-            <Text style={modalStyles.title}>
+      <View style={[modalStyles.overlay, { backgroundColor: colors.overlay }]}>
+        <View style={[modalStyles.container, { backgroundColor: colors.modalBackground }]}>
+          <View style={[modalStyles.header, { borderBottomColor: colors.borderLight }]}>
+            <Text style={[modalStyles.title, { color: colors.text }]}>
               {rule ? "Edit Rule" : "Add Rule"}
             </Text>
             <TouchableOpacity onPress={onClose}>
-              <Ionicons name="close" size={24} color="#333" />
+              <Ionicons name="close" size={24} color={colors.text} />
             </TouchableOpacity>
           </View>
 
           <ScrollView style={modalStyles.content}>
             <View style={styles.field}>
-              <Text style={styles.fieldLabel}>Rule Name</Text>
+              <Text style={[styles.fieldLabel, { color: colors.text }]}>Rule Name</Text>
               <TextInput
-                style={styles.textInput}
+                style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
                 value={name}
                 onChangeText={setName}
                 placeholder="e.g., Assign Dinner Party leads"
               />
             </View>
 
-            <Text style={styles.fieldLabel}>Condition</Text>
+            <Text style={[styles.fieldLabel, { color: colors.text }]}>Condition</Text>
             <View style={styles.field}>
-              <Text style={styles.fieldHint}>When this field...</Text>
+              <Text style={[styles.fieldHint, { color: colors.textTertiary }]}>When this field...</Text>
               <View style={modalStyles.chipContainer}>
                 {formFields.map((f) => (
                   <TouchableOpacity
                     key={f.slot || f.label}
                     style={[
-                      modalStyles.chip,
+                      modalStyles.chip, { borderColor: colors.inputBorder, backgroundColor: colors.buttonSecondary },
                       conditionField === (f.slot || f.label) &&
-                        modalStyles.chipSelected,
+                        { borderColor: colors.success, backgroundColor: colors.selectedBackground },
                     ]}
                     onPress={() => setConditionField(f.slot || f.label)}
                   >
                     <Text
                       style={[
-                        modalStyles.chipText,
+                        modalStyles.chipText, { color: colors.textSecondary },
                         conditionField === (f.slot || f.label) &&
-                          modalStyles.chipTextSelected,
+                          { color: colors.success },
                       ]}
                     >
                       {f.label}
@@ -1071,22 +1076,22 @@ function RuleEditorModal({
             </View>
 
             <View style={styles.field}>
-              <Text style={styles.fieldHint}>...matches this condition</Text>
+              <Text style={[styles.fieldHint, { color: colors.textTertiary }]}>...matches this condition</Text>
               <View style={modalStyles.chipContainer}>
                 {OPERATORS.map((op) => (
                   <TouchableOpacity
                     key={op.value}
                     style={[
-                      modalStyles.chip,
-                      conditionOperator === op.value && modalStyles.chipSelected,
+                      modalStyles.chip, { borderColor: colors.inputBorder, backgroundColor: colors.buttonSecondary },
+                      conditionOperator === op.value && { borderColor: colors.success, backgroundColor: colors.selectedBackground },
                     ]}
                     onPress={() => setConditionOperator(op.value)}
                   >
                     <Text
                       style={[
-                        modalStyles.chipText,
+                        modalStyles.chipText, { color: colors.textSecondary },
                         conditionOperator === op.value &&
-                          modalStyles.chipTextSelected,
+                          { color: colors.success },
                       ]}
                     >
                       {op.label}
@@ -1098,9 +1103,9 @@ function RuleEditorModal({
 
             {showValueInput && (
               <View style={styles.field}>
-                <Text style={styles.fieldHint}>...with this value</Text>
+                <Text style={[styles.fieldHint, { color: colors.textTertiary }]}>...with this value</Text>
                 <TextInput
-                  style={styles.textInput}
+                  style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
                   value={conditionValue}
                   onChangeText={setConditionValue}
                   placeholder="Value to match"
@@ -1108,13 +1113,13 @@ function RuleEditorModal({
               </View>
             )}
 
-            <Text style={[styles.fieldLabel, { marginTop: 8 }]}>Action</Text>
+            <Text style={[styles.fieldLabel, { marginTop: 8, color: colors.text }]}>Action</Text>
             <View style={styles.field}>
-              <Text style={styles.fieldHint}>
+              <Text style={[styles.fieldHint, { color: colors.textTertiary }]}>
                 Set assignee (enter phone number)
               </Text>
               <TextInput
-                style={styles.textInput}
+                style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
                 value={assigneePhone}
                 onChangeText={setAssigneePhone}
                 placeholder="(555) 555-5555"
@@ -1123,7 +1128,7 @@ function RuleEditorModal({
             </View>
           </ScrollView>
 
-          <TouchableOpacity style={modalStyles.saveButton} onPress={handleSave}>
+          <TouchableOpacity style={[modalStyles.saveButton, { backgroundColor: colors.buttonPrimary }]} onPress={handleSave}>
             <Text style={modalStyles.saveButtonText}>
               {rule ? "Update" : "Add"} Rule
             </Text>
@@ -1152,12 +1157,10 @@ const styles = StyleSheet.create({
     paddingBottom: 100,
   },
   section: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 16,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: "#f0f0f0",
   },
   sectionHeader: {
     flexDirection: "row",
@@ -1168,12 +1171,10 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 18,
     fontWeight: "700",
-    color: "#333",
     marginBottom: 12,
   },
   sectionHint: {
     fontSize: 13,
-    color: "#999",
     marginBottom: 12,
     marginTop: -8,
   },
@@ -1183,29 +1184,24 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#f5f5f5",
   },
   rowLabel: {
     fontSize: 16,
-    color: "#333",
   },
   rowHint: {
     fontSize: 12,
-    color: "#999",
     marginTop: 2,
   },
   linkRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    backgroundColor: "#f8f8f8",
     padding: 12,
     borderRadius: 8,
     marginBottom: 16,
   },
   linkText: {
     fontSize: 14,
-    color: "#1E8449",
     flex: 1,
   },
   field: {
@@ -1214,22 +1210,18 @@ const styles = StyleSheet.create({
   fieldLabel: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 6,
   },
   fieldHint: {
     fontSize: 12,
-    color: "#999",
     marginBottom: 6,
   },
   textInput: {
     borderWidth: 1,
-    borderColor: "#ddd",
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 16,
-    color: "#333",
   },
   multilineInput: {
     minHeight: 80,
@@ -1238,7 +1230,6 @@ const styles = StyleSheet.create({
   addButton: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#1E8449",
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 8,
@@ -1254,7 +1245,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#f5f5f5",
   },
   reorderButtons: {
     flexDirection: "column",
@@ -1263,11 +1253,9 @@ const styles = StyleSheet.create({
   listItemTitle: {
     fontSize: 15,
     fontWeight: "600",
-    color: "#333",
   },
   listItemSubtitle: {
     fontSize: 12,
-    color: "#999",
     marginTop: 2,
   },
   iconButton: {
@@ -1275,12 +1263,10 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 14,
-    color: "#999",
     textAlign: "center",
     paddingVertical: 20,
   },
   saveButton: {
-    backgroundColor: "#1E8449",
     paddingVertical: 16,
     borderRadius: 12,
     alignItems: "center",
@@ -1296,11 +1282,9 @@ const styles = StyleSheet.create({
 const modalStyles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
     justifyContent: "flex-end",
   },
   container: {
-    backgroundColor: "#fff",
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     maxHeight: "85%",
@@ -1311,12 +1295,10 @@ const modalStyles = StyleSheet.create({
     alignItems: "center",
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
   },
   title: {
     fontSize: 18,
     fontWeight: "700",
-    color: "#333",
   },
   content: {
     padding: 16,
@@ -1329,26 +1311,19 @@ const modalStyles = StyleSheet.create({
   },
   chip: {
     borderWidth: 1,
-    borderColor: "#ddd",
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    backgroundColor: "#fafafa",
   },
   chipSelected: {
-    borderColor: "#1E8449",
-    backgroundColor: "#E8F5E9",
   },
   chipText: {
     fontSize: 13,
-    color: "#666",
   },
   chipTextSelected: {
-    color: "#1E8449",
     fontWeight: "600",
   },
   saveButton: {
-    backgroundColor: "#1E8449",
     margin: 16,
     paddingVertical: 14,
     borderRadius: 12,

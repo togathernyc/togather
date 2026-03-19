@@ -2,6 +2,7 @@ import React from "react";
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { Avatar } from "@components/ui/Avatar";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
+import { useTheme } from "@hooks/useTheme";
 
 // ============================================================================
 // Types
@@ -50,6 +51,7 @@ export function GuestListPreview({
   rsvpOptions,
   onViewAll,
 }: GuestListPreviewProps) {
+  const { colors } = useTheme();
   // Find the "Going" option to show those guests
   const goingOption = rsvpOptions.find(
     (opt) =>
@@ -87,14 +89,14 @@ export function GuestListPreview({
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { borderTopColor: colors.border }]}>
       <View style={styles.header}>
         <View>
-          <Text style={styles.title}>Guest List</Text>
-          <Text style={styles.subtitle}>{subtitleText}</Text>
+          <Text style={[styles.title, { color: colors.text }]}>Guest List</Text>
+          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>{subtitleText}</Text>
         </View>
-        <TouchableOpacity style={styles.viewAllButton} onPress={onViewAll}>
-          <Text style={styles.viewAllText}>View all</Text>
+        <TouchableOpacity style={[styles.viewAllButton, { backgroundColor: colors.surfaceSecondary }]} onPress={onViewAll}>
+          <Text style={[styles.viewAllText, { color: colors.text }]}>View all</Text>
         </TouchableOpacity>
       </View>
       <View style={styles.avatarStack}>
@@ -136,7 +138,6 @@ const styles = StyleSheet.create({
     marginTop: 24,
     paddingTop: 24,
     borderTopWidth: 1,
-    borderTopColor: "#eee",
   },
   header: {
     flexDirection: "row",
@@ -147,15 +148,12 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 4,
   },
   subtitle: {
     fontSize: 14,
-    color: "#666",
   },
   viewAllButton: {
-    backgroundColor: "#f0f0f0",
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
@@ -163,7 +161,6 @@ const styles = StyleSheet.create({
   viewAllText: {
     fontSize: 14,
     fontWeight: "500",
-    color: "#333",
   },
   avatarStack: {
     flexDirection: "row",

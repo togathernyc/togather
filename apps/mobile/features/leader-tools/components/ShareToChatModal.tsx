@@ -9,6 +9,7 @@ import {
 } from "react-native";
 import { CustomModal } from "@components/ui/Modal";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
+import { useTheme } from "@hooks/useTheme";
 
 interface ShareToChatModalProps {
   visible: boolean;
@@ -29,6 +30,7 @@ export function ShareToChatModal({
   isLoading = false,
   eventTitle,
 }: ShareToChatModalProps) {
+  const { colors } = useTheme();
   const [message, setMessage] = useState(DEFAULT_MESSAGE);
 
   const handleSend = () => {
@@ -81,7 +83,7 @@ export function ShareToChatModal({
             disabled={isLoading}
           >
             {isLoading ? (
-              <ActivityIndicator color="#fff" size="small" />
+              <ActivityIndicator color={colors.textInverse} size="small" />
             ) : (
               <Text style={styles.sendButtonText}>Send to Chat</Text>
             )}

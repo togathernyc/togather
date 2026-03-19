@@ -10,6 +10,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
+import { useTheme } from '@hooks/useTheme';
 
 interface DatePickerProps {
   label?: string;
@@ -39,6 +40,7 @@ export function DatePicker({
   mode = 'date',
 }: DatePickerProps) {
   const { primaryColor } = useCommunityTheme();
+  const { colors } = useTheme();
   const [modalVisible, setModalVisible] = useState(false);
   // Track whether we're picking date or time (for datetime mode on iOS)
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -84,9 +86,9 @@ export function DatePicker({
     return (
       <View style={[styles.container, style]}>
         {label && (
-          <Text style={styles.label}>
+          <Text style={[styles.label, { color: colors.text }]}>
             {label}
-            {required && <Text style={styles.required}> *</Text>}
+            {required && <Text style={[styles.required, { color: colors.error }]}> *</Text>}
           </Text>
         )}
         <input
@@ -113,14 +115,15 @@ export function DatePicker({
             width: '100%',
             padding: '12px 16px',
             fontSize: '16px',
-            border: error ? '2px solid #FF3B30' : '2px solid #ecedf0',
+            border: error ? `2px solid ${colors.error}` : `2px solid ${colors.border}`,
             borderRadius: '8px',
-            backgroundColor: disabled ? '#f5f5f5' : '#fff',
+            backgroundColor: disabled ? colors.surfaceSecondary : colors.inputBackground,
             outline: 'none',
             cursor: disabled ? 'not-allowed' : 'pointer',
+            color: colors.text,
           }}
         />
-        {error && <Text style={styles.errorText}>{error}</Text>}
+        {error && <Text style={[styles.errorText, { color: colors.error }]}>{error}</Text>}
       </View>
     );
   }
@@ -196,16 +199,17 @@ export function DatePicker({
   return (
     <View style={[styles.container, style]}>
       {label && (
-        <Text style={styles.label}>
+        <Text style={[styles.label, { color: colors.text }]}>
           {label}
-          {required && <Text style={styles.required}> *</Text>}
+          {required && <Text style={[styles.required, { color: colors.error }]}> *</Text>}
         </Text>
       )}
       <TouchableOpacity
         style={[
           styles.select,
-          error && styles.selectError,
-          disabled && styles.selectDisabled,
+          { borderColor: colors.border, backgroundColor: colors.inputBackground },
+          error && { borderColor: colors.error },
+          disabled && { backgroundColor: colors.surfaceSecondary, opacity: 0.6 },
         ]}
         onPress={handlePress}
         disabled={disabled}
@@ -214,8 +218,9 @@ export function DatePicker({
         <Text
           style={[
             styles.selectText,
-            !value && styles.selectPlaceholder,
-            disabled && styles.selectTextDisabled,
+            { color: colors.text },
+            !value && { color: colors.inputPlaceholder },
+            disabled && { color: colors.inputPlaceholder },
           ]}
         >
           {value ? formatDate(value) : placeholder}
@@ -223,10 +228,10 @@ export function DatePicker({
         <Ionicons
           name="calendar-outline"
           size={20}
-          color={disabled ? '#bdbdc1' : '#666'}
+          color={disabled ? colors.inputPlaceholder : colors.icon}
         />
       </TouchableOpacity>
-      {error && <Text style={styles.errorText}>{error}</Text>}
+      {error && <Text style={[styles.errorText, { color: colors.error }]}>{error}</Text>}
 
       {/* iOS Modal with inline picker */}
       {Platform.OS === 'ios' && (
@@ -236,13 +241,13 @@ export function DatePicker({
           animationType="slide"
           onRequestClose={() => setModalVisible(false)}
         >
-          <View style={styles.modalOverlay}>
-            <View style={styles.iosPickerContainer}>
-              <View style={styles.iosPickerHeader}>
+          <View style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}>
+            <View style={[styles.iosPickerContainer, { backgroundColor: colors.surface }]}>
+              <View style={[styles.iosPickerHeader, { borderBottomColor: colors.borderLight }]}>
                 <TouchableOpacity onPress={handleIOSCancel}>
-                  <Text style={styles.iosPickerCancel}>Cancel</Text>
+                  <Text style={[styles.iosPickerCancel, { color: colors.textSecondary }]}>Cancel</Text>
                 </TouchableOpacity>
-                <Text style={styles.iosPickerTitle}>
+                <Text style={[styles.iosPickerTitle, { color: colors.text }]}>
                   Select {mode === 'time' ? 'Time' : mode === 'datetime' ? 'Date & Time' : 'Date'}
                 </Text>
                 <TouchableOpacity onPress={handleIOSConfirm}>
@@ -257,7 +262,7 @@ export function DatePicker({
                 minimumDate={minimumDate}
                 maximumDate={maximumDate}
                 style={styles.iosPicker}
-                textColor="#000000"
+                textColor={colors.text}
               />
             </View>
           </View>
@@ -296,54 +301,32 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#333',
     marginBottom: 8,
   },
-  required: {
-    color: '#FF3B30',
-  },
+  required: {},
   select: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     borderWidth: 2,
-    borderColor: '#ecedf0',
     borderRadius: 8,
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: '#fff',
     minHeight: 48,
-  },
-  selectError: {
-    borderColor: '#FF3B30',
-  },
-  selectDisabled: {
-    backgroundColor: '#f5f5f5',
-    opacity: 0.6,
   },
   selectText: {
     flex: 1,
     fontSize: 16,
-    color: '#333',
-  },
-  selectPlaceholder: {
-    color: '#bdbdc1',
-  },
-  selectTextDisabled: {
-    color: '#bdbdc1',
   },
   errorText: {
     fontSize: 12,
-    color: '#FF3B30',
     marginTop: 4,
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'flex-end',
   },
   iosPickerContainer: {
-    backgroundColor: '#fff',
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
     paddingBottom: 20,
@@ -355,16 +338,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
   },
   iosPickerTitle: {
     fontSize: 17,
     fontWeight: '600',
-    color: '#333',
   },
   iosPickerCancel: {
     fontSize: 17,
-    color: '#666',
   },
   iosPickerDone: {
     fontSize: 17,

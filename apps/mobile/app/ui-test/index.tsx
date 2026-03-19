@@ -32,6 +32,7 @@ import {
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { useTheme } from "@hooks/useTheme";
 
 const testSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -39,6 +40,7 @@ const testSchema = z.object({
 });
 
 function UITestScreen() {
+  const { colors } = useTheme();
   const [modalVisible, setModalVisible] = useState(false);
   const [toastVisible, setToastVisible] = useState(false);
   const [switchValue, setSwitchValue] = useState(false);
@@ -70,22 +72,41 @@ function UITestScreen() {
     Alert.alert("Form Submitted", JSON.stringify(data));
   };
 
+  const sectionStyle = [
+    styles.section,
+    {
+      backgroundColor: colors.surface,
+      ...Platform.select({
+        web: {
+          boxShadow: `0px 2px 8px rgba(0, 0, 0, 0.1)`,
+        },
+        default: {
+          shadowColor: colors.shadow,
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.1,
+          shadowRadius: 8,
+          elevation: 3,
+        },
+      }),
+    },
+  ];
+
   return (
     <ToastContainer>
       <ScrollView
-        style={styles.container}
+        style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}
         contentContainerStyle={styles.content}
       >
-        <View style={styles.header}>
-          <Text style={styles.title}>UI Components Test</Text>
-          <Text style={styles.subtitle}>
+        <View style={[styles.header, { borderBottomColor: colors.border }]}>
+          <Text style={[styles.title, { color: colors.text }]}>UI Components Test</Text>
+          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
             Testing all UI components in browser
           </Text>
         </View>
 
         {/* Button */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Button</Text>
+        <View style={sectionStyle}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Button</Text>
           <View style={styles.buttonRow}>
             <Button
               onPress={() => Alert.alert("Primary clicked")}
@@ -115,19 +136,19 @@ function UITestScreen() {
         </View>
 
         {/* Card */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Card</Text>
+        <View style={sectionStyle}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Card</Text>
           <Card style={styles.card}>
-            <Text style={styles.cardText}>This is a card component</Text>
+            <Text style={[styles.cardText, { color: colors.text }]}>This is a card component</Text>
           </Card>
           <Card onPress={() => Alert.alert("Card pressed")} style={styles.card}>
-            <Text style={styles.cardText}>Clickable card</Text>
+            <Text style={[styles.cardText, { color: colors.text }]}>Clickable card</Text>
           </Card>
         </View>
 
         {/* Avatar */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Avatar</Text>
+        <View style={sectionStyle}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Avatar</Text>
           <View style={styles.avatarRow}>
             <Avatar
               name="Alice"
@@ -138,8 +159,8 @@ function UITestScreen() {
         </View>
 
         {/* Badge */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Badge</Text>
+        <View style={sectionStyle}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Badge</Text>
           <View style={styles.badgeRow}>
             <Badge variant="primary">Primary</Badge>
             <Badge variant="success">Success</Badge>
@@ -156,8 +177,8 @@ function UITestScreen() {
         </View>
 
         {/* Input */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Input</Text>
+        <View style={sectionStyle}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Input</Text>
           <Input
             label="Regular Input"
             placeholder="Enter text"
@@ -183,8 +204,8 @@ function UITestScreen() {
         </View>
 
         {/* FormInput */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>FormInput (with validation)</Text>
+        <View style={sectionStyle}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>FormInput (with validation)</Text>
           <FormInput
             name="name"
             control={control}
@@ -212,8 +233,8 @@ function UITestScreen() {
         </View>
 
         {/* Select */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Select/Dropdown</Text>
+        <View style={sectionStyle}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Select/Dropdown</Text>
           <Select
             label="Select Option"
             placeholder="Choose an option"
@@ -233,8 +254,8 @@ function UITestScreen() {
         </View>
 
         {/* SearchBar */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>SearchBar</Text>
+        <View style={sectionStyle}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>SearchBar</Text>
           <SearchBar
             placeholder="Search..."
             value={searchValue}
@@ -244,8 +265,8 @@ function UITestScreen() {
         </View>
 
         {/* Switch */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Switch/Toggle</Text>
+        <View style={sectionStyle}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Switch/Toggle</Text>
           <Switch
             label="Enable notifications"
             value={switchValue}
@@ -259,8 +280,8 @@ function UITestScreen() {
         </View>
 
         {/* ProgressBar */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>ProgressBar</Text>
+        <View style={sectionStyle}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>ProgressBar</Text>
           <ProgressBar progress={progress} showPercentage />
           <View style={styles.progressControls}>
             <Button
@@ -281,8 +302,8 @@ function UITestScreen() {
         </View>
 
         {/* DatePicker */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>DatePicker</Text>
+        <View style={sectionStyle}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>DatePicker</Text>
           <DatePicker
             label="Select Date"
             value={dateValue}
@@ -300,8 +321,8 @@ function UITestScreen() {
         </View>
 
         {/* Modal */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Modal</Text>
+        <View style={sectionStyle}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Modal</Text>
           <Button onPress={() => setModalVisible(true)} variant="primary">
             Open Modal
           </Button>
@@ -310,8 +331,8 @@ function UITestScreen() {
             onClose={() => setModalVisible(false)}
             title="Test Modal"
           >
-            <Text style={styles.modalText}>This is a modal component</Text>
-            <Text style={styles.modalText}>
+            <Text style={[styles.modalText, { color: colors.text }]}>This is a modal component</Text>
+            <Text style={[styles.modalText, { color: colors.text }]}>
               You can close it by clicking the X or outside
             </Text>
             <Button
@@ -325,13 +346,13 @@ function UITestScreen() {
         </View>
 
         {/* Toast */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Toast</Text>
+        <View style={sectionStyle}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Toast</Text>
           <View style={styles.buttonRow}>
             <Button
               onPress={() => ToastManager.success("Success message!")}
               variant="primary"
-              style={{ flex: 1, marginRight: 8, backgroundColor: "#28a745" }}
+              style={{ flex: 1, marginRight: 8, backgroundColor: colors.success }}
             >
               Success
             </Button>
@@ -347,14 +368,14 @@ function UITestScreen() {
             <Button
               onPress={() => ToastManager.warning("Warning message!")}
               variant="secondary"
-              style={{ flex: 1, marginRight: 8, backgroundColor: "#ffc107" }}
+              style={{ flex: 1, marginRight: 8, backgroundColor: colors.warning }}
             >
               Warning
             </Button>
             <Button
               onPress={() => ToastManager.info("Info message!")}
               variant="primary"
-              style={{ flex: 1, backgroundColor: "#17a2b8" }}
+              style={{ flex: 1, backgroundColor: colors.link }}
             >
               Info
             </Button>
@@ -362,8 +383,8 @@ function UITestScreen() {
         </View>
 
         {/* Skeleton */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Skeleton/Loading</Text>
+        <View style={sectionStyle}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Skeleton/Loading</Text>
           <Skeleton width={200} height={20} style={{ marginBottom: 16 }} />
           <SkeletonText lines={3} style={{ marginBottom: 16 }} />
           <SkeletonAvatar size={64} style={{ marginBottom: 16 }} />
@@ -371,8 +392,8 @@ function UITestScreen() {
         </View>
 
         {/* EmptyState */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>EmptyState</Text>
+        <View style={sectionStyle}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>EmptyState</Text>
           <EmptyState
             icon="document-outline"
             title="No items found"
@@ -389,7 +410,6 @@ function UITestScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f5f5f5",
   },
   content: {
     padding: 20,
@@ -399,40 +419,23 @@ const styles = StyleSheet.create({
     marginBottom: 32,
     paddingBottom: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   title: {
     fontSize: 28,
     fontWeight: "bold",
-    color: "#333",
     marginBottom: 8,
   },
   subtitle: {
     fontSize: 16,
-    color: "#666",
   },
   section: {
     marginBottom: 32,
     padding: 20,
-    backgroundColor: "#fff",
     borderRadius: 12,
-    ...Platform.select({
-      web: {
-        boxShadow: "0px 2px 8px rgba(0, 0, 0, 0.1)",
-      },
-      default: {
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 8,
-        elevation: 3,
-      },
-    }),
   },
   sectionTitle: {
     fontSize: 20,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 16,
   },
   buttonRow: {
@@ -446,7 +449,6 @@ const styles = StyleSheet.create({
   },
   cardText: {
     fontSize: 16,
-    color: "#333",
   },
   avatarRow: {
     flexDirection: "row",
@@ -466,7 +468,6 @@ const styles = StyleSheet.create({
   },
   modalText: {
     fontSize: 16,
-    color: "#333",
     marginBottom: 8,
     lineHeight: 24,
   },

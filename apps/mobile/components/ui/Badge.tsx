@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
 import { DEFAULT_PRIMARY_COLOR } from '@utils/styles';
+import { useTheme } from '@hooks/useTheme';
 
 interface BadgeProps {
   children: React.ReactNode;
@@ -17,9 +18,22 @@ export function Badge({
   style,
   textStyle,
 }: BadgeProps) {
+  const { colors } = useTheme();
+
+  const variantColors: Record<string, { bg: string; text: string }> = {
+    primary: { bg: DEFAULT_PRIMARY_COLOR, text: colors.textInverse },
+    secondary: { bg: colors.textSecondary, text: colors.textInverse },
+    success: { bg: colors.success, text: colors.textInverse },
+    warning: { bg: colors.warning, text: colors.text },
+    danger: { bg: colors.destructive, text: colors.textInverse },
+    info: { bg: colors.link, text: colors.textInverse },
+  };
+
+  const variantStyle = variantColors[variant] || variantColors.primary;
+
   return (
-    <View style={[styles.badge, styles[variant], styles[size], style]}>
-      <Text style={[styles.text, styles[`${variant}Text`], styles[`${size}Text`], textStyle]}>
+    <View style={[styles.badge, styles[size], { backgroundColor: variantStyle.bg }, style]}>
+      <Text style={[styles.text, styles[`${size}Text`], { color: variantStyle.text }, textStyle]}>
         {children}
       </Text>
     </View>
@@ -60,27 +74,8 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 16,
   },
-  primary: {
-    backgroundColor: DEFAULT_PRIMARY_COLOR,
-  },
-  secondary: {
-    backgroundColor: '#6c757d',
-  },
-  success: {
-    backgroundColor: '#28a745',
-  },
-  warning: {
-    backgroundColor: '#ffc107',
-  },
-  danger: {
-    backgroundColor: '#FF3B30',
-  },
-  info: {
-    backgroundColor: '#17a2b8',
-  },
   text: {
     fontWeight: '600',
-    color: '#fff',
   },
   smallText: {
     fontSize: 10,
@@ -93,24 +88,6 @@ const styles = StyleSheet.create({
   largeText: {
     fontSize: 14,
     lineHeight: 16,
-  },
-  primaryText: {
-    color: '#ffffff',
-  },
-  secondaryText: {
-    color: '#ffffff',
-  },
-  successText: {
-    color: '#ffffff',
-  },
-  warningText: {
-    color: '#000000',
-  },
-  dangerText: {
-    color: '#ffffff',
-  },
-  infoText: {
-    color: '#ffffff',
   },
 });
 

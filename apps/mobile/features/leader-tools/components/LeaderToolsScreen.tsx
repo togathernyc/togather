@@ -3,6 +3,7 @@ import { View, ActivityIndicator, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { DragHandle } from "@components/ui/DragHandle";
+import { useTheme } from "@hooks/useTheme";
 
 /**
  * Leader Tools landing page is deprecated.
@@ -10,6 +11,7 @@ import { DragHandle } from "@components/ui/DragHandle";
  * This page redirects users to the inbox.
  */
 export function LeaderToolsScreen() {
+  const { colors } = useTheme();
   const router = useRouter();
 
   useEffect(() => {
@@ -18,7 +20,7 @@ export function LeaderToolsScreen() {
   }, [router]);
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
       <DragHandle />
       <ActivityIndicator size="large" color={DEFAULT_PRIMARY_COLOR} />
     </View>
@@ -28,7 +30,6 @@ export function LeaderToolsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f5f5f5",
     justifyContent: "center",
     alignItems: "center",
   },

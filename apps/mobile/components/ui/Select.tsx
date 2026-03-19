@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
+import { useTheme } from '@hooks/useTheme';
 
 interface SelectOption {
   label: string;
@@ -43,6 +44,7 @@ export function Select({
   disabled = false,
 }: SelectProps) {
   const { primaryColor } = useCommunityTheme();
+  const { colors } = useTheme();
   const [modalVisible, setModalVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -64,16 +66,17 @@ export function Select({
   return (
     <View style={[styles.container, style]}>
       {label && (
-        <Text style={styles.label}>
+        <Text style={[styles.label, { color: colors.text }]}>
           {label}
-          {required && <Text style={styles.required}> *</Text>}
+          {required && <Text style={{ color: colors.error }}> *</Text>}
         </Text>
       )}
       <TouchableOpacity
         style={[
           styles.select,
-          error && styles.selectError,
-          disabled && styles.selectDisabled,
+          { borderColor: colors.border, backgroundColor: colors.inputBackground },
+          error && { borderColor: colors.error },
+          disabled && [styles.selectDisabled, { backgroundColor: colors.surfaceSecondary }],
         ]}
         onPress={() => !disabled && setModalVisible(true)}
         disabled={disabled}
@@ -82,8 +85,9 @@ export function Select({
         <Text
           style={[
             styles.selectText,
-            !displayValue && styles.selectPlaceholder,
-            disabled && styles.selectTextDisabled,
+            { color: colors.text },
+            !displayValue && { color: colors.inputPlaceholder },
+            disabled && { color: colors.inputPlaceholder },
           ]}
         >
           {displayValue || placeholder}
@@ -91,10 +95,10 @@ export function Select({
         <Ionicons
           name="chevron-down"
           size={20}
-          color={disabled ? '#bdbdc1' : '#666'}
+          color={disabled ? colors.iconSecondary : colors.icon}
         />
       </TouchableOpacity>
-      {error && <Text style={styles.errorText}>{error}</Text>}
+      {error && <Text style={[styles.errorText, { color: colors.error }]}>{error}</Text>}
 
       <Modal
         visible={modalVisible}
@@ -103,30 +107,30 @@ export function Select({
         onRequestClose={() => setModalVisible(false)}
       >
         <TouchableOpacity
-          style={styles.modalOverlay}
+          style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}
           activeOpacity={1}
           onPress={() => setModalVisible(false)}
         >
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>{label || 'Select an option'}</Text>
+          <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
+            <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>{label || 'Select an option'}</Text>
               <TouchableOpacity
                 onPress={() => setModalVisible(false)}
                 style={styles.closeButton}
               >
-                <Ionicons name="close" size={24} color="#333" />
+                <Ionicons name="close" size={24} color={colors.text} />
               </TouchableOpacity>
             </View>
 
             {searchable && (
-              <View style={styles.searchContainer}>
-                <Ionicons name="search" size={20} color="#666" style={styles.searchIcon} />
+              <View style={[styles.searchContainer, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary }]}>
+                <Ionicons name="search" size={20} color={colors.icon} style={styles.searchIcon} />
                 <TextInput
-                  style={styles.searchInput}
+                  style={[styles.searchInput, { color: colors.text }]}
                   placeholder="Search..."
                   value={searchQuery}
                   onChangeText={setSearchQuery}
-                  placeholderTextColor="#bdbdc1"
+                  placeholderTextColor={colors.inputPlaceholder}
                 />
               </View>
             )}
@@ -138,10 +142,14 @@ export function Select({
                 const isSelected = item.value === value;
                 return (
                   <TouchableOpacity
-                    style={[styles.option, isSelected && styles.optionSelected]}
+                    style={[
+                      styles.option,
+                      { borderBottomColor: colors.borderLight },
+                      isSelected && { backgroundColor: colors.selectedBackground },
+                    ]}
                     onPress={() => handleSelect(item.value)}
                   >
-                    <Text style={[styles.optionText, isSelected && { color: primaryColor, fontWeight: '600' }]}>
+                    <Text style={[styles.optionText, { color: colors.text }, isSelected && { color: primaryColor, fontWeight: '600' }]}>
                       {item.label}
                     </Text>
                     {isSelected && (
@@ -166,55 +174,35 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#333',
     marginBottom: 8,
-  },
-  required: {
-    color: '#FF3B30',
   },
   select: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     borderWidth: 2,
-    borderColor: '#ecedf0',
     borderRadius: 8,
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: '#fff',
     minHeight: 48,
   },
-  selectError: {
-    borderColor: '#FF3B30',
-  },
   selectDisabled: {
-    backgroundColor: '#f5f5f5',
     opacity: 0.6,
   },
   selectText: {
     flex: 1,
     fontSize: 16,
-    color: '#333',
-  },
-  selectPlaceholder: {
-    color: '#bdbdc1',
-  },
-  selectTextDisabled: {
-    color: '#bdbdc1',
   },
   errorText: {
     fontSize: 12,
-    color: '#FF3B30',
     marginTop: 4,
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
   },
   modalContent: {
-    backgroundColor: '#fff',
     borderRadius: 16,
     width: '90%',
     maxWidth: 400,
@@ -238,12 +226,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#ecedf0',
   },
   modalTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#333',
   },
   closeButton: {
     padding: 4,
@@ -252,11 +238,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#ecedf0',
     borderRadius: 8,
     margin: 16,
     paddingHorizontal: 12,
-    backgroundColor: '#f5f5f5',
   },
   searchIcon: {
     marginRight: 8,
@@ -264,7 +248,6 @@ const styles = StyleSheet.create({
   searchInput: {
     flex: 1,
     fontSize: 16,
-    color: '#333',
     paddingVertical: 10,
   },
   optionsList: {
@@ -277,18 +260,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#f5f5f5',
-  },
-  optionSelected: {
-    backgroundColor: '#f9f5ff',
   },
   optionText: {
     fontSize: 16,
-    color: '#333',
     flex: 1,
   },
-  optionTextSelected: {
-    // Dynamic styles applied inline
-  },
 });
-

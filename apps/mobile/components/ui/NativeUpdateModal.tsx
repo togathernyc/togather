@@ -14,6 +14,7 @@ import * as Updates from 'expo-updates';
 import Constants from 'expo-constants';
 import { DEFAULT_PRIMARY_COLOR } from '@utils/styles';
 import { DOMAIN_CONFIG } from '@togather/shared';
+import { useTheme } from '@hooks/useTheme';
 
 // Environment-aware URLs
 const isStaging = Constants.expoConfig?.extra?.isStaging === true;
@@ -89,6 +90,7 @@ export function NativeUpdateModal() {
 
   const currentVersion = Constants.expoConfig?.version || '1.0.0';
   const isAndroid = Platform.OS === 'android';
+  const { colors, isDark } = useTheme();
 
   useEffect(() => {
     // Skip in development
@@ -191,25 +193,25 @@ export function NativeUpdateModal() {
       // Prevent dismissal via back button on Android
       onRequestClose={() => {}}
     >
-      <View style={styles.overlay}>
-        <View style={styles.modal}>
-          <View style={styles.iconContainer}>
+      <View style={[styles.overlay, { backgroundColor: colors.overlay }]}>
+        <View style={[styles.modal, { backgroundColor: colors.modalBackground }]}>
+          <View style={[styles.iconContainer, { backgroundColor: colors.surfaceSecondary }]}>
             <Ionicons
               name={isAndroid ? 'logo-android' : 'logo-apple'}
               size={48}
-              color={isAndroid ? '#3ddc84' : '#000'}
+              color={isAndroid ? '#3ddc84' : colors.text}
             />
           </View>
 
-          <Text style={styles.title}>Update Required</Text>
+          <Text style={[styles.title, { color: colors.text }]}>Update Required</Text>
 
-          <Text style={styles.message}>
+          <Text style={[styles.message, { color: colors.textSecondary }]}>
             A new version of Togather is available. Please update to continue using the app.
           </Text>
 
           {latestVersion && (
-            <View style={styles.versionInfo}>
-              <Text style={styles.versionText}>
+            <View style={[styles.versionInfo, { backgroundColor: colors.surfaceSecondary }]}>
+              <Text style={[styles.versionText, { color: colors.textTertiary }]}>
                 {currentVersion} → {latestVersion}
               </Text>
             </View>
@@ -220,14 +222,14 @@ export function NativeUpdateModal() {
             onPress={handleUpdate}
             activeOpacity={0.8}
           >
-            <Ionicons name="download-outline" size={20} color="#fff" />
-            <Text style={styles.updateButtonText}>
+            <Ionicons name="download-outline" size={20} color={colors.textInverse} />
+            <Text style={[styles.updateButtonText, { color: colors.textInverse }]}>
               {isAndroid ? 'Download Update' : (isStaging ? 'Open TestFlight' : 'Open App Store')}
             </Text>
           </TouchableOpacity>
 
           {isStaging && (
-            <Text style={styles.stagingNote}>
+            <Text style={[styles.stagingNote, { color: colors.warning }]}>
               Staging build - update via TestFlight (iOS) or direct download (Android)
             </Text>
           )}
@@ -240,13 +242,11 @@ export function NativeUpdateModal() {
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
   },
   modal: {
-    backgroundColor: '#fff',
     borderRadius: 20,
     padding: 24,
     width: '100%',
@@ -262,7 +262,6 @@ const styles = StyleSheet.create({
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: '#f5f5f5',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 16,
@@ -270,19 +269,16 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 22,
     fontWeight: '700',
-    color: '#1a1a1a',
     marginBottom: 12,
     textAlign: 'center',
   },
   message: {
     fontSize: 15,
-    color: '#666',
     textAlign: 'center',
     lineHeight: 22,
     marginBottom: 16,
   },
   versionInfo: {
-    backgroundColor: '#f9f9f9',
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 8,
@@ -290,7 +286,6 @@ const styles = StyleSheet.create({
   },
   versionText: {
     fontSize: 13,
-    color: '#888',
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
   updateButton: {
@@ -305,14 +300,12 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   updateButtonText: {
-    color: '#fff',
     fontSize: 16,
     fontWeight: '600',
   },
   stagingNote: {
     marginTop: 16,
     fontSize: 12,
-    color: '#F59E0B',
     textAlign: 'center',
     fontStyle: 'italic',
   },

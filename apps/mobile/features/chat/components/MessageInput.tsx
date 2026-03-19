@@ -40,6 +40,7 @@ import {
   getFileCategoryFromFilename,
   type FileCategory,
 } from '../utils/fileTypes';
+import { useTheme } from '@hooks/useTheme';
 import { useDraftStore } from '../../../stores/draftStore';
 
 interface MessageInputProps {
@@ -107,6 +108,7 @@ const filterMembers = (members: ChannelMember[], searchText: string): ChannelMem
 };
 
 export function MessageInput({ channelId, replyToMessage, onCancelReply, hideReplyPreview, externalSendMessage, externalIsSending }: MessageInputProps) {
+  const { colors: themeColors } = useTheme();
   const { getDraft, setDraft: saveDraft, clearDraft } = useDraftStore();
   const initialDraft = channelId ? getDraft(channelId) : '';
   const [text, setText] = useState(initialDraft);
@@ -624,16 +626,16 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   const canSend = (text.trim().length > 0 || uploadedImageUrls.length > 0 || uploadedFile !== null) && !isSending && !uploading;
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: themeColors.surface, borderTopColor: themeColors.border }]}>
       {/* Mention Autocomplete */}
       {showMentionAutocomplete && (
-        <View style={styles.autocompleteContainer}>
+        <View style={[styles.autocompleteContainer, { borderBottomColor: themeColors.border, backgroundColor: themeColors.surface }]}>
           <FlatList
             data={filteredMembers}
             keyExtractor={(item) => item.userId}
             renderItem={({ item }) => (
               <Pressable
-                style={styles.autocompleteItem}
+                style={[styles.autocompleteItem, { borderBottomColor: themeColors.borderLight }]}
                 onPress={() => insertMention(item)}
               >
                 {item.profilePhoto ? (
@@ -648,7 +650,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
                     </Text>
                   </View>
                 )}
-                <Text style={styles.autocompleteName}>{item.displayName}</Text>
+                <Text style={[styles.autocompleteName, { color: themeColors.text }]}>{item.displayName}</Text>
               </Pressable>
             )}
             style={styles.autocompleteList}
@@ -659,15 +661,15 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
 
       {/* Reply Preview */}
       {replyToMessage && !hideReplyPreview && (
-        <View style={styles.replyPreview}>
+        <View style={[styles.replyPreview, { backgroundColor: themeColors.surfaceSecondary, borderLeftColor: themeColors.link }]}>
           <View style={styles.replyContent}>
-            <Text style={styles.replyLabel}>Replying to {replyToMessage.senderName}</Text>
-            <Text style={styles.replyText} numberOfLines={1}>
+            <Text style={[styles.replyLabel, { color: themeColors.link }]}>Replying to {replyToMessage.senderName}</Text>
+            <Text style={[styles.replyText, { color: themeColors.textSecondary }]} numberOfLines={1}>
               {replyToMessage.content}
             </Text>
           </View>
           <Pressable onPress={onCancelReply} style={styles.replyCancel}>
-            <Ionicons name="close" size={20} color="#666" />
+            <Ionicons name="close" size={20} color={themeColors.textSecondary} />
           </Pressable>
         </View>
       )}
@@ -705,7 +707,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
             )}
           />
           {selectedImages.length > 1 && (
-            <Text style={styles.imageCount}>{selectedImages.length} photos</Text>
+            <Text style={[styles.imageCount, { color: themeColors.textSecondary }]}>{selectedImages.length} photos</Text>
           )}
         </View>
       )}
@@ -750,8 +752,8 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
       {/* Offline Hint */}
       {isEffectivelyOffline && (
         <View style={styles.offlineHint}>
-          <Ionicons name="time-outline" size={12} color="#999" />
-          <Text style={styles.offlineHintText}>Messages will be sent when you're back online</Text>
+          <Ionicons name="time-outline" size={12} color={themeColors.textTertiary} />
+          <Text style={[styles.offlineHintText, { color: themeColors.textTertiary }]}>Messages will be sent when you're back online</Text>
         </View>
       )}
 
@@ -763,7 +765,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
           onPress={handleAttachmentPress}
           disabled={uploading || isSending}
         >
-          <Ionicons name="add" size={28} color={uploading ? '#ccc' : '#007AFF'} />
+          <Ionicons name="add" size={28} color={uploading ? themeColors.iconSecondary : themeColors.link} />
         </Pressable>
 
         {/* Text Input */}
@@ -771,6 +773,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
           ref={textInputRef}
           style={[
             styles.input,
+            { borderColor: themeColors.inputBorder, backgroundColor: themeColors.inputBackground, color: themeColors.text },
             isWeb ? styles.inputWeb : styles.inputNative,
           ]}
           value={text}
@@ -782,7 +785,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
             setNativeScrollEnabled(contentHeight >= maxContentHeight);
           }}
           placeholder="Message..."
-          placeholderTextColor="#999"
+          placeholderTextColor={themeColors.inputPlaceholder}
           multiline
           scrollEnabled={isWeb ? true : nativeScrollEnabled}
           maxLength={2000}
@@ -791,7 +794,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
 
         {/* Send Button */}
         <Pressable
-          style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
+          style={[styles.sendButton, { backgroundColor: themeColors.link }, !canSend && styles.sendButtonDisabled]}
           onPress={handleSend}
           disabled={!canSend}
         >
@@ -808,15 +811,11 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: '#fff',
     borderTopWidth: 1,
-    borderTopColor: '#e0e0e0',
   },
   autocompleteContainer: {
     maxHeight: 200,
     borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-    backgroundColor: '#fff',
   },
   autocompleteList: {
     maxHeight: 200,
@@ -826,7 +825,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
   },
   autocompleteAvatar: {
     width: 32,
@@ -846,28 +844,23 @@ const styles = StyleSheet.create({
   },
   autocompleteName: {
     fontSize: 16,
-    color: '#000',
   },
   replyPreview: {
     flexDirection: 'row',
     alignItems: 'center',
     padding: 12,
-    backgroundColor: '#f5f5f5',
     borderLeftWidth: 3,
-    borderLeftColor: '#007AFF',
   },
   replyContent: {
     flex: 1,
   },
   replyLabel: {
     fontSize: 12,
-    color: '#007AFF',
     fontWeight: '600',
     marginBottom: 2,
   },
   replyText: {
     fontSize: 14,
-    color: '#666',
   },
   replyCancel: {
     padding: 4,
@@ -891,7 +884,6 @@ const styles = StyleSheet.create({
   },
   imageCount: {
     fontSize: 12,
-    color: '#666',
     textAlign: 'center',
     marginTop: 4,
   },
@@ -932,7 +924,6 @@ const styles = StyleSheet.create({
   },
   offlineHintText: {
     fontSize: 11,
-    color: '#999',
   },
   inputRow: {
     flexDirection: 'row',
@@ -948,13 +939,11 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     borderWidth: 1,
-    borderColor: '#e0e0e0',
     borderRadius: 20,
     paddingHorizontal: 16,
     paddingVertical: INPUT_PADDING_VERTICAL,
     fontSize: 16,
     maxHeight: LINE_HEIGHT * MAX_INPUT_LINES + INPUT_PADDING_VERTICAL * 2,
-    backgroundColor: '#f9f9f9',
   },
   inputNative: {
     minHeight: 40,
@@ -967,11 +956,10 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#007AFF',
     justifyContent: 'center',
     alignItems: 'center',
   },
   sendButtonDisabled: {
-    backgroundColor: '#ccc',
+    opacity: 0.4,
   },
 });

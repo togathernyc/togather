@@ -9,6 +9,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Group } from "../types";
+import { useTheme } from "@hooks/useTheme";
 
 interface GroupMapSectionProps {
   group: Group;
@@ -19,6 +20,7 @@ interface GroupMapSectionProps {
  * Shows location text with a map icon and allows opening in maps app.
  */
 export function GroupMapSection({ group }: GroupMapSectionProps) {
+  const { colors } = useTheme();
   // Prioritize structured address fields over legacy location field
   // Use full_address if available, otherwise construct from structured fields, fallback to location
   const location = 
@@ -64,25 +66,25 @@ export function GroupMapSection({ group }: GroupMapSectionProps) {
   };
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.header}>LOCATION</Text>
+    <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
+      <Text style={[styles.header, { color: colors.text }]}>LOCATION</Text>
       <TouchableOpacity
-        style={styles.mapContainer}
+        style={[styles.mapContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}
         onPress={handleMapPress}
         activeOpacity={0.8}
       >
-        <View style={styles.mapPlaceholder}>
-          <Ionicons name="map" size={48} color="#007AFF" />
+        <View style={[styles.mapPlaceholder, { backgroundColor: colors.surfaceSecondary }]}>
+          <Ionicons name="map" size={48} color={colors.link} />
           <View style={styles.locationInfo}>
             <View style={styles.locationRow}>
-              <Ionicons name="location" size={20} color="#007AFF" />
-              <Text style={styles.locationText} numberOfLines={2}>
+              <Ionicons name="location" size={20} color={colors.link} />
+              <Text style={[styles.locationText, { color: colors.text }]} numberOfLines={2}>
                 {location}
               </Text>
             </View>
-            <View style={styles.openMapsButton}>
-              <Text style={styles.openMapsText}>Open in Maps</Text>
-              <Ionicons name="arrow-forward" size={16} color="#007AFF" />
+            <View style={[styles.openMapsButton, { backgroundColor: colors.surfaceSecondary }]}>
+              <Text style={[styles.openMapsText, { color: colors.link }]}>Open in Maps</Text>
+              <Ionicons name="arrow-forward" size={16} color={colors.link} />
             </View>
           </View>
         </View>
@@ -93,7 +95,6 @@ export function GroupMapSection({ group }: GroupMapSectionProps) {
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: "#F5F5F5",
     paddingHorizontal: 16,
     paddingVertical: 16,
     marginTop: 0,
@@ -101,7 +102,6 @@ const styles = StyleSheet.create({
   header: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 12,
     textTransform: "uppercase",
     letterSpacing: 0.5,
@@ -109,9 +109,7 @@ const styles = StyleSheet.create({
   mapContainer: {
     borderRadius: 8,
     overflow: "hidden",
-    backgroundColor: "#FFFFFF",
     borderWidth: 1,
-    borderColor: "#E0E0E0",
   },
   mapPlaceholder: {
     width: "100%",
@@ -119,7 +117,6 @@ const styles = StyleSheet.create({
     padding: 16,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#F9F9F9",
   },
   locationInfo: {
     width: "100%",
@@ -133,7 +130,6 @@ const styles = StyleSheet.create({
   locationText: {
     fontSize: 14,
     fontWeight: "500",
-    color: "#333",
     marginLeft: 8,
     flex: 1,
   },
@@ -143,14 +139,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 16,
     paddingVertical: 10,
-    backgroundColor: "#F0F0F0",
     borderRadius: 6,
     alignSelf: "center",
   },
   openMapsText: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#007AFF",
     marginRight: 4,
   },
 });

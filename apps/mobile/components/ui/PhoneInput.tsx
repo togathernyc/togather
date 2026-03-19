@@ -11,6 +11,7 @@ import {
   Pressable,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useTheme } from "@hooks/useTheme";
 
 // Common country codes
 const COUNTRIES = [
@@ -53,6 +54,7 @@ export function PhoneInput({
   placeholder = "Phone number",
   autoFocus = false,
 }: PhoneInputProps) {
+  const { colors } = useTheme();
   const [isFocused, setIsFocused] = useState(false);
   const [showCountryPicker, setShowCountryPicker] = useState(false);
 
@@ -70,15 +72,15 @@ export function PhoneInput({
 
   const renderCountryItem = ({ item }: { item: (typeof COUNTRIES)[0] }) => (
     <TouchableOpacity
-      style={styles.countryItem}
+      style={[styles.countryItem, { borderBottomColor: colors.surfaceSecondary }]}
       onPress={() => {
         onCountryCodeChange(item.code);
         setShowCountryPicker(false);
       }}
     >
       <Text style={styles.countryFlag}>{item.flag}</Text>
-      <Text style={styles.countryName}>{item.name}</Text>
-      <Text style={styles.countryDialCode}>{item.dialCode}</Text>
+      <Text style={[styles.countryName, { color: colors.text }]}>{item.name}</Text>
+      <Text style={[styles.countryDialCode, { color: colors.text }]}>{item.dialCode}</Text>
     </TouchableOpacity>
   );
 
@@ -87,8 +89,9 @@ export function PhoneInput({
       <View
         style={[
           styles.inputContainer,
-          isFocused && styles.inputContainerFocused,
-          error && styles.inputContainerError,
+          { borderColor: colors.border, backgroundColor: colors.inputBackground },
+          isFocused && { borderColor: colors.buttonPrimary },
+          error && { borderColor: colors.error },
         ]}
       >
         <TouchableOpacity
@@ -96,16 +99,16 @@ export function PhoneInput({
           onPress={() => setShowCountryPicker(true)}
         >
           <Text style={styles.countryFlag}>{selectedCountry.flag}</Text>
-          <Text style={styles.countryDialCode}>{selectedCountry.dialCode}</Text>
-          <Ionicons name="chevron-down" size={16} color="#666" />
+          <Text style={[styles.countryDialCode, { color: colors.text }]}>{selectedCountry.dialCode}</Text>
+          <Ionicons name="chevron-down" size={16} color={colors.icon} />
         </TouchableOpacity>
 
-        <View style={styles.divider} />
+        <View style={[styles.divider, { backgroundColor: colors.border }]} />
 
         <TextInput
-          style={styles.input}
+          style={[styles.input, { color: colors.text }]}
           placeholder={placeholder}
-          placeholderTextColor="#bdbdc1"
+          placeholderTextColor={colors.inputPlaceholder}
           value={value}
           onChangeText={handlePhoneChange}
           keyboardType="phone-pad"
@@ -115,7 +118,7 @@ export function PhoneInput({
           testID="phone-input"
         />
       </View>
-      {error && <Text style={styles.errorText}>{error}</Text>}
+      {error && <Text style={[styles.errorText, { color: colors.error }]}>{error}</Text>}
 
       <Modal
         visible={showCountryPicker}
@@ -124,14 +127,14 @@ export function PhoneInput({
         onRequestClose={() => setShowCountryPicker(false)}
       >
         <Pressable
-          style={styles.modalOverlay}
+          style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}
           onPress={() => setShowCountryPicker(false)}
         >
-          <Pressable style={styles.modalContent} onPress={(e) => e.stopPropagation()}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Select Country</Text>
+          <Pressable style={[styles.modalContent, { backgroundColor: colors.surface }]} onPress={(e) => e.stopPropagation()}>
+            <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>Select Country</Text>
               <TouchableOpacity onPress={() => setShowCountryPicker(false)}>
-                <Ionicons name="close" size={24} color="#333" />
+                <Ionicons name="close" size={24} color={colors.text} />
               </TouchableOpacity>
             </View>
             <FlatList
@@ -156,25 +159,12 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     borderWidth: 2,
-    borderColor: "#ecedf0",
     borderRadius: 14,
-    backgroundColor: "#ffffff",
     ...Platform.select({
       web: {
         transition: "all 0.2s",
       },
     }),
-  },
-  inputContainerFocused: {
-    borderColor: "#222224",
-    ...Platform.select({
-      web: {
-        filter: "drop-shadow(0px 4px 4px rgba(0, 0, 0, 0.25))",
-      },
-    }),
-  },
-  inputContainerError: {
-    borderColor: "#FF3B30",
   },
   countrySelector: {
     flexDirection: "row",
@@ -188,33 +178,27 @@ const styles = StyleSheet.create({
   },
   countryDialCode: {
     fontSize: 16,
-    color: "#333",
     fontWeight: "500",
   },
   divider: {
     width: 1,
     height: 24,
-    backgroundColor: "#ecedf0",
   },
   input: {
     flex: 1,
     padding: 14,
     fontSize: 18,
-    color: "#000000",
     letterSpacing: 0,
   },
   errorText: {
     fontSize: 12,
-    color: "#FF3B30",
     marginTop: 4,
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
     justifyContent: "flex-end",
   },
   modalContent: {
-    backgroundColor: "#fff",
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     maxHeight: "70%",
@@ -226,24 +210,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#ecedf0",
   },
   modalTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
   },
   countryItem: {
     flexDirection: "row",
     alignItems: "center",
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
   },
   countryName: {
     flex: 1,
     fontSize: 16,
-    color: "#333",
     marginLeft: 12,
   },
 });

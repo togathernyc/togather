@@ -4,16 +4,14 @@ import { useRouter } from 'expo-router';
 import { Card } from '@components/ui';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@providers/AuthProvider';
+import { useTheme } from '@hooks/useTheme';
 import { useAuthenticatedQuery, api } from '@services/api/convex';
 import type { Id } from '@services/api/convex';
-
-// Design constants
-const ICON_COLOR = "#1a1a1a";
-const ICON_BG = "#f5f5f5";
 
 export function ProfileMenu() {
   const router = useRouter();
   const { user, community } = useAuth();
+  const { colors } = useTheme();
   const userId = user?.id as Id<"users"> | undefined;
   const [isRefetching, setIsRefetching] = useState(false);
 
@@ -58,59 +56,59 @@ export function ProfileMenu() {
     <>
       <Card style={styles.section}>
         <TouchableOpacity
-          style={styles.menuItem}
+          style={[styles.menuItem, { borderBottomColor: colors.border }]}
           onPress={() => router.push('/(user)/edit-profile')}
           activeOpacity={0.7}
         >
-          <View style={styles.menuIconContainer}>
-            <Ionicons name="person-outline" size={20} color={ICON_COLOR} />
+          <View style={[styles.menuIconContainer, { backgroundColor: colors.surfaceSecondary }]}>
+            <Ionicons name="person-outline" size={20} color={colors.text} />
           </View>
-          <Text style={styles.menuText}>Edit Profile</Text>
-          <Ionicons name="chevron-forward" size={18} color="#c7c7cc" />
+          <Text style={[styles.menuText, { color: colors.text }]}>Edit Profile</Text>
+          <Ionicons name="chevron-forward" size={18} color={colors.iconSecondary} />
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={styles.menuItem}
+          style={[styles.menuItem, { borderBottomColor: colors.border }]}
           onPress={handleSwitchCommunity}
           activeOpacity={0.7}
           disabled={isLoadingCommunities || isRefetching}
         >
-          <View style={styles.menuIconContainer}>
-            <Ionicons name="people-outline" size={20} color={ICON_COLOR} />
+          <View style={[styles.menuIconContainer, { backgroundColor: colors.surfaceSecondary }]}>
+            <Ionicons name="people-outline" size={20} color={colors.text} />
           </View>
           {community?.name ? (
             <View style={styles.menuTextContainer}>
-              <Text style={styles.menuText}>Switch Community</Text>
-              <Text style={styles.menuSubtext}>{community.name}</Text>
+              <Text style={[styles.menuText, { color: colors.text }]}>Switch Community</Text>
+              <Text style={[styles.menuSubtext, { color: colors.textTertiary }]}>{community.name}</Text>
             </View>
           ) : (
-            <Text style={styles.menuText}>Pick a community</Text>
+            <Text style={[styles.menuText, { color: colors.text }]}>Pick a community</Text>
           )}
           {isLoadingCommunities || isRefetching ? (
-            <ActivityIndicator size="small" color="#999" />
+            <ActivityIndicator size="small" color={colors.textTertiary} />
           ) : (
-            <Ionicons name="chevron-forward" size={18} color="#c7c7cc" />
+            <Ionicons name="chevron-forward" size={18} color={colors.iconSecondary} />
           )}
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.menuItem, styles.menuItemLast]}
+          style={[styles.menuItem, styles.menuItemLast, { borderBottomColor: colors.border }]}
           onPress={() => router.push('/(user)/settings')}
           activeOpacity={0.7}
         >
-          <View style={styles.menuIconContainer}>
-            <Ionicons name="settings-outline" size={20} color={ICON_COLOR} />
+          <View style={[styles.menuIconContainer, { backgroundColor: colors.surfaceSecondary }]}>
+            <Ionicons name="settings-outline" size={20} color={colors.text} />
           </View>
-          <Text style={styles.menuText}>Settings</Text>
-          <Ionicons name="chevron-forward" size={18} color="#c7c7cc" />
+          <Text style={[styles.menuText, { color: colors.text }]}>Settings</Text>
+          <Ionicons name="chevron-forward" size={18} color={colors.iconSecondary} />
         </TouchableOpacity>
       </Card>
 
       {hasLeaderAccess === true ? (
         <Card style={styles.section}>
-          <Text style={styles.sectionTitle}>Leader Tools</Text>
+          <Text style={[styles.sectionTitle, { color: colors.textTertiary }]}>Leader Tools</Text>
           <TouchableOpacity
-            style={styles.menuItem}
+            style={[styles.menuItem, { borderBottomColor: colors.border }]}
             onPress={() =>
               router.push({
                 pathname: "/tasks",
@@ -119,14 +117,14 @@ export function ProfileMenu() {
             }
             activeOpacity={0.7}
           >
-            <View style={styles.menuIconContainer}>
-              <Ionicons name="checkbox-outline" size={20} color={ICON_COLOR} />
+            <View style={[styles.menuIconContainer, { backgroundColor: colors.surfaceSecondary }]}>
+              <Ionicons name="checkbox-outline" size={20} color={colors.text} />
             </View>
-            <Text style={styles.menuText}>Tasks</Text>
-            <Ionicons name="chevron-forward" size={18} color="#c7c7cc" />
+            <Text style={[styles.menuText, { color: colors.text }]}>Tasks</Text>
+            <Ionicons name="chevron-forward" size={18} color={colors.iconSecondary} />
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.menuItem, styles.menuItemLast]}
+            style={[styles.menuItem, styles.menuItemLast, { borderBottomColor: colors.border }]}
             onPress={() =>
               router.push({
                 pathname: "/people",
@@ -135,11 +133,11 @@ export function ProfileMenu() {
             }
             activeOpacity={0.7}
           >
-            <View style={styles.menuIconContainer}>
-              <Ionicons name="people-outline" size={20} color={ICON_COLOR} />
+            <View style={[styles.menuIconContainer, { backgroundColor: colors.surfaceSecondary }]}>
+              <Ionicons name="people-outline" size={20} color={colors.text} />
             </View>
-            <Text style={styles.menuText}>People</Text>
-            <Ionicons name="chevron-forward" size={18} color="#c7c7cc" />
+            <Text style={[styles.menuText, { color: colors.text }]}>People</Text>
+            <Ionicons name="chevron-forward" size={18} color={colors.iconSecondary} />
           </TouchableOpacity>
         </Card>
       ) : null}
@@ -159,7 +157,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#e5e5e5',
   },
   menuItemLast: {
     borderBottomWidth: 0,
@@ -168,7 +165,6 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 8,
-    backgroundColor: ICON_BG,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 14,
@@ -177,14 +173,12 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 16,
     fontWeight: '400',
-    color: '#1a1a1a',
   },
   menuTextContainer: {
     flex: 1,
   },
   menuSubtext: {
     fontSize: 13,
-    color: '#8e8e93',
     marginTop: 2,
   },
   sectionTitle: {
@@ -192,7 +186,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     letterSpacing: 0.5,
     textTransform: 'uppercase',
-    color: '#8e8e93',
     marginTop: 8,
     marginBottom: 4,
   },

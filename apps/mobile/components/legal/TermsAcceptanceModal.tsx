@@ -13,6 +13,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { storage } from '@utils/storage';
 import { DOMAIN_CONFIG } from '@togather/shared';
+import { useTheme } from '@hooks/useTheme';
 
 // Version of terms - increment when terms are updated to re-prompt acceptance
 const CURRENT_TERMS_VERSION = '1.0';
@@ -27,6 +28,7 @@ export function TermsAcceptanceModal({ onAccepted }: TermsAcceptanceModalProps) 
   const [loading, setLoading] = useState(true);
   const [accepting, setAccepting] = useState(false);
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
 
   const openLink = useCallback((url: string) => {
     Linking.openURL(url).catch((err) =>
@@ -89,43 +91,43 @@ export function TermsAcceptanceModal({ onAccepted }: TermsAcceptanceModalProps) 
       animationType="fade"
       statusBarTranslucent
     >
-      <View style={styles.overlay}>
-        <View style={[styles.container, { paddingBottom: insets.bottom + 20 }]}>
+      <View style={[styles.overlay, { backgroundColor: colors.overlay }]}>
+        <View style={[styles.container, { backgroundColor: colors.modalBackground, paddingBottom: insets.bottom + 20 }]}>
           <ScrollView
             style={styles.scrollView}
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={true}
           >
-            <Text style={styles.title}>Terms of Service</Text>
-            <Text style={styles.subtitle}>
+            <Text style={[styles.title, { color: colors.text }]}>Terms of Service</Text>
+            <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
               Please review and accept our terms to continue
             </Text>
 
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Welcome to Togather</Text>
-              <Text style={styles.bodyText}>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Welcome to Togather</Text>
+              <Text style={[styles.bodyText, { color: colors.textSecondary }]}>
                 By using this app, you agree to abide by our Terms of Service and Community Guidelines.
                 These terms help us maintain a safe and respectful environment for all community members.
               </Text>
             </View>
 
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>User Conduct</Text>
-              <Text style={styles.bodyText}>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>User Conduct</Text>
+              <Text style={[styles.bodyText, { color: colors.textSecondary }]}>
                 You agree to use Togather responsibly and respectfully. This includes:
               </Text>
               <View style={styles.bulletList}>
-                <Text style={styles.bulletItem}>• Treating all users with respect and courtesy</Text>
-                <Text style={styles.bulletItem}>• Not posting offensive, harmful, or inappropriate content</Text>
-                <Text style={styles.bulletItem}>• Not harassing, bullying, or threatening other users</Text>
-                <Text style={styles.bulletItem}>• Not sharing content that is illegal or violates others' rights</Text>
-                <Text style={styles.bulletItem}>• Reporting inappropriate content or behavior when you see it</Text>
+                <Text style={[styles.bulletItem, { color: colors.textSecondary }]}>• Treating all users with respect and courtesy</Text>
+                <Text style={[styles.bulletItem, { color: colors.textSecondary }]}>• Not posting offensive, harmful, or inappropriate content</Text>
+                <Text style={[styles.bulletItem, { color: colors.textSecondary }]}>• Not harassing, bullying, or threatening other users</Text>
+                <Text style={[styles.bulletItem, { color: colors.textSecondary }]}>• Not sharing content that is illegal or violates others' rights</Text>
+                <Text style={[styles.bulletItem, { color: colors.textSecondary }]}>• Reporting inappropriate content or behavior when you see it</Text>
               </View>
             </View>
 
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Content Guidelines</Text>
-              <Text style={styles.bodyText}>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Content Guidelines</Text>
+              <Text style={[styles.bodyText, { color: colors.textSecondary }]}>
                 We have zero tolerance for objectionable content. Any content that is abusive,
                 discriminatory, sexually explicit, violent, or otherwise inappropriate will be
                 removed and may result in account suspension or termination.
@@ -133,24 +135,24 @@ export function TermsAcceptanceModal({ onAccepted }: TermsAcceptanceModalProps) 
             </View>
 
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Moderation</Text>
-              <Text style={styles.bodyText}>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Moderation</Text>
+              <Text style={[styles.bodyText, { color: colors.textSecondary }]}>
                 To ensure a safe community experience, we provide tools to:
               </Text>
               <View style={styles.bulletList}>
-                <Text style={styles.bulletItem}>• Report inappropriate messages or content</Text>
-                <Text style={styles.bulletItem}>• Block users who violate guidelines</Text>
-                <Text style={styles.bulletItem}>• Flag content for review by moderators</Text>
+                <Text style={[styles.bulletItem, { color: colors.textSecondary }]}>• Report inappropriate messages or content</Text>
+                <Text style={[styles.bulletItem, { color: colors.textSecondary }]}>• Block users who violate guidelines</Text>
+                <Text style={[styles.bulletItem, { color: colors.textSecondary }]}>• Flag content for review by moderators</Text>
               </View>
-              <Text style={styles.bodyText}>
+              <Text style={[styles.bodyText, { color: colors.textSecondary }]}>
                 Our team reviews all reports within 24 hours and takes appropriate action,
                 which may include content removal and user suspension.
               </Text>
             </View>
 
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Privacy</Text>
-              <Text style={styles.bodyText}>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Privacy</Text>
+              <Text style={[styles.bodyText, { color: colors.textSecondary }]}>
                 Your privacy matters to us. We collect and use your data as described in our Privacy Policy.
                 By accepting these terms, you also acknowledge our privacy practices.
               </Text>
@@ -158,20 +160,20 @@ export function TermsAcceptanceModal({ onAccepted }: TermsAcceptanceModalProps) 
 
             <View style={styles.linksSection}>
               <TouchableOpacity onPress={handleTermsPress}>
-                <Text style={styles.link}>Read Full Terms of Service</Text>
+                <Text style={[styles.link, { color: colors.link }]}>Read Full Terms of Service</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={handlePrivacyPress}>
-                <Text style={styles.link}>Read Privacy Policy</Text>
+                <Text style={[styles.link, { color: colors.link }]}>Read Privacy Policy</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={handlePoliciesPress}>
-                <Text style={styles.link}>Read Community Guidelines</Text>
+                <Text style={[styles.link, { color: colors.link }]}>Read Community Guidelines</Text>
               </TouchableOpacity>
             </View>
           </ScrollView>
 
-          <View style={styles.buttonContainer}>
+          <View style={[styles.buttonContainer, { borderTopColor: colors.border, backgroundColor: colors.modalBackground }]}>
             <TouchableOpacity
-              style={[styles.acceptButton, accepting && styles.acceptButtonDisabled]}
+              style={[styles.acceptButton, { backgroundColor: colors.link }, accepting && styles.acceptButtonDisabled]}
               onPress={handleAccept}
               disabled={accepting}
             >
@@ -181,7 +183,7 @@ export function TermsAcceptanceModal({ onAccepted }: TermsAcceptanceModalProps) 
                 <Text style={styles.acceptButtonText}>I Accept</Text>
               )}
             </TouchableOpacity>
-            <Text style={styles.acceptNote}>
+            <Text style={[styles.acceptNote, { color: colors.textTertiary }]}>
               By tapping "I Accept", you agree to our Terms of Service, Privacy Policy, and Community Guidelines.
             </Text>
           </View>
@@ -194,12 +196,10 @@ export function TermsAcceptanceModal({ onAccepted }: TermsAcceptanceModalProps) 
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
     justifyContent: 'center',
     alignItems: 'center',
   },
   container: {
-    backgroundColor: '#fff',
     borderRadius: 20,
     width: '92%',
     maxWidth: 500,
@@ -228,13 +228,11 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: 'bold',
-    color: '#1a1a1a',
     marginBottom: 8,
     textAlign: 'center',
   },
   subtitle: {
     fontSize: 16,
-    color: '#666',
     marginBottom: 24,
     textAlign: 'center',
   },
@@ -244,12 +242,10 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#333',
     marginBottom: 8,
   },
   bodyText: {
     fontSize: 15,
-    color: '#555',
     lineHeight: 22,
   },
   bulletList: {
@@ -258,7 +254,6 @@ const styles = StyleSheet.create({
   },
   bulletItem: {
     fontSize: 15,
-    color: '#555',
     lineHeight: 24,
   },
   linksSection: {
@@ -268,18 +263,14 @@ const styles = StyleSheet.create({
   },
   link: {
     fontSize: 15,
-    color: '#007AFF',
     textDecorationLine: 'underline',
   },
   buttonContainer: {
     paddingHorizontal: 24,
     paddingTop: 16,
     borderTopWidth: 1,
-    borderTopColor: '#e0e0e0',
-    backgroundColor: '#fff',
   },
   acceptButton: {
-    backgroundColor: '#007AFF',
     paddingVertical: 16,
     borderRadius: 12,
     alignItems: 'center',
@@ -295,7 +286,6 @@ const styles = StyleSheet.create({
   },
   acceptNote: {
     fontSize: 12,
-    color: '#888',
     textAlign: 'center',
     lineHeight: 18,
   },

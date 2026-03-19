@@ -1,6 +1,7 @@
 import React from "react";
 import { View, Text, StyleSheet, Switch, TextInput } from "react-native";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
+import { useTheme } from "@hooks/useTheme";
 
 export interface RsvpOption {
   id: number;
@@ -61,22 +62,24 @@ function RsvpOptionRow({
   showToggle = false,
   textPlaceholder,
 }: RsvpOptionRowProps) {
+  const { colors } = useTheme();
   const { text, emoji } = parseLabel(option.label);
 
   return (
-    <View style={styles.optionRow}>
+    <View style={[styles.optionRow, { borderBottomColor: colors.border }]}>
       <View style={styles.optionContent}>
         <View style={styles.inputRow}>
           <TextInput
-            style={[styles.textInput, disabled && styles.inputDisabled]}
+            style={[styles.textInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surfaceSecondary }, disabled && { backgroundColor: colors.border, color: colors.textTertiary }]}
             value={text}
             onChangeText={onTextChange}
             placeholder={textPlaceholder}
+            placeholderTextColor={colors.inputPlaceholder}
             maxLength={15}
             editable={!disabled}
           />
           <TextInput
-            style={[styles.emojiInput, disabled && styles.inputDisabled]}
+            style={[styles.emojiInput, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary }, disabled && { backgroundColor: colors.border, color: colors.textTertiary }]}
             value={emoji}
             onChangeText={onEmojiChange}
             maxLength={2}
@@ -86,18 +89,19 @@ function RsvpOptionRow({
             <Switch
               value={option.enabled}
               onValueChange={onToggle}
-              trackColor={{ false: "#e0e0e0", true: DEFAULT_PRIMARY_COLOR }}
-              thumbColor="#fff"
+              trackColor={{ false: colors.border, true: DEFAULT_PRIMARY_COLOR }}
+              thumbColor={colors.textInverse}
             />
           )}
         </View>
-        {!showToggle && <Text style={styles.alwaysEnabled}>Always shown</Text>}
+        {!showToggle && <Text style={[styles.alwaysEnabled, { color: colors.textTertiary }]}>Always shown</Text>}
       </View>
     </View>
   );
 }
 
 export function RsvpOptionsEditor({ options, onChange }: RsvpOptionsEditorProps) {
+  const { colors } = useTheme();
   const handleToggle = (optionId: number, enabled: boolean) => {
     const updatedOptions = options.map((opt) =>
       opt.id === optionId ? { ...opt, enabled } : opt
@@ -133,7 +137,7 @@ export function RsvpOptionsEditor({ options, onChange }: RsvpOptionsEditorProps)
   const cantGoOption = options.find((opt) => opt.id === 3);
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.surface, borderColor: colors.border }]}>
       {goingOption && (
         <RsvpOptionRow
           option={goingOption}
@@ -164,7 +168,7 @@ export function RsvpOptionsEditor({ options, onChange }: RsvpOptionsEditorProps)
         />
       )}
 
-      <Text style={styles.helperText}>
+      <Text style={[styles.helperText, { color: colors.textTertiary }]}>
         Customize response text and emoji. The "Maybe" option can be hidden.
       </Text>
     </View>
@@ -174,16 +178,13 @@ export function RsvpOptionsEditor({ options, onChange }: RsvpOptionsEditorProps)
 const styles = StyleSheet.create({
   container: {
     marginTop: 8,
-    backgroundColor: "#fff",
     borderRadius: 8,
     padding: 12,
     borderWidth: 1,
-    borderColor: "#ecedf0",
   },
   optionRow: {
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
   },
   optionContent: {
     flex: 1,
@@ -196,13 +197,10 @@ const styles = StyleSheet.create({
   textInput: {
     flex: 1,
     fontSize: 15,
-    color: "#333",
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderWidth: 1,
-    borderColor: "#ecedf0",
     borderRadius: 6,
-    backgroundColor: "#fafafa",
   },
   emojiInput: {
     width: 50,
@@ -211,24 +209,17 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     paddingHorizontal: 8,
     borderWidth: 1,
-    borderColor: "#ecedf0",
     borderRadius: 6,
-    backgroundColor: "#fafafa",
   },
-  inputDisabled: {
-    backgroundColor: "#f0f0f0",
-    color: "#999",
-  },
+  inputDisabled: {},
   alwaysEnabled: {
     fontSize: 11,
-    color: "#999",
     fontStyle: "italic",
     marginTop: 4,
     marginLeft: 4,
   },
   helperText: {
     fontSize: 12,
-    color: "#999",
     marginTop: 12,
     textAlign: "center",
   },

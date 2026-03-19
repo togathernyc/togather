@@ -32,7 +32,6 @@ import {
   useAuthenticatedQuery,
   useQuery,
 } from "@services/api/convex";
-import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import {
   SUBTITLE_VARIABLE_MAP,
@@ -63,6 +62,8 @@ import {
 import type { CustomFieldDef } from "./ColumnPickerModal";
 import { FollowupQuickAddPanel } from "./FollowupQuickAddPanel";
 import { FollowupMapView, FOLLOWUP_MAP_VIEW_ID } from "./FollowupMapView";
+import { useTheme } from "@hooks/useTheme";
+import type { ThemeColors } from "@/theme/colors";
 
 type SortDirection = "asc" | "desc";
 
@@ -171,26 +172,26 @@ function useDebounce<T>(value: T, delay: number): T {
   return debouncedValue;
 }
 
-function getScoreStyles(value: number) {
+function getScoreStyles(value: number, colors: ThemeColors) {
   if (value >= 70) {
-    return { border: "#4CAF50", bg: "#E8F5E9", text: "#2F855A" };
+    return { border: colors.success, bg: colors.surfaceSecondary, text: colors.success };
   }
   if (value >= 40) {
-    return { border: "#FF9800", bg: "#FFF3E0", text: "#C05621" };
+    return { border: colors.warning, bg: colors.surfaceSecondary, text: colors.warning };
   }
-  return { border: "#FF5252", bg: "#FFEBEE", text: "#C53030" };
+  return { border: colors.destructive, bg: colors.surfaceSecondary, text: colors.destructive };
 }
 
-function getStatusStyles(status?: string): { bg: string; text: string } {
+function getStatusStyles(status: string | undefined, colors: ThemeColors): { bg: string; text: string } {
   switch (status) {
     case "green":
-      return { bg: "#DEF7EC", text: "#03543F" };
+      return { bg: colors.surfaceSecondary, text: colors.success };
     case "orange":
-      return { bg: "#FFF3E0", text: "#C2410C" };
+      return { bg: colors.surfaceSecondary, text: colors.warning };
     case "red":
-      return { bg: "#FDE8E8", text: "#9B1C1C" };
+      return { bg: colors.surfaceSecondary, text: colors.destructive };
     default:
-      return { bg: "#F4F4F5", text: "#52525B" };
+      return { bg: colors.surfaceSecondary, text: colors.textSecondary };
   }
 }
 
@@ -226,6 +227,7 @@ export function FollowupMobileGrid({
   crossGroupMode?: boolean;
   returnTo?: string | null;
 }) {
+  const { colors } = useTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { community } = useAuth();
@@ -1493,7 +1495,7 @@ export function FollowupMobileGrid({
     return (
       <TouchableOpacity
         key={column.key}
-        style={[styles.headerCell, { width: column.width }]}
+        style={[styles.headerCell, { width: column.width, borderRightColor: colors.border }]}
         disabled={!column.sortable}
         onPress={() => {
           if (column.sortable) handleSortPress(column.key);
@@ -1503,7 +1505,8 @@ export function FollowupMobileGrid({
           numberOfLines={1}
           style={[
             styles.headerCellText,
-            !column.sortable && styles.headerCellTextMuted,
+            { color: colors.text },
+            !column.sortable && { color: colors.textSecondary },
           ]}
         >
           {column.label}
@@ -1523,7 +1526,7 @@ export function FollowupMobileGrid({
   const renderDataCell = (member: FollowupMember, column: GridColumn) => {
     const value = column.getValue(member);
     if (column.kind === "score" && typeof value === "number") {
-      const scoreStyles = getScoreStyles(value);
+      const scoreStyles = getScoreStyles(value, colors);
       return (
         <View
           style={[
@@ -1543,7 +1546,7 @@ export function FollowupMobileGrid({
 
     if (column.kind === "status") {
       const status = typeof value === "string" ? value : "none";
-      const statusStyles = getStatusStyles(status);
+      const statusStyles = getStatusStyles(status, colors);
       const label =
         status === "none"
           ? "None"
@@ -1575,7 +1578,7 @@ export function FollowupMobileGrid({
           <Ionicons
             name={value ? "checkbox" : "square-outline"}
             size={18}
-            color={value ? primaryColor : "#9CA3AF"}
+            color={value ? primaryColor : colors.iconSecondary}
           />
         </TouchableOpacity>
       );
@@ -1586,7 +1589,7 @@ export function FollowupMobileGrid({
         <Ionicons
           name={value ? "checkbox" : "square-outline"}
           size={16}
-          color={value ? primaryColor : "#9CA3AF"}
+          color={value ? primaryColor : colors.iconSecondary}
         />
       );
     }
@@ -1619,21 +1622,21 @@ export function FollowupMobileGrid({
           {selectedValues.length > 0 ? (
             <View style={styles.multiselectChipRow}>
               {selectedValues.slice(0, 2).map((v) => (
-                <View key={v} style={styles.multiselectChip}>
-                  <Text style={styles.multiselectChipText} numberOfLines={1}>
+                <View key={v} style={[styles.multiselectChip, { backgroundColor: colors.surfaceSecondary }]}>
+                  <Text style={[styles.multiselectChipText, { color: colors.link }]} numberOfLines={1}>
                     {v}
                   </Text>
                 </View>
               ))}
               {selectedValues.length > 2 && (
-                <Text style={styles.multiselectMoreText}>
+                <Text style={[styles.multiselectMoreText, { color: colors.link }]}>
                   +{selectedValues.length - 2}
                 </Text>
               )}
             </View>
           ) : (
             <Text
-              style={[styles.dataCellText, styles.dataCellPlaceholder]}
+              style={[styles.dataCellText, { color: colors.textTertiary, fontStyle: 'italic' as const }]}
               numberOfLines={1}
             >
               {hasOptions ? "Select…" : "No options configured"}
@@ -1643,7 +1646,7 @@ export function FollowupMobileGrid({
             <Ionicons
               name="chevron-down"
               size={11}
-              color="#6B7280"
+              color={colors.icon}
               style={styles.editIcon}
             />
           )}
@@ -1684,7 +1687,8 @@ export function FollowupMobileGrid({
           <Text
             style={[
               styles.dataCellText,
-              !displayVal && styles.dataCellPlaceholder,
+              { color: colors.text },
+              !displayVal && { color: colors.textTertiary, fontStyle: 'italic' as const },
             ]}
             numberOfLines={1}
           >
@@ -1696,7 +1700,7 @@ export function FollowupMobileGrid({
             <Ionicons
               name="chevron-down"
               size={11}
-              color="#6B7280"
+              color={colors.icon}
               style={styles.editIcon}
             />
           )}
@@ -1705,7 +1709,7 @@ export function FollowupMobileGrid({
     }
 
     return (
-      <Text style={styles.dataCellText} numberOfLines={1}>
+      <Text style={[styles.dataCellText, { color: colors.text }]} numberOfLines={1}>
         {String(value)}
       </Text>
     );
@@ -1745,25 +1749,26 @@ export function FollowupMobileGrid({
       <View
         style={[
           styles.row,
-          hasAlerts && styles.rowAlert,
+          { borderBottomColor: colors.borderLight, backgroundColor: colors.background },
+          hasAlerts && { backgroundColor: colors.warning },
           isSnoozed && styles.rowSnoozed,
-          isSelected && styles.rowSelected,
+          isSelected && { backgroundColor: colors.selectedBackground },
         ]}
       >
         <TouchableOpacity
-          style={[styles.selectCell, { width: SELECT_COL_WIDTH }]}
+          style={[styles.selectCell, { width: SELECT_COL_WIDTH, borderRightColor: colors.border }]}
           activeOpacity={0.7}
           onPress={() => handleToggleSelect(item.groupMemberId)}
         >
           <Ionicons
             name={isSelected ? "checkbox" : "square-outline"}
             size={18}
-            color={isSelected ? primaryColor : "#9CA3AF"}
+            color={isSelected ? primaryColor : colors.iconSecondary}
           />
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.memberCell, { width: MEMBER_COL_WIDTH }]}
+          style={[styles.memberCell, { width: MEMBER_COL_WIDTH, borderRightColor: colors.border }]}
           activeOpacity={0.8}
           onPress={() =>
             handleMemberPress(
@@ -1778,8 +1783,8 @@ export function FollowupMobileGrid({
               style={styles.avatarImage}
             />
           ) : (
-            <View style={styles.avatarFallback}>
-              <Text style={styles.avatarFallbackText}>
+            <View style={[styles.avatarFallback, { backgroundColor: primaryColor }]}>
+              <Text style={[styles.avatarFallbackText, { color: '#fff' }]}>
                 {item.firstName?.[0]?.toUpperCase() ?? "?"}
               </Text>
             </View>
@@ -1787,12 +1792,12 @@ export function FollowupMobileGrid({
 
           <View style={styles.memberTextWrap}>
             {crossGroupMode && (item as any).groupName ? (
-              <Text style={styles.groupNameBadge}>{(item as any).groupName}</Text>
+              <Text style={[styles.groupNameBadge, { color: colors.link }]}>{(item as any).groupName}</Text>
             ) : null}
-            <Text style={styles.memberName} numberOfLines={1}>
+            <Text style={[styles.memberName, { color: colors.text }]} numberOfLines={1}>
               {item.firstName} {item.lastName}
             </Text>
-            <Text style={styles.memberSubtitle} numberOfLines={1}>
+            <Text style={[styles.memberSubtitle, { color: colors.textSecondary }]} numberOfLines={1}>
               {subtitleLine}
             </Text>
           </View>
@@ -1811,9 +1816,10 @@ export function FollowupMobileGrid({
       <View
         style={[
           styles.row,
-          hasAlerts && styles.rowAlert,
+          { borderBottomColor: colors.borderLight, backgroundColor: colors.background },
+          hasAlerts && { backgroundColor: colors.warning },
           isSnoozed && styles.rowSnoozed,
-          isSelected && styles.rowSelected,
+          isSelected && { backgroundColor: colors.selectedBackground },
         ]}
       >
         <View style={styles.rowDataCells}>
@@ -1824,7 +1830,7 @@ export function FollowupMobileGrid({
               return (
                 <View
                   key={`${item.groupMemberId}-${column.key}`}
-                  style={[styles.dataCell, { width: column.width }]}
+                  style={[styles.dataCell, { width: column.width, borderRightColor: colors.borderLight }]}
                 >
                   {renderDataCell(item, column)}
                 </View>
@@ -1837,7 +1843,7 @@ export function FollowupMobileGrid({
                 style={[
                   styles.dataCell,
                   styles.editableCell,
-                  { width: column.width },
+                  { width: column.width, borderRightColor: colors.borderLight },
                 ]}
                 activeOpacity={0.7}
                 onPress={() => {
@@ -1852,7 +1858,7 @@ export function FollowupMobileGrid({
                 <Ionicons
                   name="chevron-down"
                   size={11}
-                  color="#6B7280"
+                  color={colors.icon}
                   style={styles.editIcon}
                 />
               </TouchableOpacity>
@@ -1867,25 +1873,25 @@ export function FollowupMobileGrid({
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={primaryColor} />
-        <Text style={styles.loadingText}>Loading people list...</Text>
+        <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading people list...</Text>
       </View>
     );
   }
 
   return (
-    <View style={styles.screen}>
-      <View style={[styles.header, { paddingTop: insets.top + 14 }]}>
+    <View style={[styles.screen, { backgroundColor: colors.backgroundSecondary }]}>
+      <View style={[styles.header, { paddingTop: insets.top + 14, borderBottomColor: colors.border, backgroundColor: colors.background }]}>
         <View style={styles.headerTopRow}>
           <TouchableOpacity
             style={styles.backButton}
             onPress={handleBack}
             testID="back-button"
           >
-            <Ionicons name="arrow-back" size={24} color="#333" />
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
           <View style={styles.headerContent}>
-            <Text style={styles.headerTitle}>{toolDisplayName}</Text>
-            <Text style={styles.headerSubtitle}>
+            <Text style={[styles.headerTitle, { color: colors.text }]}>{toolDisplayName}</Text>
+            <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>
               {crossGroupMode ? "All assigned people across groups" : (groupData?.name || "Group")}
             </Text>
           </View>
@@ -1894,7 +1900,7 @@ export function FollowupMobileGrid({
               style={styles.headerAddButton}
               onPress={() => setShowQuickAddModal(true)}
             >
-              <Ionicons name="person-add-outline" size={20} color="#16A34A" />
+              <Ionicons name="person-add-outline" size={20} color={colors.success} />
             </TouchableOpacity>
           )}
           {!crossGroupMode && (
@@ -1902,26 +1908,26 @@ export function FollowupMobileGrid({
               style={styles.settingsButton}
               onPress={handleSettingsPress}
             >
-              <Ionicons name="settings-outline" size={22} color="#666" />
+              <Ionicons name="settings-outline" size={22} color={colors.textSecondary} />
             </TouchableOpacity>
           )}
         </View>
 
-        <View style={styles.searchRow}>
+        <View style={[styles.searchRow, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary }]}>
           <Ionicons
             name="search"
             size={16}
-            color="#777"
+            color={colors.icon}
             style={styles.searchIcon}
           />
           <TextInput
             value={searchQuery}
             onChangeText={setSearchQuery}
-            style={styles.searchInput}
+            style={[styles.searchInput, { color: colors.text }]}
             onFocus={() => setIsSearchFocused(true)}
             onBlur={() => setTimeout(() => setIsSearchFocused(false), 120)}
             placeholder="Search, -assignee:bob, date added:<12/14/25"
-            placeholderTextColor="#9CA3AF"
+            placeholderTextColor={colors.iconSecondary}
             testID="followup-mobile-search"
           />
           {searchQuery.length > 0 && (
@@ -1929,19 +1935,19 @@ export function FollowupMobileGrid({
               onPress={() => setSearchQuery("")}
               style={styles.clearSearchButton}
             >
-              <Ionicons name="close-circle" size={18} color="#888" />
+              <Ionicons name="close-circle" size={18} color={colors.textTertiary} />
             </TouchableOpacity>
           )}
         </View>
         {searchHelperText && (
-          <Text style={styles.searchHelperText}>{searchHelperText}</Text>
+          <Text style={[styles.searchHelperText, { color: colors.textSecondary }]}>{searchHelperText}</Text>
         )}
         {showSearchSuggestions && (
-          <View style={styles.searchSuggestionBox}>
+          <View style={[styles.searchSuggestionBox, { borderColor: colors.border, backgroundColor: colors.background }]}>
             {searchSuggestions.map((suggestion) => (
               <TouchableOpacity
                 key={suggestion.id}
-                style={styles.searchSuggestionRow}
+                style={[styles.searchSuggestionRow, { borderBottomColor: colors.borderLight }]}
                 onPress={() => {
                   setSearchQuery(
                     applyFollowupSuggestion(searchQuery, suggestion.insertText),
@@ -1949,10 +1955,10 @@ export function FollowupMobileGrid({
                   setIsSearchFocused(false);
                 }}
               >
-                <Text style={styles.searchSuggestionLabel}>
+                <Text style={[styles.searchSuggestionLabel, { color: colors.text }]}>
                   {suggestion.label}
                 </Text>
-                <Text style={styles.searchSuggestionHelp}>
+                <Text style={[styles.searchSuggestionHelp, { color: colors.textSecondary }]}>
                   {suggestion.helperText}
                 </Text>
               </TouchableOpacity>
@@ -1967,14 +1973,14 @@ export function FollowupMobileGrid({
             contentContainerStyle={styles.filterBadgeRow}
           >
             {activeFilterBadges.map((badge, index) => (
-              <View key={`${badge}-${index}`} style={styles.filterBadge}>
-                <Text style={styles.filterBadgeText}>{badge}</Text>
+              <View key={`${badge}-${index}`} style={[styles.filterBadge, { backgroundColor: colors.surfaceSecondary }]}>
+                <Text style={[styles.filterBadgeText, { color: colors.link }]}>{badge}</Text>
               </View>
             ))}
           </ScrollView>
         )}
 
-        <Text style={styles.resultMeta}>
+        <Text style={[styles.resultMeta, { color: colors.textSecondary }]}>
           Showing {displayMembers.length}
           {typeof totalCount === "number" ? ` of ${totalCount}` : ""}
           {hasStructuredFilters || hasTextSearch ? " (filtered)" : ""}
@@ -2033,21 +2039,21 @@ export function FollowupMobileGrid({
 
       <View style={styles.gridContainer}>
         {selectedIds.size > 0 && !isMapViewActive && (
-          <View style={styles.actionBar}>
+          <View style={[styles.actionBar, { backgroundColor: colors.selectedBackground, borderColor: colors.link }]}>
             <View style={styles.actionBarLeft}>
-              <Text style={styles.actionBarCount}>
+              <Text style={[styles.actionBarCount, { color: colors.link }]}>
                 {selectedIds.size} selected
               </Text>
               <TouchableOpacity onPress={() => setSelectedIds(new Set())}>
-                <Text style={styles.actionBarDeselect}>Deselect all</Text>
+                <Text style={[styles.actionBarDeselect, { color: colors.link }]}>Deselect all</Text>
               </TouchableOpacity>
             </View>
             <TouchableOpacity
-              style={styles.actionBarRemoveButton}
+              style={[styles.actionBarRemoveButton, { backgroundColor: colors.destructive }]}
               onPress={() => setShowRemoveModal(true)}
             >
-              <Ionicons name="trash-outline" size={14} color="#fff" />
-              <Text style={styles.actionBarRemoveText}>Remove from group</Text>
+              <Ionicons name="trash-outline" size={14} color={colors.textInverse} />
+              <Text style={[styles.actionBarRemoveText, { color: '#fff' }]}>Remove from group</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -2075,10 +2081,10 @@ export function FollowupMobileGrid({
           />
         ) : (
         <View style={styles.pinnedGridWrapper}>
-          <View style={[styles.pinnedLeft, { width: pinnedWidth }]}>
-            <View style={styles.headerRow}>
+          <View style={[styles.pinnedLeft, { width: pinnedWidth, borderColor: colors.border, backgroundColor: colors.background }]}>
+            <View style={[styles.headerRow, { borderBottomColor: colors.border, backgroundColor: colors.surfaceSecondary }]}>
               <TouchableOpacity
-                style={[styles.selectHeaderCell, { width: SELECT_COL_WIDTH }]}
+                style={[styles.selectHeaderCell, { width: SELECT_COL_WIDTH, borderRightColor: colors.border }]}
                 onPress={handleSelectAll}
               >
                 <Ionicons
@@ -2090,13 +2096,13 @@ export function FollowupMobileGrid({
                         : "square-outline"
                   }
                   size={18}
-                  color={selectedIds.size > 0 ? primaryColor : "#9CA3AF"}
+                  color={selectedIds.size > 0 ? primaryColor : colors.iconSecondary}
                 />
               </TouchableOpacity>
               <View
-                style={[styles.memberHeaderCell, { width: MEMBER_COL_WIDTH }]}
+                style={[styles.memberHeaderCell, { width: MEMBER_COL_WIDTH, borderRightColor: colors.border }]}
               >
-                <Text style={styles.memberHeaderText}>Member</Text>
+                <Text style={[styles.memberHeaderText, { color: colors.text }]}>Member</Text>
               </View>
             </View>
             <FlatList
@@ -2123,16 +2129,16 @@ export function FollowupMobileGrid({
               }
               ListEmptyComponent={
                 <View style={styles.emptyContainer}>
-                  <Ionicons name="search-outline" size={42} color="#9CA3AF" />
-                  <Text style={styles.emptyTitle}>No matches</Text>
-                  <Text style={styles.emptyText}>
+                  <Ionicons name="search-outline" size={42} color={colors.iconSecondary} />
+                  <Text style={[styles.emptyTitle, { color: colors.text }]}>No matches</Text>
+                  <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
                     {hasTextSearch || hasStructuredFilters
                       ? "No members match your search and filters."
                       : "No members to show right now."}
                   </Text>
                 </View>
               }
-              contentContainerStyle={styles.listContent}
+              contentContainerStyle={[styles.listContent, { backgroundColor: colors.background }]}
             />
           </View>
           <ScrollView
@@ -2141,9 +2147,9 @@ export function FollowupMobileGrid({
             style={styles.scrollableRight}
             contentContainerStyle={styles.gridScrollContent}
           >
-            <View style={[styles.tableContainer, { width: dataColumnsWidth }]}>
-              <View style={styles.headerRow}>
-                <View style={styles.headerDataCells}>
+            <View style={[styles.tableContainer, { width: dataColumnsWidth, borderColor: colors.border, backgroundColor: colors.background }]}>
+              <View style={[styles.headerRow, { borderBottomColor: colors.border, backgroundColor: colors.surfaceSecondary }]}>
+                <View style={[styles.headerDataCells, { backgroundColor: colors.surfaceSecondary }]}>
                   {dataColumns.map(renderColumnHeader)}
                 </View>
               </View>
@@ -2164,7 +2170,7 @@ export function FollowupMobileGrid({
                   ) : null
                 }
                 ListEmptyComponent={null}
-                contentContainerStyle={styles.listContent}
+                contentContainerStyle={[styles.listContent, { backgroundColor: colors.background }]}
               />
             </View>
           </ScrollView>
@@ -2178,8 +2184,8 @@ export function FollowupMobileGrid({
         animationType="slide"
         onRequestClose={() => setShowQuickAddModal(false)}
       >
-        <View style={styles.quickAddBackdrop}>
-          <View style={styles.quickAddCard}>
+        <View style={[styles.quickAddBackdrop, { backgroundColor: colors.overlay }]}>
+          <View style={[styles.quickAddCard, { backgroundColor: colors.modalBackground }]}>
             <FollowupQuickAddPanel
               groupId={groupId}
               customFields={customFields}
@@ -2201,9 +2207,9 @@ export function FollowupMobileGrid({
         animationType="fade"
         onRequestClose={closeEditSheet}
       >
-        <Pressable style={styles.modalBackdrop} onPress={closeEditSheet}>
-          <Pressable style={styles.editSheetCard} onPress={() => undefined}>
-            <Text style={styles.editSheetTitle}>
+        <Pressable style={[styles.modalBackdrop, { backgroundColor: colors.overlay }]} onPress={closeEditSheet}>
+          <Pressable style={[styles.editSheetCard, { backgroundColor: colors.modalBackground }]} onPress={() => undefined}>
+            <Text style={[styles.editSheetTitle, { color: colors.text }]}>
               {editSheet?.type === "assignee"
                 ? "Update assignees"
                 : editSheet?.type === "status"
@@ -2216,7 +2222,7 @@ export function FollowupMobileGrid({
                         ? `Select ${editSheet.customField?.name ?? "options"}`
                         : "Edit"}
             </Text>
-            <Text style={styles.editSheetSubtitle}>
+            <Text style={[styles.editSheetSubtitle, { color: colors.textSecondary }]}>
               {activeEditMember
                 ? `${activeEditMember.firstName} ${activeEditMember.lastName}`
                 : "Member"}
@@ -2225,11 +2231,11 @@ export function FollowupMobileGrid({
             {editSheet?.type === "customText" ? (
               <View style={styles.customFieldEditRow}>
                 <TextInput
-                  style={styles.customFieldInput}
+                  style={[styles.customFieldInput, { borderColor: colors.inputBorder, color: colors.text }]}
                   value={customFieldInput}
                   onChangeText={setCustomFieldInput}
                   placeholder={`Enter ${editSheet.customField?.name ?? "value"}...`}
-                  placeholderTextColor="#9CA3AF"
+                  placeholderTextColor={colors.iconSecondary}
                   autoFocus
                   onSubmitEditing={handleCustomTextSubmit}
                   returnKeyType="done"
@@ -2247,7 +2253,7 @@ export function FollowupMobileGrid({
                   onPress={handleCustomTextSubmit}
                   disabled={isUpdatingField}
                 >
-                  <Text style={styles.customFieldSaveButtonText}>Save</Text>
+                  <Text style={[styles.customFieldSaveButtonText, { color: '#fff' }]}>Save</Text>
                 </TouchableOpacity>
               </View>
             ) : editSheet?.type === "customDropdown" ? (
@@ -2259,14 +2265,15 @@ export function FollowupMobileGrid({
                         key={opt}
                         style={[
                           styles.optionRow,
+                          { borderTopColor: colors.borderLight },
                           (activeEditMember as Record<string, unknown>)?.[
                             editSheet!.customField!.slot
-                          ] === opt && styles.optionRowSelected,
+                          ] === opt && { backgroundColor: colors.selectedBackground },
                         ]}
                         onPress={() => handleCustomDropdownSelect(opt)}
                         disabled={isUpdatingField}
                       >
-                        <Text style={styles.optionText}>{opt}</Text>
+                        <Text style={[styles.optionText, { color: colors.text }]}>{opt}</Text>
                         {(activeEditMember as Record<string, unknown>)?.[
                           editSheet!.customField!.slot
                         ] === opt && (
@@ -2280,8 +2287,8 @@ export function FollowupMobileGrid({
                     ))}
                   </>
                 ) : (
-                  <View style={styles.optionRow}>
-                    <Text style={styles.optionText}>No options configured</Text>
+                  <View style={[styles.optionRow, { borderTopColor: colors.borderLight }]}>
+                    <Text style={[styles.optionText, { color: colors.text }]}>No options configured</Text>
                   </View>
                 )}
                 {String(
@@ -2290,11 +2297,11 @@ export function FollowupMobileGrid({
                   ] ?? ""
                 ).trim().length > 0 && (
                   <TouchableOpacity
-                    style={styles.optionRow}
+                    style={[styles.optionRow, { borderTopColor: colors.borderLight }]}
                     onPress={() => handleCustomDropdownSelect(undefined)}
                     disabled={isUpdatingField}
                   >
-                    <Text style={styles.optionText}>Clear</Text>
+                    <Text style={[styles.optionText, { color: colors.text }]}>Clear</Text>
                   </TouchableOpacity>
                 )}
               </ScrollView>
@@ -2315,7 +2322,8 @@ export function FollowupMobileGrid({
                           key={opt}
                           style={[
                             styles.optionRow,
-                            isChecked && styles.optionRowSelected,
+                            { borderTopColor: colors.borderLight },
+                            isChecked && { backgroundColor: colors.selectedBackground },
                           ]}
                           onPress={() => handleMultiselectToggle(opt)}
                           disabled={isUpdatingField}
@@ -2324,18 +2332,18 @@ export function FollowupMobileGrid({
                             <Ionicons
                               name={isChecked ? "checkbox" : "square-outline"}
                               size={20}
-                              color={isChecked ? primaryColor : "#9CA3AF"}
+                              color={isChecked ? primaryColor : colors.iconSecondary}
                               style={styles.multiselectCheckboxIcon}
                             />
-                            <Text style={styles.optionText}>{opt}</Text>
+                            <Text style={[styles.optionText, { color: colors.text }]}>{opt}</Text>
                           </View>
                         </TouchableOpacity>
                       );
                     })}
                   </>
                 ) : (
-                  <View style={styles.optionRow}>
-                    <Text style={styles.optionText}>No options configured</Text>
+                  <View style={[styles.optionRow, { borderTopColor: colors.borderLight }]}>
+                    <Text style={[styles.optionText, { color: colors.text }]}>No options configured</Text>
                   </View>
                 )}
                 {parseMultiSelectValues(
@@ -2346,11 +2354,11 @@ export function FollowupMobileGrid({
                   )
                 ).length > 0 && (
                   <TouchableOpacity
-                    style={styles.optionRow}
+                    style={[styles.optionRow, { borderTopColor: colors.borderLight }]}
                     onPress={handleMultiselectClear}
                     disabled={isUpdatingField}
                   >
-                    <Text style={styles.optionText}>Clear all</Text>
+                    <Text style={[styles.optionText, { color: colors.text }]}>Clear all</Text>
                   </TouchableOpacity>
                 )}
               </ScrollView>
@@ -2366,7 +2374,8 @@ export function FollowupMobileGrid({
                       key={leader.id}
                       style={[
                         styles.optionRow,
-                        isSelected && styles.optionRowSelected,
+                        { borderTopColor: colors.borderLight },
+                        isSelected && { backgroundColor: colors.selectedBackground },
                       ]}
                       onPress={() => {
                         const nextAssigneeIds = isSelected
@@ -2376,7 +2385,7 @@ export function FollowupMobileGrid({
                       }}
                       disabled={isUpdatingField}
                     >
-                      <Text style={styles.optionText}>
+                      <Text style={[styles.optionText, { color: colors.text }]}>
                         {leader.firstName} {leader.lastName}
                       </Text>
                       {isSelected && (
@@ -2390,18 +2399,18 @@ export function FollowupMobileGrid({
                   );
                 })}
                 <TouchableOpacity
-                  style={styles.optionRow}
+                  style={[styles.optionRow, { borderTopColor: colors.borderLight }]}
                   onPress={() => handleAssignChange([])}
                   disabled={isUpdatingField}
                 >
-                  <Text style={styles.optionText}>Clear all assignees</Text>
+                  <Text style={[styles.optionText, { color: colors.text }]}>Clear all assignees</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={styles.optionRow}
+                  style={[styles.optionRow, { borderTopColor: colors.borderLight }]}
                   onPress={() => setEditSheet(null)}
                   disabled={isUpdatingField}
                 >
-                  <Text style={styles.optionText}>Done</Text>
+                  <Text style={[styles.optionText, { color: colors.text }]}>Done</Text>
                 </TouchableOpacity>
               </ScrollView>
             ) : (
@@ -2414,12 +2423,13 @@ export function FollowupMobileGrid({
                       key={option.label}
                       style={[
                         styles.optionRow,
-                        isSelected && styles.optionRowSelected,
+                        { borderTopColor: colors.borderLight },
+                        isSelected && { backgroundColor: colors.selectedBackground },
                       ]}
                       onPress={() => handleStatusChange(option.value)}
                       disabled={isUpdatingField}
                     >
-                      <Text style={styles.optionText}>{option.label}</Text>
+                      <Text style={[styles.optionText, { color: colors.text }]}>{option.label}</Text>
                       {isSelected && (
                         <Ionicons
                           name="checkmark"
@@ -2499,7 +2509,6 @@ export function FollowupMobileGrid({
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#F6F7FB",
   },
   loadingContainer: {
     flex: 1,
@@ -2508,14 +2517,11 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     marginTop: 10,
-    color: "#666",
   },
   header: {
     paddingHorizontal: 14,
     paddingBottom: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#E5E7EB",
-    backgroundColor: "#FFF",
   },
   headerTopRow: {
     flexDirection: "row",
@@ -2531,12 +2537,10 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 20,
     fontWeight: "700",
-    color: "#111827",
   },
   headerSubtitle: {
     marginTop: 2,
     fontSize: 13,
-    color: "#6B7280",
   },
   settingsButton: {
     padding: 6,
@@ -2550,8 +2554,6 @@ const styles = StyleSheet.create({
     height: 38,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
-    backgroundColor: "#F9FAFB",
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 10,
@@ -2562,7 +2564,6 @@ const styles = StyleSheet.create({
   searchInput: {
     flex: 1,
     fontSize: 13,
-    color: "#111827",
     paddingVertical: 0,
   },
   clearSearchButton: {
@@ -2571,31 +2572,25 @@ const styles = StyleSheet.create({
   searchHelperText: {
     marginTop: 6,
     fontSize: 11,
-    color: "#6B7280",
   },
   searchSuggestionBox: {
     marginTop: 6,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
     borderRadius: 8,
-    backgroundColor: "#FFF",
     overflow: "hidden",
   },
   searchSuggestionRow: {
     paddingHorizontal: 10,
     paddingVertical: 8,
     borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
   },
   searchSuggestionLabel: {
     fontSize: 12,
-    color: "#111827",
     fontWeight: "600",
   },
   searchSuggestionHelp: {
     marginTop: 2,
     fontSize: 11,
-    color: "#6B7280",
   },
   sortOptionsContainer: {
     marginTop: 10,
@@ -2607,26 +2602,18 @@ const styles = StyleSheet.create({
   sortChip: {
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
-    backgroundColor: "#FFF",
     paddingHorizontal: 10,
     paddingVertical: 6,
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
   },
-  sortChipActive: {
-    borderColor: DEFAULT_PRIMARY_COLOR,
-    backgroundColor: "#EEF6FF",
-  },
+  sortChipActive: {},
   sortChipText: {
     fontSize: 12,
-    color: "#4B5563",
     fontWeight: "600",
   },
-  sortChipTextActive: {
-    color: DEFAULT_PRIMARY_COLOR,
-  },
+  sortChipTextActive: {},
   filterBadgeRow: {
     marginTop: 8,
     gap: 6,
@@ -2635,19 +2622,16 @@ const styles = StyleSheet.create({
   },
   filterBadge: {
     borderRadius: 999,
-    backgroundColor: "#EEF2FF",
     paddingHorizontal: 8,
     paddingVertical: 4,
   },
   filterBadgeText: {
-    color: "#3730A3",
     fontSize: 11,
     fontWeight: "600",
   },
   resultMeta: {
     marginTop: 8,
     fontSize: 12,
-    color: "#6B7280",
     fontWeight: "500",
   },
   gridContainer: {
@@ -2660,12 +2644,10 @@ const styles = StyleSheet.create({
   },
   pinnedLeft: {
     borderWidth: 1,
-    borderColor: "#E5E7EB",
     borderRightWidth: 0,
     borderTopLeftRadius: 12,
     borderBottomLeftRadius: 12,
     overflow: "hidden",
-    backgroundColor: "#FFF",
   },
   scrollableRight: {
     flex: 1,
@@ -2676,11 +2658,9 @@ const styles = StyleSheet.create({
   },
   tableContainer: {
     borderWidth: 1,
-    borderColor: "#E5E7EB",
     borderTopRightRadius: 12,
     borderBottomRightRadius: 12,
     overflow: "hidden",
-    backgroundColor: "#FFF",
   },
   tableList: {
     maxHeight: "100%",
@@ -2693,9 +2673,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     marginHorizontal: 10,
     marginBottom: 8,
-    backgroundColor: "#EBF5FF",
     borderWidth: 1,
-    borderColor: "#BFDBFE",
     borderRadius: 8,
   },
   actionBarLeft: {
@@ -2705,44 +2683,36 @@ const styles = StyleSheet.create({
   },
   actionBarCount: {
     fontSize: 12,
-    color: "#1E40AF",
     fontWeight: "700",
   },
   actionBarDeselect: {
     fontSize: 12,
-    color: "#2563EB",
     textDecorationLine: "underline",
   },
   actionBarRemoveButton: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    backgroundColor: "#DC2626",
     borderRadius: 6,
     paddingHorizontal: 10,
     paddingVertical: 6,
   },
   actionBarRemoveText: {
-    color: "#FFF",
     fontSize: 12,
     fontWeight: "700",
   },
   headerRow: {
     flexDirection: "row",
     borderBottomWidth: 1,
-    borderBottomColor: "#E5E7EB",
-    backgroundColor: "#F9FAFB",
   },
   selectHeaderCell: {
     height: 40,
     borderRightWidth: 1,
-    borderRightColor: "#E5E7EB",
     alignItems: "center",
     justifyContent: "center",
   },
   memberHeaderCell: {
     borderRightWidth: 1,
-    borderRightColor: "#E5E7EB",
     justifyContent: "center",
     paddingHorizontal: 8,
     height: 40,
@@ -2750,13 +2720,11 @@ const styles = StyleSheet.create({
   memberHeaderText: {
     fontSize: 12,
     fontWeight: "700",
-    color: "#374151",
     textTransform: "uppercase",
     letterSpacing: 0.4,
   },
   headerDataCells: {
     flexDirection: "row",
-    backgroundColor: "#F9FAFB",
   },
   headerCell: {
     height: 40,
@@ -2764,49 +2732,36 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     borderRightWidth: 1,
-    borderRightColor: "#E5E7EB",
   },
   headerCellText: {
     fontSize: 11,
-    color: "#374151",
     fontWeight: "700",
   },
-  headerCellTextMuted: {
-    color: "#6B7280",
-  },
+  headerCellTextMuted: {},
   headerSortIcon: {
     marginLeft: 4,
   },
   listContent: {
     borderBottomWidth: 0,
-    backgroundColor: "#FFF",
     paddingBottom: 88,
   },
   row: {
     flexDirection: "row",
     minHeight: 56,
     borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
-    backgroundColor: "#FFF",
   },
-  rowAlert: {
-    backgroundColor: "#FFF7ED",
-  },
+  rowAlert: {},
   rowSnoozed: {
     opacity: 0.66,
   },
-  rowSelected: {
-    backgroundColor: "#EFF6FF",
-  },
+  rowSelected: {},
   selectCell: {
     borderRightWidth: 1,
-    borderRightColor: "#E5E7EB",
     justifyContent: "center",
     alignItems: "center",
   },
   memberCell: {
     borderRightWidth: 1,
-    borderRightColor: "#E5E7EB",
     paddingHorizontal: 7,
     paddingVertical: 8,
     flexDirection: "row",
@@ -2822,12 +2777,10 @@ const styles = StyleSheet.create({
     width: 26,
     height: 26,
     borderRadius: 13,
-    backgroundColor: DEFAULT_PRIMARY_COLOR,
     alignItems: "center",
     justifyContent: "center",
   },
   avatarFallbackText: {
-    color: "#FFF",
     fontWeight: "700",
     fontSize: 11,
   },
@@ -2836,17 +2789,14 @@ const styles = StyleSheet.create({
   },
   memberName: {
     fontSize: 13,
-    color: "#111827",
     fontWeight: "700",
   },
   memberSubtitle: {
     marginTop: 2,
     fontSize: 10,
-    color: "#6B7280",
   },
   groupNameBadge: {
     fontSize: 11,
-    color: "#6366F1",
     fontWeight: "600",
     marginBottom: 4,
   },
@@ -2856,7 +2806,6 @@ const styles = StyleSheet.create({
   dataCell: {
     minHeight: 48,
     borderRightWidth: 1,
-    borderRightColor: "#F3F4F6",
     justifyContent: "center",
     alignItems: "center",
     paddingHorizontal: 6,
@@ -2870,11 +2819,7 @@ const styles = StyleSheet.create({
   },
   dataCellText: {
     fontSize: 12,
-    color: "#374151",
     fontWeight: "500",
-  },
-  dataCellPlaceholder: {
-    color: "#9CA3AF",
   },
   customFieldEditRow: {
     flexDirection: "row",
@@ -2885,12 +2830,10 @@ const styles = StyleSheet.create({
   customFieldInput: {
     flex: 1,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 14,
-    color: "#111827",
   },
   customFieldSaveButton: {
     paddingHorizontal: 16,
@@ -2899,7 +2842,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   customFieldSaveButtonText: {
-    color: "#FFF",
     fontSize: 14,
     fontWeight: "600",
   },
@@ -2935,36 +2877,30 @@ const styles = StyleSheet.create({
   emptyTitle: {
     marginTop: 8,
     fontSize: 17,
-    color: "#374151",
     fontWeight: "700",
   },
   emptyText: {
     marginTop: 6,
     fontSize: 13,
-    color: "#6B7280",
     textAlign: "center",
   },
   modalBackdrop: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.28)",
     justifyContent: "center",
     paddingHorizontal: 20,
   },
   quickAddBackdrop: {
     flex: 1,
-    backgroundColor: "rgba(15, 23, 42, 0.35)",
     justifyContent: "center",
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
   quickAddCard: {
-    backgroundColor: "#FFF",
     borderRadius: 12,
     overflow: "hidden",
     maxHeight: "92%",
   },
   editSheetCard: {
-    backgroundColor: "#FFF",
     borderRadius: 14,
     maxHeight: "74%",
     paddingVertical: 12,
@@ -2977,14 +2913,12 @@ const styles = StyleSheet.create({
   editSheetTitle: {
     fontSize: 16,
     fontWeight: "700",
-    color: "#111827",
     paddingHorizontal: 16,
   },
   editSheetSubtitle: {
     marginTop: 2,
     marginBottom: 8,
     fontSize: 13,
-    color: "#6B7280",
     paddingHorizontal: 16,
   },
   optionList: {
@@ -2997,14 +2931,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     borderTopWidth: 1,
-    borderTopColor: "#F3F4F6",
-  },
-  optionRowSelected: {
-    backgroundColor: "#EEF6FF",
   },
   optionText: {
     fontSize: 14,
-    color: "#111827",
   },
   multiselectChipRow: {
     flexDirection: "row",
@@ -3014,7 +2943,6 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   multiselectChip: {
-    backgroundColor: "#EDE9FE",
     borderRadius: 4,
     paddingHorizontal: 4,
     paddingVertical: 1,
@@ -3022,12 +2950,10 @@ const styles = StyleSheet.create({
   },
   multiselectChipText: {
     fontSize: 10,
-    color: "#6B21A8",
     fontWeight: "600",
   },
   multiselectMoreText: {
     fontSize: 10,
-    color: "#6B21A8",
     fontWeight: "600",
   },
   multiselectOptionRow: {

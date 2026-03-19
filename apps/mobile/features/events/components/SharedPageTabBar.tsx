@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useTheme } from "@hooks/useTheme";
 
 interface SharedPageTabBarProps {
   hasActiveCommunity: boolean;
@@ -24,6 +25,7 @@ export function SharedPageTabBar({
 }: SharedPageTabBarProps) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
 
   const tabs = [
     {
@@ -67,7 +69,7 @@ export function SharedPageTabBar({
   };
 
   return (
-    <View style={[styles.container, { paddingBottom: insets.bottom + 8 }]}>
+    <View style={[styles.container, { paddingBottom: insets.bottom + 8, backgroundColor: colors.surface, borderTopColor: colors.border }]}>
       {visibleTabs.map((tab) => (
         <TouchableOpacity
           key={tab.key}
@@ -75,8 +77,8 @@ export function SharedPageTabBar({
           onPress={() => handleTabPress(tab.route)}
           activeOpacity={0.7}
         >
-          <Ionicons name={tab.icon} size={24} color="#666" />
-          <Text style={styles.tabLabel}>{tab.label}</Text>
+          <Ionicons name={tab.icon} size={24} color={colors.textSecondary} />
+          <Text style={[styles.tabLabel, { color: colors.textSecondary }]}>{tab.label}</Text>
         </TouchableOpacity>
       ))}
     </View>
@@ -86,9 +88,7 @@ export function SharedPageTabBar({
 const styles = StyleSheet.create({
   container: {
     flexDirection: "row",
-    backgroundColor: "#fff",
     borderTopWidth: 1,
-    borderTopColor: "#e0e0e0",
     paddingTop: 8,
   },
   tab: {
@@ -100,7 +100,6 @@ const styles = StyleSheet.create({
   tabLabel: {
     fontSize: 12,
     fontWeight: "500",
-    color: "#666",
     marginTop: 4,
   },
 });

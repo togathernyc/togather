@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { useTheme } from "@hooks/useTheme";
 import { GroupHeader } from "./GroupHeader";
 import { MembersRow } from "./MembersRow";
 import { HighlightsGrid } from "./HighlightsGrid";
@@ -30,6 +31,7 @@ export function GroupNonMemberView({
 }: GroupNonMemberViewProps) {
   const { user } = useAuth();
   const router = useRouter();
+  const { colors } = useTheme();
   const [showOptionsModal, setShowOptionsModal] = useState(false);
 
   // Check if user is a community admin - admins should see the menu even if not a member
@@ -70,9 +72,9 @@ export function GroupNonMemberView({
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       <ScrollView
-        style={styles.scrollView}
+        style={[styles.scrollView, { backgroundColor: colors.background }]}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
       >
@@ -85,8 +87,8 @@ export function GroupNonMemberView({
         />
 
         {/* Description */}
-        <View style={styles.descriptionContainer}>
-          <Text style={styles.description}>
+        <View style={[styles.descriptionContainer, { backgroundColor: colors.surfaceSecondary }]}>
+          <Text style={[styles.description, { color: colors.textSecondary }]}>
             {group.description || "No description available."}
           </Text>
         </View>
@@ -103,9 +105,9 @@ export function GroupNonMemberView({
            (group.leaders && group.leaders.length > 0)) ? (
             <TouchableOpacity onPress={handleMembersPress} activeOpacity={0.7}>
               <MembersRow members={group.members} leaders={group.leaders} />
-              <View style={styles.viewMembersHint}>
-                <Text style={styles.viewMembersText}>View all members</Text>
-                <Ionicons name="chevron-forward" size={16} color="#007AFF" />
+              <View style={[styles.viewMembersHint, { backgroundColor: colors.surfaceSecondary }]}>
+                <Text style={[styles.viewMembersText, { color: colors.link }]}>View all members</Text>
+                <Ionicons name="chevron-forward" size={16} color={colors.link} />
               </View>
             </TouchableOpacity>
           ) : null
@@ -125,20 +127,20 @@ export function GroupNonMemberView({
                     totalCount={group.members_count || 0}
                   />
                 ) : (
-                  <View style={styles.nonMemberMembersContainer}>
-                    <Text style={styles.nonMemberMembersTitle}>MEMBERS</Text>
+                  <View style={[styles.nonMemberMembersContainer, { backgroundColor: colors.surfaceSecondary }]}>
+                    <Text style={[styles.nonMemberMembersTitle, { color: colors.text }]}>MEMBERS</Text>
                     <View style={styles.nonMemberMembersRow}>
-                      <View style={styles.nonMemberCountCircle}>
-                        <Ionicons name="people" size={24} color="#666" />
+                      <View style={[styles.nonMemberCountCircle, { backgroundColor: colors.border }]}>
+                        <Ionicons name="people" size={24} color={colors.textSecondary} />
                       </View>
-                      <Text style={styles.nonMemberMembersCount}>
+                      <Text style={[styles.nonMemberMembersCount, { color: colors.text }]}>
                         {group.members_count} members
                       </Text>
                     </View>
                   </View>
                 )}
-                <View style={styles.nonMemberHintContainer}>
-                  <Text style={styles.nonMemberPendingHint}>Request pending - you'll see all members once approved</Text>
+                <View style={[styles.nonMemberHintContainer, { backgroundColor: colors.surfaceSecondary }]}>
+                  <Text style={[styles.nonMemberPendingHint, { color: colors.textSecondary }]}>Request pending - you'll see all members once approved</Text>
                 </View>
               </View>
             ) : (
@@ -160,11 +162,11 @@ export function GroupNonMemberView({
                     totalCount={group.members_count || 0}
                   />
                 ) : (
-                  <View style={styles.nonMemberMembersContainer}>
-                    <Text style={styles.nonMemberMembersTitle}>MEMBERS</Text>
+                  <View style={[styles.nonMemberMembersContainer, { backgroundColor: colors.surfaceSecondary }]}>
+                    <Text style={[styles.nonMemberMembersTitle, { color: colors.text }]}>MEMBERS</Text>
                     <View style={styles.nonMemberMembersRow}>
-                      <View style={styles.nonMemberCountCircle}>
-                        <Ionicons name="people" size={24} color="#666" />
+                      <View style={[styles.nonMemberCountCircle, { backgroundColor: colors.border }]}>
+                        <Ionicons name="people" size={24} color={colors.textSecondary} />
                       </View>
                       <Text style={styles.nonMemberMembersCount}>
                         {group.members_count} members
@@ -229,24 +231,20 @@ export function GroupNonMemberView({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
   },
   scrollView: {
     flex: 1,
-    backgroundColor: '#fff',
   },
   scrollContent: {
     paddingBottom: 100, // Space for fixed button
   },
   descriptionContainer: {
-    backgroundColor: "#F5F5F5",
     paddingHorizontal: 16,
     paddingVertical: 16,
     marginTop: 0,
   },
   description: {
     fontSize: 16,
-    color: "#666",
     lineHeight: 24,
   },
   spacer: {
@@ -257,26 +255,22 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 8,
-    backgroundColor: "#F5F5F5",
     marginTop: -8,
     paddingBottom: 16,
   },
   viewMembersText: {
     fontSize: 14,
-    color: "#007AFF",
     fontWeight: "500",
     marginRight: 4,
   },
   // Non-member members section styles
   nonMemberMembersContainer: {
-    backgroundColor: "#F5F5F5",
     paddingHorizontal: 16,
     paddingVertical: 16,
   },
   nonMemberMembersTitle: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 12,
     textTransform: "uppercase",
     letterSpacing: 0.5,
@@ -289,7 +283,6 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: "#E0E0E0",
     justifyContent: "center",
     alignItems: "center",
     marginRight: 12,
@@ -297,22 +290,18 @@ const styles = StyleSheet.create({
   nonMemberMembersCount: {
     flex: 1,
     fontSize: 16,
-    color: "#333",
     fontWeight: "500",
   },
   nonMemberJoinHint: {
     fontSize: 13,
-    color: "#007AFF",
     textAlign: "center",
   },
   nonMemberPendingHint: {
     fontSize: 13,
-    color: "#666",
     textAlign: "center",
     fontStyle: "italic",
   },
   nonMemberHintContainer: {
-    backgroundColor: "#F5F5F5",
     paddingVertical: 8,
     paddingHorizontal: 16,
     marginTop: -8,

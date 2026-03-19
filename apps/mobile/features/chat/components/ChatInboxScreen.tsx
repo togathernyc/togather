@@ -23,6 +23,7 @@ import { UserRoute } from "@components/guards/UserRoute";
 import { useQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 import { GroupedInboxItem } from "./GroupedInboxItem";
 import { useExpandedGroups } from "../hooks/useExpandedGroups";
 import { useInboxCache } from "../../../stores/inboxCache";
@@ -68,6 +69,7 @@ export function ChatInboxScreen({
   const pathname = usePathname();
   const { user, community, token } = useAuth();
   const { primaryColor } = useCommunityTheme();
+  const { colors } = useTheme();
   const hasCommunity = !!community?.id;
   const { isGroupExpanded, toggleGroupExpanded } = useExpandedGroups();
   const { getInboxChannels, setInboxChannels } = useInboxCache();
@@ -165,19 +167,19 @@ export function ChatInboxScreen({
   if (!hasCommunity) {
     return (
       <Wrapper>
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: colors.surface }]}>
           <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
-            <Text style={styles.headerTitle}>Inbox</Text>
+            <Text style={[styles.headerTitle, { color: colors.text }]}>Inbox</Text>
           </View>
           <View style={styles.centered}>
             <Ionicons
               name="chatbubbles-outline"
               size={48}
-              color="#ccc"
+              color={colors.iconSecondary}
               style={{ marginBottom: 16 }}
             />
-            <Text style={styles.emptyTitle}>No Community Selected</Text>
-            <Text style={styles.emptySubtext}>
+            <Text style={[styles.emptyTitle, { color: colors.text }]}>No Community Selected</Text>
+            <Text style={[styles.emptySubtext, { color: colors.textSecondary }]}>
               Join a community to access group chats
             </Text>
           </View>
@@ -205,13 +207,13 @@ export function ChatInboxScreen({
   if (showLoadingSpinner) {
     return (
       <Wrapper>
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: colors.surface }]}>
           <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
-            <Text style={styles.headerTitle}>Inbox</Text>
+            <Text style={[styles.headerTitle, { color: colors.text }]}>Inbox</Text>
           </View>
           <View style={styles.centered}>
             <ActivityIndicator size="large" color={primaryColor} />
-            <Text style={styles.loadingText}>Loading your chats...</Text>
+            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading your chats...</Text>
           </View>
         </View>
       </Wrapper>
@@ -221,19 +223,19 @@ export function ChatInboxScreen({
   if (!displayChannels || displayChannels.length === 0) {
     return (
       <Wrapper>
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: colors.surface }]}>
           <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
-            <Text style={styles.headerTitle}>Inbox</Text>
+            <Text style={[styles.headerTitle, { color: colors.text }]}>Inbox</Text>
           </View>
           <ScrollView contentContainerStyle={styles.centeredScrollContent}>
             <Ionicons
               name="chatbubbles-outline"
               size={48}
-              color="#ccc"
+              color={colors.iconSecondary}
               style={{ marginBottom: 16 }}
             />
-            <Text style={styles.emptyTitle}>No Groups Yet</Text>
-            <Text style={styles.emptySubtext}>
+            <Text style={[styles.emptyTitle, { color: colors.text }]}>No Groups Yet</Text>
+            <Text style={[styles.emptySubtext, { color: colors.textSecondary }]}>
               Join a group to start chatting
             </Text>
           </ScrollView>
@@ -244,9 +246,9 @@ export function ChatInboxScreen({
 
   return (
     <Wrapper>
-      <View style={styles.container}>
+      <View style={[styles.container, { backgroundColor: colors.surface }]}>
         <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
-          <Text style={styles.headerTitle}>Inbox</Text>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Inbox</Text>
         </View>
         <FlatList
           data={displayChannels}
@@ -263,7 +265,6 @@ export function ChatInboxScreen({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
   },
   header: {
     paddingHorizontal: 16,
@@ -272,7 +273,6 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 28,
     fontWeight: "bold",
-    color: "#000",
   },
   centered: {
     flex: 1,
@@ -289,17 +289,14 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 16,
     fontSize: 16,
-    color: "#666",
   },
   emptyTitle: {
     fontSize: 20,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 8,
   },
   emptySubtext: {
     fontSize: 16,
-    color: "#666",
     textAlign: "center",
   },
   list: {

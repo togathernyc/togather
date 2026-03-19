@@ -12,6 +12,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Group } from "../types";
 import { formatCadence } from "../utils";
 import { AppImageBackground } from "@components/ui/AppImageBackground";
+import { useTheme } from "@hooks/useTheme";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const HEADER_HEIGHT = SCREEN_WIDTH * 0.6; // 60% of screen width for aspect ratio
@@ -24,6 +25,7 @@ interface GroupHeaderProps {
 
 export function GroupHeader({ group, onMenuPress, showMenu = true }: GroupHeaderProps) {
   const router = useRouter();
+  const { colors } = useTheme();
   const previewUrl = group.preview || group.image_url;
   const hasImage = !!previewUrl;
   // Ensure group name always has a value
@@ -38,8 +40,8 @@ export function GroupHeader({ group, onMenuPress, showMenu = true }: GroupHeader
     }
   };
 
-  const iconColor = hasImage ? "#ffffff" : "#333333";
-  const textColor = hasImage ? "#ffffff" : "#333333";
+  const iconColor = hasImage ? "#ffffff" : colors.text;
+  const textColor = hasImage ? "#ffffff" : colors.text;
 
   const content = (
     <View style={styles.contentContainer}>
@@ -106,7 +108,7 @@ export function GroupHeader({ group, onMenuPress, showMenu = true }: GroupHeader
           </View>
         </AppImageBackground>
       ) : (
-        <View style={styles.placeholderContainer}>
+        <View style={[styles.placeholderContainer, { backgroundColor: colors.border }]}>
           <View style={styles.gradient}>
             {content}
           </View>
@@ -131,7 +133,7 @@ const styles = StyleSheet.create({
   placeholderContainer: {
     width: "100%",
     height: "100%",
-    backgroundColor: "#E0E0E0",
+    backgroundColor: "#E0E0E0", // Placeholder gradient - stays as design constant
   },
   gradient: {
     flex: 1,

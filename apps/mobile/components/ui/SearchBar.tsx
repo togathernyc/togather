@@ -8,6 +8,7 @@ import {
   Text,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useTheme } from "@hooks/useTheme";
 
 interface SearchBarProps {
   placeholder?: string;
@@ -30,6 +31,7 @@ export function SearchBar({
   autoFocus = false,
   debounceMs = 300,
 }: SearchBarProps) {
+  const { colors } = useTheme();
   const [internalValue, setInternalValue] = useState(value || "");
   const debounceTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -73,20 +75,21 @@ export function SearchBar({
 
   return (
     <View style={[styles.container, style]}>
-      <View style={styles.searchContainer}>
+      <View style={[styles.searchContainer, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
         <Ionicons
           name="search"
           size={20}
-          color="#666"
+          color={colors.icon}
           style={styles.searchIcon}
         />
         <TextInput
           style={[
             styles.input,
+            { color: colors.text },
             Platform.OS === "web" ? { outlineStyle: "none" as any } : {},
           ]}
           placeholder={placeholder}
-          placeholderTextColor="#bdbdc1"
+          placeholderTextColor={colors.inputPlaceholder}
           value={internalValue}
           onChangeText={handleChangeText}
           autoFocus={autoFocus}
@@ -95,7 +98,7 @@ export function SearchBar({
         />
         {internalValue.length > 0 && (
           <TouchableOpacity onPress={handleClear} style={styles.clearButton}>
-            <Ionicons name="close-circle" size={20} color="#bdbdc1" />
+            <Ionicons name="close-circle" size={20} color={colors.iconSecondary} />
           </TouchableOpacity>
         )}
       </View>
@@ -110,11 +113,9 @@ const styles = StyleSheet.create({
   searchContainer: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f5f5f5",
     borderRadius: 12,
     paddingHorizontal: 16,
     borderWidth: 2,
-    borderColor: "#ecedf0",
     minHeight: 48,
   },
   searchIcon: {
@@ -123,7 +124,6 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     fontSize: 16,
-    color: "#333",
     paddingVertical: 12,
     letterSpacing: 0,
   },

@@ -18,6 +18,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 import { useSlackBotConfig } from "../hooks/useSlackBotConfig";
 
 interface ToolCallEntry {
@@ -75,37 +76,38 @@ function formatDuration(ms: number): string {
 
 function ToolCallItem({ call, index }: { call: ToolCallEntry; index: number }) {
   const [expanded, setExpanded] = useState(false);
+  const { colors, isDark } = useTheme();
 
   return (
-    <View style={styles.toolCallItem}>
+    <View style={[styles.toolCallItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
       <TouchableOpacity
         style={styles.toolCallHeader}
         onPress={() => setExpanded(!expanded)}
       >
         <View style={styles.toolCallLeft}>
-          <Text style={styles.toolCallIndex}>{index + 1}.</Text>
-          <Text style={styles.toolCallName}>{call.tool}</Text>
+          <Text style={[styles.toolCallIndex, { color: colors.textTertiary }]}>{index + 1}.</Text>
+          <Text style={[styles.toolCallName, { color: colors.text }]}>{call.tool}</Text>
         </View>
         <View style={styles.toolCallRight}>
-          <Text style={styles.toolCallDuration}>{formatDuration(call.durationMs)}</Text>
+          <Text style={[styles.toolCallDuration, { color: colors.textTertiary }]}>{formatDuration(call.durationMs)}</Text>
           <Ionicons
             name={expanded ? "chevron-up" : "chevron-down"}
             size={14}
-            color="#999"
+            color={colors.textTertiary}
           />
         </View>
       </TouchableOpacity>
       {expanded && (
-        <View style={styles.toolCallDetails}>
-          <Text style={styles.toolCallDetailLabel}>Args:</Text>
+        <View style={[styles.toolCallDetails, { borderTopColor: colors.border }]}>
+          <Text style={[styles.toolCallDetailLabel, { color: colors.textTertiary }]}>Args:</Text>
           <ScrollView horizontal style={styles.codeScroll}>
-            <Text style={styles.codeText}>
+            <Text style={[styles.codeText, { color: colors.text }]}>
               {JSON.stringify(call.args, null, 2)}
             </Text>
           </ScrollView>
-          <Text style={[styles.toolCallDetailLabel, { marginTop: 8 }]}>Result:</Text>
+          <Text style={[styles.toolCallDetailLabel, { marginTop: 8, color: colors.textTertiary }]}>Result:</Text>
           <ScrollView horizontal style={styles.codeScroll}>
-            <Text style={styles.codeText}>
+            <Text style={[styles.codeText, { color: colors.text }]}>
               {typeof call.result === "string"
                 ? call.result.slice(0, 500)
                 : JSON.stringify(call.result, null, 2)?.slice(0, 500)}
@@ -119,6 +121,7 @@ function ToolCallItem({ call, index }: { call: ToolCallEntry; index: number }) {
 
 function ActivityCard({ entry }: { entry: ActivityLogEntry }) {
   const [expanded, setExpanded] = useState(false);
+  const { colors, isDark } = useTheme();
   const triggerConfig = TRIGGER_CONFIG[entry.trigger] ?? {
     icon: "ellipse-outline",
     label: entry.trigger,
@@ -126,7 +129,7 @@ function ActivityCard({ entry }: { entry: ActivityLogEntry }) {
   const statusColor = STATUS_COLORS[entry.status] ?? "#8E8E93";
 
   return (
-    <View style={styles.card}>
+    <View style={[styles.card, { backgroundColor: colors.surface }]}>
       <TouchableOpacity
         style={styles.cardContent}
         onPress={() => setExpanded(!expanded)}
@@ -138,16 +141,16 @@ function ActivityCard({ entry }: { entry: ActivityLogEntry }) {
             <Ionicons
               name={triggerConfig.icon as keyof typeof Ionicons.glyphMap}
               size={18}
-              color="#666"
+              color={colors.icon}
             />
-            <Text style={styles.triggerLabel}>{triggerConfig.label}</Text>
+            <Text style={[styles.triggerLabel, { color: colors.text }]}>{triggerConfig.label}</Text>
             {entry.location && (
-              <View style={styles.locationBadge}>
-                <Text style={styles.locationBadgeText}>{entry.location}</Text>
+              <View style={[styles.locationBadge, { backgroundColor: colors.surfaceSecondary }]}>
+                <Text style={[styles.locationBadgeText, { color: colors.textSecondary }]}>{entry.location}</Text>
               </View>
             )}
           </View>
-          <Text style={styles.timeAgo}>{formatTimeAgo(entry.timestamp)}</Text>
+          <Text style={[styles.timeAgo, { color: colors.textTertiary }]}>{formatTimeAgo(entry.timestamp)}</Text>
         </View>
 
         {/* Summary row */}
@@ -155,51 +158,51 @@ function ActivityCard({ entry }: { entry: ActivityLogEntry }) {
           <View style={[styles.statusBadge, { backgroundColor: statusColor }]}>
             <Text style={styles.statusText}>{entry.status}</Text>
           </View>
-          <Text style={styles.summaryDetail}>
+          <Text style={[styles.summaryDetail, { color: colors.textSecondary }]}>
             {formatDuration(entry.durationMs)}
           </Text>
           {entry.iterations > 0 && (
-            <Text style={styles.summaryDetail}>
+            <Text style={[styles.summaryDetail, { color: colors.textSecondary }]}>
               {entry.iterations} iter
             </Text>
           )}
           {entry.toolCalls.length > 0 && (
-            <Text style={styles.summaryDetail}>
+            <Text style={[styles.summaryDetail, { color: colors.textSecondary }]}>
               {entry.toolCalls.length} tool{entry.toolCalls.length !== 1 ? "s" : ""}
             </Text>
           )}
           {entry.nagLabel && (
-            <Text style={styles.summaryDetail}>{entry.nagLabel}</Text>
+            <Text style={[styles.summaryDetail, { color: colors.textSecondary }]}>{entry.nagLabel}</Text>
           )}
           <View style={{ flex: 1 }} />
           <Ionicons
             name={expanded ? "chevron-up" : "chevron-down"}
             size={16}
-            color="#ccc"
+            color={colors.iconSecondary}
           />
         </View>
 
         {/* Expanded details */}
         {expanded && (
-          <View style={styles.expandedSection}>
+          <View style={[styles.expandedSection, { borderTopColor: colors.border }]}>
             {/* Error */}
             {entry.error && (
-              <View style={styles.errorBox}>
-                <Text style={styles.errorText}>{entry.error}</Text>
+              <View style={[styles.errorBox, { backgroundColor: isDark ? 'rgba(255,59,48,0.15)' : '#FFF0F0', borderColor: isDark ? 'rgba(255,59,48,0.3)' : '#FFD0D0' }]}>
+                <Text style={[styles.errorText, { color: colors.error }]}>{entry.error}</Text>
               </View>
             )}
 
             {/* Skip reason */}
             {entry.skipReason && (
-              <View style={styles.skipBox}>
-                <Text style={styles.skipText}>{entry.skipReason}</Text>
+              <View style={[styles.skipBox, { backgroundColor: colors.surfaceSecondary }]}>
+                <Text style={[styles.skipText, { color: colors.textSecondary }]}>{entry.skipReason}</Text>
               </View>
             )}
 
             {/* Tool calls */}
             {entry.toolCalls.length > 0 && (
               <View style={styles.toolCallsSection}>
-                <Text style={styles.expandedLabel}>Tool Calls</Text>
+                <Text style={[styles.expandedLabel, { color: colors.textSecondary }]}>Tool Calls</Text>
                 {entry.toolCalls.map((call, i) => (
                   <ToolCallItem key={i} call={call} index={i} />
                 ))}
@@ -209,29 +212,29 @@ function ActivityCard({ entry }: { entry: ActivityLogEntry }) {
             {/* Agent response */}
             {entry.agentResponse && (
               <View style={styles.responseSection}>
-                <Text style={styles.expandedLabel}>Agent Response</Text>
-                <Text style={styles.responseText}>{entry.agentResponse}</Text>
+                <Text style={[styles.expandedLabel, { color: colors.textSecondary }]}>Agent Response</Text>
+                <Text style={[styles.responseText, { color: colors.text }]}>{entry.agentResponse}</Text>
               </View>
             )}
 
             {/* Metadata */}
-            <View style={styles.metadataSection}>
+            <View style={[styles.metadataSection, { borderTopColor: colors.border }]}>
               {entry.threadTs && (
-                <Text style={styles.metadataText}>
+                <Text style={[styles.metadataText, { color: colors.textTertiary }]}>
                   Thread: {entry.threadTs}
                 </Text>
               )}
               {entry.messageTs && (
-                <Text style={styles.metadataText}>
+                <Text style={[styles.metadataText, { color: colors.textTertiary }]}>
                   Message: {entry.messageTs}
                 </Text>
               )}
               {entry.userId && (
-                <Text style={styles.metadataText}>
+                <Text style={[styles.metadataText, { color: colors.textTertiary }]}>
                   User: {entry.userId}
                 </Text>
               )}
-              <Text style={styles.metadataText}>
+              <Text style={[styles.metadataText, { color: colors.textTertiary }]}>
                 {new Date(entry.timestamp).toLocaleString("en-US", {
                   month: "short",
                   day: "numeric",
@@ -251,6 +254,7 @@ function ActivityCard({ entry }: { entry: ActivityLogEntry }) {
 export function SlackBotActivityScreen() {
   const insets = useSafeAreaInsets();
   const { primaryColor } = useCommunityTheme();
+  const { colors } = useTheme();
   const { config, isLoading } = useSlackBotConfig();
 
   const activityLog = (config?.activityLog ?? []) as ActivityLogEntry[];
@@ -259,7 +263,7 @@ export function SlackBotActivityScreen() {
 
   if (isLoading) {
     return (
-      <View style={styles.centered}>
+      <View style={[styles.centered, { backgroundColor: colors.backgroundSecondary }]}>
         <ActivityIndicator size="large" color={primaryColor} />
       </View>
     );
@@ -267,9 +271,9 @@ export function SlackBotActivityScreen() {
 
   if (!config) {
     return (
-      <View style={styles.centered}>
-        <Ionicons name="warning-outline" size={48} color="#999" />
-        <Text style={styles.emptyText}>
+      <View style={[styles.centered, { backgroundColor: colors.backgroundSecondary }]}>
+        <Ionicons name="warning-outline" size={48} color={colors.textTertiary} />
+        <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
           Slack bot not configured for this community.
         </Text>
       </View>
@@ -278,7 +282,7 @@ export function SlackBotActivityScreen() {
 
   return (
     <FlatList
-      style={styles.container}
+      style={[styles.container, { backgroundColor: colors.backgroundSecondary }]}
       contentContainerStyle={{
         paddingBottom: insets.bottom + 20,
         paddingTop: 12,
@@ -288,9 +292,9 @@ export function SlackBotActivityScreen() {
       renderItem={({ item }) => <ActivityCard entry={item} />}
       ListEmptyComponent={
         <View style={styles.centered}>
-          <Ionicons name="document-text-outline" size={48} color="#ccc" />
-          <Text style={styles.emptyText}>No activity yet</Text>
-          <Text style={styles.emptySubtext}>
+          <Ionicons name="document-text-outline" size={48} color={colors.iconSecondary} />
+          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No activity yet</Text>
+          <Text style={[styles.emptySubtext, { color: colors.textTertiary }]}>
             Bot interactions will appear here as they occur.
           </Text>
         </View>
@@ -302,7 +306,6 @@ export function SlackBotActivityScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F2F2F7",
   },
   centered: {
     flex: 1,
@@ -313,18 +316,15 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 16,
-    color: "#666",
     marginTop: 12,
     textAlign: "center",
   },
   emptySubtext: {
     fontSize: 14,
-    color: "#999",
     marginTop: 4,
     textAlign: "center",
   },
   card: {
-    backgroundColor: "#fff",
     marginHorizontal: 16,
     marginBottom: 8,
     borderRadius: 12,
@@ -354,22 +354,18 @@ const styles = StyleSheet.create({
   triggerLabel: {
     fontSize: 15,
     fontWeight: "600",
-    color: "#000",
   },
   locationBadge: {
-    backgroundColor: "#F0F0F0",
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 8,
   },
   locationBadgeText: {
     fontSize: 12,
-    color: "#666",
     fontWeight: "500",
   },
   timeAgo: {
     fontSize: 13,
-    color: "#999",
   },
   summaryRow: {
     flexDirection: "row",
@@ -389,53 +385,43 @@ const styles = StyleSheet.create({
   },
   summaryDetail: {
     fontSize: 13,
-    color: "#666",
   },
   expandedSection: {
     marginTop: 12,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "#E5E5EA",
     paddingTop: 12,
   },
   expandedLabel: {
     fontSize: 13,
     fontWeight: "600",
-    color: "#666",
     textTransform: "uppercase",
     marginBottom: 6,
   },
   errorBox: {
-    backgroundColor: "#FFF0F0",
     borderRadius: 8,
     padding: 10,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: "#FFD0D0",
   },
   errorText: {
     fontSize: 13,
-    color: "#CC0000",
     fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
   },
   skipBox: {
-    backgroundColor: "#F5F5F5",
     borderRadius: 8,
     padding: 10,
     marginBottom: 10,
   },
   skipText: {
     fontSize: 13,
-    color: "#666",
   },
   toolCallsSection: {
     marginBottom: 10,
   },
   toolCallItem: {
-    backgroundColor: "#F9F9F9",
     borderRadius: 8,
     marginBottom: 4,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#E5E5EA",
   },
   toolCallHeader: {
     flexDirection: "row",
@@ -450,13 +436,11 @@ const styles = StyleSheet.create({
   },
   toolCallIndex: {
     fontSize: 12,
-    color: "#999",
     fontWeight: "600",
   },
   toolCallName: {
     fontSize: 14,
     fontWeight: "500",
-    color: "#333",
     fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
   },
   toolCallRight: {
@@ -466,18 +450,15 @@ const styles = StyleSheet.create({
   },
   toolCallDuration: {
     fontSize: 12,
-    color: "#999",
   },
   toolCallDetails: {
     paddingHorizontal: 10,
     paddingBottom: 10,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "#E5E5EA",
   },
   toolCallDetailLabel: {
     fontSize: 11,
     fontWeight: "600",
-    color: "#999",
     textTransform: "uppercase",
     marginTop: 6,
     marginBottom: 2,
@@ -487,7 +468,6 @@ const styles = StyleSheet.create({
   },
   codeText: {
     fontSize: 12,
-    color: "#333",
     fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
     lineHeight: 18,
   },
@@ -496,17 +476,14 @@ const styles = StyleSheet.create({
   },
   responseText: {
     fontSize: 14,
-    color: "#333",
     lineHeight: 20,
   },
   metadataSection: {
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "#E5E5EA",
     paddingTop: 8,
   },
   metadataText: {
     fontSize: 12,
-    color: "#999",
     fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
     marginBottom: 2,
   },

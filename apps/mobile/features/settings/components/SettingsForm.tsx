@@ -7,11 +7,13 @@ import {
   TouchableOpacity,
   ActivityIndicator,
 } from "react-native";
+import { useTheme } from "@hooks/useTheme";
 import { useSettings } from "../hooks/useSettings";
 import { useUpdateSettings } from "../hooks/useUpdateSettings";
 import { SettingsFormData } from "../types";
 
 export function SettingsForm() {
+  const { colors } = useTheme();
   const {
     firstName,
     setFirstName,
@@ -37,67 +39,70 @@ export function SettingsForm() {
   };
 
   return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>Profile Information</Text>
+    <View style={[styles.section, { backgroundColor: colors.surface }]}>
+      <Text style={[styles.sectionTitle, { color: colors.text }]}>Profile Information</Text>
 
       <View style={styles.formGroup}>
-        <Text style={styles.label}>First Name</Text>
+        <Text style={[styles.label, { color: colors.textSecondary }]}>First Name</Text>
         <TextInput
-          style={styles.input}
+          style={[styles.input, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground, color: colors.text }]}
           value={firstName}
           onChangeText={setFirstName}
           editable={isEditing}
           placeholder="First name"
+          placeholderTextColor={colors.inputPlaceholder}
         />
       </View>
 
       <View style={styles.formGroup}>
-        <Text style={styles.label}>Last Name</Text>
+        <Text style={[styles.label, { color: colors.textSecondary }]}>Last Name</Text>
         <TextInput
-          style={styles.input}
+          style={[styles.input, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground, color: colors.text }]}
           value={lastName}
           onChangeText={setLastName}
           editable={isEditing}
           placeholder="Last name"
+          placeholderTextColor={colors.inputPlaceholder}
         />
       </View>
 
       <View style={styles.formGroup}>
-        <Text style={styles.label}>Email</Text>
+        <Text style={[styles.label, { color: colors.textSecondary }]}>Email</Text>
         <TextInput
-          style={[styles.input, styles.inputDisabled]}
+          style={[styles.input, styles.inputDisabled, { borderColor: colors.inputBorder, backgroundColor: colors.surfaceSecondary, color: colors.textSecondary }]}
           value={user?.email || ""}
           editable={false}
           placeholder="Email"
+          placeholderTextColor={colors.inputPlaceholder}
         />
       </View>
 
       {isEditing ? (
         <View style={styles.buttonRow}>
           <TouchableOpacity
-            style={[styles.button, styles.cancelButton]}
+            style={[styles.button, styles.cancelButton, { backgroundColor: colors.surfaceSecondary }]}
             onPress={resetForm}
           >
-            <Text style={styles.cancelButtonText}>Cancel</Text>
+            <Text style={[styles.cancelButtonText, { color: colors.text }]}>Cancel</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.button, styles.saveButton]}
+            style={[styles.button, styles.saveButton, { backgroundColor: colors.link }]}
             onPress={handleSave}
             disabled={isUpdating}
           >
             {isUpdating ? (
-              <ActivityIndicator color="#fff" />
+              <ActivityIndicator color={colors.textInverse} />
             ) : (
-              <Text style={styles.saveButtonText}>Save</Text>
+              <Text style={[styles.saveButtonText, { color: colors.textInverse }]}>Save</Text>
             )}
           </TouchableOpacity>
         </View>
       ) : (
         <TouchableOpacity
-          style={styles.button}
+          style={[styles.button, { backgroundColor: colors.link }]}
           onPress={() => setIsEditing(true)}
         >
-          <Text style={styles.buttonText}>Edit Profile</Text>
+          <Text style={[styles.buttonText, { color: colors.textInverse }]}>Edit Profile</Text>
         </TouchableOpacity>
       )}
     </View>
@@ -107,13 +112,11 @@ export function SettingsForm() {
 const styles = StyleSheet.create({
   section: {
     marginTop: 12,
-    backgroundColor: "#fff",
     padding: 20,
   },
   sectionTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 20,
   },
   formGroup: {
@@ -122,30 +125,22 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 12,
     fontWeight: "600",
-    color: "#666",
     marginBottom: 8,
     textTransform: "uppercase",
   },
   input: {
     borderWidth: 2,
-    borderColor: "#ecedf0",
     borderRadius: 8,
     padding: 12,
     fontSize: 16,
-    backgroundColor: "#fff",
   },
-  inputDisabled: {
-    backgroundColor: "#f5f5f5",
-    color: "#666",
-  },
+  inputDisabled: {},
   button: {
-    backgroundColor: "#007AFF",
     borderRadius: 8,
     padding: 16,
     alignItems: "center",
   },
   buttonText: {
-    color: "#fff",
     fontSize: 16,
     fontWeight: "600",
   },
@@ -156,15 +151,10 @@ const styles = StyleSheet.create({
   },
   cancelButton: {
     flex: 1,
-    backgroundColor: "#f0f0f0",
   },
-  cancelButtonText: {
-    color: "#333",
-  },
+  cancelButtonText: {},
   saveButton: {
     flex: 1,
   },
-  saveButtonText: {
-    color: "#fff",
-  },
+  saveButtonText: {},
 });

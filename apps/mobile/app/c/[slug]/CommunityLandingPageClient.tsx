@@ -19,6 +19,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppImage } from "@components/ui";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
+import { useTheme } from "@hooks/useTheme";
 import { DOMAIN_CONFIG } from "@togather/shared";
 import { validateZipCode, normalizeZipCode } from "@features/groups/utils/geocodeLocation";
 import {
@@ -50,6 +51,7 @@ const openExternalUrl = async (url: string) => {
 };
 
 export default function CommunityLandingPageClient() {
+  const { colors, isDark } = useTheme();
   const { slug } = useLocalSearchParams<{ slug: string }>();
   const insets = useSafeAreaInsets();
 
@@ -281,7 +283,7 @@ export default function CommunityLandingPageClient() {
 
   if (isLoading) {
     return (
-      <SafeAreaView style={styles.centerContainer}>
+      <SafeAreaView style={[styles.centerContainer, { backgroundColor: colors.background }]}>
         <ActivityIndicator size="large" color={DEFAULT_PRIMARY_COLOR} />
       </SafeAreaView>
     );
@@ -289,10 +291,10 @@ export default function CommunityLandingPageClient() {
 
   if (notFound) {
     return (
-      <SafeAreaView style={styles.centerContainer}>
-        <Ionicons name="alert-circle-outline" size={64} color="#999" />
-        <Text style={styles.errorTitle}>Page Not Found</Text>
-        <Text style={styles.errorText}>
+      <SafeAreaView style={[styles.centerContainer, { backgroundColor: colors.background }]}>
+        <Ionicons name="alert-circle-outline" size={64} color={colors.textTertiary} />
+        <Text style={[styles.errorTitle, { color: colors.text }]}>Page Not Found</Text>
+        <Text style={[styles.errorText, { color: colors.textTertiary }]}>
           This community page doesn't exist or is no longer available.
         </Text>
       </SafeAreaView>
@@ -301,15 +303,15 @@ export default function CommunityLandingPageClient() {
 
   if (submitSuccess) {
     return (
-      <SafeAreaView style={[styles.centerContainer, { backgroundColor: "#fff" }]}>
+      <SafeAreaView style={[styles.centerContainer, { backgroundColor: colors.background }]}>
         <View style={styles.successContainer}>
           <View style={[styles.successIcon, { backgroundColor: primaryColor + "15" }]}>
             <Ionicons name="checkmark-circle" size={64} color={primaryColor} />
           </View>
-          <Text style={styles.successTitle}>
+          <Text style={[styles.successTitle, { color: colors.text }]}>
             {data.successMessage || `Welcome to ${data.community?.name || "the community"}!`}
           </Text>
-          <Text style={styles.successSubtitle}>
+          <Text style={[styles.successSubtitle, { color: colors.textSecondary }]}>
             Download the Togather app to stay connected.
           </Text>
           <View style={styles.appLinksContainer}>
@@ -352,7 +354,7 @@ export default function CommunityLandingPageClient() {
   // ============================================================================
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={{ flex: 1 }}
@@ -388,33 +390,33 @@ export default function CommunityLandingPageClient() {
           </View>
 
           {/* Form Card */}
-          <View style={styles.formCard}>
+          <View style={[styles.formCard, { backgroundColor: colors.surface }]}>
             {/* Built-in fields */}
             <View style={styles.fieldRow}>
               <View style={styles.fieldHalf}>
-                <Text style={styles.fieldLabel}>
-                  First Name <Text style={styles.required}>*</Text>
+                <Text style={[styles.fieldLabel, { color: colors.text }]}>
+                  First Name <Text style={[styles.required, { color: colors.error }]}>*</Text>
                 </Text>
                 <TextInput
-                  style={styles.textInput}
+                  style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
                   value={firstName}
                   onChangeText={setFirstName}
                   placeholder="First name"
-                  placeholderTextColor="#aaa"
+                  placeholderTextColor={colors.inputPlaceholder}
                   autoCapitalize="words"
                   autoComplete="given-name"
                 />
               </View>
               <View style={styles.fieldHalf}>
-                <Text style={styles.fieldLabel}>
-                  Last Name <Text style={styles.required}>*</Text>
+                <Text style={[styles.fieldLabel, { color: colors.text }]}>
+                  Last Name <Text style={[styles.required, { color: colors.error }]}>*</Text>
                 </Text>
                 <TextInput
-                  style={styles.textInput}
+                  style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
                   value={lastName}
                   onChangeText={setLastName}
                   placeholder="Last name"
-                  placeholderTextColor="#aaa"
+                  placeholderTextColor={colors.inputPlaceholder}
                   autoCapitalize="words"
                   autoComplete="family-name"
                 />
@@ -422,28 +424,28 @@ export default function CommunityLandingPageClient() {
             </View>
 
             <View style={styles.field}>
-              <Text style={styles.fieldLabel}>
-                Phone <Text style={styles.required}>*</Text>
+              <Text style={[styles.fieldLabel, { color: colors.text }]}>
+                Phone <Text style={[styles.required, { color: colors.error }]}>*</Text>
               </Text>
               <TextInput
-                style={styles.textInput}
+                style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
                 value={phone}
                 onChangeText={setPhone}
                 placeholder="(555) 555-5555"
-                placeholderTextColor="#aaa"
+                placeholderTextColor={colors.inputPlaceholder}
                 keyboardType="phone-pad"
                 autoComplete="tel"
               />
             </View>
 
             <View style={styles.field}>
-              <Text style={styles.fieldLabel}>Email</Text>
+              <Text style={[styles.fieldLabel, { color: colors.text }]}>Email</Text>
               <TextInput
-                style={styles.textInput}
+                style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
                 value={email}
                 onChangeText={setEmail}
                 placeholder="email@example.com"
-                placeholderTextColor="#aaa"
+                placeholderTextColor={colors.inputPlaceholder}
                 keyboardType="email-address"
                 autoCapitalize="none"
                 autoComplete="email"
@@ -452,30 +454,30 @@ export default function CommunityLandingPageClient() {
 
             <View style={styles.fieldRow}>
               <View style={styles.fieldHalf}>
-                <Text style={styles.fieldLabel}>
-                  ZIP Code{data.requireZipCode ? <Text style={styles.required}> *</Text> : null}
+                <Text style={[styles.fieldLabel, { color: colors.text }]}>
+                  ZIP Code{data.requireZipCode ? <Text style={[styles.required, { color: colors.error }]}> *</Text> : null}
                 </Text>
                 <TextInput
-                  style={styles.textInput}
+                  style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
                   value={zipCode}
                   onChangeText={setZipCode}
                   placeholder="10001"
-                  placeholderTextColor="#aaa"
+                  placeholderTextColor={colors.inputPlaceholder}
                   keyboardType="number-pad"
                   autoComplete="postal-code"
                   maxLength={10}
                 />
               </View>
               <View style={styles.fieldHalf}>
-                <Text style={styles.fieldLabel}>
-                  Birthday{data.requireBirthday ? <Text style={styles.required}> *</Text> : null}
+                <Text style={[styles.fieldLabel, { color: colors.text }]}>
+                  Birthday{data.requireBirthday ? <Text style={[styles.required, { color: colors.error }]}> *</Text> : null}
                 </Text>
                 <TextInput
-                  style={styles.textInput}
+                  style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
                   value={dateOfBirth}
                   onChangeText={handleBirthdayChange}
                   placeholder="MM/DD/YYYY"
-                  placeholderTextColor="#aaa"
+                  placeholderTextColor={colors.inputPlaceholder}
                   keyboardType="number-pad"
                   maxLength={10}
                 />
@@ -496,9 +498,9 @@ export default function CommunityLandingPageClient() {
 
             {/* Error message */}
             {submitError && (
-              <View style={styles.errorBanner}>
-                <Ionicons name="alert-circle" size={16} color="#dc2626" />
-                <Text style={styles.errorBannerText}>{submitError}</Text>
+              <View style={[styles.errorBanner, { backgroundColor: isDark ? 'rgba(255,59,48,0.15)' : '#FEF2F2' }]}>
+                <Ionicons name="alert-circle" size={16} color={colors.error} />
+                <Text style={[styles.errorBannerText, { color: colors.error }]}>{submitError}</Text>
               </View>
             )}
 
@@ -524,7 +526,7 @@ export default function CommunityLandingPageClient() {
           </View>
 
           {/* Footer */}
-          <Text style={styles.footerText}>
+          <Text style={[styles.footerText, { color: colors.textTertiary }]}>
             Powered by{" "}
             <Text style={{ fontWeight: "600" }}>{DOMAIN_CONFIG.brandName}</Text>
           </Text>
@@ -547,26 +549,27 @@ function DynamicField({
   value: any;
   onChange: (value: any) => void;
 }) {
+  const { colors, isDark } = useTheme();
   const subtitleSegments =
     field.type === "subtitle" ? parseSubtitleSegments(field.label) : [];
 
   switch (field.type) {
     case "section_header":
       return (
-        <View style={styles.sectionHeaderField}>
-          <Text style={styles.sectionHeaderText}>{field.label}</Text>
+        <View style={[styles.sectionHeaderField, { borderBottomColor: colors.borderLight }]}>
+          <Text style={[styles.sectionHeaderText, { color: colors.text }]}>{field.label}</Text>
         </View>
       );
 
     case "subtitle":
       return (
         <View style={styles.subtitleField}>
-          <Text style={styles.subtitleText}>
+          <Text style={[styles.subtitleText, { color: colors.textSecondary }]}>
             {subtitleSegments.map((segment, idx) =>
               segment.type === "link" ? (
                 <Text
                   key={`${segment.url}-${idx}`}
-                  style={styles.subtitleLink}
+                  style={[styles.subtitleLink, { color: colors.link }]}
                   onPress={() => openExternalUrl(segment.url)}
                   suppressHighlighting
                 >
@@ -584,7 +587,7 @@ function DynamicField({
       return (
         <View style={styles.field}>
           <TouchableOpacity
-            style={styles.fullWidthButton}
+            style={[styles.fullWidthButton, { backgroundColor: colors.link }]}
             onPress={() => {
               if (field.buttonUrl) {
                 openExternalUrl(field.buttonUrl);
@@ -604,12 +607,12 @@ function DynamicField({
           onPress={() => onChange(!value)}
           activeOpacity={0.7}
         >
-          <View style={[styles.checkbox, !!value && styles.checkboxChecked]}>
+          <View style={[styles.checkbox, { borderColor: colors.border, backgroundColor: colors.inputBackground }, !!value && { backgroundColor: colors.success, borderColor: colors.success }]}>
             {!!value && <Ionicons name="checkmark" size={16} color="#fff" />}
           </View>
-          <Text style={styles.booleanLabel}>
+          <Text style={[styles.booleanLabel, { color: colors.text }]}>
             {field.label}
-            {field.required && <Text style={styles.required}> *</Text>}
+            {field.required && <Text style={[styles.required, { color: colors.error }]}> *</Text>}
           </Text>
         </TouchableOpacity>
       );
@@ -617,12 +620,12 @@ function DynamicField({
     case "number":
       return (
         <View style={styles.field}>
-          <Text style={styles.fieldLabel}>
+          <Text style={[styles.fieldLabel, { color: colors.text }]}>
             {field.label}
-            {field.required && <Text style={styles.required}> *</Text>}
+            {field.required && <Text style={[styles.required, { color: colors.error }]}> *</Text>}
           </Text>
           <TextInput
-            style={styles.textInput}
+            style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
             value={value !== undefined ? String(value) : ""}
             onChangeText={(text) => {
               const num = parseFloat(text);
@@ -630,7 +633,7 @@ function DynamicField({
             }}
             keyboardType="numeric"
             placeholder={field.placeholder}
-            placeholderTextColor="#aaa"
+            placeholderTextColor={colors.inputPlaceholder}
           />
         </View>
       );
@@ -638,9 +641,9 @@ function DynamicField({
     case "dropdown":
       return (
         <View style={styles.field}>
-          <Text style={styles.fieldLabel}>
+          <Text style={[styles.fieldLabel, { color: colors.text }]}>
             {field.label}
-            {field.required && <Text style={styles.required}> *</Text>}
+            {field.required && <Text style={[styles.required, { color: colors.error }]}> *</Text>}
           </Text>
           <View style={styles.dropdownContainer}>
             {(field.options || []).map((option) => (
@@ -648,14 +651,16 @@ function DynamicField({
                 key={option}
                 style={[
                   styles.dropdownOption,
-                  value === option && styles.dropdownOptionSelected,
+                  { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground },
+                  value === option && { borderColor: colors.success, backgroundColor: isDark ? 'rgba(52, 199, 89, 0.15)' : '#E8F5E9' },
                 ]}
                 onPress={() => onChange(option)}
               >
                 <Text
                   style={[
                     styles.dropdownOptionText,
-                    value === option && styles.dropdownOptionTextSelected,
+                    { color: colors.textSecondary },
+                    value === option && { color: colors.success, fontWeight: '600' as const },
                   ]}
                 >
                   {option}
@@ -670,9 +675,9 @@ function DynamicField({
       const selectedValues: string[] = Array.isArray(value) ? value : [];
       return (
         <View style={styles.field}>
-          <Text style={styles.fieldLabel}>
+          <Text style={[styles.fieldLabel, { color: colors.text }]}>
             {field.label}
-            {field.required && <Text style={styles.required}> *</Text>}
+            {field.required && <Text style={[styles.required, { color: colors.error }]}> *</Text>}
           </Text>
           <View style={styles.multiselectContainer}>
             {(field.options || []).map((option) => {
@@ -682,7 +687,8 @@ function DynamicField({
                   key={option}
                   style={[
                     styles.multiselectOption,
-                    isChecked && styles.multiselectOptionSelected,
+                    { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground },
+                    isChecked && { borderColor: colors.success, backgroundColor: isDark ? 'rgba(52, 199, 89, 0.15)' : '#E8F5E9' },
                   ]}
                   onPress={() => {
                     const newValues = isChecked
@@ -695,13 +701,14 @@ function DynamicField({
                   <Ionicons
                     name={isChecked ? "checkbox" : "square-outline"}
                     size={20}
-                    color={isChecked ? "#4CAF50" : "#999"}
+                    color={isChecked ? colors.success : colors.textTertiary}
                     style={{ marginRight: 8 }}
                   />
                   <Text
                     style={[
                       styles.multiselectOptionText,
-                      isChecked && styles.multiselectOptionTextSelected,
+                      { color: colors.textSecondary },
+                      isChecked && { color: colors.success, fontWeight: '600' as const },
                     ]}
                   >
                     {option}
@@ -718,16 +725,16 @@ function DynamicField({
     default:
       return (
         <View style={styles.field}>
-          <Text style={styles.fieldLabel}>
+          <Text style={[styles.fieldLabel, { color: colors.text }]}>
             {field.label}
-            {field.required && <Text style={styles.required}> *</Text>}
+            {field.required && <Text style={[styles.required, { color: colors.error }]}> *</Text>}
           </Text>
           <TextInput
-            style={styles.textInput}
+            style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
             value={value || ""}
             onChangeText={onChange}
             placeholder={field.placeholder}
-            placeholderTextColor="#aaa"
+            placeholderTextColor={colors.inputPlaceholder}
           />
         </View>
       );
@@ -741,7 +748,6 @@ function DynamicField({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f5f5f5",
   },
   scrollView: {
     flex: 1,
@@ -754,17 +760,14 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     padding: 24,
-    backgroundColor: "#fff",
   },
   errorTitle: {
     fontSize: 22,
     fontWeight: "700",
-    color: "#333",
     marginTop: 16,
   },
   errorText: {
     fontSize: 15,
-    color: "#999",
     textAlign: "center",
     marginTop: 8,
     maxWidth: 300,
@@ -809,7 +812,6 @@ const styles = StyleSheet.create({
 
   // Form card
   formCard: {
-    backgroundColor: "#fff",
     marginHorizontal: 16,
     marginTop: -24,
     borderRadius: 16,
@@ -834,21 +836,15 @@ const styles = StyleSheet.create({
   fieldLabel: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 6,
   },
-  required: {
-    color: "#dc2626",
-  },
+  required: {},
   textInput: {
     borderWidth: 1,
-    borderColor: "#ddd",
     borderRadius: 10,
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 16,
-    color: "#333",
-    backgroundColor: "#fafafa",
   },
 
   // Boolean field (checkbox)
@@ -863,18 +859,11 @@ const styles = StyleSheet.create({
     height: 24,
     borderRadius: 6,
     borderWidth: 2,
-    borderColor: "#ccc",
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#fff",
-  },
-  checkboxChecked: {
-    backgroundColor: "#4CAF50",
-    borderColor: "#4CAF50",
   },
   booleanLabel: {
     fontSize: 16,
-    color: "#333",
     flex: 1,
   },
 
@@ -886,23 +875,12 @@ const styles = StyleSheet.create({
   },
   dropdownOption: {
     borderWidth: 1,
-    borderColor: "#ddd",
     borderRadius: 8,
     paddingHorizontal: 14,
     paddingVertical: 10,
-    backgroundColor: "#fafafa",
-  },
-  dropdownOptionSelected: {
-    borderColor: "#4CAF50",
-    backgroundColor: "#E8F5E9",
   },
   dropdownOptionText: {
     fontSize: 14,
-    color: "#666",
-  },
-  dropdownOptionTextSelected: {
-    color: "#2E7D32",
-    fontWeight: "600",
   },
 
   // Multiselect (checkbox group)
@@ -916,20 +894,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: "#ddd",
-    backgroundColor: "#fafafa",
-  },
-  multiselectOptionSelected: {
-    borderColor: "#4CAF50",
-    backgroundColor: "#E8F5E9",
   },
   multiselectOptionText: {
     fontSize: 14,
-    color: "#666",
-  },
-  multiselectOptionTextSelected: {
-    color: "#2E7D32",
-    fontWeight: "600",
   },
 
   // Section header & subtitle (decorative fields)
@@ -937,31 +904,26 @@ const styles = StyleSheet.create({
     marginTop: 24,
     marginBottom: 8,
     borderBottomWidth: 1,
-    borderBottomColor: "#eee",
     paddingBottom: 8,
   },
   sectionHeaderText: {
     fontSize: 18,
     fontWeight: "700",
-    color: "#333",
   },
   subtitleField: {
     marginBottom: 12,
   },
   subtitleText: {
     fontSize: 14,
-    color: "#666",
     lineHeight: 20,
   },
   subtitleLink: {
-    color: "#2563EB",
     textDecorationLine: "underline",
   },
 
   fullWidthButton: {
     width: "100%",
     borderRadius: 12,
-    backgroundColor: "#2563EB",
     paddingVertical: 14,
     paddingHorizontal: 16,
     alignItems: "center",
@@ -977,7 +939,6 @@ const styles = StyleSheet.create({
   errorBanner: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#FEF2F2",
     padding: 12,
     borderRadius: 8,
     marginBottom: 16,
@@ -985,7 +946,6 @@ const styles = StyleSheet.create({
   },
   errorBannerText: {
     fontSize: 14,
-    color: "#dc2626",
     flex: 1,
   },
 
@@ -1023,13 +983,11 @@ const styles = StyleSheet.create({
   successTitle: {
     fontSize: 24,
     fontWeight: "700",
-    color: "#333",
     textAlign: "center",
     marginBottom: 8,
   },
   successSubtitle: {
     fontSize: 16,
-    color: "#666",
     textAlign: "center",
     marginBottom: 24,
   },
@@ -1054,7 +1012,6 @@ const styles = StyleSheet.create({
   // Footer
   footerText: {
     textAlign: "center",
-    color: "#999",
     fontSize: 13,
     marginTop: 24,
     marginBottom: 16,

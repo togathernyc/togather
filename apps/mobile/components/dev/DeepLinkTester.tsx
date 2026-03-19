@@ -15,6 +15,7 @@ import { useNotifications } from '@/providers/NotificationProvider';
 import { useAuth } from '@/providers/AuthProvider';
 import { Environment } from '@/services/environment';
 import { useDevToolsEscapeHatch } from '@/hooks/useDevToolsEscapeHatch';
+import { useTheme } from '@hooks/useTheme';
 
 // Sample notification payloads for testing
 const SAMPLE_NOTIFICATIONS = [
@@ -82,6 +83,7 @@ export function DeepLinkTester() {
   const { handleNotificationTap } = useNotifications();
   const { community } = useAuth();
   const { isEnabled: devToolsEnabled } = useDevToolsEscapeHatch();
+  const { colors } = useTheme();
 
   const [groupId, setGroupId] = useState('');
   const [communityId, setCommunityId] = useState('');
@@ -108,70 +110,70 @@ export function DeepLinkTester() {
   };
 
   return (
-    <ScrollView style={styles.container}>
+    <ScrollView style={[styles.container, { backgroundColor: colors.backgroundSecondary }]}>
       <View style={styles.header}>
-        <Text style={styles.title}>Deep Link Tester</Text>
-        <Text style={styles.subtitle}>
+        <Text style={[styles.title, { color: colors.text }]}>Deep Link Tester</Text>
+        <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
           Current Community: {community?.id || 'None'}
         </Text>
       </View>
 
-      <View style={styles.inputSection}>
-        <Text style={styles.sectionTitle}>Test Parameters</Text>
+      <View style={[styles.inputSection, { backgroundColor: colors.surface }]}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Test Parameters</Text>
 
         <View style={styles.inputRow}>
-          <Text style={styles.label}>Group ID:</Text>
+          <Text style={[styles.label, { color: colors.textSecondary }]}>Group ID:</Text>
           <TextInput
-            style={styles.input}
+            style={[styles.input, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
             value={groupId}
             onChangeText={setGroupId}
             placeholder="e.g., abc123-uuid"
-            placeholderTextColor="#999"
+            placeholderTextColor={colors.inputPlaceholder}
           />
         </View>
 
         <View style={styles.inputRow}>
-          <Text style={styles.label}>Community ID:</Text>
+          <Text style={[styles.label, { color: colors.textSecondary }]}>Community ID:</Text>
           <TextInput
-            style={styles.input}
+            style={[styles.input, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
             value={communityId}
             onChangeText={setCommunityId}
             placeholder="e.g., 123"
-            placeholderTextColor="#999"
+            placeholderTextColor={colors.inputPlaceholder}
             keyboardType="numeric"
           />
         </View>
 
         <View style={styles.inputRow}>
-          <Text style={styles.label}>Channel ID:</Text>
+          <Text style={[styles.label, { color: colors.textSecondary }]}>Channel ID:</Text>
           <TextInput
-            style={styles.input}
+            style={[styles.input, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
             value={channelId}
             onChangeText={setChannelId}
             placeholder="Optional - for new_message"
-            placeholderTextColor="#999"
+            placeholderTextColor={colors.inputPlaceholder}
           />
         </View>
 
         <View style={styles.inputRow}>
-          <Text style={styles.label}>Short ID:</Text>
+          <Text style={[styles.label, { color: colors.textSecondary }]}>Short ID:</Text>
           <TextInput
-            style={styles.input}
+            style={[styles.input, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
             value={shortId}
             onChangeText={setShortId}
             placeholder="Optional - for events"
-            placeholderTextColor="#999"
+            placeholderTextColor={colors.inputPlaceholder}
           />
         </View>
       </View>
 
-      <View style={styles.buttonSection}>
-        <Text style={styles.sectionTitle}>Test Notifications</Text>
+      <View style={[styles.buttonSection, { backgroundColor: colors.surface }]}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Test Notifications</Text>
 
         {SAMPLE_NOTIFICATIONS.map((notification) => (
           <TouchableOpacity
             key={notification.type}
-            style={styles.button}
+            style={[styles.button, { backgroundColor: colors.link }]}
             onPress={() => handleTest(notification)}
           >
             <Text style={styles.buttonText}>{notification.name}</Text>
@@ -181,9 +183,9 @@ export function DeepLinkTester() {
       </View>
 
       {lastResult && (
-        <View style={styles.resultSection}>
-          <Text style={styles.sectionTitle}>Last Result</Text>
-          <Text style={styles.resultText}>{lastResult}</Text>
+        <View style={[styles.resultSection, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Last Result</Text>
+          <Text style={[styles.resultText, { color: colors.text, backgroundColor: colors.backgroundSecondary }]}>{lastResult}</Text>
         </View>
       )}
     </ScrollView>
@@ -193,7 +195,6 @@ export function DeepLinkTester() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
     padding: 16,
   },
   header: {
@@ -202,15 +203,12 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#333',
   },
   subtitle: {
     fontSize: 14,
-    color: '#666',
     marginTop: 4,
   },
   inputSection: {
-    backgroundColor: '#fff',
     borderRadius: 8,
     padding: 16,
     marginBottom: 16,
@@ -218,7 +216,6 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#333',
     marginBottom: 12,
   },
   inputRow: {
@@ -226,26 +223,20 @@ const styles = StyleSheet.create({
   },
   label: {
     fontSize: 14,
-    color: '#666',
     marginBottom: 4,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#ddd',
     borderRadius: 6,
     padding: 10,
     fontSize: 14,
-    color: '#333',
-    backgroundColor: '#fafafa',
   },
   buttonSection: {
-    backgroundColor: '#fff',
     borderRadius: 8,
     padding: 16,
     marginBottom: 16,
   },
   button: {
-    backgroundColor: '#007AFF',
     borderRadius: 8,
     padding: 12,
     marginBottom: 8,
@@ -261,7 +252,6 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   resultSection: {
-    backgroundColor: '#fff',
     borderRadius: 8,
     padding: 16,
     marginBottom: 24,
@@ -269,8 +259,6 @@ const styles = StyleSheet.create({
   resultText: {
     fontFamily: 'monospace',
     fontSize: 12,
-    color: '#333',
-    backgroundColor: '#f5f5f5',
     padding: 12,
     borderRadius: 6,
   },

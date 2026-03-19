@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { Avatar } from "@components/ui/Avatar";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 
 interface Guest {
   id: string;
@@ -29,6 +30,7 @@ export function GuestListSection({
   isGroupLeader,
   onViewAll,
 }: Props) {
+  const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const displayGuests = topGuests.slice(0, 6);
   const overflowCount = totalGoing - displayGuests.length;
@@ -38,11 +40,11 @@ export function GuestListSection({
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.surface }]}>
       <View style={styles.header}>
         <View>
-          <Text style={styles.title}>Guest List</Text>
-          <Text style={styles.subtitle}>{totalGoing} Going</Text>
+          <Text style={[styles.title, { color: colors.text }]}>Guest List</Text>
+          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>{totalGoing} Going</Text>
         </View>
         <TouchableOpacity onPress={onViewAll}>
           <Text style={[styles.viewAllButton, { color: primaryColor }]}>View all</Text>
@@ -55,6 +57,7 @@ export function GuestListSection({
             key={guest.id}
             style={[
               styles.avatarWrapper,
+              { borderColor: colors.surface },
               index > 0 && { marginLeft: -12 },
             ]}
           >
@@ -67,9 +70,9 @@ export function GuestListSection({
           </View>
         ))}
         {overflowCount > 0 && (
-          <View style={[styles.avatarWrapper, { marginLeft: -12 }]}>
-            <View style={styles.overflowBadge}>
-              <Text style={styles.overflowText}>+{overflowCount}</Text>
+          <View style={[styles.avatarWrapper, { marginLeft: -12, borderColor: colors.surface }]}>
+            <View style={[styles.overflowBadge, { backgroundColor: colors.surfaceSecondary }]}>
+              <Text style={[styles.overflowText, { color: colors.textSecondary }]}>+{overflowCount}</Text>
             </View>
           </View>
         )}
@@ -80,7 +83,6 @@ export function GuestListSection({
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,
@@ -94,12 +96,10 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#111827",
     marginBottom: 4,
   },
   subtitle: {
     fontSize: 14,
-    color: "#6B7280",
   },
   viewAllButton: {
     fontSize: 14,
@@ -112,7 +112,6 @@ const styles = StyleSheet.create({
   },
   avatarWrapper: {
     borderWidth: 2,
-    borderColor: "#fff",
     borderRadius: 20,
   },
   avatar: {
@@ -122,13 +121,11 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: "#F3F4F6",
     justifyContent: "center",
     alignItems: "center",
   },
   overflowText: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#6B7280",
   },
 });

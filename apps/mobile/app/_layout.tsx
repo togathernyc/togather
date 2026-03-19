@@ -26,6 +26,8 @@ import { ImageViewerProvider } from "@providers/ImageViewerProvider";
 import { NotificationProvider } from "@providers/NotificationProvider";
 import { PostHogProvider } from "@providers/PostHogProvider";
 import { SentryProvider } from "@providers/SentryProvider";
+import { ThemeProvider } from "@providers/ThemeProvider";
+import { useTheme } from "@hooks/useTheme";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ErrorBoundary } from "@components/ErrorBoundary";
 import { TestFlightBanner } from "@components/ui/TestFlightBanner";
@@ -54,6 +56,69 @@ function PrefetchExecutorRegistration({ children }: { children: React.ReactNode 
 }
 
 /**
+ * StatusBar that respects the app's theme preference (not just system).
+ */
+function ThemedStatusBar() {
+  const { isDark } = useTheme();
+  return <StatusBar style={isDark ? "light" : "dark"} />;
+}
+
+/**
+ * Stack navigator with theme-aware content styles.
+ */
+function ThemedStack() {
+  const { colors } = useTheme();
+
+  return (
+    <Stack
+      screenOptions={{
+        headerShown: false,
+        animation: "fade",
+        animationTypeForReplace: "push",
+        gestureEnabled: false,
+        presentation: "card",
+        contentStyle: {
+          backgroundColor: colors.background,
+        },
+      }}
+    >
+      <Stack.Screen
+        name="(user)"
+        options={{
+          presentation: "modal",
+          animation: "slide_from_bottom",
+          gestureEnabled: true,
+        }}
+      />
+      <Stack.Screen
+        name="groups"
+        options={{
+          presentation: "modal",
+          animation: "slide_from_bottom",
+          gestureEnabled: true,
+        }}
+      />
+      <Stack.Screen
+        name="e"
+        options={{
+          presentation: "modal",
+          animation: "slide_from_right",
+          gestureEnabled: true,
+        }}
+      />
+      {/* Inbox routes - slide from right like iMessage/WhatsApp */}
+      <Stack.Screen
+        name="inbox"
+        options={{
+          animation: "slide_from_right",
+          gestureEnabled: true,
+        }}
+      />
+    </Stack>
+  );
+}
+
+/**
  * Container that adds bottom safe area padding + extra space for the
  * status bar banner when it's visible. This keeps ALL screens (tabs,
  * chat, modals) above the banner without per-screen fixes.
@@ -62,9 +127,11 @@ function StatusBarAwareContainer({ children }: { children: React.ReactNode }) {
   const insets = useSafeAreaInsets();
   const isStatusBarVisible = useStatusBarVisible();
   const segments = useSegments();
+  const { colors } = useTheme();
 
   // Landing page needs edge-to-edge design with dark background
-  const isLandingPage = segments.includes("landing") || (segments[0] === "(auth)" && segments[1] === "landing");
+  const segmentArray = segments as string[];
+  const isLandingPage = segmentArray.includes("landing") || (segmentArray[0] === "(auth)" && segmentArray[1] === "landing");
 
   // Keep padding consistent to prevent jank
   const bottomPadding = insets.bottom + (isStatusBarVisible ? STATUS_BAR_CONTENT_HEIGHT : 0);
@@ -73,9 +140,9 @@ function StatusBarAwareContainer({ children }: { children: React.ReactNode }) {
     <>
       {/* Background layer for landing page - matches image bottom fade */}
       {isLandingPage && (
-        <View style={[StyleSheet.absoluteFillObject, { backgroundColor: "#1a1a1a" }]} />
+        <View style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.landing }]} />
       )}
-      <View style={{ flex: 1, backgroundColor: isLandingPage ? "transparent" : "#fff", paddingBottom: bottomPadding }}>
+      <View style={{ flex: 1, backgroundColor: isLandingPage ? "transparent" : colors.background, paddingBottom: bottomPadding }}>
         {children}
       </View>
       <BottomStatusBar />
@@ -125,51 +192,7 @@ function AppLayout() {
                     <OTAUpdateModal />
                     <BirthdayCollectionModal />
                     <TestFlightBanner />
-                    <Stack
-                  screenOptions={{
-                    headerShown: false,
-                    animation: "fade",
-                    animationTypeForReplace: "push",
-                    gestureEnabled: false,
-                    presentation: "card",
-                    contentStyle: {
-                      backgroundColor: '#fff',
-                    },
-                  }}
-                >
-                  <Stack.Screen
-                    name="(user)"
-                    options={{
-                      presentation: "modal",
-                      animation: "slide_from_bottom",
-                      gestureEnabled: true,
-                    }}
-                  />
-                  <Stack.Screen
-                    name="groups"
-                    options={{
-                      presentation: "modal",
-                      animation: "slide_from_bottom",
-                      gestureEnabled: true,
-                    }}
-                  />
-                  <Stack.Screen
-                    name="e"
-                    options={{
-                      presentation: "modal",
-                      animation: "slide_from_right",
-                      gestureEnabled: true,
-                    }}
-                  />
-                  {/* Inbox routes - slide from right like iMessage/WhatsApp */}
-                  <Stack.Screen
-                    name="inbox"
-                    options={{
-                      animation: "slide_from_right",
-                      gestureEnabled: true,
-                    }}
-                  />
-                </Stack>
+                    <ThemedStack />
                   </StatusBarAwareContainer>
                 </PrefetchExecutorRegistration>
               </ChatPrefetchProvider>
@@ -218,12 +241,14 @@ export default function RootLayout() {
       <SentryProvider>
         <ErrorBoundary>
           <SafeAreaProvider>
-            <StatusBar style="auto" />
-            <OTAUpdateProvider>
-              <EnvironmentProvider>
-                <AppLayout />
-              </EnvironmentProvider>
-            </OTAUpdateProvider>
+            <ThemeProvider>
+              <ThemedStatusBar />
+              <OTAUpdateProvider>
+                <EnvironmentProvider>
+                  <AppLayout />
+                </EnvironmentProvider>
+              </OTAUpdateProvider>
+            </ThemeProvider>
           </SafeAreaProvider>
         </ErrorBoundary>
       </SentryProvider>

@@ -8,6 +8,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
+import { useTheme } from "@hooks/useTheme";
 
 interface RsvpOption {
   id: number;
@@ -30,30 +31,33 @@ const EMOJI_MAP: Record<string, string> = {
   No: "😢",
 };
 
-// Map RSVP option labels to gradient colors
-const COLOR_MAP: Record<string, string[]> = {
-  Going: [DEFAULT_PRIMARY_COLOR, DEFAULT_PRIMARY_COLOR],
-  Maybe: ["#FF9500", "#FF7A00"],
-  "Can't Go": ["#666", "#444"],
-  Yes: [DEFAULT_PRIMARY_COLOR, DEFAULT_PRIMARY_COLOR],
-  No: ["#666", "#444"],
-};
+// Map RSVP option labels to gradient colors (function because it needs theme colors)
+function getRsvpColorMap(colors: { warning: string; textSecondary: string; buttonPrimary: string }): Record<string, string[]> {
+  return {
+    Going: [DEFAULT_PRIMARY_COLOR, DEFAULT_PRIMARY_COLOR],
+    Maybe: [colors.warning, colors.warning],
+    "Can't Go": [colors.textSecondary, colors.buttonPrimary],
+    Yes: [DEFAULT_PRIMARY_COLOR, DEFAULT_PRIMARY_COLOR],
+    No: [colors.textSecondary, colors.buttonPrimary],
+  };
+}
 
 export function FloatingRsvpButtons({
   options,
   loadingOptionId,
   onSelect,
 }: FloatingRsvpButtonsProps) {
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
 
   const enabledOptions = options.filter((option) => option.enabled);
 
   return (
-    <View style={[styles.container, { paddingBottom: insets.bottom + 20 }]}>
+    <View style={[styles.container, { paddingBottom: insets.bottom + 20, backgroundColor: colors.surface, borderTopColor: colors.border }]}>
       <View style={styles.buttonsRow}>
         {enabledOptions.map((option) => {
           const emoji = EMOJI_MAP[option.label] || "👍";
-          const buttonColors = COLOR_MAP[option.label] || [DEFAULT_PRIMARY_COLOR, DEFAULT_PRIMARY_COLOR];
+          const buttonColors = getRsvpColorMap(colors)[option.label] || [DEFAULT_PRIMARY_COLOR, DEFAULT_PRIMARY_COLOR];
           const isLoading = loadingOptionId === option.id;
 
           return (
@@ -66,12 +70,12 @@ export function FloatingRsvpButtons({
             >
               <View style={[styles.circleButton, { backgroundColor: buttonColors[0] }]}>
                 {isLoading ? (
-                  <ActivityIndicator size="small" color="#fff" />
+                  <ActivityIndicator size="small" color={colors.textInverse} />
                 ) : (
                   <Text style={styles.emoji}>{emoji}</Text>
                 )}
               </View>
-              <Text style={styles.label}>{option.label}</Text>
+              <Text style={[styles.label, { color: colors.text }]}>{option.label}</Text>
             </TouchableOpacity>
           );
         })}
@@ -86,9 +90,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: "#fff",
     borderTopWidth: 1,
-    borderTopColor: "#e0e0e0",
     paddingTop: 16,
     paddingHorizontal: 20,
   },
@@ -123,6 +125,5 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 13,
     fontWeight: "600",
-    color: "#333",
   },
 });

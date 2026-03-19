@@ -25,6 +25,7 @@ import {
 } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import type { CustomFieldDef } from "./ColumnPickerModal";
+import { useTheme } from "@hooks/useTheme";
 
 // ============================================================================
 // Types
@@ -124,6 +125,7 @@ export function FollowupSettingsPanel({
   onColumnChange,
   onClose,
 }: FollowupSettingsPanelProps) {
+  const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const themeColor = primaryColor || DEFAULT_PRIMARY_COLOR;
 
@@ -495,11 +497,11 @@ export function FollowupSettingsPanel({
 
   if (!crossGroupMode && (!config || !groupData)) {
     return (
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Settings</Text>
+      <View style={[styles.container, { backgroundColor: colors.surface }]}>
+        <View style={[styles.header, { borderBottomColor: colors.border }]}>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Settings</Text>
           <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-            <Ionicons name="close" size={22} color="#374151" />
+            <Ionicons name="close" size={22} color={colors.textSecondary} />
           </TouchableOpacity>
         </View>
         <View style={styles.loadingContainer}>
@@ -517,24 +519,24 @@ export function FollowupSettingsPanel({
     onToggle: () => void,
     extra?: React.ReactNode,
   ) => (
-    <TouchableOpacity style={styles.sectionHeader} onPress={onToggle} activeOpacity={0.7}>
+    <TouchableOpacity style={[styles.sectionHeader, { borderBottomColor: colors.borderLight }]} onPress={onToggle} activeOpacity={0.7}>
       <Ionicons
         name={isOpen ? "chevron-down" : "chevron-forward"}
         size={14}
-        color="#9CA3AF"
+        color={colors.iconSecondary}
       />
-      <Text style={styles.sectionHeaderText}>{title}</Text>
+      <Text style={[styles.sectionHeaderText, { color: colors.textTertiary }]}>{title}</Text>
       {extra}
     </TouchableOpacity>
   );
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.surface }]}>
       {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Settings</Text>
+      <View style={[styles.header, { borderBottomColor: colors.border }]}>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>Settings</Text>
         <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-          <Ionicons name="close" size={22} color="#374151" />
+          <Ionicons name="close" size={22} color={colors.textSecondary} />
         </TouchableOpacity>
       </View>
 
@@ -542,20 +544,21 @@ export function FollowupSettingsPanel({
         {/* ── Section 1: Display Name (hidden in cross-group mode) ── */}
         {!crossGroupMode && renderSectionHeader("Display Name", displayNameOpen, () => setDisplayNameOpen((p) => !p))}
         {!crossGroupMode && displayNameOpen && (
-          <View style={styles.sectionBody}>
+          <View style={[styles.sectionBody, { borderBottomColor: colors.borderLight }]}>
             <TextInput
               style={[
                 styles.textInput,
+                { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground },
                 Platform.OS === "web" ? ({ outlineStyle: "none" } as any) : {},
               ]}
               value={toolDisplayName}
               onChangeText={setToolDisplayName}
               onBlur={handleDisplayNameBlur}
               placeholder="People"
-              placeholderTextColor="#9CA3AF"
+              placeholderTextColor={colors.inputPlaceholder}
               maxLength={20}
             />
-            <Text style={styles.hintText}>
+            <Text style={[styles.hintText, { color: colors.textTertiary }]}>
               Customize what this tool is called. Leave empty for default.
             </Text>
           </View>
@@ -564,7 +567,7 @@ export function FollowupSettingsPanel({
         {/* ── Section 2: Data (hidden in cross-group mode) ── */}
         {!crossGroupMode && renderSectionHeader("Data", dataOpen, () => setDataOpen((p) => !p))}
         {!crossGroupMode && dataOpen && (
-          <View style={styles.sectionBody}>
+          <View style={[styles.sectionBody, { borderBottomColor: colors.borderLight }]}>
             <TouchableOpacity
               onPress={handleRefreshFollowupScores}
               style={[
@@ -576,31 +579,31 @@ export function FollowupSettingsPanel({
             >
               {isRefreshingScores ? (
                 <View style={styles.refreshButtonBusy}>
-                  <ActivityIndicator size="small" color="#fff" />
-                  <Text style={styles.saveButtonText}>Starting Refresh...</Text>
+                  <ActivityIndicator size="small" color={colors.textInverse} />
+                  <Text style={[styles.saveButtonText, { color: '#fff' }]}>Starting Refresh...</Text>
                 </View>
               ) : (
-                <Text style={styles.saveButtonText}>Refresh People Table Now</Text>
+                <Text style={[styles.saveButtonText, { color: '#fff' }]}>Refresh People Table Now</Text>
               )}
             </TouchableOpacity>
-            <Text style={styles.hintText}>
+            <Text style={[styles.hintText, { color: colors.textTertiary }]}>
               Recalculates all scores for this community.
             </Text>
-            {refreshMessage && <Text style={styles.hintText}>{refreshMessage}</Text>}
+            {refreshMessage && <Text style={[styles.hintText, { color: colors.textTertiary }]}>{refreshMessage}</Text>}
           </View>
         )}
 
         {/* ── Section 3: Columns ── */}
         {renderSectionHeader("Columns", columnsOpen, () => setColumnsOpen((p) => !p))}
         {columnsOpen && (
-          <View style={styles.sectionBody}>
+          <View style={[styles.sectionBody, { borderBottomColor: colors.borderLight }]}>
             {/* Column order & visibility */}
             <View style={styles.columnList}>
               {currentColumnOrder.map((key, idx) => {
                 const label = labelMap.get(key) ?? key;
                 const isHidden = hiddenColumnsSet.has(key);
                 return (
-                  <View key={key} style={styles.columnRow}>
+                  <View key={key} style={[styles.columnRow, { borderBottomColor: colors.borderLight }]}>
                     <View style={styles.columnArrows}>
                       <TouchableOpacity
                         onPress={() => moveColumn(idx, -1)}
@@ -610,7 +613,7 @@ export function FollowupSettingsPanel({
                         <Ionicons
                           name="chevron-up"
                           size={14}
-                          color={idx === 0 ? "#D1D5DB" : "#6B7280"}
+                          color={idx === 0 ? colors.buttonDisabled : colors.icon}
                         />
                       </TouchableOpacity>
                       <TouchableOpacity
@@ -621,18 +624,18 @@ export function FollowupSettingsPanel({
                         <Ionicons
                           name="chevron-down"
                           size={14}
-                          color={idx === currentColumnOrder.length - 1 ? "#D1D5DB" : "#6B7280"}
+                          color={idx === currentColumnOrder.length - 1 ? colors.buttonDisabled : colors.icon}
                         />
                       </TouchableOpacity>
                     </View>
-                    <Text style={[styles.columnLabel, isHidden && styles.columnLabelHidden]} numberOfLines={1}>
+                    <Text style={[styles.columnLabel, { color: colors.textSecondary }, isHidden && { color: colors.border, textDecorationLine: 'line-through' }]} numberOfLines={1}>
                       {label}
                     </Text>
                     <TouchableOpacity onPress={() => toggleVisibility(key)} style={styles.eyeBtn}>
                       <Ionicons
                         name={isHidden ? "eye-off-outline" : "eye-outline"}
                         size={16}
-                        color={isHidden ? "#D1D5DB" : "#6B7280"}
+                        color={isHidden ? colors.buttonDisabled : colors.icon}
                       />
                     </TouchableOpacity>
                   </View>
@@ -643,17 +646,17 @@ export function FollowupSettingsPanel({
             {/* Custom Fields subsection (hidden in cross-group mode) */}
             {!crossGroupMode && (
               <>
-                <View style={styles.subsectionDivider} />
-                <Text style={styles.subsectionTitle}>Custom Fields</Text>
-                <Text style={styles.noteText}>
+                <View style={[styles.subsectionDivider, { backgroundColor: colors.border }]} />
+                <Text style={[styles.subsectionTitle, { color: colors.textTertiary }]}>Custom Fields</Text>
+                <Text style={[styles.noteText, { color: colors.textTertiary }]}>
                   Custom fields are shared across all groups in your community.
                 </Text>
 
                 {/* Capacity indicators */}
                 <View style={styles.capacityRow}>
                   {Object.entries(SLOT_CAPACITIES).map(([key, info]) => (
-                    <View key={key} style={styles.capacityBadge}>
-                      <Text style={styles.capacityText}>
+                    <View key={key} style={[styles.capacityBadge, { backgroundColor: colors.surfaceSecondary }]}>
+                      <Text style={[styles.capacityText, { color: colors.textTertiary }]}>
                         {info.label}: {capacityInfo[key] ?? 0}/{info.total}
                       </Text>
                     </View>
@@ -662,36 +665,37 @@ export function FollowupSettingsPanel({
 
                 {/* Existing custom fields */}
                 {customFields.map((field, idx) => (
-                  <View key={field.slot} style={styles.fieldRow}>
+                  <View key={field.slot} style={[styles.fieldRow, { backgroundColor: colors.surfaceSecondary }]}>
                     <View style={styles.fieldInfo}>
-                      <Text style={styles.fieldName}>{field.name}</Text>
-                      <View style={styles.typeBadge}>
-                        <Text style={styles.typeBadgeText}>{field.type}</Text>
+                      <Text style={[styles.fieldName, { color: colors.textSecondary }]}>{field.name}</Text>
+                      <View style={[styles.typeBadge, { backgroundColor: colors.border }]}>
+                        <Text style={[styles.typeBadgeText, { color: colors.textTertiary }]}>{field.type}</Text>
                       </View>
                       {(field.type === "dropdown" || field.type === "multiselect") && field.options && (
-                        <Text style={styles.fieldOptions} numberOfLines={1}>
+                        <Text style={[styles.fieldOptions, { color: colors.textTertiary }]} numberOfLines={1}>
                           ({field.options.join(", ")})
                         </Text>
                       )}
                     </View>
                     <TouchableOpacity onPress={() => handleDeleteField(idx)} style={styles.deleteBtn}>
-                      <Ionicons name="trash-outline" size={14} color="#EF4444" />
+                      <Ionicons name="trash-outline" size={14} color={colors.destructive} />
                     </TouchableOpacity>
                   </View>
                 ))}
 
                 {/* Add custom field form */}
                 {showAddField ? (
-                  <View style={styles.addFieldForm}>
+                  <View style={[styles.addFieldForm, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
                     <TextInput
                       style={[
                         styles.fieldInput,
+                        { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground },
                         Platform.OS === "web" ? ({ outlineStyle: "none" } as any) : {},
                       ]}
                       value={newFieldName}
                       onChangeText={setNewFieldName}
                       placeholder="Field name..."
-                      placeholderTextColor="#9CA3AF"
+                      placeholderTextColor={colors.inputPlaceholder}
                       autoFocus
                     />
                     <View style={styles.typePickerRow}>
@@ -703,6 +707,7 @@ export function FollowupSettingsPanel({
                             key={ft.value}
                             style={[
                               styles.typeOption,
+                              { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground },
                               isActive && { borderColor: themeColor, backgroundColor: `${themeColor}10` },
                               !enabled && styles.typeOptionDisabled,
                             ]}
@@ -712,8 +717,9 @@ export function FollowupSettingsPanel({
                             <Text
                               style={[
                                 styles.typeOptionText,
+                                { color: colors.textSecondary },
                                 isActive && { color: themeColor, fontWeight: "600" as const },
-                                !enabled && styles.typeOptionTextDisabled,
+                                !enabled && { color: colors.textTertiary },
                               ]}
                             >
                               {ft.label}
@@ -726,12 +732,13 @@ export function FollowupSettingsPanel({
                     {/* Dropdown / multiselect options editor */}
                     {(newFieldType === "dropdown" || newFieldType === "multiselect") && (
                       <View style={styles.optionsEditor}>
-                        <Text style={styles.optionsLabel}>Options:</Text>
+                        <Text style={[styles.optionsLabel, { color: colors.textTertiary }]}>Options:</Text>
                         {newFieldOptions.map((opt, i) => (
                           <View key={i} style={styles.optionRow}>
                             <TextInput
                               style={[
                                 styles.optionInput,
+                                { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground },
                                 Platform.OS === "web" ? ({ outlineStyle: "none" } as any) : {},
                               ]}
                               value={opt}
@@ -741,13 +748,13 @@ export function FollowupSettingsPanel({
                                 setNewFieldOptions(next);
                               }}
                               placeholder={`Option ${i + 1}`}
-                              placeholderTextColor="#9CA3AF"
+                              placeholderTextColor={colors.inputPlaceholder}
                             />
                             <TouchableOpacity
                               onPress={() => setNewFieldOptions(newFieldOptions.filter((_, j) => j !== i))}
                               style={styles.optionDeleteBtn}
                             >
-                              <Ionicons name="close-circle" size={16} color="#9CA3AF" />
+                              <Ionicons name="close-circle" size={16} color={colors.iconSecondary} />
                             </TouchableOpacity>
                           </View>
                         ))}
@@ -771,7 +778,7 @@ export function FollowupSettingsPanel({
                         }}
                         style={styles.cancelFieldBtn}
                       >
-                        <Text style={styles.cancelFieldText}>Cancel</Text>
+                        <Text style={[styles.cancelFieldText, { color: colors.textTertiary }]}>Cancel</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
                         onPress={handleAddField}
@@ -782,7 +789,7 @@ export function FollowupSettingsPanel({
                         ]}
                         disabled={!canSubmitNewField}
                       >
-                        <Text style={styles.confirmFieldText}>Add Field</Text>
+                        <Text style={[styles.confirmFieldText, { color: '#fff' }]}>Add Field</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -807,15 +814,15 @@ export function FollowupSettingsPanel({
                 disabled={isSavingColumns || showAddField}
               >
                 {isSavingColumns ? (
-                  <ActivityIndicator size="small" color="#fff" />
+                  <ActivityIndicator size="small" color={colors.textInverse} />
                 ) : (
-                  <Text style={styles.saveButtonText}>Save Custom Fields</Text>
+                  <Text style={[styles.saveButtonText, { color: '#fff' }]}>Save Custom Fields</Text>
                 )}
               </TouchableOpacity>
             )}
 
             {/* Hint text about live preview */}
-            <Text style={styles.hintText}>
+            <Text style={[styles.hintText, { color: colors.textTertiary }]}>
               Changes preview live. Save as a view to keep them.
             </Text>
           </View>
@@ -826,11 +833,11 @@ export function FollowupSettingsPanel({
           "Member Card Subtitle",
           subtitleOpen,
           () => setSubtitleOpen((p) => !p),
-          <Text style={styles.sectionHeaderExtra}>(Mobile only)</Text>,
+          <Text style={[styles.sectionHeaderExtra, { color: colors.textTertiary }]}>(Mobile only)</Text>,
         )}
         {!crossGroupMode && subtitleOpen && (
-          <View style={styles.sectionBody}>
-            <Text style={styles.hintText}>
+          <View style={[styles.sectionBody, { borderBottomColor: colors.borderLight }]}>
+            <Text style={[styles.hintText, { color: colors.textTertiary }]}>
               Choose up to 2 items to show below each member's name.
             </Text>
             <View style={styles.subtitleOptions}>
@@ -842,6 +849,7 @@ export function FollowupSettingsPanel({
                     key={v.id}
                     style={[
                       styles.subtitleOption,
+                      { borderColor: colors.border },
                       selected && { borderColor: themeColor, backgroundColor: `${themeColor}10` },
                       disabled && { opacity: 0.4 },
                     ]}
@@ -852,14 +860,16 @@ export function FollowupSettingsPanel({
                       <View
                         style={[
                           styles.subtitleCheckbox,
+                          { borderColor: colors.inputBorder },
                           selected && { backgroundColor: themeColor, borderColor: themeColor },
                         ]}
                       >
-                        {selected && <Ionicons name="checkmark" size={12} color="#fff" />}
+                        {selected && <Ionicons name="checkmark" size={12} color={colors.textInverse} />}
                       </View>
                       <Text
                         style={[
                           styles.subtitleOptionText,
+                          { color: colors.textSecondary },
                           selected && { color: themeColor, fontWeight: "600" as const },
                         ]}
                       >
@@ -871,7 +881,7 @@ export function FollowupSettingsPanel({
               })}
             </View>
             {subtitleVars.length >= 2 && (
-              <Text style={styles.hintText}>Maximum of 2 selected</Text>
+              <Text style={[styles.hintText, { color: colors.textTertiary }]}>Maximum of 2 selected</Text>
             )}
             {hasSubtitleChanges && (
               <TouchableOpacity
@@ -880,9 +890,9 @@ export function FollowupSettingsPanel({
                 disabled={savingSubtitle}
               >
                 {savingSubtitle ? (
-                  <ActivityIndicator size="small" color="#fff" />
+                  <ActivityIndicator size="small" color={colors.textInverse} />
                 ) : (
-                  <Text style={styles.saveButtonText}>Save Subtitle</Text>
+                  <Text style={[styles.saveButtonText, { color: '#fff' }]}>Save Subtitle</Text>
                 )}
               </TouchableOpacity>
             )}
@@ -891,33 +901,33 @@ export function FollowupSettingsPanel({
         {/* ── Section 5: Scores (read-only, all users) ── */}
         {renderSectionHeader("Scores", scoresOpen, () => setScoresOpen((p) => !p))}
         {scoresOpen && (
-          <View style={styles.sectionBody}>
+          <View style={[styles.sectionBody, { borderBottomColor: colors.borderLight }]}>
             <View style={styles.scoreExplainer}>
-              <Text style={styles.scoreExplainerTitle}>Service (Score 1)</Text>
-              <Text style={styles.scoreExplainerText}>
+              <Text style={[styles.scoreExplainerTitle, { color: colors.textSecondary }]}>Service (Score 1)</Text>
+              <Text style={[styles.scoreExplainerText, { color: colors.textTertiary }]}>
                 Measures PCO serving engagement over the past 2 months. Each service adds 20 points (max 100 at 5+ services).
               </Text>
             </View>
             <View style={styles.scoreExplainer}>
-              <Text style={styles.scoreExplainerTitle}>Attendance (Score 2)</Text>
-              <Text style={styles.scoreExplainerText}>
+              <Text style={[styles.scoreExplainerTitle, { color: colors.textSecondary }]}>Attendance (Score 2)</Text>
+              <Text style={[styles.scoreExplainerText, { color: colors.textTertiary }]}>
                 Percentage of meetings attended across all groups in the community. Shows as a direct 0-100% score.
               </Text>
             </View>
             <View style={styles.scoreExplainer}>
-              <Text style={styles.scoreExplainerTitle}>Togather (Score 3)</Text>
-              <Text style={styles.scoreExplainerText}>
+              <Text style={[styles.scoreExplainerTitle, { color: colors.textSecondary }]}>Togather (Score 3)</Text>
+              <Text style={[styles.scoreExplainerText, { color: colors.textTertiary }]}>
                 Composite engagement score combining attendance consistency and followup recency. Attendance starts at 100 and drops 15 points per consecutive miss. Followup score is based on the most recent contact: in-person (100), call (85), or text (70), decaying by 1 point per day. The two components are averaged.
               </Text>
             </View>
-            <View style={styles.subsectionDivider} />
+            <View style={[styles.subsectionDivider, { backgroundColor: colors.border }]} />
             <View style={styles.colorLegendRow}>
-              <View style={[styles.colorDot, { backgroundColor: "#22C55E" }]} />
-              <Text style={styles.colorLegendText}>Green: 70+</Text>
-              <View style={[styles.colorDot, { backgroundColor: "#F59E0B" }]} />
-              <Text style={styles.colorLegendText}>Orange: 40-69</Text>
-              <View style={[styles.colorDot, { backgroundColor: "#EF4444" }]} />
-              <Text style={styles.colorLegendText}>Red: &lt;40</Text>
+              <View style={[styles.colorDot, { backgroundColor: colors.success }]} />
+              <Text style={[styles.colorLegendText, { color: colors.textTertiary }]}>Green: 70+</Text>
+              <View style={[styles.colorDot, { backgroundColor: colors.warning }]} />
+              <Text style={[styles.colorLegendText, { color: colors.textTertiary }]}>Orange: 40-69</Text>
+              <View style={[styles.colorDot, { backgroundColor: colors.destructive }]} />
+              <Text style={[styles.colorLegendText, { color: colors.textTertiary }]}>Red: &lt;40</Text>
             </View>
           </View>
         )}
@@ -925,8 +935,8 @@ export function FollowupSettingsPanel({
         {/* ── Section 6: Alerts (admin-only) ── */}
         {isAdmin && communityId && renderSectionHeader("Alerts", alertsOpen, () => setAlertsOpen((p) => !p))}
         {isAdmin && communityId && alertsOpen && (
-          <View style={styles.sectionBody}>
-            <Text style={styles.hintText}>
+          <View style={[styles.sectionBody, { borderBottomColor: colors.borderLight }]}>
+            <Text style={[styles.hintText, { color: colors.textTertiary }]}>
               Custom alert rules trigger when a member's metric crosses a threshold.
               Alerts appear in the Alerts column of the people table.
             </Text>
@@ -935,17 +945,17 @@ export function FollowupSettingsPanel({
             {alertRules.map((alert) => {
               const varDef = ALERT_VARIABLES.find((v) => v.id === alert.variableId);
               return (
-                <View key={alert.id} style={styles.alertCard}>
+                <View key={alert.id} style={[styles.alertCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
                   <View style={styles.alertCardInfo}>
-                    <Text style={styles.alertCardLabel}>
+                    <Text style={[styles.alertCardLabel, { color: colors.textSecondary }]}>
                       {alert.label || `${varDef?.label ?? alert.variableId} ${alert.operator} ${alert.threshold}`}
                     </Text>
-                    <Text style={styles.alertCardDetail}>
+                    <Text style={[styles.alertCardDetail, { color: colors.textTertiary }]}>
                       {varDef?.label ?? alert.variableId} {alert.operator} {alert.threshold}
                     </Text>
                   </View>
                   <TouchableOpacity onPress={() => handleDeleteAlert(alert.id)} style={styles.deleteBtn}>
-                    <Ionicons name="trash-outline" size={14} color="#EF4444" />
+                    <Ionicons name="trash-outline" size={14} color={colors.destructive} />
                   </TouchableOpacity>
                 </View>
               );
@@ -953,8 +963,8 @@ export function FollowupSettingsPanel({
 
             {/* Add alert form */}
             {showAddAlert ? (
-              <View style={styles.addFieldForm}>
-                <Text style={styles.optionsLabel}>Variable</Text>
+              <View style={[styles.addFieldForm, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+                <Text style={[styles.optionsLabel, { color: colors.textTertiary }]}>Variable</Text>
                 <ScrollView
                   horizontal
                   showsHorizontalScrollIndicator={false}
@@ -966,6 +976,7 @@ export function FollowupSettingsPanel({
                         key={v.id}
                         style={[
                           styles.typeOption,
+                          { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground },
                           newAlertVariable === v.id && {
                             borderColor: themeColor,
                             backgroundColor: `${themeColor}10`,
@@ -976,6 +987,7 @@ export function FollowupSettingsPanel({
                         <Text
                           style={[
                             styles.typeOptionText,
+                            { color: colors.textSecondary },
                             newAlertVariable === v.id && {
                               color: themeColor,
                               fontWeight: "600" as const,
@@ -989,11 +1001,12 @@ export function FollowupSettingsPanel({
                   </View>
                 </ScrollView>
 
-                <Text style={styles.optionsLabel}>Condition</Text>
+                <Text style={[styles.optionsLabel, { color: colors.textTertiary }]}>Condition</Text>
                 <View style={styles.typePickerRow}>
                   <TouchableOpacity
                     style={[
                       styles.typeOption,
+                      { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground },
                       newAlertOperator === "above" && {
                         borderColor: themeColor,
                         backgroundColor: `${themeColor}10`,
@@ -1004,6 +1017,7 @@ export function FollowupSettingsPanel({
                     <Text
                       style={[
                         styles.typeOptionText,
+                        { color: colors.textSecondary },
                         newAlertOperator === "above" && {
                           color: themeColor,
                           fontWeight: "600" as const,
@@ -1016,6 +1030,7 @@ export function FollowupSettingsPanel({
                   <TouchableOpacity
                     style={[
                       styles.typeOption,
+                      { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground },
                       newAlertOperator === "below" && {
                         borderColor: themeColor,
                         backgroundColor: `${themeColor}10`,
@@ -1026,6 +1041,7 @@ export function FollowupSettingsPanel({
                     <Text
                       style={[
                         styles.typeOptionText,
+                        { color: colors.textSecondary },
                         newAlertOperator === "below" && {
                           color: themeColor,
                           fontWeight: "600" as const,
@@ -1037,29 +1053,31 @@ export function FollowupSettingsPanel({
                   </TouchableOpacity>
                 </View>
 
-                <Text style={styles.optionsLabel}>Threshold</Text>
+                <Text style={[styles.optionsLabel, { color: colors.textTertiary }]}>Threshold</Text>
                 <TextInput
                   style={[
                     styles.fieldInput,
+                    { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground },
                     Platform.OS === "web" ? ({ outlineStyle: "none" } as any) : {},
                   ]}
                   value={newAlertThreshold}
                   onChangeText={setNewAlertThreshold}
                   placeholder="e.g. 3"
-                  placeholderTextColor="#9CA3AF"
+                  placeholderTextColor={colors.inputPlaceholder}
                   keyboardType="numeric"
                 />
 
-                <Text style={styles.optionsLabel}>Label (optional)</Text>
+                <Text style={[styles.optionsLabel, { color: colors.textTertiary }]}>Label (optional)</Text>
                 <TextInput
                   style={[
                     styles.fieldInput,
+                    { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground },
                     Platform.OS === "web" ? ({ outlineStyle: "none" } as any) : {},
                   ]}
                   value={newAlertLabel}
                   onChangeText={setNewAlertLabel}
                   placeholder="e.g. High miss count"
-                  placeholderTextColor="#9CA3AF"
+                  placeholderTextColor={colors.inputPlaceholder}
                 />
 
                 <View style={styles.addFieldActions}>
@@ -1071,7 +1089,7 @@ export function FollowupSettingsPanel({
                     }}
                     style={styles.cancelFieldBtn}
                   >
-                    <Text style={styles.cancelFieldText}>Cancel</Text>
+                    <Text style={[styles.cancelFieldText, { color: colors.textTertiary }]}>Cancel</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={handleAddAlert}
@@ -1082,7 +1100,7 @@ export function FollowupSettingsPanel({
                     ]}
                     disabled={!newAlertThreshold.trim()}
                   >
-                    <Text style={styles.confirmFieldText}>Add Alert</Text>
+                    <Text style={[styles.confirmFieldText, { color: '#fff' }]}>Add Alert</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -1105,9 +1123,9 @@ export function FollowupSettingsPanel({
                 disabled={isSavingAlerts}
               >
                 {isSavingAlerts ? (
-                  <ActivityIndicator size="small" color="#fff" />
+                  <ActivityIndicator size="small" color={colors.textInverse} />
                 ) : (
-                  <Text style={styles.saveButtonText}>Save Alerts</Text>
+                  <Text style={[styles.saveButtonText, { color: '#fff' }]}>Save Alerts</Text>
                 )}
               </TouchableOpacity>
             )}
@@ -1125,7 +1143,6 @@ export function FollowupSettingsPanel({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
   },
   header: {
     flexDirection: "row",
@@ -1134,12 +1151,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#E5E7EB",
   },
   headerTitle: {
     fontSize: 16,
     fontWeight: "600" as const,
-    color: "#111827",
   },
   closeButton: {
     padding: 4,
@@ -1163,20 +1178,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
     gap: 6,
   },
   sectionHeaderText: {
     fontSize: 11,
     fontWeight: "600" as const,
-    color: "#6B7280",
     textTransform: "uppercase",
     letterSpacing: 0.5,
     flex: 1,
   },
   sectionHeaderExtra: {
     fontSize: 10,
-    color: "#9CA3AF",
     fontStyle: "italic",
   },
   sectionBody: {
@@ -1184,23 +1196,18 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     gap: 8,
     borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
   },
 
   // Text inputs
   textInput: {
     fontSize: 13,
     borderWidth: 1,
-    borderColor: "#D1D5DB",
     borderRadius: 6,
     paddingHorizontal: 10,
     paddingVertical: 7,
-    color: "#374151",
-    backgroundColor: "#F9FAFB",
   },
   hintText: {
     fontSize: 11,
-    color: "#9CA3AF",
     lineHeight: 15,
   },
 
@@ -1213,7 +1220,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: 4,
     borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
   },
   columnArrows: {
     flexDirection: "row",
@@ -1226,10 +1232,8 @@ const styles = StyleSheet.create({
   columnLabel: {
     flex: 1,
     fontSize: 12,
-    color: "#374151",
   },
   columnLabelHidden: {
-    color: "#D1D5DB",
     textDecorationLine: "line-through",
   },
   eyeBtn: {
@@ -1239,13 +1243,11 @@ const styles = StyleSheet.create({
   // Subsection
   subsectionDivider: {
     height: 1,
-    backgroundColor: "#E5E7EB",
     marginVertical: 4,
   },
   subsectionTitle: {
     fontSize: 11,
     fontWeight: "600" as const,
-    color: "#6B7280",
     textTransform: "uppercase",
     letterSpacing: 0.5,
   },
@@ -1257,14 +1259,12 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
   },
   capacityBadge: {
-    backgroundColor: "#F3F4F6",
     borderRadius: 4,
     paddingHorizontal: 6,
     paddingVertical: 2,
   },
   capacityText: {
     fontSize: 10,
-    color: "#6B7280",
     fontWeight: "500" as const,
   },
 
@@ -1274,7 +1274,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: 6,
     paddingHorizontal: 6,
-    backgroundColor: "#F9FAFB",
     borderRadius: 6,
     gap: 6,
   },
@@ -1286,23 +1285,19 @@ const styles = StyleSheet.create({
   },
   fieldName: {
     fontSize: 12,
-    color: "#374151",
     fontWeight: "500" as const,
   },
   typeBadge: {
     paddingHorizontal: 5,
     paddingVertical: 1,
     borderRadius: 3,
-    backgroundColor: "#E5E7EB",
   },
   typeBadgeText: {
     fontSize: 10,
     fontWeight: "600" as const,
-    color: "#6B7280",
   },
   fieldOptions: {
     fontSize: 10,
-    color: "#9CA3AF",
     flex: 1,
   },
   deleteBtn: {
@@ -1311,22 +1306,17 @@ const styles = StyleSheet.create({
 
   // Add field form
   addFieldForm: {
-    backgroundColor: "#F9FAFB",
     borderRadius: 6,
     padding: 10,
     gap: 8,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
   },
   fieldInput: {
     fontSize: 12,
     borderWidth: 1,
-    borderColor: "#D1D5DB",
     borderRadius: 5,
     paddingHorizontal: 8,
     paddingVertical: 6,
-    backgroundColor: "#fff",
-    color: "#374151",
   },
   typePickerRow: {
     flexDirection: "row",
@@ -1338,19 +1328,14 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     borderRadius: 5,
     borderWidth: 1,
-    borderColor: "#D1D5DB",
-    backgroundColor: "#fff",
   },
   typeOptionDisabled: {
     opacity: 0.4,
   },
   typeOptionText: {
     fontSize: 11,
-    color: "#374151",
   },
-  typeOptionTextDisabled: {
-    color: "#9CA3AF",
-  },
+  typeOptionTextDisabled: {},
 
   // Dropdown options editor
   optionsEditor: {
@@ -1358,7 +1343,6 @@ const styles = StyleSheet.create({
   },
   optionsLabel: {
     fontSize: 11,
-    color: "#6B7280",
     fontWeight: "500" as const,
   },
   optionRow: {
@@ -1370,12 +1354,9 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 11,
     borderWidth: 1,
-    borderColor: "#D1D5DB",
     borderRadius: 4,
     paddingHorizontal: 6,
     paddingVertical: 4,
-    backgroundColor: "#fff",
-    color: "#374151",
   },
   optionDeleteBtn: {
     padding: 2,
@@ -1403,7 +1384,6 @@ const styles = StyleSheet.create({
   },
   cancelFieldText: {
     fontSize: 12,
-    color: "#6B7280",
   },
   confirmFieldBtn: {
     paddingHorizontal: 10,
@@ -1412,7 +1392,6 @@ const styles = StyleSheet.create({
   },
   confirmFieldText: {
     fontSize: 12,
-    color: "#fff",
     fontWeight: "600" as const,
   },
   btnDisabled: {
@@ -1439,7 +1418,6 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   saveButtonText: {
-    color: "#fff",
     fontSize: 13,
     fontWeight: "600" as const,
   },
@@ -1450,12 +1428,10 @@ const styles = StyleSheet.create({
   },
   hintError: {
     fontSize: 11,
-    color: "#B91C1C",
     lineHeight: 15,
   },
   noteText: {
     fontSize: 11,
-    color: "#6B7280",
     fontStyle: "italic" as const,
     lineHeight: 15,
   },
@@ -1466,7 +1442,6 @@ const styles = StyleSheet.create({
   },
   subtitleOption: {
     borderWidth: 1.5,
-    borderColor: "#E5E7EB",
     borderRadius: 6,
     paddingVertical: 8,
     paddingHorizontal: 10,
@@ -1481,13 +1456,11 @@ const styles = StyleSheet.create({
     height: 18,
     borderRadius: 4,
     borderWidth: 1.5,
-    borderColor: "#D1D5DB",
     alignItems: "center",
     justifyContent: "center",
   },
   subtitleOptionText: {
     fontSize: 12,
-    color: "#374151",
   },
 
   // Score explanation section
@@ -1497,11 +1470,9 @@ const styles = StyleSheet.create({
   scoreExplainerTitle: {
     fontSize: 12,
     fontWeight: "600" as const,
-    color: "#374151",
   },
   scoreExplainerText: {
     fontSize: 11,
-    color: "#6B7280",
     lineHeight: 16,
   },
   colorLegendRow: {
@@ -1517,7 +1488,6 @@ const styles = StyleSheet.create({
   },
   colorLegendText: {
     fontSize: 11,
-    color: "#6B7280",
     marginRight: 6,
   },
 
@@ -1527,11 +1497,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: 6,
     paddingHorizontal: 8,
-    backgroundColor: "#F9FAFB",
     borderRadius: 6,
     gap: 6,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
   },
   alertCardInfo: {
     flex: 1,
@@ -1540,11 +1508,9 @@ const styles = StyleSheet.create({
   alertCardLabel: {
     fontSize: 12,
     fontWeight: "500" as const,
-    color: "#374151",
   },
   alertCardDetail: {
     fontSize: 10,
-    color: "#9CA3AF",
   },
   alertPickerScroll: {
     maxHeight: 36,

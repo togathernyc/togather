@@ -23,6 +23,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@providers/AuthProvider";
 import { AppImage } from "@components/ui";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 import { getGroupTypeColorScheme } from "../../../constants/groupTypes";
 import type { Id } from "@services/api/convex";
 import { useAwaitPrefetch, useTriggerPrefetch } from "../hooks/usePrefetchChannel";
@@ -112,6 +113,7 @@ function GroupedInboxItemInner({
 }: GroupedInboxItemProps) {
   const router = useRouter();
   const { user } = useAuth();
+  const { colors, isDark } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const isDesktopWeb = useIsDesktopWeb();
   const userId = user?.id as Id<"users"> | undefined;
@@ -266,9 +268,10 @@ function GroupedInboxItemInner({
         onPress={() => handleChannelPress(primaryChannel)}
         style={({ pressed }) => [
           styles.groupItem,
-          hasUnread && styles.groupItemUnread,
-          pressed && styles.groupItemPressed,
-          isActive && styles.groupItemActive,
+          { backgroundColor: colors.surface },
+          hasUnread && { backgroundColor: isDark ? colors.surfaceSecondary : "#F0F7FF" },
+          pressed && { backgroundColor: colors.surfaceSecondary },
+          isActive && { backgroundColor: colors.surfaceSecondary },
         ]}
       >
         {/* Avatar */}
@@ -280,11 +283,11 @@ function GroupedInboxItemInner({
             placeholder={{
               type: "initials",
               name: group.name,
-              backgroundColor: "#E5E5E5",
+              backgroundColor: isDark ? "#333" : "#E5E5E5",
             }}
           />
           {isLeader && (
-            <View style={[styles.leaderBadge, { backgroundColor: primaryColor }]}>
+            <View style={[styles.leaderBadge, { backgroundColor: primaryColor, borderColor: colors.surface }]}>
               <Ionicons name="shield" size={12} color="#fff" />
             </View>
           )}
@@ -294,7 +297,7 @@ function GroupedInboxItemInner({
         <View style={styles.groupContent}>
           {/* Top row: Name + Badge */}
           <View style={styles.topRow}>
-            <Text style={[styles.groupName, hasUnread && styles.groupNameUnread]} numberOfLines={1}>
+            <Text style={[styles.groupName, { color: colors.text }, hasUnread && styles.groupNameUnread]} numberOfLines={1}>
               {group.name}
             </Text>
             {primaryChannel.isShared && (
@@ -310,13 +313,13 @@ function GroupedInboxItemInner({
           {/* Bottom row: Last message preview */}
           <View style={styles.bottomRow}>
             <Text
-              style={[styles.lastMessage, hasUnread && styles.lastMessageUnread]}
+              style={[styles.lastMessage, { color: colors.textSecondary }, hasUnread && { fontWeight: "600", color: colors.text }]}
               numberOfLines={1}
             >
               {getMessagePreview(primaryChannel)}
             </Text>
             {primaryChannel.lastMessageAt && (
-              <Text style={[styles.timestamp, hasUnread && styles.timestampUnread]}>
+              <Text style={[styles.timestamp, { color: colors.textTertiary }, hasUnread && { color: colors.link, fontWeight: "600" }]}>
                 {formatRelativeTime(primaryChannel.lastMessageAt)}
               </Text>
             )}
@@ -353,7 +356,7 @@ function GroupedInboxItemInner({
   const mainHasUnread = mainChannel.unreadCount > 0;
 
   return (
-    <View style={styles.groupedContainer}>
+    <View style={[styles.groupedContainer, { backgroundColor: colors.surface }]}>
       {/* Main channel - renders like a full single-channel card */}
       <Pressable
         onPress={() => handleChannelPress(mainChannel)}
@@ -363,9 +366,10 @@ function GroupedInboxItemInner({
         onContextMenu={handleContextMenu}
         style={({ pressed }) => [
           styles.groupItem,
-          (mainHasUnread || totalUnread > 0) && styles.groupItemUnread,
-          pressed && styles.groupItemPressed,
-          isActiveGroup && activeChannelSlug === mainChannel.slug && styles.groupItemActive,
+          { backgroundColor: colors.surface },
+          (mainHasUnread || totalUnread > 0) && { backgroundColor: isDark ? colors.surfaceSecondary : "#F0F7FF" },
+          pressed && { backgroundColor: colors.surfaceSecondary },
+          isActiveGroup && activeChannelSlug === mainChannel.slug && { backgroundColor: colors.surfaceSecondary },
         ]}
       >
         {/* Avatar */}
@@ -377,11 +381,11 @@ function GroupedInboxItemInner({
             placeholder={{
               type: "initials",
               name: group.name,
-              backgroundColor: "#E5E5E5",
+              backgroundColor: isDark ? "#333" : "#E5E5E5",
             }}
           />
           {isLeader && (
-            <View style={[styles.leaderBadge, { backgroundColor: primaryColor }]}>
+            <View style={[styles.leaderBadge, { backgroundColor: primaryColor, borderColor: colors.surface }]}>
               <Ionicons name="shield" size={12} color="#fff" />
             </View>
           )}
@@ -391,7 +395,7 @@ function GroupedInboxItemInner({
         <View style={styles.groupContent}>
           {/* Top row: Name + Badge */}
           <View style={styles.topRow}>
-            <Text style={[styles.groupName, (mainHasUnread || totalUnread > 0) && styles.groupNameUnread]} numberOfLines={1}>
+            <Text style={[styles.groupName, { color: colors.text }, (mainHasUnread || totalUnread > 0) && styles.groupNameUnread]} numberOfLines={1}>
               {group.name}
             </Text>
             <View style={[styles.badge, { backgroundColor: badgeColors.bg }]}>
@@ -404,13 +408,13 @@ function GroupedInboxItemInner({
           {/* Bottom row: Last message preview */}
           <View style={styles.bottomRow}>
             <Text
-              style={[styles.lastMessage, mainHasUnread && styles.lastMessageUnread]}
+              style={[styles.lastMessage, { color: colors.textSecondary }, mainHasUnread && { fontWeight: "600", color: colors.text }]}
               numberOfLines={1}
             >
               {getMessagePreview(mainChannel)}
             </Text>
             {mainChannel.lastMessageAt && (
-              <Text style={[styles.timestamp, mainHasUnread && styles.timestampUnread]}>
+              <Text style={[styles.timestamp, { color: colors.textTertiary }, mainHasUnread && { color: colors.link, fontWeight: "600" }]}>
                 {formatRelativeTime(mainChannel.lastMessageAt)}
               </Text>
             )}
@@ -437,8 +441,8 @@ function GroupedInboxItemInner({
           <View key={channel._id} style={styles.subChannelContainer}>
             {/* L-shaped connector */}
             <View style={styles.connectorContainer}>
-              <View style={styles.connectorVertical} />
-              <View style={styles.connectorHorizontal} />
+              <View style={[styles.connectorVertical, { backgroundColor: colors.border }]} />
+              <View style={[styles.connectorHorizontal, { backgroundColor: colors.border }]} />
             </View>
 
             {/* Sub-channel card */}
@@ -446,23 +450,24 @@ function GroupedInboxItemInner({
               onPress={() => handleChannelPress(channel)}
               style={({ pressed }) => [
                 styles.subChannelCard,
-                hasUnread && styles.subChannelCardUnread,
-                pressed && styles.subChannelCardPressed,
-                isActiveGroup && activeChannelSlug === channel.slug && styles.subChannelCardActive,
+                { backgroundColor: colors.surfaceSecondary, borderColor: "transparent" },
+                hasUnread && { backgroundColor: isDark ? colors.surfaceSecondary : "#EBF3FF", borderColor: isDark ? colors.border : "#D0E2FF" },
+                pressed && { backgroundColor: isDark ? colors.border : "#E8E8E8" },
+                isActiveGroup && activeChannelSlug === channel.slug && { backgroundColor: isDark ? colors.border : "#E8E8E8" },
               ]}
             >
               {channel.isShared && (
                 <Ionicons name="link" size={12} color="#8B5CF6" style={styles.subChannelSharedIcon} />
               )}
-              <Text style={[styles.subChannelName, hasUnread && styles.subChannelNameUnread]}>{channel.name}</Text>
+              <Text style={[styles.subChannelName, { color: colors.text }, hasUnread && styles.subChannelNameUnread]}>{channel.name}</Text>
               <Text
-                style={[styles.subChannelPreview, hasUnread && styles.subChannelPreviewUnread]}
+                style={[styles.subChannelPreview, { color: colors.textSecondary }, hasUnread && { fontWeight: "500", color: colors.text }]}
                 numberOfLines={1}
               >
                 {getMessagePreview(channel)}
               </Text>
               {channel.lastMessageAt && (
-                <Text style={[styles.subChannelTimestamp, hasUnread && styles.subChannelTimestampUnread]}>
+                <Text style={[styles.subChannelTimestamp, { color: colors.textTertiary }, hasUnread && { color: colors.link, fontWeight: "600" }]}>
                   {formatRelativeTime(channel.lastMessageAt)}
                 </Text>
               )}
@@ -492,16 +497,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: "#fff",
-  },
-  groupItemUnread: {
-    backgroundColor: "#F0F7FF",
-  },
-  groupItemPressed: {
-    backgroundColor: "#F5F5F5",
-  },
-  groupItemActive: {
-    backgroundColor: "#F0F0F0",
   },
   avatarContainer: {
     position: "relative",
@@ -522,7 +517,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     borderWidth: 2,
-    borderColor: "#fff",
   },
   groupContent: {
     flex: 1,
@@ -536,7 +530,6 @@ const styles = StyleSheet.create({
   groupName: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#000",
     flex: 1,
     marginRight: 8,
   },
@@ -559,21 +552,11 @@ const styles = StyleSheet.create({
   },
   lastMessage: {
     fontSize: 14,
-    color: "#666",
     flex: 1,
     marginRight: 8,
   },
-  lastMessageUnread: {
-    fontWeight: "600",
-    color: "#000",
-  },
   timestamp: {
     fontSize: 12,
-    color: "#999",
-  },
-  timestampUnread: {
-    color: "#007AFF",
-    fontWeight: "600",
   },
   unreadBadgeCount: {
     minWidth: 22,
@@ -595,7 +578,6 @@ const styles = StyleSheet.create({
 
   // Grouped styles (multiple channels)
   groupedContainer: {
-    backgroundColor: "#fff",
   },
   groupedRow: {
     flexDirection: "row",
@@ -613,7 +595,6 @@ const styles = StyleSheet.create({
   groupHeaderName: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#000",
     marginRight: 8,
     flexShrink: 1,
   },
@@ -638,30 +619,19 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: 6,
   },
-  channelRowPressed: {
-    backgroundColor: "#F5F5F5",
-  },
   channelText: {
     flex: 1,
     fontSize: 13,
-    color: "#666",
-  },
-  channelTextUnread: {
-    color: "#333",
   },
   channelName: {
     fontWeight: "500",
-    color: "#444",
   },
   channelSeparator: {
-    color: "#999",
   },
   channelPreview: {
-    color: "#666",
   },
   channelTimestamp: {
     fontSize: 11,
-    color: "#999",
     marginLeft: 6,
   },
   channelUnreadDot: {
@@ -688,7 +658,6 @@ const styles = StyleSheet.create({
     top: 0,
     width: 1.5,
     height: 20,
-    backgroundColor: "#D1D5DB",
   },
   connectorHorizontal: {
     position: "absolute",
@@ -696,13 +665,11 @@ const styles = StyleSheet.create({
     top: 20,
     width: 12,
     height: 1.5,
-    backgroundColor: "#D1D5DB",
   },
   subChannelCard: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#F5F5F5",
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 10,
@@ -710,45 +677,22 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     marginTop: 4,
     borderWidth: 1,
-    borderColor: "transparent",
-  },
-  subChannelCardUnread: {
-    backgroundColor: "#EBF3FF",
-    borderColor: "#D0E2FF",
-  },
-  subChannelCardPressed: {
-    backgroundColor: "#E8E8E8",
-  },
-  subChannelCardActive: {
-    backgroundColor: "#E8E8E8",
   },
   subChannelName: {
     fontSize: 13,
     fontWeight: "600",
-    color: "#374151",
     marginRight: 8,
   },
   subChannelNameUnread: {
     fontWeight: "700",
-    color: "#1F2937",
   },
   subChannelPreview: {
     flex: 1,
     fontSize: 13,
-    color: "#6B7280",
-  },
-  subChannelPreviewUnread: {
-    fontWeight: "500",
-    color: "#374151",
   },
   subChannelTimestamp: {
     fontSize: 11,
-    color: "#9CA3AF",
     marginLeft: 8,
-  },
-  subChannelTimestampUnread: {
-    color: "#007AFF",
-    fontWeight: "600",
   },
   subChannelUnreadBadge: {
     minWidth: 20,

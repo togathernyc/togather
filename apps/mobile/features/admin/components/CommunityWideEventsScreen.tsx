@@ -23,6 +23,7 @@ import { format, isPast } from "date-fns";
 import { useQuery, useAuthenticatedMutation, api, Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 import { DEFAULT_PRIMARY_COLOR } from "../../../utils/styles";
 import { formatError } from "@/utils/error-handling";
 
@@ -54,6 +55,7 @@ export function CommunityWideEventsScreen() {
   const router = useRouter();
   const { community, token } = useAuth();
   const { primaryColor } = useCommunityTheme();
+  const { colors } = useTheme();
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
 
@@ -162,7 +164,7 @@ export function CommunityWideEventsScreen() {
     return (
       <View style={styles.centerContainer}>
         <ActivityIndicator size="large" color={primaryColor} />
-        <Text style={styles.loadingText}>Loading events...</Text>
+        <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading events...</Text>
       </View>
     );
   }
@@ -170,11 +172,11 @@ export function CommunityWideEventsScreen() {
   const isEmpty = upcomingEvents.length === 0 && pastEvents.length === 0;
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
+    <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.surfaceSecondary }]}>
       {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Community-Wide Events</Text>
-        <Text style={styles.headerSubtitle}>
+      <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>Community-Wide Events</Text>
+        <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>
           {isEmpty
             ? "No events created yet"
             : `${upcomingEvents.length} upcoming, ${pastEvents.length} past`}
@@ -184,8 +186,8 @@ export function CommunityWideEventsScreen() {
       {isEmpty ? (
         <View style={styles.emptyContainer}>
           <Ionicons name="calendar-outline" size={64} color={primaryColor} />
-          <Text style={styles.emptyTitle}>No Events Yet</Text>
-          <Text style={styles.emptySubtitle}>
+          <Text style={[styles.emptyTitle, { color: colors.text }]}>No Events Yet</Text>
+          <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
             Community-wide events you create will appear here. These events automatically create meetings across all groups of a specific type.
           </Text>
         </View>
@@ -200,7 +202,7 @@ export function CommunityWideEventsScreen() {
           {/* Upcoming Events Section */}
           {upcomingEvents.length > 0 && (
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Upcoming</Text>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Upcoming</Text>
               {upcomingEvents.map((event) => (
                 <EventCard
                   key={String(event.id)}
@@ -218,7 +220,7 @@ export function CommunityWideEventsScreen() {
           {/* Past Events Section */}
           {pastEvents.length > 0 && (
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Past & Cancelled</Text>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Past & Cancelled</Text>
               {pastEvents.map((event) => (
                 <EventCard
                   key={String(event.id)}
@@ -258,35 +260,36 @@ function EventCard({
   primaryColor,
   isCancelling,
 }: EventCardProps) {
+  const { colors } = useTheme();
   const isCancelled = event.status === "cancelled";
   const isPastEvent = isPast(new Date(event.scheduledAt));
   const canTakeAction = !isCancelled && !isPastEvent;
 
   return (
-    <View style={[styles.eventCard, isCancelled && styles.eventCardCancelled]}>
+    <View style={[styles.eventCard, { backgroundColor: colors.surface }, isCancelled && styles.eventCardCancelled]}>
       {/* Event Header */}
       <View style={styles.eventHeader}>
         <View style={styles.eventTitleRow}>
-          <Text style={[styles.eventTitle, isCancelled && styles.eventTitleCancelled]}>
+          <Text style={[styles.eventTitle, { color: colors.text }, isCancelled && [styles.eventTitleCancelled, { color: colors.textTertiary }]]}>
             {event.title}
           </Text>
           <StatusBadge status={event.status} isPast={isPastEvent} />
         </View>
-        <Text style={styles.eventDateTime}>{formatDateTime(event.scheduledAt)}</Text>
+        <Text style={[styles.eventDateTime, { color: colors.textSecondary }]}>{formatDateTime(event.scheduledAt)}</Text>
       </View>
 
       {/* Event Details */}
-      <View style={styles.eventDetails}>
+      <View style={[styles.eventDetails, { borderTopColor: colors.borderLight }]}>
         <View style={styles.eventDetailRow}>
-          <Ionicons name="folder-outline" size={16} color="#666" />
-          <Text style={styles.eventDetailText}>{event.groupTypeName}</Text>
+          <Ionicons name="folder-outline" size={16} color={colors.textSecondary} />
+          <Text style={[styles.eventDetailText, { color: colors.textSecondary }]}>{event.groupTypeName}</Text>
         </View>
         <View style={styles.eventDetailRow}>
-          <Ionicons name="people-outline" size={16} color="#666" />
-          <Text style={styles.eventDetailText}>
+          <Ionicons name="people-outline" size={16} color={colors.textSecondary} />
+          <Text style={[styles.eventDetailText, { color: colors.textSecondary }]}>
             {event.totalMeetings} group{event.totalMeetings !== 1 ? "s" : ""}
             {event.overriddenMeetings > 0 && (
-              <Text style={styles.overriddenText}>
+              <Text style={[styles.overriddenText, { color: colors.warning }]}>
                 {" "}({event.overriddenMeetings} overridden)
               </Text>
             )}
@@ -294,8 +297,8 @@ function EventCard({
         </View>
         {event.meetingType === 2 && event.meetingLink && (
           <View style={styles.eventDetailRow}>
-            <Ionicons name="videocam-outline" size={16} color="#666" />
-            <Text style={styles.eventDetailText} numberOfLines={1}>
+            <Ionicons name="videocam-outline" size={16} color={colors.textSecondary} />
+            <Text style={[styles.eventDetailText, { color: colors.textSecondary }]} numberOfLines={1}>
               Online meeting
             </Text>
           </View>
@@ -304,7 +307,7 @@ function EventCard({
 
       {/* Actions */}
       {canTakeAction && (
-        <View style={styles.eventActions}>
+        <View style={[styles.eventActions, { borderTopColor: colors.borderLight }]}>
           <TouchableOpacity
             style={[styles.actionButton, { borderColor: primaryColor }]}
             onPress={() => onEdit(event)}
@@ -352,7 +355,6 @@ function StatusBadge({ status, isPast }: { status: string; isPast: boolean }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f5f5f5",
   },
   centerContainer: {
     flex: 1,
@@ -363,7 +365,6 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 12,
     fontSize: 16,
-    color: "#666",
   },
   errorText: {
     marginTop: 12,
@@ -383,18 +384,14 @@ const styles = StyleSheet.create({
   },
   header: {
     padding: 20,
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   headerTitle: {
     fontSize: 24,
     fontWeight: "bold",
-    color: "#333",
   },
   headerSubtitle: {
     fontSize: 14,
-    color: "#666",
     marginTop: 4,
   },
   emptyContainer: {
@@ -406,12 +403,10 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 20,
     fontWeight: "600",
-    color: "#333",
     marginTop: 16,
   },
   emptySubtitle: {
     fontSize: 14,
-    color: "#666",
     textAlign: "center",
     marginTop: 8,
     lineHeight: 20,
@@ -429,12 +424,10 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 12,
     paddingHorizontal: 4,
   },
   eventCard: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,
@@ -465,23 +458,19 @@ const styles = StyleSheet.create({
   eventTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     flex: 1,
   },
   eventTitleCancelled: {
     textDecorationLine: "line-through",
-    color: "#999",
   },
   eventDateTime: {
     fontSize: 14,
-    color: "#666",
     marginTop: 4,
   },
   eventDetails: {
     gap: 8,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: "#f0f0f0",
   },
   eventDetailRow: {
     flexDirection: "row",
@@ -490,10 +479,8 @@ const styles = StyleSheet.create({
   },
   eventDetailText: {
     fontSize: 14,
-    color: "#666",
   },
   overriddenText: {
-    color: "#FF9800",
     fontStyle: "italic",
   },
   eventActions: {
@@ -502,7 +489,6 @@ const styles = StyleSheet.create({
     marginTop: 16,
     paddingTop: 16,
     borderTopWidth: 1,
-    borderTopColor: "#f0f0f0",
   },
   actionButton: {
     flexDirection: "row",

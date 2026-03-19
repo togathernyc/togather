@@ -13,6 +13,7 @@ import {
 import { Picker } from "@react-native-picker/picker";
 import { Ionicons } from "@expo/vector-icons";
 import Papa from "papaparse";
+import { useTheme } from "@hooks/useTheme";
 import { api, Id, useAuthenticatedMutation, useAuthenticatedQuery } from "@services/api/convex";
 import type {
   CsvImportCustomFieldDef,
@@ -93,6 +94,7 @@ function getErrorMessage(error: unknown): string {
 }
 
 export function FollowupCsvImportModal({ visible, groupId, onClose, onImported }: Props) {
+  const { colors, isDark } = useTheme();
   const previewImport = useAuthenticatedMutation(api.functions.memberFollowups.previewCsvImport);
   const applyImport = useAuthenticatedMutation(api.functions.memberFollowups.applyCsvImport);
   const followupConfig = useAuthenticatedQuery(
@@ -336,43 +338,43 @@ export function FollowupCsvImportModal({ visible, groupId, onClose, onImported }
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={styles.backdrop}>
-        <View style={styles.modalCard}>
-          <View style={styles.headerRow}>
-            <Text style={styles.title}>Import People from CSV</Text>
+      <View style={[styles.backdrop, { backgroundColor: colors.overlay }]}>
+        <View style={[styles.modalCard, { backgroundColor: colors.modalBackground }]}>
+          <View style={[styles.headerRow, { borderBottomColor: colors.border }]}>
+            <Text style={[styles.title, { color: colors.text }]}>Import People from CSV</Text>
             <TouchableOpacity onPress={onClose} style={styles.iconButton}>
-              <Ionicons name="close" size={18} color="#4B5563" />
+              <Ionicons name="close" size={18} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
 
           <ScrollView contentContainerStyle={styles.content}>
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>1) Upload CSV</Text>
-              <TouchableOpacity style={styles.primaryOutlineButton} onPress={handleSelectCsv}>
-                <Ionicons name="cloud-upload-outline" size={14} color="#2563EB" />
-                <Text style={styles.primaryOutlineButtonText}>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>1) Upload CSV</Text>
+              <TouchableOpacity style={[styles.primaryOutlineButton, { borderColor: colors.link }]} onPress={handleSelectCsv}>
+                <Ionicons name="cloud-upload-outline" size={14} color={colors.link} />
+                <Text style={[styles.primaryOutlineButtonText, { color: colors.link }]}>
                   {fileName ? "Replace file" : "Choose CSV file"}
                 </Text>
               </TouchableOpacity>
-              {isParsing ? <ActivityIndicator size="small" color="#2563EB" /> : null}
-              {fileName ? <Text style={styles.mutedText}>{fileName}</Text> : null}
+              {isParsing ? <ActivityIndicator size="small" color={colors.link} /> : null}
+              {fileName ? <Text style={[styles.mutedText, { color: colors.textTertiary }]}>{fileName}</Text> : null}
               {sourceRows.length > 0 ? (
-                <Text style={styles.mutedText}>
+                <Text style={[styles.mutedText, { color: colors.textTertiary }]}>
                   {sourceRows.length} data rows detected
                 </Text>
               ) : null}
-              {parseError ? <Text style={styles.errorText}>{parseError}</Text> : null}
+              {parseError ? <Text style={[styles.errorText, { color: colors.error }]}>{parseError}</Text> : null}
             </View>
 
             {headers.length > 0 && (
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>2) Match columns + choose fields</Text>
+                <Text style={[styles.sectionTitle, { color: colors.text }]}>2) Match columns + choose fields</Text>
                 {FIELD_ORDER.map((field) => {
                   const selected = selectedFields.has(field.key);
                   const required = !!field.required;
                   const selectedValue = mapping[field.key] ?? "__none__";
                   return (
-                    <View key={field.key} style={styles.fieldRow}>
+                    <View key={field.key} style={[styles.fieldRow, { borderColor: colors.border }]}>
                       <View style={styles.fieldRowTop}>
                         <TouchableOpacity
                           onPress={() => handleToggleField(field.key)}
@@ -382,15 +384,15 @@ export function FollowupCsvImportModal({ visible, groupId, onClose, onImported }
                           <Ionicons
                             name={selected ? "checkbox" : "square-outline"}
                             size={18}
-                            color={required || selected ? "#2563EB" : "#9CA3AF"}
+                            color={required || selected ? colors.link : colors.iconSecondary}
                           />
                         </TouchableOpacity>
-                        <Text style={styles.fieldLabel}>
+                        <Text style={[styles.fieldLabel, { color: colors.text }]}>
                           {field.label}
                           {required ? " (required)" : ""}
                         </Text>
                       </View>
-                      <View style={styles.pickerWrap}>
+                      <View style={[styles.pickerWrap, { borderColor: colors.border }]}>
                         <Picker
                           selectedValue={selectedValue}
                           onValueChange={(value) =>
@@ -409,12 +411,12 @@ export function FollowupCsvImportModal({ visible, groupId, onClose, onImported }
                 })}
                 {customFields.length > 0 && (
                   <View style={styles.customFieldsSection}>
-                    <Text style={styles.customFieldsTitle}>Community custom columns</Text>
+                    <Text style={[styles.customFieldsTitle, { color: colors.text }]}>Community custom columns</Text>
                     {customFields.map((field) => {
                       const selected = selectedCustomSlots.has(field.slot);
                       const selectedValue = customFieldMapping[field.slot] ?? "__none__";
                       return (
-                        <View key={field.slot} style={styles.fieldRow}>
+                        <View key={field.slot} style={[styles.fieldRow, { borderColor: colors.border }]}>
                           <View style={styles.fieldRowTop}>
                             <TouchableOpacity
                               onPress={() => handleToggleCustomField(field.slot)}
@@ -423,14 +425,14 @@ export function FollowupCsvImportModal({ visible, groupId, onClose, onImported }
                               <Ionicons
                                 name={selected ? "checkbox" : "square-outline"}
                                 size={18}
-                                color={selected ? "#2563EB" : "#9CA3AF"}
+                                color={selected ? colors.link : colors.iconSecondary}
                               />
                             </TouchableOpacity>
-                            <Text style={styles.fieldLabel}>
+                            <Text style={[styles.fieldLabel, { color: colors.text }]}>
                               {field.name} ({field.type})
                             </Text>
                           </View>
-                          <View style={styles.pickerWrap}>
+                          <View style={[styles.pickerWrap, { borderColor: colors.border }]}>
                             <Picker
                               selectedValue={selectedValue}
                               onValueChange={(value) =>
@@ -456,40 +458,40 @@ export function FollowupCsvImportModal({ visible, groupId, onClose, onImported }
             )}
 
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>3) Dry run preview</Text>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>3) Dry run preview</Text>
               <TouchableOpacity
-                style={[styles.primaryButton, (!canPreview || isPreviewing) && styles.disabledButton]}
+                style={[styles.primaryButton, { backgroundColor: colors.buttonPrimary }, (!canPreview || isPreviewing) && styles.disabledButton]}
                 onPress={handleRunPreview}
                 disabled={!canPreview || isPreviewing}
               >
                 {isPreviewing ? (
-                  <ActivityIndicator size="small" color="#fff" />
+                  <ActivityIndicator size="small" color={colors.textInverse} />
                 ) : (
-                  <Text style={styles.primaryButtonText}>Preview import</Text>
+                  <Text style={[styles.primaryButtonText, { color: colors.buttonPrimaryText }]}>Preview import</Text>
                 )}
               </TouchableOpacity>
             </View>
 
             {previewResult && (
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Preview summary</Text>
+                <Text style={[styles.sectionTitle, { color: colors.text }]}>Preview summary</Text>
                 <View style={styles.summaryGrid}>
-                  <Text style={styles.summaryItem}>Ready: {previewResult.summary.readyRows}</Text>
-                  <Text style={styles.summaryItem}>Skipped: {previewResult.summary.skippedRows}</Text>
-                  <Text style={styles.summaryItem}>Create users: {previewResult.summary.usersToCreate}</Text>
-                  <Text style={styles.summaryItem}>Update users: {previewResult.summary.usersToUpdate}</Text>
-                  <Text style={styles.summaryItem}>Add to community: {previewResult.summary.communityAdds}</Text>
-                  <Text style={styles.summaryItem}>Add to group: {previewResult.summary.groupAdds}</Text>
-                  <Text style={styles.summaryItem}>Records created: {previewResult.summary.followupCreates}</Text>
-                  <Text style={styles.summaryItem}>Notes append/create: {previewResult.summary.notesAppends + previewResult.summary.notesCreates}</Text>
-                  <Text style={styles.summaryItem}>Custom field updates: {previewResult.summary.customFieldUpdates}</Text>
+                  <Text style={[styles.summaryItem, { color: colors.textSecondary, backgroundColor: colors.surfaceSecondary }]}>Ready: {previewResult.summary.readyRows}</Text>
+                  <Text style={[styles.summaryItem, { color: colors.textSecondary, backgroundColor: colors.surfaceSecondary }]}>Skipped: {previewResult.summary.skippedRows}</Text>
+                  <Text style={[styles.summaryItem, { color: colors.textSecondary, backgroundColor: colors.surfaceSecondary }]}>Create users: {previewResult.summary.usersToCreate}</Text>
+                  <Text style={[styles.summaryItem, { color: colors.textSecondary, backgroundColor: colors.surfaceSecondary }]}>Update users: {previewResult.summary.usersToUpdate}</Text>
+                  <Text style={[styles.summaryItem, { color: colors.textSecondary, backgroundColor: colors.surfaceSecondary }]}>Add to community: {previewResult.summary.communityAdds}</Text>
+                  <Text style={[styles.summaryItem, { color: colors.textSecondary, backgroundColor: colors.surfaceSecondary }]}>Add to group: {previewResult.summary.groupAdds}</Text>
+                  <Text style={[styles.summaryItem, { color: colors.textSecondary, backgroundColor: colors.surfaceSecondary }]}>Records created: {previewResult.summary.followupCreates}</Text>
+                  <Text style={[styles.summaryItem, { color: colors.textSecondary, backgroundColor: colors.surfaceSecondary }]}>Notes append/create: {previewResult.summary.notesAppends + previewResult.summary.notesCreates}</Text>
+                  <Text style={[styles.summaryItem, { color: colors.textSecondary, backgroundColor: colors.surfaceSecondary }]}>Custom field updates: {previewResult.summary.customFieldUpdates}</Text>
                 </View>
 
                 {skippedRows.length > 0 && (
-                  <View style={styles.skippedWrap}>
-                    <Text style={styles.skippedTitle}>Skipped rows (first 20)</Text>
+                  <View style={[styles.skippedWrap, { borderColor: isDark ? colors.destructive : '#FCA5A5', backgroundColor: isDark ? colors.surfaceSecondary : '#FEF2F2' }]}>
+                    <Text style={[styles.skippedTitle, { color: colors.destructive }]}>Skipped rows (first 20)</Text>
                     {skippedRows.map((row) => (
-                      <Text key={row.rowNumber} style={styles.skippedRowText}>
+                      <Text key={row.rowNumber} style={[styles.skippedRowText, { color: colors.destructive }]}>
                         Row {row.rowNumber}: {row.reasons.join(", ")}
                       </Text>
                     ))}
@@ -499,13 +501,14 @@ export function FollowupCsvImportModal({ visible, groupId, onClose, onImported }
             )}
           </ScrollView>
 
-          <View style={styles.footerRow}>
-            <TouchableOpacity style={styles.secondaryButton} onPress={onClose}>
-              <Text style={styles.secondaryButtonText}>Close</Text>
+          <View style={[styles.footerRow, { borderTopColor: colors.border }]}>
+            <TouchableOpacity style={[styles.secondaryButton, { borderColor: colors.border }]} onPress={onClose}>
+              <Text style={[styles.secondaryButtonText, { color: colors.text }]}>Close</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[
                 styles.primaryButton,
+                { backgroundColor: colors.buttonPrimary },
                 (isApplying || !previewResult || previewResult.summary.readyRows === 0) &&
                   styles.disabledButton,
               ]}
@@ -513,9 +516,9 @@ export function FollowupCsvImportModal({ visible, groupId, onClose, onImported }
               disabled={isApplying || !previewResult || previewResult.summary.readyRows === 0}
             >
               {isApplying ? (
-                <ActivityIndicator size="small" color="#fff" />
+                <ActivityIndicator size="small" color={colors.textInverse} />
               ) : (
-                <Text style={styles.primaryButtonText}>Import ready rows</Text>
+                <Text style={[styles.primaryButtonText, { color: colors.buttonPrimaryText }]}>Import ready rows</Text>
               )}
             </TouchableOpacity>
           </View>
@@ -528,7 +531,6 @@ export function FollowupCsvImportModal({ visible, groupId, onClose, onImported }
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: "rgba(15, 23, 42, 0.35)",
     justifyContent: "center",
     alignItems: "center",
     padding: 20,
@@ -537,7 +539,6 @@ const styles = StyleSheet.create({
     width: "100%",
     maxWidth: 860,
     maxHeight: "90%",
-    backgroundColor: "#fff",
     borderRadius: 12,
     overflow: "hidden",
   },
@@ -548,12 +549,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#E5E7EB",
   },
   title: {
     fontSize: 16,
     fontWeight: "700",
-    color: "#111827",
   },
   iconButton: {
     padding: 6,
@@ -572,12 +571,10 @@ const styles = StyleSheet.create({
   customFieldsTitle: {
     fontSize: 12,
     fontWeight: "700",
-    color: "#1F2937",
   },
   sectionTitle: {
     fontSize: 13,
     fontWeight: "700",
-    color: "#111827",
   },
   primaryOutlineButton: {
     flexDirection: "row",
@@ -585,27 +582,22 @@ const styles = StyleSheet.create({
     gap: 6,
     alignSelf: "flex-start",
     borderWidth: 1,
-    borderColor: "#2563EB",
     borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: 8,
   },
   primaryOutlineButtonText: {
-    color: "#2563EB",
     fontSize: 12,
     fontWeight: "600",
   },
   mutedText: {
     fontSize: 12,
-    color: "#6B7280",
   },
   errorText: {
-    color: "#B91C1C",
     fontSize: 12,
   },
   fieldRow: {
     borderWidth: 1,
-    borderColor: "#E5E7EB",
     borderRadius: 8,
     padding: 10,
     gap: 6,
@@ -620,17 +612,14 @@ const styles = StyleSheet.create({
   },
   fieldLabel: {
     fontSize: 12,
-    color: "#111827",
     fontWeight: "600",
   },
   pickerWrap: {
     borderWidth: 1,
-    borderColor: "#E5E7EB",
     borderRadius: 6,
     overflow: "hidden",
   },
   primaryButton: {
-    backgroundColor: "#2563EB",
     borderRadius: 8,
     paddingHorizontal: 14,
     paddingVertical: 10,
@@ -642,7 +631,6 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   primaryButtonText: {
-    color: "#fff",
     fontSize: 12,
     fontWeight: "700",
   },
@@ -653,16 +641,12 @@ const styles = StyleSheet.create({
   },
   summaryItem: {
     fontSize: 12,
-    color: "#374151",
-    backgroundColor: "#F3F4F6",
     borderRadius: 6,
     paddingHorizontal: 8,
     paddingVertical: 6,
   },
   skippedWrap: {
     borderWidth: 1,
-    borderColor: "#FCA5A5",
-    backgroundColor: "#FEF2F2",
     borderRadius: 8,
     padding: 10,
     gap: 4,
@@ -670,15 +654,12 @@ const styles = StyleSheet.create({
   skippedTitle: {
     fontSize: 12,
     fontWeight: "700",
-    color: "#991B1B",
   },
   skippedRowText: {
     fontSize: 12,
-    color: "#7F1D1D",
   },
   footerRow: {
     borderTopWidth: 1,
-    borderTopColor: "#E5E7EB",
     paddingHorizontal: 16,
     paddingVertical: 12,
     flexDirection: "row",
@@ -687,13 +668,11 @@ const styles = StyleSheet.create({
   },
   secondaryButton: {
     borderWidth: 1,
-    borderColor: "#D1D5DB",
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
   secondaryButtonText: {
-    color: "#374151",
     fontSize: 12,
     fontWeight: "600",
   },

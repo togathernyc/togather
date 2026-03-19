@@ -19,6 +19,7 @@ import type { Id } from "@services/api/convex";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
+import { useTheme } from "@hooks/useTheme";
 import { DOMAIN_CONFIG } from "@togather/shared";
 import * as Clipboard from "expo-clipboard";
 import { ResourceSection } from "@components/ui";
@@ -31,6 +32,7 @@ import type { RunSheet } from "@features/leader-tools/components/RunSheetScreen"
 // ============================================================================
 
 export default function ToolPageClient() {
+  const { colors } = useTheme();
   const { shortId } = useLocalSearchParams<{ shortId: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -135,9 +137,9 @@ export default function ToolPageClient() {
 
   if (isLoading) {
     return (
-      <SafeAreaView style={styles.loadingContainer}>
+      <SafeAreaView style={[styles.loadingContainer, { backgroundColor: colors.background }]}>
         <ActivityIndicator size="large" color={DEFAULT_PRIMARY_COLOR} />
-        <Text style={styles.loadingText}>Loading...</Text>
+        <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading...</Text>
       </SafeAreaView>
     );
   }
@@ -145,10 +147,10 @@ export default function ToolPageClient() {
   // Not found
   if (toolLink === null) {
     return (
-      <SafeAreaView style={styles.errorContainer}>
-        <Ionicons name="alert-circle-outline" size={64} color="#999" />
-        <Text style={styles.errorTitle}>Link Not Found</Text>
-        <Text style={styles.errorText}>
+      <SafeAreaView style={[styles.errorContainer, { backgroundColor: colors.background }]}>
+        <Ionicons name="alert-circle-outline" size={64} color={colors.textTertiary} />
+        <Text style={[styles.errorTitle, { color: colors.text }]}>Link Not Found</Text>
+        <Text style={[styles.errorText, { color: colors.textSecondary }]}>
           This tool link may have been removed or is invalid.
         </Text>
         <TouchableOpacity style={styles.backBtn} onPress={handleBack}>
@@ -170,24 +172,24 @@ export default function ToolPageClient() {
   // Run sheet uses RunSheetScreen directly (no outer ScrollView — it manages its own)
   if (toolLink.toolType === "runsheet") {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
         {/* Header */}
-        <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+        <View style={[styles.header, { paddingTop: insets.top + 8, backgroundColor: colors.surface, borderBottomColor: colors.surfaceSecondary }]}>
           {showBackButton ? (
             <TouchableOpacity style={styles.headerButton} onPress={handleBack}>
-              <Ionicons name="arrow-back" size={24} color="#000" />
+              <Ionicons name="arrow-back" size={24} color={colors.text} />
             </TouchableOpacity>
           ) : (
             <View style={{ width: 40 }} />
           )}
           <View style={styles.headerTitleContainer}>
-            <Ionicons name={getToolIcon()} size={18} color="#666" />
-            <Text style={styles.headerTitle} numberOfLines={1}>
+            <Ionicons name={getToolIcon()} size={18} color={colors.textSecondary} />
+            <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
               {getToolDisplayName()}
             </Text>
           </View>
           <TouchableOpacity style={styles.headerButton} onPress={handleShare}>
-            <Ionicons name="share-outline" size={24} color="#000" />
+            <Ionicons name="share-outline" size={24} color={colors.text} />
           </TouchableOpacity>
         </View>
 
@@ -195,19 +197,19 @@ export default function ToolPageClient() {
         {runSheetLoading ? (
           <View style={styles.contentLoading}>
             <ActivityIndicator size="large" color={DEFAULT_PRIMARY_COLOR} />
-            <Text style={styles.loadingText}>Loading run sheet...</Text>
+            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading run sheet...</Text>
           </View>
         ) : runSheetError ? (
           <View style={styles.contentError}>
-            <Ionicons name="alert-circle-outline" size={48} color="#e74c3c" />
-            <Text style={styles.errorTitle}>Failed to load</Text>
-            <Text style={styles.errorText}>{runSheetError}</Text>
+            <Ionicons name="alert-circle-outline" size={48} color={colors.error} />
+            <Text style={[styles.errorTitle, { color: colors.text }]}>Failed to load</Text>
+            <Text style={[styles.errorText, { color: colors.textSecondary }]}>{runSheetError}</Text>
           </View>
         ) : !runSheet ? (
           <View style={styles.contentError}>
-            <Ionicons name="calendar-outline" size={48} color="#999" />
-            <Text style={styles.errorTitle}>No upcoming plans</Text>
-            <Text style={styles.errorText}>
+            <Ionicons name="calendar-outline" size={48} color={colors.textTertiary} />
+            <Text style={[styles.errorTitle, { color: colors.text }]}>No upcoming plans</Text>
+            <Text style={[styles.errorText, { color: colors.textSecondary }]}>
               There are no scheduled services for this group.
             </Text>
           </View>
@@ -220,7 +222,7 @@ export default function ToolPageClient() {
 
   // Resource and other tool types use ScrollView wrapper
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={[
@@ -229,22 +231,22 @@ export default function ToolPageClient() {
         ]}
       >
         {/* Header */}
-        <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+        <View style={[styles.header, { paddingTop: insets.top + 8, backgroundColor: colors.surface, borderBottomColor: colors.surfaceSecondary }]}>
           {showBackButton ? (
             <TouchableOpacity style={styles.headerButton} onPress={handleBack}>
-              <Ionicons name="arrow-back" size={24} color="#000" />
+              <Ionicons name="arrow-back" size={24} color={colors.text} />
             </TouchableOpacity>
           ) : (
             <View style={{ width: 40 }} />
           )}
           <View style={styles.headerTitleContainer}>
-            <Ionicons name={getToolIcon()} size={18} color="#666" />
-            <Text style={styles.headerTitle} numberOfLines={1}>
+            <Ionicons name={getToolIcon()} size={18} color={colors.textSecondary} />
+            <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
               {getToolDisplayName()}
             </Text>
           </View>
           <TouchableOpacity style={styles.headerButton} onPress={handleShare}>
-            <Ionicons name="share-outline" size={24} color="#000" />
+            <Ionicons name="share-outline" size={24} color={colors.text} />
           </TouchableOpacity>
         </View>
 
@@ -260,7 +262,7 @@ export default function ToolPageClient() {
       return (
         <View style={styles.contentLoading}>
           <ActivityIndicator size="large" color={DEFAULT_PRIMARY_COLOR} />
-          <Text style={styles.loadingText}>Loading resource...</Text>
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading resource...</Text>
         </View>
       );
     }
@@ -268,9 +270,9 @@ export default function ToolPageClient() {
     if (resourceData === null) {
       return (
         <View style={styles.contentError}>
-          <Ionicons name="document-outline" size={48} color="#ccc" />
-          <Text style={styles.errorTitle}>Resource not found</Text>
-          <Text style={styles.errorText}>
+          <Ionicons name="document-outline" size={48} color={colors.iconSecondary} />
+          <Text style={[styles.errorTitle, { color: colors.text }]}>Resource not found</Text>
+          <Text style={[styles.errorText, { color: colors.textSecondary }]}>
             This resource may have been removed.
           </Text>
         </View>
@@ -289,10 +291,10 @@ export default function ToolPageClient() {
             <Ionicons
               name={resourceData.icon as keyof typeof Ionicons.glyphMap}
               size={28}
-              color="#333"
+              color={colors.text}
             />
           )}
-          <Text style={styles.resourceTitle}>{resourceData.title}</Text>
+          <Text style={[styles.resourceTitle, { color: colors.text }]}>{resourceData.title}</Text>
         </View>
 
         {/* Sections */}
@@ -302,8 +304,8 @@ export default function ToolPageClient() {
 
         {sortedSections.length === 0 && (
           <View style={styles.emptyContainer}>
-            <Ionicons name="document-text-outline" size={48} color="#ccc" />
-            <Text style={styles.emptyText}>No content yet</Text>
+            <Ionicons name="document-text-outline" size={48} color={colors.iconSecondary} />
+            <Text style={[styles.emptyText, { color: colors.textTertiary }]}>No content yet</Text>
           </View>
         )}
       </View>
@@ -318,7 +320,6 @@ export default function ToolPageClient() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
   },
   scrollView: {
     flex: 1,
@@ -330,29 +331,24 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#fff",
   },
   loadingText: {
     marginTop: 16,
     fontSize: 16,
-    color: "#666",
   },
   errorContainer: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#fff",
     padding: 24,
   },
   errorTitle: {
     fontSize: 20,
     fontWeight: "600",
     marginTop: 16,
-    color: "#333",
   },
   errorText: {
     fontSize: 16,
-    color: "#666",
     textAlign: "center",
     marginTop: 8,
   },
@@ -374,8 +370,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
-    backgroundColor: "#fff",
   },
   headerButton: {
     width: 40,
@@ -395,7 +389,6 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
   },
 
   // Content states
@@ -426,7 +419,6 @@ const styles = StyleSheet.create({
   resourceTitle: {
     fontSize: 24,
     fontWeight: "bold",
-    color: "#333",
     flex: 1,
   },
   emptyContainer: {
@@ -437,7 +429,6 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 16,
-    color: "#999",
     textAlign: "center",
   },
 });
