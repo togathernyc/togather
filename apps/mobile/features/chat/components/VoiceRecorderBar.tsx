@@ -73,10 +73,12 @@ export function VoiceRecorderBar({ onSend, onCancel }: VoiceRecorderBarProps) {
   }, [state, deleteRecording, onCancel]);
 
   const handleSend = useCallback(async () => {
-    await sendRecording(async (file) => {
+    const success = await sendRecording(async (file) => {
       await onSend(file);
     });
-    onCancel();
+    if (success) {
+      onCancel();
+    }
   }, [sendRecording, onSend, onCancel]);
 
   const handlePreviewPlayPause = useCallback(async () => {
@@ -146,6 +148,22 @@ export function VoiceRecorderBar({ onSend, onCancel }: VoiceRecorderBarProps) {
     if (state === 'idle') {
       startRecording();
     }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      const sound = soundRef.current;
+      if (sound) {
+        if (Platform.OS === 'web') {
+          const audio = sound as HTMLAudioElement;
+          audio.pause();
+          audio.src = '';
+        } else {
+          sound.unloadAsync?.().catch(() => {});
+        }
+        soundRef.current = null;
+      }
+    };
   }, []);
 
   useEffect(() => {

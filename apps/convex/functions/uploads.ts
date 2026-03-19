@@ -62,6 +62,7 @@ const ALLOWED_AUDIO_CONTENT_TYPES = [
   "audio/x-wav",
   "audio/m4a",
   "audio/x-m4a",
+  "audio/mp4",
   "audio/aac",
   "audio/webm",
 ];

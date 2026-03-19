@@ -45,12 +45,11 @@ export const FILE_TYPES: FileTypeInfo[] = [
   { extension: '.wav', mimeTypes: ['audio/wav', 'audio/x-wav'], category: 'audio', icon: 'musical-notes', label: 'WAV' },
   { extension: '.m4a', mimeTypes: ['audio/m4a', 'audio/x-m4a', 'audio/mp4'], category: 'audio', icon: 'musical-notes', label: 'M4A' },
   { extension: '.aac', mimeTypes: ['audio/aac'], category: 'audio', icon: 'musical-notes', label: 'AAC' },
-  { extension: '.webm', mimeTypes: ['audio/webm'], category: 'audio', icon: 'musical-notes', label: 'WebM' },
 
   // Video
   { extension: '.mp4', mimeTypes: ['video/mp4'], category: 'video', icon: 'videocam', label: 'MP4' },
   { extension: '.mov', mimeTypes: ['video/quicktime'], category: 'video', icon: 'videocam', label: 'MOV' },
-  { extension: '.webm', mimeTypes: ['video/webm'], category: 'video', icon: 'videocam', label: 'WebM' },
+  { extension: '.webm', mimeTypes: ['video/webm', 'audio/webm'], category: 'video', icon: 'videocam', label: 'WebM' },
 
   // Images (for reference, though images use the existing image upload flow)
   { extension: '.jpg', mimeTypes: ['image/jpeg'], category: 'image', icon: 'image', label: 'JPEG' },

@@ -32,7 +32,7 @@ export interface VoiceRecorderResult {
   resumeRecording: () => Promise<void>;
   stopRecording: () => Promise<void>;
   deleteRecording: () => void;
-  sendRecording: (onSend: (file: { uri: string; name: string; size: number; mimeType: string }) => Promise<void>) => Promise<void>;
+  sendRecording: (onSend: (file: { uri: string; name: string; size: number; mimeType: string }) => Promise<void>) => Promise<boolean>;
 }
 
 function useVoiceRecorderWeb(): VoiceRecorderResult {
@@ -206,8 +206,8 @@ function useVoiceRecorderWeb(): VoiceRecorderResult {
   }, [state, cleanup]);
 
   const sendRecording = useCallback(
-    async (onSend: (file: { uri: string; name: string; size: number; mimeType: string }) => Promise<void>) => {
-      if (!fileUri || state !== 'preview') return;
+    async (onSend: (file: { uri: string; name: string; size: number; mimeType: string }) => Promise<void>): Promise<boolean> => {
+      if (!fileUri || state !== 'preview') return false;
       setState('sending');
       try {
         const response = await fetch(fileUri);
@@ -219,10 +219,12 @@ function useVoiceRecorderWeb(): VoiceRecorderResult {
           mimeType: 'audio/webm',
         });
         deleteRecording();
+        return true;
       } catch (err) {
         console.error('[useVoiceRecorder] Send error:', err);
         setError(err instanceof Error ? err.message : 'Failed to send');
         setState('preview');
+        return false;
       }
     },
     [fileUri, state, deleteRecording]
@@ -497,8 +499,8 @@ function useVoiceRecorderNative(): VoiceRecorderResult {
   }, [state]);
 
   const sendRecording = useCallback(
-    async (onSend: (file: { uri: string; name: string; size: number; mimeType: string }) => Promise<void>) => {
-      if (!fileUri || state !== 'preview') return;
+    async (onSend: (file: { uri: string; name: string; size: number; mimeType: string }) => Promise<void>): Promise<boolean> => {
+      if (!fileUri || state !== 'preview') return false;
       setState('sending');
       try {
         let size = 0;
@@ -518,10 +520,12 @@ function useVoiceRecorderNative(): VoiceRecorderResult {
           mimeType: 'audio/mp4',
         });
         deleteRecording();
+        return true;
       } catch (err) {
         console.error('[useVoiceRecorder] Send error:', err);
         setError(err instanceof Error ? err.message : 'Failed to send');
         setState('preview');
+        return false;
       }
     },
     [fileUri, state, deleteRecording]
