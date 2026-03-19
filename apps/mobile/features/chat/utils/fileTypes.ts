@@ -227,29 +227,45 @@ let _audioVideoSupported: boolean | null = null;
 let _linearGradientSupported: boolean | null = null;
 
 /**
+ * Check if a native module is registered, supporting both architectures.
+ *
+ * Old architecture: modules register on the NativeModules bridge.
+ * New architecture (Fabric/TurboModules): modules register via
+ * expo-modules-core and are NOT on NativeModules. We use
+ * requireNativeModule() which throws if the module isn't linked.
+ */
+function hasNativeModule(moduleName: string): boolean {
+  // Legacy bridge check
+  if (NativeModules[moduleName]) {
+    return true;
+  }
+
+  // New architecture: try expo-modules-core's requireNativeModule
+  try {
+    const expoModulesCore = require('expo-modules-core');
+    expoModulesCore.requireNativeModule(moduleName);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Check if expo-document-picker is available
  *
  * This module is only available after a native build update.
  * Returns false for OTA updates where the module isn't installed.
- *
- * Uses NativeModules to safely check if the native module exists,
- * avoiding the Hermes crash from dynamic require() of missing modules.
  */
 export function isDocumentPickerSupported(): boolean {
   if (_documentPickerSupported !== null) {
     return _documentPickerSupported;
   }
 
-  // Check if the native module is registered
-  // expo-document-picker registers as "ExpoDocumentPicker"
-  const hasNativeModule = !!NativeModules.ExpoDocumentPicker;
-
-  if (!hasNativeModule) {
+  if (!hasNativeModule('ExpoDocumentPicker')) {
     _documentPickerSupported = false;
     return false;
   }
 
-  // Native module exists, now safe to require the JS module
   try {
     const DocumentPicker = require('expo-document-picker');
     _documentPickerSupported = !!DocumentPicker?.getDocumentAsync;
@@ -265,26 +281,19 @@ export function isDocumentPickerSupported(): boolean {
  *
  * This module is only available after a native build update.
  * Returns false for OTA updates where the module isn't installed.
- *
- * Uses NativeModules to safely check if the native module exists,
- * avoiding the Hermes crash from dynamic require() of missing modules.
  */
 export function isAudioVideoSupported(): boolean {
   if (_audioVideoSupported !== null) {
     return _audioVideoSupported;
   }
 
-  // Check if the native module is registered
-  // expo-av registers as "ExpoAV" on iOS and "ExponentAV" on Android
   const nativeModuleName = Platform.OS === 'ios' ? 'ExpoAV' : 'ExponentAV';
-  const hasNativeModule = !!NativeModules[nativeModuleName];
 
-  if (!hasNativeModule) {
+  if (!hasNativeModule(nativeModuleName)) {
     _audioVideoSupported = false;
     return false;
   }
 
-  // Native module exists, now safe to require the JS module
   try {
     const ExpoAV = require('expo-av');
     _audioVideoSupported = !!ExpoAV?.Audio && !!ExpoAV?.Video;
@@ -318,10 +327,7 @@ export function isLinearGradientSupported(): boolean {
     }
   }
 
-  // Check if the native module is registered
-  const hasNativeModule = !!NativeModules.ExpoLinearGradient;
-
-  if (!hasNativeModule) {
+  if (!hasNativeModule('ExpoLinearGradient')) {
     _linearGradientSupported = false;
     return false;
   }
