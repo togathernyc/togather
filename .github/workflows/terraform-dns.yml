@@ -1,16 +1,16 @@
 name: Terraform DNS
 
 # Uses CLOUDFLARE_API_TOKEN from GitHub environment secrets (production)
-# Token requires Zone:DNS:Edit and Zone:Zone:Read permissions
+# Token requires Zone:DNS:Edit, Zone:Zone:Read, and Workers R2 Storage:Edit permissions
 
 on:
   push:
     branches: [main]
     paths:
-      - 'infrastructure/cloudflare/**'
+      - 'ee/infrastructure/cloudflare/**'
   pull_request:
     paths:
-      - 'infrastructure/cloudflare/**'
+      - 'ee/infrastructure/cloudflare/**'
 
 # Ensure only one Terraform run at a time to prevent state conflicts
 concurrency:
@@ -24,7 +24,7 @@ jobs:
     environment: production
     defaults:
       run:
-        working-directory: infrastructure/cloudflare
+        working-directory: ee/infrastructure/cloudflare
 
     steps:
       - name: Checkout code
