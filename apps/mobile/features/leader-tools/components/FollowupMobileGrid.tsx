@@ -20,6 +20,7 @@ import {
   View,
 } from "react-native";
 import { useRouter } from "expo-router";
+import { useAuth } from "@providers/AuthProvider";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
@@ -227,6 +228,8 @@ export function FollowupMobileGrid({
 }) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { community } = useAuth();
+  const communityId = community?.id as Id<"communities"> | undefined;
   const { primaryColor } = useCommunityTheme();
 
   const [sortField, setSortField] = useState("score1");
@@ -471,19 +474,31 @@ export function FollowupMobileGrid({
   );
 
   const {
-    results: crossGroupRawMembers,
+    results: crossGroupRawMembersRaw,
     status: crossGroupPaginationStatus,
     loadMore: crossGroupLoadMore,
     isLoading: crossGroupIsLoading,
   } = useAuthenticatedPaginatedQuery(
-    api.functions.memberFollowups.listAssignedToMe,
-    crossGroupMode && !hasTextSearch
+    api.functions.communityPeople.listAssignedToMe,
+    crossGroupMode && !hasTextSearch && communityId
       ? {
+          communityId,
+          sortBy: serverSortBy,
+          sortDirection: serverSortDirection,
           ...listFilterArgs,
           ...crossGroupFilterArg,
         }
       : "skip",
     { initialNumItems: 50 },
+  );
+  const crossGroupRawMembers = useMemo(
+    () =>
+      crossGroupRawMembersRaw
+        ? applyDevZipCodeSample(
+            crossGroupRawMembersRaw.map((r: any) => adaptCommunityPerson(r)),
+          )
+        : [],
+    [crossGroupRawMembersRaw],
   );
 
   const rawMembers = crossGroupMode ? crossGroupRawMembers : perGroupRawMembers;
@@ -508,11 +523,12 @@ export function FollowupMobileGrid({
     [perGroupSearchResultsRaw],
   );
 
-  const crossGroupSearchResults = useAuthenticatedQuery(
-    api.functions.memberFollowups.searchAssignedToMe,
-    crossGroupMode && hasTextSearch
+  const crossGroupSearchResultsRaw = useAuthenticatedQuery(
+    api.functions.communityPeople.searchAssignedToMe,
+    crossGroupMode && hasTextSearch && communityId
       ? {
-          searchText: parsedQuery.searchText,
+          communityId,
+          searchTerm: parsedQuery.searchText,
           ...(parsedQuery.statusFilter
             ? { statusFilter: parsedQuery.statusFilter }
             : {}),
@@ -539,12 +555,34 @@ export function FollowupMobileGrid({
         }
       : "skip",
   );
+  const crossGroupSearchResults = useMemo(
+    () =>
+      crossGroupSearchResultsRaw
+        ? applyDevZipCodeSample(
+            crossGroupSearchResultsRaw.map((r: any) => adaptCommunityPerson(r)),
+          )
+        : undefined,
+    [crossGroupSearchResultsRaw],
+  );
 
   const searchResults = crossGroupMode ? crossGroupSearchResults : perGroupSearchResults;
 
   const totalCount = useAuthenticatedQuery(
-    api.functions.communityPeople.count,
-    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip",
+    crossGroupMode
+      ? api.functions.communityPeople.countAssignedToMe
+      : api.functions.communityPeople.count,
+    crossGroupMode
+      ? communityId
+        ? {
+            communityId,
+            ...(crossGroupFilter !== "all"
+              ? { groupFilter: crossGroupFilter as Id<"groups"> }
+              : {}),
+          }
+        : "skip"
+      : groupId
+        ? { groupId: groupId as Id<"groups"> }
+        : "skip",
   );
   const setAssigneeMut = useAuthenticatedMutation(
     api.functions.communityPeople.setAssignees,

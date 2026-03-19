@@ -421,8 +421,10 @@ export const upsertCommunityPeopleBatch = internalMutation({
       };
 
       if (existing) {
-        // Patch preserves custom fields, status, assigneeIds, connectionPoint
-        await ctx.db.patch(existing._id, scoreDoc);
+        // Patch preserves custom fields, status, assigneeIds, connectionPoint (not in scoreDoc)
+        // Keep assigneeId in sync with assigneeIds for indexing
+        const assigneeId = (existing as any).assigneeIds?.[0];
+        await ctx.db.patch(existing._id, { ...scoreDoc, assigneeId });
       } else {
         // Check if user has a record in another group — copy leader-set fields
         const siblingRecord = await ctx.db
@@ -432,11 +434,13 @@ export const upsertCommunityPeopleBatch = internalMutation({
           )
           .first();
 
+        const siblingAssigneeId = (siblingRecord as any)?.assigneeIds?.[0];
         await ctx.db.insert("communityPeople", {
           ...scoreDoc,
           // Copy leader-set fields from sibling if exists
           status: siblingRecord?.status,
           assigneeIds: siblingRecord?.assigneeIds,
+          assigneeId: siblingAssigneeId,
           assigneeSortKey: siblingRecord?.assigneeSortKey,
           connectionPoint: siblingRecord?.connectionPoint,
           customText1: siblingRecord?.customText1,
