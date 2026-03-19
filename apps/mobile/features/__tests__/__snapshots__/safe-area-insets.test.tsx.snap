@@ -219,10 +219,14 @@ exports[`Safe Area Insets Explore Screen matches snapshot for edge-to-edge layou
 exports[`Safe Area Insets Profile Screen adapts header padding to different safe area insets 1`] = `
 <RCTScrollView
   style={
-    {
-      "backgroundColor": "#f2f2f7",
-      "flex": 1,
-    }
+    [
+      {
+        "flex": 1,
+      },
+      {
+        "backgroundColor": "#f2f2f7",
+      },
+    ]
   }
 >
   <View>
@@ -230,12 +234,12 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
       style={
         [
           {
-            "backgroundColor": "#f2f2f7",
             "paddingBottom": 16,
             "paddingHorizontal": 20,
             "paddingTop": 16,
           },
           {
+            "backgroundColor": "#f2f2f7",
             "paddingTop": 16,
           },
         ]
@@ -243,11 +247,15 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
     >
       <Text
         style={
-          {
-            "color": "#1a1a1a",
-            "fontSize": 24,
-            "fontWeight": "bold",
-          }
+          [
+            {
+              "fontSize": 24,
+              "fontWeight": "bold",
+            },
+            {
+              "color": "#1a1a1a",
+            },
+          ]
         }
       >
         Profile
@@ -258,7 +266,6 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
       style={
         [
           {
-            "backgroundColor": "#fff",
             "borderRadius": 16,
             "elevation": 3,
             "shadowColor": "#000",
@@ -268,6 +275,9 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
             },
             "shadowOpacity": 0.1,
             "shadowRadius": 8,
+          },
+          {
+            "backgroundColor": "#ffffff",
           },
           {
             "marginHorizontal": 16,
@@ -315,10 +325,10 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
             style={
               [
                 {
-                  "color": "#fff",
                   "fontWeight": "600",
                 },
                 {
+                  "color": "#ffffff",
                   "fontSize": 32,
                 },
               ]
@@ -368,7 +378,6 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
       style={
         [
           {
-            "backgroundColor": "#fff",
             "borderRadius": 16,
             "elevation": 3,
             "shadowColor": "#000",
@@ -378,6 +387,9 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
             },
             "shadowOpacity": 0.1,
             "shadowRadius": 8,
+          },
+          {
+            "backgroundColor": "#ffffff",
           },
           {
             "marginHorizontal": 16,
@@ -610,7 +622,6 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
       style={
         [
           {
-            "backgroundColor": "#fff",
             "borderRadius": 16,
             "elevation": 3,
             "shadowColor": "#000",
@@ -620,6 +631,9 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
             },
             "shadowOpacity": 0.1,
             "shadowRadius": 8,
+          },
+          {
+            "backgroundColor": "#ffffff",
           },
           {
             "marginHorizontal": 16,
@@ -632,15 +646,19 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
     >
       <Text
         style={
-          {
-            "color": "#8e8e93",
-            "fontSize": 12,
-            "fontWeight": "600",
-            "letterSpacing": 0.5,
-            "marginBottom": 4,
-            "marginTop": 8,
-            "textTransform": "uppercase",
-          }
+          [
+            {
+              "fontSize": 12,
+              "fontWeight": "600",
+              "letterSpacing": 0.5,
+              "marginBottom": 4,
+              "marginTop": 8,
+              "textTransform": "uppercase",
+            },
+            {
+              "color": "#999999",
+            },
+          ]
         }
       >
         Developer Tools
@@ -676,7 +694,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
         style={
           {
             "alignItems": "center",
-            "borderBottomColor": "#e5e5e5",
+            "borderBottomColor": "#e0e0e0",
             "borderBottomWidth": 0.5,
             "flexDirection": "row",
             "opacity": 1,
@@ -686,15 +704,19 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
       >
         <View
           style={
-            {
-              "alignItems": "center",
-              "backgroundColor": "#f5f5f5",
-              "borderRadius": 8,
-              "height": 36,
-              "justifyContent": "center",
-              "marginRight": 14,
-              "width": 36,
-            }
+            [
+              {
+                "alignItems": "center",
+                "borderRadius": 8,
+                "height": 36,
+                "justifyContent": "center",
+                "marginRight": 14,
+                "width": 36,
+              },
+              {
+                "backgroundColor": "#f5f5f5",
+              },
+            ]
           }
         >
           <Text>
@@ -710,23 +732,31 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
         >
           <Text
             style={
-              {
-                "color": "#1a1a1a",
-                "flex": 1,
-                "fontSize": 16,
-                "fontWeight": "400",
-              }
+              [
+                {
+                  "flex": 1,
+                  "fontSize": 16,
+                  "fontWeight": "400",
+                },
+                {
+                  "color": "#1a1a1a",
+                },
+              ]
             }
           >
             Feature Flags
           </Text>
           <Text
             style={
-              {
-                "color": "#8e8e93",
-                "fontSize": 13,
-                "marginTop": 2,
-              }
+              [
+                {
+                  "fontSize": 13,
+                  "marginTop": 2,
+                },
+                {
+                  "color": "#999999",
+                },
+              ]
             }
           >
             View and override PostHog feature flags
@@ -767,7 +797,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
         style={
           {
             "alignItems": "center",
-            "borderBottomColor": "#e5e5e5",
+            "borderBottomColor": "#e0e0e0",
             "borderBottomWidth": 0.5,
             "flexDirection": "row",
             "opacity": 1,
@@ -777,15 +807,19 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
       >
         <View
           style={
-            {
-              "alignItems": "center",
-              "backgroundColor": "#f5f5f5",
-              "borderRadius": 8,
-              "height": 36,
-              "justifyContent": "center",
-              "marginRight": 14,
-              "width": 36,
-            }
+            [
+              {
+                "alignItems": "center",
+                "borderRadius": 8,
+                "height": 36,
+                "justifyContent": "center",
+                "marginRight": 14,
+                "width": 36,
+              },
+              {
+                "backgroundColor": "#f5f5f5",
+              },
+            ]
           }
         >
           <Text>
@@ -801,23 +835,31 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
         >
           <Text
             style={
-              {
-                "color": "#1a1a1a",
-                "flex": 1,
-                "fontSize": 16,
-                "fontWeight": "400",
-              }
+              [
+                {
+                  "flex": 1,
+                  "fontSize": 16,
+                  "fontWeight": "400",
+                },
+                {
+                  "color": "#1a1a1a",
+                },
+              ]
             }
           >
             Notification Tester
           </Text>
           <Text
             style={
-              {
-                "color": "#8e8e93",
-                "fontSize": 13,
-                "marginTop": 2,
-              }
+              [
+                {
+                  "fontSize": 13,
+                  "marginTop": 2,
+                },
+                {
+                  "color": "#999999",
+                },
+              ]
             }
           >
             Test push notifications and deep links
@@ -858,7 +900,110 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
         style={
           {
             "alignItems": "center",
-            "borderBottomColor": "#e5e5e5",
+            "borderBottomColor": "#e0e0e0",
+            "borderBottomWidth": 0.5,
+            "flexDirection": "row",
+            "opacity": 1,
+            "paddingVertical": 14,
+          }
+        }
+      >
+        <View
+          style={
+            [
+              {
+                "alignItems": "center",
+                "borderRadius": 8,
+                "height": 36,
+                "justifyContent": "center",
+                "marginRight": 14,
+                "width": 36,
+              },
+              {
+                "backgroundColor": "#f5f5f5",
+              },
+            ]
+          }
+        >
+          <Text>
+            color-palette-outline
+          </Text>
+        </View>
+        <View
+          style={
+            {
+              "flex": 1,
+            }
+          }
+        >
+          <Text
+            style={
+              [
+                {
+                  "flex": 1,
+                  "fontSize": 16,
+                  "fontWeight": "400",
+                },
+                {
+                  "color": "#1a1a1a",
+                },
+              ]
+            }
+          >
+            Theme Gallery
+          </Text>
+          <Text
+            style={
+              [
+                {
+                  "fontSize": 13,
+                  "marginTop": 2,
+                },
+                {
+                  "color": "#999999",
+                },
+              ]
+            }
+          >
+            Preview all components in light/dark mode
+          </Text>
+        </View>
+        <Text>
+          chevron-forward
+        </Text>
+      </View>
+      <View
+        accessibilityState={
+          {
+            "busy": undefined,
+            "checked": undefined,
+            "disabled": undefined,
+            "expanded": undefined,
+            "selected": undefined,
+          }
+        }
+        accessibilityValue={
+          {
+            "max": undefined,
+            "min": undefined,
+            "now": undefined,
+            "text": undefined,
+          }
+        }
+        accessible={true}
+        collapsable={false}
+        focusable={true}
+        onClick={[Function]}
+        onResponderGrant={[Function]}
+        onResponderMove={[Function]}
+        onResponderRelease={[Function]}
+        onResponderTerminate={[Function]}
+        onResponderTerminationRequest={[Function]}
+        onStartShouldSetResponder={[Function]}
+        style={
+          {
+            "alignItems": "center",
+            "borderBottomColor": "#e0e0e0",
             "borderBottomWidth": 0,
             "flexDirection": "row",
             "opacity": 1,
@@ -868,15 +1013,19 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
       >
         <View
           style={
-            {
-              "alignItems": "center",
-              "backgroundColor": "#f5f5f5",
-              "borderRadius": 8,
-              "height": 36,
-              "justifyContent": "center",
-              "marginRight": 14,
-              "width": 36,
-            }
+            [
+              {
+                "alignItems": "center",
+                "borderRadius": 8,
+                "height": 36,
+                "justifyContent": "center",
+                "marginRight": 14,
+                "width": 36,
+              },
+              {
+                "backgroundColor": "#f5f5f5",
+              },
+            ]
           }
         >
           <Text>
@@ -892,23 +1041,31 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
         >
           <Text
             style={
-              {
-                "color": "#1a1a1a",
-                "flex": 1,
-                "fontSize": 16,
-                "fontWeight": "400",
-              }
+              [
+                {
+                  "flex": 1,
+                  "fontSize": 16,
+                  "fontWeight": "400",
+                },
+                {
+                  "color": "#1a1a1a",
+                },
+              ]
             }
           >
             Task Reminder Tester
           </Text>
           <Text
             style={
-              {
-                "color": "#8e8e93",
-                "fontSize": 13,
-                "marginTop": 2,
-              }
+              [
+                {
+                  "fontSize": 13,
+                  "marginTop": 2,
+                },
+                {
+                  "color": "#999999",
+                },
+              ]
             }
           >
             Test task reminder bot with mentions
@@ -924,7 +1081,6 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
       style={
         [
           {
-            "backgroundColor": "#fff",
             "borderRadius": 16,
             "elevation": 3,
             "shadowColor": "#000",
@@ -934,6 +1090,9 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
             },
             "shadowOpacity": 0.1,
             "shadowRadius": 8,
+          },
+          {
+            "backgroundColor": "#ffffff",
           },
           {
             "marginHorizontal": 16,
@@ -975,7 +1134,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
         style={
           {
             "alignItems": "center",
-            "borderBottomColor": "#e5e5e5",
+            "borderBottomColor": "#e0e0e0",
             "borderBottomWidth": 0,
             "flexDirection": "row",
             "opacity": 1,
@@ -985,15 +1144,19 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
       >
         <View
           style={
-            {
-              "alignItems": "center",
-              "backgroundColor": "#f5f5f5",
-              "borderRadius": 8,
-              "height": 36,
-              "justifyContent": "center",
-              "marginRight": 14,
-              "width": 36,
-            }
+            [
+              {
+                "alignItems": "center",
+                "borderRadius": 8,
+                "height": 36,
+                "justifyContent": "center",
+                "marginRight": 14,
+                "width": 36,
+              },
+              {
+                "backgroundColor": "#f5f5f5",
+              },
+            ]
           }
         >
           <Text>
@@ -1002,12 +1165,16 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
         </View>
         <Text
           style={
-            {
-              "color": "#1a1a1a",
-              "flex": 1,
-              "fontSize": 16,
-              "fontWeight": "400",
-            }
+            [
+              {
+                "flex": 1,
+                "fontSize": 16,
+                "fontWeight": "400",
+              },
+              {
+                "color": "#1a1a1a",
+              },
+            ]
           }
         >
           Log out
@@ -1021,10 +1188,14 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
 exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding 1`] = `
 <RCTScrollView
   style={
-    {
-      "backgroundColor": "#f2f2f7",
-      "flex": 1,
-    }
+    [
+      {
+        "flex": 1,
+      },
+      {
+        "backgroundColor": "#f2f2f7",
+      },
+    ]
   }
 >
   <View>
@@ -1032,12 +1203,12 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
       style={
         [
           {
-            "backgroundColor": "#f2f2f7",
             "paddingBottom": 16,
             "paddingHorizontal": 20,
             "paddingTop": 16,
           },
           {
+            "backgroundColor": "#f2f2f7",
             "paddingTop": 16,
           },
         ]
@@ -1045,11 +1216,15 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
     >
       <Text
         style={
-          {
-            "color": "#1a1a1a",
-            "fontSize": 24,
-            "fontWeight": "bold",
-          }
+          [
+            {
+              "fontSize": 24,
+              "fontWeight": "bold",
+            },
+            {
+              "color": "#1a1a1a",
+            },
+          ]
         }
       >
         Profile
@@ -1060,7 +1235,6 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
       style={
         [
           {
-            "backgroundColor": "#fff",
             "borderRadius": 16,
             "elevation": 3,
             "shadowColor": "#000",
@@ -1070,6 +1244,9 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
             },
             "shadowOpacity": 0.1,
             "shadowRadius": 8,
+          },
+          {
+            "backgroundColor": "#ffffff",
           },
           {
             "marginHorizontal": 16,
@@ -1117,10 +1294,10 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
             style={
               [
                 {
-                  "color": "#fff",
                   "fontWeight": "600",
                 },
                 {
+                  "color": "#ffffff",
                   "fontSize": 32,
                 },
               ]
@@ -1170,7 +1347,6 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
       style={
         [
           {
-            "backgroundColor": "#fff",
             "borderRadius": 16,
             "elevation": 3,
             "shadowColor": "#000",
@@ -1180,6 +1356,9 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
             },
             "shadowOpacity": 0.1,
             "shadowRadius": 8,
+          },
+          {
+            "backgroundColor": "#ffffff",
           },
           {
             "marginHorizontal": 16,
@@ -1412,7 +1591,6 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
       style={
         [
           {
-            "backgroundColor": "#fff",
             "borderRadius": 16,
             "elevation": 3,
             "shadowColor": "#000",
@@ -1422,6 +1600,9 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
             },
             "shadowOpacity": 0.1,
             "shadowRadius": 8,
+          },
+          {
+            "backgroundColor": "#ffffff",
           },
           {
             "marginHorizontal": 16,
@@ -1434,15 +1615,19 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
     >
       <Text
         style={
-          {
-            "color": "#8e8e93",
-            "fontSize": 12,
-            "fontWeight": "600",
-            "letterSpacing": 0.5,
-            "marginBottom": 4,
-            "marginTop": 8,
-            "textTransform": "uppercase",
-          }
+          [
+            {
+              "fontSize": 12,
+              "fontWeight": "600",
+              "letterSpacing": 0.5,
+              "marginBottom": 4,
+              "marginTop": 8,
+              "textTransform": "uppercase",
+            },
+            {
+              "color": "#999999",
+            },
+          ]
         }
       >
         Developer Tools
@@ -1478,7 +1663,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
         style={
           {
             "alignItems": "center",
-            "borderBottomColor": "#e5e5e5",
+            "borderBottomColor": "#e0e0e0",
             "borderBottomWidth": 0.5,
             "flexDirection": "row",
             "opacity": 1,
@@ -1488,15 +1673,19 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
       >
         <View
           style={
-            {
-              "alignItems": "center",
-              "backgroundColor": "#f5f5f5",
-              "borderRadius": 8,
-              "height": 36,
-              "justifyContent": "center",
-              "marginRight": 14,
-              "width": 36,
-            }
+            [
+              {
+                "alignItems": "center",
+                "borderRadius": 8,
+                "height": 36,
+                "justifyContent": "center",
+                "marginRight": 14,
+                "width": 36,
+              },
+              {
+                "backgroundColor": "#f5f5f5",
+              },
+            ]
           }
         >
           <Text>
@@ -1512,23 +1701,31 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
         >
           <Text
             style={
-              {
-                "color": "#1a1a1a",
-                "flex": 1,
-                "fontSize": 16,
-                "fontWeight": "400",
-              }
+              [
+                {
+                  "flex": 1,
+                  "fontSize": 16,
+                  "fontWeight": "400",
+                },
+                {
+                  "color": "#1a1a1a",
+                },
+              ]
             }
           >
             Feature Flags
           </Text>
           <Text
             style={
-              {
-                "color": "#8e8e93",
-                "fontSize": 13,
-                "marginTop": 2,
-              }
+              [
+                {
+                  "fontSize": 13,
+                  "marginTop": 2,
+                },
+                {
+                  "color": "#999999",
+                },
+              ]
             }
           >
             View and override PostHog feature flags
@@ -1569,7 +1766,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
         style={
           {
             "alignItems": "center",
-            "borderBottomColor": "#e5e5e5",
+            "borderBottomColor": "#e0e0e0",
             "borderBottomWidth": 0.5,
             "flexDirection": "row",
             "opacity": 1,
@@ -1579,15 +1776,19 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
       >
         <View
           style={
-            {
-              "alignItems": "center",
-              "backgroundColor": "#f5f5f5",
-              "borderRadius": 8,
-              "height": 36,
-              "justifyContent": "center",
-              "marginRight": 14,
-              "width": 36,
-            }
+            [
+              {
+                "alignItems": "center",
+                "borderRadius": 8,
+                "height": 36,
+                "justifyContent": "center",
+                "marginRight": 14,
+                "width": 36,
+              },
+              {
+                "backgroundColor": "#f5f5f5",
+              },
+            ]
           }
         >
           <Text>
@@ -1603,23 +1804,31 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
         >
           <Text
             style={
-              {
-                "color": "#1a1a1a",
-                "flex": 1,
-                "fontSize": 16,
-                "fontWeight": "400",
-              }
+              [
+                {
+                  "flex": 1,
+                  "fontSize": 16,
+                  "fontWeight": "400",
+                },
+                {
+                  "color": "#1a1a1a",
+                },
+              ]
             }
           >
             Notification Tester
           </Text>
           <Text
             style={
-              {
-                "color": "#8e8e93",
-                "fontSize": 13,
-                "marginTop": 2,
-              }
+              [
+                {
+                  "fontSize": 13,
+                  "marginTop": 2,
+                },
+                {
+                  "color": "#999999",
+                },
+              ]
             }
           >
             Test push notifications and deep links
@@ -1660,7 +1869,110 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
         style={
           {
             "alignItems": "center",
-            "borderBottomColor": "#e5e5e5",
+            "borderBottomColor": "#e0e0e0",
+            "borderBottomWidth": 0.5,
+            "flexDirection": "row",
+            "opacity": 1,
+            "paddingVertical": 14,
+          }
+        }
+      >
+        <View
+          style={
+            [
+              {
+                "alignItems": "center",
+                "borderRadius": 8,
+                "height": 36,
+                "justifyContent": "center",
+                "marginRight": 14,
+                "width": 36,
+              },
+              {
+                "backgroundColor": "#f5f5f5",
+              },
+            ]
+          }
+        >
+          <Text>
+            color-palette-outline
+          </Text>
+        </View>
+        <View
+          style={
+            {
+              "flex": 1,
+            }
+          }
+        >
+          <Text
+            style={
+              [
+                {
+                  "flex": 1,
+                  "fontSize": 16,
+                  "fontWeight": "400",
+                },
+                {
+                  "color": "#1a1a1a",
+                },
+              ]
+            }
+          >
+            Theme Gallery
+          </Text>
+          <Text
+            style={
+              [
+                {
+                  "fontSize": 13,
+                  "marginTop": 2,
+                },
+                {
+                  "color": "#999999",
+                },
+              ]
+            }
+          >
+            Preview all components in light/dark mode
+          </Text>
+        </View>
+        <Text>
+          chevron-forward
+        </Text>
+      </View>
+      <View
+        accessibilityState={
+          {
+            "busy": undefined,
+            "checked": undefined,
+            "disabled": undefined,
+            "expanded": undefined,
+            "selected": undefined,
+          }
+        }
+        accessibilityValue={
+          {
+            "max": undefined,
+            "min": undefined,
+            "now": undefined,
+            "text": undefined,
+          }
+        }
+        accessible={true}
+        collapsable={false}
+        focusable={true}
+        onClick={[Function]}
+        onResponderGrant={[Function]}
+        onResponderMove={[Function]}
+        onResponderRelease={[Function]}
+        onResponderTerminate={[Function]}
+        onResponderTerminationRequest={[Function]}
+        onStartShouldSetResponder={[Function]}
+        style={
+          {
+            "alignItems": "center",
+            "borderBottomColor": "#e0e0e0",
             "borderBottomWidth": 0,
             "flexDirection": "row",
             "opacity": 1,
@@ -1670,15 +1982,19 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
       >
         <View
           style={
-            {
-              "alignItems": "center",
-              "backgroundColor": "#f5f5f5",
-              "borderRadius": 8,
-              "height": 36,
-              "justifyContent": "center",
-              "marginRight": 14,
-              "width": 36,
-            }
+            [
+              {
+                "alignItems": "center",
+                "borderRadius": 8,
+                "height": 36,
+                "justifyContent": "center",
+                "marginRight": 14,
+                "width": 36,
+              },
+              {
+                "backgroundColor": "#f5f5f5",
+              },
+            ]
           }
         >
           <Text>
@@ -1694,23 +2010,31 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
         >
           <Text
             style={
-              {
-                "color": "#1a1a1a",
-                "flex": 1,
-                "fontSize": 16,
-                "fontWeight": "400",
-              }
+              [
+                {
+                  "flex": 1,
+                  "fontSize": 16,
+                  "fontWeight": "400",
+                },
+                {
+                  "color": "#1a1a1a",
+                },
+              ]
             }
           >
             Task Reminder Tester
           </Text>
           <Text
             style={
-              {
-                "color": "#8e8e93",
-                "fontSize": 13,
-                "marginTop": 2,
-              }
+              [
+                {
+                  "fontSize": 13,
+                  "marginTop": 2,
+                },
+                {
+                  "color": "#999999",
+                },
+              ]
             }
           >
             Test task reminder bot with mentions
@@ -1726,7 +2050,6 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
       style={
         [
           {
-            "backgroundColor": "#fff",
             "borderRadius": 16,
             "elevation": 3,
             "shadowColor": "#000",
@@ -1736,6 +2059,9 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
             },
             "shadowOpacity": 0.1,
             "shadowRadius": 8,
+          },
+          {
+            "backgroundColor": "#ffffff",
           },
           {
             "marginHorizontal": 16,
@@ -1777,7 +2103,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
         style={
           {
             "alignItems": "center",
-            "borderBottomColor": "#e5e5e5",
+            "borderBottomColor": "#e0e0e0",
             "borderBottomWidth": 0,
             "flexDirection": "row",
             "opacity": 1,
@@ -1787,15 +2113,19 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
       >
         <View
           style={
-            {
-              "alignItems": "center",
-              "backgroundColor": "#f5f5f5",
-              "borderRadius": 8,
-              "height": 36,
-              "justifyContent": "center",
-              "marginRight": 14,
-              "width": 36,
-            }
+            [
+              {
+                "alignItems": "center",
+                "borderRadius": 8,
+                "height": 36,
+                "justifyContent": "center",
+                "marginRight": 14,
+                "width": 36,
+              },
+              {
+                "backgroundColor": "#f5f5f5",
+              },
+            ]
           }
         >
           <Text>
@@ -1804,12 +2134,16 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
         </View>
         <Text
           style={
-            {
-              "color": "#1a1a1a",
-              "flex": 1,
-              "fontSize": 16,
-              "fontWeight": "400",
-            }
+            [
+              {
+                "flex": 1,
+                "fontSize": 16,
+                "fontWeight": "400",
+              },
+              {
+                "color": "#1a1a1a",
+              },
+            ]
           }
         >
           Log out

@@ -397,8 +397,8 @@ describe("ChannelsSection", () => {
       );
 
       const leadersText = getByText("Leaders");
-      // Check that the disabled style is applied (color: #999)
-      expect(leadersText.props.style).toContainEqual({ color: "#999" });
+      // Check that the disabled style is applied (color: #999999)
+      expect(leadersText.props.style).toContainEqual({ color: "#999999" });
     });
   });
 
