@@ -7,15 +7,17 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AuthGuard } from "@components/guards/AuthGuard";
 import { usePasswordReset } from "../hooks/usePasswordReset";
 import { PasswordResetForm } from "./PasswordResetForm";
+import { useTheme } from "@hooks/useTheme";
 
 export function PasswordResetScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const passwordReset = usePasswordReset();
+  const { colors } = useTheme();
 
   return (
     <AuthGuard>
-      <ScrollView contentContainerStyle={[styles.container, { paddingTop: insets.top }]}>
+      <ScrollView contentContainerStyle={[styles.container, { paddingTop: insets.top, backgroundColor: colors.surface }]}>
         <PasswordResetForm
           step={passwordReset.step}
           email={passwordReset.email}
@@ -43,10 +45,8 @@ export function PasswordResetScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: "#fff",
   },
   container: {
     flexGrow: 1,
-    backgroundColor: "#fff",
   },
 });

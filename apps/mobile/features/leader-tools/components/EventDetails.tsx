@@ -30,6 +30,7 @@ import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { DOMAIN_CONFIG } from "@togather/shared";
 import * as Clipboard from "expo-clipboard";
 import { DragHandle } from "@components/ui/DragHandle";
+import { useTheme } from "@hooks/useTheme";
 
 interface RsvpOption {
   id: number;
@@ -54,6 +55,7 @@ export function EventDetails({
   onBack,
   onGroupChat,
 }: EventDetailsProps) {
+  const { colors } = useTheme();
   const router = useRouter();
   const { user } = useAuth();
 
@@ -298,19 +300,19 @@ export function EventDetails({
   const isPastEvent = eventDateObj < new Date();
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
       <DragHandle />
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <TouchableOpacity
           testID="back-button"
           style={styles.backButton}
           onPress={onBack}
         >
-          <Ionicons name="arrow-back" size={24} color="#333" />
+          <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
         <View style={styles.headerContent}>
-          <Text style={styles.headerTitle} numberOfLines={1}>
+          <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
             {displayTitle}
           </Text>
         </View>
@@ -320,15 +322,15 @@ export function EventDetails({
           style={styles.shareButton}
           onPress={handleShare}
         >
-          <Ionicons name="share-outline" size={22} color="#333" />
+          <Ionicons name="share-outline" size={22} color={colors.text} />
         </TouchableOpacity>
         {isLeader && (
           <TouchableOpacity
             testID="edit-button"
-            style={styles.editButton}
+            style={[styles.editButton, { backgroundColor: colors.surfaceSecondary }]}
             onPress={handleEdit}
           >
-            <Text style={styles.editButtonText}>Edit</Text>
+            <Text style={[styles.editButtonText, { color: colors.text }]}>Edit</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -340,8 +342,8 @@ export function EventDetails({
       >
         {isLoading ? (
           <View style={styles.loadingContainer}>
-            <ActivityIndicator size="small" color="#666" />
-            <Text style={styles.loadingText}>Loading event details...</Text>
+            <ActivityIndicator size="small" color={colors.textSecondary} />
+            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading event details...</Text>
           </View>
         ) : (
           <>
@@ -355,21 +357,21 @@ export function EventDetails({
                 placeholder={{ type: 'icon', icon: 'calendar' }}
               />
             ) : (
-              <View style={styles.imagePlaceholder}>
-                <Ionicons name="calendar" size={48} color="#9CA3AF" />
+              <View style={[styles.imagePlaceholder, { backgroundColor: colors.border }]}>
+                <Ionicons name="calendar" size={48} color={colors.iconSecondary} />
               </View>
             )}
 
             {/* Group Info Section */}
             {meeting?.group && (
-              <View style={styles.groupInfoCard}>
+              <View style={[styles.groupInfoCard, { backgroundColor: colors.surface }]}>
                 <Avatar
                   name={meeting.group.name}
                   imageUrl={meeting.group.preview || null}
                   size={48}
                 />
                 <View style={styles.groupInfoText}>
-                  <Text style={styles.groupName}>{meeting.group.name}</Text>
+                  <Text style={[styles.groupName, { color: colors.text }]}>{meeting.group.name}</Text>
                 </View>
               </View>
             )}
@@ -386,15 +388,15 @@ export function EventDetails({
             )}
 
             {/* Event Details Section */}
-            <Text style={styles.sectionTitle}>EVENT DETAILS</Text>
+            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>EVENT DETAILS</Text>
 
             {/* Date and Time */}
-            <View style={styles.detailCard}>
+            <View style={[styles.detailCard, { backgroundColor: colors.surface }]}>
               <View style={styles.detailRow}>
-                <Ionicons name="calendar-outline" size={20} color="#666" />
+                <Ionicons name="calendar-outline" size={20} color={colors.textSecondary} />
                 <View style={styles.detailContent}>
-                  <Text style={styles.detailLabel}>Date & Time</Text>
-                  <Text style={styles.detailValue}>
+                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Date & Time</Text>
+                  <Text style={[styles.detailValue, { color: colors.text }]}>
                     {format(
                       toZonedTime(new Date(displayDate), userTimezone),
                       "EEEE, MMMM dd, yyyy 'at' h:mm a zzz",
@@ -407,14 +409,14 @@ export function EventDetails({
 
             {/* Location */}
             {displayLocation && (
-              <View style={styles.detailCard}>
+              <View style={[styles.detailCard, { backgroundColor: colors.surface }]}>
                 <Pressable
                   style={styles.detailRow}
                   onPress={handleLocationPress}
                 >
-                  <Ionicons name="location-outline" size={20} color="#666" />
+                  <Ionicons name="location-outline" size={20} color={colors.textSecondary} />
                   <View style={styles.detailContent}>
-                    <Text style={styles.detailLabel}>Location</Text>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Location</Text>
                     <Text style={[styles.detailValue, styles.linkText]}>
                       {displayLocation}
                     </Text>
@@ -426,7 +428,7 @@ export function EventDetails({
 
             {/* Meeting Link (for virtual meetings) */}
             {displayMeetingLink && (
-              <View style={styles.detailCard}>
+              <View style={[styles.detailCard, { backgroundColor: colors.surface }]}>
                 <TouchableOpacity
                   style={styles.detailRow}
                   onPress={() => {
@@ -437,7 +439,7 @@ export function EventDetails({
                 >
                   <Ionicons name="videocam-outline" size={20} color={DEFAULT_PRIMARY_COLOR} />
                   <View style={styles.detailContent}>
-                    <Text style={styles.detailLabel}>Meeting Link</Text>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Meeting Link</Text>
                     <Text style={[styles.detailValue, styles.linkText]}>
                       Join Meeting
                     </Text>
@@ -449,16 +451,16 @@ export function EventDetails({
 
             {/* Description/Note */}
             {displayNote && (
-              <View style={styles.detailCard}>
+              <View style={[styles.detailCard, { backgroundColor: colors.surface }]}>
                 <View style={styles.detailRow}>
                   <Ionicons
                     name="document-text-outline"
                     size={20}
-                    color="#666"
+                    color={colors.textSecondary}
                   />
                   <View style={styles.detailContent}>
-                    <Text style={styles.detailLabel}>Description</Text>
-                    <Text style={styles.detailValue}>{displayNote}</Text>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Description</Text>
+                    <Text style={[styles.detailValue, { color: colors.text }]}>{displayNote}</Text>
                   </View>
                 </View>
               </View>
@@ -489,10 +491,10 @@ export function EventDetails({
             {/* RSVP Responses Section - shows who responded */}
             {rsvpEnabled && rsvpOptions.length > 0 && !isPastEvent && rsvpData && (
               <>
-                <Text style={[styles.sectionTitle, { marginTop: 24 }]}>RESPONSES</Text>
+                <Text style={[styles.sectionTitle, { marginTop: 24, color: colors.textSecondary }]}>RESPONSES</Text>
                 <View style={styles.rsvpContainer}>
                   {isLoadingRsvp ? (
-                    <ActivityIndicator size="small" color="#666" />
+                    <ActivityIndicator size="small" color={colors.textSecondary} />
                   ) : (
                     rsvpOptions
                       .filter((option) => option.enabled)
@@ -511,27 +513,27 @@ export function EventDetails({
                           <View key={option.id} style={styles.rsvpOptionWrapper}>
                             <TouchableOpacity
                               testID={`rsvp-count-${option.id}`}
-                              style={styles.rsvpCountCard}
+                              style={[styles.rsvpCountCard, { backgroundColor: colors.surface }]}
                               onPress={() => toggleExpandOption(option.id)}
                             >
                               <View style={styles.rsvpOptionContent}>
-                                <Text style={styles.rsvpOptionLabel}>
+                                <Text style={[styles.rsvpOptionLabel, { color: colors.text }]}>
                                   {option.label}
                                 </Text>
                               </View>
-                              <View style={styles.rsvpCountBadge}>
-                                <Text style={styles.rsvpCountText}>{count}</Text>
+                              <View style={[styles.rsvpCountBadge, { backgroundColor: colors.surfaceSecondary }]}>
+                                <Text style={[styles.rsvpCountText, { color: colors.textSecondary }]}>{count}</Text>
                                 <Ionicons
                                   name={isExpanded ? "chevron-up" : "chevron-down"}
                                   size={14}
-                                  color="#666"
+                                  color={colors.textSecondary}
                                 />
                               </View>
                             </TouchableOpacity>
 
                             {/* Expanded users list */}
                             {isExpanded && users.length > 0 && (
-                              <View style={styles.rsvpUsersList}>
+                              <View style={[styles.rsvpUsersList, { backgroundColor: colors.surface }]}>
                                 {users.map((user) => (
                                   <View key={user.id} style={styles.rsvpUser}>
                                     <Avatar
@@ -539,7 +541,7 @@ export function EventDetails({
                                       imageUrl={user.profileImage || null}
                                       size={32}
                                     />
-                                    <Text style={styles.rsvpUserName}>
+                                    <Text style={[styles.rsvpUserName, { color: colors.text }]}>
                                       {user.firstName} {user.lastName}
                                     </Text>
                                   </View>
@@ -552,7 +554,7 @@ export function EventDetails({
                   )}
                 </View>
                 {rsvpData?.total !== undefined && rsvpData.total > 0 && (
-                  <Text style={styles.totalResponses}>
+                  <Text style={[styles.totalResponses, { color: colors.textSecondary }]}>
                     {rsvpData.total} {rsvpData.total === 1 ? "response" : "responses"}
                   </Text>
                 )}
@@ -561,8 +563,8 @@ export function EventDetails({
 
             {/* Event Status */}
             {isPastEvent && (
-              <View style={styles.statusContainer}>
-                <Text style={styles.statusText}>This event has passed</Text>
+              <View style={[styles.statusContainer, { backgroundColor: colors.surface }]}>
+                <Text style={[styles.statusText, { color: colors.textSecondary }]}>This event has passed</Text>
               </View>
             )}
           </>
@@ -596,19 +598,19 @@ export function EventDetails({
         onRequestClose={() => setShowRsvpSheet(false)}
       >
         <TouchableOpacity
-          style={styles.modalOverlay}
+          style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}
           activeOpacity={1}
           onPress={() => setShowRsvpSheet(false)}
         >
-          <View style={styles.modalContent}>
+          <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
             <TouchableOpacity
               activeOpacity={1}
               onPress={(e) => e.stopPropagation()}
             >
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Change your RSVP</Text>
+              <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
+                <Text style={[styles.modalTitle, { color: colors.text }]}>Change your RSVP</Text>
                 <TouchableOpacity onPress={() => setShowRsvpSheet(false)}>
-                  <Ionicons name="close" size={24} color="#333" />
+                  <Ionicons name="close" size={24} color={colors.text} />
                 </TouchableOpacity>
               </View>
               <View style={styles.modalOptions}>
@@ -624,7 +626,8 @@ export function EventDetails({
                         testID={`modal-rsvp-option-${option.id}`}
                         style={[
                           styles.modalOption,
-                          isSelected && styles.modalOptionSelected,
+                          { backgroundColor: colors.surface, borderColor: colors.border },
+                          isSelected && [styles.modalOptionSelected, { backgroundColor: colors.surfaceSecondary }],
                         ]}
                         onPress={() => handleRsvpSelect(option.id)}
                         disabled={loadingOptionId !== null}
@@ -632,6 +635,7 @@ export function EventDetails({
                         <Text
                           style={[
                             styles.modalOptionLabel,
+                            { color: colors.text },
                             isSelected && styles.modalOptionLabelSelected,
                           ]}
                         >
@@ -663,15 +667,12 @@ export function EventDetails({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f5f5f5",
   },
   header: {
     flexDirection: "row",
     alignItems: "center",
     padding: 16,
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   backButton: {
     marginRight: 12,
@@ -687,14 +688,12 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 20,
     fontWeight: "bold",
-    color: "#333",
   },
   shareButton: {
     padding: 8,
     marginRight: 8,
   },
   editButton: {
-    backgroundColor: "#f0f0f0",
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 8,
@@ -702,7 +701,6 @@ const styles = StyleSheet.create({
   editButtonText: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#333",
   },
   content: {
     flex: 1,
@@ -714,7 +712,6 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 12,
     fontWeight: "600",
-    color: "#666",
     marginBottom: 16,
     textTransform: "uppercase",
   },
@@ -727,17 +724,14 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: 14,
-    color: "#666",
   },
   statusContainer: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 16,
     marginTop: 16,
   },
   statusText: {
     fontSize: 14,
-    color: "#666",
     textAlign: "center",
   },
   footer: {
@@ -745,40 +739,33 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: "#fff",
     padding: 20,
     borderTopWidth: 1,
-    borderTopColor: "#e0e0e0",
   },
   groupChatButton: {
-    backgroundColor: "#333",
     borderRadius: 12,
     padding: 16,
     alignItems: "center",
   },
   groupChatButtonText: {
-    color: "#fff",
     fontSize: 16,
     fontWeight: "600",
   },
   coverImage: {
     width: "100%",
     height: 200,
-    backgroundColor: "#f0f0f0",
     marginBottom: 24,
     borderRadius: 12,
   },
   imagePlaceholder: {
     width: "100%",
     height: 200,
-    backgroundColor: "#E5E5E5",
     marginBottom: 24,
     borderRadius: 12,
     justifyContent: "center",
     alignItems: "center",
   },
   groupInfoCard: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 16,
     marginBottom: 24,
@@ -792,18 +779,15 @@ const styles = StyleSheet.create({
   groupName: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 2,
   },
   communityName: {
     fontSize: 14,
-    color: "#666",
   },
   communityWideBadgeContainer: {
     marginBottom: 16,
   },
   detailCard: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,
@@ -819,13 +803,11 @@ const styles = StyleSheet.create({
   detailLabel: {
     fontSize: 12,
     fontWeight: "600",
-    color: "#666",
     textTransform: "uppercase",
     marginBottom: 4,
   },
   detailValue: {
     fontSize: 16,
-    color: "#333",
     lineHeight: 22,
   },
   linkText: {
@@ -840,7 +822,6 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   rsvpCountCard: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 16,
     flexDirection: "row",
@@ -855,7 +836,6 @@ const styles = StyleSheet.create({
   },
   rsvpOptionLabel: {
     fontSize: 16,
-    color: "#333",
   },
   rsvpOptionLabelSelected: {
     color: DEFAULT_PRIMARY_COLOR,
@@ -864,7 +844,6 @@ const styles = StyleSheet.create({
   rsvpCountBadge: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f0f0f0",
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
@@ -872,11 +851,9 @@ const styles = StyleSheet.create({
   },
   rsvpCountText: {
     fontSize: 14,
-    color: "#666",
     fontWeight: "600",
   },
   rsvpUsersList: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     marginTop: 4,
     marginLeft: 16,
@@ -909,27 +886,22 @@ const styles = StyleSheet.create({
   },
   rsvpUserName: {
     fontSize: 14,
-    color: "#333",
   },
   noUsersText: {
     fontSize: 14,
-    color: "#999",
     fontStyle: "italic",
   },
   totalResponses: {
     fontSize: 12,
-    color: "#666",
     marginTop: 8,
     textAlign: "center",
   },
   // Modal styles
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
     justifyContent: "flex-end",
   },
   modalContent: {
-    backgroundColor: "#fff",
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     paddingBottom: 40,
@@ -940,34 +912,28 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 20,
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   modalTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
   },
   modalOptions: {
     padding: 20,
     gap: 12,
   },
   modalOption: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 16,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     borderWidth: 2,
-    borderColor: "#e0e0e0",
   },
   modalOptionSelected: {
     borderColor: DEFAULT_PRIMARY_COLOR,
-    backgroundColor: "#F8F0FF",
   },
   modalOptionLabel: {
     fontSize: 16,
-    color: "#333",
   },
   modalOptionLabelSelected: {
     color: DEFAULT_PRIMARY_COLOR,

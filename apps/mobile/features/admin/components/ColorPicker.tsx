@@ -12,7 +12,7 @@ import {
   ScrollView,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { DEFAULT_PRIMARY_COLOR } from "../../../utils/styles";
+import { useTheme } from "@hooks/useTheme";
 
 interface ColorPickerProps {
   label: string;
@@ -38,6 +38,7 @@ const PRESET_COLORS = [
 ];
 
 export function ColorPicker({ label, value, onChange, defaultColor = "#1E8449" }: ColorPickerProps) {
+  const { colors, isDark } = useTheme();
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [hexInput, setHexInput] = useState(value || defaultColor);
   const [isValidHex, setIsValidHex] = useState(true);
@@ -86,15 +87,15 @@ export function ColorPicker({ label, value, onChange, defaultColor = "#1E8449" }
 
   return (
     <View style={styles.container}>
-      <Text style={styles.label}>{label}</Text>
+      <Text style={[styles.label, { color: colors.textSecondary }]}>{label}</Text>
 
       <TouchableOpacity
-        style={styles.colorButton}
+        style={[styles.colorButton, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
         onPress={() => setIsModalVisible(true)}
       >
-        <View style={[styles.colorSwatch, { backgroundColor: currentColor }]} />
-        <Text style={styles.colorValue}>{currentColor}</Text>
-        <Ionicons name="chevron-forward" size={20} color="#999" />
+        <View style={[styles.colorSwatch, { backgroundColor: currentColor, borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }]} />
+        <Text style={[styles.colorValue, { color: colors.text }]}>{currentColor}</Text>
+        <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
       </TouchableOpacity>
 
       <Modal
@@ -103,48 +104,49 @@ export function ColorPicker({ label, value, onChange, defaultColor = "#1E8449" }
         presentationStyle="pageSheet"
         onRequestClose={() => setIsModalVisible(false)}
       >
-        <View style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>{label}</Text>
+        <View style={[styles.modalContainer, { backgroundColor: colors.surface }]}>
+          <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>{label}</Text>
             <TouchableOpacity
               style={styles.closeButton}
               onPress={() => setIsModalVisible(false)}
             >
-              <Ionicons name="close" size={24} color="#333" />
+              <Ionicons name="close" size={24} color={colors.text} />
             </TouchableOpacity>
           </View>
 
           <ScrollView style={styles.modalContent}>
             {/* Current color preview */}
             <View style={styles.previewSection}>
-              <View style={[styles.largePreview, { backgroundColor: currentColor }]} />
-              <Text style={styles.previewHex}>{currentColor}</Text>
+              <View style={[styles.largePreview, { backgroundColor: currentColor, borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }]} />
+              <Text style={[styles.previewHex, { color: colors.text }]}>{currentColor}</Text>
             </View>
 
             {/* Hex input */}
             <View style={styles.hexInputSection}>
-              <Text style={styles.sectionTitle}>Hex Color</Text>
+              <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Hex Color</Text>
               <TextInput
                 style={[
                   styles.hexInput,
-                  !isValidHex && styles.hexInputError,
+                  { backgroundColor: colors.surfaceSecondary, borderColor: colors.border, color: colors.text },
+                  !isValidHex && { borderColor: colors.error },
                 ]}
                 value={hexInput}
                 onChangeText={handleHexChange}
                 placeholder="#000000"
-                placeholderTextColor="#999"
+                placeholderTextColor={colors.inputPlaceholder}
                 autoCapitalize="characters"
                 autoCorrect={false}
                 maxLength={7}
               />
               {!isValidHex && (
-                <Text style={styles.errorText}>Enter a valid hex color (e.g. #1E8449)</Text>
+                <Text style={[styles.errorText, { color: colors.error }]}>Enter a valid hex color (e.g. #1E8449)</Text>
               )}
             </View>
 
             {/* Preset swatches */}
             <View style={styles.swatchSection}>
-              <Text style={styles.sectionTitle}>Preset Colors</Text>
+              <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Preset Colors</Text>
               <View style={styles.swatchGrid}>
                 {PRESET_COLORS.map((color) => (
                   <TouchableOpacity
@@ -152,7 +154,7 @@ export function ColorPicker({ label, value, onChange, defaultColor = "#1E8449" }
                     style={[
                       styles.swatchItem,
                       { backgroundColor: color },
-                      currentColor === color && styles.swatchSelected,
+                      currentColor === color && [styles.swatchSelected, { borderColor: colors.text }],
                     ]}
                     onPress={() => handlePresetSelect(color)}
                   >
@@ -169,18 +171,18 @@ export function ColorPicker({ label, value, onChange, defaultColor = "#1E8449" }
               style={styles.resetButton}
               onPress={handleResetToDefault}
             >
-              <Ionicons name="refresh" size={18} color={DEFAULT_PRIMARY_COLOR} />
-              <Text style={styles.resetButtonText}>Reset to Default ({defaultColor})</Text>
+              <Ionicons name="refresh" size={18} color={colors.link} />
+              <Text style={[styles.resetButtonText, { color: colors.link }]}>Reset to Default ({defaultColor})</Text>
             </TouchableOpacity>
           </ScrollView>
 
           {/* Done button */}
-          <View style={styles.modalFooter}>
+          <View style={[styles.modalFooter, { borderTopColor: colors.border }]}>
             <TouchableOpacity
-              style={styles.doneButton}
+              style={[styles.doneButton, { backgroundColor: colors.buttonPrimary }]}
               onPress={() => setIsModalVisible(false)}
             >
-              <Text style={styles.doneButtonText}>Done</Text>
+              <Text style={[styles.doneButtonText, { color: colors.buttonPrimaryText }]}>Done</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -196,17 +198,14 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: "500",
-    color: "#666",
     marginBottom: 8,
   },
   colorButton: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f8f8f8",
     borderRadius: 8,
     padding: 12,
     borderWidth: 1,
-    borderColor: "#e0e0e0",
   },
   colorSwatch: {
     width: 32,
@@ -214,17 +213,14 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     marginRight: 12,
     borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.1)",
   },
   colorValue: {
     flex: 1,
     fontSize: 16,
-    color: "#333",
     fontFamily: "monospace",
   },
   modalContainer: {
     flex: 1,
-    backgroundColor: "#fff",
   },
   modalHeader: {
     flexDirection: "row",
@@ -232,12 +228,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   modalTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
   },
   closeButton: {
     padding: 4,
@@ -256,7 +250,6 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     marginBottom: 12,
     borderWidth: 2,
-    borderColor: "rgba(0,0,0,0.1)",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.15,
@@ -266,7 +259,6 @@ const styles = StyleSheet.create({
   previewHex: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     fontFamily: "monospace",
   },
   hexInputSection: {
@@ -275,26 +267,18 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#666",
     marginBottom: 12,
   },
   hexInput: {
-    backgroundColor: "#f8f8f8",
     borderRadius: 8,
     padding: 14,
     fontSize: 18,
-    color: "#333",
     borderWidth: 1,
-    borderColor: "#e0e0e0",
     fontFamily: "monospace",
     textAlign: "center",
   },
-  hexInputError: {
-    borderColor: "#FF3B30",
-  },
   errorText: {
     fontSize: 12,
-    color: "#FF3B30",
     marginTop: 6,
     textAlign: "center",
   },
@@ -315,9 +299,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: "transparent",
   },
-  swatchSelected: {
-    borderColor: "#333",
-  },
+  swatchSelected: {},
   resetButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -327,22 +309,18 @@ const styles = StyleSheet.create({
   },
   resetButtonText: {
     fontSize: 14,
-    color: DEFAULT_PRIMARY_COLOR,
     fontWeight: "500",
   },
   modalFooter: {
     padding: 16,
     borderTopWidth: 1,
-    borderTopColor: "#e0e0e0",
   },
   doneButton: {
-    backgroundColor: DEFAULT_PRIMARY_COLOR,
     borderRadius: 8,
     padding: 16,
     alignItems: "center",
   },
   doneButtonText: {
-    color: "#fff",
     fontSize: 16,
     fontWeight: "600",
   },

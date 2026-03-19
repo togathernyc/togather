@@ -24,6 +24,7 @@ import { useAuth } from '@providers/AuthProvider';
 import { useQuery, useMutation, api } from '@services/api/convex';
 import { Avatar } from '@components/ui';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
+import { useTheme } from '@hooks/useTheme';
 import type { Id } from '@services/api/convex';
 
 interface BlockedUser {
@@ -36,6 +37,7 @@ interface BlockedUser {
 export function BlockedUsersScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
   const { token } = useAuth();
   const { primaryColor } = useCommunityTheme();
 
@@ -109,14 +111,14 @@ export function BlockedUsersScreen() {
     const userImage = item.profilePhoto || undefined;
 
     return (
-      <View style={styles.userItem}>
+      <View style={[styles.userItem, { backgroundColor: colors.surface, shadowColor: colors.shadow }]}>
         <Avatar
           name={userName}
           imageUrl={userImage}
           size={48}
         />
         <View style={styles.userInfo}>
-          <Text style={styles.userName}>{userName}</Text>
+          <Text style={[styles.userName, { color: colors.text }]}>{userName}</Text>
         </View>
         <TouchableOpacity
           style={[styles.unblockButton, { borderColor: primaryColor }]}
@@ -138,9 +140,9 @@ export function BlockedUsersScreen() {
   // Empty state component
   const EmptyState = () => (
     <View style={styles.emptyState}>
-      <Ionicons name="checkmark-circle-outline" size={64} color="#ccc" />
-      <Text style={styles.emptyStateTitle}>No Blocked Users</Text>
-      <Text style={styles.emptyStateText}>
+      <Ionicons name="checkmark-circle-outline" size={64} color={colors.iconSecondary} />
+      <Text style={[styles.emptyStateTitle, { color: colors.text }]}>No Blocked Users</Text>
+      <Text style={[styles.emptyStateText, { color: colors.textSecondary }]}>
         You have not blocked anyone. Blocked users will appear here.
       </Text>
     </View>
@@ -148,9 +150,9 @@ export function BlockedUsersScreen() {
 
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.backgroundSecondary }]}>
       {/* Header */}
-      <View style={[styles.header, { paddingTop: insets.top + 20 }]}>
+      <View style={[styles.header, { paddingTop: insets.top + 20, backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => {
@@ -161,16 +163,16 @@ export function BlockedUsersScreen() {
             }
           }}
         >
-          <Ionicons name="arrow-back" size={24} color="#333" />
+          <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Blocked Users</Text>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>Blocked Users</Text>
       </View>
 
       {/* Content */}
       {isLoading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={primaryColor} />
-          <Text style={styles.loadingText}>Loading blocked users...</Text>
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading blocked users...</Text>
         </View>
       ) : (
         <FlatList
@@ -198,15 +200,12 @@ export function BlockedUsersScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     padding: 20,
-    backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
   },
   backButton: {
     marginRight: 12,
@@ -216,7 +215,6 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#333',
   },
   loadingContainer: {
     flex: 1,
@@ -226,7 +224,6 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 12,
     fontSize: 14,
-    color: '#666',
   },
   listContent: {
     padding: 16,
@@ -237,11 +234,9 @@ const styles = StyleSheet.create({
   userItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,
-    shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.05,
     shadowRadius: 2,
@@ -254,11 +249,9 @@ const styles = StyleSheet.create({
   userName: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#333',
   },
   blockedDate: {
     fontSize: 13,
-    color: '#666',
     marginTop: 2,
   },
   unblockButton: {
@@ -282,12 +275,10 @@ const styles = StyleSheet.create({
   emptyStateTitle: {
     fontSize: 20,
     fontWeight: '600',
-    color: '#333',
     marginTop: 16,
   },
   emptyStateText: {
     fontSize: 14,
-    color: '#666',
     textAlign: 'center',
     marginTop: 8,
     lineHeight: 20,
@@ -301,12 +292,10 @@ const styles = StyleSheet.create({
   errorStateTitle: {
     fontSize: 20,
     fontWeight: '600',
-    color: '#333',
     marginTop: 16,
   },
   errorStateText: {
     fontSize: 14,
-    color: '#666',
     textAlign: 'center',
     marginTop: 8,
     lineHeight: 20,
@@ -318,7 +307,6 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   retryButtonText: {
-    color: '#fff',
     fontSize: 16,
     fontWeight: '600',
   },

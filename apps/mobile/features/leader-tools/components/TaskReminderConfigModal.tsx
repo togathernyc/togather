@@ -17,10 +17,10 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery, useAuthenticatedQuery, useAuthenticatedMutation, api, Id } from "@services/api/convex";
-import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useAuth } from "@providers/AuthProvider";
 import { generateId } from "../utils/generateId";
+import { useTheme } from "@hooks/useTheme";
 
 type DayOfWeek =
   | "monday"
@@ -93,6 +93,7 @@ export function TaskReminderConfigModal({
   onClose,
   groupId,
 }: TaskReminderConfigModalProps) {
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { primaryColor } = useCommunityTheme();
   const { token } = useAuth();
@@ -396,16 +397,16 @@ export function TaskReminderConfigModal({
     );
 
     return (
-      <View key={role.id} style={styles.roleItem}>
+      <View key={role.id} style={[styles.roleItem, { backgroundColor: colors.surface, borderColor: colors.border }]}>
         <TextInput
-          style={styles.roleNameInput}
+          style={[styles.roleNameInput, { color: colors.text, backgroundColor: colors.surfaceSecondary }]}
           value={role.name}
           onChangeText={(text) => updateRole(role.id, { name: text })}
           placeholder="Role name"
-          placeholderTextColor="#999"
+          placeholderTextColor={colors.textTertiary}
         />
         <TouchableOpacity
-          style={styles.memberSelector}
+          style={[styles.memberSelector, { backgroundColor: colors.surfaceSecondary }]}
           onPress={() => {
             const leaders: TransformedMember[] = groupData?.leaders || [];
             const members: TransformedMember[] = groupData?.members || [];
@@ -466,18 +467,18 @@ export function TaskReminderConfigModal({
             );
           }}
         >
-          <Text style={styles.memberSelectorText} numberOfLines={1}>
+          <Text style={[styles.memberSelectorText, { color: colors.text }]} numberOfLines={1}>
             {assignedMember
               ? `${assignedMember.user.firstName} ${assignedMember.user.lastName}`
               : "Select member"}
           </Text>
-          <Ionicons name="chevron-down" size={16} color="#666" />
+          <Ionicons name="chevron-down" size={16} color={colors.textSecondary} />
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.deleteButton}
           onPress={() => deleteRole(role.id)}
         >
-          <Ionicons name="trash-outline" size={18} color="#e74c3c" />
+          <Ionicons name="trash-outline" size={18} color={colors.destructive} />
         </TouchableOpacity>
       </View>
     );
@@ -490,17 +491,17 @@ export function TaskReminderConfigModal({
     return (
       <View
         key={task.id}
-        style={[styles.taskItem, hasInvalid && styles.taskItemWarning]}
+        style={[styles.taskItem, { backgroundColor: colors.surfaceSecondary }, hasInvalid && styles.taskItemWarning]}
       >
         <View style={styles.taskContent}>
-          <Text style={styles.taskMessage} numberOfLines={2}>
+          <Text style={[styles.taskMessage, { color: colors.text }]} numberOfLines={2}>
             {task.message || "No message"}
           </Text>
-          <Text style={styles.taskMeta}>
+          <Text style={[styles.taskMeta, { color: colors.textSecondary }]}>
             Roles: {getRoleNames(task.roleIds) || "None"}
           </Text>
           {hasInvalid && (
-            <Text style={styles.taskWarning}>
+            <Text style={[styles.taskWarning, { color: colors.destructive }]}>
               Some roles no longer exist
             </Text>
           )}
@@ -513,13 +514,13 @@ export function TaskReminderConfigModal({
               setEditingTaskDay(day);
             }}
           >
-            <Ionicons name="pencil-outline" size={18} color="#666" />
+            <Ionicons name="pencil-outline" size={18} color={colors.textSecondary} />
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.taskActionButton}
             onPress={() => deleteTask(day, task.id)}
           >
-            <Ionicons name="trash-outline" size={18} color="#e74c3c" />
+            <Ionicons name="trash-outline" size={18} color={colors.destructive} />
           </TouchableOpacity>
         </View>
       </View>
@@ -544,21 +545,21 @@ export function TaskReminderConfigModal({
         >
           <Pressable
             testID="task-editor-backdrop"
-            style={styles.taskEditorOverlayBackdrop}
+            style={[styles.taskEditorOverlayBackdrop, { backgroundColor: colors.overlay }]}
             onPress={Keyboard.dismiss}
           >
             <Pressable
-              style={[styles.taskEditorContainer, { paddingBottom: insets.bottom + 16 }]}
+              style={[styles.taskEditorContainer, { paddingBottom: insets.bottom + 16, backgroundColor: colors.modalBackground }]}
               onPress={(event) => event.stopPropagation()}
             >
-              <View style={styles.taskEditorHeader}>
-                <Text style={styles.taskEditorTitle}>
+              <View style={[styles.taskEditorHeader, { borderBottomColor: colors.border }]}>
+                <Text style={[styles.taskEditorTitle, { color: colors.text }]}>
                   {config.schedule[editingTaskDay!]?.find((t) => t.id === editingTask.id)
                     ? "Edit Task"
                     : "New Task"}
                 </Text>
                 <TouchableOpacity onPress={() => setEditingTask(null)}>
-                  <Ionicons name="close" size={24} color="#333" />
+                  <Ionicons name="close" size={24} color={colors.text} />
                 </TouchableOpacity>
               </View>
 
@@ -568,23 +569,23 @@ export function TaskReminderConfigModal({
                 keyboardShouldPersistTaps="handled"
                 keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
               >
-                <Text style={styles.fieldLabel}>Message</Text>
+                <Text style={[styles.fieldLabel, { color: colors.text }]}>Message</Text>
                 <TextInput
-                  style={[styles.input, styles.textareaInput]}
+                  style={[styles.input, styles.textareaInput, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border, color: colors.text }]}
                   value={editingTask.message}
                   onChangeText={(text) =>
                     setEditingTask((prev) => prev && { ...prev, message: text })
                   }
                   placeholder="Enter reminder message"
-                  placeholderTextColor="#999"
+                  placeholderTextColor={colors.textTertiary}
                   multiline
                   numberOfLines={3}
                 />
 
-                <Text style={styles.fieldLabel}>Assign to Roles</Text>
+                <Text style={[styles.fieldLabel, { color: colors.text }]}>Assign to Roles</Text>
                 <View style={styles.roleCheckboxes}>
                   {config.roles.length === 0 ? (
-                    <Text style={styles.noRolesText}>
+                    <Text style={[styles.noRolesText, { color: colors.textTertiary }]}>
                       No roles defined. Add roles above first.
                     </Text>
                   ) : (
@@ -593,8 +594,9 @@ export function TaskReminderConfigModal({
                         key={role.id}
                         style={[
                           styles.roleCheckbox,
+                          { backgroundColor: colors.surfaceSecondary },
                           editingTask.roleIds.includes(role.id) &&
-                            styles.roleCheckboxSelected,
+                            [styles.roleCheckboxSelected, { backgroundColor: colors.selectedBackground }],
                         ]}
                         onPress={() => {
                           setEditingTask((prev) => {
@@ -619,10 +621,10 @@ export function TaskReminderConfigModal({
                           color={
                             editingTask.roleIds.includes(role.id)
                               ? primaryColor
-                              : "#666"
+                              : colors.textSecondary
                           }
                         />
-                        <Text style={styles.roleCheckboxText}>
+                        <Text style={[styles.roleCheckboxText, { color: colors.text }]}>
                           {role.name || "Unnamed role"}
                         </Text>
                       </TouchableOpacity>
@@ -635,8 +637,9 @@ export function TaskReminderConfigModal({
               <TouchableOpacity
                 style={[
                   styles.saveTaskButton,
+                  { backgroundColor: primaryColor },
                   (!editingTask.message || editingTask.roleIds.length === 0) &&
-                    styles.saveTaskButtonDisabled,
+                    [styles.saveTaskButtonDisabled, { backgroundColor: colors.border }],
                 ]}
                 onPress={() => saveTask(editingTask)}
                 disabled={!editingTask.message || editingTask.roleIds.length === 0}
@@ -658,17 +661,17 @@ export function TaskReminderConfigModal({
       onRequestClose={onClose}
     >
       <KeyboardAvoidingView
-        style={styles.container}
+        style={[styles.container, { backgroundColor: colors.backgroundSecondary }]}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
         {/* Header */}
-        <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+        <View style={[styles.header, { paddingTop: insets.top + 8, backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
           <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-            <Ionicons name="close" size={24} color="#333" />
+            <Ionicons name="close" size={24} color={colors.text} />
           </TouchableOpacity>
           <View style={styles.headerCenter}>
             <Text style={styles.headerIcon}>📋</Text>
-            <Text style={styles.headerTitle}>Task Reminder Settings</Text>
+            <Text style={[styles.headerTitle, { color: colors.text }]}>Task Reminder Settings</Text>
           </View>
           <View style={styles.headerRight} />
         </View>
@@ -677,12 +680,12 @@ export function TaskReminderConfigModal({
         {isLoading ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={primaryColor} />
-            <Text style={styles.loadingText}>Loading configuration...</Text>
+            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading configuration...</Text>
           </View>
         ) : error ? (
           <View style={styles.errorContainer}>
-            <Ionicons name="alert-circle-outline" size={48} color="#e74c3c" />
-            <Text style={styles.errorText}>Failed to load configuration</Text>
+            <Ionicons name="alert-circle-outline" size={48} color={colors.destructive} />
+            <Text style={[styles.errorText, { color: colors.textSecondary }]}>Failed to load configuration</Text>
           </View>
         ) : (
           <>
@@ -696,7 +699,7 @@ export function TaskReminderConfigModal({
               {/* Roles Section */}
               <View style={styles.section}>
                 <View style={styles.sectionHeader}>
-                  <Text style={styles.sectionTitle}>ROLES</Text>
+                  <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>ROLES</Text>
                   <TouchableOpacity style={styles.addButton} onPress={addRole}>
                     <Ionicons name="add" size={20} color={primaryColor} />
                     <Text style={[styles.addButtonText, { color: primaryColor }]}>
@@ -705,7 +708,7 @@ export function TaskReminderConfigModal({
                   </TouchableOpacity>
                 </View>
                 {config.roles.length === 0 ? (
-                  <Text style={styles.emptyText}>
+                  <Text style={[styles.emptyText, { color: colors.textTertiary }]}>
                     No roles defined. Add roles to assign members to tasks.
                   </Text>
                 ) : (
@@ -715,8 +718,8 @@ export function TaskReminderConfigModal({
 
               {/* Delivery Section */}
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>DELIVERY</Text>
-                <Text style={styles.sectionDescription}>
+                <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>DELIVERY</Text>
+                <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>
                   Choose whether the bot only creates tasks or also posts task cards to channels.
                 </Text>
 
@@ -728,7 +731,8 @@ export function TaskReminderConfigModal({
                         key={option.value}
                         style={[
                           styles.deliveryOption,
-                          isSelected && styles.deliveryOptionSelected,
+                          { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
+                          isSelected && [styles.deliveryOptionSelected, { backgroundColor: primaryColor, borderColor: primaryColor }],
                         ]}
                         onPress={() => {
                           setConfig((prev) => ({
@@ -741,6 +745,7 @@ export function TaskReminderConfigModal({
                         <Text
                           style={[
                             styles.deliveryOptionText,
+                            { color: colors.text },
                             isSelected && styles.deliveryOptionTextSelected,
                           ]}
                         >
@@ -753,10 +758,10 @@ export function TaskReminderConfigModal({
 
                 {config.deliveryMode === "task_and_channel_post" ? (
                   <>
-                    <Text style={[styles.sectionTitle, { marginTop: 16 }]}>
+                    <Text style={[styles.sectionTitle, { marginTop: 16, color: colors.textSecondary }]}>
                       CHANNEL TARGETS
                     </Text>
-                    <Text style={styles.sectionDescription}>
+                    <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>
                       Select one or more channels to receive task cards.
                     </Text>
 
@@ -776,7 +781,8 @@ export function TaskReminderConfigModal({
                               key={channel.slug}
                               style={[
                                 styles.channelOption,
-                                isSelected && styles.channelOptionSelected,
+                                { backgroundColor: colors.surface, borderColor: colors.border },
+                                isSelected && [styles.channelOptionSelected, { backgroundColor: primaryColor, borderColor: primaryColor }],
                               ]}
                               onPress={() => {
                                 setConfig((prev) => ({
@@ -791,6 +797,7 @@ export function TaskReminderConfigModal({
                               <Text
                                 style={[
                                   styles.channelOptionText,
+                                  { color: colors.text },
                                   isSelected && styles.channelOptionTextSelected,
                                 ]}
                               >
@@ -806,7 +813,7 @@ export function TaskReminderConfigModal({
 
               {/* Weekly Schedule Section */}
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>WEEKLY SCHEDULE</Text>
+                <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>WEEKLY SCHEDULE</Text>
 
                 {/* Day tabs */}
                 <ScrollView
@@ -822,21 +829,23 @@ export function TaskReminderConfigModal({
                         key={day.key}
                         style={[
                           styles.dayTab,
-                          selectedDay === day.key && styles.dayTabSelected,
+                          { backgroundColor: colors.surface, borderColor: colors.border },
+                          selectedDay === day.key && [styles.dayTabSelected, { backgroundColor: primaryColor, borderColor: primaryColor }],
                         ]}
                         onPress={() => setSelectedDay(day.key)}
                       >
                         <Text
                           style={[
                             styles.dayTabText,
+                            { color: colors.textSecondary },
                             selectedDay === day.key && styles.dayTabTextSelected,
                           ]}
                         >
                           {day.short}
                         </Text>
                         {taskCount > 0 && (
-                          <View style={styles.taskBadge}>
-                            <Text style={styles.taskBadgeText}>{taskCount}</Text>
+                          <View style={[styles.taskBadge, { backgroundColor: colors.border }]}>
+                            <Text style={[styles.taskBadgeText, { color: colors.textSecondary }]}>{taskCount}</Text>
                           </View>
                         )}
                       </TouchableOpacity>
@@ -845,9 +854,9 @@ export function TaskReminderConfigModal({
                 </ScrollView>
 
                 {/* Tasks for selected day */}
-                <View style={styles.tasksContainer}>
+                <View style={[styles.tasksContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                   <View style={styles.tasksHeader}>
-                    <Text style={styles.tasksTitle}>
+                    <Text style={[styles.tasksTitle, { color: colors.text }]}>
                       {DAYS.find((d) => d.key === selectedDay)?.label} Tasks
                     </Text>
                     <TouchableOpacity style={styles.addButton} onPress={addTask}>
@@ -859,7 +868,7 @@ export function TaskReminderConfigModal({
                   </View>
 
                   {config.schedule[selectedDay].length === 0 ? (
-                    <Text style={styles.emptyText}>
+                    <Text style={[styles.emptyText, { color: colors.textTertiary }]}>
                       No tasks for {DAYS.find((d) => d.key === selectedDay)?.label}.
                       Add a task to send reminders.
                     </Text>
@@ -873,17 +882,18 @@ export function TaskReminderConfigModal({
             </ScrollView>
 
             {/* Save button */}
-            <View style={[styles.footer, { paddingBottom: insets.bottom + 16 }]}>
+            <View style={[styles.footer, { paddingBottom: insets.bottom + 16, backgroundColor: colors.surface, borderTopColor: colors.border }]}>
               <TouchableOpacity
                 style={[
                   styles.saveButton,
-                  (!isDirty || isSaving) && styles.saveButtonDisabled,
+                  { backgroundColor: primaryColor },
+                  (!isDirty || isSaving) && [styles.saveButtonDisabled, { backgroundColor: colors.border }],
                 ]}
                 onPress={handleSave}
                 disabled={!isDirty || isSaving}
               >
                 {isSaving ? (
-                  <ActivityIndicator size="small" color="#fff" />
+                  <ActivityIndicator size="small" color={colors.textInverse} />
                 ) : (
                   <Text style={styles.saveButtonText}>Save Changes</Text>
                 )}
@@ -902,7 +912,6 @@ export function TaskReminderConfigModal({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f5f5f5",
   },
   header: {
     flexDirection: "row",
@@ -910,9 +919,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingBottom: 12,
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   closeButton: {
     padding: 4,
@@ -929,7 +936,6 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
   },
   headerRight: {
     width: 40,
@@ -942,7 +948,6 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 12,
     fontSize: 16,
-    color: "#666",
   },
   errorContainer: {
     flex: 1,
@@ -952,7 +957,6 @@ const styles = StyleSheet.create({
   },
   errorText: {
     fontSize: 16,
-    color: "#666",
     marginTop: 12,
     textAlign: "center",
   },
@@ -974,12 +978,10 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 12,
     fontWeight: "700",
-    color: "#666",
     letterSpacing: 0.5,
   },
   sectionDescription: {
     fontSize: 13,
-    color: "#666",
     marginTop: 4,
     marginBottom: 12,
   },
@@ -1006,20 +1008,15 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   channelOption: {
-    backgroundColor: "#fff",
     borderWidth: 1,
-    borderColor: "#e0e0e0",
     borderRadius: 8,
     paddingVertical: 10,
     paddingHorizontal: 16,
   },
   channelOptionSelected: {
-    backgroundColor: DEFAULT_PRIMARY_COLOR,
-    borderColor: DEFAULT_PRIMARY_COLOR,
   },
   channelOptionText: {
     fontSize: 14,
-    color: "#333",
   },
   channelOptionTextSelected: {
     color: "#fff",
@@ -1036,7 +1033,6 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 14,
-    color: "#999",
     fontStyle: "italic",
     textAlign: "center",
     padding: 16,
@@ -1044,27 +1040,22 @@ const styles = StyleSheet.create({
   roleItem: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#fff",
     borderRadius: 8,
     padding: 8,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: "#e0e0e0",
   },
   roleNameInput: {
     flex: 1,
     fontSize: 14,
-    color: "#333",
     paddingVertical: 8,
     paddingHorizontal: 12,
-    backgroundColor: "#f9f9f9",
     borderRadius: 6,
     marginRight: 8,
   },
   memberSelector: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f9f9f9",
     borderRadius: 6,
     paddingVertical: 8,
     paddingHorizontal: 12,
@@ -1072,7 +1063,6 @@ const styles = StyleSheet.create({
   },
   memberSelectorText: {
     fontSize: 14,
-    color: "#333",
     flex: 1,
     marginRight: 4,
   },
@@ -1091,26 +1081,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     marginRight: 8,
     borderRadius: 20,
-    backgroundColor: "#fff",
     borderWidth: 1,
-    borderColor: "#e0e0e0",
     flexDirection: "row",
     alignItems: "center",
   },
   dayTabSelected: {
-    backgroundColor: DEFAULT_PRIMARY_COLOR,
-    borderColor: DEFAULT_PRIMARY_COLOR,
   },
   dayTabText: {
     fontSize: 14,
-    color: "#666",
     fontWeight: "500",
   },
   dayTabTextSelected: {
     color: "#fff",
   },
   taskBadge: {
-    backgroundColor: "#e0e0e0",
     borderRadius: 10,
     minWidth: 20,
     height: 20,
@@ -1121,14 +1105,11 @@ const styles = StyleSheet.create({
   taskBadgeText: {
     fontSize: 11,
     fontWeight: "600",
-    color: "#666",
   },
   tasksContainer: {
-    backgroundColor: "#fff",
     borderRadius: 8,
     padding: 12,
     borderWidth: 1,
-    borderColor: "#e0e0e0",
   },
   tasksHeader: {
     flexDirection: "row",
@@ -1139,11 +1120,9 @@ const styles = StyleSheet.create({
   tasksTitle: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#333",
   },
   taskItem: {
     flexDirection: "row",
-    backgroundColor: "#f9f9f9",
     borderRadius: 8,
     padding: 12,
     marginBottom: 8,
@@ -1158,17 +1137,14 @@ const styles = StyleSheet.create({
   },
   taskMessage: {
     fontSize: 14,
-    color: "#333",
     marginBottom: 4,
   },
   taskMeta: {
     fontSize: 12,
-    color: "#666",
     marginTop: 2,
   },
   taskWarning: {
     fontSize: 12,
-    color: "#e74c3c",
     marginTop: 4,
     fontWeight: "500",
   },
@@ -1181,19 +1157,15 @@ const styles = StyleSheet.create({
   },
   footer: {
     padding: 16,
-    backgroundColor: "#fff",
     borderTopWidth: 1,
-    borderTopColor: "#e0e0e0",
   },
   saveButton: {
-    backgroundColor: DEFAULT_PRIMARY_COLOR,
     borderRadius: 8,
     paddingVertical: 14,
     alignItems: "center",
     justifyContent: "center",
   },
   saveButtonDisabled: {
-    backgroundColor: "#ccc",
   },
   saveButtonText: {
     color: "#fff",
@@ -1206,11 +1178,9 @@ const styles = StyleSheet.create({
   },
   taskEditorOverlayBackdrop: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
     justifyContent: "flex-end",
   },
   taskEditorContainer: {
-    backgroundColor: "#fff",
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
     maxHeight: "80%",
@@ -1221,12 +1191,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   taskEditorTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
   },
   taskEditorContent: {
     padding: 16,
@@ -1234,18 +1202,14 @@ const styles = StyleSheet.create({
   fieldLabel: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 8,
     marginTop: 16,
   },
   input: {
-    backgroundColor: "#f9f9f9",
     borderWidth: 1,
-    borderColor: "#e0e0e0",
     borderRadius: 8,
     padding: 12,
     fontSize: 16,
-    color: "#333",
   },
   textareaInput: {
     minHeight: 80,
@@ -1259,21 +1223,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: 10,
     paddingHorizontal: 12,
-    backgroundColor: "#f9f9f9",
     borderRadius: 8,
     marginBottom: 8,
   },
   roleCheckboxSelected: {
-    backgroundColor: "#e8f5e9",
   },
   roleCheckboxText: {
     fontSize: 14,
-    color: "#333",
     marginLeft: 10,
   },
   noRolesText: {
     fontSize: 14,
-    color: "#999",
     fontStyle: "italic",
     padding: 12,
   },
@@ -1284,34 +1244,27 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   deliveryOption: {
-    backgroundColor: "#f9f9f9",
     borderWidth: 1,
-    borderColor: "#e0e0e0",
     borderRadius: 8,
     paddingVertical: 10,
     paddingHorizontal: 16,
   },
   deliveryOptionSelected: {
-    backgroundColor: DEFAULT_PRIMARY_COLOR,
-    borderColor: DEFAULT_PRIMARY_COLOR,
   },
   deliveryOptionText: {
     fontSize: 14,
-    color: "#333",
   },
   deliveryOptionTextSelected: {
     color: "#fff",
     fontWeight: "600",
   },
   saveTaskButton: {
-    backgroundColor: DEFAULT_PRIMARY_COLOR,
     borderRadius: 8,
     paddingVertical: 14,
     marginHorizontal: 16,
     alignItems: "center",
   },
   saveTaskButtonDisabled: {
-    backgroundColor: "#ccc",
   },
   saveTaskButtonText: {
     color: "#fff",

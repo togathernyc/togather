@@ -29,6 +29,7 @@ import {
   SyncedMemberRowContent,
   UnsyncedPersonRowContent,
 } from "@/components/ui/ChannelMemberRows";
+import { useTheme } from "@hooks/useTheme";
 
 type ListItem =
   | { type: "synced"; data: ChannelMember }
@@ -47,6 +48,7 @@ const PAGE_SIZE = 50;
 const SEARCH_DEBOUNCE_MS = 350;
 
 export function Members({ groupId, onMemberAction, canManageMembers = false }: MembersProps) {
+  const { colors } = useTheme();
   const { user } = useAuth();
   const { primaryColor } = useCommunityTheme();
   const [searchQuery, setSearchQuery] = useState("");
@@ -239,14 +241,14 @@ export function Members({ groupId, onMemberAction, canManageMembers = false }: M
 
         return (
           <TouchableOpacity
-            style={styles.memberItem}
+            style={[styles.memberItem, { backgroundColor: colors.surface, borderColor: colors.border }]}
             onPress={() => handleMemberPress(member)}
           >
             <SyncedMemberRowContent
               member={member}
               primaryColor={primaryColor}
               isCurrentUser={isCurrentUser}
-              rightContent={<Ionicons name="chevron-forward" size={20} color="#999" />}
+              rightContent={<Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />}
             />
           </TouchableOpacity>
         );
@@ -268,7 +270,7 @@ export function Members({ groupId, onMemberAction, canManageMembers = false }: M
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" />
-        <Text style={styles.loadingText}>Loading members...</Text>
+        <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading members...</Text>
       </View>
     );
   }
@@ -277,7 +279,7 @@ export function Members({ groupId, onMemberAction, canManageMembers = false }: M
   if (visibleChannels.length === 0) {
     return (
       <View style={styles.emptyState}>
-        <Text style={styles.emptyStateText}>No channels found for this group</Text>
+        <Text style={[styles.emptyStateText, { color: colors.textTertiary }]}>No channels found for this group</Text>
       </View>
     );
   }
@@ -286,9 +288,9 @@ export function Members({ groupId, onMemberAction, canManageMembers = false }: M
     !membersData && !!activeChannelId && accumulatedSyncedMembers.length === 0;
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
       {/* Search Bar */}
-      <View style={styles.searchContainer}>
+      <View style={[styles.searchContainer, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <SearchBar
           placeholder="Search members..."
           value={searchQuery}
@@ -297,7 +299,7 @@ export function Members({ groupId, onMemberAction, canManageMembers = false }: M
       </View>
 
       {/* Channel Chips */}
-      <View style={styles.filterSection}>
+      <View style={[styles.filterSection, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -309,7 +311,7 @@ export function Members({ groupId, onMemberAction, canManageMembers = false }: M
             return (
               <TouchableOpacity
                 key={channel._id}
-                style={[styles.filterChip, isActive && activeChipStyle]}
+                style={[styles.filterChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }, isActive && activeChipStyle]}
                 onPress={() => {
                   setSelectedChannelId(channel._id);
                   setSearchQuery("");
@@ -321,7 +323,7 @@ export function Members({ groupId, onMemberAction, canManageMembers = false }: M
                     <Ionicons
                       name="link"
                       size={12}
-                      color={isActive ? "#fff" : "#8B5CF6"}
+                      color={isActive ? colors.textInverse : colors.link}
                       style={{ marginRight: 4 }}
                     />
                   )}
@@ -329,14 +331,15 @@ export function Members({ groupId, onMemberAction, canManageMembers = false }: M
                     <Ionicons
                       name="sync"
                       size={12}
-                      color={isActive ? "#fff" : "#2196F3"}
+                      color={isActive ? colors.textInverse : colors.link}
                       style={{ marginRight: 4 }}
                     />
                   )}
                   <Text
                     style={[
                       styles.filterChipText,
-                      isActive && styles.filterChipTextActive,
+                      { color: colors.textSecondary },
+                      isActive && { color: colors.textInverse },
                     ]}
                   >
                     {channel.name}
@@ -350,8 +353,8 @@ export function Members({ groupId, onMemberAction, canManageMembers = false }: M
 
       {/* Member Count & Channel Info */}
       {activeChannel && (
-        <View style={styles.memberCountSection}>
-          <Text style={styles.memberCountText}>
+        <View style={[styles.memberCountSection, { backgroundColor: colors.surfaceSecondary }]}>
+          <Text style={[styles.memberCountText, { color: colors.textSecondary }]}>
             {totalMemberCount} member{totalMemberCount !== 1 ? "s" : ""}
             {unsyncedPeople.length > 0 && (
               <Text style={styles.unsyncedCountText}>
@@ -361,13 +364,13 @@ export function Members({ groupId, onMemberAction, canManageMembers = false }: M
           </Text>
           {isPcoChannel && (
             <View style={styles.pcoBadge}>
-              <Ionicons name="sync" size={12} color="#2196F3" />
+              <Ionicons name="sync" size={12} color={colors.link} />
               <Text style={styles.pcoBadgeText}>PCO Synced</Text>
             </View>
           )}
           {activeChannel.isShared && (
             <View style={styles.sharedBadge}>
-              <Ionicons name="link" size={12} color="#8B5CF6" />
+              <Ionicons name="link" size={12} color={colors.link} />
               <Text style={styles.sharedBadgeText}>Shared</Text>
             </View>
           )}
@@ -378,7 +381,7 @@ export function Members({ groupId, onMemberAction, canManageMembers = false }: M
       {isLoadingMembers ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" />
-          <Text style={styles.loadingText}>Loading channel members...</Text>
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading channel members...</Text>
         </View>
       ) : (
         <FlatList
@@ -397,13 +400,13 @@ export function Members({ groupId, onMemberAction, canManageMembers = false }: M
             isFetchingNextPage ? (
               <View style={styles.paginationLoader}>
                 <ActivityIndicator size="small" />
-                <Text style={styles.paginationLoaderText}>Loading more members...</Text>
+                <Text style={[styles.paginationLoaderText, { color: colors.textSecondary }]}>Loading more members...</Text>
               </View>
             ) : null
           }
           ListEmptyComponent={
             <View style={styles.emptyState}>
-              <Text style={styles.emptyStateText}>
+              <Text style={[styles.emptyStateText, { color: colors.textTertiary }]}>
                 {backendSearchQuery
                   ? "No members found matching your search"
                   : "No members in this channel"}
@@ -443,6 +446,7 @@ function MemberActionsModal({
   onAction,
   canManageMembers = false,
 }: MemberActionsModalProps) {
+  const { colors } = useTheme();
   const { user } = useAuth();
 
   if (!member || !visible) {
@@ -471,13 +475,13 @@ function MemberActionsModal({
           activeOpacity={1}
           onPress={onClose}
         />
-        <View style={styles.modalContent}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>
+        <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
+          <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>
               {member?.first_name || ""} {member?.last_name || ""}
             </Text>
             <TouchableOpacity onPress={onClose} style={styles.modalCloseButton}>
-              <Ionicons name="close" size={24} color="#333" />
+              <Ionicons name="close" size={24} color={colors.text} />
             </TouchableOpacity>
           </View>
 
@@ -486,19 +490,19 @@ function MemberActionsModal({
               <>
                 {isLeader ? (
                   <TouchableOpacity
-                    style={styles.modalActionButton}
+                    style={[styles.modalActionButton, { borderBottomColor: colors.border }]}
                     onPress={() => onAction("demote")}
                   >
-                    <Ionicons name="arrow-down" size={20} color="#333" />
-                    <Text style={styles.modalActionText}>Demote to Member</Text>
+                    <Ionicons name="arrow-down" size={20} color={colors.text} />
+                    <Text style={[styles.modalActionText, { color: colors.text }]}>Demote to Member</Text>
                   </TouchableOpacity>
                 ) : (
                   <TouchableOpacity
-                    style={styles.modalActionButton}
+                    style={[styles.modalActionButton, { borderBottomColor: colors.border }]}
                     onPress={() => onAction("promote")}
                   >
-                    <Ionicons name="arrow-up" size={20} color="#333" />
-                    <Text style={styles.modalActionText}>
+                    <Ionicons name="arrow-up" size={20} color={colors.text} />
+                    <Text style={[styles.modalActionText, { color: colors.text }]}>
                       Promote to Leader
                     </Text>
                   </TouchableOpacity>
@@ -513,9 +517,9 @@ function MemberActionsModal({
                 ]}
                 onPress={() => onAction("remove")}
               >
-                <Ionicons name="person-remove" size={20} color="#e74c3c" />
+                <Ionicons name="person-remove" size={20} color={colors.destructive} />
                 <Text
-                  style={[styles.modalActionText, styles.modalActionTextDanger]}
+                  style={[styles.modalActionText, { color: colors.destructive }]}
                 >
                   Remove from Group
                 </Text>
@@ -531,18 +535,13 @@ function MemberActionsModal({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f5f5f5",
   },
   searchContainer: {
     padding: 16,
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   filterSection: {
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
     paddingVertical: 12,
   },
   filterChips: {
@@ -558,29 +557,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
-    backgroundColor: "#f0f0f0",
     borderWidth: 1,
-    borderColor: "#e0e0e0",
   },
   filterChipText: {
     fontSize: 14,
-    color: "#666",
     fontWeight: "500",
   },
-  filterChipTextActive: {
-    color: "#fff",
-  },
+  filterChipTextActive: {},
   memberCountSection: {
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 16,
     paddingVertical: 10,
-    backgroundColor: "#f5f5f5",
     gap: 8,
   },
   memberCountText: {
     fontSize: 14,
-    color: "#666",
     fontWeight: "500",
   },
   unsyncedCountText: {
@@ -620,12 +612,10 @@ const styles = StyleSheet.create({
   memberItem: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#fff",
     padding: 12,
     borderRadius: 12,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: "#e0e0e0",
   },
   unsyncedMemberItem: {
     backgroundColor: "#FFF8F0",
@@ -639,7 +629,6 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 10,
     fontSize: 16,
-    color: "#666",
   },
   paginationLoader: {
     flexDirection: "row",
@@ -650,7 +639,6 @@ const styles = StyleSheet.create({
   },
   paginationLoaderText: {
     fontSize: 13,
-    color: "#666",
   },
   emptyState: {
     padding: 40,
@@ -658,7 +646,6 @@ const styles = StyleSheet.create({
   },
   emptyStateText: {
     fontSize: 16,
-    color: "#999",
     textAlign: "center",
   },
   // Modal styles
@@ -676,7 +663,6 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0, 0, 0, 0.5)",
   },
   modalContent: {
-    backgroundColor: "#fff",
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     paddingTop: 20,
@@ -691,12 +677,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: 20,
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   modalTitle: {
     fontSize: 20,
     fontWeight: "bold",
-    color: "#333",
   },
   modalCloseButton: {
     padding: 4,
@@ -710,17 +694,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
   },
   modalActionButtonDanger: {
     borderBottomWidth: 0,
   },
   modalActionText: {
     fontSize: 16,
-    color: "#333",
     marginLeft: 12,
   },
-  modalActionTextDanger: {
-    color: "#e74c3c",
-  },
+  modalActionTextDanger: {},
 });

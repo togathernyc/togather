@@ -20,6 +20,7 @@ try {
 import { Ionicons } from '@expo/vector-icons';
 import { AppImage } from './AppImage';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
+import { useTheme } from '@hooks/useTheme';
 
 interface ImagePickerProps {
   onImageSelected: (imageUri: string) => void;
@@ -49,6 +50,7 @@ export function ImagePickerComponent({
   isUploading = false,
 }: ImagePickerProps) {
   const { primaryColor } = useCommunityTheme();
+  const { colors } = useTheme();
   const [isLoading, setIsLoading] = useState(false);
 
   const requestPermissions = async () => {
@@ -200,8 +202,8 @@ export function ImagePickerComponent({
                 onPress={onImageRemoved}
                 disabled={isLoading}
               >
-                <Ionicons name="trash" size={20} color="#FF3B30" />
-                <Text style={[styles.actionButtonText, styles.removeButtonText]}>
+                <Ionicons name="trash" size={20} color={colors.destructive} />
+                <Text style={[styles.actionButtonText, { color: colors.destructive }]}>
                   Remove
                 </Text>
               </TouchableOpacity>
@@ -210,7 +212,7 @@ export function ImagePickerComponent({
         </View>
       ) : (
         <TouchableOpacity
-          style={[styles.selectButton, { borderColor: primaryColor }]}
+          style={[styles.selectButton, { borderColor: primaryColor, backgroundColor: colors.buttonSecondary }]}
           onPress={showImageOptions}
           disabled={isLoading}
         >
@@ -240,7 +242,6 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderStyle: 'dashed',
     borderRadius: 8,
-    backgroundColor: '#fafafa',
     gap: 8,
   },
   selectButtonText: {
@@ -289,8 +290,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   removeButton: {},
-  removeButtonText: {
-    color: '#FF3B30',
-  },
+  removeButtonText: {},
 });
 

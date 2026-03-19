@@ -13,6 +13,7 @@ import { useQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { format } from "date-fns";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
+import { useTheme } from "@hooks/useTheme";
 
 interface EventsListProps {
   groupId: string;
@@ -36,6 +37,7 @@ export function EventsList({
   selectedDate,
   onEventSelect,
 }: EventsListProps) {
+  const { colors } = useTheme();
   // Hooks must be called before any conditional returns
   const scrollViewRef = useRef<ScrollView>(null);
   const hasScrolledToMostRecent = useRef(false);
@@ -262,10 +264,10 @@ export function EventsList({
   if (isLoading) {
     return (
       <View style={styles.container}>
-        <Text style={styles.sectionTitle}>Events</Text>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Events</Text>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="small" color="#666" />
-          <Text style={styles.loadingText}>Loading events...</Text>
+          <ActivityIndicator size="small" color={colors.textSecondary} />
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading events...</Text>
         </View>
       </View>
     );
@@ -274,9 +276,9 @@ export function EventsList({
   if (sortedEvents.length === 0) {
     return (
       <View style={styles.container}>
-        <Text style={styles.sectionTitle}>Events</Text>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Events</Text>
         <View style={styles.emptyState}>
-          <Text style={styles.emptyStateText}>No events scheduled</Text>
+          <Text style={[styles.emptyStateText, { color: colors.textSecondary }]}>No events scheduled</Text>
         </View>
       </View>
     );
@@ -284,7 +286,7 @@ export function EventsList({
 
   return (
     <View style={styles.container}>
-      <Text style={styles.sectionTitle}>Events</Text>
+      <Text style={[styles.sectionTitle, { color: colors.text }]}>Events</Text>
       <View onLayout={handleLayout} style={styles.scrollViewContainer}>
         <ScrollView
           ref={scrollViewRef}
@@ -320,6 +322,7 @@ interface EventCardProps {
 // EventCard is now a pure presentational component - no API calls
 // Stats are passed from parent via the event prop (already fetched in bulk)
 function EventCard({ event, isSelected, onPress }: EventCardProps) {
+  const { colors } = useTheme();
   if (!event.date) {
     return null; // Skip rendering if date is missing
   }
@@ -343,39 +346,39 @@ function EventCard({ event, isSelected, onPress }: EventCardProps) {
 
   return (
     <TouchableOpacity
-      style={[styles.card, isSelected && styles.cardSelected]}
+      style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, isSelected && [styles.cardSelected, { backgroundColor: colors.surfaceSecondary }]]}
       onPress={onPress}
     >
       {/* Cover Image */}
       {event.coverImageUrl ? (
         <AppImage
           source={event.coverImageUrl}
-          style={styles.cardImage}
+          style={[styles.cardImage, { backgroundColor: colors.surfaceSecondary }]}
           resizeMode="cover"
           optimizedWidth={400}
           placeholder={{ type: 'icon', icon: 'calendar' }}
         />
       ) : (
-        <View style={styles.cardImagePlaceholder}>
-          <Text style={styles.cardImagePlaceholderText}>
+        <View style={[styles.cardImagePlaceholder, { backgroundColor: colors.border }]}>
+          <Text style={[styles.cardImagePlaceholderText, { color: colors.textTertiary }]}>
             {format(eventDate, "MMM")}
           </Text>
         </View>
       )}
 
       {/* Event Title - Always shown */}
-      <Text style={styles.cardName} numberOfLines={2}>
+      <Text style={[styles.cardName, { color: colors.text }]} numberOfLines={2}>
         {eventTitle}
       </Text>
 
       {/* Date - Always shown */}
-      <Text style={styles.cardDate}>{formattedDate}</Text>
+      <Text style={[styles.cardDate, { color: colors.textSecondary }]}>{formattedDate}</Text>
 
       {/* Attendee Count (only show if > 0) */}
       {event.isPast && event.attendanceCount > 0 && (
         <View style={styles.cardStats}>
-          <Text style={styles.cardStatsValue}>{event.attendanceCount}</Text>
-          <Text style={styles.cardStatsLabel}>
+          <Text style={[styles.cardStatsValue, { color: colors.text }]}>{event.attendanceCount}</Text>
+          <Text style={[styles.cardStatsLabel, { color: colors.textSecondary }]}>
             {event.attendanceCount === 1 ? "person" : "people"}
           </Text>
         </View>
@@ -391,7 +394,6 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 12,
     paddingHorizontal: 20,
   },
@@ -409,7 +411,6 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 8,
     fontSize: 14,
-    color: "#666",
   },
   emptyState: {
     padding: 20,
@@ -417,16 +418,13 @@ const styles = StyleSheet.create({
   },
   emptyStateText: {
     fontSize: 14,
-    color: "#666",
   },
   card: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     overflow: "hidden",
     minWidth: 140,
     maxWidth: 160,
     borderWidth: 1,
-    borderColor: "#e0e0e0",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
@@ -436,37 +434,31 @@ const styles = StyleSheet.create({
   cardSelected: {
     borderColor: DEFAULT_PRIMARY_COLOR,
     borderWidth: 2,
-    backgroundColor: "#f8f5ff",
   },
   cardImage: {
     width: "100%",
     height: 100,
-    backgroundColor: "#f0f0f0",
   },
   cardImagePlaceholder: {
     width: "100%",
     height: 100,
-    backgroundColor: "#e8e8e8",
     justifyContent: "center",
     alignItems: "center",
   },
   cardImagePlaceholderText: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#999",
     textTransform: "uppercase",
   },
   cardName: {
     fontSize: 15,
     fontWeight: "600",
-    color: "#333",
     paddingHorizontal: 12,
     paddingTop: 12,
     paddingBottom: 4,
   },
   cardDate: {
     fontSize: 13,
-    color: "#666",
     paddingHorizontal: 12,
     paddingBottom: 8,
   },
@@ -480,10 +472,8 @@ const styles = StyleSheet.create({
   cardStatsValue: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
   },
   cardStatsLabel: {
     fontSize: 12,
-    color: "#666",
   },
 });

@@ -11,6 +11,7 @@ import {
   ScrollView,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useTheme } from "@hooks/useTheme";
 
 interface AddGuestProps {
   visible: boolean;
@@ -25,6 +26,7 @@ interface AddGuestProps {
 }
 
 export function AddGuest({ visible, onClose, onAddGuest, error: externalError }: AddGuestProps) {
+  const { colors } = useTheme();
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
@@ -129,17 +131,17 @@ export function AddGuest({ visible, onClose, onAddGuest, error: externalError }:
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={styles.container}
       >
-        <View style={styles.overlay}>
+        <View style={[styles.overlay, { backgroundColor: colors.overlay }]}>
           <TouchableOpacity
             style={styles.backdrop}
             activeOpacity={1}
             onPress={handleClose}
           />
-          <View style={styles.modalContent}>
-            <View style={styles.header}>
-              <Text style={styles.headerTitle}>Add Guest</Text>
+          <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
+            <View style={[styles.header, { borderBottomColor: colors.border }]}>
+              <Text style={[styles.headerTitle, { color: colors.text }]}>Add Guest</Text>
               <TouchableOpacity onPress={handleClose} style={styles.closeButton}>
-                <Ionicons name="close" size={24} color="#333" />
+                <Ionicons name="close" size={24} color={colors.text} />
               </TouchableOpacity>
             </View>
 
@@ -150,18 +152,20 @@ export function AddGuest({ visible, onClose, onAddGuest, error: externalError }:
             >
               {/* Name Section */}
               <View style={styles.section}>
-                <Text style={styles.sectionLabel}>NAME</Text>
+                <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>NAME</Text>
                 <TextInput
-                  style={styles.input}
+                  style={[styles.input, { borderColor: colors.border, color: colors.text, backgroundColor: colors.surface }]}
                   placeholder="First Name"
+                  placeholderTextColor={colors.textTertiary}
                   value={firstName}
                   onChangeText={setFirstName}
                   autoCapitalize="words"
                   returnKeyType="next"
                 />
                 <TextInput
-                  style={styles.input}
+                  style={[styles.input, { borderColor: colors.border, color: colors.text, backgroundColor: colors.surface }]}
                   placeholder="Last Name"
+                  placeholderTextColor={colors.textTertiary}
                   value={lastName}
                   onChangeText={setLastName}
                   autoCapitalize="words"
@@ -171,12 +175,13 @@ export function AddGuest({ visible, onClose, onAddGuest, error: externalError }:
 
               {/* Phone Section */}
               <View style={styles.section}>
-                <Text style={styles.sectionLabel}>
-                  PHONE NUMBER <Text style={styles.optionalText}>(Optional)</Text>
+                <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
+                  PHONE NUMBER <Text style={[styles.optionalText, { color: colors.textTertiary }]}>(Optional)</Text>
                 </Text>
                 <TextInput
-                  style={styles.input}
+                  style={[styles.input, { borderColor: colors.border, color: colors.text, backgroundColor: colors.surface }]}
                   placeholder="Phone Number"
+                  placeholderTextColor={colors.textTertiary}
                   value={phone}
                   onChangeText={handlePhoneChange}
                   keyboardType="phone-pad"
@@ -187,12 +192,13 @@ export function AddGuest({ visible, onClose, onAddGuest, error: externalError }:
 
               {/* Email Section */}
               <View style={styles.section}>
-                <Text style={styles.sectionLabel}>
-                  EMAIL <Text style={styles.optionalText}>(Optional)</Text>
+                <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
+                  EMAIL <Text style={[styles.optionalText, { color: colors.textTertiary }]}>(Optional)</Text>
                 </Text>
                 <TextInput
-                  style={[styles.input, (emailError || apiError) ? styles.inputError : null]}
+                  style={[styles.input, { borderColor: colors.border, color: colors.text, backgroundColor: colors.surface }, (emailError || apiError) ? { borderColor: colors.destructive } : null]}
                   placeholder="Email"
+                  placeholderTextColor={colors.textTertiary}
                   value={email}
                   onChangeText={handleEmailChange}
                   keyboardType="email-address"
@@ -202,30 +208,30 @@ export function AddGuest({ visible, onClose, onAddGuest, error: externalError }:
                   onSubmitEditing={handleSubmit}
                 />
                 {emailError ? (
-                  <Text style={styles.errorText}>{emailError}</Text>
+                  <Text style={[styles.errorText, { color: colors.destructive }]}>{emailError}</Text>
                 ) : null}
                 {apiError && !emailError ? (
-                  <Text style={styles.errorText}>{apiError}</Text>
+                  <Text style={[styles.errorText, { color: colors.destructive }]}>{apiError}</Text>
                 ) : null}
               </View>
             </ScrollView>
 
             {/* Action Buttons */}
-            <View style={styles.buttonContainer}>
+            <View style={[styles.buttonContainer, { borderTopColor: colors.border }]}>
               <TouchableOpacity
-                style={[styles.button, styles.submitButton, !isFormValid && styles.buttonDisabled]}
+                style={[styles.button, { backgroundColor: colors.buttonPrimary }, !isFormValid && { backgroundColor: colors.buttonDisabled }]}
                 onPress={handleSubmit}
                 disabled={!isFormValid}
               >
-                <Text style={[styles.buttonText, styles.submitButtonText]}>
+                <Text style={[styles.buttonText, { color: colors.textInverse }]}>
                   Add Guest to Attendance
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.button, styles.cancelButton]}
+                style={[styles.button, { backgroundColor: colors.surfaceSecondary }]}
                 onPress={handleClose}
               >
-                <Text style={[styles.buttonText, styles.cancelButtonText]}>Cancel</Text>
+                <Text style={[styles.buttonText, { color: colors.textSecondary }]}>Cancel</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -241,14 +247,12 @@ const styles = StyleSheet.create({
   },
   overlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
     justifyContent: "flex-end",
   },
   backdrop: {
     flex: 1,
   },
   modalContent: {
-    backgroundColor: "#fff",
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     maxHeight: "90%",
@@ -261,12 +265,10 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   headerTitle: {
     fontSize: 20,
     fontWeight: "bold",
-    color: "#333",
   },
   closeButton: {
     padding: 4,
@@ -283,38 +285,27 @@ const styles = StyleSheet.create({
   sectionLabel: {
     fontSize: 12,
     fontWeight: "600",
-    color: "#666",
     marginBottom: 8,
     textTransform: "uppercase",
   },
   optionalText: {
     fontWeight: "400",
-    color: "#999",
     textTransform: "none",
   },
   input: {
     borderWidth: 1,
-    borderColor: "#e0e0e0",
     borderRadius: 8,
     padding: 12,
     fontSize: 16,
-    color: "#333",
-    backgroundColor: "#fff",
     marginBottom: 12,
-  },
-  inputError: {
-    borderColor: "#C62727",
-    marginBottom: 4,
   },
   errorText: {
     fontSize: 12,
-    color: "#C62727",
     marginBottom: 12,
   },
   buttonContainer: {
     padding: 16,
     borderTopWidth: 1,
-    borderTopColor: "#e0e0e0",
   },
   button: {
     borderRadius: 100,
@@ -323,24 +314,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginBottom: 12,
   },
-  submitButton: {
-    backgroundColor: "#222224",
-  },
-  buttonDisabled: {
-    backgroundColor: "#bdbdc1",
-  },
-  cancelButton: {
-    backgroundColor: "#ecedf0",
-  },
   buttonText: {
     fontSize: 18,
     fontWeight: "600",
-  },
-  submitButtonText: {
-    color: "#fff",
-  },
-  cancelButtonText: {
-    color: "#4b4b4d",
   },
 });
 

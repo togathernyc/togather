@@ -15,8 +15,10 @@ import { AttendanceDetails } from "./AttendanceDetails";
 import { useAttendanceEdit } from "../hooks/useAttendanceEdit";
 import { useAttendanceReport } from "../hooks/useAttendanceReport";
 import { DragHandle } from "@components/ui/DragHandle";
+import { useTheme } from "@hooks/useTheme";
 
 export function AttendanceEditScreen() {
+  const { colors } = useTheme();
   // FIX for Issue #303: Read meetingId from URL params to ensure we record
   // attendance for the correct event when multiple events exist on the same day
   const { group_id, eventDate: eventDateParam, meetingId: meetingIdParam } = useLocalSearchParams<{
@@ -54,11 +56,11 @@ export function AttendanceEditScreen() {
   if (isLoadingGroup) {
     return (
       <UserRoute>
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
           <DragHandle />
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" />
-            <Text style={styles.loadingText}>Loading...</Text>
+            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading...</Text>
           </View>
         </View>
       </UserRoute>
@@ -68,15 +70,15 @@ export function AttendanceEditScreen() {
   if (groupError || !group) {
     return (
       <UserRoute>
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
           <DragHandle />
           <View style={styles.errorContainer}>
-            <Text style={styles.errorText}>Group not found</Text>
+            <Text style={[styles.errorText, { color: colors.textSecondary }]}>Group not found</Text>
             <TouchableOpacity
               style={styles.backButton}
               onPress={() => handleBack()}
             >
-              <Text style={styles.errorText}>Go Back</Text>
+              <Text style={[styles.errorText, { color: colors.textSecondary }]}>Go Back</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -95,21 +97,21 @@ export function AttendanceEditScreen() {
   if (isFutureEvent) {
     return (
       <UserRoute>
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
           <DragHandle />
-          <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
+          <View style={[styles.header, { paddingTop: insets.top + 16, backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
             <TouchableOpacity style={styles.backButton} onPress={handleBack}>
-              <Ionicons name="arrow-back" size={24} color="#333" />
+              <Ionicons name="arrow-back" size={24} color={colors.text} />
             </TouchableOpacity>
-            <Text style={styles.headerTitle}>Edit Attendance</Text>
+            <Text style={[styles.headerTitle, { color: colors.text }]}>Edit Attendance</Text>
           </View>
           <View style={styles.errorContainer}>
-            <Text style={styles.errorText}>Cannot edit attendance for future events</Text>
+            <Text style={[styles.errorText, { color: colors.textSecondary }]}>Cannot edit attendance for future events</Text>
             <TouchableOpacity
               style={styles.backButton}
               onPress={() => handleBack()}
             >
-              <Text style={styles.errorText}>Go Back</Text>
+              <Text style={[styles.errorText, { color: colors.textSecondary }]}>Go Back</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -122,13 +124,13 @@ export function AttendanceEditScreen() {
 
   return (
     <UserRoute>
-      <View style={styles.container}>
+      <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
         <DragHandle />
-        <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
+        <View style={[styles.header, { paddingTop: insets.top + 16, backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
           <TouchableOpacity style={styles.backButton} onPress={handleBack}>
-            <Ionicons name="arrow-back" size={24} color="#333" />
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Edit Attendance</Text>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Edit Attendance</Text>
         </View>
 
         {/* No ScrollView here - AttendanceEditMode handles its own scrolling */}
@@ -157,15 +159,12 @@ export function AttendanceEditScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f5f5f5",
   },
   header: {
     flexDirection: "row",
     alignItems: "center",
     padding: 16,
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   backButton: {
     marginRight: 12,
@@ -174,7 +173,6 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 20,
     fontWeight: "bold",
-    color: "#333",
   },
   contentContainer: {
     flex: 1,
@@ -187,7 +185,6 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 12,
     fontSize: 16,
-    color: "#666",
   },
   errorContainer: {
     flex: 1,
@@ -197,7 +194,6 @@ const styles = StyleSheet.create({
   },
   errorText: {
     fontSize: 18,
-    color: "#666",
     marginBottom: 20,
   },
 });

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from "react";
 import { View, StyleSheet, Animated, Platform } from "react-native";
+import { useTheme } from "@hooks/useTheme";
 
 interface SkeletonProps {
   width?: number | string;
@@ -16,6 +17,7 @@ export function Skeleton({
   style,
   variant = "rectangular",
 }: SkeletonProps) {
+  const { colors } = useTheme();
   const fadeAnim = useRef(new Animated.Value(0.3)).current;
 
   useEffect(() => {
@@ -53,6 +55,7 @@ export function Skeleton({
           height: variant === "text" ? height : height,
           borderRadius: getBorderRadius(),
           opacity: fadeAnim,
+          backgroundColor: colors.border,
         },
         style,
       ]}
@@ -61,9 +64,7 @@ export function Skeleton({
 }
 
 const styles = StyleSheet.create({
-  skeleton: {
-    backgroundColor: "#e0e0e0",
-  },
+  skeleton: {},
 });
 
 // Skeleton components for common use cases
@@ -102,8 +103,9 @@ export function SkeletonAvatar({
 }
 
 export function SkeletonCard({ style }: { style?: any }) {
+  const { colors } = useTheme();
   return (
-    <View style={[cardStyles.cardSkeleton, style]}>
+    <View style={[cardStyles.cardSkeleton, { backgroundColor: colors.surface }, style]}>
       <View style={cardStyles.cardHeader}>
         <SkeletonAvatar size={40} />
         <View style={cardStyles.cardHeaderText}>
@@ -119,7 +121,6 @@ export function SkeletonCard({ style }: { style?: any }) {
 const cardStyles = StyleSheet.create({
   cardSkeleton: {
     padding: 16,
-    backgroundColor: "#fff",
     borderRadius: 12,
     marginBottom: 12,
     ...Platform.select({

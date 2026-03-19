@@ -24,6 +24,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppImage } from "@components/ui";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
+import { useTheme } from "@hooks/useTheme";
 import { MembersRow } from "@/features/groups/components/MembersRow";
 import { JoinCommunityCard } from "@/features/events/components/JoinCommunityCard";
 import { SharedPageTabBar } from "@/features/events/components/SharedPageTabBar";
@@ -74,6 +75,7 @@ interface GroupPageClientProps {
  * Convex queries will take over for real-time updates.
  */
 export default function GroupPageClient({ initialGroupData }: GroupPageClientProps) {
+  const { colors } = useTheme();
   const { shortId, source } = useLocalSearchParams<{
     shortId: string;
     source?: string;
@@ -232,19 +234,19 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
 
   if (isLoading) {
     return (
-      <SafeAreaView style={styles.loadingContainer}>
+      <SafeAreaView style={[styles.loadingContainer, { backgroundColor: colors.background }]}>
         <ActivityIndicator size="large" color={DEFAULT_PRIMARY_COLOR} />
-        <Text style={styles.loadingText}>Loading group...</Text>
+        <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading group...</Text>
       </SafeAreaView>
     );
   }
 
   if (error || !groupData) {
     return (
-      <SafeAreaView style={styles.errorContainer}>
-        <Ionicons name="alert-circle-outline" size={64} color="#999" />
-        <Text style={styles.errorTitle}>Group Not Found</Text>
-        <Text style={styles.errorText}>
+      <SafeAreaView style={[styles.errorContainer, { backgroundColor: colors.background }]}>
+        <Ionicons name="alert-circle-outline" size={64} color={colors.textTertiary} />
+        <Text style={[styles.errorTitle, { color: colors.text }]}>Group Not Found</Text>
+        <Text style={[styles.errorText, { color: colors.textSecondary }]}>
           This group may have been removed or the link is invalid.
         </Text>
         <TouchableOpacity style={styles.backButton} onPress={handleBack}>
@@ -259,7 +261,7 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
   // ============================================================================
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={[
@@ -271,13 +273,13 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
         <View style={[styles.header, { paddingTop: insets.top }]}>
           {showBackButton ? (
             <TouchableOpacity style={styles.headerButton} onPress={handleBack}>
-              <Ionicons name="arrow-back" size={24} color="#000" />
+              <Ionicons name="arrow-back" size={24} color={colors.text} />
             </TouchableOpacity>
           ) : (
             <View style={{ width: 40 }} />
           )}
           <TouchableOpacity style={styles.headerButton} onPress={handleShare}>
-            <Ionicons name="share-outline" size={24} color="#000" />
+            <Ionicons name="share-outline" size={24} color={colors.text} />
           </TouchableOpacity>
         </View>
 
@@ -289,8 +291,8 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
             resizeMode="cover"
           />
         ) : (
-          <View style={[styles.groupImage, styles.placeholderImage]}>
-            <Ionicons name="people" size={64} color="#ccc" />
+          <View style={[styles.groupImage, styles.placeholderImage, { backgroundColor: colors.surfaceSecondary }]}>
+            <Ionicons name="people" size={64} color={colors.iconSecondary} />
           </View>
         )}
 
@@ -298,13 +300,13 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
         <View style={styles.infoContainer}>
           {/* Group Type Badge */}
           {groupData.groupTypeName && (
-            <View style={styles.typeBadge}>
-              <Text style={styles.typeBadgeText}>{groupData.groupTypeName}</Text>
+            <View style={[styles.typeBadge, { backgroundColor: colors.surfaceSecondary }]}>
+              <Text style={[styles.typeBadgeText, { color: colors.textSecondary }]}>{groupData.groupTypeName}</Text>
             </View>
           )}
 
           {/* Group Name */}
-          <Text style={styles.groupName}>{groupData.name}</Text>
+          <Text style={[styles.groupName, { color: colors.text }]}>{groupData.name}</Text>
 
           {/* Community Name */}
           {groupData.communityName && (
@@ -316,15 +318,15 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
                   resizeMode="cover"
                 />
               )}
-              <Text style={styles.communityName}>{groupData.communityName}</Text>
+              <Text style={[styles.communityName, { color: colors.textSecondary }]}>{groupData.communityName}</Text>
             </View>
           )}
 
           {/* Location */}
           {(groupData.city || groupData.state) && (
             <View style={styles.locationRow}>
-              <Ionicons name="location-outline" size={16} color="#666" />
-              <Text style={styles.locationText}>
+              <Ionicons name="location-outline" size={16} color={colors.textSecondary} />
+              <Text style={[styles.locationText, { color: colors.textSecondary }]}>
                 {[groupData.city, groupData.state].filter(Boolean).join(", ")}
               </Text>
             </View>
@@ -340,22 +342,22 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
                 totalCount={groupData.memberCount}
               />
               {!groupData.isPublic && (
-                <View style={styles.privateBadge}>
-                  <Ionicons name="lock-closed" size={12} color="#666" />
-                  <Text style={styles.privateText}>Private</Text>
+                <View style={[styles.privateBadge, { backgroundColor: colors.surfaceSecondary }]}>
+                  <Ionicons name="lock-closed" size={12} color={colors.textSecondary} />
+                  <Text style={[styles.privateText, { color: colors.textSecondary }]}>Private</Text>
                 </View>
               )}
             </>
           ) : (
             <View style={styles.memberRow}>
-              <Ionicons name="people-outline" size={16} color="#666" />
-              <Text style={styles.memberText}>
+              <Ionicons name="people-outline" size={16} color={colors.textSecondary} />
+              <Text style={[styles.memberText, { color: colors.textSecondary }]}>
                 {groupData.memberCount} {groupData.memberCount === 1 ? "member" : "members"}
               </Text>
               {!groupData.isPublic && (
-                <View style={styles.privateBadge}>
-                  <Ionicons name="lock-closed" size={12} color="#666" />
-                  <Text style={styles.privateText}>Private</Text>
+                <View style={[styles.privateBadge, { backgroundColor: colors.surfaceSecondary }]}>
+                  <Ionicons name="lock-closed" size={12} color={colors.textSecondary} />
+                  <Text style={[styles.privateText, { color: colors.textSecondary }]}>Private</Text>
                 </View>
               )}
             </View>
@@ -363,7 +365,7 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
 
           {/* Description */}
           {groupData.description && (
-            <Text style={styles.description}>{groupData.description}</Text>
+            <Text style={[styles.description, { color: colors.text }]}>{groupData.description}</Text>
           )}
 
           {/* On Break Notice */}
@@ -390,7 +392,7 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
       </ScrollView>
 
       {/* Bottom Action Button */}
-      <View style={[styles.bottomBar, { paddingBottom: insets.bottom + 16 }]}>
+      <View style={[styles.bottomBar, { paddingBottom: insets.bottom + 16, backgroundColor: colors.surface, borderTopColor: colors.surfaceSecondary }]}>
         {groupData.userRole ? (
           // User is already a member - navigate to full group detail
           <TouchableOpacity
@@ -456,7 +458,6 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
   },
   scrollView: {
     flex: 1,
@@ -468,29 +469,24 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#fff",
   },
   loadingText: {
     marginTop: 16,
     fontSize: 16,
-    color: "#666",
   },
   errorContainer: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#fff",
     padding: 24,
   },
   errorTitle: {
     fontSize: 24,
     fontWeight: "600",
     marginTop: 16,
-    color: "#333",
   },
   errorText: {
     fontSize: 16,
-    color: "#666",
     textAlign: "center",
     marginTop: 8,
   },
@@ -534,7 +530,6 @@ const styles = StyleSheet.create({
   groupImage: {
     width: "100%",
     height: 280,
-    backgroundColor: "#f0f0f0",
   },
   placeholderImage: {
     justifyContent: "center",
@@ -545,7 +540,6 @@ const styles = StyleSheet.create({
   },
   typeBadge: {
     alignSelf: "flex-start",
-    backgroundColor: "#f0f0f0",
     paddingHorizontal: 12,
     paddingVertical: 4,
     borderRadius: 12,
@@ -553,13 +547,11 @@ const styles = StyleSheet.create({
   },
   typeBadgeText: {
     fontSize: 12,
-    color: "#666",
     fontWeight: "500",
   },
   groupName: {
     fontSize: 28,
     fontWeight: "700",
-    color: "#000",
     marginBottom: 8,
   },
   communityRow: {
@@ -575,7 +567,6 @@ const styles = StyleSheet.create({
   },
   communityName: {
     fontSize: 16,
-    color: "#666",
   },
   locationRow: {
     flexDirection: "row",
@@ -584,7 +575,6 @@ const styles = StyleSheet.create({
   },
   locationText: {
     fontSize: 14,
-    color: "#666",
     marginLeft: 6,
   },
   memberRow: {
@@ -594,26 +584,22 @@ const styles = StyleSheet.create({
   },
   memberText: {
     fontSize: 14,
-    color: "#666",
     marginLeft: 6,
   },
   privateBadge: {
     flexDirection: "row",
     alignItems: "center",
     marginLeft: 12,
-    backgroundColor: "#f0f0f0",
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 8,
   },
   privateText: {
     fontSize: 12,
-    color: "#666",
     marginLeft: 4,
   },
   description: {
     fontSize: 16,
-    color: "#333",
     lineHeight: 24,
   },
   onBreakBanner: {
@@ -638,11 +624,9 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: "#fff",
     paddingHorizontal: 20,
     paddingTop: 16,
     borderTopWidth: 1,
-    borderTopColor: "#f0f0f0",
   },
   primaryButton: {
     backgroundColor: DEFAULT_PRIMARY_COLOR,

@@ -12,6 +12,7 @@ import {
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useTheme } from "@hooks/useTheme";
 import { UserRoute } from "@components/guards/UserRoute";
 import { GroupDetailSkeleton } from "./GroupDetailSkeleton";
 import { useAuth } from "@providers/AuthProvider";
@@ -43,6 +44,7 @@ export function GroupDetailScreen() {
   const router = useRouter();
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
   const [showRSVPModal, setShowRSVPModal] = useState(false);
   const [showOptionsModal, setShowOptionsModal] = useState(false);
   const [showJoinSuccessModal, setShowJoinSuccessModal] = useState(false);
@@ -213,10 +215,10 @@ export function GroupDetailScreen() {
   if (error || !group) {
     return (
       <UserRoute>
-        <View style={styles.centerContainer}>
-          <Text style={styles.errorText}>Group not found</Text>
+        <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
+          <Text style={[styles.errorText, { color: colors.error }]}>Group not found</Text>
           <TouchableOpacity
-            style={styles.button}
+            style={[styles.button, { backgroundColor: colors.link }]}
             onPress={() => {
               if (router.canGoBack()) {
                 router.back();
@@ -225,7 +227,7 @@ export function GroupDetailScreen() {
               }
             }}
           >
-            <Text style={styles.buttonText}>Go Back</Text>
+            <Text style={[styles.buttonText, { color: colors.textInverse }]}>Go Back</Text>
           </TouchableOpacity>
         </View>
       </UserRoute>
@@ -258,17 +260,17 @@ export function GroupDetailScreen() {
             }
           }}
         >
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalContent}>
+          <View style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}>
+            <View style={[styles.modalContent, { backgroundColor: colors.modalBackground }]}>
               <View style={styles.modalHeader}>
-                <Ionicons name="checkmark-circle" size={48} color="#34C759" />
-                <Text style={styles.modalTitle}>Request Submitted!</Text>
+                <Ionicons name="checkmark-circle" size={48} color={colors.success} />
+                <Text style={[styles.modalTitle, { color: colors.text }]}>Request Submitted!</Text>
               </View>
-              <Text style={styles.modalMessage}>
+              <Text style={[styles.modalMessage, { color: colors.textSecondary }]}>
                 Your request to join this group has been sent to the group leaders for approval.
               </Text>
               <TouchableOpacity
-                style={styles.modalButton}
+                style={[styles.modalButton, { backgroundColor: colors.link }]}
                 onPress={() => {
                   setShowJoinSuccessModal(false);
                   if (router.canGoBack()) {
@@ -277,7 +279,7 @@ export function GroupDetailScreen() {
                 }}
                 activeOpacity={0.8}
               >
-                <Text style={styles.modalButtonText}>OK</Text>
+                <Text style={[styles.modalButtonText, { color: colors.textInverse }]}>OK</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -309,14 +311,14 @@ export function GroupDetailScreen() {
   return (
     <UserRoute>
       <ScrollView
-        style={styles.scrollView}
+        style={[styles.scrollView, { backgroundColor: colors.background }]}
         contentContainerStyle={{ paddingTop: insets.top }}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
             refreshing={isRefetching}
             onRefresh={handleRefresh}
-            tintColor="#007AFF"
+            tintColor={colors.link}
           />
         }
       >
@@ -328,17 +330,17 @@ export function GroupDetailScreen() {
         />
 
         {/* Description */}
-        <View style={styles.descriptionContainer}>
-          <Text style={styles.description}>
+        <View style={[styles.descriptionContainer, { backgroundColor: colors.surfaceSecondary }]}>
+          <Text style={[styles.description, { color: colors.textSecondary }]}>
             {group.description || "No description available."}
           </Text>
         </View>
 
         {/* Chat Section - Link to group chat */}
         {(group as any).main_channel_id && (
-          <View style={styles.chatSection}>
+          <View style={[styles.chatSection, { backgroundColor: colors.surfaceSecondary }]}>
             <TouchableOpacity
-              style={styles.chatCard}
+              style={[styles.chatCard, { backgroundColor: colors.surface }]}
               onPress={() => {
                 const mainChannelId = (group as any).main_channel_id;
                 const leadersChannelId = (group as any).leaders_channel_id;
@@ -360,14 +362,14 @@ export function GroupDetailScreen() {
               }}
               activeOpacity={0.7}
             >
-              <View style={styles.chatIconContainer}>
-                <Ionicons name="chatbubbles" size={24} color="#007AFF" />
+              <View style={[styles.chatIconContainer, { backgroundColor: colors.link + "15" }]}>
+                <Ionicons name="chatbubbles" size={24} color={colors.link} />
               </View>
               <View style={styles.chatInfo}>
-                <Text style={styles.chatTitle}>Group Chat</Text>
-                <Text style={styles.chatSubtitle}>Message your group members</Text>
+                <Text style={[styles.chatTitle, { color: colors.text }]}>Group Chat</Text>
+                <Text style={[styles.chatSubtitle, { color: colors.textSecondary }]}>Message your group members</Text>
               </View>
-              <Ionicons name="chevron-forward" size={20} color="#007AFF" />
+              <Ionicons name="chevron-forward" size={20} color={colors.link} />
             </TouchableOpacity>
           </View>
         )}
@@ -376,10 +378,10 @@ export function GroupDetailScreen() {
         {(group as any).externalChatLink && (() => {
           const externalChatInfo = getExternalChatInfo((group as any).externalChatLink);
           return (
-            <View style={styles.externalChatSection}>
-              <Text style={styles.sectionTitle}>EXTERNAL CHAT</Text>
+            <View style={[styles.externalChatSection, { backgroundColor: colors.surfaceSecondary }]}>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>EXTERNAL CHAT</Text>
               <TouchableOpacity
-                style={styles.externalChatCard}
+                style={[styles.externalChatCard, { backgroundColor: colors.surface }]}
                 onPress={() => openExternalChatLink((group as any).externalChatLink)}
                 activeOpacity={0.7}
               >
@@ -391,10 +393,10 @@ export function GroupDetailScreen() {
                   />
                 </View>
                 <View style={styles.externalChatInfo}>
-                  <Text style={styles.externalChatTitle}>
+                  <Text style={[styles.externalChatTitle, { color: colors.text }]}>
                     Join on {externalChatInfo.name}
                   </Text>
-                  <Text style={styles.externalChatSubtitle}>
+                  <Text style={[styles.externalChatSubtitle, { color: colors.textSecondary }]}>
                     This group also chats on {externalChatInfo.name}
                   </Text>
                 </View>
@@ -434,9 +436,9 @@ export function GroupDetailScreen() {
           group.user_role === "admin" ? (
             <TouchableOpacity onPress={handleMembersPress} activeOpacity={0.7}>
               <MembersRow members={group.members} leaders={group.leaders} />
-              <View style={styles.viewMembersHint}>
-                <Text style={styles.viewMembersText}>View all members</Text>
-                <Ionicons name="chevron-forward" size={16} color="#007AFF" />
+              <View style={[styles.viewMembersHint, { backgroundColor: colors.surfaceSecondary }]}>
+                <Text style={[styles.viewMembersText, { color: colors.link }]}>View all members</Text>
+                <Ionicons name="chevron-forward" size={16} color={colors.link} />
               </View>
             </TouchableOpacity>
           ) : (
@@ -482,41 +484,34 @@ export function GroupDetailScreen() {
 const styles = StyleSheet.create({
   scrollView: {
     flex: 1,
-    backgroundColor: "#fff",
   },
   centerContainer: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
     padding: 20,
-    backgroundColor: "#fff",
   },
   errorText: {
     fontSize: 16,
-    color: "#FF3B30",
     marginBottom: 16,
     textAlign: "center",
   },
   button: {
-    backgroundColor: "#007AFF",
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 8,
   },
   buttonText: {
-    color: "#fff",
     fontSize: 16,
     fontWeight: "600",
   },
   descriptionContainer: {
-    backgroundColor: "#F5F5F5",
     paddingHorizontal: 16,
     paddingVertical: 16,
     marginTop: 0,
   },
   description: {
     fontSize: 16,
-    color: "#666",
     lineHeight: 24,
   },
   viewMembersHint: {
@@ -524,33 +519,28 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 8,
-    backgroundColor: "#F5F5F5",
     marginTop: -8,
     paddingBottom: 16,
   },
   viewMembersText: {
     fontSize: 14,
-    color: "#007AFF",
     fontWeight: "500",
     marginRight: 4,
   },
   // External Chat Section styles
   externalChatSection: {
-    backgroundColor: "#F5F5F5",
     paddingHorizontal: 16,
     paddingVertical: 16,
   },
   sectionTitle: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#333",
     letterSpacing: 0.5,
     marginBottom: 12,
   },
   externalChatCard: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 12,
     shadowColor: "#000",
@@ -573,23 +563,19 @@ const styles = StyleSheet.create({
   externalChatTitle: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 2,
   },
   externalChatSubtitle: {
     fontSize: 13,
-    color: "#666",
   },
   // Chat Section styles
   chatSection: {
-    backgroundColor: "#F5F5F5",
     paddingHorizontal: 16,
     paddingVertical: 16,
   },
   chatCard: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 12,
     shadowColor: "#000",
@@ -602,7 +588,6 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: "#007AFF15",
     justifyContent: "center",
     alignItems: "center",
     marginRight: 12,
@@ -613,23 +598,19 @@ const styles = StyleSheet.create({
   chatTitle: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 2,
   },
   chatSubtitle: {
     fontSize: 13,
-    color: "#666",
   },
   // Join Success Modal styles
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
     justifyContent: "center",
     alignItems: "center",
     padding: 20,
   },
   modalContent: {
-    backgroundColor: "#fff",
     borderRadius: 16,
     padding: 24,
     width: "100%",
@@ -648,25 +629,21 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 20,
     fontWeight: "600",
-    color: "#333",
     marginTop: 12,
   },
   modalMessage: {
     fontSize: 16,
-    color: "#666",
     textAlign: "center",
     lineHeight: 22,
     marginBottom: 24,
   },
   modalButton: {
-    backgroundColor: "#007AFF",
     borderRadius: 8,
     paddingVertical: 12,
     paddingHorizontal: 32,
     minWidth: 120,
   },
   modalButtonText: {
-    color: "#fff",
     fontSize: 16,
     fontWeight: "600",
     textAlign: "center",

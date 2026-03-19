@@ -15,6 +15,7 @@ import { ExploreMap, MapBounds } from "@features/explore/components/ExploreMap";
 import type { Group } from "@features/groups/types";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { computeMemberMapPlacements } from "../utils/memberMapPlacement";
+import { useTheme } from "@hooks/useTheme";
 
 const mapboxToken =
   Constants.expoConfig?.extra?.mapboxAccessToken ||
@@ -70,6 +71,7 @@ export function FollowupMapView({
   onLoadAll,
   isLoadingAll = false,
 }: FollowupMapViewProps) {
+  const { colors, isDark } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
   const [visibleMemberIds, setVisibleMemberIds] = useState<Set<string>>(new Set());
@@ -177,16 +179,16 @@ export function FollowupMapView({
   return (
     <View style={styles.container}>
       <View style={styles.summaryRow}>
-        <View style={styles.summaryChip}>
-          <Ionicons name="location-outline" size={14} color="#475569" />
-          <Text style={styles.summaryText}>
+        <View style={[styles.summaryChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+          <Ionicons name="location-outline" size={14} color={colors.textSecondary} />
+          <Text style={[styles.summaryText, { color: colors.text }]}>
             {mappedMembers.length} mapped
             {unmappedCount > 0 ? `, ${unmappedCount} missing ZIP` : ""}
           </Text>
         </View>
-        <View style={styles.summaryChip}>
-          <Ionicons name="eye-outline" size={14} color="#475569" />
-          <Text style={styles.summaryText}>{visibleMembers.length} visible</Text>
+        <View style={[styles.summaryChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+          <Ionicons name="eye-outline" size={14} color={colors.textSecondary} />
+          <Text style={[styles.summaryText, { color: colors.text }]}>{visibleMembers.length} visible</Text>
         </View>
         {onLoadAll && !allMembers && (
           <TouchableOpacity
@@ -199,11 +201,11 @@ export function FollowupMapView({
             ]}
           >
             {isLoadingAll ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
+              <ActivityIndicator size="small" color={colors.textInverse} />
             ) : (
-              <Ionicons name="globe-outline" size={14} color="#FFFFFF" />
+              <Ionicons name="globe-outline" size={14} color={colors.textInverse} />
             )}
-            <Text style={[styles.summaryText, { color: "#FFFFFF" }]}>
+            <Text style={[styles.summaryText, { color: colors.textInverse }]}>
               {isLoadingAll ? "Loading..." : "Load all ZIP codes"}
             </Text>
           </TouchableOpacity>
@@ -212,7 +214,7 @@ export function FollowupMapView({
 
       <View style={[styles.contentRow, isDesktopWeb ? styles.contentRowDesktop : null]}>
         <View style={styles.mapColumn}>
-          <View style={styles.mapCard}>
+          <View style={[styles.mapCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
             <ExploreMap
               groups={markerGroups}
               selectedGroupId={typeof selectedMarkerId === "number" ? selectedMarkerId : null}
@@ -221,26 +223,26 @@ export function FollowupMapView({
               mapboxToken={mapboxToken}
             />
             {loadingState ? (
-              <View style={styles.overlayContainer}>
+              <View style={[styles.overlayContainer, { backgroundColor: isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.85)' }]}>
                 <ActivityIndicator size="large" color={primaryColor} />
-                <Text style={styles.loadingText}>Loading map…</Text>
+                <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading map…</Text>
               </View>
             ) : markerGroups.length === 0 ? (
-              <View style={styles.overlayContainer}>
-                <Ionicons name="map-outline" size={36} color="#94A3B8" />
-                <Text style={styles.emptyText}>{emptyText}</Text>
+              <View style={[styles.overlayContainer, { backgroundColor: isDark ? 'rgba(0,0,0,0.7)' : 'rgba(255,255,255,0.85)' }]}>
+                <Ionicons name="map-outline" size={36} color={colors.iconSecondary} />
+                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>{emptyText}</Text>
               </View>
             ) : null}
           </View>
 
           {!isDesktopWeb && selectedMember ? (
             <Pressable
-              style={styles.selectedCard}
+              style={[styles.selectedCard, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}
               onPress={() => onOpenMember(selectedMember.groupMemberId)}
             >
               <View style={styles.selectedCardText}>
-                <Text style={styles.selectedTitle}>{getMemberName(selectedMember)}</Text>
-                <Text style={styles.selectedSubtitle}>
+                <Text style={[styles.selectedTitle, { color: colors.text }]}>{getMemberName(selectedMember)}</Text>
+                <Text style={[styles.selectedSubtitle, { color: colors.textSecondary }]}>
                   {selectedMember.groupName
                     ? `${selectedMember.groupName} • ${selectedMember.zipCode ?? ""}`
                     : selectedMember.zipCode ?? ""}
@@ -251,16 +253,16 @@ export function FollowupMapView({
           ) : null}
         </View>
 
-        <View style={[styles.listCard, isDesktopWeb ? styles.listCardDesktop : null]}>
-          <Text style={styles.listTitle}>Visible members</Text>
+        <View style={[styles.listCard, { borderColor: colors.border, backgroundColor: colors.surface }, isDesktopWeb ? styles.listCardDesktop : null]}>
+          <Text style={[styles.listTitle, { color: colors.text }]}>Visible members</Text>
           {isDesktopWeb && selectedMember ? (
             <Pressable
-              style={styles.selectedCard}
+              style={[styles.selectedCard, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}
               onPress={() => onOpenMember(selectedMember.groupMemberId)}
             >
               <View style={styles.selectedCardText}>
-                <Text style={styles.selectedTitle}>{getMemberName(selectedMember)}</Text>
-                <Text style={styles.selectedSubtitle}>
+                <Text style={[styles.selectedTitle, { color: colors.text }]}>{getMemberName(selectedMember)}</Text>
+                <Text style={[styles.selectedSubtitle, { color: colors.textSecondary }]}>
                   {selectedMember.groupName
                     ? `${selectedMember.groupName} • ${selectedMember.zipCode ?? ""}`
                     : selectedMember.zipCode ?? ""}
@@ -271,20 +273,20 @@ export function FollowupMapView({
           ) : null}
           <ScrollView contentContainerStyle={styles.listContent}>
             {visibleMembers.length === 0 ? (
-              <Text style={styles.listEmptyText}>Move the map to load members in view.</Text>
+              <Text style={[styles.listEmptyText, { color: colors.textSecondary }]}>Move the map to load members in view.</Text>
             ) : (
               visibleMembers.map((member) => {
                 const isSelected = member.groupMemberId === selectedMemberId;
                 return (
                   <Pressable
                     key={member.groupMemberId}
-                    style={[styles.memberRow, isSelected && styles.memberRowSelected]}
+                    style={[styles.memberRow, { backgroundColor: colors.surfaceSecondary }, isSelected && { backgroundColor: colors.selectedBackground }]}
                     onPress={() => setSelectedMemberId(member.groupMemberId)}
                     onLongPress={() => onOpenMember(member.groupMemberId)}
                   >
                     <View style={styles.memberRowText}>
-                      <Text style={styles.memberName}>{getMemberName(member)}</Text>
-                      <Text style={styles.memberMeta}>
+                      <Text style={[styles.memberName, { color: colors.text }]}>{getMemberName(member)}</Text>
+                      <Text style={[styles.memberMeta, { color: colors.textSecondary }]}>
                         {member.groupName ? `${member.groupName} • ` : ""}
                         {member.zipCode ?? ""}
                       </Text>
@@ -320,9 +322,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    backgroundColor: "#F8FAFC",
     borderWidth: 1,
-    borderColor: "#E2E8F0",
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 6,
@@ -330,7 +330,6 @@ const styles = StyleSheet.create({
   summaryText: {
     fontSize: 13,
     fontWeight: "500",
-    color: "#334155",
   },
   mapCard: {
     flex: 1,
@@ -338,8 +337,6 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "#E2E8F0",
-    backgroundColor: "#FFFFFF",
   },
   contentRow: {
     flex: 1,
@@ -357,13 +354,11 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.85)",
     gap: 12,
     zIndex: 10,
   },
   loadingText: {
     fontSize: 14,
-    color: "#64748B",
   },
   emptyContainer: {
     flex: 1,
@@ -374,7 +369,6 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 14,
-    color: "#64748B",
     textAlign: "center",
   },
   selectedCard: {
@@ -384,9 +378,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
     borderRadius: 14,
-    backgroundColor: "#FFFFFF",
     borderWidth: 1,
-    borderColor: "#DBEAFE",
   },
   selectedCardText: {
     flex: 1,
@@ -395,19 +387,15 @@ const styles = StyleSheet.create({
   selectedTitle: {
     fontSize: 15,
     fontWeight: "600",
-    color: "#0F172A",
   },
   selectedSubtitle: {
     marginTop: 2,
     fontSize: 13,
-    color: "#64748B",
   },
   listCard: {
     maxHeight: 220,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: "#E2E8F0",
-    backgroundColor: "#FFFFFF",
     overflow: "hidden",
   },
   listCardDesktop: {
@@ -418,7 +406,6 @@ const styles = StyleSheet.create({
   listTitle: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#0F172A",
     paddingHorizontal: 14,
     paddingTop: 14,
     paddingBottom: 8,
@@ -430,7 +417,6 @@ const styles = StyleSheet.create({
   },
   listEmptyText: {
     fontSize: 13,
-    color: "#64748B",
     paddingHorizontal: 4,
     paddingBottom: 8,
   },
@@ -441,10 +427,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderRadius: 12,
-    backgroundColor: "#F8FAFC",
-  },
-  memberRowSelected: {
-    backgroundColor: "#EFF6FF",
   },
   memberRowText: {
     flex: 1,
@@ -453,12 +435,10 @@ const styles = StyleSheet.create({
   memberName: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#0F172A",
   },
   memberMeta: {
     marginTop: 2,
     fontSize: 12,
-    color: "#64748B",
   },
   openButton: {
     paddingHorizontal: 10,

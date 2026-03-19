@@ -21,7 +21,7 @@ import { isCommunityAdmin } from "../lib/permissions";
 import { isActiveMembership, isLeaderRole } from "../lib/helpers";
 import { VALID_CUSTOM_SLOTS } from "../lib/followupConstants";
 import { SYSTEM_SCORES, SYSTEM_VARIABLE_IDS } from "./systemScoring";
-import { getMediaUrl } from "../lib/utils";
+import { getMediaUrl, safeSliceForJson } from "../lib/utils";
 
 // ============================================================================
 // Auth Helpers
@@ -80,6 +80,27 @@ async function requireCommunityLeader(
   }
 
   throw new ConvexError("Must be a community leader or admin");
+}
+
+/**
+ * Get IDs of groups in the community where the user is an active leader/admin.
+ */
+async function getLeaderGroupIdsInCommunity(
+  ctx: { db: any },
+  communityId: Id<"communities">,
+  userId: Id<"users">,
+): Promise<Id<"groups">[]> {
+  const memberships = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_user", (q: any) => q.eq("userId", userId))
+    .collect();
+  const result: Id<"groups">[] = [];
+  for (const m of memberships) {
+    if (!isActiveMembership(m) || !isLeaderRole(m.role)) continue;
+    const group = await ctx.db.get(m.groupId);
+    if (group?.communityId === communityId) result.push(m.groupId);
+  }
+  return result;
 }
 
 // ============================================================================
@@ -370,6 +391,290 @@ export const getConfig = query({
   },
 });
 
+/**
+ * List community people assigned to the current user (or assigneeFilter).
+ * Used by the People tab (Profile > Leader Tools > People).
+ * Same data as list() but scoped to community and filtered by assignee.
+ */
+export const listAssignedToMe = query({
+  args: {
+    communityId: v.id("communities"),
+    token: v.optional(v.string()),
+    sortBy: v.optional(v.string()),
+    sortDirection: v.optional(v.union(v.literal("asc"), v.literal("desc"))),
+    statusFilter: v.optional(v.string()),
+    assigneeFilter: v.optional(v.id("users")),
+    excludedAssigneeFilters: v.optional(v.array(v.id("users"))),
+    scoreField: v.optional(v.string()),
+    scoreMin: v.optional(v.number()),
+    scoreMax: v.optional(v.number()),
+    addedAtMin: v.optional(v.number()),
+    addedAtMax: v.optional(v.number()),
+    groupFilter: v.optional(v.id("groups")),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token ?? "");
+    await requireCommunityLeader(ctx, args.communityId, userId);
+
+    const leaderGroupIds = await getLeaderGroupIdsInCommunity(
+      ctx,
+      args.communityId,
+      userId,
+    );
+    if (leaderGroupIds.length === 0) {
+      return { page: [], isDone: true, continueCursor: "" };
+    }
+    const leaderGroupIdSet = new Set(leaderGroupIds.map((id) => id.toString()));
+
+    const assigneeId = args.assigneeFilter ?? userId;
+    const scoreFilterField = (args.scoreField ?? "score1") as
+      | "score1"
+      | "score2"
+      | "score3";
+
+    // Query by community; filter by assigneeIds (array) so users appear when they're
+    // any assignee, not just the first. Convex doesn't support array-contains in
+    // indexes, so we collect and filter.
+    const allDocs = await ctx.db
+      .query("communityPeople")
+      .withIndex("by_community", (fq: any) =>
+        fq.eq("communityId", args.communityId),
+      )
+      .collect();
+
+    let filtered = allDocs.filter(
+      (doc: any) =>
+        doc.assigneeIds?.includes(assigneeId) &&
+        (args.groupFilter
+          ? doc.groupId.toString() === args.groupFilter.toString()
+          : leaderGroupIdSet.has(doc.groupId.toString())),
+    );
+
+    if (args.statusFilter)
+      filtered = filtered.filter((d: any) => d.status === args.statusFilter);
+    if (args.excludedAssigneeFilters?.length)
+      filtered = filtered.filter(
+        (d: any) =>
+          !d.assigneeIds?.some((id: any) =>
+            args.excludedAssigneeFilters!.includes(id),
+          ),
+      );
+    if (args.scoreMax !== undefined)
+      filtered = filtered.filter(
+        (d: any) => (d[scoreFilterField] ?? 0) < args.scoreMax!,
+      );
+    if (args.scoreMin !== undefined)
+      filtered = filtered.filter(
+        (d: any) => (d[scoreFilterField] ?? 0) > args.scoreMin!,
+      );
+    if (args.addedAtMax !== undefined)
+      filtered = filtered.filter(
+        (d: any) => (d.addedAt ?? 0) <= args.addedAtMax!,
+      );
+    if (args.addedAtMin !== undefined)
+      filtered = filtered.filter(
+        (d: any) => (d.addedAt ?? 0) >= args.addedAtMin!,
+      );
+
+    const direction = args.sortDirection === "desc" ? "desc" : "asc";
+    const sortField = args.sortBy ?? "lastName";
+    filtered.sort((a: any, b: any) => {
+      const va = a[sortField] ?? "";
+      const vb = b[sortField] ?? "";
+      const cmp =
+        typeof va === "number" && typeof vb === "number"
+          ? va - vb
+          : String(va).localeCompare(String(vb));
+      return direction === "desc" ? -cmp : cmp;
+    });
+
+    const { cursor, numItems } = args.paginationOpts;
+    const offset = cursor ? parseInt(cursor, 10) || 0 : 0;
+    const page = filtered.slice(offset, offset + numItems);
+    const isDone = offset + page.length >= filtered.length;
+    const continueCursor = isDone ? "" : String(offset + page.length);
+
+    const groupNameCache = new Map<string, string>();
+    const enrichedPage = await Promise.all(
+      page.map(async (doc: any) => {
+        const gidStr = doc.groupId.toString();
+        if (!groupNameCache.has(gidStr)) {
+          const group = await ctx.db.get(doc.groupId as Id<"groups">);
+          groupNameCache.set(gidStr, (group as any)?.name ?? "Unknown Group");
+        }
+        return { ...doc, groupName: groupNameCache.get(gidStr) };
+      }),
+    );
+
+    return {
+      page: enrichedPage,
+      isDone,
+      continueCursor,
+    };
+  },
+});
+
+/**
+ * Search community people assigned to the current user.
+ * Used by the People tab when searching.
+ */
+export const searchAssignedToMe = query({
+  args: {
+    communityId: v.id("communities"),
+    token: v.optional(v.string()),
+    searchTerm: v.string(),
+    statusFilter: v.optional(v.string()),
+    assigneeFilter: v.optional(v.id("users")),
+    excludedAssigneeFilters: v.optional(v.array(v.id("users"))),
+    scoreField: v.optional(v.string()),
+    scoreMin: v.optional(v.number()),
+    scoreMax: v.optional(v.number()),
+    addedAtMin: v.optional(v.number()),
+    addedAtMax: v.optional(v.number()),
+    groupFilter: v.optional(v.id("groups")),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token ?? "");
+    await requireCommunityLeader(ctx, args.communityId, userId);
+
+    const leaderGroupIds = await getLeaderGroupIdsInCommunity(
+      ctx,
+      args.communityId,
+      userId,
+    );
+    if (leaderGroupIds.length === 0) return [];
+    const leaderGroupIdSet = new Set(leaderGroupIds.map((id) => id.toString()));
+
+    const assigneeId = args.assigneeFilter ?? userId;
+
+    // Search by community; filter by assigneeIds (array) so users appear when
+    // they're any assignee. Convex search can't filter by array-contains.
+    let results = ctx.db
+      .query("communityPeople")
+      .withSearchIndex("search_communityPeople", (q: any) => {
+        let sq = q
+          .search("searchText", args.searchTerm)
+          .eq("communityId", args.communityId);
+        if (args.statusFilter) sq = sq.eq("status", args.statusFilter);
+        if (args.groupFilter) sq = sq.eq("groupId", args.groupFilter);
+        return sq;
+      });
+
+    const scoreFilterField = (args.scoreField ?? "score1") as
+      | "score1"
+      | "score2"
+      | "score3";
+    if (args.scoreMax !== undefined || args.scoreMin !== undefined) {
+      results = results.filter((fq: any) => {
+        const conds: any[] = [];
+        if (args.scoreMax !== undefined)
+          conds.push(fq.lt(fq.field(scoreFilterField), args.scoreMax));
+        if (args.scoreMin !== undefined)
+          conds.push(fq.gt(fq.field(scoreFilterField), args.scoreMin));
+        return conds.length === 1
+          ? conds[0]
+          : fq.and(...(conds as [any, any, ...any[]]));
+      });
+    }
+
+    if (args.addedAtMax !== undefined || args.addedAtMin !== undefined) {
+      results = results.filter((fq: any) => {
+        const conds: any[] = [];
+        if (args.addedAtMax !== undefined)
+          conds.push(fq.lte(fq.field("addedAt"), args.addedAtMax));
+        if (args.addedAtMin !== undefined)
+          conds.push(fq.gte(fq.field("addedAt"), args.addedAtMin));
+        return conds.length === 1
+          ? conds[0]
+          : fq.and(...(conds as [any, any, ...any[]]));
+      });
+    }
+
+    const allResults = await results.take(500);
+    let filtered = allResults.filter(
+      (doc: any) =>
+        doc.assigneeIds?.includes(assigneeId) &&
+        (args.groupFilter
+          ? doc.groupId.toString() === args.groupFilter.toString()
+          : leaderGroupIdSet.has(doc.groupId.toString())),
+    );
+
+    if (args.addedAtMax !== undefined)
+      filtered = filtered.filter(
+        (d: any) => (d.addedAt ?? 0) <= args.addedAtMax!,
+      );
+    if (args.addedAtMin !== undefined)
+      filtered = filtered.filter(
+        (d: any) => (d.addedAt ?? 0) >= args.addedAtMin!,
+      );
+    if (args.excludedAssigneeFilters?.length)
+      filtered = filtered.filter(
+        (d: any) =>
+          !d.assigneeIds?.some((id: any) =>
+            args.excludedAssigneeFilters!.includes(id),
+          ),
+      );
+
+    const groupNameCache = new Map<string, string>();
+    return Promise.all(
+      filtered.slice(0, 200).map(async (doc: any) => {
+        const gidStr = doc.groupId.toString();
+        if (!groupNameCache.has(gidStr)) {
+          const group = await ctx.db.get(doc.groupId as Id<"groups">);
+          groupNameCache.set(gidStr, (group as any)?.name ?? "Unknown Group");
+        }
+        return { ...doc, groupName: groupNameCache.get(gidStr) };
+      }),
+    );
+  },
+});
+
+/**
+ * Count community people assigned to the current user (for People tab).
+ */
+export const countAssignedToMe = query({
+  args: {
+    communityId: v.id("communities"),
+    token: v.optional(v.string()),
+    statusFilter: v.optional(v.string()),
+    assigneeFilter: v.optional(v.id("users")),
+    groupFilter: v.optional(v.id("groups")),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token ?? "");
+    await requireCommunityLeader(ctx, args.communityId, userId);
+
+    const leaderGroupIds = await getLeaderGroupIdsInCommunity(
+      ctx,
+      args.communityId,
+      userId,
+    );
+    if (leaderGroupIds.length === 0) return 0;
+    const leaderGroupIdSet = new Set(leaderGroupIds.map((id) => id.toString()));
+
+    const assigneeId = args.assigneeFilter ?? userId;
+
+    const allDocs = await ctx.db
+      .query("communityPeople")
+      .withIndex("by_community", (q: any) =>
+        q.eq("communityId", args.communityId),
+      )
+      .collect();
+
+    let filtered = allDocs.filter(
+      (doc: any) =>
+        doc.assigneeIds?.includes(assigneeId) &&
+        (args.groupFilter
+          ? doc.groupId.toString() === args.groupFilter.toString()
+          : leaderGroupIdSet.has(doc.groupId.toString())),
+    );
+    if (args.statusFilter)
+      filtered = filtered.filter((d: any) => d.status === args.statusFilter);
+    return filtered.length;
+  },
+});
+
 // ============================================================================
 // Assignee Sort Key Helper
 // ============================================================================
@@ -580,8 +885,10 @@ export const setAssignees = mutation({
     const normalizedIds =
       args.assigneeIds.length > 0 ? args.assigneeIds : undefined;
     const assigneeSortKey = await buildAssigneeSortKey(ctx, normalizedIds as string[] | undefined);
+    const assigneeId = normalizedIds?.[0];
     const patchFields = {
       assigneeIds: normalizedIds,
+      assigneeId,
       assigneeSortKey,
     };
     await ctx.db.patch(args.communityPeopleId, {
@@ -630,10 +937,15 @@ export const count = query({
 /**
  * Get detailed history for a community person.
  * Aggregates attendance and followup history across all groups.
+ *
+ * Accepts either communityPeopleId (from per-group People view) or groupMemberId
+ * (from cross-group view which uses memberFollowupScores). When groupMemberId
+ * is provided, resolves it to the corresponding communityPeople record.
  */
 export const history = query({
   args: {
-    communityPeopleId: v.id("communityPeople"),
+    communityPeopleId: v.optional(v.id("communityPeople")),
+    groupMemberId: v.optional(v.id("groupMembers")),
     token: v.optional(v.string()),
     currentUserId: v.optional(v.id("users")),
   },
@@ -641,7 +953,28 @@ export const history = query({
     const authUserId = await requireAuth(ctx, args.token ?? "");
     const currentTime = Date.now();
 
-    const cpRecord = await ctx.db.get(args.communityPeopleId);
+    let cpRecord: any;
+    if (args.communityPeopleId) {
+      cpRecord = await ctx.db.get(args.communityPeopleId);
+    } else if (args.groupMemberId) {
+      const groupMember = await ctx.db.get(args.groupMemberId);
+      if (!groupMember) {
+        throw new ConvexError("Group member not found");
+      }
+      const group = await ctx.db.get(groupMember.groupId);
+      if (!group?.communityId) {
+        throw new ConvexError("Group or community not found");
+      }
+      cpRecord = await ctx.db
+        .query("communityPeople")
+        .withIndex("by_group_user", (q: any) =>
+          q.eq("groupId", groupMember.groupId).eq("userId", groupMember.userId),
+        )
+        .first();
+    } else {
+      throw new ConvexError("Either communityPeopleId or groupMemberId is required");
+    }
+
     if (!cpRecord) {
       throw new ConvexError("Community person not found");
     }
@@ -861,20 +1194,22 @@ export const history = query({
     }
 
     // Get profile image URL
-    const profileImage = user.profilePhoto
-      ? typeof user.profilePhoto === "string"
-        ? user.profilePhoto
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const u = user as any;
+    const profileImage = u.profilePhoto
+      ? typeof u.profilePhoto === "string"
+        ? u.profilePhoto
         : undefined
       : undefined;
 
     return {
       member: {
-        id: args.communityPeopleId,
+        id: cpRecord._id,
         odUserId: cpRecord.userId,
-        firstName: user.firstName || cpRecord.firstName || "",
-        lastName: user.lastName || cpRecord.lastName || "",
-        email: user.email || cpRecord.email,
-        phone: user.phone || cpRecord.phone,
+        firstName: u.firstName || cpRecord.firstName || "",
+        lastName: u.lastName || cpRecord.lastName || "",
+        email: u.email || cpRecord.email,
+        phone: u.phone || cpRecord.phone,
         profileImage,
         joinedAt: cpRecord.addedAt,
       },
@@ -1070,14 +1405,19 @@ export const addFollowup = mutation({
 
     await requireCommunityLeader(ctx, cpRecord.communityId, userId);
 
-    // Update lastFollowupAt on communityPeople
-    await ctx.db.patch(args.communityPeopleId, {
+    // Update lastFollowupAt and latestNote on communityPeople when adding a note
+    const patchFields: Record<string, any> = {
       lastFollowupAt: timestamp,
       updatedAt: timestamp,
-    });
+    };
+    if (args.type === "note" && args.content) {
+      patchFields.latestNote = safeSliceForJson(args.content, 200);
+      patchFields.latestNoteAt = timestamp;
+    }
+    await ctx.db.patch(args.communityPeopleId, patchFields);
 
     // Sync to sibling records in the same community
-    await syncToSiblingRecords(ctx, cpRecord, { lastFollowupAt: timestamp });
+    await syncToSiblingRecords(ctx, cpRecord, patchFields);
 
     // Find announcement group membership
     const announcementGroup = await ctx.db
@@ -1199,6 +1539,7 @@ export const upsertFromSubmission = internalMutation({
       assigneeIds = [(scoreDoc as any).assigneeId];
     }
     const assigneeSortKey = await buildAssigneeSortKey(ctx, assigneeIds as string[] | undefined);
+    const assigneeId = assigneeIds?.[0];
 
     const canonicalFields = {
       communityId: args.communityId,
@@ -1215,12 +1556,15 @@ export const upsertFromSubmission = internalMutation({
       score3: (scoreDoc as any).score3,
       status: (scoreDoc as any).status,
       assigneeIds,
+      assigneeId,
       assigneeSortKey,
       connectionPoint: (scoreDoc as any).connectionPoint,
       lastFollowupAt: (scoreDoc as any).lastFollowupAt,
       lastActiveAt: (scoreDoc as any).lastActiveAt,
       lastAttendedAt: (scoreDoc as any).lastAttendedAt,
       addedAt: (scoreDoc as any).addedAt ?? groupMember.joinedAt,
+      latestNote: (scoreDoc as any).latestNote,
+      latestNoteAt: (scoreDoc as any).latestNoteAt,
       alerts: (scoreDoc as any).alerts ?? [],
       isSnoozed: (scoreDoc as any).isSnoozed ?? false,
       snoozedUntil: (scoreDoc as any).snoozedUntil,
@@ -1351,9 +1695,9 @@ export const updateCommunityAlerts = mutation({
 // ============================================================================
 
 /**
- * Backfill assigneeSortKey for existing communityPeople records that have
- * assigneeIds but no assigneeSortKey. Processes in batches of 100 and
- * auto-schedules continuation until all records are processed. Run via:
+ * Backfill assigneeSortKey and assigneeId for existing communityPeople records
+ * that have assigneeIds but are missing these fields. Processes in batches of
+ * 100 and auto-schedules continuation until all records are processed. Run via:
  *   npx convex run functions/communityPeople:backfillAssigneeSortKey
  */
 export const backfillAssigneeSortKey = internalMutation({
@@ -1369,12 +1713,18 @@ export const backfillAssigneeSortKey = internalMutation({
 
     let updated = 0;
     for (const row of results.page) {
-      if (row.assigneeIds && row.assigneeIds.length > 0 && !row.assigneeSortKey) {
-        const sortKey = await buildAssigneeSortKey(ctx, row.assigneeIds as string[]);
-        if (sortKey) {
-          await ctx.db.patch(row._id, { assigneeSortKey: sortKey });
-          updated++;
+      const hasAssignees = row.assigneeIds && row.assigneeIds.length > 0;
+      const needsSortKey = hasAssignees && !row.assigneeSortKey;
+      const needsAssigneeId = hasAssignees && !row.assigneeId;
+      if (needsSortKey || needsAssigneeId) {
+        const patch: Record<string, any> = { updatedAt: Date.now() };
+        if (needsSortKey) {
+          const sortKey = await buildAssigneeSortKey(ctx, row.assigneeIds as string[]);
+          if (sortKey) patch.assigneeSortKey = sortKey;
         }
+        if (needsAssigneeId) patch.assigneeId = row.assigneeIds![0];
+        await ctx.db.patch(row._id, patch);
+        updated++;
       }
     }
 

@@ -29,6 +29,8 @@ import {
 import type { Id } from "@services/api/convex";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { DragHandle } from "@components/ui/DragHandle";
+import { useTheme } from "@hooks/useTheme";
+import type { ThemeColors } from "@/theme/colors";
 
 interface Channel {
   _id: Id<"chatChannels">;
@@ -49,6 +51,7 @@ export function ChannelPinningScreen({
   groupId,
   onSave,
 }: ChannelPinningScreenProps) {
+  const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const [pinnedChannelSlugs, setPinnedChannelSlugs] = useState<string[]>([]);
   const [isSaving, setIsSaving] = useState(false);
@@ -197,7 +200,7 @@ export function ChannelPinningScreen({
               <Ionicons
                 name="chevron-up"
                 size={20}
-                color={isFirst ? "#ccc" : "#666"}
+                color={isFirst ? colors.iconSecondary : colors.textSecondary}
               />
             </TouchableOpacity>
             <TouchableOpacity
@@ -209,7 +212,7 @@ export function ChannelPinningScreen({
               <Ionicons
                 name="chevron-down"
                 size={20}
-                color={isLast ? "#ccc" : "#666"}
+                color={isLast ? colors.iconSecondary : colors.textSecondary}
               />
             </TouchableOpacity>
           </View>
@@ -218,13 +221,13 @@ export function ChannelPinningScreen({
           <View
             style={[
               styles.channelIcon,
-              { backgroundColor: getChannelColor(channel.channelType) + "15" },
+              { backgroundColor: getChannelColor(channel.channelType, colors) + "15" },
             ]}
           >
             <Ionicons
               name={getChannelIcon(channel.channelType)}
               size={18}
-              color={getChannelColor(channel.channelType)}
+              color={getChannelColor(channel.channelType, colors)}
             />
           </View>
 
@@ -247,7 +250,7 @@ export function ChannelPinningScreen({
             onPress={() => handleTogglePin(channel)}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
-            <Ionicons name="close-circle" size={24} color="#FF3B30" />
+            <Ionicons name="close-circle" size={24} color={colors.destructive} />
           </TouchableOpacity>
         </View>
       );
@@ -266,13 +269,13 @@ export function ChannelPinningScreen({
         <View
           style={[
             styles.channelIcon,
-            { backgroundColor: getChannelColor(channel.channelType) + "15" },
+            { backgroundColor: getChannelColor(channel.channelType, colors) + "15" },
           ]}
         >
           <Ionicons
             name={getChannelIcon(channel.channelType)}
             size={18}
-            color={getChannelColor(channel.channelType)}
+            color={getChannelColor(channel.channelType, colors)}
           />
         </View>
 
@@ -317,7 +320,7 @@ export function ChannelPinningScreen({
       <View style={styles.container}>
         <DragHandle />
         <View style={styles.emptyContainer}>
-          <Ionicons name="pin-outline" size={48} color="#ccc" />
+          <Ionicons name="pin-outline" size={48} color={colors.iconSecondary} />
           <Text style={styles.emptyTitle}>No Channels to Pin</Text>
           <Text style={styles.emptySubtitle}>
             Create custom or PCO synced channels to enable pinning.
@@ -372,10 +375,10 @@ export function ChannelPinningScreen({
             disabled={isSaving}
           >
             {isSaving ? (
-              <ActivityIndicator size="small" color="#fff" />
+              <ActivityIndicator size="small" color={colors.textInverse} />
             ) : (
               <>
-                <Ionicons name="checkmark" size={20} color="#fff" />
+                <Ionicons name="checkmark" size={20} color={colors.textInverse} />
                 <Text style={styles.saveButtonText}>Save Changes</Text>
               </>
             )}
@@ -387,14 +390,14 @@ export function ChannelPinningScreen({
 }
 
 // Helper to get channel color based on type
-function getChannelColor(channelType: string): string {
+function getChannelColor(channelType: string, colors: ThemeColors): string {
   switch (channelType) {
     case "pco_services":
-      return "#2196F3";
+      return colors.link;
     case "custom":
-      return "#00BCD4";
+      return colors.link;
     default:
-      return "#666";
+      return colors.textSecondary;
   }
 }
 

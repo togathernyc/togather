@@ -37,6 +37,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 import { useMemberSearch, UseMemberSearchOptions, parseSearchTerms } from "@hooks/useMemberSearch";
 import type { CommunityMember } from "@/types/community";
 
@@ -117,6 +118,7 @@ function DefaultMemberItem({
   actionIcon?: keyof typeof Ionicons.glyphMap;
   isDisabled?: boolean;
 }) {
+  const { colors } = useTheme();
   const fullName = `${member.first_name} ${member.last_name}`;
   const initials = getInitials(member.first_name, member.last_name);
 
@@ -124,6 +126,7 @@ function DefaultMemberItem({
     <TouchableOpacity
       style={[
         styles.memberItem,
+        { borderBottomColor: colors.borderLight },
         isSelected && { backgroundColor: `${primaryColor}10` },
       ]}
       onPress={onToggle}
@@ -138,19 +141,19 @@ function DefaultMemberItem({
           />
         ) : (
           <View style={[styles.avatarPlaceholder, { backgroundColor: primaryColor }]}>
-            <Text style={styles.avatarText}>{initials}</Text>
+            <Text style={[styles.avatarText, { color: colors.textInverse }]}>{initials}</Text>
           </View>
         )}
       </View>
       <View style={styles.memberInfo}>
-        <Text style={styles.memberName} numberOfLines={1}>
+        <Text style={[styles.memberName, { color: colors.text }]} numberOfLines={1}>
           {fullName}
         </Text>
-        <Text style={styles.memberEmail} numberOfLines={1}>
+        <Text style={[styles.memberEmail, { color: colors.textSecondary }]} numberOfLines={1}>
           {member.email}
         </Text>
         {member.phone && (
-          <Text style={styles.memberPhone} numberOfLines={1}>
+          <Text style={[styles.memberPhone, { color: colors.textTertiary }]} numberOfLines={1}>
             {member.phone}
           </Text>
         )}
@@ -178,13 +181,14 @@ function DefaultEmptyState({
   searchQuery: string;
   showIcon?: boolean;
 }) {
+  const { colors } = useTheme();
   return (
     <View style={styles.emptyContainer}>
       {showIcon && (
-        <Ionicons name="people-outline" size={48} color="#ccc" />
+        <Ionicons name="people-outline" size={48} color={colors.iconSecondary} />
       )}
-      <Text style={styles.emptyTitle}>No members found</Text>
-      <Text style={styles.emptySubtitle}>
+      <Text style={[styles.emptyTitle, { color: colors.text }]}>No members found</Text>
+      <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
         {searchQuery
           ? `No results for "${searchQuery}"`
           : "Try searching by name, email, or phone"}
@@ -217,6 +221,7 @@ export function MemberSearch({
   ...searchOptions
 }: MemberSearchProps) {
   const { primaryColor } = useCommunityTheme();
+  const { colors } = useTheme();
   const [internalSelectedMembers, setInternalSelectedMembers] = React.useState<
     CommunityMember[]
   >([]);
@@ -349,33 +354,33 @@ export function MemberSearch({
     return (
       <View style={styles.footerLoader}>
         <ActivityIndicator size="small" color={primaryColor} />
-        <Text style={styles.loadingMoreText}>Loading more...</Text>
+        <Text style={[styles.loadingMoreText, { color: colors.textSecondary }]}>Loading more...</Text>
       </View>
     );
-  }, [isFetchingNextPage, primaryColor]);
+  }, [isFetchingNextPage, primaryColor, colors.textSecondary]);
 
   return (
-    <View style={[styles.container, style]} testID={testID}>
+    <View style={[styles.container, { backgroundColor: colors.surface }, style]} testID={testID}>
       {/* Title Section */}
       {showTitle && (title || description) && (
         <View style={styles.titleSection}>
-          {title && <Text style={styles.title}>{title}</Text>}
-          {description && <Text style={styles.description}>{description}</Text>}
+          {title && <Text style={[styles.title, { color: colors.text }]}>{title}</Text>}
+          {description && <Text style={[styles.description, { color: colors.textSecondary }]}>{description}</Text>}
         </View>
       )}
 
       {/* Search Input */}
-      <View style={styles.searchContainer}>
+      <View style={[styles.searchContainer, { backgroundColor: colors.surfaceSecondary }]}>
         <Ionicons
           name="search"
           size={20}
-          color="#666"
+          color={colors.icon}
           style={styles.searchIcon}
         />
         <TextInput
-          style={styles.searchInput}
+          style={[styles.searchInput, { color: colors.text }]}
           placeholder={placeholder}
-          placeholderTextColor="#999"
+          placeholderTextColor={colors.textTertiary}
           value={searchQuery}
           onChangeText={setSearchQuery}
           autoCapitalize="none"
@@ -390,7 +395,7 @@ export function MemberSearch({
             style={styles.clearButton}
             disabled={isDisabled}
           >
-            <Ionicons name="close-circle" size={20} color="#999" />
+            <Ionicons name="close-circle" size={20} color={colors.textTertiary} />
           </TouchableOpacity>
         )}
       </View>
@@ -399,14 +404,14 @@ export function MemberSearch({
       {(isLoading || isSearching) && (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="small" color={primaryColor} />
-          <Text style={styles.loadingText}>Searching...</Text>
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Searching...</Text>
         </View>
       )}
 
       {/* Result Count */}
       {showCount && shouldShowResults && !isLoading && !isSearching && (
         <View style={styles.countContainer}>
-          <Text style={styles.countText}>
+          <Text style={[styles.countText, { color: colors.textSecondary }]}>
             {totalCount === 0
               ? "No members found"
               : `${totalCount.toLocaleString()} member${totalCount === 1 ? "" : "s"}`}
@@ -463,7 +468,7 @@ export function MemberSearch({
         !isSearching &&
         displayedMembers.length === 0 &&
         !showEmptyState && (
-          <Text style={styles.noResultsText}>
+          <Text style={[styles.noResultsText, { color: colors.textSecondary }]}>
             No members found matching "{debouncedQuery}"
           </Text>
         )}
@@ -473,7 +478,6 @@ export function MemberSearch({
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: "#fff",
     borderRadius: 12,
   },
   titleSection: {
@@ -484,17 +488,14 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 4,
   },
   description: {
     fontSize: 14,
-    color: "#666",
   },
   searchContainer: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#F5F5F5",
     borderRadius: 10,
     paddingHorizontal: 12,
     marginHorizontal: 16,
@@ -507,7 +508,6 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 12,
     fontSize: 16,
-    color: "#333",
   },
   clearButton: {
     padding: 4,
@@ -521,7 +521,6 @@ const styles = StyleSheet.create({
   loadingText: {
     marginLeft: 8,
     fontSize: 14,
-    color: "#666",
   },
   countContainer: {
     paddingHorizontal: 16,
@@ -529,7 +528,6 @@ const styles = StyleSheet.create({
   },
   countText: {
     fontSize: 14,
-    color: "#666",
   },
   resultsList: {
     flex: 1,
@@ -543,7 +541,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#E5E5E5",
   },
   avatar: {
     width: 44,
@@ -565,7 +562,6 @@ const styles = StyleSheet.create({
   avatarText: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#fff",
   },
   memberInfo: {
     flex: 1,
@@ -574,16 +570,13 @@ const styles = StyleSheet.create({
   memberName: {
     fontSize: 16,
     fontWeight: "500",
-    color: "#333",
     marginBottom: 2,
   },
   memberEmail: {
     fontSize: 14,
-    color: "#666",
   },
   memberPhone: {
     fontSize: 13,
-    color: "#888",
     marginTop: 2,
   },
   emptyContainer: {
@@ -594,18 +587,15 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     marginTop: 12,
   },
   emptySubtitle: {
     fontSize: 14,
-    color: "#666",
     textAlign: "center",
     marginTop: 4,
   },
   noResultsText: {
     fontSize: 14,
-    color: "#666",
     textAlign: "center",
     paddingVertical: 16,
     paddingHorizontal: 16,
@@ -619,7 +609,6 @@ const styles = StyleSheet.create({
   },
   loadingMoreText: {
     fontSize: 14,
-    color: "#666",
   },
 });
 

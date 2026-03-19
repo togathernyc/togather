@@ -61,6 +61,8 @@ import {
   type LeaderInfo,
   type ScoreConfigEntry,
 } from "./followupGridHelpers";
+import { useTheme } from "@hooks/useTheme";
+import type { ThemeColors } from "@/theme/colors";
 
 // ============================================================================
 // Types
@@ -163,16 +165,16 @@ type DropdownPosition = {
 // Helpers
 // ============================================================================
 
-function getScoreColor(value: number): string {
-  if (value >= 70) return "#4CAF50";
-  if (value >= 40) return "#FF9800";
-  return "#FF5252";
+function getScoreColor(value: number, colors: ThemeColors): string {
+  if (value >= 70) return colors.success;
+  if (value >= 40) return colors.warning;
+  return colors.destructive;
 }
 
-function getScoreBgColor(value: number): string {
-  if (value >= 70) return "#E8F5E9";
-  if (value >= 40) return "#FFF3E0";
-  return "#FFEBEE";
+function getScoreBgColor(value: number, colors: ThemeColors): string {
+  if (value >= 70) return colors.surfaceSecondary;
+  if (value >= 40) return colors.surfaceSecondary;
+  return colors.surfaceSecondary;
 }
 
 function formatShortDate(timestamp: number | undefined): string {
@@ -186,25 +188,27 @@ function formatShortDate(timestamp: number | undefined): string {
   return date.toLocaleDateString("en-US", opts);
 }
 
-function getStatusColor(status?: string): { bg: string; text: string } {
+function getStatusColor(status: string | undefined, colors: ThemeColors): { bg: string; text: string } {
   switch (status) {
     case "green":
-      return { bg: "#DEF7EC", text: "#03543F" };
+      return { bg: colors.surfaceSecondary, text: colors.success };
     case "orange":
-      return { bg: "#FFF3E0", text: "#C2410C" };
+      return { bg: colors.surfaceSecondary, text: colors.warning };
     case "red":
-      return { bg: "#FDE8E8", text: "#9B1C1C" };
+      return { bg: colors.surfaceSecondary, text: colors.destructive };
     default:
-      return { bg: "transparent", text: "#666" };
+      return { bg: "transparent", text: colors.textSecondary };
   }
 }
 
-const STATUS_OPTIONS = [
-  { value: "green", label: "Green", color: "#DEF7EC" },
-  { value: "orange", label: "Orange", color: "#FFF3E0" },
-  { value: "red", label: "Red", color: "#FDE8E8" },
-  { value: undefined, label: "Clear", color: "transparent" },
-] as const;
+function getStatusOptions(colors: ThemeColors) {
+  return [
+    { value: "green" as const, label: "Green", color: colors.surfaceSecondary },
+    { value: "orange" as const, label: "Orange", color: colors.surfaceSecondary },
+    { value: "red" as const, label: "Red", color: colors.surfaceSecondary },
+    { value: undefined, label: "Clear", color: "transparent" },
+  ];
+}
 
 const STORAGE_PREFIX = "followup-col-widths-";
 const MIN_COL_WIDTH = 60;
@@ -235,9 +239,11 @@ export function FollowupDesktopTable({
   crossGroupMode?: boolean;
   returnTo?: string | null;
 }) {
+  const { colors } = useTheme();
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, community } = useAuth();
   const currentUserId = user?.id as Id<"users"> | undefined;
+  const communityId = community?.id as Id<"communities"> | undefined;
   const { primaryColor } = useCommunityTheme();
 
   // Sort state
@@ -365,8 +371,15 @@ export function FollowupDesktopTable({
     }
   }, [crossGroupMode]);
 
-  // Group filter for cross-group mode
-  const [crossGroupFilter, setCrossGroupFilter] = useState<string>("all");
+  // Group filter for cross-group mode — default to announcement group
+  const [crossGroupFilter, setCrossGroupFilter] = useState<string>("");
+
+  useEffect(() => {
+    if (!crossGroupMode || crossGroupFilter) return;
+    const defaultId = crossGroupConfig?.announcementGroupId
+      ?? crossGroupConfig?.leaderGroups?.[0]?._id;
+    if (defaultId) setCrossGroupFilter(defaultId);
+  }, [crossGroupMode, crossGroupFilter, crossGroupConfig]);
 
   // Config query (per-group)
   const perGroupConfig = useAuthenticatedQuery(
@@ -803,7 +816,7 @@ export function FollowupDesktopTable({
 
   // Cross-group group filter arg
   const crossGroupFilterArg =
-    crossGroupMode && crossGroupFilter !== "all"
+    crossGroupMode && crossGroupFilter
       ? { groupFilter: crossGroupFilter as Id<"groups"> }
       : {};
 
@@ -832,16 +845,25 @@ export function FollowupDesktopTable({
     { initialNumItems: 50 },
   );
 
-  // Cross-group paginated query
+  // Cross-group paginated query — uses communityPeople (same data source as follow-up view)
   const {
     results: crossGroupRawMembers,
     status: crossGroupPaginationStatus,
     loadMore: crossGroupLoadMore,
     isLoading: crossGroupIsLoading,
   } = useAuthenticatedPaginatedQuery(
-    api.functions.memberFollowups.listAssignedToMe,
-    crossGroupMode && !hasTextSearch
+    api.functions.communityPeople.listAssignedToMe,
+    crossGroupMode && !hasTextSearch && communityId && crossGroupFilter
       ? {
+          communityId,
+          sortBy:
+            activeViewId === FOLLOWUP_MAP_VIEW_ID ? "zipCode" : serverSortBy,
+          sortDirection:
+            activeViewId === FOLLOWUP_MAP_VIEW_ID
+              ? "desc"
+              : isClientSideSort
+                ? "desc"
+                : sortDirection,
           ...listFilterArgs,
           ...crossGroupFilterArg,
         }
@@ -889,12 +911,13 @@ export function FollowupDesktopTable({
       : "skip",
   );
 
-  // Cross-group search query
+  // Cross-group search query — uses communityPeople
   const crossGroupSearchResults = useAuthenticatedQuery(
-    api.functions.memberFollowups.searchAssignedToMe,
-    crossGroupMode && hasTextSearch
+    api.functions.communityPeople.searchAssignedToMe,
+    crossGroupMode && hasTextSearch && communityId && crossGroupFilter
       ? {
-          searchText: parsedQuery.searchText,
+          communityId,
+          searchTerm: parsedQuery.searchText,
           ...(parsedQuery.statusFilter
             ? { statusFilter: parsedQuery.statusFilter }
             : {}),
@@ -926,10 +949,21 @@ export function FollowupDesktopTable({
     ? crossGroupSearchResults
     : perGroupSearchResults;
 
-  // Total member count (only for per-group mode)
+  // Total member count
   const totalCount = useAuthenticatedQuery(
-    api.functions.communityPeople.count,
-    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip",
+    crossGroupMode
+      ? api.functions.communityPeople.countAssignedToMe
+      : api.functions.communityPeople.count,
+    crossGroupMode
+      ? communityId && crossGroupFilter
+        ? {
+            communityId,
+            groupFilter: crossGroupFilter as Id<"groups">,
+          }
+        : "skip"
+      : groupId
+        ? { groupId: groupId as Id<"groups"> }
+        : "skip",
   );
 
   // Merge: use search results when text search active, otherwise paginated.
@@ -939,10 +973,10 @@ export function FollowupDesktopTable({
     const raw = (hasTextSearch
       ? (searchResults ?? [])
       : (rawMembers ?? [])) as unknown as any[];
-    // Adapt community people records to FollowupMember shape
-    const adapted: FollowupMember[] = crossGroupMode
-      ? (raw as FollowupMember[])
-      : applyDevZipCodeSample(raw.map((r: any) => adaptCommunityPerson(r)));
+    // Adapt community people records to FollowupMember shape (both modes use communityPeople)
+    const adapted: FollowupMember[] = applyDevZipCodeSample(
+      raw.map((r: any) => adaptCommunityPerson(r)),
+    );
     const filtered = applyParsedFollowupFilters(adapted, parsedQuery);
 
     if (!isClientSideSort || filtered.length === 0) return filtered;
@@ -1657,24 +1691,24 @@ export function FollowupDesktopTable({
             <Ionicons
               name={isChecked ? "checkbox" : "square-outline"}
               size={18}
-              color={isChecked ? primaryColor : "#9CA3AF"}
+              color={isChecked ? primaryColor : colors.iconSecondary}
             />
           </TouchableOpacity>
         );
       }
 
       case "rowNum":
-        return <Text style={s.rowNumText}>{rowIndex + 1}</Text>;
+        return <Text style={[s.rowNumText, { color: colors.textTertiary }]}>{rowIndex + 1}</Text>;
 
       case "groupName":
         return (
-          <Text style={s.cellText} numberOfLines={1}>
+          <Text style={[s.cellText, { color: colors.text }]} numberOfLines={1}>
             {(item as any).groupName ?? ""}
           </Text>
         );
 
       case "addedAt":
-        return <Text style={s.cellText}>{formatShortDate(item.addedAt)}</Text>;
+        return <Text style={[s.cellText, { color: colors.text }]}>{formatShortDate(item.addedAt)}</Text>;
 
       case "firstName":
         return (
@@ -1684,29 +1718,29 @@ export function FollowupDesktopTable({
               imageUrl={item.avatarUrl}
               size={24}
             />
-            <Text style={s.cellText}>{item.firstName}</Text>
+            <Text style={[s.cellText, { color: colors.text }]}>{item.firstName}</Text>
           </View>
         );
 
       case "lastName":
-        return <Text style={s.cellText}>{item.lastName ?? ""}</Text>;
+        return <Text style={[s.cellText, { color: colors.text }]}>{item.lastName ?? ""}</Text>;
 
       case "email":
         return (
-          <Text style={[s.cellText, s.cellTextSmall]} numberOfLines={1}>
+          <Text style={[s.cellText, s.cellTextSmall, { color: colors.text }]} numberOfLines={1}>
             {item.email ?? ""}
           </Text>
         );
 
       case "phone":
-        return <Text style={s.cellText}>{item.phone ?? ""}</Text>;
+        return <Text style={[s.cellText, { color: colors.text }]}>{item.phone ?? ""}</Text>;
 
       case "zipCode": {
         const zipEditKey = `${item.groupMemberId}:zipCode`;
         if (editingInlineField === zipEditKey) {
           return (
             <TextInput
-              style={s.inlineInput}
+              style={[s.inlineInput, { color: colors.text, borderColor: primaryColor, backgroundColor: colors.background }]}
               value={inlineFieldValue}
               onChangeText={setInlineFieldValue}
               onBlur={() => {
@@ -1737,7 +1771,7 @@ export function FollowupDesktopTable({
             }}
           >
             <Text
-              style={[s.cellText, !item.zipCode && s.cellPlaceholder]}
+              style={[s.cellText, { color: colors.text }, !item.zipCode && { color: colors.textTertiary, fontStyle: 'italic' as const }]}
             >
               {item.zipCode || "Click to add"}
             </Text>
@@ -1747,7 +1781,7 @@ export function FollowupDesktopTable({
 
       case "dateOfBirth":
         return (
-          <Text style={s.cellText}>
+          <Text style={[s.cellText, { color: colors.text }]}>
             {item.dateOfBirth
               ? new Date(item.dateOfBirth).toLocaleDateString("en-US", {
                   month: "short",
@@ -1761,25 +1795,25 @@ export function FollowupDesktopTable({
 
       case "lastAttendedAt":
         return (
-          <Text style={s.cellText}>{formatShortDate(item.lastAttendedAt)}</Text>
+          <Text style={[s.cellText, { color: colors.text }]}>{formatShortDate(item.lastAttendedAt)}</Text>
         );
 
       case "lastFollowupAt":
         return (
-          <Text style={s.cellText}>{formatShortDate(item.lastFollowupAt)}</Text>
+          <Text style={[s.cellText, { color: colors.text }]}>{formatShortDate(item.lastFollowupAt)}</Text>
         );
 
       case "lastActiveAt":
         return (
-          <Text style={s.cellText}>{formatShortDate(item.lastActiveAt)}</Text>
+          <Text style={[s.cellText, { color: colors.text }]}>{formatShortDate(item.lastActiveAt)}</Text>
         );
 
       case "alerts":
         return (
           <View style={s.alertsCell}>
             {item.alerts?.map((label, i) => (
-              <View key={i} style={s.alertChip}>
-                <Text style={s.alertChipText}>{label}</Text>
+              <View key={i} style={[s.alertChip, { backgroundColor: colors.warning }]}>
+                <Text style={[s.alertChipText, { color: colors.text }]}>{label}</Text>
               </View>
             ))}
           </View>
@@ -1798,7 +1832,7 @@ export function FollowupDesktopTable({
               requestAnimationFrame(() => setScrollToNotes(true));
             }}
           >
-            <Text style={s.cellText} numberOfLines={2}>
+            <Text style={[s.cellText, { color: colors.text }]} numberOfLines={2}>
               {item.latestNote || ""}
             </Text>
           </TouchableOpacity>
@@ -1807,7 +1841,7 @@ export function FollowupDesktopTable({
       case "tasks": {
         const tasks = tasksByMember.get(item.userId) ?? [];
         if (tasks.length === 0) {
-          return <Text style={s.cellText}>{"\u2014"}</Text>;
+          return <Text style={[s.cellText, { color: colors.text }]}>{"\u2014"}</Text>;
         }
         const visibleTasks = tasks.slice(0, 2);
         const overflow = tasks.length - 2;
@@ -1825,14 +1859,14 @@ export function FollowupDesktopTable({
             }}
           >
             {visibleTasks.map((task) => (
-              <View key={task._id} style={s.taskChip}>
-                <Text style={s.taskChipText} numberOfLines={1}>
+              <View key={task._id} style={[s.taskChip, { backgroundColor: colors.surfaceSecondary }]}>
+                <Text style={[s.taskChipText, { color: colors.link }]} numberOfLines={1}>
                   {task.assignedToName ?? "Unassigned"} — {task.title}
                 </Text>
               </View>
             ))}
             {overflow > 0 && (
-              <Text style={s.taskOverflowText}>+{overflow} more</Text>
+              <Text style={[s.taskOverflowText, { color: colors.link }]}>+{overflow} more</Text>
             )}
           </TouchableOpacity>
         );
@@ -1863,23 +1897,23 @@ export function FollowupDesktopTable({
             {assignees.length > 0 ? (
               <View style={s.assigneeBadgesRow}>
                 {assignees.slice(0, 2).map(({ assigneeId, leader }) => (
-                  <View key={assigneeId} style={s.assigneeBadge}>
+                  <View key={assigneeId} style={[s.assigneeBadge, { backgroundColor: colors.surfaceSecondary }]}>
                     <Avatar
                       name={`${leader!.firstName} ${leader!.lastName}`}
                       imageUrl={leader!.profilePhoto}
                       size={20}
                     />
-                    <Text style={s.assigneeBadgeText}>{leader!.firstName}</Text>
+                    <Text style={[s.assigneeBadgeText, { color: colors.link }]}>{leader!.firstName}</Text>
                   </View>
                 ))}
                 {assignees.length > 2 && (
-                  <Text style={s.assigneeMoreText}>
+                  <Text style={[s.assigneeMoreText, { color: colors.textSecondary }]}>
                     +{assignees.length - 2}
                   </Text>
                 )}
               </View>
             ) : (
-              <Text style={s.cellPlaceholder}>Assign</Text>
+              <Text style={[s.cellPlaceholder, { color: colors.textTertiary }]}>Assign</Text>
             )}
           </TouchableOpacity>
         );
@@ -1887,7 +1921,7 @@ export function FollowupDesktopTable({
 
       case "status": {
         const isOpen = statusDropdownFor === item.groupMemberId;
-        const statusStyle = getStatusColor(item.status);
+        const statusStyle = getStatusColor(item.status, colors);
         return (
           <TouchableOpacity
             style={[
@@ -1920,9 +1954,9 @@ export function FollowupDesktopTable({
           const value = getSystemScoreValue(item, slot) ?? 0;
           return (
             <View
-              style={[s.scoreCell, { backgroundColor: getScoreBgColor(value) }]}
+              style={[s.scoreCell, { backgroundColor: getScoreBgColor(value, colors) }]}
             >
-              <Text style={[s.scoreCellText, { color: getScoreColor(value) }]}>
+              <Text style={[s.scoreCellText, { color: getScoreColor(value, colors) }]}>
                 {value}%
               </Text>
             </View>
@@ -1947,7 +1981,7 @@ export function FollowupDesktopTable({
                 <Ionicons
                   name={rawValue ? "checkbox" : "square-outline"}
                   size={18}
-                  color={rawValue ? primaryColor : "#9CA3AF"}
+                  color={rawValue ? primaryColor : colors.iconSecondary}
                 />
               </TouchableOpacity>
             );
@@ -1989,13 +2023,13 @@ export function FollowupDesktopTable({
                     style={{ flexDirection: "row", flexWrap: "wrap", gap: 2 }}
                   >
                     {selectedValues.map((val) => (
-                      <View key={val} style={s.multiSelectChip}>
-                        <Text style={s.multiSelectChipText}>{val}</Text>
+                      <View key={val} style={[s.multiSelectChip, { backgroundColor: colors.surfaceSecondary }]}>
+                        <Text style={[s.multiSelectChipText, { color: colors.link }]}>{val}</Text>
                       </View>
                     ))}
                   </View>
                 ) : (
-                  <Text style={[s.cellText, s.cellPlaceholder]}>
+                  <Text style={[s.cellText, { color: colors.textTertiary, fontStyle: 'italic' as const }]}>
                     {hasOptions ? "Select..." : "No options configured"}
                   </Text>
                 )}
@@ -2040,7 +2074,7 @@ export function FollowupDesktopTable({
                   }
                 }}
               >
-                <Text style={[s.cellText, !rawValue && s.cellPlaceholder]}>
+                <Text style={[s.cellText, { color: colors.text }, !rawValue && { color: colors.textTertiary, fontStyle: 'italic' as const }]}>
                   {rawValue ||
                     (hasOptions ? "Select..." : "No options configured")}
                 </Text>
@@ -2053,7 +2087,7 @@ export function FollowupDesktopTable({
             if (editingInlineField === `${item.groupMemberId}:${cf.slot}`) {
               return (
                 <TextInput
-                  style={s.inlineInput}
+                  style={[s.inlineInput, { color: colors.text, borderColor: primaryColor, backgroundColor: colors.background }]}
                   value={inlineFieldValue}
                   onChangeText={setInlineFieldValue}
                   onBlur={() => {
@@ -2093,7 +2127,7 @@ export function FollowupDesktopTable({
                 }}
               >
                 <Text
-                  style={[s.cellText, rawValue == null && s.cellPlaceholder]}
+                  style={[s.cellText, { color: colors.text }, rawValue == null && { color: colors.textTertiary, fontStyle: 'italic' as const }]}
                 >
                   {rawValue != null ? String(rawValue) : "Click to add"}
                 </Text>
@@ -2105,7 +2139,7 @@ export function FollowupDesktopTable({
           if (editingInlineField === `${item.groupMemberId}:${cf.slot}`) {
             return (
               <TextInput
-                style={s.inlineInput}
+                style={[s.inlineInput, { color: colors.text, borderColor: primaryColor, backgroundColor: colors.background }]}
                 value={inlineFieldValue}
                 onChangeText={setInlineFieldValue}
                 onBlur={() => {
@@ -2137,7 +2171,7 @@ export function FollowupDesktopTable({
                 setInlineFieldValue(rawValue ?? "");
               }}
             >
-              <Text style={[s.cellText, !rawValue && s.cellPlaceholder]}>
+              <Text style={[s.cellText, { color: colors.text }, !rawValue && { color: colors.textTertiary, fontStyle: 'italic' as const }]}>
                 {rawValue || "Click to add"}
               </Text>
             </TouchableOpacity>
@@ -2208,15 +2242,15 @@ export function FollowupDesktopTable({
   });
 
   return (
-    <View style={s.container}>
+    <View style={[s.container, { backgroundColor: colors.background }]}>
       {/* Header */}
-      <View style={s.header}>
+      <View style={[s.header, { backgroundColor: colors.background, borderBottomColor: colors.border }]}>
         <TouchableOpacity style={s.backButton} onPress={handleBack}>
-          <Ionicons name="arrow-back" size={24} color="#333" />
+          <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
         <View style={s.headerContent}>
-          <Text style={s.headerTitle}>{toolDisplayName}</Text>
-          <Text style={s.headerSubtitle}>
+          <Text style={[s.headerTitle, { color: colors.text }]}>{toolDisplayName}</Text>
+          <Text style={[s.headerSubtitle, { color: colors.textSecondary }]}>
             {crossGroupMode
               ? "All assigned people across groups"
               : groupData?.name || "Group"}
@@ -2234,9 +2268,9 @@ export function FollowupDesktopTable({
                 style: {
                   fontSize: 13,
                   fontWeight: "600",
-                  color: "#334155",
-                  backgroundColor: "#fff",
-                  border: "1px solid #CBD5E1",
+                  color: colors.textSecondary,
+                  backgroundColor: colors.textInverse,
+                  border: `1px solid ${colors.border}`,
                   borderRadius: 8,
                   padding: "6px 28px 6px 10px",
                   appearance: "none",
@@ -2249,7 +2283,6 @@ export function FollowupDesktopTable({
                   minWidth: 140,
                 },
               },
-              React.createElement("option", { value: "all" }, "All Groups"),
               ...crossGroupConfig.leaderGroups.map(
                 (g: { _id: string; name: string }) =>
                   React.createElement(
@@ -2264,18 +2297,18 @@ export function FollowupDesktopTable({
         {!crossGroupMode && (
           <>
             <TouchableOpacity
-              style={s.addButton}
+              style={[s.addButton, { borderColor: colors.success, backgroundColor: colors.surfaceSecondary }]}
               onPress={() => {
                 setSelectedMemberId(null);
                 setShowSettingsPanel(false);
                 setShowQuickAddPanel(true);
               }}
             >
-              <Ionicons name="person-add-outline" size={16} color="#16A34A" />
-              <Text style={s.addButtonText}>Add Person</Text>
+              <Ionicons name="person-add-outline" size={16} color={colors.success} />
+              <Text style={[s.addButtonText, { color: colors.success }]}>Add Person</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={s.importButton}
+              style={[s.importButton, { borderColor: colors.link, backgroundColor: colors.surfaceSecondary }]}
               onPress={() => {
                 setSelectedMemberId(null);
                 setShowSettingsPanel(false);
@@ -2283,8 +2316,8 @@ export function FollowupDesktopTable({
                 setShowCsvImportModal(true);
               }}
             >
-              <Ionicons name="cloud-upload-outline" size={16} color="#2563EB" />
-              <Text style={s.importButtonText}>Import CSV</Text>
+              <Ionicons name="cloud-upload-outline" size={16} color={colors.link} />
+              <Text style={[s.importButtonText, { color: colors.link }]}>Import CSV</Text>
             </TouchableOpacity>
           </>
         )}
@@ -2292,19 +2325,19 @@ export function FollowupDesktopTable({
           style={s.settingsButton}
           onPress={handleSettingsPress}
         >
-          <Ionicons name="settings-outline" size={22} color="#666" />
+          <Ionicons name="settings-outline" size={22} color={colors.textSecondary} />
         </TouchableOpacity>
       </View>
 
       {/* Search bar */}
-      <View style={s.searchBar}>
+      <View style={[s.searchBar, { backgroundColor: colors.surfaceSecondary, borderBottomColor: colors.border }]}>
         <View style={s.searchInputStack}>
-          <View style={s.searchInputContainer}>
-            <Ionicons name="search" size={16} color="#9CA3AF" />
+          <View style={[s.searchInputContainer, { backgroundColor: colors.background, borderColor: colors.border }]}>
+            <Ionicons name="search" size={16} color={colors.iconSecondary} />
             <TextInput
-              style={s.searchInput}
+              style={[s.searchInput, { color: colors.text }]}
               placeholder={`Search... (e.g., -assignee:bob, date added:<12/14/25, ${scoreConfig[0]?.name?.toLowerCase() ?? "score"}:>50)`}
-              placeholderTextColor="#9CA3AF"
+              placeholderTextColor={colors.iconSecondary}
               value={searchQuery}
               onFocus={() => setIsSearchFocused(true)}
               onBlur={() => setTimeout(() => setIsSearchFocused(false), 120)}
@@ -2312,19 +2345,19 @@ export function FollowupDesktopTable({
             />
             {searchQuery !== "" && (
               <TouchableOpacity onPress={() => setSearchQuery("")}>
-                <Ionicons name="close-circle" size={16} color="#9CA3AF" />
+                <Ionicons name="close-circle" size={16} color={colors.iconSecondary} />
               </TouchableOpacity>
             )}
           </View>
           {searchHelperText && (
-            <Text style={s.searchHelperText}>{searchHelperText}</Text>
+            <Text style={[s.searchHelperText, { color: colors.textSecondary }]}>{searchHelperText}</Text>
           )}
           {showSearchSuggestions && (
-            <View style={s.searchSuggestionBox}>
+            <View style={[s.searchSuggestionBox, { backgroundColor: colors.background, borderColor: colors.border }]}>
               {searchSuggestions.map((suggestion) => (
                 <TouchableOpacity
                   key={suggestion.id}
-                  style={s.searchSuggestionRow}
+                  style={[s.searchSuggestionRow, { borderBottomColor: colors.borderLight }]}
                   onPress={() => {
                     setSearchQuery(
                       applyFollowupSuggestion(
@@ -2335,10 +2368,10 @@ export function FollowupDesktopTable({
                     setIsSearchFocused(false);
                   }}
                 >
-                  <Text style={s.searchSuggestionLabel}>
+                  <Text style={[s.searchSuggestionLabel, { color: colors.text }]}>
                     {suggestion.label}
                   </Text>
-                  <Text style={s.searchSuggestionHelp}>
+                  <Text style={[s.searchSuggestionHelp, { color: colors.textSecondary }]}>
                     {suggestion.helperText}
                   </Text>
                 </TouchableOpacity>
@@ -2346,38 +2379,38 @@ export function FollowupDesktopTable({
             </View>
           )}
         </View>
-        <Text style={s.memberCount}>
+        <Text style={[s.memberCount, { color: colors.textSecondary }]}>
           {hasTextSearch
             ? `${members.length} result${members.length !== 1 ? "s" : ""}`
             : crossGroupMode
-              ? `${members.length} people${hasAnyFilter || crossGroupFilter !== "all" ? " (filtered)" : ""}`
+              ? `${members.length} people${hasAnyFilter ? " (filtered)" : ""}`
               : `${totalCount ?? "\u2014"} members${hasAnyFilter ? " (filtered)" : ""}`}
         </Text>
       </View>
 
       {/* Bulk action bar */}
       {selectedIds.size > 0 && !isMapViewActive && (
-        <View style={s.actionBar}>
+        <View style={[s.actionBar, { backgroundColor: colors.selectedBackground, borderBottomColor: colors.link }]}>
           <View style={s.actionBarLeft}>
-            <Text style={s.actionBarCount}>{selectedIds.size} selected</Text>
+            <Text style={[s.actionBarCount, { color: colors.link }]}>{selectedIds.size} selected</Text>
             <TouchableOpacity onPress={() => setSelectedIds(new Set())}>
-              <Text style={s.actionBarDeselect}>Deselect all</Text>
+              <Text style={[s.actionBarDeselect, { color: colors.link }]}>Deselect all</Text>
             </TouchableOpacity>
           </View>
           <TouchableOpacity
-            style={s.actionBarRemoveButton}
+            style={[s.actionBarRemoveButton, { backgroundColor: colors.destructive }]}
             onPress={() => setShowRemoveModal(true)}
           >
-            <Ionicons name="trash-outline" size={14} color="#fff" />
-            <Text style={s.actionBarRemoveText}>Remove from group</Text>
+            <Ionicons name="trash-outline" size={14} color={colors.textInverse} />
+            <Text style={[s.actionBarRemoveText, { color: '#fff' }]}>Remove from group</Text>
           </TouchableOpacity>
         </View>
       )}
 
       {/* People view bar */}
-      {groupData?.communityId && (
+      {(groupData?.communityId || (crossGroupMode && communityId)) && (
         <PeopleViewBar
-          communityId={groupData.communityId}
+          communityId={(groupData?.communityId ?? communityId)!}
           activeViewId={activeViewId}
           onViewSelect={(viewId, view) => {
             if (view?.isSpecial) {
@@ -2442,8 +2475,8 @@ export function FollowupDesktopTable({
       {!isMapViewActive &&
         (localColumnOrder !== null || localHiddenColumns !== null) &&
         activeViewId === null && (
-          <View style={s.unsavedBar}>
-            <Text style={s.unsavedText}>Unsaved column changes</Text>
+          <View style={[s.unsavedBar, { backgroundColor: colors.surfaceSecondary, borderBottomColor: colors.border }]}>
+            <Text style={[s.unsavedText, { color: colors.textSecondary }]}>Unsaved column changes</Text>
             <TouchableOpacity onPress={() => setShowSaveViewModal(true)}>
               <Text style={[s.unsavedAction, { color: primaryColor }]}>
                 Save as View
@@ -2455,7 +2488,7 @@ export function FollowupDesktopTable({
                 setLocalHiddenColumns(null);
               }}
             >
-              <Text style={s.unsavedDiscard}>Discard</Text>
+              <Text style={[s.unsavedDiscard, { color: colors.textTertiary }]}>Discard</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -2490,7 +2523,7 @@ export function FollowupDesktopTable({
           ) : showInitialLoading ? (
             <View style={s.loadingContainer}>
               <ActivityIndicator size="large" color={primaryColor} />
-              <Text style={s.loadingText}>Loading...</Text>
+              <Text style={[s.loadingText, { color: colors.textSecondary }]}>Loading...</Text>
             </View>
           ) : (
             <ScrollView
@@ -2504,7 +2537,7 @@ export function FollowupDesktopTable({
             >
               <View style={{ width: totalWidth }}>
                 {/* Sticky header row */}
-                <View style={s.headerRow}>
+                <View style={[s.headerRow, { backgroundColor: colors.surfaceSecondary, borderBottomColor: colors.border }]}>
                   {columns.map((col) => {
                     const isSystemCol =
                       col.key === "checkbox" || col.key === "rowNum";
@@ -2515,7 +2548,7 @@ export function FollowupDesktopTable({
 
                     const cellStyle = StyleSheet.flatten([
                       s.headerCell,
-                      { width: getColWidth(col) },
+                      { width: getColWidth(col), borderRightColor: colors.border },
                       dragColumnKey === col.key && { opacity: 0.4 },
                       isDragOver && {
                         borderLeftWidth: 2,
@@ -2541,7 +2574,7 @@ export function FollowupDesktopTable({
                               }
                               size={18}
                               color={
-                                selectedIds.size > 0 ? primaryColor : "#9CA3AF"
+                                selectedIds.size > 0 ? primaryColor : colors.iconSecondary
                               }
                             />
                           </TouchableOpacity>
@@ -2560,9 +2593,9 @@ export function FollowupDesktopTable({
                             <Text
                               style={[
                                 s.headerText,
+                                { color: colors.textSecondary },
                                 (sortField === col.serverSortKey ||
-                                  sortField === col.key) &&
-                                  s.headerTextActive,
+                                  sortField === col.key) && { color: primaryColor },
                               ]}
                               numberOfLines={1}
                             >
@@ -2656,10 +2689,10 @@ export function FollowupDesktopTable({
                       key={item._id}
                       style={[
                         s.dataRow,
-                        selectedIds.has(item.groupMemberId) && s.dataRowChecked,
-                        selectedMemberId === item.groupMemberId &&
-                          s.dataRowSelected,
-                        hoveredRowId === item._id && s.dataRowHovered,
+                        { borderBottomColor: colors.borderLight },
+                        selectedIds.has(item.groupMemberId) && { backgroundColor: colors.selectedBackground },
+                        selectedMemberId === item.groupMemberId && { backgroundColor: colors.selectedBackground },
+                        hoveredRowId === item._id && { backgroundColor: colors.surfaceSecondary },
                       ]}
                       onPress={(e: any) => {
                         if (e.target?.closest?.("[data-checkbox]")) return;
@@ -2687,11 +2720,10 @@ export function FollowupDesktopTable({
                             key={col.key}
                             style={[
                               s.dataCell,
-                              { width: getColWidth(col) },
-                              isEditable && s.dataCellEditable,
+                              { width: getColWidth(col), borderRightColor: colors.borderLight },
+                              isEditable && { backgroundColor: colors.surfaceSecondary },
                               isEditable &&
-                                hoveredCellId === cellId &&
-                                s.dataCellEditableHovered,
+                                hoveredCellId === cellId && { backgroundColor: colors.selectedBackground },
                             ]}
                             {...(Platform.OS === "web" && isEditable
                               ? {
@@ -2716,9 +2748,9 @@ export function FollowupDesktopTable({
                       <Ionicons
                         name="checkmark-circle-outline"
                         size={32}
-                        color="#4CAF50"
+                        color={colors.success}
                       />
-                      <Text style={s.emptyText}>
+                      <Text style={[s.emptyText, { color: colors.textSecondary }]}>
                         {debouncedSearch
                           ? "No matching members"
                           : "No members found"}
@@ -2734,12 +2766,12 @@ export function FollowupDesktopTable({
         {/* Side sheet — settings panel or member detail (mutually exclusive) */}
         {showSettingsPanel ? (
           <>
-            <View style={s.divider} />
-            <View style={s.sideSheet}>
+            <View style={[s.divider, { backgroundColor: colors.border }]} />
+            <View style={[s.sideSheet, { backgroundColor: colors.background }]}>
               <FollowupSettingsPanel
                 groupId={groupId}
                 crossGroupMode={crossGroupMode}
-                communityId={groupData?.communityId}
+                communityId={groupData?.communityId ?? communityId}
                 isAdmin={user?.is_admin === true}
                 currentColumnOrder={
                   localColumnOrder ?? columnConfig?.columnOrder ?? allColumnKeys
@@ -2762,8 +2794,8 @@ export function FollowupDesktopTable({
           </>
         ) : !crossGroupMode && showQuickAddPanel ? (
           <>
-            <View style={s.divider} />
-            <View style={s.sideSheet}>
+            <View style={[s.divider, { backgroundColor: colors.border }]} />
+            <View style={[s.sideSheet, { backgroundColor: colors.background }]}>
               <FollowupQuickAddPanel
                 groupId={groupId}
                 customFields={customFields}
@@ -2790,14 +2822,15 @@ export function FollowupDesktopTable({
               : groupId;
             return (
               <>
-                <View style={s.divider} />
-                <View style={s.sideSheet}>
+                <View style={[s.divider, { backgroundColor: colors.border }]} />
+                <View style={[s.sideSheet, { backgroundColor: colors.background }]}>
                   <FollowupDetailContent
                     groupId={detailGroupId}
                     memberId={selectedMemberId}
                     onClose={() => setSelectedMemberId(null)}
                     scrollToNotes={scrollToNotes}
                     scrollToTasks={scrollToTasks}
+                    crossGroupMode={crossGroupMode}
                   />
                 </View>
               </>
@@ -2837,6 +2870,8 @@ export function FollowupDesktopTable({
               top: dropdownPos.top,
               left: dropdownPos.left,
               minWidth: dropdownPos.width,
+              backgroundColor: colors.background,
+              borderColor: colors.border,
             },
           ]}
           data-dropdown="true"
@@ -2872,8 +2907,9 @@ export function FollowupDesktopTable({
             </TouchableOpacity>
           )}
           <TextInput
-            style={s.dropdownSearch}
+            style={[s.dropdownSearch, { borderColor: colors.border, color: colors.text }]}
             placeholder="Search leaders..."
+            placeholderTextColor={colors.inputPlaceholder}
             value={assigneeSearch}
             onChangeText={setAssigneeSearch}
             autoFocus
@@ -2903,14 +2939,14 @@ export function FollowupDesktopTable({
                   <Ionicons
                     name={isChecked ? "checkbox" : "square-outline"}
                     size={16}
-                    color={isChecked ? primaryColor : "#9CA3AF"}
+                    color={isChecked ? primaryColor : colors.iconSecondary}
                   />
                   <Avatar
                     name={`${leader.firstName ?? ""} ${leader.lastName ?? ""}`}
                     imageUrl={leader.profilePhoto}
                     size={24}
                   />
-                  <Text style={s.dropdownItemText}>
+                  <Text style={[s.dropdownItemText, { color: colors.text }]}>
                     {leader.firstName} {leader.lastName}
                   </Text>
                 </TouchableOpacity>
@@ -2918,8 +2954,8 @@ export function FollowupDesktopTable({
             })}
             {crossGroupAssignees.map((group) => (
               <View key={group.groupId}>
-                <View style={s.dropdownGroupHeader}>
-                  <Text style={s.dropdownGroupHeaderText}>
+                <View style={[s.dropdownGroupHeader, { borderTopColor: colors.borderLight }]}>
+                  <Text style={[s.dropdownGroupHeaderText, { color: colors.textTertiary }]}>
                     {group.groupName}
                   </Text>
                 </View>
@@ -2928,13 +2964,13 @@ export function FollowupDesktopTable({
                     key={leader.userId}
                     style={[s.dropdownItem, { opacity: 0.5 }]}
                   >
-                    <Ionicons name="checkbox" size={16} color="#9CA3AF" />
+                    <Ionicons name="checkbox" size={16} color={colors.iconSecondary} />
                     <Avatar
                       name={`${leader.firstName} ${leader.lastName}`}
                       imageUrl={leader.profilePhoto}
                       size={24}
                     />
-                    <Text style={[s.dropdownItemText, { color: "#9CA3AF" }]}>
+                    <Text style={[s.dropdownItemText, { color: colors.iconSecondary }]}>
                       {leader.firstName} {leader.lastName}
                     </Text>
                   </View>
@@ -2944,7 +2980,7 @@ export function FollowupDesktopTable({
           </ScrollView>
           {getAssigneeIds(activeDropdownMember).length > 0 && (
             <TouchableOpacity
-              style={[s.dropdownItem, s.dropdownItemDanger]}
+              style={[s.dropdownItem, s.dropdownItemDanger, { borderTopColor: colors.borderLight }]}
               onPress={() => {
                 // Preserve cross-group assignees — only clear current group's assignments
                 const crossIds = crossGroupAssignees.flatMap((g) =>
@@ -2956,7 +2992,7 @@ export function FollowupDesktopTable({
                 );
               }}
             >
-              <Text style={[s.dropdownItemText, { color: "#FF3B30" }]}>
+              <Text style={[s.dropdownItemText, { color: colors.destructive }]}>
                 Clear all assignees
               </Text>
             </TouchableOpacity>
@@ -2972,11 +3008,13 @@ export function FollowupDesktopTable({
               top: dropdownPos.top,
               left: dropdownPos.left,
               minWidth: dropdownPos.width,
+              backgroundColor: colors.background,
+              borderColor: colors.border,
             },
           ]}
           data-dropdown="true"
         >
-          {STATUS_OPTIONS.map((opt) => (
+          {getStatusOptions(colors).map((opt) => (
             <TouchableOpacity
               key={opt.label}
               style={[s.dropdownItem, { backgroundColor: opt.color }]}
@@ -2987,7 +3025,7 @@ export function FollowupDesktopTable({
                 )
               }
             >
-              <Text style={s.dropdownItemText}>{opt.label}</Text>
+              <Text style={[s.dropdownItemText, { color: colors.text }]}>{opt.label}</Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -3026,6 +3064,8 @@ export function FollowupDesktopTable({
                     top: dropdownPos.top,
                     left: dropdownPos.left,
                     minWidth: dropdownPos.width,
+                    backgroundColor: colors.background,
+                    borderColor: colors.border,
                   },
                 ]}
                 data-dropdown="true"
@@ -3038,7 +3078,7 @@ export function FollowupDesktopTable({
                         key={opt}
                         style={[
                           s.dropdownItem,
-                          isChecked && { backgroundColor: "#F3F4F6" },
+                          isChecked && { backgroundColor: colors.surfaceSecondary },
                         ]}
                         onPress={() =>
                           handleMultiSelectToggle(
@@ -3059,23 +3099,23 @@ export function FollowupDesktopTable({
                           <Ionicons
                             name={isChecked ? "checkbox" : "square-outline"}
                             size={16}
-                            color={isChecked ? "#6B21A8" : "#9CA3AF"}
+                            color={isChecked ? colors.link : colors.iconSecondary}
                           />
-                          <Text style={s.dropdownItemText}>{opt}</Text>
+                          <Text style={[s.dropdownItemText, { color: colors.text }]}>{opt}</Text>
                         </View>
                       </TouchableOpacity>
                     );
                   })
                 ) : (
                   <View style={s.dropdownItem}>
-                    <Text style={s.dropdownItemText}>
+                    <Text style={[s.dropdownItemText, { color: colors.text }]}>
                       No options configured
                     </Text>
                   </View>
                 )}
                 {selectedValues.length > 0 && (
                   <TouchableOpacity
-                    style={[s.dropdownItem, s.dropdownItemDanger]}
+                    style={[s.dropdownItem, s.dropdownItemDanger, { borderTopColor: colors.borderLight }]}
                     onPress={() => {
                       handleCustomFieldSave(
                         member.groupMemberId,
@@ -3084,7 +3124,7 @@ export function FollowupDesktopTable({
                       );
                     }}
                   >
-                    <Text style={[s.dropdownItemText, { color: "#FF3B30" }]}>
+                    <Text style={[s.dropdownItemText, { color: colors.destructive }]}>
                       Clear all
                     </Text>
                   </TouchableOpacity>
@@ -3112,6 +3152,8 @@ export function FollowupDesktopTable({
                     top: dropdownPos.top,
                     left: dropdownPos.left,
                     minWidth: dropdownPos.width,
+                    backgroundColor: colors.background,
+                    borderColor: colors.border,
                   },
                 ]}
                 data-dropdown="true"
@@ -3129,19 +3171,19 @@ export function FollowupDesktopTable({
                         )
                       }
                     >
-                      <Text style={s.dropdownItemText}>{opt}</Text>
+                      <Text style={[s.dropdownItemText, { color: colors.text }]}>{opt}</Text>
                     </TouchableOpacity>
                   ))
                 ) : (
                   <View style={s.dropdownItem}>
-                    <Text style={s.dropdownItemText}>
+                    <Text style={[s.dropdownItemText, { color: colors.text }]}>
                       No options configured
                     </Text>
                   </View>
                 )}
                 {currentValue && (
                   <TouchableOpacity
-                    style={[s.dropdownItem, s.dropdownItemDanger]}
+                    style={[s.dropdownItem, s.dropdownItemDanger, { borderTopColor: colors.borderLight }]}
                     onPress={() =>
                       handleCustomFieldSave(
                         member.groupMemberId,
@@ -3150,7 +3192,7 @@ export function FollowupDesktopTable({
                       )
                     }
                   >
-                    <Text style={[s.dropdownItemText, { color: "#FF3B30" }]}>
+                    <Text style={[s.dropdownItemText, { color: colors.destructive }]}>
                       Clear
                     </Text>
                   </TouchableOpacity>
@@ -3169,6 +3211,8 @@ export function FollowupDesktopTable({
                   top: dropdownPos.top,
                   left: dropdownPos.left,
                   minWidth: dropdownPos.width,
+                  backgroundColor: colors.background,
+                  borderColor: colors.border,
                 },
               ]}
               data-dropdown="true"
@@ -3181,11 +3225,11 @@ export function FollowupDesktopTable({
                     handleCustomFieldSave(member.groupMemberId, cf.slot, opt)
                   }
                 >
-                  <Text style={s.dropdownItemText}>{opt}</Text>
+                  <Text style={[s.dropdownItemText, { color: colors.text }]}>{opt}</Text>
                 </TouchableOpacity>
               ))}
               <TouchableOpacity
-                style={[s.dropdownItem, s.dropdownItemDanger]}
+                style={[s.dropdownItem, s.dropdownItemDanger, { borderTopColor: colors.borderLight }]}
                 onPress={() =>
                   handleCustomFieldSave(
                     member.groupMemberId,
@@ -3194,7 +3238,7 @@ export function FollowupDesktopTable({
                   )
                 }
               >
-                <Text style={[s.dropdownItemText, { color: "#FF3B30" }]}>
+                <Text style={[s.dropdownItemText, { color: colors.destructive }]}>
                   Clear
                 </Text>
               </TouchableOpacity>
@@ -3229,7 +3273,7 @@ export function FollowupDesktopTable({
       />
 
       {/* Save view modal */}
-      {groupData?.communityId && (
+      {(groupData?.communityId || (crossGroupMode && communityId)) && (
         <SaveViewModal
           visible={showSaveViewModal}
           onClose={() => {
@@ -3239,7 +3283,7 @@ export function FollowupDesktopTable({
             setLocalColumnOrder(null);
             setLocalHiddenColumns(null);
           }}
-          communityId={groupData.communityId}
+          communityId={groupData?.communityId ?? communityId!}
           currentSortBy={sortField}
           currentSortDirection={sortDirection}
           currentColumnOrder={localColumnOrder ?? columnConfig?.columnOrder}
@@ -3268,7 +3312,7 @@ export function FollowupDesktopTable({
           <View
             style={[
               s.contextMenu,
-              { top: headerContextMenu.top, left: headerContextMenu.left },
+              { top: headerContextMenu.top, left: headerContextMenu.left, backgroundColor: colors.background, borderColor: colors.border },
             ]}
           >
             <TouchableOpacity
@@ -3285,8 +3329,8 @@ export function FollowupDesktopTable({
                 setHeaderContextMenu(null);
               }}
             >
-              <Ionicons name="eye-off-outline" size={14} color="#374151" />
-              <Text style={s.contextMenuText}>
+              <Ionicons name="eye-off-outline" size={14} color={colors.textSecondary} />
+              <Text style={[s.contextMenuText, { color: colors.text }]}>
                 Hide "{headerContextMenu.colLabel}"
               </Text>
             </TouchableOpacity>
@@ -3330,15 +3374,12 @@ export function FollowupDesktopTable({
 const s = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
   },
   header: {
     flexDirection: "row",
     alignItems: "center",
     padding: 16,
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   backButton: {
     marginRight: 12,
@@ -3350,11 +3391,9 @@ const s = StyleSheet.create({
   headerTitle: {
     fontSize: 20,
     fontWeight: "bold" as const,
-    color: "#333",
   },
   headerSubtitle: {
     fontSize: 14,
-    color: "#666",
     marginTop: 2,
   },
   settingsButton: {
@@ -3369,8 +3408,6 @@ const s = StyleSheet.create({
     alignItems: "center" as const,
     gap: 4,
     borderWidth: 1,
-    borderColor: "#BFDBFE",
-    backgroundColor: "#EFF6FF",
     borderRadius: 6,
     paddingHorizontal: 8,
     paddingVertical: 5,
@@ -3379,15 +3416,12 @@ const s = StyleSheet.create({
   importButtonText: {
     fontSize: 12,
     fontWeight: "600" as const,
-    color: "#2563EB",
   },
   addButton: {
     flexDirection: "row" as const,
     alignItems: "center" as const,
     gap: 4,
     borderWidth: 1,
-    borderColor: "#BBF7D0",
-    backgroundColor: "#F0FDF4",
     borderRadius: 6,
     paddingHorizontal: 8,
     paddingVertical: 5,
@@ -3396,7 +3430,6 @@ const s = StyleSheet.create({
   addButtonText: {
     fontSize: 12,
     fontWeight: "600" as const,
-    color: "#16A34A",
   },
 
   // Search bar
@@ -3405,17 +3438,13 @@ const s = StyleSheet.create({
     alignItems: "flex-start" as const,
     paddingHorizontal: 16,
     paddingVertical: 8,
-    backgroundColor: "#F9FAFB",
     borderBottomWidth: 1,
-    borderBottomColor: "#E5E7EB",
     gap: 12,
   },
   searchInputContainer: {
     flexDirection: "row" as const,
     alignItems: "center" as const,
-    backgroundColor: "#fff",
     borderWidth: 1,
-    borderColor: "#E5E7EB",
     borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: 6,
@@ -3428,23 +3457,18 @@ const s = StyleSheet.create({
   searchInput: {
     flex: 1,
     fontSize: 13,
-    color: "#374151",
     ...(Platform.OS === "web" ? { outlineStyle: "none" as any } : {}),
   },
   memberCount: {
     fontSize: 13,
-    color: "#6B7280",
     fontWeight: "500" as const,
     paddingTop: 8,
   },
   searchHelperText: {
     fontSize: 11,
-    color: "#6B7280",
   },
   searchSuggestionBox: {
-    backgroundColor: "#fff",
     borderWidth: 1,
-    borderColor: "#E5E7EB",
     borderRadius: 8,
     overflow: "hidden",
   },
@@ -3452,16 +3476,13 @@ const s = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 8,
     borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
   },
   searchSuggestionLabel: {
     fontSize: 12,
-    color: "#111827",
     fontWeight: "600" as const,
   },
   searchSuggestionHelp: {
     fontSize: 11,
-    color: "#6B7280",
     marginTop: 2,
   },
 
@@ -3484,13 +3505,10 @@ const s = StyleSheet.create({
   loadingText: {
     marginTop: 12,
     fontSize: 14,
-    color: "#666",
   },
   headerRow: {
     flexDirection: "row" as const,
-    backgroundColor: "#F9FAFB",
     borderBottomWidth: 2,
-    borderBottomColor: "#E5E7EB",
     // Sticky on web
     ...(Platform.OS === "web"
       ? { position: "sticky" as any, top: 0, zIndex: 10 }
@@ -3501,7 +3519,6 @@ const s = StyleSheet.create({
     alignItems: "center" as const,
     position: "relative" as const,
     borderRightWidth: 1,
-    borderRightColor: "#E5E7EB",
   },
   headerCellInner: {
     flex: 1,
@@ -3514,12 +3531,9 @@ const s = StyleSheet.create({
   headerText: {
     fontSize: 12,
     fontWeight: "600" as const,
-    color: "#6B7280",
     textTransform: "uppercase" as const,
   },
-  headerTextActive: {
-    color: DEFAULT_PRIMARY_COLOR,
-  },
+  headerTextActive: {},
   resizeHandle: {
     width: 6,
     height: "100%" as any,
@@ -3536,35 +3550,23 @@ const s = StyleSheet.create({
   dataRow: {
     flexDirection: "row" as const,
     borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
     minHeight: 44,
   },
-  dataRowChecked: {
-    backgroundColor: "#EFF6FF",
-  },
-  dataRowSelected: {
-    backgroundColor: "#EBF5FF",
-  },
-  dataRowHovered: {
-    backgroundColor: "#F9FAFB",
-  },
+  dataRowChecked: {},
+  dataRowSelected: {},
+  dataRowHovered: {},
   dataCell: {
     paddingHorizontal: 8,
     paddingVertical: 6,
     justifyContent: "center" as const,
     borderRightWidth: 1,
-    borderRightColor: "#F3F4F6",
   },
   dataCellEditable: {
-    backgroundColor: "#F0F7FF",
     ...(Platform.OS === "web" ? { cursor: "cell" as any } : {}),
   },
-  dataCellEditableHovered: {
-    backgroundColor: "#DBEAFE",
-  },
+  dataCellEditableHovered: {},
   rowNumText: {
     fontSize: 12,
-    color: "#9CA3AF",
     textAlign: "center" as const,
   },
   nameCellRow: {
@@ -3574,13 +3576,11 @@ const s = StyleSheet.create({
   },
   cellText: {
     fontSize: 13,
-    color: "#374151",
   },
   cellTextSmall: {
     fontSize: 12,
   },
   cellPlaceholder: {
-    color: "#9CA3AF",
     fontStyle: "italic" as const,
   },
 
@@ -3606,7 +3606,6 @@ const s = StyleSheet.create({
   assigneeBadge: {
     flexDirection: "row" as const,
     alignItems: "center" as const,
-    backgroundColor: "#E0E7FF",
     borderRadius: 12,
     paddingLeft: 2,
     paddingRight: 8,
@@ -3616,7 +3615,6 @@ const s = StyleSheet.create({
   },
   assigneeBadgeText: {
     fontSize: 12,
-    color: "#4338CA",
     fontWeight: "500" as const,
   },
   assigneeBadgesRow: {
@@ -3627,7 +3625,6 @@ const s = StyleSheet.create({
   },
   assigneeMoreText: {
     fontSize: 11,
-    color: "#6B7280",
     fontWeight: "600" as const,
   },
 
@@ -3642,19 +3639,16 @@ const s = StyleSheet.create({
     gap: 4,
   },
   taskChip: {
-    backgroundColor: "#EEF2FF",
     borderRadius: 6,
     paddingHorizontal: 8,
     paddingVertical: 4,
   },
   taskChipText: {
     fontSize: 12,
-    color: "#4338CA",
     fontWeight: "500" as const,
   },
   taskOverflowText: {
     fontSize: 11,
-    color: "#6366F1",
     fontWeight: "500" as const,
     marginTop: 2,
   },
@@ -3667,25 +3661,20 @@ const s = StyleSheet.create({
   },
   inlineInput: {
     fontSize: 13,
-    color: "#374151",
     borderWidth: 1,
-    borderColor: DEFAULT_PRIMARY_COLOR,
     borderRadius: 4,
     paddingHorizontal: 6,
     paddingVertical: 3,
-    backgroundColor: "#fff",
   },
 
   // Multiselect chips
   multiSelectChip: {
-    backgroundColor: "#EDE9FE",
     borderRadius: 4,
     paddingHorizontal: 6,
     paddingVertical: 1,
   },
   multiSelectChipText: {
     fontSize: 11,
-    color: "#6B21A8",
   },
 
   // Alerts
@@ -3695,14 +3684,12 @@ const s = StyleSheet.create({
     gap: 4,
   },
   alertChip: {
-    backgroundColor: "#FEF3C7",
     borderRadius: 4,
     paddingHorizontal: 6,
     paddingVertical: 2,
   },
   alertChipText: {
     fontSize: 11,
-    color: "#B45309",
     fontWeight: "500" as const,
   },
 
@@ -3710,10 +3697,8 @@ const s = StyleSheet.create({
   dropdownPortal: {
     position: Platform.OS === "web" ? ("fixed" as any) : ("absolute" as const),
     minWidth: 200,
-    backgroundColor: "#fff",
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.15,
@@ -3725,7 +3710,6 @@ const s = StyleSheet.create({
   dropdownSearch: {
     fontSize: 13,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
     borderRadius: 6,
     paddingHorizontal: 8,
     paddingVertical: 6,
@@ -3745,25 +3729,21 @@ const s = StyleSheet.create({
   },
   dropdownItemDanger: {
     borderTopWidth: 1,
-    borderTopColor: "#F3F4F6",
     marginTop: 4,
   },
   dropdownItemText: {
     fontSize: 13,
-    color: "#374151",
   },
   dropdownGroupHeader: {
     paddingHorizontal: 10,
     paddingTop: 10,
     paddingBottom: 4,
     borderTopWidth: 1,
-    borderTopColor: "#F3F4F6",
     marginTop: 4,
   },
   dropdownGroupHeaderText: {
     fontSize: 11,
     fontWeight: "600" as const,
-    color: "#9CA3AF",
     textTransform: "uppercase" as const,
     letterSpacing: 0.5,
   },
@@ -3771,11 +3751,9 @@ const s = StyleSheet.create({
   // Side sheet
   divider: {
     width: 1,
-    backgroundColor: "#E5E5E5",
   },
   sideSheet: {
     width: 420,
-    backgroundColor: "#fff",
   },
 
   // Footer
@@ -3790,7 +3768,6 @@ const s = StyleSheet.create({
   },
   emptyText: {
     fontSize: 14,
-    color: "#666",
   },
 
   // Checkbox
@@ -3808,9 +3785,7 @@ const s = StyleSheet.create({
     justifyContent: "space-between" as const,
     paddingHorizontal: 16,
     paddingVertical: 8,
-    backgroundColor: "#EBF5FF",
     borderBottomWidth: 1,
-    borderBottomColor: "#BFDBFE",
   },
   actionBarLeft: {
     flexDirection: "row" as const,
@@ -3820,18 +3795,15 @@ const s = StyleSheet.create({
   actionBarCount: {
     fontSize: 13,
     fontWeight: "600" as const,
-    color: "#1E40AF",
   },
   actionBarDeselect: {
     fontSize: 13,
-    color: "#2563EB",
     textDecorationLine: "underline" as const,
   },
   actionBarRemoveButton: {
     flexDirection: "row" as const,
     alignItems: "center" as const,
     gap: 6,
-    backgroundColor: "#DC2626",
     borderRadius: 6,
     paddingHorizontal: 12,
     paddingVertical: 6,
@@ -3839,7 +3811,6 @@ const s = StyleSheet.create({
   actionBarRemoveText: {
     fontSize: 13,
     fontWeight: "600" as const,
-    color: "#fff",
   },
 
   // Unsaved column changes bar
@@ -3849,13 +3820,10 @@ const s = StyleSheet.create({
     gap: 12,
     paddingHorizontal: 16,
     paddingVertical: 6,
-    backgroundColor: "#F9FAFB",
     borderBottomWidth: 1,
-    borderBottomColor: "#E5E7EB",
   },
   unsavedText: {
     fontSize: 12,
-    color: "#6B7280",
     flex: 1,
   },
   unsavedAction: {
@@ -3864,7 +3832,6 @@ const s = StyleSheet.create({
   },
   unsavedDiscard: {
     fontSize: 12,
-    color: "#9CA3AF",
   },
 
   // Column header context menu
@@ -3885,10 +3852,8 @@ const s = StyleSheet.create({
       ? {
           position: "fixed" as any,
           zIndex: 9999,
-          backgroundColor: "#fff",
           borderRadius: 8,
           borderWidth: 1,
-          borderColor: "#E5E7EB",
           shadowColor: "#000",
           shadowOffset: { width: 0, height: 4 },
           shadowOpacity: 0.15,
@@ -3907,6 +3872,5 @@ const s = StyleSheet.create({
   },
   contextMenuText: {
     fontSize: 13,
-    color: "#374151",
   },
 });

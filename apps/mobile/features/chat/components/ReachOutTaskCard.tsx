@@ -12,6 +12,7 @@ import { usePathname, useRouter } from "expo-router";
 import type { Id } from "@services/api/convex";
 import { api, useAuthenticatedMutation } from "@services/api/convex";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 
 type ReachOutTaskStatus = "pending" | "assigned" | "resolved" | "revoked";
 
@@ -74,6 +75,7 @@ interface ReachOutTaskCardProps {
 }
 
 export function ReachOutTaskCard({ task, variant }: ReachOutTaskCardProps) {
+  const { colors, isDark } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const router = useRouter();
   const pathname = usePathname();
@@ -157,26 +159,26 @@ export function ReachOutTaskCard({ task, variant }: ReachOutTaskCardProps) {
   };
 
   return (
-    <View style={[styles.card, { borderLeftColor: badge.color }]}>
+    <View style={[styles.card, { backgroundColor: colors.surface, borderLeftColor: badge.color }]}>
       <View style={styles.header}>
         <View style={[styles.badge, { backgroundColor: `${badge.color}20` }]}>
           <Ionicons name={badge.icon} size={14} color={badge.color} />
           <Text style={[styles.badgeText, { color: badge.color }]}>{badge.label}</Text>
         </View>
-        <Text style={styles.time}>{formatTime(task.createdAt)}</Text>
+        <Text style={[styles.time, { color: colors.textTertiary }]}>{formatTime(task.createdAt)}</Text>
       </View>
 
-      <Text style={styles.content}>{content}</Text>
-      {assigneeName ? <Text style={styles.meta}>Assigned to {assigneeName}</Text> : null}
+      <Text style={[styles.content, { color: colors.text }]}>{content}</Text>
+      {assigneeName ? <Text style={[styles.meta, { color: colors.textSecondary }]}>Assigned to {assigneeName}</Text> : null}
 
       {variant === "member" ? (
         <View style={styles.actionsRow}>
           {isOpen && (task.viewerCanWithdraw ?? true) ? (
             <Pressable style={styles.textAction} onPress={onWithdraw} disabled={busyAction === "withdraw"}>
               {busyAction === "withdraw" ? (
-                <ActivityIndicator size="small" color="#999" />
+                <ActivityIndicator size="small" color={colors.textTertiary} />
               ) : (
-                <Text style={styles.textActionLabel}>Withdraw</Text>
+                <Text style={[styles.textActionLabel, { color: colors.textTertiary }]}>Withdraw</Text>
               )}
             </Pressable>
           ) : null}
@@ -196,24 +198,24 @@ export function ReachOutTaskCard({ task, variant }: ReachOutTaskCardProps) {
           ) : null}
           {status === "assigned" ? (
             <>
-              <Pressable style={[styles.button, { backgroundColor: "#34C75920" }]} onPress={onDone}>
+              <Pressable style={[styles.button, { backgroundColor: colors.success + "20" }]} onPress={onDone}>
                 {busyAction === "done" ? (
-                  <ActivityIndicator size="small" color="#34C759" />
+                  <ActivityIndicator size="small" color={colors.success} />
                 ) : (
-                  <Text style={[styles.buttonText, { color: "#34C759" }]}>Done</Text>
+                  <Text style={[styles.buttonText, { color: colors.success }]}>Done</Text>
                 )}
               </Pressable>
-              <Pressable style={[styles.button, { backgroundColor: "#FF3B3020" }]} onPress={onUnassign}>
+              <Pressable style={[styles.button, { backgroundColor: colors.error + "20" }]} onPress={onUnassign}>
                 {busyAction === "unassign" ? (
-                  <ActivityIndicator size="small" color="#FF3B30" />
+                  <ActivityIndicator size="small" color={colors.error} />
                 ) : (
-                  <Text style={[styles.buttonText, { color: "#FF3B30" }]}>Unassign</Text>
+                  <Text style={[styles.buttonText, { color: colors.error }]}>Unassign</Text>
                 )}
               </Pressable>
             </>
           ) : null}
-          <Pressable style={styles.button} onPress={openTasks}>
-            <Text style={styles.buttonText}>Open Tasks</Text>
+          <Pressable style={[styles.button, { backgroundColor: colors.surfaceSecondary }]} onPress={openTasks}>
+            <Text style={[styles.buttonText, { color: colors.text }]}>Open Tasks</Text>
           </Pressable>
         </View>
       ) : null}
@@ -223,7 +225,6 @@ export function ReachOutTaskCard({ task, variant }: ReachOutTaskCardProps) {
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 14,
     borderLeftWidth: 4,
@@ -253,17 +254,14 @@ const styles = StyleSheet.create({
   },
   time: {
     fontSize: 12,
-    color: "#999",
   },
   content: {
     fontSize: 15,
-    color: "#333",
     lineHeight: 21,
   },
   meta: {
     marginTop: 8,
     fontSize: 13,
-    color: "#666",
   },
   actionsRow: {
     marginTop: 10,
@@ -275,18 +273,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 8,
-    backgroundColor: "#F3F4F6",
   },
   buttonText: {
     fontSize: 13,
     fontWeight: "600",
-    color: "#333",
   },
   textAction: {
     paddingVertical: 4,
   },
   textActionLabel: {
     fontSize: 13,
-    color: "#999",
   },
 });

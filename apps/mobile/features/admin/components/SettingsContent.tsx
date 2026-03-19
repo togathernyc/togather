@@ -26,6 +26,7 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { DEFAULT_PRIMARY_COLOR, DEFAULT_SECONDARY_COLOR } from "../../../utils/styles";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 import { uploadAsync, FileSystemUploadType } from "expo-file-system/legacy";
 import { ImagePicker } from "@components/ui";
 import { useCommunitySettings, useGroupTypes, GroupType } from "../hooks";
@@ -40,6 +41,7 @@ import type { Id } from "@services/api/convex";
 export function SettingsContent() {
   const router = useRouter();
   const { primaryColor: themePrimaryColor } = useCommunityTheme();
+  const { colors, isDark } = useTheme();
   const {
     settings,
     isLoading,
@@ -278,7 +280,7 @@ export function SettingsContent() {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={themePrimaryColor} />
-        <Text style={styles.loadingText}>Loading settings...</Text>
+        <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading settings...</Text>
       </View>
     );
   }
@@ -286,9 +288,9 @@ export function SettingsContent() {
   if (isError) {
     return (
       <View style={styles.errorContainer}>
-        <Ionicons name="alert-circle-outline" size={48} color="#FF3B30" />
-        <Text style={styles.errorTitle}>Failed to load settings</Text>
-        <TouchableOpacity style={styles.retryButton} onPress={() => refetch()}>
+        <Ionicons name="alert-circle-outline" size={48} color={colors.error} />
+        <Text style={[styles.errorTitle, { color: colors.text }]}>Failed to load settings</Text>
+        <TouchableOpacity style={[styles.retryButton, { backgroundColor: themePrimaryColor }]} onPress={() => refetch()}>
           <Text style={styles.retryButtonText}>Retry</Text>
         </TouchableOpacity>
       </View>
@@ -296,7 +298,7 @@ export function SettingsContent() {
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
@@ -305,42 +307,42 @@ export function SettingsContent() {
         }
       >
         {/* Quick Links Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Quick Links</Text>
+        <View style={[styles.section, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Quick Links</Text>
           <TouchableOpacity
-            style={styles.quickLinkItem}
+            style={[styles.quickLinkItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
             onPress={() => router.push("/(user)/admin/community-wide-events")}
           >
-            <View style={styles.quickLinkIcon}>
+            <View style={[styles.quickLinkIcon, { backgroundColor: colors.surface }]}>
               <Ionicons name="calendar-outline" size={20} color={themePrimaryColor} />
             </View>
             <View style={styles.quickLinkInfo}>
-              <Text style={styles.quickLinkName}>Community-Wide Events</Text>
-              <Text style={styles.quickLinkDescription}>
+              <Text style={[styles.quickLinkName, { color: colors.text }]}>Community-Wide Events</Text>
+              <Text style={[styles.quickLinkDescription, { color: colors.textSecondary }]}>
                 Manage events that span multiple groups
               </Text>
             </View>
-            <Ionicons name="chevron-forward" size={20} color="#999" />
+            <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
           </TouchableOpacity>
         </View>
 
         {/* Basic Info Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Basic Information</Text>
+        <View style={[styles.section, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Basic Information</Text>
 
           <View style={styles.field}>
-            <Text style={styles.label}>Community Name</Text>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Community Name</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, { backgroundColor: colors.inputBackground, color: colors.text, borderColor: colors.inputBorder }]}
               value={name}
               onChangeText={setName}
               placeholder="Enter community name"
-              placeholderTextColor="#999"
+              placeholderTextColor={colors.inputPlaceholder}
             />
           </View>
 
           <View style={styles.field}>
-            <Text style={styles.label}>Logo</Text>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Logo</Text>
             <ImagePicker
               currentImage={selectedImageUri || settings?.logo || undefined}
               onImageSelected={handleImageSelected}
@@ -351,100 +353,100 @@ export function SettingsContent() {
           </View>
 
           <View style={styles.field}>
-            <Text style={styles.label}>Subdomain</Text>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Subdomain</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, { backgroundColor: colors.inputBackground, color: colors.text, borderColor: colors.inputBorder }]}
               value={subdomain}
               onChangeText={(text) => setSubdomain(text.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
               placeholder="your-community"
-              placeholderTextColor="#999"
+              placeholderTextColor={colors.inputPlaceholder}
               autoCapitalize="none"
               autoCorrect={false}
             />
-            <Text style={styles.hint}>
+            <Text style={[styles.hint, { color: colors.textTertiary }]}>
               Lowercase letters, numbers, and hyphens only
             </Text>
           </View>
         </View>
 
         {/* Address Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Address</Text>
+        <View style={[styles.section, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Address</Text>
 
           <View style={styles.field}>
-            <Text style={styles.label}>Address Line 1</Text>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Address Line 1</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, { backgroundColor: colors.inputBackground, color: colors.text, borderColor: colors.inputBorder }]}
               value={addressLine1}
               onChangeText={setAddressLine1}
               placeholder="Street address"
-              placeholderTextColor="#999"
+              placeholderTextColor={colors.inputPlaceholder}
             />
           </View>
 
           <View style={styles.field}>
-            <Text style={styles.label}>Address Line 2</Text>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Address Line 2</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, { backgroundColor: colors.inputBackground, color: colors.text, borderColor: colors.inputBorder }]}
               value={addressLine2}
               onChangeText={setAddressLine2}
               placeholder="Apt, suite, unit, etc."
-              placeholderTextColor="#999"
+              placeholderTextColor={colors.inputPlaceholder}
             />
           </View>
 
           <View style={styles.row}>
             <View style={[styles.field, styles.flex2]}>
-              <Text style={styles.label}>City</Text>
+              <Text style={[styles.label, { color: colors.textSecondary }]}>City</Text>
               <TextInput
-                style={styles.input}
+                style={[styles.input, { backgroundColor: colors.inputBackground, color: colors.text, borderColor: colors.inputBorder }]}
                 value={city}
                 onChangeText={setCity}
                 placeholder="City"
-                placeholderTextColor="#999"
+                placeholderTextColor={colors.inputPlaceholder}
               />
             </View>
             <View style={[styles.field, styles.flex1]}>
-              <Text style={styles.label}>State</Text>
+              <Text style={[styles.label, { color: colors.textSecondary }]}>State</Text>
               <TextInput
-                style={styles.input}
+                style={[styles.input, { backgroundColor: colors.inputBackground, color: colors.text, borderColor: colors.inputBorder }]}
                 value={state}
                 onChangeText={setState}
                 placeholder="State"
-                placeholderTextColor="#999"
+                placeholderTextColor={colors.inputPlaceholder}
               />
             </View>
           </View>
 
           <View style={styles.row}>
             <View style={[styles.field, styles.flex1]}>
-              <Text style={styles.label}>ZIP Code</Text>
+              <Text style={[styles.label, { color: colors.textSecondary }]}>ZIP Code</Text>
               <TextInput
-                style={styles.input}
+                style={[styles.input, { backgroundColor: colors.inputBackground, color: colors.text, borderColor: colors.inputBorder }]}
                 value={zipCode}
                 onChangeText={setZipCode}
                 placeholder="ZIP"
-                placeholderTextColor="#999"
+                placeholderTextColor={colors.inputPlaceholder}
                 keyboardType="numeric"
               />
             </View>
             <View style={[styles.field, styles.flex2]}>
-              <Text style={styles.label}>Country</Text>
+              <Text style={[styles.label, { color: colors.textSecondary }]}>Country</Text>
               <TextInput
-                style={styles.input}
+                style={[styles.input, { backgroundColor: colors.inputBackground, color: colors.text, borderColor: colors.inputBorder }]}
                 value={country}
                 onChangeText={setCountry}
                 placeholder="Country"
-                placeholderTextColor="#999"
+                placeholderTextColor={colors.inputPlaceholder}
               />
             </View>
           </View>
         </View>
 
         {/* Branding Colors Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Branding Colors</Text>
-          <Text style={styles.sectionDescription}>
+        <View style={[styles.section, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Branding Colors</Text>
+          <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>
             Customize your community's accent colors. These colors will be used for buttons, links, and other interactive elements.
           </Text>
 
@@ -469,15 +471,15 @@ export function SettingsContent() {
         </View>
 
         {/* Explore Page Settings Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Explore Page Settings</Text>
-          <Text style={styles.sectionDescription}>
+        <View style={[styles.section, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Explore Page Settings</Text>
+          <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>
             Configure default filters for the explore page. These filters will be applied for everyone in your community.
           </Text>
 
           {/* Group Type Filter */}
           <View style={styles.field}>
-            <Text style={styles.label}>Group Type</Text>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Group Type</Text>
             {groupTypesLoading ? (
               <ActivityIndicator size="small" color={themePrimaryColor} />
             ) : (
@@ -494,11 +496,11 @@ export function SettingsContent() {
                 )}
                 {exploreGroupTypes.length > 0 && (
                   <TouchableOpacity
-                    style={styles.exploreChip}
+                    style={[styles.exploreChip, { borderColor: colors.border, backgroundColor: colors.surface }]}
                     onPress={() => setExploreGroupTypes([])}
                     activeOpacity={0.7}
                   >
-                    <Text style={styles.exploreChipText}>All Types</Text>
+                    <Text style={[styles.exploreChipText, { color: colors.text }]}>All Types</Text>
                   </TouchableOpacity>
                 )}
                 {groupTypes?.map((gt) => {
@@ -510,6 +512,7 @@ export function SettingsContent() {
                       key={gt.id}
                       style={[
                         styles.exploreChip,
+                        { borderColor: colors.border, backgroundColor: colors.surface },
                         isSelected && { backgroundColor: typeColor, borderColor: typeColor },
                       ]}
                       onPress={() => toggleExploreGroupType(gt.id)}
@@ -518,6 +521,7 @@ export function SettingsContent() {
                       <Text
                         style={[
                           styles.exploreChipText,
+                          { color: colors.text },
                           isSelected && styles.exploreChipTextSelected,
                         ]}
                       >
@@ -532,7 +536,7 @@ export function SettingsContent() {
 
           {/* Meeting Type Filter */}
           <View style={styles.field}>
-            <Text style={styles.label}>Meeting Type</Text>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Meeting Type</Text>
             <View style={styles.exploreChipsGrid}>
               {[
                 { label: "All", value: null },
@@ -546,6 +550,7 @@ export function SettingsContent() {
                     key={option.label}
                     style={[
                       styles.exploreChip,
+                      { borderColor: colors.border, backgroundColor: colors.surface },
                       isSelected && { backgroundColor: themePrimaryColor, borderColor: themePrimaryColor },
                     ]}
                     onPress={() => setExploreDefaultMeetingType(option.value)}
@@ -555,13 +560,14 @@ export function SettingsContent() {
                       <Ionicons
                         name={option.icon}
                         size={16}
-                        color={isSelected ? "#fff" : "#666"}
+                        color={isSelected ? "#fff" : colors.textSecondary}
                         style={styles.exploreChipIcon}
                       />
                     )}
                     <Text
                       style={[
                         styles.exploreChipText,
+                        { color: colors.text },
                         isSelected && styles.exploreChipTextSelected,
                       ]}
                     >
@@ -592,9 +598,9 @@ export function SettingsContent() {
         </View>
 
         {/* Group Types Section */}
-        <View style={styles.section}>
+        <View style={[styles.section, { backgroundColor: colors.surface }]}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Group Types</Text>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Group Types</Text>
             <TouchableOpacity
               style={styles.addButton}
               onPress={() => setIsCreatingGroupType(true)}
@@ -611,33 +617,33 @@ export function SettingsContent() {
               {groupTypes.map((gt) => (
                 <TouchableOpacity
                   key={gt.id}
-                  style={styles.groupTypeItem}
+                  style={[styles.groupTypeItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
                   onPress={() => setEditingGroupType(gt)}
                 >
                   <View style={styles.groupTypeInfo}>
-                    <Text style={styles.groupTypeName}>{gt.name}</Text>
+                    <Text style={[styles.groupTypeName, { color: colors.text }]}>{gt.name}</Text>
                     {gt.description && (
-                      <Text style={styles.groupTypeDescription} numberOfLines={1}>
+                      <Text style={[styles.groupTypeDescription, { color: colors.textSecondary }]} numberOfLines={1}>
                         {gt.description}
                       </Text>
                     )}
-                    <Text style={styles.groupTypeCount}>
+                    <Text style={[styles.groupTypeCount, { color: colors.textTertiary }]}>
                       {gt.groupCount} {gt.groupCount === 1 ? "group" : "groups"}
                     </Text>
                   </View>
-                  <Ionicons name="chevron-forward" size={20} color="#999" />
+                  <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
                 </TouchableOpacity>
               ))}
             </View>
           ) : (
-            <Text style={styles.emptyText}>No group types defined</Text>
+            <Text style={[styles.emptyText, { color: colors.textTertiary }]}>No group types defined</Text>
           )}
         </View>
 
         {/* Integrations Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Integrations</Text>
-          <Text style={styles.sectionDescription}>
+        <View style={[styles.section, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Integrations</Text>
+          <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>
             Connect third-party services to sync groups, events, and members.
           </Text>
 
@@ -648,7 +654,7 @@ export function SettingsContent() {
               {integrations.map((integration) => (
                 <TouchableOpacity
                   key={integration.type}
-                  style={styles.integrationItem}
+                  style={[styles.integrationItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
                   onPress={() => {
                     if (integration.type === "planning_center") {
                       router.push("/leader-tools/integrations/planning-center");
@@ -656,24 +662,24 @@ export function SettingsContent() {
                   }}
                 >
                   <View style={styles.groupTypeInfo}>
-                    <Text style={styles.groupTypeName}>{integration.display_name}</Text>
-                    <Text style={styles.groupTypeDescription} numberOfLines={2}>
+                    <Text style={[styles.groupTypeName, { color: colors.text }]}>{integration.display_name}</Text>
+                    <Text style={[styles.groupTypeDescription, { color: colors.textSecondary }]} numberOfLines={2}>
                       {integration.description}
                     </Text>
                   </View>
                   {integration.is_connected ? (
-                    <View style={styles.connectedBadge}>
-                      <Ionicons name="checkmark-circle" size={18} color="#34C759" />
-                      <Text style={styles.connectedText}>Connected</Text>
+                    <View style={[styles.connectedBadge, { backgroundColor: isDark ? 'rgba(52,199,89,0.15)' : '#E8F5E9' }]}>
+                      <Ionicons name="checkmark-circle" size={18} color={colors.success} />
+                      <Text style={[styles.connectedText, { color: colors.success }]}>Connected</Text>
                     </View>
                   ) : (
-                    <Ionicons name="chevron-forward" size={20} color="#999" />
+                    <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
                   )}
                 </TouchableOpacity>
               ))}
             </View>
           ) : (
-            <Text style={styles.emptyText}>No integrations available</Text>
+            <Text style={[styles.emptyText, { color: colors.textTertiary }]}>No integrations available</Text>
           )}
         </View>
 
@@ -683,9 +689,9 @@ export function SettingsContent() {
 
       {/* Save Button */}
       {isDirty && (
-        <View style={styles.saveButtonContainer}>
+        <View style={[styles.saveButtonContainer, { backgroundColor: colors.surface, borderTopColor: colors.border }]}>
           <TouchableOpacity
-            style={[styles.saveButton, isSaving && styles.saveButtonDisabled]}
+            style={[styles.saveButton, { backgroundColor: themePrimaryColor }, isSaving && styles.saveButtonDisabled]}
             onPress={handleSave}
             disabled={isSaving}
           >
@@ -716,7 +722,6 @@ export function SettingsContent() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f5f5f5",
   },
   scrollView: {
     flex: 1,
@@ -732,7 +737,6 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: 16,
-    color: "#666",
   },
   errorContainer: {
     flex: 1,
@@ -744,12 +748,10 @@ const styles = StyleSheet.create({
   errorTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
   },
   retryButton: {
     paddingHorizontal: 24,
     paddingVertical: 12,
-    backgroundColor: DEFAULT_PRIMARY_COLOR,
     borderRadius: 8,
   },
   retryButtonText: {
@@ -758,7 +760,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   section: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 16,
     marginBottom: 16,
@@ -777,7 +778,6 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 16,
   },
   field: {
@@ -786,21 +786,16 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: "500",
-    color: "#666",
     marginBottom: 8,
   },
   input: {
-    backgroundColor: "#f8f8f8",
     borderRadius: 8,
     padding: 12,
     fontSize: 16,
-    color: "#333",
     borderWidth: 1,
-    borderColor: "#e0e0e0",
   },
   hint: {
     fontSize: 12,
-    color: "#999",
     marginTop: 4,
   },
   row: {
@@ -828,11 +823,9 @@ const styles = StyleSheet.create({
   groupTypeItem: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f8f8f8",
     borderRadius: 8,
     padding: 12,
     borderWidth: 1,
-    borderColor: "#e0e0e0",
   },
   groupTypeInfo: {
     flex: 1,
@@ -840,38 +833,31 @@ const styles = StyleSheet.create({
   groupTypeName: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
   },
   groupTypeDescription: {
     fontSize: 14,
-    color: "#666",
     marginTop: 2,
   },
   groupTypeCount: {
     fontSize: 12,
-    color: "#999",
     marginTop: 4,
   },
   emptyText: {
     fontSize: 14,
-    color: "#999",
     textAlign: "center",
     paddingVertical: 20,
   },
   sectionDescription: {
     fontSize: 14,
-    color: "#666",
     marginBottom: 16,
     lineHeight: 20,
   },
   integrationItem: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f8f8f8",
     borderRadius: 8,
     padding: 12,
     borderWidth: 1,
-    borderColor: "#e0e0e0",
   },
   connectedBadge: {
     flexDirection: "row",
@@ -879,13 +865,11 @@ const styles = StyleSheet.create({
     gap: 4,
     paddingHorizontal: 10,
     paddingVertical: 4,
-    backgroundColor: "#E8F5E9",
     borderRadius: 12,
   },
   connectedText: {
     fontSize: 12,
     fontWeight: "600",
-    color: "#34C759",
   },
   saveButtonContainer: {
     position: "absolute",
@@ -893,12 +877,9 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     padding: 16,
-    backgroundColor: "#fff",
     borderTopWidth: 1,
-    borderTopColor: "#e0e0e0",
   },
   saveButton: {
-    backgroundColor: DEFAULT_PRIMARY_COLOR,
     borderRadius: 8,
     padding: 16,
     alignItems: "center",
@@ -914,17 +895,14 @@ const styles = StyleSheet.create({
   quickLinkItem: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f8f8f8",
     borderRadius: 8,
     padding: 12,
     borderWidth: 1,
-    borderColor: "#e0e0e0",
   },
   quickLinkIcon: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: "#fff",
     justifyContent: "center",
     alignItems: "center",
     marginRight: 12,
@@ -935,11 +913,9 @@ const styles = StyleSheet.create({
   quickLinkName: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
   },
   quickLinkDescription: {
     fontSize: 13,
-    color: "#666",
     marginTop: 2,
   },
   exploreChipsGrid: {
@@ -954,13 +930,10 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 20,
     borderWidth: 1.5,
-    borderColor: "#E5E5E5",
-    backgroundColor: "#fff",
   },
   exploreChipText: {
     fontSize: 14,
     fontWeight: "500",
-    color: "#333",
   },
   exploreChipTextSelected: {
     color: "#fff",

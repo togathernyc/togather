@@ -20,6 +20,7 @@ import {
   type FileCategory,
 } from '../utils/fileTypes';
 import { getMediaUrl } from '@/utils/media';
+import { useTheme } from '@hooks/useTheme';
 
 // ============================================================================
 // Types
@@ -35,7 +36,7 @@ interface FileAttachmentProps {
 }
 
 // ============================================================================
-// Category Colors
+// Category Colors (branded, kept as-is)
 // ============================================================================
 
 const CATEGORY_COLORS: Record<FileCategory, string> = {
@@ -55,6 +56,8 @@ export function FileAttachment({
   name,
   isOwnMessage = false,
 }: FileAttachmentProps) {
+  const { colors, isDark } = useTheme();
+
   // Resolve the URL from storage path
   const resolvedUrl = getMediaUrl(url);
 
@@ -98,7 +101,7 @@ export function FileAttachment({
   }, [resolvedUrl]);
 
   return (
-    <Pressable style={styles.container} onPress={handlePress}>
+    <Pressable style={[styles.container, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)' }]} onPress={handlePress}>
       {/* File Icon */}
       <View style={[styles.iconContainer, { backgroundColor: color + '20' }]}>
         <Ionicons name={iconName} size={20} color={color} />
@@ -107,12 +110,12 @@ export function FileAttachment({
       {/* File Info */}
       <View style={styles.infoContainer}>
         <Text
-          style={[styles.fileName, isOwnMessage && styles.ownMessageText]}
+          style={[styles.fileName, { color: colors.text }]}
           numberOfLines={1}
         >
           {displayName}
         </Text>
-        <Text style={[styles.fileType, isOwnMessage && styles.ownMessageMeta]}>
+        <Text style={[styles.fileType, { color: colors.textSecondary }]}>
           Tap to open
         </Text>
       </View>
@@ -122,7 +125,7 @@ export function FileAttachment({
         <Ionicons
           name="download-outline"
           size={20}
-          color={isOwnMessage ? '#666' : '#999'}
+          color={colors.textTertiary}
         />
       </View>
     </Pressable>
@@ -137,7 +140,6 @@ const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.05)',
     borderRadius: 8,
     padding: 10,
     marginTop: 6,
@@ -158,18 +160,10 @@ const styles = StyleSheet.create({
   fileName: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#333',
     marginBottom: 2,
-  },
-  ownMessageText: {
-    color: '#000',
   },
   fileType: {
     fontSize: 11,
-    color: '#666',
-  },
-  ownMessageMeta: {
-    color: '#666',
   },
   downloadIcon: {
     padding: 4,

@@ -1,6 +1,7 @@
 import React from "react";
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { format } from "date-fns";
+import { useTheme } from "@hooks/useTheme";
 
 interface MeetingSummary {
   id?: number;
@@ -29,35 +30,36 @@ interface EventListProps {
 }
 
 export function EventList({ meetingDates, onEditEvent }: EventListProps) {
+  const { colors } = useTheme();
   if (meetingDates.length === 0) {
     return null;
   }
 
   return (
     <View style={styles.eventsList}>
-      <Text style={styles.sectionTitle}>SCHEDULED EVENTS</Text>
+      <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>SCHEDULED EVENTS</Text>
       {meetingDates.map((meeting) => {
         const meetingDate = new Date(meeting.dateOfMeeting);
         return (
           <View
             key={meeting.id || meeting.dateOfMeeting}
-            style={styles.eventItem}
+            style={[styles.eventItem, { backgroundColor: colors.surface, borderColor: colors.border }]}
           >
             <View style={styles.eventItemContent}>
-              <Text style={styles.eventDate}>
+              <Text style={[styles.eventDate, { color: colors.text }]}>
                 {format(meetingDate, "MMM dd, yyyy 'at' h:mm a")}
               </Text>
               {meeting.stats && (
-                <Text style={styles.eventStats}>
+                <Text style={[styles.eventStats, { color: colors.textSecondary }]}>
                   {meeting.stats.presentCount || 0} attended
                 </Text>
               )}
             </View>
             <TouchableOpacity
-              style={styles.editButton}
+              style={[styles.editButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
               onPress={() => onEditEvent(meetingDate)}
             >
-              <Text style={styles.editButtonText}>EDIT</Text>
+              <Text style={[styles.editButtonText, { color: colors.text }]}>EDIT</Text>
             </TouchableOpacity>
           </View>
         );
@@ -73,7 +75,6 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 12,
     fontWeight: "600",
-    color: "#666",
     marginBottom: 8,
     textTransform: "uppercase",
   },
@@ -82,11 +83,9 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     padding: 16,
-    backgroundColor: "#fff",
     borderRadius: 8,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: "#e0e0e0",
   },
   eventItemContent: {
     flex: 1,
@@ -94,25 +93,20 @@ const styles = StyleSheet.create({
   eventDate: {
     fontSize: 16,
     fontWeight: "500",
-    color: "#333",
     marginBottom: 4,
   },
   eventStats: {
     fontSize: 14,
-    color: "#666",
   },
   editButton: {
     paddingVertical: 8,
     paddingHorizontal: 12,
-    backgroundColor: "#fff",
     borderWidth: 1,
-    borderColor: "#e0e0e0",
     borderRadius: 6,
   },
   editButtonText: {
     fontSize: 12,
     fontWeight: "600",
-    color: "#333",
   },
 });
 

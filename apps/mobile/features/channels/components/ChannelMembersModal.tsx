@@ -28,6 +28,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 import { useQuery, useAction, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 
@@ -64,6 +65,7 @@ export const ChannelMembersModal = memo(function ChannelMembersModal({
   const router = useRouter();
   const { token, user } = useAuth();
   const { primaryColor } = useCommunityTheme();
+  const { colors, isDark } = useTheme();
 
   // Query channel members - only fetch when modal is visible to prevent memory leaks
   const membersData = useQuery(
@@ -162,9 +164,9 @@ export const ChannelMembersModal = memo(function ChannelMembersModal({
       if (item.type === "section-header") {
         return (
           <View style={styles.sectionHeader}>
-            <View style={styles.sectionHeaderLine} />
-            <Text style={styles.sectionHeaderText}>{item.title}</Text>
-            <View style={styles.sectionHeaderLine} />
+            <View style={[styles.sectionHeaderLine, { backgroundColor: colors.border }]} />
+            <Text style={[styles.sectionHeaderText, { color: isDark ? '#FFD60A' : '#B25000' }]}>{item.title}</Text>
+            <View style={[styles.sectionHeaderLine, { backgroundColor: colors.border }]} />
           </View>
         );
       }
@@ -173,7 +175,7 @@ export const ChannelMembersModal = memo(function ChannelMembersModal({
         const person = item.data;
 
         return (
-          <View style={[styles.memberItem, styles.unsyncedItem]}>
+          <View style={[styles.memberItem, styles.unsyncedItem, { backgroundColor: isDark ? '#332b00' : '#FFF8E1', borderBottomColor: colors.border }]}>
             <UnsyncedPersonRowContent person={person} />
           </View>
         );
@@ -184,7 +186,7 @@ export const ChannelMembersModal = memo(function ChannelMembersModal({
       const isCurrentUser = member.userId === user?.id;
 
       return (
-        <View style={styles.memberItem}>
+        <View style={[styles.memberItem, { borderBottomColor: colors.border }]}>
           <SyncedMemberRowContent
             member={member}
             primaryColor={primaryColor}
@@ -212,25 +214,25 @@ export const ChannelMembersModal = memo(function ChannelMembersModal({
       animationType="slide"
       onRequestClose={onClose}
     >
-      <Pressable style={styles.backdrop} onPress={onClose}>
+      <Pressable style={[styles.backdrop, { backgroundColor: colors.overlay }]} onPress={onClose}>
         <View style={styles.backdropInner} />
       </Pressable>
 
-      <View style={[styles.modalContainer, { paddingBottom: insets.bottom + 16 }]}>
+      <View style={[styles.modalContainer, { paddingBottom: insets.bottom + 16, backgroundColor: colors.modalBackground }]}>
         {/* Handle bar */}
-        <View style={styles.handleBar} />
+        <View style={[styles.handleBar, { backgroundColor: colors.iconSecondary }]} />
 
         {/* Header */}
-        <View style={styles.header}>
+        <View style={[styles.header, { borderBottomColor: colors.border }]}>
           <View style={styles.headerTop}>
             <View style={styles.headerTitleContainer}>
-              <Text style={styles.headerTitle} numberOfLines={1}>
+              <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
                 {channelName}
               </Text>
-              <Text style={styles.memberCountText}>
+              <Text style={[styles.memberCountText, { color: colors.textSecondary }]}>
                 {memberCount} member{memberCount !== 1 ? "s" : ""}
                 {unsyncedCount > 0 && (
-                  <Text style={styles.unsyncedCountText}>
+                  <Text style={[styles.unsyncedCountText, { color: isDark ? '#FFD60A' : '#B25000' }]}>
                     {" "}
                     ({unsyncedCount} unsynced)
                   </Text>
@@ -246,7 +248,7 @@ export const ChannelMembersModal = memo(function ChannelMembersModal({
                   accessibilityLabel="Manage members"
                   accessibilityRole="button"
                 >
-                  <Ionicons name="settings-outline" size={22} color="#666" />
+                  <Ionicons name="settings-outline" size={22} color={colors.icon} />
                 </TouchableOpacity>
               )}
               <TouchableOpacity
@@ -255,7 +257,7 @@ export const ChannelMembersModal = memo(function ChannelMembersModal({
                 accessibilityLabel="Close members modal"
                 accessibilityRole="button"
               >
-                <Ionicons name="close" size={24} color="#666" />
+                <Ionicons name="close" size={24} color={colors.icon} />
               </TouchableOpacity>
             </View>
           </View>
@@ -284,13 +286,13 @@ export const ChannelMembersModal = memo(function ChannelMembersModal({
         {!membersData ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={primaryColor} />
-            <Text style={styles.loadingText}>Loading members...</Text>
+            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading members...</Text>
           </View>
         ) : listData.length === 0 ? (
           <View style={styles.emptyContainer}>
-            <Ionicons name="people-outline" size={48} color="#ccc" />
-            <Text style={styles.emptyTitle}>No Members</Text>
-            <Text style={styles.emptySubtitle}>
+            <Ionicons name="people-outline" size={48} color={colors.iconSecondary} />
+            <Text style={[styles.emptyTitle, { color: colors.text }]}>No Members</Text>
+            <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
               This channel has no members yet.
             </Text>
           </View>
@@ -311,14 +313,12 @@ export const ChannelMembersModal = memo(function ChannelMembersModal({
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.4)",
     justifyContent: "flex-end",
   },
   backdropInner: {
     flex: 1,
   },
   modalContainer: {
-    backgroundColor: "#fff",
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     maxHeight: "70%",
@@ -327,7 +327,6 @@ const styles = StyleSheet.create({
   handleBar: {
     width: 40,
     height: 4,
-    backgroundColor: "#DDD",
     borderRadius: 2,
     alignSelf: "center",
     marginTop: 12,
@@ -337,7 +336,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#E0E0E0",
   },
   headerTop: {
     flexDirection: "row",
@@ -351,15 +349,12 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#000",
   },
   memberCountText: {
     fontSize: 14,
-    color: "#666",
     marginTop: 4,
   },
   unsyncedCountText: {
-    color: "#B25000",
   },
   headerActions: {
     flexDirection: "row",
@@ -397,7 +392,6 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 12,
     fontSize: 16,
-    color: "#666",
   },
   emptyContainer: {
     flex: 1,
@@ -408,12 +402,10 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     marginTop: 12,
   },
   emptySubtitle: {
     fontSize: 14,
-    color: "#666",
     textAlign: "center",
     marginTop: 4,
   },
@@ -429,12 +421,10 @@ const styles = StyleSheet.create({
   sectionHeaderLine: {
     flex: 1,
     height: 1,
-    backgroundColor: "#E0E0E0",
   },
   sectionHeaderText: {
     fontSize: 13,
     fontWeight: "600",
-    color: "#B25000",
     textTransform: "uppercase",
   },
   memberItem: {
@@ -442,99 +432,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#E0E0E0",
   },
   unsyncedItem: {
-    backgroundColor: "#FFF8E1",
     marginHorizontal: -16,
     paddingHorizontal: 16,
     borderRadius: 8,
     marginBottom: 4,
-  },
-  memberAvatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    overflow: "hidden",
-    marginRight: 12,
-  },
-  avatarImage: {
-    width: "100%",
-    height: "100%",
-  },
-  avatarPlaceholder: {
-    width: "100%",
-    height: "100%",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  unsyncedAvatar: {
-    backgroundColor: "#FFB74D",
-  },
-  avatarInitials: {
-    fontSize: 14,
-    fontWeight: "bold",
-    color: "#fff",
-  },
-  unsyncedInitials: {
-    color: "#5D4037",
-  },
-  memberInfo: {
-    flex: 1,
-  },
-  memberNameRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  memberName: {
-    fontSize: 16,
-    fontWeight: "500",
-    color: "#333",
-    flexShrink: 1,
-  },
-  youBadge: {
-    fontSize: 13,
-    color: "#888",
-  },
-  badgeRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 6,
-    marginTop: 4,
-  },
-  roleBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 10,
-  },
-  roleBadgeText: {
-    fontSize: 11,
-    fontWeight: "600",
-  },
-  syncBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    backgroundColor: "#2196F320",
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 8,
-  },
-  syncBadgeText: {
-    fontSize: 11,
-    color: "#2196F3",
-    fontWeight: "500",
-  },
-  positionBadge: {
-    backgroundColor: "#FF980020",
-  },
-  positionBadgeText: {
-    color: "#FF9800",
-  },
-  unsyncedReason: {
-    fontSize: 12,
-    color: "#B25000",
-    marginTop: 2,
   },
 });

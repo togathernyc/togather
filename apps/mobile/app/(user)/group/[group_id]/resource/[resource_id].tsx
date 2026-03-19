@@ -26,12 +26,14 @@ import * as Clipboard from "expo-clipboard";
 import { useCallback } from "react";
 import { ResourceSection } from "@components/ui";
 import { DragHandle } from "@components/ui/DragHandle";
+import { useTheme } from "@hooks/useTheme";
 
 // ============================================================================
 // Main Component
 // ============================================================================
 
 export default function ResourcePage() {
+  const { colors } = useTheme();
   const { group_id, resource_id } = useLocalSearchParams<{
     group_id: string;
     resource_id: string;
@@ -89,12 +91,12 @@ export default function ResourcePage() {
   // Loading state
   if (resource === undefined) {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, { backgroundColor: colors.surface }]}>
         <DragHandle />
         <Stack.Screen options={{ title: "Loading..." }} />
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={DEFAULT_PRIMARY_COLOR} />
-          <Text style={styles.loadingText}>Loading resource...</Text>
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading resource...</Text>
         </View>
       </View>
     );
@@ -103,13 +105,13 @@ export default function ResourcePage() {
   // Not found state
   if (resource === null) {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, { backgroundColor: colors.surface }]}>
         <DragHandle />
         <Stack.Screen options={{ title: "Not Found" }} />
         <View style={styles.errorContainer}>
-          <Ionicons name="document-outline" size={48} color="#ccc" />
-          <Text style={styles.errorTitle}>Resource not found</Text>
-          <Text style={styles.errorText}>
+          <Ionicons name="document-outline" size={48} color={colors.iconSecondary} />
+          <Text style={[styles.errorTitle, { color: colors.text }]}>Resource not found</Text>
+          <Text style={[styles.errorText, { color: colors.textSecondary }]}>
             This resource may have been removed or you don't have access to it.
           </Text>
         </View>
@@ -123,7 +125,7 @@ export default function ResourcePage() {
   );
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.surface }]}>
       <DragHandle />
       <Stack.Screen options={{ title: resource.title }} />
 
@@ -135,16 +137,16 @@ export default function ResourcePage() {
               <Ionicons
                 name={resource.icon as keyof typeof Ionicons.glyphMap}
                 size={28}
-                color="#333"
+                color={colors.text}
               />
             )}
-            <Text style={styles.title}>{resource.title}</Text>
+            <Text style={[styles.title, { color: colors.text }]}>{resource.title}</Text>
           </View>
           <TouchableOpacity
             onPress={handleShareResource}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
-            <Ionicons name="share-outline" size={22} color="#666" />
+            <Ionicons name="share-outline" size={22} color={colors.icon} />
           </TouchableOpacity>
         </View>
 
@@ -156,8 +158,8 @@ export default function ResourcePage() {
         {/* Empty state */}
         {sortedSections.length === 0 && (
           <View style={styles.emptyContainer}>
-            <Ionicons name="document-text-outline" size={48} color="#ccc" />
-            <Text style={styles.emptyText}>No content yet</Text>
+            <Ionicons name="document-text-outline" size={48} color={colors.iconSecondary} />
+            <Text style={[styles.emptyText, { color: colors.textTertiary }]}>No content yet</Text>
           </View>
         )}
       </ScrollView>
@@ -172,7 +174,6 @@ export default function ResourcePage() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
   },
   loadingContainer: {
     flex: 1,
@@ -182,7 +183,6 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: 16,
-    color: "#666",
   },
   errorContainer: {
     flex: 1,
@@ -194,11 +194,9 @@ const styles = StyleSheet.create({
   errorTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
   },
   errorText: {
     fontSize: 14,
-    color: "#666",
     textAlign: "center",
     lineHeight: 20,
   },
@@ -220,7 +218,6 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 24,
     fontWeight: "bold",
-    color: "#333",
     flex: 1,
   },
   emptyContainer: {
@@ -231,7 +228,6 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 16,
-    color: "#999",
     textAlign: "center",
   },
 });

@@ -17,6 +17,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { ProgrammaticTextInput } from "@/components/ui";
 import { formatAuthError } from "../utils/formatAuthError";
 import { RegisterResult } from "../types";
+import { useTheme } from "@hooks/useTheme";
 
 const INPUT_ACCESSORY_VIEW_ID = "completeProfileKeyboard";
 
@@ -39,6 +40,7 @@ export function CompleteProfileScreen({
 }: CompleteProfileScreenProps) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { colors } = useTheme();
 
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -169,7 +171,7 @@ export function CompleteProfileScreen({
   return (
     <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
       <ScrollView
-        style={styles.scrollView}
+        style={[styles.scrollView, { backgroundColor: colors.surface }]}
         contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top }]}
         keyboardShouldPersistTaps="handled"
       >
@@ -179,17 +181,17 @@ export function CompleteProfileScreen({
           onPress={onBack}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         >
-          <Ionicons name="arrow-back" size={24} color="#333" />
+          <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
 
-        <Text style={styles.title}>Complete Your Profile</Text>
-        <Text style={styles.subtitle}>Just a few more details to get started</Text>
+        <Text style={[styles.title, { color: colors.text }]}>Complete Your Profile</Text>
+        <Text style={[styles.subtitle, { color: colors.textSecondary }]}>Just a few more details to get started</Text>
 
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+        {error ? <Text style={[styles.errorText, { color: colors.error }]}>{error}</Text> : null}
 
-        <Text style={styles.label}>First Name</Text>
+        <Text style={[styles.label, { color: colors.textSecondary }]}>First Name</Text>
         <ProgrammaticTextInput
-          style={[styles.input, firstNameError && styles.inputError]}
+          style={[styles.input, { borderColor: colors.border, backgroundColor: colors.surface, color: colors.text }, firstNameError && { borderColor: colors.error }]}
           placeholder="First name"
           value={firstName}
           onChangeText={handleFirstNameChange}
@@ -200,12 +202,12 @@ export function CompleteProfileScreen({
           inputAccessoryViewID={INPUT_ACCESSORY_VIEW_ID}
         />
         {firstNameError ? (
-          <Text style={styles.fieldError}>{firstNameError}</Text>
+          <Text style={[styles.fieldError, { color: colors.error }]}>{firstNameError}</Text>
         ) : null}
 
-        <Text style={styles.label}>Last Name</Text>
+        <Text style={[styles.label, { color: colors.textSecondary }]}>Last Name</Text>
         <ProgrammaticTextInput
-          style={[styles.input, lastNameError && styles.inputError]}
+          style={[styles.input, { borderColor: colors.border, backgroundColor: colors.surface, color: colors.text }, lastNameError && { borderColor: colors.error }]}
           placeholder="Last name"
           value={lastName}
           onChangeText={handleLastNameChange}
@@ -215,12 +217,12 @@ export function CompleteProfileScreen({
           inputAccessoryViewID={INPUT_ACCESSORY_VIEW_ID}
         />
         {lastNameError ? (
-          <Text style={styles.fieldError}>{lastNameError}</Text>
+          <Text style={[styles.fieldError, { color: colors.error }]}>{lastNameError}</Text>
         ) : null}
 
-        <Text style={styles.label}>Email</Text>
+        <Text style={[styles.label, { color: colors.textSecondary }]}>Email</Text>
         <ProgrammaticTextInput
-          style={[styles.input, emailError && styles.inputError]}
+          style={[styles.input, { borderColor: colors.border, backgroundColor: colors.surface, color: colors.text }, emailError && { borderColor: colors.error }]}
           placeholder="Email"
           value={email}
           onChangeText={handleEmailChange}
@@ -232,7 +234,7 @@ export function CompleteProfileScreen({
           programmaticCheckInterval={400}
           inputAccessoryViewID={INPUT_ACCESSORY_VIEW_ID}
         />
-        {emailError ? <Text style={styles.fieldError}>{emailError}</Text> : null}
+        {emailError ? <Text style={[styles.fieldError, { color: colors.error }]}>{emailError}</Text> : null}
 
         <View style={styles.termsContainer}>
           <TouchableOpacity
@@ -243,23 +245,23 @@ export function CompleteProfileScreen({
             <Ionicons
               name={termsAccepted ? "checkbox" : "square-outline"}
               size={24}
-              color={termsAccepted ? "#007AFF" : "#999"}
+              color={termsAccepted ? colors.link : colors.textTertiary}
             />
           </TouchableOpacity>
           <View style={styles.termsTextContainer}>
-            <Text style={styles.termsText}>I agree to the </Text>
+            <Text style={[styles.termsText, { color: colors.textSecondary }]}>I agree to the </Text>
             <TouchableOpacity onPress={handleTermsPress}>
-              <Text style={styles.termsLink}>Terms of Service</Text>
+              <Text style={[styles.termsLink, { color: colors.link }]}>Terms of Service</Text>
             </TouchableOpacity>
-            <Text style={styles.termsText}> and </Text>
+            <Text style={[styles.termsText, { color: colors.textSecondary }]}> and </Text>
             <TouchableOpacity onPress={handlePrivacyPress}>
-              <Text style={styles.termsLink}>Privacy Policy</Text>
+              <Text style={[styles.termsLink, { color: colors.link }]}>Privacy Policy</Text>
             </TouchableOpacity>
           </View>
         </View>
 
         <TouchableOpacity
-          style={[styles.button, isSubmitDisabled && styles.buttonDisabled]}
+          style={[styles.button, { backgroundColor: colors.link }, isSubmitDisabled && styles.buttonDisabled]}
           onPress={handleSubmit}
           disabled={isSubmitDisabled}
         >
@@ -273,13 +275,13 @@ export function CompleteProfileScreen({
 
       {Platform.OS === "ios" && (
         <InputAccessoryView nativeID={INPUT_ACCESSORY_VIEW_ID}>
-          <View style={styles.keyboardToolbar}>
+          <View style={[styles.keyboardToolbar, { backgroundColor: colors.surfaceSecondary, borderTopColor: colors.border }]}>
             <TouchableOpacity
               onPress={Keyboard.dismiss}
               style={styles.keyboardDoneButton}
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             >
-              <Text style={styles.keyboardDoneText}>Done</Text>
+              <Text style={[styles.keyboardDoneText, { color: colors.link }]}>Done</Text>
             </TouchableOpacity>
           </View>
         </InputAccessoryView>
@@ -292,7 +294,6 @@ export function CompleteProfileScreen({
 const styles = StyleSheet.create({
   scrollView: {
     flex: 1,
-    backgroundColor: "#fff",
   },
   scrollContent: {
     flexGrow: 1,
@@ -314,42 +315,31 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     marginBottom: 8,
     textAlign: "center",
-    color: "#333",
   },
   subtitle: {
     fontSize: 16,
-    color: "#666",
     marginBottom: 32,
     textAlign: "center",
   },
   label: {
     fontSize: 12,
     fontWeight: "600",
-    color: "#7f7f82",
     marginTop: 16,
     marginBottom: 8,
     textTransform: "uppercase",
   },
   input: {
     borderWidth: 1,
-    borderColor: "#ddd",
     borderRadius: 8,
     padding: 12,
     fontSize: 16,
-    backgroundColor: "#fff",
-    color: "#333",
-  },
-  inputError: {
-    borderColor: "#FF3B30",
   },
   fieldError: {
-    color: "#FF3B30",
     fontSize: 12,
     marginTop: 4,
     marginBottom: 8,
   },
   errorText: {
-    color: "#FF3B30",
     marginBottom: 16,
     textAlign: "center",
     fontSize: 14,
@@ -372,17 +362,14 @@ const styles = StyleSheet.create({
   },
   termsText: {
     fontSize: 14,
-    color: "#7f7f82",
     lineHeight: 22,
   },
   termsLink: {
-    color: "#007AFF",
     textDecorationLine: "underline",
     fontSize: 14,
     lineHeight: 22,
   },
   button: {
-    backgroundColor: "#007AFF",
     borderRadius: 8,
     padding: 16,
     alignItems: "center",
@@ -397,9 +384,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   keyboardToolbar: {
-    backgroundColor: "#f8f8f8",
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "#ccc",
     paddingVertical: 8,
     paddingHorizontal: 16,
     flexDirection: "row",
@@ -411,7 +396,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
   },
   keyboardDoneText: {
-    color: "#007AFF",
     fontSize: 17,
     fontWeight: "600",
   },

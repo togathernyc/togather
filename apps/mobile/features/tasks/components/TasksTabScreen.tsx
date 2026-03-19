@@ -30,6 +30,8 @@ import {
   type TaskRow,
   type TaskSourceType,
 } from "./taskHelpers";
+import { useTheme } from "@hooks/useTheme";
+import type { ThemeColors } from "@/theme/colors";
 
 type Segment = "my" | "all" | "claimable";
 type TaskId = Id<"tasks">;
@@ -52,12 +54,14 @@ const sourceLabels: Record<TaskSourceType, string> = {
   followup: "PEOPLE",
 };
 
-const sourceColors: Record<TaskSourceType, string> = {
-  manual: "#64748B",
-  bot_task_reminder: "#7C3AED",
-  reach_out: "#2563EB",
-  followup: "#0891B2",
-};
+function getSourceColors(colors: ThemeColors): Record<TaskSourceType, string> {
+  return {
+    manual: colors.textSecondary,
+    bot_task_reminder: colors.link,
+    reach_out: colors.link,
+    followup: colors.link,
+  };
+}
 
 function formatStatus(status: string): string {
   if (status === "snoozed") return "Snoozed";
@@ -66,14 +70,15 @@ function formatStatus(status: string): string {
   return "Open";
 }
 
-function statusColor(status: string): string {
-  if (status === "done") return "#16A34A";
-  if (status === "snoozed") return "#CA8A04";
-  if (status === "canceled") return "#DC2626";
-  return "#2563EB";
+function statusColor(status: string, colors: ThemeColors): string {
+  if (status === "done") return colors.success;
+  if (status === "snoozed") return colors.warning;
+  if (status === "canceled") return colors.destructive;
+  return colors.link;
 }
 
 export function TasksTabScreen() {
+  const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const pathname = usePathname();
@@ -452,6 +457,7 @@ export function TasksTabScreen() {
         }
         style={[
           styles.card,
+          { backgroundColor: colors.surface, borderColor: colors.borderLight },
           item.depth > 0 && styles.childCard,
           { marginLeft: item.depth * 14 },
         ]}
@@ -470,36 +476,36 @@ export function TasksTabScreen() {
                 <Ionicons
                   name={expandedParents.has(taskIdKey) ? "chevron-down" : "chevron-forward"}
                   size={14}
-                  color="#64748B"
+                  color={colors.textSecondary}
                 />
               </Pressable>
             ) : null}
-            <Text style={styles.cardTitle}>{task.title}</Text>
+            <Text style={[styles.cardTitle, { color: colors.text }]}>{task.title}</Text>
           </View>
           <View
             style={[
               styles.badge,
-              { backgroundColor: sourceColors[sourceType] ?? "#64748B" },
+              { backgroundColor: getSourceColors(colors)[sourceType] ?? colors.textSecondary },
             ]}
           >
-            <Text style={styles.badgeText}>{sourceLabels[sourceType] ?? "TASK"}</Text>
+            <Text style={[styles.badgeText, { color: colors.textInverse }]}>{sourceLabels[sourceType] ?? "TASK"}</Text>
           </View>
         </View>
 
         <View style={styles.metaRow}>
-          <Ionicons name="people-outline" size={14} color="#64748B" />
-          <Text style={styles.metaText}>{task.groupName ?? "Group"}</Text>
+          <Ionicons name="people-outline" size={14} color={colors.textSecondary} />
+          <Text style={[styles.metaText, { color: colors.textSecondary }]}>{task.groupName ?? "Group"}</Text>
           {task.assignedToName ? (
-            <Text style={styles.metaText}>• {task.assignedToName}</Text>
+            <Text style={[styles.metaText, { color: colors.textSecondary }]}>• {task.assignedToName}</Text>
           ) : null}
-          <Text style={[styles.statusText, { color: statusColor(task.status) }]}>
+          <Text style={[styles.statusText, { color: statusColor(task.status, colors) }]}>
             {formatStatus(task.status)}
           </Text>
         </View>
 
         {task.targetType !== "none" ? (
-          <View style={styles.targetPill}>
-            <Text style={styles.targetPillText}>
+          <View style={[styles.targetPill, { backgroundColor: isDark ? 'rgba(0,122,255,0.15)' : '#E0F2FE' }]}>
+            <Text style={[styles.targetPillText, { color: colors.link }]}>
               {task.targetType === "member"
                 ? `Member: ${task.targetMemberName ?? "Unknown"}`
                 : `Group: ${task.targetGroupName ?? "Group"}`}
@@ -510,8 +516,8 @@ export function TasksTabScreen() {
         {task.tags && task.tags.length > 0 ? (
           <View style={styles.tagsRow}>
             {task.tags.map((tag) => (
-              <View key={`${taskIdKey}-${tag}`} style={styles.tagChip}>
-                <Text style={styles.tagChipText}>#{tag}</Text>
+              <View key={`${taskIdKey}-${tag}`} style={[styles.tagChip, { backgroundColor: isDark ? 'rgba(0,122,255,0.15)' : '#EEF2FF' }]}>
+                <Text style={[styles.tagChipText, { color: colors.link }]}>#{tag}</Text>
               </View>
             ))}
           </View>
@@ -525,9 +531,9 @@ export function TasksTabScreen() {
                 event.stopPropagation();
                 runTaskAction(taskId, "claim");
               }}
-              style={[styles.primaryAction, isBusy && styles.disabledAction]}
+              style={[styles.primaryAction, { backgroundColor: colors.link }, isBusy && styles.disabledAction]}
             >
-              <Text style={styles.primaryActionText}>{isBusy ? "..." : "Claim"}</Text>
+              <Text style={[styles.primaryActionText, { color: colors.textInverse }]}>{isBusy ? "..." : "Claim"}</Text>
             </Pressable>
           ) : (
             <>
@@ -537,9 +543,9 @@ export function TasksTabScreen() {
                   event.stopPropagation();
                   runTaskAction(taskId, "done");
                 }}
-                style={[styles.inlineAction, isBusy && styles.disabledAction]}
+                style={[styles.inlineAction, { borderColor: colors.border, backgroundColor: colors.surface }, isBusy && styles.disabledAction]}
               >
-                <Text style={styles.inlineActionText}>Done</Text>
+                <Text style={[styles.inlineActionText, { color: colors.text }]}>Done</Text>
               </Pressable>
               <Pressable
                 disabled={isBusy}
@@ -547,9 +553,9 @@ export function TasksTabScreen() {
                   event.stopPropagation();
                   runTaskAction(taskId, "snooze");
                 }}
-                style={[styles.inlineAction, isBusy && styles.disabledAction]}
+                style={[styles.inlineAction, { borderColor: colors.border, backgroundColor: colors.surface }, isBusy && styles.disabledAction]}
               >
-                <Text style={styles.inlineActionText}>Snooze 1w</Text>
+                <Text style={[styles.inlineActionText, { color: colors.text }]}>Snooze 1w</Text>
               </Pressable>
               <Pressable
                 disabled={isBusy}
@@ -557,9 +563,9 @@ export function TasksTabScreen() {
                   event.stopPropagation();
                   runTaskAction(taskId, "cancel");
                 }}
-                style={[styles.inlineAction, isBusy && styles.disabledAction]}
+                style={[styles.inlineAction, { borderColor: colors.border, backgroundColor: colors.surface }, isBusy && styles.disabledAction]}
               >
-                <Text style={[styles.inlineActionText, { color: "#DC2626" }]}>
+                <Text style={[styles.inlineActionText, { color: colors.destructive }]}>
                   Cancel
                 </Text>
               </Pressable>
@@ -571,9 +577,9 @@ export function TasksTabScreen() {
                     current === taskIdKey ? null : taskIdKey,
                   );
                 }}
-                style={[styles.inlineAction, isBusy && styles.disabledAction]}
+                style={[styles.inlineAction, { borderColor: colors.border, backgroundColor: colors.surface }, isBusy && styles.disabledAction]}
               >
-                <Text style={styles.inlineActionText}>
+                <Text style={[styles.inlineActionText, { color: colors.text }]}>
                   {task.assignedToId ? "Reassign" : "Assign"}
                 </Text>
               </Pressable>
@@ -582,8 +588,8 @@ export function TasksTabScreen() {
         </View>
 
         {showAssignPanel ? (
-          <View style={styles.assignPanel}>
-            <Text style={styles.assignPanelTitle}>Assigned to</Text>
+          <View style={[styles.assignPanel, { borderTopColor: colors.borderLight }]}>
+            <Text style={[styles.assignPanelTitle, { color: colors.textSecondary }]}>Assigned to</Text>
             <View style={styles.assignButtonsRow}>
               {(assignableLeaders ?? []).map((leader) => (
                 <Pressable
@@ -593,9 +599,9 @@ export function TasksTabScreen() {
                     event.stopPropagation();
                     runTaskAction(taskId, "assign", leader.userId as Id<"users">);
                   }}
-                  style={[styles.assignButton, isBusy && styles.disabledAction]}
+                  style={[styles.assignButton, { borderColor: isDark ? 'rgba(0,122,255,0.3)' : '#BFDBFE', backgroundColor: colors.selectedBackground }, isBusy && styles.disabledAction]}
                 >
-                  <Text style={styles.assignButtonText}>{leader.name}</Text>
+                  <Text style={[styles.assignButtonText, { color: colors.link }]}>{leader.name}</Text>
                 </Pressable>
               ))}
               <Pressable
@@ -604,9 +610,9 @@ export function TasksTabScreen() {
                   event.stopPropagation();
                   runTaskAction(taskId, "assign");
                 }}
-                style={[styles.assignButton, isBusy && styles.disabledAction]}
+                style={[styles.assignButton, { borderColor: isDark ? 'rgba(0,122,255,0.3)' : '#BFDBFE', backgroundColor: colors.selectedBackground }, isBusy && styles.disabledAction]}
               >
-                <Text style={styles.assignButtonText}>Unassign</Text>
+                <Text style={[styles.assignButtonText, { color: colors.link }]}>Unassign</Text>
               </Pressable>
             </View>
           </View>
@@ -631,7 +637,7 @@ export function TasksTabScreen() {
     assigneeFilter !== "all";
 
   const content = (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={[styles.header, { paddingTop: insets.top + 14 }]}>
         <View style={styles.headerRow}>
           <View style={styles.headerTitleWrap}>
@@ -650,25 +656,25 @@ export function TasksTabScreen() {
                 router.replace("/(tabs)/profile");
               }}
             >
-              <Ionicons name="arrow-back" size={22} color="#0F172A" />
+              <Ionicons name="arrow-back" size={22} color={colors.text} />
             </Pressable>
             <View>
-              <Text style={styles.headerTitle}>Tasks</Text>
-              <Text style={styles.headerSubtitle}>All task-related workflows</Text>
+              <Text style={[styles.headerTitle, { color: colors.text }]}>Tasks</Text>
+              <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>All task-related workflows</Text>
             </View>
           </View>
           <View style={styles.headerActions}>
-            <Pressable style={styles.createButton} onPress={() => setIsCreateOpen(true)}>
-              <Ionicons name="add" size={16} color="#fff" />
-              <Text style={styles.createButtonText}>Create</Text>
+            <Pressable style={[styles.createButton, { backgroundColor: colors.link }]} onPress={() => setIsCreateOpen(true)}>
+              <Ionicons name="add" size={16} color={colors.textInverse} />
+              <Text style={[styles.createButtonText, { color: colors.textInverse }]}>Create</Text>
             </Pressable>
             <Pressable
               testID="tasks-filter-button"
-              style={styles.headerFilterButton}
+              style={[styles.headerFilterButton, { borderColor: colors.border, backgroundColor: colors.surface }]}
               onPress={() => setIsFilterModalOpen(true)}
             >
-              <Ionicons name="options-outline" size={18} color="#334155" />
-              {hasActiveFilters ? <View style={styles.headerFilterDot} /> : null}
+              <Ionicons name="options-outline" size={18} color={colors.textSecondary} />
+              {hasActiveFilters ? <View style={[styles.headerFilterDot, { backgroundColor: colors.link }]} /> : null}
             </Pressable>
           </View>
         </View>
@@ -679,11 +685,12 @@ export function TasksTabScreen() {
           onPress={() => setSegment("my")}
           style={[
             styles.segmentButton,
+            { backgroundColor: colors.surfaceSecondary },
             segment === "my" && { backgroundColor: primaryColor },
           ]}
         >
           <Text
-            style={[styles.segmentText, segment === "my" && styles.segmentTextActive]}
+            style={[styles.segmentText, { color: colors.text }, segment === "my" && { color: colors.textInverse }]}
           >
             My Tasks
           </Text>
@@ -692,11 +699,12 @@ export function TasksTabScreen() {
           onPress={() => setSegment("all")}
           style={[
             styles.segmentButton,
+            { backgroundColor: colors.surfaceSecondary },
             segment === "all" && { backgroundColor: primaryColor },
           ]}
         >
           <Text
-            style={[styles.segmentText, segment === "all" && styles.segmentTextActive]}
+            style={[styles.segmentText, { color: colors.text }, segment === "all" && { color: colors.textInverse }]}
           >
             All Tasks
           </Text>
@@ -705,13 +713,15 @@ export function TasksTabScreen() {
           onPress={() => setSegment("claimable")}
           style={[
             styles.segmentButton,
+            { backgroundColor: colors.surfaceSecondary },
             segment === "claimable" && { backgroundColor: primaryColor },
           ]}
         >
           <Text
             style={[
               styles.segmentText,
-              segment === "claimable" && styles.segmentTextActive,
+              { color: colors.text },
+              segment === "claimable" && { color: colors.textInverse },
             ]}
           >
             Claimable
@@ -724,23 +734,24 @@ export function TasksTabScreen() {
           value={searchText}
           onChangeText={setSearchText}
           placeholder="Search title, tag, member, or group"
-          style={styles.searchInput}
+          placeholderTextColor={colors.inputPlaceholder}
+          style={[styles.searchInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
         />
       </View>
 
-      {actionError ? <Text style={styles.errorText}>{actionError}</Text> : null}
-      {actionSuccess ? <Text style={styles.successText}>{actionSuccess}</Text> : null}
+      {actionError ? <Text style={[styles.errorText, { color: colors.destructive }]}>{actionError}</Text> : null}
+      {actionSuccess ? <Text style={[styles.successText, { color: colors.success }]}>{actionSuccess}</Text> : null}
 
       {isLoading ? (
         <View style={styles.centered}>
           <ActivityIndicator size="large" color={primaryColor} />
-          <Text style={styles.loadingText}>Loading tasks...</Text>
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading tasks...</Text>
         </View>
       ) : !activeTasks || activeTasks.length === 0 ? (
         <View style={styles.centered}>
-          <Ionicons name="checkmark-done-outline" size={48} color="#94A3B8" />
-          <Text style={styles.emptyTitle}>No tasks here yet</Text>
-          <Text style={styles.emptySubtitle}>
+          <Ionicons name="checkmark-done-outline" size={48} color={colors.iconSecondary} />
+          <Text style={[styles.emptyTitle, { color: colors.text }]}>No tasks here yet</Text>
+          <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
             {segment === "my"
               ? "Assigned tasks will appear here."
               : segment === "all"
@@ -750,7 +761,7 @@ export function TasksTabScreen() {
         </View>
       ) : isDesktopWeb ? (
         <View style={styles.desktopContainer}>
-          <View style={styles.desktopList}>
+          <View style={[styles.desktopList, { borderRightColor: colors.borderLight }]}>
             <FlatList
               data={taskRows}
               renderItem={renderTaskCard}
@@ -758,10 +769,10 @@ export function TasksTabScreen() {
               contentContainerStyle={styles.listContent}
             />
           </View>
-          <View style={styles.desktopDetail}>
+          <View style={[styles.desktopDetail, { backgroundColor: colors.surfaceSecondary }]}>
             <ScrollView contentContainerStyle={styles.detailContent}>
-              <Text style={styles.detailTitle}>Task details</Text>
-              <Text style={styles.detailBody}>
+              <Text style={[styles.detailTitle, { color: colors.text }]}>Task details</Text>
+              <Text style={[styles.detailBody, { color: colors.text }]}>
                 Click a task to open its detail page, edit it, and review history.
               </Text>
             </ScrollView>
@@ -782,17 +793,17 @@ export function TasksTabScreen() {
         transparent
         onRequestClose={() => setIsFilterModalOpen(false)}
       >
-        <View style={styles.filterModalOverlay}>
-          <View style={styles.filterModalCard}>
+        <View style={[styles.filterModalOverlay, { backgroundColor: colors.overlay }]}>
+          <View style={[styles.filterModalCard, { backgroundColor: colors.modalBackground }]}>
             <View style={styles.filterModalHeader}>
-              <Text style={styles.filterModalTitle}>Filter Tasks</Text>
+              <Text style={[styles.filterModalTitle, { color: colors.text }]}>Filter Tasks</Text>
               <Pressable onPress={() => setIsFilterModalOpen(false)}>
-                <Ionicons name="close" size={22} color="#334155" />
+                <Ionicons name="close" size={22} color={colors.textSecondary} />
               </Pressable>
             </View>
 
             <ScrollView showsVerticalScrollIndicator={false}>
-              <Text style={styles.filterSectionTitle}>Group</Text>
+              <Text style={[styles.filterSectionTitle, { color: colors.textSecondary }]}>Group</Text>
               <View style={styles.chipsWrap}>
                 {groupFilterOptions.map((option) => (
                   <Pressable
@@ -801,13 +812,15 @@ export function TasksTabScreen() {
                     onPress={() => setSelectedGroupId(option.value)}
                     style={[
                       styles.filterChip,
-                      selectedGroupId === option.value && styles.filterChipActive,
+                      { borderColor: colors.border, backgroundColor: colors.surface },
+                      selectedGroupId === option.value && { borderColor: colors.link, backgroundColor: colors.selectedBackground },
                     ]}
                   >
                     <Text
                       style={[
                         styles.filterChipText,
-                        selectedGroupId === option.value && styles.filterChipTextActive,
+                        { color: colors.text },
+                        selectedGroupId === option.value && { color: colors.link },
                       ]}
                     >
                       {option.label}
@@ -816,7 +829,7 @@ export function TasksTabScreen() {
                 ))}
               </View>
 
-              <Text style={styles.filterSectionTitle}>Source</Text>
+              <Text style={[styles.filterSectionTitle, { color: colors.textSecondary }]}>Source</Text>
               <View style={styles.chipsWrap}>
                 {(
                   ["all", "manual", "reach_out", "bot_task_reminder", "followup"] as SourceFilter[]
@@ -826,13 +839,15 @@ export function TasksTabScreen() {
                     onPress={() => setSourceFilter(source)}
                     style={[
                       styles.filterChip,
-                      sourceFilter === source && styles.filterChipActive,
+                      { borderColor: colors.border, backgroundColor: colors.surface },
+                      sourceFilter === source && { borderColor: colors.link, backgroundColor: colors.selectedBackground },
                     ]}
                   >
                     <Text
                       style={[
                         styles.filterChipText,
-                        sourceFilter === source && styles.filterChipTextActive,
+                        { color: colors.text },
+                        sourceFilter === source && { color: colors.link },
                       ]}
                     >
                       {source === "all" ? "All Sources" : sourceLabels[source]}
@@ -841,16 +856,17 @@ export function TasksTabScreen() {
                 ))}
               </View>
 
-              <Text style={styles.filterSectionTitle}>Tags</Text>
+              <Text style={[styles.filterSectionTitle, { color: colors.textSecondary }]}>Tags</Text>
               <View style={styles.chipsWrap}>
                 <Pressable
                   onPress={() => setTagFilter("all")}
-                  style={[styles.filterChip, tagFilter === "all" && styles.filterChipActive]}
+                  style={[styles.filterChip, { borderColor: colors.border, backgroundColor: colors.surface }, tagFilter === "all" && { borderColor: colors.link, backgroundColor: colors.selectedBackground }]}
                 >
                   <Text
                     style={[
                       styles.filterChipText,
-                      tagFilter === "all" && styles.filterChipTextActive,
+                      { color: colors.text },
+                      tagFilter === "all" && { color: colors.link },
                     ]}
                   >
                     All Tags
@@ -860,12 +876,13 @@ export function TasksTabScreen() {
                   <Pressable
                     key={tag}
                     onPress={() => setTagFilter(tag)}
-                    style={[styles.filterChip, tagFilter === tag && styles.filterChipActive]}
+                    style={[styles.filterChip, { borderColor: colors.border, backgroundColor: colors.surface }, tagFilter === tag && { borderColor: colors.link, backgroundColor: colors.selectedBackground }]}
                   >
                     <Text
                       style={[
                         styles.filterChipText,
-                        tagFilter === tag && styles.filterChipTextActive,
+                        { color: colors.text },
+                        tagFilter === tag && { color: colors.link },
                       ]}
                     >
                       #{tag}
@@ -876,7 +893,7 @@ export function TasksTabScreen() {
 
               {segment === "all" ? (
                 <>
-                  <Text style={styles.filterSectionTitle}>Assignee</Text>
+                  <Text style={[styles.filterSectionTitle, { color: colors.textSecondary }]}>Assignee</Text>
                   <View style={styles.chipsWrap}>
                     {assigneeOptions.map((option) => (
                       <Pressable
@@ -885,13 +902,15 @@ export function TasksTabScreen() {
                         onPress={() => setAssigneeFilter(option.value)}
                         style={[
                           styles.filterChip,
-                          assigneeFilter === option.value && styles.filterChipActive,
+                          { borderColor: colors.border, backgroundColor: colors.surface },
+                          assigneeFilter === option.value && { borderColor: colors.link, backgroundColor: colors.selectedBackground },
                         ]}
                       >
                         <Text
                           style={[
                             styles.filterChipText,
-                            assigneeFilter === option.value && styles.filterChipTextActive,
+                            { color: colors.text },
+                            assigneeFilter === option.value && { color: colors.link },
                           ]}
                         >
                           {option.label}
@@ -905,7 +924,7 @@ export function TasksTabScreen() {
               <View style={styles.filterActionsRow}>
                 <Pressable
                   testID="tasks-filter-reset"
-                  style={[styles.inlineAction, styles.filterActionButton]}
+                  style={[styles.inlineAction, { borderColor: colors.border, backgroundColor: colors.surface }, styles.filterActionButton]}
                   onPress={() => {
                     setSelectedGroupId(defaultGroupFilter);
                     setSourceFilter("all");
@@ -913,14 +932,14 @@ export function TasksTabScreen() {
                     setAssigneeFilter("all");
                   }}
                 >
-                  <Text style={styles.inlineActionText}>Reset</Text>
+                  <Text style={[styles.inlineActionText, { color: colors.text }]}>Reset</Text>
                 </Pressable>
                 <Pressable
                   testID="tasks-filter-apply"
-                  style={[styles.primaryAction, styles.filterActionButton]}
+                  style={[styles.primaryAction, { backgroundColor: colors.link }, styles.filterActionButton]}
                   onPress={() => setIsFilterModalOpen(false)}
                 >
-                  <Text style={styles.primaryActionText}>Done</Text>
+                  <Text style={[styles.primaryActionText, { color: colors.textInverse }]}>Done</Text>
                 </Pressable>
               </View>
             </ScrollView>
@@ -934,20 +953,20 @@ export function TasksTabScreen() {
         onRequestClose={() => setIsCreateOpen(false)}
       >
         <ScrollView
-          style={styles.modalContainer}
+          style={[styles.modalContainer, { backgroundColor: colors.modalBackground }]}
           contentContainerStyle={{ paddingTop: insets.top + 16, paddingBottom: insets.bottom + 24 }}
         >
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Create Task</Text>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Create Task</Text>
             <Pressable onPress={() => setIsCreateOpen(false)}>
-              <Ionicons name="close" size={24} color="#0F172A" />
+              <Ionicons name="close" size={24} color={colors.text} />
             </Pressable>
           </View>
 
-          <Text style={styles.inputLabel}>Group</Text>
+          <Text style={[styles.inputLabel, { color: colors.text }]}>Group</Text>
           {contextGroupId ? (
-            <View style={styles.lockedField}>
-              <Text style={styles.lockedFieldText}>
+            <View style={[styles.lockedField, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary }]}>
+              <Text style={[styles.lockedFieldText, { color: colors.text }]}>
                 {selectedCreateGroup?.name ?? "Current group"}
               </Text>
             </View>
@@ -966,13 +985,15 @@ export function TasksTabScreen() {
                   }}
                   style={[
                     styles.groupChip,
-                    createGroupId === group._id && styles.groupChipActive,
+                    { borderColor: colors.border, backgroundColor: colors.surface },
+                    createGroupId === group._id && { backgroundColor: colors.selectedBackground, borderColor: colors.link },
                   ]}
                 >
                   <Text
                     style={[
                       styles.groupChipText,
-                      createGroupId === group._id && styles.groupChipTextActive,
+                      { color: colors.text },
+                      createGroupId === group._id && { color: colors.link },
                     ]}
                   >
                     {group.name}
@@ -982,41 +1003,45 @@ export function TasksTabScreen() {
             </View>
           )}
 
-          <Text style={styles.inputLabel}>Title *</Text>
+          <Text style={[styles.inputLabel, { color: colors.text }]}>Title *</Text>
           <TextInput
             value={createTitle}
             onChangeText={setCreateTitle}
             placeholder="Task title"
-            style={styles.textInput}
+            placeholderTextColor={colors.inputPlaceholder}
+            style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
           />
 
-          <Text style={styles.inputLabel}>Description</Text>
+          <Text style={[styles.inputLabel, { color: colors.text }]}>Description</Text>
           <TextInput
             value={createDescription}
             onChangeText={setCreateDescription}
             placeholder="Optional details"
             multiline
-            style={[styles.textInput, styles.multilineInput]}
+            placeholderTextColor={colors.inputPlaceholder}
+            style={[styles.textInput, styles.multilineInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
           />
 
-          <Text style={styles.inputLabel}>Tags (comma separated)</Text>
+          <Text style={[styles.inputLabel, { color: colors.text }]}>Tags (comma separated)</Text>
           <TextInput
             value={createTagsInput}
             onChangeText={setCreateTagsInput}
             placeholder="care, prayer_request"
-            style={styles.textInput}
+            placeholderTextColor={colors.inputPlaceholder}
+            style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
           />
 
-          <Text style={styles.helperText}>
+          <Text style={[styles.helperText, { color: colors.textSecondary }]}>
             Target defaults to this group. Add a relevant member only if needed.
           </Text>
 
-          <Text style={styles.inputLabel}>Relevant member</Text>
+          <Text style={[styles.inputLabel, { color: colors.text }]}>Relevant member</Text>
           <TextInput
             value={createRelevantMemberSearch}
             onChangeText={setCreateRelevantMemberSearch}
             placeholder="Search members (server search)"
-            style={styles.textInput}
+            placeholderTextColor={colors.inputPlaceholder}
+            style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
           />
           {createRelevantMemberId && createRelevantMemberName ? (
             <Pressable
@@ -1024,16 +1049,16 @@ export function TasksTabScreen() {
                 setCreateRelevantMemberId(null);
                 setCreateRelevantMemberName(null);
               }}
-              style={styles.selectionPill}
+              style={[styles.selectionPill, { borderColor: isDark ? 'rgba(0,122,255,0.3)' : '#BFDBFE', backgroundColor: colors.selectedBackground }]}
             >
-              <Text style={styles.selectionPillText}>
+              <Text style={[styles.selectionPillText, { color: colors.link }]}>
                 {createRelevantMemberName} • Tap to clear
               </Text>
             </Pressable>
           ) : null}
           {createRelevantMemberSearch.trim().length >= 2 ? (
             <ScrollView
-              style={styles.searchResultsList}
+              style={[styles.searchResultsList, { borderColor: colors.borderLight, backgroundColor: colors.surface }]}
               nestedScrollEnabled
               keyboardShouldPersistTaps="handled"
             >
@@ -1046,27 +1071,28 @@ export function TasksTabScreen() {
                       setCreateRelevantMemberName(member.name);
                       setCreateRelevantMemberSearch("");
                     }}
-                    style={styles.searchResultRow}
+                    style={[styles.searchResultRow, { borderBottomColor: colors.borderLight }]}
                   >
-                    <Text style={styles.searchResultText}>{member.name}</Text>
+                    <Text style={[styles.searchResultText, { color: colors.text }]}>{member.name}</Text>
                   </Pressable>
                 );
               })}
               {createRelevantMemberResults !== undefined &&
               createRelevantMemberResults.length === 0 ? (
-                <Text style={styles.searchHelperText}>No matching members.</Text>
+                <Text style={[styles.searchHelperText, { color: colors.textSecondary }]}>No matching members.</Text>
               ) : null}
             </ScrollView>
           ) : (
-            <Text style={styles.searchHelperText}>Type at least 2 characters.</Text>
+            <Text style={[styles.searchHelperText, { color: colors.textSecondary }]}>Type at least 2 characters.</Text>
           )}
 
-          <Text style={styles.inputLabel}>Assigned to</Text>
+          <Text style={[styles.inputLabel, { color: colors.text }]}>Assigned to</Text>
           <TextInput
             value={createAssignedSearch}
             onChangeText={setCreateAssignedSearch}
             placeholder="Search group leaders (server search)"
-            style={styles.textInput}
+            placeholderTextColor={colors.inputPlaceholder}
+            style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
           />
           {createAssignedToId && createAssignedToName ? (
             <Pressable
@@ -1074,20 +1100,20 @@ export function TasksTabScreen() {
                 setCreateAssignedToId(null);
                 setCreateAssignedToName(null);
               }}
-              style={styles.selectionPill}
+              style={[styles.selectionPill, { borderColor: isDark ? 'rgba(0,122,255,0.3)' : '#BFDBFE', backgroundColor: colors.selectedBackground }]}
             >
-              <Text style={styles.selectionPillText}>
+              <Text style={[styles.selectionPillText, { color: colors.link }]}>
                 {createAssignedToName} • Tap to clear
               </Text>
             </Pressable>
           ) : (
-            <Text style={styles.searchHelperText}>
+            <Text style={[styles.searchHelperText, { color: colors.textSecondary }]}>
               Leave empty to keep responsibility at group level.
             </Text>
           )}
           {createAssignedSearch.trim().length >= 2 ? (
             <ScrollView
-              style={styles.searchResultsList}
+              style={[styles.searchResultsList, { borderColor: colors.borderLight, backgroundColor: colors.surface }]}
               nestedScrollEnabled
               keyboardShouldPersistTaps="handled"
             >
@@ -1099,31 +1125,32 @@ export function TasksTabScreen() {
                     setCreateAssignedToName(leader.name);
                     setCreateAssignedSearch("");
                   }}
-                  style={styles.searchResultRow}
+                  style={[styles.searchResultRow, { borderBottomColor: colors.borderLight }]}
                 >
-                  <Text style={styles.searchResultText}>{leader.name}</Text>
+                  <Text style={[styles.searchResultText, { color: colors.text }]}>{leader.name}</Text>
                 </Pressable>
               ))}
               {createAssignableLeaderResults !== undefined &&
               createAssignableLeaderResults.length === 0 ? (
-                <Text style={styles.searchHelperText}>No matching leaders.</Text>
+                <Text style={[styles.searchHelperText, { color: colors.textSecondary }]}>No matching leaders.</Text>
               ) : null}
             </ScrollView>
           ) : null}
 
           {createGroupId ? (
             <>
-              <Text style={styles.inputLabel}>
+              <Text style={[styles.inputLabel, { color: colors.text }]}>
                 Parent Task ({selectedCreateGroup?.name ?? "Current group"})
               </Text>
               <TextInput
                 value={createParentTaskSearch}
                 onChangeText={setCreateParentTaskSearch}
                 placeholder="Search tasks (server search)"
-                style={styles.textInput}
+                placeholderTextColor={colors.inputPlaceholder}
+                style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
               />
               <ScrollView
-                style={styles.searchResultsList}
+                style={[styles.searchResultsList, { borderColor: colors.borderLight, backgroundColor: colors.surface }]}
                 nestedScrollEnabled
                 keyboardShouldPersistTaps="handled"
               >
@@ -1131,10 +1158,11 @@ export function TasksTabScreen() {
                   onPress={() => setCreateParentTaskId(null)}
                   style={[
                     styles.searchResultRow,
-                    createParentTaskId === null && styles.searchResultRowActive,
+                    { borderBottomColor: colors.borderLight },
+                    createParentTaskId === null && { backgroundColor: colors.selectedBackground },
                   ]}
                 >
-                  <Text style={styles.searchResultText}>None</Text>
+                  <Text style={[styles.searchResultText, { color: colors.text }]}>None</Text>
                 </Pressable>
                 {createParentTaskOptions.map((task) => (
                   <Pressable
@@ -1142,35 +1170,36 @@ export function TasksTabScreen() {
                     onPress={() => setCreateParentTaskId(task._id.toString())}
                     style={[
                       styles.searchResultRow,
+                      { borderBottomColor: colors.borderLight },
                       createParentTaskId === task._id.toString() &&
-                        styles.searchResultRowActive,
+                        { backgroundColor: colors.selectedBackground },
                     ]}
                   >
-                    <Text style={styles.searchResultText}>{task.title}</Text>
+                    <Text style={[styles.searchResultText, { color: colors.text }]}>{task.title}</Text>
                   </Pressable>
                 ))}
                 {createParentTaskOptions.length === 0 ? (
-                  <Text style={styles.searchHelperText}>No matching parent tasks.</Text>
+                  <Text style={[styles.searchHelperText, { color: colors.textSecondary }]}>No matching parent tasks.</Text>
                 ) : null}
               </ScrollView>
             </>
           ) : null}
 
-          {createError ? <Text style={styles.errorText}>{createError}</Text> : null}
+          {createError ? <Text style={[styles.errorText, { color: colors.destructive }]}>{createError}</Text> : null}
 
           <View style={styles.modalActions}>
             <Pressable
               onPress={() => setIsCreateOpen(false)}
-              style={[styles.modalActionButton, styles.cancelButton]}
+              style={[styles.modalActionButton, styles.cancelButton, { borderColor: colors.border, backgroundColor: colors.surface }]}
             >
-              <Text style={styles.cancelButtonText}>Cancel</Text>
+              <Text style={[styles.cancelButtonText, { color: colors.text }]}>Cancel</Text>
             </Pressable>
             <Pressable
               disabled={createBusy}
               onPress={handleCreateTask}
-              style={[styles.modalActionButton, styles.saveButton]}
+              style={[styles.modalActionButton, styles.saveButton, { backgroundColor: colors.link }]}
             >
-              <Text style={styles.saveButtonText}>
+              <Text style={[styles.saveButtonText, { color: colors.textInverse }]}>
                 {createBusy ? "Creating..." : "Create"}
               </Text>
             </Pressable>
@@ -1186,7 +1215,6 @@ export function TasksTabScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
   },
   header: {
     paddingHorizontal: 16,
@@ -1214,16 +1242,13 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 28,
     fontWeight: "700",
-    color: "#0F172A",
   },
   headerSubtitle: {
     marginTop: 4,
     fontSize: 14,
-    color: "#64748B",
   },
   createButton: {
     borderRadius: 8,
-    backgroundColor: "#2563EB",
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
@@ -1231,15 +1256,12 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   createButtonText: {
-    color: "#fff",
     fontWeight: "700",
     fontSize: 12,
   },
   headerFilterButton: {
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: "#CBD5E1",
-    backgroundColor: "#fff",
     paddingHorizontal: 10,
     paddingVertical: 8,
   },
@@ -1250,7 +1272,6 @@ const styles = StyleSheet.create({
     width: 7,
     height: 7,
     borderRadius: 4,
-    backgroundColor: "#2563EB",
   },
   segmentRow: {
     flexDirection: "row",
@@ -1262,15 +1283,10 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 999,
-    backgroundColor: "#EEF2F7",
   },
   segmentText: {
     fontSize: 13,
-    color: "#334155",
     fontWeight: "600",
-  },
-  segmentTextActive: {
-    color: "#fff",
   },
   filtersContainer: {
     paddingHorizontal: 16,
@@ -1279,13 +1295,10 @@ const styles = StyleSheet.create({
   },
   searchInput: {
     borderWidth: 1,
-    borderColor: "#CBD5E1",
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 14,
-    color: "#0F172A",
-    backgroundColor: "#fff",
   },
   chipsRow: {
     flexDirection: "row",
@@ -1296,41 +1309,25 @@ const styles = StyleSheet.create({
   filterChip: {
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: "#CBD5E1",
     paddingHorizontal: 10,
     paddingVertical: 6,
-    backgroundColor: "#fff",
-  },
-  filterChipActive: {
-    borderColor: "#2563EB",
-    backgroundColor: "#EFF6FF",
   },
   filterChipText: {
-    color: "#334155",
     fontSize: 12,
     fontWeight: "600",
-  },
-  filterChipTextActive: {
-    color: "#1D4ED8",
   },
   listContent: {
     padding: 12,
     paddingBottom: 28,
   },
   card: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#E2E8F0",
     padding: 12,
     marginBottom: 10,
   },
   childCard: {
     borderStyle: "dashed",
-  },
-  cardSelected: {
-    borderColor: "#2563EB",
-    backgroundColor: "#F8FAFF",
   },
   cardHeader: {
     flexDirection: "row",
@@ -1351,7 +1348,6 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 15,
     fontWeight: "600",
-    color: "#0F172A",
   },
   badge: {
     borderRadius: 6,
@@ -1359,7 +1355,6 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   badgeText: {
-    color: "#fff",
     fontSize: 10,
     fontWeight: "700",
   },
@@ -1371,7 +1366,6 @@ const styles = StyleSheet.create({
   },
   metaText: {
     fontSize: 12,
-    color: "#475569",
   },
   statusText: {
     marginLeft: "auto",
@@ -1382,14 +1376,12 @@ const styles = StyleSheet.create({
     marginTop: 8,
     alignSelf: "flex-start",
     borderRadius: 999,
-    backgroundColor: "#E0F2FE",
     paddingHorizontal: 10,
     paddingVertical: 5,
   },
   targetPillText: {
     fontSize: 11,
     fontWeight: "600",
-    color: "#075985",
   },
   tagsRow: {
     marginTop: 8,
@@ -1401,11 +1393,9 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 8,
     paddingVertical: 4,
-    backgroundColor: "#EEF2FF",
   },
   tagChipText: {
     fontSize: 11,
-    color: "#4338CA",
     fontWeight: "600",
   },
   actionsRow: {
@@ -1416,39 +1406,32 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
   },
   primaryAction: {
-    backgroundColor: "#2563EB",
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
   primaryActionText: {
-    color: "#fff",
     fontSize: 12,
     fontWeight: "700",
   },
   inlineAction: {
     borderWidth: 1,
-    borderColor: "#CBD5E1",
     borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: 7,
-    backgroundColor: "#fff",
   },
   inlineActionText: {
     fontSize: 12,
     fontWeight: "600",
-    color: "#0F172A",
   },
   assignPanel: {
     marginTop: 10,
     borderTopWidth: 1,
-    borderTopColor: "#E2E8F0",
     paddingTop: 10,
     gap: 8,
   },
   assignPanelTitle: {
     fontSize: 12,
-    color: "#475569",
     fontWeight: "700",
   },
   assignButtonsRow: {
@@ -1458,14 +1441,11 @@ const styles = StyleSheet.create({
   },
   assignButton: {
     borderWidth: 1,
-    borderColor: "#BFDBFE",
     borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: 6,
-    backgroundColor: "#EFF6FF",
   },
   assignButtonText: {
-    color: "#1D4ED8",
     fontSize: 12,
     fontWeight: "600",
   },
@@ -1481,30 +1461,25 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 12,
     fontSize: 15,
-    color: "#64748B",
   },
   emptyTitle: {
     marginTop: 12,
     fontSize: 18,
     fontWeight: "700",
-    color: "#0F172A",
   },
   emptySubtitle: {
     marginTop: 6,
     textAlign: "center",
-    color: "#64748B",
   },
   errorText: {
     marginHorizontal: 16,
     marginBottom: 8,
-    color: "#DC2626",
     fontSize: 12,
     fontWeight: "600",
   },
   successText: {
     marginHorizontal: 16,
     marginBottom: 8,
-    color: "#16A34A",
     fontSize: 12,
     fontWeight: "600",
   },
@@ -1515,11 +1490,9 @@ const styles = StyleSheet.create({
   desktopList: {
     width: 460,
     borderRightWidth: 1,
-    borderRightColor: "#E2E8F0",
   },
   desktopDetail: {
     flex: 1,
-    backgroundColor: "#F8FAFC",
   },
   detailContent: {
     padding: 20,
@@ -1528,12 +1501,10 @@ const styles = StyleSheet.create({
   detailTitle: {
     fontSize: 24,
     fontWeight: "700",
-    color: "#0F172A",
   },
   detailBody: {
     fontSize: 14,
     lineHeight: 20,
-    color: "#334155",
   },
   detailMeta: {
     marginTop: 6,
@@ -1541,18 +1512,15 @@ const styles = StyleSheet.create({
   },
   detailMetaText: {
     fontSize: 13,
-    color: "#64748B",
   },
   filterModalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(15, 23, 42, 0.45)",
     justifyContent: "flex-end",
   },
   filterModalCard: {
     maxHeight: "80%",
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
-    backgroundColor: "#fff",
     paddingHorizontal: 16,
     paddingTop: 14,
     paddingBottom: 18,
@@ -1566,14 +1534,12 @@ const styles = StyleSheet.create({
   filterModalTitle: {
     fontSize: 18,
     fontWeight: "700",
-    color: "#0F172A",
   },
   filterSectionTitle: {
     marginTop: 14,
     marginBottom: 6,
     fontSize: 12,
     fontWeight: "700",
-    color: "#475569",
     letterSpacing: 0.3,
   },
   filterActionsRow: {
@@ -1588,7 +1554,6 @@ const styles = StyleSheet.create({
   },
   modalContainer: {
     flex: 1,
-    backgroundColor: "#fff",
     paddingHorizontal: 16,
   },
   modalHeader: {
@@ -1600,43 +1565,34 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 24,
     fontWeight: "700",
-    color: "#0F172A",
   },
   inputLabel: {
     marginTop: 12,
     marginBottom: 6,
-    color: "#334155",
     fontSize: 13,
     fontWeight: "700",
   },
   helperText: {
     marginTop: 10,
-    color: "#64748B",
     fontSize: 12,
     lineHeight: 18,
   },
   lockedField: {
     borderWidth: 1,
-    borderColor: "#CBD5E1",
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    backgroundColor: "#F8FAFC",
   },
   lockedFieldText: {
     fontSize: 14,
-    color: "#0F172A",
     fontWeight: "600",
   },
   textInput: {
     borderWidth: 1,
-    borderColor: "#CBD5E1",
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 14,
-    color: "#0F172A",
-    backgroundColor: "#fff",
   },
   multilineInput: {
     minHeight: 80,
@@ -1650,35 +1606,22 @@ const styles = StyleSheet.create({
   groupChip: {
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: "#CBD5E1",
     paddingHorizontal: 10,
     paddingVertical: 6,
-    backgroundColor: "#fff",
-  },
-  groupChipActive: {
-    backgroundColor: "#EEF2FF",
-    borderColor: "#4F46E5",
   },
   groupChipText: {
-    color: "#334155",
     fontSize: 12,
     fontWeight: "600",
-  },
-  groupChipTextActive: {
-    color: "#3730A3",
   },
   selectionPill: {
     marginTop: 8,
     alignSelf: "flex-start",
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: "#BFDBFE",
-    backgroundColor: "#EFF6FF",
     paddingHorizontal: 10,
     paddingVertical: 6,
   },
   selectionPillText: {
-    color: "#1D4ED8",
     fontSize: 12,
     fontWeight: "600",
   },
@@ -1686,27 +1629,19 @@ const styles = StyleSheet.create({
     maxHeight: 180,
     marginTop: 8,
     borderWidth: 1,
-    borderColor: "#E2E8F0",
     borderRadius: 10,
-    backgroundColor: "#fff",
   },
   searchResultRow: {
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: "#F1F5F9",
-  },
-  searchResultRowActive: {
-    backgroundColor: "#EFF6FF",
   },
   searchResultText: {
-    color: "#0F172A",
     fontSize: 13,
     fontWeight: "500",
   },
   searchHelperText: {
     marginTop: 8,
-    color: "#64748B",
     fontSize: 12,
   },
   modalActions: {
@@ -1725,18 +1660,12 @@ const styles = StyleSheet.create({
   },
   cancelButton: {
     borderWidth: 1,
-    borderColor: "#CBD5E1",
-    backgroundColor: "#fff",
   },
   cancelButtonText: {
-    color: "#334155",
     fontWeight: "700",
   },
-  saveButton: {
-    backgroundColor: "#2563EB",
-  },
+  saveButton: {},
   saveButtonText: {
-    color: "#fff",
     fontWeight: "700",
   },
 });

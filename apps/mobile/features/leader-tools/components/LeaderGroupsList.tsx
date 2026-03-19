@@ -9,12 +9,14 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useLeaderGroups } from "../hooks/useLeaderGroups";
 import { useLeaderGroupMemberCounts } from "../hooks/useLeaderGroupMemberCounts";
+import { useTheme } from "@hooks/useTheme";
 
 interface LeaderGroupsListProps {
   onGroupPress?: (groupId: number) => void;
 }
 
 export function LeaderGroupsList({ onGroupPress }: LeaderGroupsListProps) {
+  const { colors } = useTheme();
   const router = useRouter();
   const { leaderGroups, isLoading } = useLeaderGroups();
 
@@ -37,7 +39,7 @@ export function LeaderGroupsList({ onGroupPress }: LeaderGroupsListProps) {
   if (isLoading) {
     return (
       <View style={styles.emptyContainer}>
-        <Text style={styles.emptyText}>Loading groups...</Text>
+        <Text style={[styles.emptyText, { color: colors.textTertiary }]}>Loading groups...</Text>
       </View>
     );
   }
@@ -45,7 +47,7 @@ export function LeaderGroupsList({ onGroupPress }: LeaderGroupsListProps) {
   if (leaderGroups.length === 0) {
     return (
       <View style={styles.emptyContainer}>
-        <Text style={styles.emptyText}>
+        <Text style={[styles.emptyText, { color: colors.textTertiary }]}>
           You're not a leader of any groups yet.
         </Text>
       </View>
@@ -69,21 +71,21 @@ export function LeaderGroupsList({ onGroupPress }: LeaderGroupsListProps) {
         return (
           <TouchableOpacity
             key={index}
-            style={styles.groupCard}
+            style={[styles.groupCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
             onPress={() => handleGroupPress(group)}
           >
-            <Ionicons name="people" size={24} color="#007AFF" />
+            <Ionicons name="people" size={24} color={colors.link} />
             <View style={styles.cardContent}>
-              <Text style={styles.groupTitle}>
+              <Text style={[styles.groupTitle, { color: colors.text }]}>
                 {group.group?.title ||
                   group.title ||
                   `Group ${index + 1}`}
               </Text>
-              <Text style={styles.groupInfo}>
+              <Text style={[styles.groupInfo, { color: colors.textSecondary }]}>
                 {count} {count === 1 ? "member" : "members"}
               </Text>
             </View>
-            <Ionicons name="chevron-forward" size={20} color="#999" />
+            <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
           </TouchableOpacity>
         );
       })}
@@ -98,11 +100,9 @@ const styles = StyleSheet.create({
   groupCard: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 16,
     borderWidth: 1,
-    borderColor: "#e0e0e0",
   },
   cardContent: {
     flex: 1,
@@ -111,12 +111,10 @@ const styles = StyleSheet.create({
   groupTitle: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 4,
   },
   groupInfo: {
     fontSize: 14,
-    color: "#666",
   },
   emptyContainer: {
     padding: 40,
@@ -124,7 +122,6 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 16,
-    color: "#999",
     textAlign: "center",
   },
 });

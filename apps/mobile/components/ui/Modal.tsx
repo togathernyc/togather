@@ -11,6 +11,7 @@ import {
   ScrollView,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useTheme } from "@hooks/useTheme";
 
 interface CustomModalProps {
   visible: boolean;
@@ -33,6 +34,8 @@ export function CustomModal({
   contentPadding = "24px",
   fixedHeight,
 }: CustomModalProps) {
+  const { colors } = useTheme();
+
   // Parse padding string to number
   const parsePadding = (padding: string) => {
     const parts = padding.split(" ");
@@ -75,12 +78,13 @@ export function CustomModal({
         style={styles.overlay}
       >
         <TouchableWithoutFeedback onPress={onClose}>
-          <View style={styles.backdrop} />
+          <View style={[styles.backdrop, { backgroundColor: colors.overlay }]} />
         </TouchableWithoutFeedback>
         <View style={styles.modalContainer}>
           <View
             style={[
               styles.modalContent,
+              { backgroundColor: colors.surface },
               Platform.OS === "web"
                 ? {
                     width: width as any,
@@ -109,26 +113,26 @@ export function CustomModal({
             ]}
           >
             {title && (
-              <View style={styles.header}>
-                <Text style={styles.title}>{title}</Text>
+              <View style={[styles.header, { borderBottomColor: colors.border }]}>
+                <Text style={[styles.title, { color: colors.text }]}>{title}</Text>
                 {!withoutCloseBtn && (
                   <TouchableOpacity
                     style={styles.closeButton}
                     onPress={onClose}
                     hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                   >
-                    <Ionicons name="close" size={24} color="#666" />
+                    <Ionicons name="close" size={24} color={colors.icon} />
                   </TouchableOpacity>
                 )}
               </View>
             )}
             {!title && !withoutCloseBtn && (
               <TouchableOpacity
-                style={styles.closeButtonAbsolute}
+                style={[styles.closeButtonAbsolute, { backgroundColor: colors.modalCloseBackground }]}
                 onPress={onClose}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               >
-                <Ionicons name="close" size={24} color="#666" />
+                <Ionicons name="close" size={24} color={colors.icon} />
               </TouchableOpacity>
             )}
             <ScrollView
@@ -160,7 +164,6 @@ const styles = StyleSheet.create({
   },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
   },
   modalContainer: {
     flex: 1,
@@ -169,7 +172,6 @@ const styles = StyleSheet.create({
     width: "100%",
   },
   modalContent: {
-    backgroundColor: "#fff",
     borderRadius: 16,
     overflow: "hidden",
   },
@@ -181,12 +183,10 @@ const styles = StyleSheet.create({
     paddingTop: 24,
     paddingBottom: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   title: {
     fontSize: 20,
     fontWeight: "600",
-    color: "#333",
     flex: 1,
   },
   closeButton: {
@@ -198,7 +198,6 @@ const styles = StyleSheet.create({
     right: 16,
     zIndex: 10,
     padding: 4,
-    backgroundColor: "rgba(255, 255, 255, 0.9)",
     borderRadius: 12,
   },
   content: {

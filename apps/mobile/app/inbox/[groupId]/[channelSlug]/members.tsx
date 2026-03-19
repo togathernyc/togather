@@ -37,6 +37,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 import { useQuery, useMutation, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { MemberSearch } from "@components/ui/MemberSearch";
@@ -74,6 +75,7 @@ export default function ChannelMembersScreen() {
   const insets = useSafeAreaInsets();
   const { token, user, community } = useAuth();
   const { primaryColor } = useCommunityTheme();
+  const { colors, isDark } = useTheme();
 
   // State
   const [showAddMemberModal, setShowAddMemberModal] = useState(false);
@@ -381,7 +383,7 @@ export default function ChannelMembersScreen() {
           canManage && isCustomChannel && (!isSharedChannel || isPrimaryGroup) && !(isOwner && isCurrentUser);
 
         return (
-          <View style={styles.memberItem}>
+          <View style={[styles.memberItem, { backgroundColor: colors.surface }]}>
             <SyncedMemberRowContent
               member={member}
               primaryColor={primaryColor}
@@ -394,9 +396,9 @@ export default function ChannelMembersScreen() {
                     disabled={isRemoving}
                   >
                     {isRemoving ? (
-                      <ActivityIndicator size="small" color="#FF3B30" />
+                      <ActivityIndicator size="small" color={colors.destructive} />
                     ) : (
-                      <Ionicons name="remove-circle-outline" size={24} color="#FF3B30" />
+                      <Ionicons name="remove-circle-outline" size={24} color={colors.destructive} />
                     )}
                   </TouchableOpacity>
                 ) : undefined
@@ -409,7 +411,12 @@ export default function ChannelMembersScreen() {
 
         return (
           <View
-            style={[styles.memberItem, styles.unsyncedMemberItem]}
+            style={[
+              styles.memberItem,
+              { backgroundColor: colors.surface },
+              styles.unsyncedMemberItem,
+              { backgroundColor: isDark ? 'rgba(255,215,0,0.1)' : '#FFF8E6' },
+            ]}
             testID={`unsynced-member-${person.pcoPersonId}`}
           >
             <UnsyncedPersonRowContent person={person} />
@@ -417,36 +424,36 @@ export default function ChannelMembersScreen() {
         );
       }
     },
-    [canManage, isCustomChannel, isSharedChannel, isPrimaryGroup, user, removingMemberId, primaryColor, handleRemoveMember]
+    [canManage, isCustomChannel, isSharedChannel, isPrimaryGroup, user, removingMemberId, primaryColor, handleRemoveMember, colors, isDark]
   );
 
   // Loading state
   if (!channelData || !membersData) {
     return (
-      <View style={[styles.container, { paddingTop: insets.top }]}>
-        <View style={styles.header}>
+      <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.background }]}>
+        <View style={[styles.header, { borderBottomColor: colors.border }]}>
           <TouchableOpacity onPress={handleBack} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={24} color="#000" />
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Channel Members</Text>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Channel Members</Text>
           <View style={styles.headerRight} />
         </View>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={primaryColor} />
-          <Text style={styles.loadingText}>Loading members...</Text>
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading members...</Text>
         </View>
       </View>
     );
   }
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
+    <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.background }]}>
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={handleBack} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={24} color="#000" />
+          <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle} numberOfLines={1}>
+        <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
           {channelData.name}
         </Text>
         {canManage && isCustomChannel && (!isSharedChannel || isPrimaryGroup) ? (
@@ -470,10 +477,13 @@ export default function ChannelMembersScreen() {
 
       {/* Shared channel info banner */}
       {isSharedChannel && (
-        <View style={styles.sharedBanner}>
+        <View style={[styles.sharedBanner, {
+          backgroundColor: isDark ? 'rgba(124,58,237,0.1)' : '#F5F0FF',
+          borderBottomColor: isDark ? 'rgba(124,58,237,0.2)' : '#E0D6F5',
+        }]}>
           <Ionicons name="link" size={16} color="#8B5CF6" />
           <View style={styles.sharedBannerContent}>
-            <Text style={styles.sharedBannerTitle}>
+            <Text style={[styles.sharedBannerTitle, { color: isDark ? '#c4b5fd' : '#5B21B6' }]}>
               Shared Channel{isPrimaryGroup ? " (Owner)" : ""}
             </Text>
             <Text style={styles.sharedBannerText}>
@@ -492,8 +502,8 @@ export default function ChannelMembersScreen() {
       )}
 
       {/* Member count */}
-      <View style={styles.memberCount}>
-        <Text style={styles.memberCountText}>
+      <View style={[styles.memberCount, { backgroundColor: colors.surfaceSecondary }]}>
+        <Text style={[styles.memberCountText, { color: colors.textSecondary }]}>
           {totalMemberCount} member{totalMemberCount !== 1 ? "s" : ""}
           {unsyncedPeople.length > 0 && (
             <Text style={styles.unsyncedCountText}> ({unsyncedPeople.length} unsynced)</Text>
@@ -504,26 +514,29 @@ export default function ChannelMembersScreen() {
       {/* Auto channel info banner */}
       {isPcoAutoChannel && (!isSharedChannel || isPrimaryGroup) && (
         <TouchableOpacity
-          style={styles.autoChannelBanner}
+          style={[styles.autoChannelBanner, {
+            backgroundColor: isDark ? 'rgba(33,150,243,0.1)' : '#F0F7FF',
+            borderBottomColor: colors.border,
+          }]}
           onPress={() => setShowAutoChannelSettings(true)}
         >
           <Ionicons name="sync" size={16} color={primaryColor} />
           <View style={styles.autoChannelBannerContent}>
-            <Text style={styles.autoChannelBannerTitle}>PCO Auto Channel</Text>
-            <Text style={styles.autoChannelBannerText}>
+            <Text style={[styles.autoChannelBannerTitle, { color: colors.text }]}>PCO Auto Channel</Text>
+            <Text style={[styles.autoChannelBannerText, { color: colors.textSecondary }]}>
               Members are automatically synced from Planning Center Services
             </Text>
           </View>
-          <Ionicons name="chevron-forward" size={20} color="#999" />
+          <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
         </TouchableOpacity>
       )}
 
       {/* Members list (unified: synced members first, unsynced at bottom) */}
       {unifiedList.length === 0 ? (
         <View style={styles.emptyContainer}>
-          <Ionicons name="people-outline" size={64} color="#ccc" />
-          <Text style={styles.emptyTitle}>No Members</Text>
-          <Text style={styles.emptySubtitle}>
+          <Ionicons name="people-outline" size={64} color={colors.textTertiary} />
+          <Text style={[styles.emptyTitle, { color: colors.text }]}>No Members</Text>
+          <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
             This channel has no members yet.
           </Text>
         </View>
@@ -543,43 +556,47 @@ export default function ChannelMembersScreen() {
       {hasBottomActions && (
         <View
           testID="bottom-actions"
-          style={[styles.bottomActions, { paddingBottom: insets.bottom + 16 }]}
+          style={[styles.bottomActions, {
+            paddingBottom: insets.bottom + 16,
+            backgroundColor: colors.surface,
+            borderTopColor: colors.border,
+          }]}
         >
           {/* Remove Group / Leave button for secondary group leaders */}
           {showLeaveSharedChannelAction && (
             <TouchableOpacity
-              style={styles.removeGroupButton}
+              style={[styles.removeGroupButton, { borderColor: colors.warning }]}
               onPress={() => handleRemoveGroup(groupId as Id<"groups">)}
             >
-              <Ionicons name="exit-outline" size={20} color="#FF9500" />
-              <Text style={styles.removeGroupButtonText}>Leave Shared Channel</Text>
+              <Ionicons name="exit-outline" size={20} color={colors.warning} />
+              <Text style={[styles.removeGroupButtonText, { color: colors.warning }]}>Leave Shared Channel</Text>
             </TouchableOpacity>
           )}
 
           {/* Share with Groups button (for primary group leaders) */}
           {canShare && (
             <TouchableOpacity
-              style={styles.shareButton}
+              style={[styles.shareButton, { borderColor: '#8B5CF6' }]}
               onPress={() => setShowShareModal(true)}
             >
               <Ionicons name="people-outline" size={20} color="#8B5CF6" />
-              <Text style={styles.shareButtonText}>Share with Groups</Text>
+              <Text style={[styles.shareButtonText, { color: '#8B5CF6' }]}>Share with Groups</Text>
             </TouchableOpacity>
           )}
 
           {/* Archive button (for primary group, custom/PCO channels) */}
           {showArchiveChannelAction && (
             <TouchableOpacity
-              style={styles.archiveButton}
+              style={[styles.archiveButton, { borderColor: colors.destructive }]}
               onPress={handleArchiveChannel}
               disabled={isArchiving}
             >
               {isArchiving ? (
-                <ActivityIndicator size="small" color="#FF3B30" />
+                <ActivityIndicator size="small" color={colors.destructive} />
               ) : (
                 <>
-                  <Ionicons name="archive-outline" size={20} color="#FF3B30" />
-                  <Text style={styles.archiveButtonText}>Archive Channel</Text>
+                  <Ionicons name="archive-outline" size={20} color={colors.destructive} />
+                  <Text style={[styles.archiveButtonText, { color: colors.destructive }]}>Archive Channel</Text>
                 </>
               )}
             </TouchableOpacity>
@@ -670,6 +687,7 @@ function AddMemberModalContent({
   primaryColor: string;
 }) {
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
   const [selectedMembers, setSelectedMembers] = useState<CommunityMember[]>([]);
 
   const handleConfirmAdd = () => {
@@ -680,15 +698,15 @@ function AddMemberModalContent({
 
   return (
     <KeyboardAvoidingView
-      style={styles.modalContainer}
+      style={[styles.modalContainer, { backgroundColor: colors.background }]}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       {/* Modal Header */}
-      <View style={[styles.modalHeader, { paddingTop: insets.top + 16 }]}>
+      <View style={[styles.modalHeader, { paddingTop: insets.top + 16, borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={onClose} style={styles.modalCloseButton}>
-          <Text style={styles.modalCancelText}>Cancel</Text>
+          <Text style={[styles.modalCancelText, { color: colors.textSecondary }]}>Cancel</Text>
         </TouchableOpacity>
-        <Text style={styles.modalTitle}>Add Members</Text>
+        <Text style={[styles.modalTitle, { color: colors.text }]}>Add Members</Text>
         <TouchableOpacity
           onPress={handleConfirmAdd}
           style={styles.modalAddButton}
@@ -700,7 +718,7 @@ function AddMemberModalContent({
             <Text
               style={[
                 styles.modalAddText,
-                { color: selectedMembers.length > 0 ? primaryColor : "#ccc" },
+                { color: selectedMembers.length > 0 ? primaryColor : colors.textTertiary },
               ]}
             >
               Add ({selectedMembers.length})
@@ -710,9 +728,9 @@ function AddMemberModalContent({
       </View>
 
       {/* Info note about non-group members */}
-      <View style={styles.infoNote}>
-        <Ionicons name="information-circle-outline" size={16} color="#666" />
-        <Text style={styles.infoNoteText}>
+      <View style={[styles.infoNote, { backgroundColor: colors.surfaceSecondary, borderBottomColor: colors.border }]}>
+        <Ionicons name="information-circle-outline" size={16} color={colors.textSecondary} />
+        <Text style={[styles.infoNoteText, { color: colors.textSecondary }]}>
           {isSharedChannel
             ? "Only primary + connected group members appear here. Adding someone from a connected group adds them to this channel only, not to the primary group."
             : "People not in this group will be automatically added when you add them to this channel."}
@@ -721,8 +739,8 @@ function AddMemberModalContent({
 
       {/* Selected Members Preview */}
       {selectedMembers.length > 0 && (
-        <View style={styles.selectedPreview}>
-          <Text style={styles.selectedPreviewText}>
+        <View style={[styles.selectedPreview, { backgroundColor: colors.surfaceSecondary, borderBottomColor: colors.border }]}>
+          <Text style={[styles.selectedPreviewText, { color: colors.textSecondary }]}>
             Selected: {selectedMembers.map((m) => `${m.first_name} ${m.last_name}`.trim()).join(", ")}
           </Text>
         </View>
@@ -773,6 +791,7 @@ function ShareWithGroupModal({
 }) {
   const insets = useSafeAreaInsets();
   const { token } = useAuth();
+  const { colors, isDark } = useTheme();
   const [isInviting, setIsInviting] = useState<Id<"groups"> | null>(null);
   const [searchText, setSearchText] = useState("");
   const [isCancelling, setIsCancelling] = useState<Id<"groups"> | null>(null);
@@ -860,17 +879,20 @@ function ShareWithGroupModal({
   );
 
   return (
-    <View style={[styles.modalContainer, { paddingTop: insets.top }]}>
+    <View style={[styles.modalContainer, { paddingTop: insets.top, backgroundColor: colors.background }]}>
       {/* Header */}
-      <View style={styles.shareModalHeader}>
+      <View style={[styles.shareModalHeader, { borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={onClose} style={styles.modalCloseButton}>
-          <Text style={styles.modalCancelText}>Done</Text>
+          <Text style={[styles.modalCancelText, { color: colors.textSecondary }]}>Done</Text>
         </TouchableOpacity>
-        <Text style={styles.modalTitle}>Share Channel</Text>
+        <Text style={[styles.modalTitle, { color: colors.text }]}>Share Channel</Text>
         <View style={{ width: 60 }} />
       </View>
 
-      <View style={styles.shareModalSubheader}>
+      <View style={[styles.shareModalSubheader, {
+        backgroundColor: isDark ? 'rgba(124,58,237,0.1)' : '#F5F0FF',
+        borderBottomColor: isDark ? 'rgba(124,58,237,0.2)' : '#E0D6F5',
+      }]}>
         <Ionicons name="link" size={14} color="#8B5CF6" />
         <Text style={styles.shareModalSubheaderText}>
           Invite groups to join "{channelName}"
@@ -878,12 +900,15 @@ function ShareWithGroupModal({
       </View>
 
       {/* Search bar */}
-      <View style={styles.shareSearchContainer}>
-        <Ionicons name="search" size={18} color="#999" />
+      <View style={[styles.shareSearchContainer, {
+        backgroundColor: colors.surfaceSecondary,
+        borderBottomColor: colors.border,
+      }]}>
+        <Ionicons name="search" size={18} color={colors.textTertiary} />
         <TextInput
-          style={styles.shareSearchInput}
+          style={[styles.shareSearchInput, { color: colors.text }]}
           placeholder="Search groups..."
-          placeholderTextColor="#999"
+          placeholderTextColor={colors.inputPlaceholder}
           value={searchText}
           onChangeText={setSearchText}
           autoCapitalize="none"
@@ -891,7 +916,7 @@ function ShareWithGroupModal({
         />
         {searchText.length > 0 && (
           <TouchableOpacity onPress={() => setSearchText("")}>
-            <Ionicons name="close-circle" size={18} color="#999" />
+            <Ionicons name="close-circle" size={18} color={colors.textTertiary} />
           </TouchableOpacity>
         )}
       </View>
@@ -908,9 +933,9 @@ function ShareWithGroupModal({
             const isInvitingThis = isInviting === group._id;
 
             return (
-              <View key={group._id} style={styles.shareGroupItem}>
+              <View key={group._id} style={[styles.shareGroupItem, { borderBottomColor: colors.borderLight }]}>
                 <View style={styles.shareGroupInfo}>
-                  <Text style={styles.shareGroupName} numberOfLines={1}>
+                  <Text style={[styles.shareGroupName, { color: colors.text }]} numberOfLines={1}>
                     {group.name}
                   </Text>
                   {status && (
@@ -953,14 +978,14 @@ function ShareWithGroupModal({
                   </TouchableOpacity>
                 ) : isPrimaryLeader && status === "pending" ? (
                   <TouchableOpacity
-                    style={styles.shareCancelButton}
+                    style={[styles.shareCancelButton, { borderColor: colors.warning }]}
                     onPress={() => handleCancelInvite(group._id)}
                     disabled={!!isCancelling}
                   >
                     {isCancelling === group._id ? (
-                      <ActivityIndicator size="small" color="#FF9500" />
+                      <ActivityIndicator size="small" color={colors.warning} />
                     ) : (
-                      <Text style={styles.shareCancelButtonText}>Cancel</Text>
+                      <Text style={[styles.shareCancelButtonText, { color: colors.warning }]}>Cancel</Text>
                     )}
                   </TouchableOpacity>
                 ) : isPrimaryLeader && status === "accepted" ? (
@@ -968,7 +993,7 @@ function ShareWithGroupModal({
                     style={styles.shareRemoveButton}
                     onPress={() => onRemoveGroup(group._id, group.name)}
                   >
-                    <Ionicons name="close-circle-outline" size={22} color="#FF3B30" />
+                    <Ionicons name="close-circle-outline" size={22} color={colors.destructive} />
                   </TouchableOpacity>
                 ) : null}
               </View>
@@ -977,7 +1002,7 @@ function ShareWithGroupModal({
 
           {filteredGroups.length === 0 && (
             <View style={styles.shareEmptyState}>
-              <Text style={styles.shareEmptyStateText}>
+              <Text style={[styles.shareEmptyStateText, { color: colors.textTertiary }]}>
                 {searchText.trim()
                   ? "No groups match your search."
                   : "No other groups found in this community."}
@@ -993,7 +1018,6 @@ function ShareWithGroupModal({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
   },
   header: {
     flexDirection: "row",
@@ -1002,7 +1026,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#E0E0E0",
   },
   backButton: {
     width: 40,
@@ -1014,7 +1037,6 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 18,
     fontWeight: "600",
-    color: "#000",
     textAlign: "center",
     marginHorizontal: 8,
   },
@@ -1034,9 +1056,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 12,
     paddingHorizontal: 16,
-    backgroundColor: "#F5F0FF",
     borderBottomWidth: 1,
-    borderBottomColor: "#E0D6F5",
     gap: 12,
   },
   sharedBannerContent: {
@@ -1045,7 +1065,6 @@ const styles = StyleSheet.create({
   sharedBannerTitle: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#5B21B6",
     marginBottom: 2,
   },
   sharedBannerText: {
@@ -1056,20 +1075,16 @@ const styles = StyleSheet.create({
   memberCount: {
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: "#F5F5F5",
   },
   memberCountText: {
     fontSize: 14,
-    color: "#666",
   },
   autoChannelBanner: {
     flexDirection: "row",
     alignItems: "center",
     padding: 12,
     paddingHorizontal: 16,
-    backgroundColor: "#F0F7FF",
     borderBottomWidth: 1,
-    borderBottomColor: "#E0E0E0",
     gap: 12,
   },
   autoChannelBannerContent: {
@@ -1078,12 +1093,10 @@ const styles = StyleSheet.create({
   autoChannelBannerTitle: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 2,
   },
   autoChannelBannerText: {
     fontSize: 12,
-    color: "#666",
   },
   listContent: {
     padding: 16,
@@ -1092,7 +1105,6 @@ const styles = StyleSheet.create({
   memberItem: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 12,
     marginBottom: 8,
@@ -1175,7 +1187,6 @@ const styles = StyleSheet.create({
   },
   // Unsynced member styles
   unsyncedMemberItem: {
-    backgroundColor: "#FFF8E6",
     borderWidth: 1,
     borderColor: "#FFE0A3",
   },
@@ -1208,7 +1219,6 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 12,
     fontSize: 16,
-    color: "#666",
   },
   emptyContainer: {
     flex: 1,
@@ -1219,12 +1229,10 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 20,
     fontWeight: "600",
-    color: "#333",
     marginTop: 16,
   },
   emptySubtitle: {
     fontSize: 14,
-    color: "#666",
     textAlign: "center",
     marginTop: 8,
   },
@@ -1236,9 +1244,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     padding: 16,
-    backgroundColor: "#fff",
     borderTopWidth: 1,
-    borderTopColor: "#E0E0E0",
     gap: 8,
   },
   removeGroupButton: {
@@ -1248,13 +1254,11 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#FF9500",
     gap: 8,
   },
   removeGroupButtonText: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#FF9500",
   },
   shareButton: {
     flexDirection: "row",
@@ -1263,13 +1267,11 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#8B5CF6",
     gap: 8,
   },
   shareButtonText: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#8B5CF6",
   },
   archiveButton: {
     flexDirection: "row",
@@ -1278,19 +1280,16 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#FF3B30",
     gap: 8,
   },
   archiveButtonText: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#FF3B30",
   },
 
   // Modal styles
   modalContainer: {
     flex: 1,
-    backgroundColor: "#fff",
   },
   modalHeader: {
     flexDirection: "row",
@@ -1299,19 +1298,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#E0E0E0",
   },
   modalCloseButton: {
     width: 60,
   },
   modalCancelText: {
     fontSize: 16,
-    color: "#666",
   },
   modalTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#000",
   },
   modalAddButton: {
     width: 80,
@@ -1324,13 +1320,10 @@ const styles = StyleSheet.create({
   selectedPreview: {
     paddingHorizontal: 16,
     paddingVertical: 10,
-    backgroundColor: "#F5F5F5",
     borderBottomWidth: 1,
-    borderBottomColor: "#E0E0E0",
   },
   selectedPreviewText: {
     fontSize: 14,
-    color: "#666",
   },
   searchContainer: {
     flex: 1,
@@ -1341,15 +1334,12 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: "#F5F5F5",
     borderBottomWidth: 1,
-    borderBottomColor: "#E0E0E0",
     gap: 8,
   },
   infoNoteText: {
     flex: 1,
     fontSize: 13,
-    color: "#666",
     lineHeight: 18,
   },
 
@@ -1361,16 +1351,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#E0E0E0",
   },
   shareModalSubheader: {
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 16,
     paddingVertical: 10,
-    backgroundColor: "#F5F0FF",
     borderBottomWidth: 1,
-    borderBottomColor: "#E0D6F5",
     gap: 8,
   },
   shareModalSubheaderText: {
@@ -1388,7 +1375,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#F0F0F0",
   },
   shareGroupInfo: {
     flex: 1,
@@ -1399,7 +1385,6 @@ const styles = StyleSheet.create({
   shareGroupName: {
     fontSize: 16,
     fontWeight: "500",
-    color: "#333",
     flexShrink: 1,
   },
   shareGroupStatusBadge: {
@@ -1443,15 +1428,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 16,
     paddingVertical: 8,
-    backgroundColor: "#F5F5F5",
     borderBottomWidth: 1,
-    borderBottomColor: "#E0E0E0",
     gap: 8,
   },
   shareSearchInput: {
     flex: 1,
     fontSize: 16,
-    color: "#333",
     paddingVertical: 8,
   },
   shareCancelButton: {
@@ -1459,14 +1441,12 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: "#FF9500",
     minWidth: 70,
     alignItems: "center",
   },
   shareCancelButtonText: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#FF9500",
   },
   shareEmptyState: {
     paddingVertical: 40,
@@ -1474,6 +1454,5 @@ const styles = StyleSheet.create({
   },
   shareEmptyStateText: {
     fontSize: 14,
-    color: "#999",
   },
 });

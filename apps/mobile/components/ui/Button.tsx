@@ -6,6 +6,7 @@ import {
   ActivityIndicator,
   Platform,
 } from "react-native";
+import { useTheme } from "@hooks/useTheme";
 
 interface ButtonProps {
   onPress: () => void;
@@ -26,14 +27,28 @@ export function Button({
   style,
   textStyle,
 }: ButtonProps) {
+  const { colors } = useTheme();
   const isDisabled = disabled || loading;
+
+  const variantStyles = {
+    primary: { backgroundColor: colors.buttonPrimary },
+    secondary: { backgroundColor: colors.buttonSecondary },
+    danger: { backgroundColor: colors.destructive },
+  };
+
+  const variantTextStyles = {
+    primary: { color: colors.textInverse },
+    secondary: { color: colors.text },
+    danger: { color: colors.textInverse },
+  };
 
   return (
     <TouchableOpacity
       style={[
         styles.button,
-        styles[variant],
-        isDisabled && styles.disabled,
+        variant === "secondary" && styles.secondary,
+        variantStyles[variant],
+        isDisabled && [styles.disabled, { backgroundColor: colors.buttonDisabled }],
         style,
       ]}
       onPress={onPress}
@@ -42,11 +57,11 @@ export function Button({
     >
       {loading ? (
         <ActivityIndicator
-          color={variant === "primary" ? "#fff" : "#222224"}
+          color={variant === "primary" ? colors.textInverse : colors.text}
           size="small"
         />
       ) : (
-        <Text style={[styles.text, styles[`${variant}Text`], textStyle]}>
+        <Text style={[styles.text, variantTextStyles[variant], textStyle]}>
           {children}
         </Text>
       )}
@@ -76,11 +91,7 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  primary: {
-    backgroundColor: "#222224",
-  },
   secondary: {
-    backgroundColor: "#fafafa",
     ...Platform.select({
       web: {
         boxShadow: "0px 9px 14px -7px rgba(0, 0, 0, 0.35)",
@@ -94,25 +105,12 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  danger: {
-    backgroundColor: "#FF3B30",
-  },
   disabled: {
-    backgroundColor: "#ccccd1",
     ...(Platform.OS === "web" ? { cursor: "not-allowed" as any } : {}),
   },
   text: {
     fontSize: 18,
     fontWeight: "600",
     lineHeight: 22,
-  },
-  primaryText: {
-    color: "#ffffff",
-  },
-  secondaryText: {
-    color: "#222224",
-  },
-  dangerText: {
-    color: "#ffffff",
   },
 });

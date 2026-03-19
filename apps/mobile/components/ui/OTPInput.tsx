@@ -7,6 +7,7 @@ import {
   Platform,
   Pressable,
 } from "react-native";
+import { useTheme } from "@hooks/useTheme";
 
 interface OTPInputProps {
   length?: number;
@@ -23,6 +24,7 @@ export function OTPInput({
   error,
   autoFocus = true,
 }: OTPInputProps) {
+  const { colors } = useTheme();
   const inputRefs = useRef<(TextInput | null)[]>([]);
   const [focusedIndex, setFocusedIndex] = useState<number | null>(
     autoFocus ? 0 : null
@@ -133,14 +135,15 @@ export function OTPInput({
             key={index}
             style={[
               styles.inputBox,
-              focusedIndex === index && styles.inputBoxFocused,
-              error && styles.inputBoxError,
-              digit && styles.inputBoxFilled,
+              { borderColor: colors.border, backgroundColor: colors.inputBackground },
+              focusedIndex === index && { borderColor: colors.text },
+              error && { borderColor: colors.error },
+              digit && { borderColor: colors.buttonPrimary, backgroundColor: colors.surfaceSecondary },
             ]}
           >
             <TextInput
               ref={(ref) => { inputRefs.current[index] = ref; }}
-              style={styles.input}
+              style={[styles.input, { color: colors.text }]}
               value={digit}
               onChangeText={(text) => handleChange(index, text)}
               onKeyPress={({ nativeEvent }) =>
@@ -156,7 +159,7 @@ export function OTPInput({
           </View>
         ))}
       </Pressable>
-      {error && <Text style={styles.errorText}>{error}</Text>}
+      {error && <Text style={[styles.errorText, { color: colors.error }]}>{error}</Text>}
     </View>
   );
 }
@@ -174,9 +177,7 @@ const styles = StyleSheet.create({
     width: 48,
     height: 56,
     borderWidth: 2,
-    borderColor: "#ecedf0",
     borderRadius: 12,
-    backgroundColor: "#ffffff",
     justifyContent: "center",
     alignItems: "center",
     ...Platform.select({
@@ -185,32 +186,15 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  inputBoxFocused: {
-    borderColor: "#1a1a1a",
-    ...Platform.select({
-      web: {
-        filter: "drop-shadow(0px 2px 4px rgba(0, 0, 0, 0.15))",
-      },
-    }),
-  },
-  inputBoxError: {
-    borderColor: "#FF3B30",
-  },
-  inputBoxFilled: {
-    borderColor: "#222224",
-    backgroundColor: "#f8f8f8",
-  },
   input: {
     fontSize: 24,
     fontWeight: "600",
-    color: "#000",
     textAlign: "center",
     width: "100%",
     height: "100%",
   },
   errorText: {
     fontSize: 12,
-    color: "#FF3B30",
     marginTop: 8,
     textAlign: "center",
   },

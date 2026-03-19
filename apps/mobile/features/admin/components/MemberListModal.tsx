@@ -25,6 +25,7 @@ import { useQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 import { ExportBottomSheet } from "./ExportBottomSheet";
 import { generateMembersCsv, generateFilename } from "../utils/csvExport";
 
@@ -52,6 +53,7 @@ export function MemberListModal({ visible, onClose, type }: MemberListModalProps
   const router = useRouter();
   const { community, token, user } = useAuth();
   const { primaryColor } = useCommunityTheme();
+  const { colors } = useTheme();
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
@@ -171,7 +173,7 @@ export function MemberListModal({ visible, onClose, type }: MemberListModalProps
 
       return (
         <TouchableOpacity
-          style={styles.memberItem}
+          style={[styles.memberItem, { backgroundColor: colors.surface }]}
           onPress={() => handleMemberPress(item.id)}
           activeOpacity={0.7}
         >
@@ -185,10 +187,10 @@ export function MemberListModal({ visible, onClose, type }: MemberListModalProps
             )}
           </View>
           <View style={styles.memberInfo}>
-            <Text style={styles.memberName}>{fullName}</Text>
-            <Text style={styles.memberSubtitle}>{subtitle}</Text>
+            <Text style={[styles.memberName, { color: colors.text }]}>{fullName}</Text>
+            <Text style={[styles.memberSubtitle, { color: colors.textSecondary }]}>{subtitle}</Text>
           </View>
-          <Ionicons name="chevron-forward" size={20} color="#ccc" />
+          <Ionicons name="chevron-forward" size={20} color={colors.borderLight} />
         </TouchableOpacity>
       );
     },
@@ -200,10 +202,10 @@ export function MemberListModal({ visible, onClose, type }: MemberListModalProps
     return (
       <View style={styles.footerLoader}>
         <ActivityIndicator size="small" color={primaryColor} />
-        <Text style={styles.loadingMoreText}>Loading more...</Text>
+        <Text style={[styles.loadingMoreText, { color: colors.textSecondary }]}>Loading more...</Text>
       </View>
     );
-  }, [isFetchingNextPage, primaryColor]);
+  }, [isFetchingNextPage, primaryColor, colors.textSecondary]);
 
   const title = type === "active" ? "Active Members" : "New Members";
   const newMembersDataTyped = data && "monthName" in data ? data as { monthName?: string } : null;
@@ -240,14 +242,14 @@ export function MemberListModal({ visible, onClose, type }: MemberListModalProps
       onRequestClose={onClose}
     >
       <KeyboardAvoidingView
-        style={styles.container}
+        style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         {/* Header */}
-        <View style={styles.header}>
+        <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
           <View style={styles.headerContent}>
-            <Text style={styles.title}>{title}</Text>
-            <Text style={styles.subtitle}>{subtitle}</Text>
+            <Text style={[styles.title, { color: colors.text }]}>{title}</Text>
+            <Text style={[styles.subtitle, { color: colors.textSecondary }]}>{subtitle}</Text>
           </View>
           <View style={styles.headerButtons}>
             {allMembers.length > 0 && (
@@ -260,18 +262,19 @@ export function MemberListModal({ visible, onClose, type }: MemberListModalProps
               </TouchableOpacity>
             )}
             <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-              <Ionicons name="close" size={24} color="#333" />
+              <Ionicons name="close" size={24} color={colors.text} />
             </TouchableOpacity>
           </View>
         </View>
 
         {/* Search Bar */}
-        <View style={styles.searchContainer}>
-          <View style={styles.searchInputContainer}>
-            <Ionicons name="search" size={20} color="#666" style={styles.searchIcon} />
+        <View style={[styles.searchContainer, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+          <View style={[styles.searchInputContainer, { backgroundColor: colors.surfaceSecondary }]}>
+            <Ionicons name="search" size={20} color={colors.textSecondary} style={styles.searchIcon} />
             <TextInput
-              style={styles.searchInput}
+              style={[styles.searchInput, { color: colors.text }]}
               placeholder="Search by name or email..."
+              placeholderTextColor={colors.textTertiary}
               value={searchQuery}
               onChangeText={setSearchQuery}
               autoCapitalize="none"
@@ -279,15 +282,15 @@ export function MemberListModal({ visible, onClose, type }: MemberListModalProps
             />
             {searchQuery.length > 0 && (
               <TouchableOpacity onPress={handleClearSearch} style={styles.clearButton}>
-                <Ionicons name="close-circle" size={20} color="#999" />
+                <Ionicons name="close-circle" size={20} color={colors.textTertiary} />
               </TouchableOpacity>
             )}
           </View>
         </View>
 
         {/* Summary */}
-        <View style={styles.summary}>
-          <Text style={styles.summaryText}>
+        <View style={[styles.summary, { backgroundColor: colors.surfaceSecondary }]}>
+          <Text style={[styles.summaryText, { color: colors.textSecondary }]}>
             {isLoading
               ? "Loading..."
               : `${data?.total?.toLocaleString() ?? 0} member${(data?.total ?? 0) === 1 ? "" : "s"}`}
@@ -299,13 +302,13 @@ export function MemberListModal({ visible, onClose, type }: MemberListModalProps
         {isLoading && currentPage === 1 ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={primaryColor} />
-            <Text style={styles.loadingText}>Loading members...</Text>
+            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading members...</Text>
           </View>
         ) : allMembers.length === 0 ? (
           <View style={styles.emptyContainer}>
-            <Ionicons name="people-outline" size={64} color="#ccc" />
-            <Text style={styles.emptyTitle}>No members found</Text>
-            <Text style={styles.emptySubtitle}>
+            <Ionicons name="people-outline" size={64} color={colors.borderLight} />
+            <Text style={[styles.emptyTitle, { color: colors.text }]}>No members found</Text>
+            <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
               {searchQuery
                 ? "Try adjusting your search"
                 : type === "active"
@@ -344,7 +347,6 @@ export function MemberListModal({ visible, onClose, type }: MemberListModalProps
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f5f5f5",
   },
   header: {
     flexDirection: "row",
@@ -353,9 +355,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 20,
     paddingBottom: 16,
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   headerContent: {
     flex: 1,
@@ -374,11 +374,9 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 24,
     fontWeight: "bold",
-    color: "#333",
   },
   subtitle: {
     fontSize: 14,
-    color: "#666",
     marginTop: 4,
   },
   closeButton: {
@@ -391,14 +389,11 @@ const styles = StyleSheet.create({
   searchContainer: {
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   searchInputContainer: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f5f5f5",
     borderRadius: 10,
     paddingHorizontal: 12,
   },
@@ -409,7 +404,6 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 12,
     fontSize: 16,
-    color: "#333",
   },
   clearButton: {
     padding: 4,
@@ -417,11 +411,9 @@ const styles = StyleSheet.create({
   summary: {
     paddingHorizontal: 16,
     paddingVertical: 10,
-    backgroundColor: "#f5f5f5",
   },
   summaryText: {
     fontSize: 14,
-    color: "#666",
   },
   listContent: {
     padding: 16,
@@ -430,7 +422,6 @@ const styles = StyleSheet.create({
   memberItem: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 14,
     marginBottom: 10,
@@ -468,12 +459,10 @@ const styles = StyleSheet.create({
   memberName: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 2,
   },
   memberSubtitle: {
     fontSize: 13,
-    color: "#666",
   },
   loadingContainer: {
     flex: 1,
@@ -483,7 +472,6 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 12,
     fontSize: 16,
-    color: "#666",
   },
   emptyContainer: {
     flex: 1,
@@ -494,12 +482,10 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 20,
     fontWeight: "600",
-    color: "#333",
     marginTop: 16,
   },
   emptySubtitle: {
     fontSize: 14,
-    color: "#666",
     textAlign: "center",
     marginTop: 8,
   },
@@ -512,6 +498,5 @@ const styles = StyleSheet.create({
   },
   loadingMoreText: {
     fontSize: 14,
-    color: "#666",
   },
 });

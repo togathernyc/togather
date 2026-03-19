@@ -30,6 +30,7 @@ import { useImageUpload } from "@features/chat/hooks/useImageUpload";
 import { AppImage } from "@components/ui";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
+import { useTheme } from "@hooks/useTheme";
 
 // ============================================================================
 // Types
@@ -59,6 +60,7 @@ export function ResourceSectionEditor({
   resourceId,
   token,
 }: ResourceSectionEditorProps) {
+  const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const themeColor = primaryColor || DEFAULT_PRIMARY_COLOR;
 
@@ -242,15 +244,15 @@ export function ResourceSectionEditor({
   // Collapsed view
   if (!isEditing) {
     return (
-      <Pressable style={styles.section} onPress={() => setIsEditing(true)}>
+      <Pressable style={[styles.section, { backgroundColor: colors.surfaceSecondary }]} onPress={() => setIsEditing(true)}>
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle} numberOfLines={1}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]} numberOfLines={1}>
             {section.title}
           </Text>
-          <Ionicons name="pencil" size={16} color="#666" />
+          <Ionicons name="pencil" size={16} color={colors.textSecondary} />
         </View>
         {section.description && (
-          <Text style={styles.sectionPreview} numberOfLines={2}>
+          <Text style={[styles.sectionPreview, { color: colors.textSecondary }]} numberOfLines={2}>
             {section.description}
           </Text>
         )}
@@ -261,7 +263,7 @@ export function ResourceSectionEditor({
           />
         )}
         {section.linkUrl && (
-          <Text style={styles.sectionLink} numberOfLines={1}>
+          <Text style={[styles.sectionLink, { color: colors.link }]} numberOfLines={1}>
             {section.linkUrl}
           </Text>
         )}
@@ -280,29 +282,29 @@ export function ResourceSectionEditor({
 
   // Expanded editing view
   return (
-    <View style={[styles.sectionEditing, { borderColor: themeColor }]}>
-      <Text style={styles.fieldLabel}>Title</Text>
+    <View style={[styles.sectionEditing, { borderColor: themeColor, backgroundColor: colors.surfaceSecondary }]}>
+      <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Title</Text>
       <TextInput
-        style={styles.input}
+        style={[styles.input, { borderColor: colors.border, backgroundColor: colors.inputBackground, color: colors.text }]}
         value={title}
         onChangeText={setTitle}
         placeholder="Section title"
-        placeholderTextColor="#999"
+        placeholderTextColor={colors.textTertiary}
       />
 
-      <Text style={styles.fieldLabel}>Description (optional)</Text>
+      <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Description (optional)</Text>
       <TextInput
-        style={[styles.input, styles.multilineInput]}
+        style={[styles.input, styles.multilineInput, { borderColor: colors.border, backgroundColor: colors.inputBackground, color: colors.text }]}
         value={description}
         onChangeText={setDescription}
         placeholder="Add a description..."
-        placeholderTextColor="#999"
+        placeholderTextColor={colors.textTertiary}
         multiline
         numberOfLines={3}
         textAlignVertical="top"
       />
 
-      <Text style={styles.fieldLabel}>Photos (optional)</Text>
+      <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Photos (optional)</Text>
       {allDisplayImages.length > 0 && (
         <ScrollView
           horizontal
@@ -315,35 +317,35 @@ export function ResourceSectionEditor({
               <AppImage source={img.uri} style={styles.thumbnail} />
               {img.type === "uploaded" && (
                 <Pressable
-                  style={styles.thumbnailRemoveButton}
+                  style={[styles.thumbnailRemoveButton, { backgroundColor: colors.surface }]}
                   onPress={() => handleRemoveImage(index)}
                 >
-                  <Ionicons name="close-circle" size={22} color="#FF3B30" />
+                  <Ionicons name="close-circle" size={22} color={colors.destructive} />
                 </Pressable>
               )}
               {img.type === "uploading" && (
                 <View style={styles.thumbnailUploadingOverlay}>
-                  <ActivityIndicator size="small" color="#fff" />
+                  <ActivityIndicator size="small" color={colors.textInverse} />
                 </View>
               )}
             </View>
           ))}
         </ScrollView>
       )}
-      <Pressable style={styles.addPhotoButton} onPress={handlePickImages}>
-        <Ionicons name="camera-outline" size={24} color="#999" />
-        <Text style={styles.addPhotoText}>
+      <Pressable style={[styles.addPhotoButton, { borderColor: colors.border, backgroundColor: colors.inputBackground }]} onPress={handlePickImages}>
+        <Ionicons name="camera-outline" size={24} color={colors.textTertiary} />
+        <Text style={[styles.addPhotoText, { color: colors.textTertiary }]}>
           {allDisplayImages.length > 0 ? "Add More Photos" : "Add Photos"}
         </Text>
       </Pressable>
 
-      <Text style={styles.fieldLabel}>Link URL (optional)</Text>
+      <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Link URL (optional)</Text>
       <TextInput
-        style={styles.input}
+        style={[styles.input, { borderColor: colors.border, backgroundColor: colors.inputBackground, color: colors.text }]}
         value={linkUrl}
         onChangeText={setLinkUrl}
         placeholder="https://..."
-        placeholderTextColor="#999"
+        placeholderTextColor={colors.textTertiary}
         autoCapitalize="none"
         autoCorrect={false}
         keyboardType="url"
@@ -352,16 +354,16 @@ export function ResourceSectionEditor({
       {/* Link preview */}
       {linkUrl.trim() && (
         <View style={styles.previewContainer}>
-          <Text style={styles.previewLabel}>Preview:</Text>
+          <Text style={[styles.previewLabel, { color: colors.textSecondary }]}>Preview:</Text>
           {previewLoading ? (
-            <View style={styles.previewLoading}>
+            <View style={[styles.previewLoading, { backgroundColor: colors.surface, borderColor: colors.border }]}>
               <ActivityIndicator size="small" color={themeColor} />
-              <Text style={styles.previewLoadingText}>Loading preview...</Text>
+              <Text style={[styles.previewLoadingText, { color: colors.textSecondary }]}>Loading preview...</Text>
             </View>
           ) : preview ? (
             <LinkPreviewCard preview={preview} embedded compact />
           ) : (
-            <Text style={styles.noPreview}>No preview available</Text>
+            <Text style={[styles.noPreview, { color: colors.textTertiary, backgroundColor: colors.surface, borderColor: colors.border }]}>No preview available</Text>
           )}
         </View>
       )}
@@ -369,10 +371,10 @@ export function ResourceSectionEditor({
       {/* Action buttons */}
       <View style={styles.buttonRow}>
         <Pressable style={styles.cancelButton} onPress={handleCancel}>
-          <Text style={styles.cancelText}>Cancel</Text>
+          <Text style={[styles.cancelText, { color: colors.textSecondary }]}>Cancel</Text>
         </Pressable>
         <Pressable style={styles.deleteSmallButton} onPress={handleDelete}>
-          <Ionicons name="trash-outline" size={20} color="#FF3B30" />
+          <Ionicons name="trash-outline" size={20} color={colors.destructive} />
         </Pressable>
         <Pressable
           style={[
@@ -384,7 +386,7 @@ export function ResourceSectionEditor({
           disabled={saving || uploadingCount > 0}
         >
           {saving ? (
-            <ActivityIndicator size="small" color="#fff" />
+            <ActivityIndicator size="small" color={colors.textInverse} />
           ) : (
             <Text style={styles.saveSmallText}>Save</Text>
           )}
@@ -401,7 +403,6 @@ export function ResourceSectionEditor({
 const styles = StyleSheet.create({
   section: {
     padding: 16,
-    backgroundColor: "#f5f5f5",
     borderRadius: 12,
     marginBottom: 8,
   },
@@ -413,18 +414,15 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
     flex: 1,
     marginRight: 8,
   },
   sectionPreview: {
     fontSize: 14,
-    color: "#666",
     marginTop: 4,
   },
   sectionLink: {
     fontSize: 12,
-    color: "#007AFF",
     marginTop: 4,
   },
   collapsedThumbnail: {
@@ -435,26 +433,21 @@ const styles = StyleSheet.create({
   },
   sectionEditing: {
     padding: 16,
-    backgroundColor: "#f5f5f5",
     borderRadius: 12,
     marginBottom: 8,
     borderWidth: 2,
   },
   fieldLabel: {
     fontSize: 12,
-    color: "#666",
     marginTop: 12,
     marginBottom: 4,
     fontWeight: "500",
   },
   input: {
     borderWidth: 1,
-    borderColor: "#ddd",
     borderRadius: 8,
     padding: 10,
-    backgroundColor: "#fff",
     fontSize: 15,
-    color: "#333",
   },
   multilineInput: {
     minHeight: 80,
@@ -481,7 +474,6 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: -6,
     right: -6,
-    backgroundColor: "#fff",
     borderRadius: 11,
   },
   thumbnailUploadingOverlay: {
@@ -498,21 +490,17 @@ const styles = StyleSheet.create({
     gap: 8,
     padding: 16,
     borderWidth: 1,
-    borderColor: "#ccc",
     borderStyle: "dashed",
     borderRadius: 8,
-    backgroundColor: "#fff",
   },
   addPhotoText: {
     fontSize: 15,
-    color: "#999",
   },
   previewContainer: {
     marginTop: 12,
   },
   previewLabel: {
     fontSize: 12,
-    color: "#666",
     marginBottom: 8,
     fontWeight: "500",
   },
@@ -521,24 +509,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
     padding: 12,
-    backgroundColor: "#fff",
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: "#e0e0e0",
   },
   previewLoadingText: {
     fontSize: 14,
-    color: "#666",
   },
   noPreview: {
-    color: "#999",
     fontStyle: "italic",
     fontSize: 14,
     padding: 12,
-    backgroundColor: "#fff",
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: "#e0e0e0",
   },
   buttonRow: {
     flexDirection: "row",
@@ -551,7 +533,6 @@ const styles = StyleSheet.create({
     padding: 10,
   },
   cancelText: {
-    color: "#666",
     fontSize: 15,
   },
   deleteSmallButton: {

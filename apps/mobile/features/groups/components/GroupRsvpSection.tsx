@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import { format, parseISO } from "date-fns";
 import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 
 interface GroupData {
   id: number;
@@ -30,6 +31,7 @@ export function GroupRsvpSection({
   const [viewAll, setViewAll] = useState(false);
   const { user } = useAuth();
   const { primaryColor } = useCommunityTheme();
+  const { colors } = useTheme();
 
   const formatDate = (dateString: string, createdAt?: string) => {
     try {
@@ -55,18 +57,18 @@ export function GroupRsvpSection({
     if (rsvpMode === 1) {
       return [styles.rsvpButton, { borderColor: primaryColor, backgroundColor: primaryColor }];
     } else if (rsvpMode === 0) {
-      return [styles.rsvpButton, styles.rsvpButtonNotGoing];
+      return [styles.rsvpButton, { borderColor: colors.textTertiary, backgroundColor: colors.surface }];
     }
-    return [styles.rsvpButton, styles.rsvpButtonDefault];
+    return [styles.rsvpButton, { borderColor: colors.border, backgroundColor: colors.surface }];
   };
 
   const getRsvpTextStyle = (rsvpMode: number) => {
     if (rsvpMode === 1) {
-      return [styles.rsvpButtonText, styles.rsvpButtonTextGoing];
+      return [styles.rsvpButtonText, { color: colors.textInverse }];
     } else if (rsvpMode === 0) {
-      return [styles.rsvpButtonText, styles.rsvpButtonTextNotGoing];
+      return [styles.rsvpButtonText, { color: colors.textSecondary }];
     }
-    return [styles.rsvpButtonText, styles.rsvpButtonTextDefault];
+    return [styles.rsvpButtonText, { color: colors.text }];
   };
 
   const displayGroups = viewAll ? groups : groups.slice(0, 2);
@@ -76,13 +78,13 @@ export function GroupRsvpSection({
   }
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>GROUP RSVPS</Text>
+    <View style={[styles.container, { backgroundColor: colors.surface }]}>
+      <Text style={[styles.title, { color: colors.text }]}>GROUP RSVPS</Text>
       <View style={styles.rsvpList}>
         {displayGroups.map((item) => (
-          <View key={item.id} style={styles.rsvpItem}>
+          <View key={item.id} style={[styles.rsvpItem, { borderBottomColor: colors.borderLight }]}>
             <View style={styles.rsvpContent}>
-              <Text style={styles.groupName}>{item.group.title}</Text>
+              <Text style={[styles.groupName, { color: colors.text }]}>{item.group.title}</Text>
               <View style={styles.tagsContainer}>
                 {item.group.type === 1 && (
                   <View style={[styles.tag, { backgroundColor: primaryColor }]}>
@@ -93,7 +95,7 @@ export function GroupRsvpSection({
                   <Text style={styles.tagText}>Party</Text>
                 </View>
               </View>
-              <Text style={styles.groupDate}>
+              <Text style={[styles.groupDate, { color: colors.textSecondary }]}>
                 {formatDate(
                   item.group.date,
                   item.group.next_meeting_date_created_at
@@ -113,10 +115,10 @@ export function GroupRsvpSection({
       </View>
       {groups.length > 2 && (
         <TouchableOpacity
-          style={styles.viewAllButton}
+          style={[styles.viewAllButton, { backgroundColor: colors.surfaceSecondary }]}
           onPress={() => setViewAll(!viewAll)}
         >
-          <Text style={styles.viewAllText}>
+          <Text style={[styles.viewAllText, { color: colors.text }]}>
             {viewAll ? "Show Less" : "View All"}
           </Text>
         </TouchableOpacity>
@@ -128,13 +130,11 @@ export function GroupRsvpSection({
 const styles = StyleSheet.create({
   container: {
     padding: 20,
-    backgroundColor: "#fff",
     marginTop: 12,
   },
   title: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 16,
     textTransform: "uppercase",
     letterSpacing: 0.5,
@@ -148,7 +148,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingBottom: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
   },
   rsvpContent: {
     flex: 1,
@@ -157,7 +156,6 @@ const styles = StyleSheet.create({
   groupName: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 8,
   },
   tagsContainer: {
@@ -177,7 +175,6 @@ const styles = StyleSheet.create({
   },
   groupDate: {
     fontSize: 14,
-    color: "#666",
   },
   rsvpButton: {
     paddingHorizontal: 20,
@@ -188,39 +185,35 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   rsvpButtonDefault: {
-    borderColor: "#ddd",
-    backgroundColor: "#fff",
+    // borderColor/backgroundColor set dynamically
   },
   rsvpButtonGoing: {
     // Dynamic styles applied inline
   },
   rsvpButtonNotGoing: {
-    borderColor: "#999",
-    backgroundColor: "#fff",
+    // borderColor/backgroundColor set dynamically
   },
   rsvpButtonText: {
     fontSize: 14,
     fontWeight: "600",
   },
   rsvpButtonTextDefault: {
-    color: "#333",
+    // color set dynamically
   },
   rsvpButtonTextGoing: {
-    color: "#fff",
+    // color set dynamically
   },
   rsvpButtonTextNotGoing: {
-    color: "#666",
+    // color set dynamically
   },
   viewAllButton: {
     marginTop: 16,
     paddingVertical: 12,
-    backgroundColor: "#f5f5f5",
     borderRadius: 8,
     alignItems: "center",
   },
   viewAllText: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#333",
   },
 });

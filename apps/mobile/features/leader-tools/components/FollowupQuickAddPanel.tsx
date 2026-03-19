@@ -17,6 +17,7 @@ import {
   buildQuickAddCustomFieldValues,
   validateQuickAddRequiredFields,
 } from "./followupQuickAddHelpers";
+import { useTheme } from "@hooks/useTheme";
 
 type LeaderOption = {
   id: string;
@@ -52,6 +53,7 @@ export function FollowupQuickAddPanel({
   onCancel,
   onCreated,
 }: Props) {
+  const { colors, isDark } = useTheme();
   const quickAddRow = useAuthenticatedMutation(api.functions.memberFollowups.quickAddRow);
 
   const [firstName, setFirstName] = useState("");
@@ -132,18 +134,19 @@ export function FollowupQuickAddPanel({
   };
 
   return (
-    <View style={styles.container}>
-      <View style={styles.headerRow}>
-        <Text style={styles.title}>Add person</Text>
+    <View style={[styles.container, { backgroundColor: colors.surface }]}>
+      <View style={[styles.headerRow, { borderBottomColor: colors.border }]}>
+        <Text style={[styles.title, { color: colors.text }]}>Add person</Text>
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Required</Text>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Required</Text>
           <View style={styles.fieldWrap}>
-            <Text style={styles.label}>First name *</Text>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>First name *</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
+              placeholderTextColor={colors.inputPlaceholder}
               value={firstName}
               onChangeText={(value) => {
                 setFirstName(value);
@@ -154,9 +157,10 @@ export function FollowupQuickAddPanel({
             />
           </View>
           <View style={styles.fieldWrap}>
-            <Text style={styles.label}>Phone *</Text>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Phone *</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
+              placeholderTextColor={colors.inputPlaceholder}
               value={phone}
               onChangeText={(value) => {
                 setPhone(value);
@@ -167,15 +171,16 @@ export function FollowupQuickAddPanel({
               editable={!isSaving}
             />
           </View>
-          {validationError && <Text style={styles.errorText}>{validationError}</Text>}
+          {validationError && <Text style={[styles.errorText, { color: colors.error }]}>{validationError}</Text>}
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Profile</Text>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Profile</Text>
           <View style={styles.fieldWrap}>
-            <Text style={styles.label}>Last name</Text>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Last name</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
+              placeholderTextColor={colors.inputPlaceholder}
               value={lastName}
               onChangeText={setLastName}
               placeholder="Last name"
@@ -183,9 +188,10 @@ export function FollowupQuickAddPanel({
             />
           </View>
           <View style={styles.fieldWrap}>
-            <Text style={styles.label}>Email</Text>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Email</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
+              placeholderTextColor={colors.inputPlaceholder}
               value={email}
               onChangeText={setEmail}
               placeholder="email@example.com"
@@ -195,9 +201,10 @@ export function FollowupQuickAddPanel({
             />
           </View>
           <View style={styles.fieldWrap}>
-            <Text style={styles.label}>ZIP code</Text>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>ZIP code</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
+              placeholderTextColor={colors.inputPlaceholder}
               value={zipCode}
               onChangeText={setZipCode}
               placeholder="ZIP code"
@@ -205,9 +212,10 @@ export function FollowupQuickAddPanel({
             />
           </View>
           <View style={styles.fieldWrap}>
-            <Text style={styles.label}>Birthday</Text>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Birthday</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
+              placeholderTextColor={colors.inputPlaceholder}
               value={dateOfBirth}
               onChangeText={setDateOfBirth}
               placeholder="YYYY-MM-DD"
@@ -215,9 +223,10 @@ export function FollowupQuickAddPanel({
             />
           </View>
           <View style={styles.fieldWrap}>
-            <Text style={styles.label}>Notes</Text>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Notes</Text>
             <TextInput
-              style={[styles.input, styles.multilineInput]}
+              style={[styles.input, styles.multilineInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
+              placeholderTextColor={colors.inputPlaceholder}
               value={notes}
               onChangeText={setNotes}
               placeholder="Optional note"
@@ -229,11 +238,11 @@ export function FollowupQuickAddPanel({
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>People fields</Text>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>People fields</Text>
 
           <View style={styles.fieldWrap}>
-            <Text style={styles.label}>Status</Text>
-            <View style={styles.pickerWrap}>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Status</Text>
+            <View style={[styles.pickerWrap, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground }]}>
               <Picker
                 selectedValue={status}
                 onValueChange={(value) => setStatus(String(value))}
@@ -248,7 +257,7 @@ export function FollowupQuickAddPanel({
           </View>
 
           <View style={styles.fieldWrap}>
-            <Text style={styles.label}>Assignees</Text>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Assignees</Text>
             <View style={styles.multiselectWrap}>
               {leaderOptions.map((leader) => {
                 const id = leader.id;
@@ -256,7 +265,7 @@ export function FollowupQuickAddPanel({
                 return (
                   <TouchableOpacity
                     key={id}
-                    style={[styles.multiselectChip, isSelected && styles.multiselectChipSelected]}
+                    style={[styles.multiselectChip, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground }, isSelected && { borderColor: primaryColor, backgroundColor: colors.selectedBackground }]}
                     onPress={() => {
                       setAssigneeIds((prev) =>
                         prev.includes(id) ? prev.filter((assigneeId) => assigneeId !== id) : [...prev, id]
@@ -267,7 +276,8 @@ export function FollowupQuickAddPanel({
                     <Text
                       style={[
                         styles.multiselectChipText,
-                        isSelected && styles.multiselectChipTextSelected,
+                        { color: colors.textSecondary },
+                        isSelected && { color: primaryColor, fontWeight: "600" },
                       ]}
                     >
                       {`${leader.firstName} ${leader.lastName}`.trim()}
@@ -283,28 +293,28 @@ export function FollowupQuickAddPanel({
               const selectedValue = customValues[field.slot] as boolean | undefined;
               return (
                 <View key={field.slot} style={styles.fieldWrap}>
-                  <Text style={styles.label}>{field.name}</Text>
+                  <Text style={[styles.label, { color: colors.textSecondary }]}>{field.name}</Text>
                   <View style={styles.booleanRow}>
                     <TouchableOpacity
-                      style={[styles.booleanButton, selectedValue === undefined && styles.booleanSelected]}
+                      style={[styles.booleanButton, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground }, selectedValue === undefined && { borderColor: primaryColor, backgroundColor: colors.selectedBackground }]}
                       onPress={() => setCustomValue(field.slot, undefined)}
                       disabled={isSaving}
                     >
-                      <Text style={styles.booleanText}>Not set</Text>
+                      <Text style={[styles.booleanText, { color: colors.text }]}>Not set</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      style={[styles.booleanButton, selectedValue === true && styles.booleanSelected]}
+                      style={[styles.booleanButton, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground }, selectedValue === true && { borderColor: primaryColor, backgroundColor: colors.selectedBackground }]}
                       onPress={() => setCustomValue(field.slot, true)}
                       disabled={isSaving}
                     >
-                      <Text style={styles.booleanText}>Yes</Text>
+                      <Text style={[styles.booleanText, { color: colors.text }]}>Yes</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      style={[styles.booleanButton, selectedValue === false && styles.booleanSelected]}
+                      style={[styles.booleanButton, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground }, selectedValue === false && { borderColor: primaryColor, backgroundColor: colors.selectedBackground }]}
                       onPress={() => setCustomValue(field.slot, false)}
                       disabled={isSaving}
                     >
-                      <Text style={styles.booleanText}>No</Text>
+                      <Text style={[styles.booleanText, { color: colors.text }]}>No</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -315,8 +325,8 @@ export function FollowupQuickAddPanel({
               const options = normalizeSelectOptions(field.options);
               return (
                 <View key={field.slot} style={styles.fieldWrap}>
-                  <Text style={styles.label}>{field.name}</Text>
-                  <View style={styles.pickerWrap}>
+                  <Text style={[styles.label, { color: colors.textSecondary }]}>{field.name}</Text>
+                  <View style={[styles.pickerWrap, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground }]}>
                     <Picker
                       selectedValue={(customValues[field.slot] as string | undefined) ?? "__none__"}
                       onValueChange={(value) => {
@@ -342,7 +352,7 @@ export function FollowupQuickAddPanel({
                 : [];
               return (
                 <View key={field.slot} style={styles.fieldWrap}>
-                  <Text style={styles.label}>{field.name}</Text>
+                  <Text style={[styles.label, { color: colors.textSecondary }]}>{field.name}</Text>
                   {options.length > 0 ? (
                     <View style={styles.multiselectWrap}>
                       {options.map((option) => {
@@ -350,14 +360,15 @@ export function FollowupQuickAddPanel({
                         return (
                           <TouchableOpacity
                             key={option}
-                            style={[styles.multiselectChip, isSelected && styles.multiselectChipSelected]}
+                            style={[styles.multiselectChip, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground }, isSelected && { borderColor: primaryColor, backgroundColor: colors.selectedBackground }]}
                             onPress={() => toggleMultiValue(field.slot, option)}
                             disabled={isSaving}
                           >
                             <Text
                               style={[
                                 styles.multiselectChipText,
-                                isSelected && styles.multiselectChipTextSelected,
+                                { color: colors.textSecondary },
+                                isSelected && { color: primaryColor, fontWeight: "600" },
                               ]}
                             >
                               {option}
@@ -367,7 +378,7 @@ export function FollowupQuickAddPanel({
                       })}
                     </View>
                   ) : (
-                    <Text style={styles.mutedText}>No options configured</Text>
+                    <Text style={[styles.mutedText, { color: colors.textTertiary }]}>No options configured</Text>
                   )}
                 </View>
               );
@@ -376,9 +387,10 @@ export function FollowupQuickAddPanel({
             const isNumber = field.type === "number";
             return (
               <View key={field.slot} style={styles.fieldWrap}>
-                <Text style={styles.label}>{field.name}</Text>
+                <Text style={[styles.label, { color: colors.textSecondary }]}>{field.name}</Text>
                 <TextInput
-                  style={styles.input}
+                  style={[styles.input, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
+                  placeholderTextColor={colors.inputPlaceholder}
                   value={(customValues[field.slot] as string | undefined) ?? ""}
                   onChangeText={(value) => setCustomValue(field.slot, value)}
                   keyboardType={isNumber ? "numeric" : "default"}
@@ -392,14 +404,14 @@ export function FollowupQuickAddPanel({
 
         {submitError && (
           <View style={styles.section}>
-            <Text style={styles.errorText}>{submitError}</Text>
+            <Text style={[styles.errorText, { color: colors.error }]}>{submitError}</Text>
           </View>
         )}
       </ScrollView>
 
-      <View style={styles.footer}>
-        <TouchableOpacity style={styles.secondaryButton} onPress={onCancel} disabled={isSaving}>
-          <Text style={styles.secondaryButtonText}>Cancel</Text>
+      <View style={[styles.footer, { borderTopColor: colors.border }]}>
+        <TouchableOpacity style={[styles.secondaryButton, { borderColor: colors.border }]} onPress={onCancel} disabled={isSaving}>
+          <Text style={[styles.secondaryButtonText, { color: colors.text }]}>Cancel</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.primaryButton, { backgroundColor: primaryColor }, isSaving && styles.disabled]}
@@ -407,9 +419,9 @@ export function FollowupQuickAddPanel({
           disabled={isSaving}
         >
           {isSaving ? (
-            <ActivityIndicator size="small" color="#fff" />
+            <ActivityIndicator size="small" color={colors.textInverse} />
           ) : (
-            <Text style={styles.primaryButtonText}>Add person</Text>
+            <Text style={[styles.primaryButtonText, { color: '#fff' }]}>Add person</Text>
           )}
         </TouchableOpacity>
       </View>
@@ -420,19 +432,16 @@ export function FollowupQuickAddPanel({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
   },
   headerRow: {
     paddingHorizontal: 16,
     paddingTop: 16,
     paddingBottom: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#E5E7EB",
   },
   title: {
     fontSize: 17,
     fontWeight: "700",
-    color: "#111827",
   },
   content: {
     padding: 16,
@@ -444,25 +453,20 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 13,
     fontWeight: "700",
-    color: "#111827",
   },
   fieldWrap: {
     gap: 6,
   },
   label: {
     fontSize: 12,
-    color: "#374151",
     fontWeight: "600",
   },
   input: {
     borderWidth: 1,
-    borderColor: "#D1D5DB",
     borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: 8,
     fontSize: 13,
-    color: "#111827",
-    backgroundColor: "#fff",
   },
   multilineInput: {
     minHeight: 72,
@@ -470,10 +474,8 @@ const styles = StyleSheet.create({
   },
   pickerWrap: {
     borderWidth: 1,
-    borderColor: "#D1D5DB",
     borderRadius: 8,
     overflow: "hidden",
-    backgroundColor: "#fff",
   },
   booleanRow: {
     flexDirection: "row",
@@ -481,19 +483,12 @@ const styles = StyleSheet.create({
   },
   booleanButton: {
     borderWidth: 1,
-    borderColor: "#D1D5DB",
     borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: 8,
-    backgroundColor: "#fff",
-  },
-  booleanSelected: {
-    borderColor: "#2563EB",
-    backgroundColor: "#EFF6FF",
   },
   booleanText: {
     fontSize: 12,
-    color: "#1F2937",
     fontWeight: "600",
   },
   multiselectWrap: {
@@ -503,36 +498,22 @@ const styles = StyleSheet.create({
   },
   multiselectChip: {
     borderWidth: 1,
-    borderColor: "#D1D5DB",
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 6,
-    backgroundColor: "#fff",
-  },
-  multiselectChipSelected: {
-    borderColor: "#2563EB",
-    backgroundColor: "#EFF6FF",
   },
   multiselectChipText: {
     fontSize: 12,
-    color: "#374151",
-  },
-  multiselectChipTextSelected: {
-    color: "#1D4ED8",
-    fontWeight: "600",
   },
   mutedText: {
     fontSize: 12,
-    color: "#6B7280",
   },
   errorText: {
     fontSize: 12,
-    color: "#B91C1C",
     fontWeight: "600",
   },
   footer: {
     borderTopWidth: 1,
-    borderTopColor: "#E5E7EB",
     padding: 12,
     flexDirection: "row",
     justifyContent: "flex-end",
@@ -540,14 +521,12 @@ const styles = StyleSheet.create({
   },
   secondaryButton: {
     borderWidth: 1,
-    borderColor: "#D1D5DB",
     borderRadius: 8,
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
   secondaryButtonText: {
     fontSize: 12,
-    color: "#374151",
     fontWeight: "600",
   },
   primaryButton: {
@@ -559,7 +538,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   primaryButtonText: {
-    color: "#fff",
     fontSize: 12,
     fontWeight: "700",
   },

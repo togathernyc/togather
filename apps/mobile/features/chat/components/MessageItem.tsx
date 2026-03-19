@@ -41,6 +41,7 @@ import { extractEventShortIds, extractToolShortIds, stripEventLinksFromText, str
 import { useLinkPreview } from '../hooks/useLinkPreview';
 import { getMediaUrl } from '@/utils/media';
 import { colors } from '@utils/styles';
+import { useTheme } from '@hooks/useTheme';
 import type { ChannelPrefetchState } from '../context/ChatPrefetchContext';
 
 interface MessageItemProps {
@@ -208,10 +209,6 @@ function parseMessageContent(content: string): ContentPart[] {
   return parts;
 }
 
-// Chat bubble colors
-const IMESSAGE_BLUE = '#e0efff';
-const IMESSAGE_GRAY = '#E5E5EA';
-
 function MessageItemInner({
   message,
   currentUserId,
@@ -227,6 +224,7 @@ function MessageItemInner({
   onRetry,
 }: MessageItemProps) {
   const router = useRouter();
+  const { colors: themeColors } = useTheme();
 
   const isOwnMessage = message.senderId === currentUserId;
 
@@ -373,7 +371,7 @@ function MessageItemInner({
   const renderMessageContent = () => {
     if (message.isDeleted) {
       return (
-        <Text style={[styles.messageText, styles.deletedText]}>
+        <Text style={[styles.messageText, styles.deletedText, { color: themeColors.textTertiary }]}>
           This message was deleted
         </Text>
       );
@@ -388,7 +386,7 @@ function MessageItemInner({
     }
 
     return (
-      <Text style={[styles.messageText, isOwnMessage && styles.ownMessageText]}>
+      <Text style={[styles.messageText, { color: themeColors.text }, isOwnMessage && { color: themeColors.chatBubbleOwnText }]}>
         {parts.map((part, index) => {
           if (part.type === 'mention') {
             return (
@@ -405,7 +403,7 @@ function MessageItemInner({
             return (
               <Text
                 key={index}
-                style={styles.urlLink}
+                style={[styles.urlLink, { color: themeColors.link }]}
                 onPress={() => handleUrlTap(part.value)}
               >
                 {part.value}
@@ -647,7 +645,8 @@ function MessageItemInner({
               key={reaction.emoji}
               style={[
                 styles.reactionBadge,
-                reaction.hasReacted && styles.reactionBadgeActive,
+                { backgroundColor: themeColors.surfaceSecondary, borderColor: themeColors.border },
+                reaction.hasReacted && { backgroundColor: '#E3F2FD', borderColor: '#1976D2' },
               ]}
               onPress={() => handleReactionTap(reaction.emoji)}
               onLongPress={() => handleReactionLongPress(reaction.emoji)}
@@ -655,7 +654,7 @@ function MessageItemInner({
             >
               <Text style={styles.reactionEmoji}>{reaction.emoji}</Text>
               {reaction.count > 1 && (
-                <Text style={styles.reactionCount}>{reaction.count}</Text>
+                <Text style={[styles.reactionCount, { color: themeColors.textSecondary }]}>{reaction.count}</Text>
               )}
             </Pressable>
           ))}
@@ -726,7 +725,7 @@ function MessageItemInner({
     if (optimisticStatus === 'sending') {
       return (
         <View testID="optimistic-sending" style={styles.optimisticStatusContainer}>
-          <ActivityIndicator size={10} color="#999" />
+          <ActivityIndicator size={10} color={themeColors.textTertiary} />
         </View>
       );
     }
@@ -735,7 +734,7 @@ function MessageItemInner({
       return (
         <View testID="optimistic-queued" style={styles.optimisticStatusContainer}>
           <Ionicons name="time-outline" size={12} color={colors.warning} />
-          <Text style={styles.optimisticStatusText}>Queued</Text>
+          <Text style={[styles.optimisticStatusText, { color: themeColors.textTertiary }]}>Queued</Text>
         </View>
       );
     }
@@ -773,8 +772,8 @@ function MessageItemInner({
       // Read by some people
       return (
         <View style={styles.readReceiptsContainer}>
-          <Text style={[styles.readCheck, { color: IMESSAGE_BLUE }]}>✓✓</Text>
-          <Text style={[styles.readCount, { color: IMESSAGE_BLUE }]}>
+          <Text style={[styles.readCheck, { color: themeColors.chatBubbleOwn }]}>✓✓</Text>
+          <Text style={[styles.readCount, { color: themeColors.chatBubbleOwn }]}>
             {readByCount}
           </Text>
         </View>
@@ -783,14 +782,14 @@ function MessageItemInner({
       // Delivered but not read
       return (
         <View style={styles.readReceiptsContainer}>
-          <Text style={styles.deliveredCheck}>✓✓</Text>
+          <Text style={[styles.deliveredCheck, { color: themeColors.textTertiary }]}>✓✓</Text>
         </View>
       );
     } else {
       // Just sent
       return (
         <View style={styles.readReceiptsContainer}>
-          <Text style={styles.sentCheck}>✓</Text>
+          <Text style={[styles.sentCheck, { color: themeColors.textTertiary }]}>✓</Text>
         </View>
       );
     }
@@ -827,7 +826,7 @@ function MessageItemInner({
         ]}>
           {/* Sender name (only for others' messages) */}
           {!isOwnMessage && (
-            <Text style={styles.senderName}>{message.senderName || 'Unknown'}</Text>
+            <Text style={[styles.senderName, { color: themeColors.textSecondary }]}>{message.senderName || 'Unknown'}</Text>
           )}
 
           {/* Message bubble (hidden for special card messages) */}
@@ -837,8 +836,8 @@ function MessageItemInner({
                 style={[
                   styles.messageBubble,
                   isOwnMessage
-                    ? styles.ownMessageBubble
-                    : styles.otherMessageBubble,
+                    ? [styles.ownMessageBubble, { backgroundColor: themeColors.chatBubbleOwn }]
+                    : [styles.otherMessageBubble, { backgroundColor: themeColors.chatBubbleOther }],
                 ]}
               >
                 {renderMessageContent()}
@@ -852,7 +851,8 @@ function MessageItemInner({
                   <Text
                     style={[
                       styles.timestamp,
-                      isOwnMessage && styles.ownMessageTimestamp,
+                      { color: themeColors.textTertiary },
+                      isOwnMessage && { color: themeColors.textSecondary },
                     ]}
                   >
                     {formatMessageTime(message.createdAt)}
@@ -861,7 +861,8 @@ function MessageItemInner({
                     <Text
                       style={[
                         styles.editedBadge,
-                        isOwnMessage && styles.ownMessageTimestamp,
+                        { color: themeColors.textTertiary },
+                        isOwnMessage && { color: themeColors.textSecondary },
                       ]}
                     >
                       (edited)
@@ -873,8 +874,8 @@ function MessageItemInner({
               <View
                 style={
                   isOwnMessage
-                    ? styles.ownMessageTail
-                    : styles.otherMessageTail
+                    ? [styles.ownMessageTail, { borderLeftColor: themeColors.chatBubbleOwn }]
+                    : [styles.otherMessageTail, { borderRightColor: themeColors.chatBubbleOther }]
                 }
               />
             </View>
@@ -961,7 +962,6 @@ const styles = StyleSheet.create({
   senderName: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#666',
     marginBottom: 2,
     marginLeft: 12,
   },
@@ -974,12 +974,10 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   ownMessageBubble: {
-    backgroundColor: IMESSAGE_BLUE,
     borderBottomRightRadius: 3,
     alignSelf: 'flex-end',
   },
   otherMessageBubble: {
-    backgroundColor: IMESSAGE_GRAY,
     borderBottomLeftRadius: 3,
     alignSelf: 'flex-start',
   },
@@ -991,7 +989,6 @@ const styles = StyleSheet.create({
     width: 0,
     height: 0,
     borderLeftWidth: 6,
-    borderLeftColor: IMESSAGE_BLUE,
     borderTopWidth: 5,
     borderTopColor: 'transparent',
     borderBottomWidth: 5,
@@ -1005,7 +1002,6 @@ const styles = StyleSheet.create({
     width: 0,
     height: 0,
     borderRightWidth: 6,
-    borderRightColor: IMESSAGE_GRAY,
     borderTopWidth: 5,
     borderTopColor: 'transparent',
     borderBottomWidth: 5,
@@ -1014,14 +1010,11 @@ const styles = StyleSheet.create({
   messageText: {
     fontSize: 14,
     lineHeight: 18,
-    color: '#000',
   },
   ownMessageText: {
-    color: '#000000',
   },
   deletedText: {
     fontStyle: 'italic',
-    color: '#999',
   },
   mention: {
     backgroundColor: '#E3F2FD',
@@ -1038,7 +1031,6 @@ const styles = StyleSheet.create({
     borderRadius: 2,
   },
   urlLink: {
-    color: '#1976D2',
     textDecorationLine: 'underline',
   },
   eventCardsContainer: {
@@ -1048,7 +1040,6 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   ownMessageTimestamp: {
-    color: '#666666',
   },
   messageFooter: {
     flexDirection: 'row',
@@ -1057,11 +1048,9 @@ const styles = StyleSheet.create({
   },
   timestamp: {
     fontSize: 10,
-    color: '#999',
   },
   editedBadge: {
     fontSize: 10,
-    color: '#999',
     marginLeft: 4,
     fontStyle: 'italic',
   },
@@ -1076,18 +1065,12 @@ const styles = StyleSheet.create({
   reactionBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F0F0F0',
     borderRadius: 12,
     paddingHorizontal: 8,
     paddingVertical: 4,
     marginRight: 4,
     marginBottom: 4,
     borderWidth: 1,
-    borderColor: '#E0E0E0',
-  },
-  reactionBadgeActive: {
-    backgroundColor: '#E3F2FD',
-    borderColor: '#1976D2',
   },
   reactionEmoji: {
     fontSize: 14,
@@ -1095,7 +1078,6 @@ const styles = StyleSheet.create({
   reactionCount: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#666',
     marginLeft: 4,
   },
   readReceiptsContainer: {
@@ -1105,12 +1087,10 @@ const styles = StyleSheet.create({
   },
   sentCheck: {
     fontSize: 10,
-    color: '#999',
     letterSpacing: -1,
   },
   deliveredCheck: {
     fontSize: 10,
-    color: '#999',
     letterSpacing: -1,
   },
   readCheck: {
@@ -1133,6 +1113,5 @@ const styles = StyleSheet.create({
   },
   optimisticStatusText: {
     fontSize: 11,
-    color: '#999',
   },
 });

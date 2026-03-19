@@ -20,6 +20,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@providers/AuthProvider";
 import { Card } from "@components/ui";
 import { useAvailableIntegrations } from "../hooks/useIntegrations";
+import { useTheme } from "@hooks/useTheme";
 
 export function IntegrationsScreen() {
   const router = useRouter();
@@ -27,6 +28,7 @@ export function IntegrationsScreen() {
   const { user } = useAuth();
 
   const { data: integrations, isLoading } = useAvailableIntegrations();
+  const { colors } = useTheme();
 
   // Only admins can manage integrations
   const isAdmin = user?.is_admin === true;
@@ -39,14 +41,14 @@ export function IntegrationsScreen() {
             onPress={() => router.back()}
             style={styles.backButton}
           >
-            <Ionicons name="arrow-back" size={24} color="#222224" />
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
           <Text style={styles.title}>Integrations</Text>
           <View style={styles.placeholder} />
         </View>
 
         <View style={styles.centerContainer}>
-          <Ionicons name="lock-closed-outline" size={64} color="#ccccd1" />
+          <Ionicons name="lock-closed-outline" size={64} color={colors.iconSecondary} />
           <Text style={styles.emptyText}>
             Only community admins can manage integrations
           </Text>
@@ -62,7 +64,7 @@ export function IntegrationsScreen() {
           onPress={() => router.back()}
           style={styles.backButton}
         >
-          <Ionicons name="arrow-back" size={24} color="#222224" />
+          <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
         <Text style={styles.title}>Integrations</Text>
         <View style={styles.placeholder} />
@@ -75,7 +77,7 @@ export function IntegrationsScreen() {
 
         {isLoading ? (
           <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#222224" />
+            <ActivityIndicator size="large" color={colors.text} />
           </View>
         ) : integrations && integrations.length > 0 ? (
           <View style={styles.integrationsContainer}>
@@ -105,7 +107,7 @@ export function IntegrationsScreen() {
                         <Ionicons
                           name="checkmark-circle"
                           size={20}
-                          color="#34C759"
+                          color={colors.success}
                         />
                         <Text style={styles.connectedText}>Connected</Text>
                       </View>
@@ -113,7 +115,7 @@ export function IntegrationsScreen() {
                       <Ionicons
                         name="chevron-forward"
                         size={24}
-                        color="#ccccd1"
+                        color={colors.iconSecondary}
                       />
                     )}
                   </View>
@@ -123,7 +125,7 @@ export function IntegrationsScreen() {
           </View>
         ) : (
           <View style={styles.emptyContainer}>
-            <Ionicons name="link-outline" size={64} color="#ccccd1" />
+            <Ionicons name="link-outline" size={64} color={colors.iconSecondary} />
             <Text style={styles.emptyText}>No integrations available</Text>
           </View>
         )}
@@ -135,7 +137,7 @@ export function IntegrationsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fafafa",
+    backgroundColor: "#fafafa", // Will be overridden dynamically
   },
   header: {
     flexDirection: "row",
@@ -143,9 +145,9 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: "#fff",
+    backgroundColor: "#fff", // Will be overridden dynamically
     borderBottomWidth: 1,
-    borderBottomColor: "#e5e5ea",
+    borderBottomColor: "#e5e5ea", // Will be overridden dynamically
   },
   backButton: {
     padding: 8,

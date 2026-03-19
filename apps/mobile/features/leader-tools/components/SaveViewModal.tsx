@@ -13,6 +13,7 @@ import { useAuthenticatedMutation, api } from "@services/api/convex";
 import { Id } from "@services/api/convex";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { CustomModal } from "@/components/ui/Modal";
+import { useTheme } from "@hooks/useTheme";
 
 // ============================================================================
 // Types
@@ -69,6 +70,7 @@ export function SaveViewModal({
   editingView,
   isAdmin,
 }: SaveViewModalProps) {
+  const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const [name, setName] = useState("");
   const [visibility, setVisibility] = useState<"personal" | "shared">(
@@ -166,7 +168,7 @@ export function SaveViewModal({
               setName(text.slice(0, MAX_VIEW_NAME_LENGTH))
             }
             placeholder="e.g. New Members, Active Leaders..."
-            placeholderTextColor="#9CA3AF"
+            placeholderTextColor={colors.iconSecondary}
             autoFocus
             maxLength={MAX_VIEW_NAME_LENGTH}
           />
@@ -197,7 +199,7 @@ export function SaveViewModal({
               <Ionicons
                 name="person-outline"
                 size={16}
-                color={visibility === "personal" ? primaryColor : "#6B7280"}
+                color={visibility === "personal" ? primaryColor : colors.icon}
               />
               <Text
                 style={[
@@ -225,7 +227,7 @@ export function SaveViewModal({
                 <Ionicons
                   name="people-outline"
                   size={16}
-                  color={visibility === "shared" ? primaryColor : "#6B7280"}
+                  color={visibility === "shared" ? primaryColor : colors.icon}
                 />
                 <Text
                   style={[
@@ -262,7 +264,7 @@ export function SaveViewModal({
             disabled={!canSave}
           >
             {isSaving ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
+              <ActivityIndicator size="small" color={colors.textInverse} />
             ) : (
               <Text style={styles.saveText}>
                 {isEditMode ? "Update" : "Save"}

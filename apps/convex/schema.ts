@@ -1733,6 +1733,7 @@ export default defineSchema({
 
     // Leader actions (community-level)
     status: v.optional(v.string()),
+    assigneeId: v.optional(v.id("users")), // Primary assignee for indexing (assigneeIds?.[0])
     assigneeIds: v.optional(v.array(v.id("users"))),
     assigneeSortKey: v.optional(v.string()),
     connectionPoint: v.optional(v.string()),
@@ -1742,6 +1743,8 @@ export default defineSchema({
     lastActiveAt: v.optional(v.number()),
     lastAttendedAt: v.optional(v.number()),
     addedAt: v.optional(v.number()),
+    latestNote: v.optional(v.string()),
+    latestNoteAt: v.optional(v.number()),
 
     // Alerts
     alerts: v.optional(v.array(v.string())),
@@ -1774,6 +1777,7 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_community", ["communityId"])
+    .index("by_community_assignee", ["communityId", "assigneeId"])
     .index("by_community_user", ["communityId", "userId"])
     .index("by_group", ["groupId"])
     .index("by_group_user", ["groupId", "userId"])
@@ -1807,7 +1811,7 @@ export default defineSchema({
     .index("by_user", ["userId"])
     .searchIndex("search_communityPeople", {
       searchField: "searchText",
-      filterFields: ["groupId", "status"],
+      filterFields: ["communityId", "groupId", "status", "assigneeId"],
     }),
 
   // =============================================================================

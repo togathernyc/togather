@@ -25,6 +25,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { CustomModal } from "@/components/ui/Modal";
 import { useQuery, useMutation, useAuthenticatedMutation, api, Id } from "@services/api/convex";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 import { format, parseISO } from "date-fns";
 
 interface AttendanceConfirmationModalProps {
@@ -49,6 +50,7 @@ export function AttendanceConfirmationModal({
   groupName,
 }: AttendanceConfirmationModalProps) {
   const { primaryColor } = useCommunityTheme();
+  const { colors } = useTheme();
   const [step, setStep] = useState<Step>("confirm");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -154,23 +156,23 @@ export function AttendanceConfirmationModal({
         <Ionicons name="hand-left" size={48} color={primaryColor} />
       </View>
 
-      <Text style={styles.title}>Did you attend?</Text>
+      <Text style={[styles.title, { color: colors.text }]}>Did you attend?</Text>
 
-      <View style={styles.eventInfo}>
-        <Text style={styles.eventTitle}>{displayTitle}</Text>
+      <View style={[styles.eventInfo, { backgroundColor: colors.surfaceSecondary }]}>
+        <Text style={[styles.eventTitle, { color: colors.text }]}>{displayTitle}</Text>
         {displayGroupName && (
-          <Text style={styles.eventGroup}>{displayGroupName}</Text>
+          <Text style={[styles.eventGroup, { color: colors.textSecondary }]}>{displayGroupName}</Text>
         )}
         {formattedDate && (
-          <Text style={styles.eventDate}>{formattedDate}</Text>
+          <Text style={[styles.eventDate, { color: colors.textSecondary }]}>{formattedDate}</Text>
         )}
       </View>
 
-      <Text style={styles.description}>
+      <Text style={[styles.description, { color: colors.textSecondary }]}>
         Please let us know if you made it to this event.
       </Text>
 
-      {error && <Text style={styles.errorText}>{error}</Text>}
+      {error && <Text style={[styles.errorText, { color: colors.error }]}>{error}</Text>}
 
       <View style={styles.buttonRow}>
         <TouchableOpacity
@@ -179,11 +181,11 @@ export function AttendanceConfirmationModal({
           disabled={isLoading}
         >
           {isLoading ? (
-            <ActivityIndicator size="small" color="#fff" />
+            <ActivityIndicator size="small" color={colors.textInverse} />
           ) : (
             <>
-              <Ionicons name="checkmark-circle" size={24} color="#fff" />
-              <Text style={styles.attendedButtonText}>I Attended</Text>
+              <Ionicons name="checkmark-circle" size={24} color={colors.textInverse} />
+              <Text style={[styles.attendedButtonText, { color: colors.textInverse }]}>I Attended</Text>
             </>
           )}
         </TouchableOpacity>
@@ -191,16 +193,16 @@ export function AttendanceConfirmationModal({
 
       <View style={styles.buttonRow}>
         <TouchableOpacity
-          style={styles.notAttendedButton}
+          style={[styles.notAttendedButton, { backgroundColor: colors.surfaceSecondary }]}
           onPress={() => handleConfirmAttendance(0)}
           disabled={isLoading}
         >
           {isLoading ? (
-            <ActivityIndicator size="small" color="#666" />
+            <ActivityIndicator size="small" color={colors.textSecondary} />
           ) : (
             <>
-              <Ionicons name="close-circle" size={24} color="#666" />
-              <Text style={styles.notAttendedButtonText}>I Didn't Attend</Text>
+              <Ionicons name="close-circle" size={24} color={colors.textSecondary} />
+              <Text style={[styles.notAttendedButtonText, { color: colors.textSecondary }]}>I Didn't Attend</Text>
             </>
           )}
         </TouchableOpacity>
@@ -218,9 +220,9 @@ export function AttendanceConfirmationModal({
         />
       </View>
 
-      <Text style={styles.title}>Thanks for confirming!</Text>
+      <Text style={[styles.title, { color: colors.text }]}>Thanks for confirming!</Text>
 
-      <Text style={styles.description}>
+      <Text style={[styles.description, { color: colors.textSecondary }]}>
         {confirmedStatus === 1
           ? "Great to hear you made it to the event!"
           : "Thanks for letting us know. We hope to see you next time!"}
@@ -230,7 +232,7 @@ export function AttendanceConfirmationModal({
         style={[styles.doneButton, { backgroundColor: primaryColor }]}
         onPress={onClose}
       >
-        <Text style={styles.doneButtonText}>Done</Text>
+        <Text style={[styles.doneButtonText, { color: colors.textInverse }]}>Done</Text>
       </TouchableOpacity>
     </>
   );
@@ -238,12 +240,12 @@ export function AttendanceConfirmationModal({
   const renderAlreadyConfirmedStep = () => (
     <>
       <View style={styles.iconContainer}>
-        <Ionicons name="information-circle" size={64} color="#666" />
+        <Ionicons name="information-circle" size={64} color={colors.textSecondary} />
       </View>
 
-      <Text style={styles.title}>Already Confirmed</Text>
+      <Text style={[styles.title, { color: colors.text }]}>Already Confirmed</Text>
 
-      <Text style={styles.description}>
+      <Text style={[styles.description, { color: colors.textSecondary }]}>
         You've already confirmed your attendance for this event.
         {confirmedStatus === 1
           ? " You marked that you attended."
@@ -254,7 +256,7 @@ export function AttendanceConfirmationModal({
         style={[styles.doneButton, { backgroundColor: primaryColor }]}
         onPress={onClose}
       >
-        <Text style={styles.doneButtonText}>Got it</Text>
+        <Text style={[styles.doneButtonText, { color: colors.textInverse }]}>Got it</Text>
       </TouchableOpacity>
     </>
   );
@@ -262,20 +264,20 @@ export function AttendanceConfirmationModal({
   const renderErrorStep = () => (
     <>
       <View style={styles.iconContainer}>
-        <Ionicons name="alert-circle" size={64} color="#DC2626" />
+        <Ionicons name="alert-circle" size={64} color={colors.error} />
       </View>
 
-      <Text style={styles.title}>Something went wrong</Text>
+      <Text style={[styles.title, { color: colors.text }]}>Something went wrong</Text>
 
-      <Text style={styles.description}>
+      <Text style={[styles.description, { color: colors.textSecondary }]}>
         {error || "Unable to process your request. Please try again."}
       </Text>
 
       <TouchableOpacity
-        style={[styles.doneButton, { backgroundColor: "#666" }]}
+        style={[styles.doneButton, { backgroundColor: colors.textSecondary }]}
         onPress={onClose}
       >
-        <Text style={styles.doneButtonText}>Close</Text>
+        <Text style={[styles.doneButtonText, { color: colors.textInverse }]}>Close</Text>
       </TouchableOpacity>
     </>
   );
@@ -286,7 +288,7 @@ export function AttendanceConfirmationModal({
       return (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={primaryColor} />
-          <Text style={styles.loadingText}>Validating...</Text>
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Validating...</Text>
         </View>
       );
     }
@@ -328,7 +330,6 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 16,
     fontSize: 16,
-    color: "#666",
   },
   iconContainer: {
     marginBottom: 16,
@@ -336,12 +337,10 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 22,
     fontWeight: "700",
-    color: "#333",
     marginBottom: 12,
     textAlign: "center",
   },
   eventInfo: {
-    backgroundColor: "#f8f9fa",
     borderRadius: 12,
     padding: 16,
     marginBottom: 16,
@@ -350,24 +349,20 @@ const styles = StyleSheet.create({
   eventTitle: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
     textAlign: "center",
     marginBottom: 4,
   },
   eventGroup: {
     fontSize: 14,
-    color: "#666",
     textAlign: "center",
     marginBottom: 4,
   },
   eventDate: {
     fontSize: 14,
-    color: "#666",
     textAlign: "center",
   },
   description: {
     fontSize: 15,
-    color: "#666",
     textAlign: "center",
     lineHeight: 22,
     marginBottom: 24,
@@ -387,21 +382,18 @@ const styles = StyleSheet.create({
   attendedButtonText: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#fff",
   },
   notAttendedButton: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
-    backgroundColor: "#f0f0f0",
     borderRadius: 12,
     padding: 16,
   },
   notAttendedButtonText: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#666",
   },
   doneButton: {
     alignSelf: "stretch",
@@ -412,11 +404,9 @@ const styles = StyleSheet.create({
   doneButtonText: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#fff",
   },
   errorText: {
     fontSize: 14,
-    color: "#DC2626",
     textAlign: "center",
     marginBottom: 16,
   },

@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 
 interface RsvpOption {
   id: number;
@@ -35,6 +36,7 @@ export function FloatingRsvpCard({
   options,
   onEdit,
 }: FloatingRsvpCardProps) {
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { primaryColor } = useCommunityTheme();
 
@@ -43,10 +45,10 @@ export function FloatingRsvpCard({
   const label = selectedOption?.label || "Going";
 
   return (
-    <View style={[styles.container, { paddingBottom: insets.bottom + 20 }]}>
+    <View style={[styles.container, { paddingBottom: insets.bottom + 20, backgroundColor: colors.surface, borderTopColor: colors.border }]}>
       <TouchableOpacity
         testID="floating-rsvp-card"
-        style={[styles.card, { borderColor: primaryColor }]}
+        style={[styles.card, { borderColor: primaryColor, backgroundColor: colors.surfaceSecondary }]}
         onPress={onEdit}
         activeOpacity={0.7}
       >
@@ -54,7 +56,7 @@ export function FloatingRsvpCard({
           <Text style={styles.emoji}>{emoji}</Text>
           <View style={styles.textContent}>
             <Text style={[styles.statusLabel, { color: primaryColor }]}>{label}</Text>
-            <Text style={styles.editPrompt}>Edit your RSVP</Text>
+            <Text style={[styles.editPrompt, { color: colors.textSecondary }]}>Edit your RSVP</Text>
           </View>
           <Ionicons name="create-outline" size={20} color={primaryColor} />
         </View>
@@ -69,14 +71,11 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: "#fff",
     borderTopWidth: 1,
-    borderTopColor: "#e0e0e0",
     paddingTop: 16,
     paddingHorizontal: 20,
   },
   card: {
-    backgroundColor: "#F8F0FF",
     borderRadius: 12,
     borderWidth: 1,
     borderColor: DEFAULT_PRIMARY_COLOR,
@@ -109,6 +108,5 @@ const styles = StyleSheet.create({
   },
   editPrompt: {
     fontSize: 13,
-    color: "#666",
   },
 });

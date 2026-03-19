@@ -17,6 +17,7 @@ import type { Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { getExternalChatInfo } from "../utils/externalChat";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 import {
   TOOLBAR_TOOLS,
   DEFAULT_TOOLS,
@@ -61,6 +62,7 @@ export const ChatTabBar = memo(function ChatTabBar({
   onExternalChatPress,
 }: ChatTabBarProps) {
   const { primaryColor } = useCommunityTheme();
+  const { colors: themeColors } = useTheme();
   const externalChatInfo = externalChatLink ? getExternalChatInfo(externalChatLink) : null;
 
   // Helper to get display name for a channel
@@ -72,7 +74,7 @@ export const ChatTabBar = memo(function ChatTabBar({
   };
 
   return (
-    <View style={styles.tabBar}>
+    <View style={[styles.tabBar, { backgroundColor: themeColors.surface, borderBottomColor: themeColors.border }]}>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -102,12 +104,12 @@ export const ChatTabBar = memo(function ChatTabBar({
                   />
                 )}
                 <Text
-                  style={[styles.tabText, isActive && { color: primaryColor }]}
+                  style={[styles.tabText, { color: themeColors.textSecondary }, isActive && { color: primaryColor }]}
                   numberOfLines={1}
                 >
                   {displayName}
                 </Text>
-                {hasUnread && <View style={styles.unreadDot} />}
+                {hasUnread && <View style={[styles.unreadDot, { backgroundColor: themeColors.error }]} />}
               </View>
             </TouchableOpacity>
           );
@@ -116,7 +118,7 @@ export const ChatTabBar = memo(function ChatTabBar({
 
       {externalChatInfo && (
         <TouchableOpacity
-          style={styles.externalChatTab}
+          style={[styles.externalChatTab, { borderColor: themeColors.border }]}
           onPress={onExternalChatPress}
         >
           <Ionicons
@@ -167,6 +169,7 @@ export const ChatToolbar = memo(function ChatToolbar({
 }: ChatToolbarProps) {
   const router = useRouter();
   const { token } = useAuth();
+  const { colors: themeColors } = useTheme();
 
   // Check if user is a leader/admin
   const isLeaderOrAdmin = userRole === "leader" || userRole === "admin";
@@ -278,7 +281,7 @@ export const ChatToolbar = memo(function ChatToolbar({
   if (!showLeaderTools || allToolItems.length === 0) return null;
 
   return (
-    <View style={styles.toolbarContainer}>
+    <View style={[styles.toolbarContainer, { backgroundColor: themeColors.surface, borderBottomColor: themeColors.borderLight }]}>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -288,15 +291,15 @@ export const ChatToolbar = memo(function ChatToolbar({
         {allToolItems.map((item) => (
           <TouchableOpacity
             key={item.id}
-            style={styles.toolbarItem}
+            style={[styles.toolbarItem, { borderColor: themeColors.border, backgroundColor: themeColors.surface }]}
             onPress={() => handleToolPress(item)}
           >
             <Ionicons
               name={item.icon as keyof typeof Ionicons.glyphMap}
               size={18}
-              color="#333"
+              color={themeColors.text}
             />
-            <Text style={styles.toolbarItemText}>{item.label}</Text>
+            <Text style={[styles.toolbarItemText, { color: themeColors.text }]}>{item.label}</Text>
           </TouchableOpacity>
         ))}
       </ScrollView>
@@ -307,7 +310,7 @@ export const ChatToolbar = memo(function ChatToolbar({
             router.push(`/(user)/leader-tools/${groupId}/toolbar-settings`)
           }
         >
-          <Ionicons name="settings-outline" size={18} color="#888" />
+          <Ionicons name="settings-outline" size={18} color={themeColors.icon} />
         </TouchableOpacity>
       )}
     </View>
@@ -390,9 +393,7 @@ const styles = StyleSheet.create({
   // Tab bar styles
   tabBar: {
     flexDirection: "row",
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
     paddingHorizontal: 16,
   },
   tabBarScrollContent: {
@@ -414,7 +415,6 @@ const styles = StyleSheet.create({
   tabText: {
     fontSize: 14,
     fontWeight: "500",
-    color: "#666",
   },
   sharedTabIcon: {
     marginRight: 4,
@@ -423,7 +423,6 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: "#FF3B30",
     marginLeft: 6,
   },
   externalChatTab: {
@@ -434,16 +433,13 @@ const styles = StyleSheet.create({
     marginLeft: "auto",
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: "#e0e0e0",
     alignSelf: "center",
   },
   // Toolbar styles
   toolbarContainer: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
   },
   toolbarScrollView: {
     flex: 1,
@@ -461,14 +457,11 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: "#e0e0e0",
-    backgroundColor: "#fff",
     gap: 6,
   },
   toolbarItemText: {
     fontSize: 14,
     fontWeight: "500",
-    color: "#333",
   },
   settingsButton: {
     paddingHorizontal: 12,

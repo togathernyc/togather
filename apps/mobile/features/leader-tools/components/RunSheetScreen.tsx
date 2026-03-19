@@ -47,6 +47,7 @@ import * as WebBrowser from "expo-web-browser";
 import { useLinkPreview } from "@features/chat/hooks/useLinkPreview";
 import { LinkPreviewCard } from "@features/chat/components/LinkPreviewCard";
 import { DragHandle } from "@components/ui/DragHandle";
+import { useTheme } from "@hooks/useTheme";
 
 // URL regex pattern for detecting links
 const URL_REGEX = /(https?:\/\/[^\s<>"{}|\\^`[\]]+)/g;
@@ -119,6 +120,7 @@ function getFilenameFromUrl(url: string): string {
 
 // Dropbox Video Card Component - Opens in in-app browser for playback
 function DropboxVideoPlayer({ url }: { url: string }) {
+  const { colors, isDark } = useTheme();
   const playableUrl = getDropboxPlayableUrl(url);
   const filename = getFilenameFromUrl(url);
 
@@ -137,17 +139,17 @@ function DropboxVideoPlayer({ url }: { url: string }) {
 
   return (
     <Pressable
-      style={dropboxVideoStyles.container}
+      style={[dropboxVideoStyles.container, { backgroundColor: isDark ? '#1a2730' : '#1a1a1a' }]}
       onPress={handlePress}
     >
-      <View style={dropboxVideoStyles.iconContainer}>
-        <Ionicons name="play-circle" size={48} color="#fff" />
+      <View style={[dropboxVideoStyles.iconContainer, { backgroundColor: isDark ? '#233138' : '#333' }]}>
+        <Ionicons name="play-circle" size={48} color={colors.textInverse} />
       </View>
       <View style={dropboxVideoStyles.textContainer}>
-        <Text style={dropboxVideoStyles.filename} numberOfLines={1}>
+        <Text style={[dropboxVideoStyles.filename, { color: '#fff' }]} numberOfLines={1}>
           {filename}
         </Text>
-        <Text style={dropboxVideoStyles.tapText}>Tap to play video</Text>
+        <Text style={[dropboxVideoStyles.tapText, { color: colors.textTertiary }]}>Tap to play video</Text>
       </View>
     </Pressable>
   );
@@ -157,7 +159,6 @@ const dropboxVideoStyles = StyleSheet.create({
   container: {
     marginTop: 12,
     borderRadius: 8,
-    backgroundColor: "#1a1a1a",
     flexDirection: "row",
     alignItems: "center",
     padding: 12,
@@ -165,7 +166,6 @@ const dropboxVideoStyles = StyleSheet.create({
   iconContainer: {
     width: 60,
     height: 60,
-    backgroundColor: "#333",
     borderRadius: 8,
     justifyContent: "center",
     alignItems: "center",
@@ -175,12 +175,10 @@ const dropboxVideoStyles = StyleSheet.create({
     marginLeft: 12,
   },
   filename: {
-    color: "#fff",
     fontSize: 14,
     fontWeight: "500",
   },
   tapText: {
-    color: "#999",
     fontSize: 12,
     marginTop: 2,
   },
@@ -207,6 +205,7 @@ function removeUrlsFromText(text: string, urls: string[]): string {
 
 // Rich link preview component for runsheet notes
 function RunsheetLinkPreview({ url }: { url: string }) {
+  const { colors } = useTheme();
   const { preview, loading } = useLinkPreview(url);
 
   if (loading) {
@@ -232,7 +231,7 @@ function RunsheetLinkPreview({ url }: { url: string }) {
         }}
         style={linkPreviewStyles.fallbackLink}
       >
-        <Text style={linkPreviewStyles.fallbackLinkText} numberOfLines={1}>
+        <Text style={[linkPreviewStyles.fallbackLinkText, { color: colors.link }]} numberOfLines={1}>
           {url}
         </Text>
       </Pressable>
@@ -264,7 +263,6 @@ const linkPreviewStyles = StyleSheet.create({
     gap: 4,
   },
   fallbackLinkText: {
-    color: "#007AFF",
     textDecorationLine: "underline",
     fontSize: 13,
   },
@@ -408,6 +406,7 @@ export function RunSheetScreen({
   externalThemeColor,
   readOnly = false,
 }: RunSheetScreenProps = {}) {
+  const { colors, isDark } = useTheme();
   const isExternalMode = externalRunSheet !== undefined;
 
   const { group_id } = useLocalSearchParams<{ group_id: string }>();
@@ -863,7 +862,7 @@ export function RunSheetScreen({
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" color={themeColor} />
-        <Text style={styles.loadingText}>Loading run sheet...</Text>
+        <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading run sheet...</Text>
       </View>
     );
   }
@@ -872,9 +871,9 @@ export function RunSheetScreen({
   if (!isExternalMode && error && serviceTypes.length === 0) {
     return (
       <View style={styles.centered}>
-        <Ionicons name="alert-circle-outline" size={48} color="#e74c3c" />
-        <Text style={styles.errorText}>{error}</Text>
-        <Text style={styles.hintText}>
+        <Ionicons name="alert-circle-outline" size={48} color={colors.destructive} />
+        <Text style={[styles.errorText, { color: colors.destructive }]}>{error}</Text>
+        <Text style={[styles.hintText, { color: colors.textTertiary }]}>
           Make sure PCO sync is configured for this group.
         </Text>
       </View>
@@ -885,9 +884,9 @@ export function RunSheetScreen({
   if (!isExternalMode && serviceTypes.length === 0) {
     return (
       <View style={styles.centered}>
-        <Ionicons name="calendar-outline" size={48} color="#999" />
-        <Text style={styles.emptyText}>No PCO services configured</Text>
-        <Text style={styles.hintText}>
+        <Ionicons name="calendar-outline" size={48} color={colors.textTertiary} />
+        <Text style={[styles.emptyText, { color: colors.text }]}>No PCO services configured</Text>
+        <Text style={[styles.hintText, { color: colors.textTertiary }]}>
           Set up PCO sync channels to see run sheets.
         </Text>
       </View>
@@ -897,13 +896,13 @@ export function RunSheetScreen({
   const selectedRoleColor = getRoleColor(selectedRole);
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.backgroundSecondary }]}>
       {/* Drag Indicator - at the very top (hidden in external mode) */}
       {!isExternalMode && <DragHandle />}
 
       {/* Service Type Tabs (hidden in external mode) */}
       {!isExternalMode && serviceTypes.length > 1 && (
-        <View style={styles.serviceTypeTabs}>
+        <View style={[styles.serviceTypeTabs, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             <View style={styles.tabsRow}>
               {serviceTypes.map((type) => (
@@ -911,6 +910,7 @@ export function RunSheetScreen({
                   key={type.id}
                   style={[
                     styles.serviceTab,
+                    { borderColor: colors.border, backgroundColor: colors.surface },
                     selectedServiceTypeId === type.id && {
                       backgroundColor: themeColor,
                       borderColor: themeColor,
@@ -924,6 +924,7 @@ export function RunSheetScreen({
                   <Text
                     style={[
                       styles.serviceTabText,
+                      { color: colors.textSecondary },
                       selectedServiceTypeId === type.id && styles.serviceTabTextActive,
                     ]}
                   >
@@ -938,7 +939,7 @@ export function RunSheetScreen({
 
       {/* Role Selector (with share/settings buttons) */}
       {(availableRoles.length > 1 || canAccessSettings || !readOnly) && (
-        <View style={styles.roleSelector}>
+        <View style={[styles.roleSelector, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
           <View style={styles.roleSelectorContent}>
             {availableRoles.length > 1 && (
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.rolesScrollView}>
@@ -952,7 +953,7 @@ export function RunSheetScreen({
                         style={[
                           styles.roleChip,
                           {
-                            backgroundColor: isSelected ? roleColor : "#f5f5f5",
+                            backgroundColor: isSelected ? roleColor : colors.surfaceSecondary,
                             borderColor: roleColor,
                           },
                         ]}
@@ -978,7 +979,7 @@ export function RunSheetScreen({
                 onPress={handleShareRunSheet}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               >
-                <Ionicons name="share-outline" size={22} color="#666" />
+                <Ionicons name="share-outline" size={22} color={colors.textSecondary} />
               </Pressable>
             )}
             {!readOnly && canAccessSettings && (
@@ -987,7 +988,7 @@ export function RunSheetScreen({
                 onPress={() => router.push(`/(user)/leader-tools/${group_id}/tool-settings/runsheet`)}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               >
-                <Ionicons name="settings-outline" size={22} color="#666" />
+                <Ionicons name="settings-outline" size={22} color={colors.textSecondary} />
               </Pressable>
             )}
           </View>
@@ -996,7 +997,7 @@ export function RunSheetScreen({
 
       {/* Service Time Toggle (when plan has multiple service times) */}
       {runSheet && runSheet.serviceTimes && runSheet.serviceTimes.length > 1 && (
-        <View style={styles.serviceTimeSelector}>
+        <View style={[styles.serviceTimeSelector, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
           {runSheet.serviceTimes.map((st) => {
             const isSelected = selectedServiceTimeId
               ? st.id === selectedServiceTimeId
@@ -1007,6 +1008,7 @@ export function RunSheetScreen({
                 key={st.id}
                 style={[
                   styles.serviceTimeChip,
+                  { backgroundColor: colors.surfaceSecondary },
                   isSelected && { backgroundColor: themeColor },
                 ]}
                 onPress={() => setSelectedServiceTimeId(st.id)}
@@ -1014,6 +1016,7 @@ export function RunSheetScreen({
                 <Text
                   style={[
                     styles.serviceTimeChipText,
+                    { color: colors.textSecondary },
                     isSelected && { color: "#fff" },
                   ]}
                 >
@@ -1032,9 +1035,9 @@ export function RunSheetScreen({
         </View>
       ) : !runSheet ? (
         <View style={styles.centered}>
-          <Ionicons name="calendar-outline" size={48} color="#999" />
-          <Text style={styles.emptyText}>No upcoming plans</Text>
-          <Text style={styles.hintText}>
+          <Ionicons name="calendar-outline" size={48} color={colors.textTertiary} />
+          <Text style={[styles.emptyText, { color: colors.text }]}>No upcoming plans</Text>
+          <Text style={[styles.hintText, { color: colors.textTertiary }]}>
             There are no scheduled services for this location.
           </Text>
         </View>
@@ -1052,15 +1055,15 @@ export function RunSheetScreen({
         >
           {/* Stale data indicator */}
           {isStale && (
-            <View style={styles.staleBanner}>
-              <Ionicons name="cloud-offline-outline" size={16} color="#856404" />
-              <Text style={styles.staleBannerText}>Cached — may not be current</Text>
+            <View style={[styles.staleBanner, { backgroundColor: isDark ? '#332b00' : '#fff3cd', borderBottomColor: colors.warning }]}>
+              <Ionicons name="cloud-offline-outline" size={16} color={colors.warning} />
+              <Text style={[styles.staleBannerText, { color: isDark ? colors.warning : '#856404' }]}>Cached — may not be current</Text>
             </View>
           )}
 
           {/* Plan Header */}
-          <View style={styles.planHeader}>
-            <Text style={styles.planDate}>
+          <View style={[styles.planHeader, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+            <Text style={[styles.planDate, { color: colors.textSecondary }]}>
               {new Date(runSheet.date).toLocaleDateString("en-US", {
                 weekday: "long",
                 month: "short",
@@ -1068,10 +1071,10 @@ export function RunSheetScreen({
               })}
             </Text>
             {runSheet.title && (
-              <Text style={styles.planTitle}>{runSheet.title}</Text>
+              <Text style={[styles.planTitle, { color: colors.text }]}>{runSheet.title}</Text>
             )}
             {runSheet.seriesTitle && (
-              <Text style={styles.seriesTitle}>{runSheet.seriesTitle}</Text>
+              <Text style={[styles.seriesTitle, { color: colors.textTertiary }]}>{runSheet.seriesTitle}</Text>
             )}
           </View>
 
@@ -1208,6 +1211,7 @@ function RunSheetItemRow({
   onToggleCollapse: () => void;
   isCurrent: boolean;
 }) {
+  const { colors, isDark } = useTheme();
   const isHeader = item.type === "header";
 
   // Get clock time from computed startsAt
@@ -1267,7 +1271,8 @@ function RunSheetItemRow({
     <View
       style={[
         styles.itemRowOuter,
-        isCurrent && styles.currentItem,
+        { backgroundColor: colors.surface },
+        isCurrent && { backgroundColor: isDark ? '#2a2700' : '#FFF9E6' },
         // Role note border applied after currentItem so it takes precedence
         hasNotes && { borderLeftColor: roleColor, borderLeftWidth: 4 },
         // If current but no role notes, apply the current item border
@@ -1280,12 +1285,12 @@ function RunSheetItemRow({
         onPress={hasExpandableContent ? onToggle : undefined}
       >
         {/* Time Column */}
-        <View style={styles.timeColumn}>
+        <View style={[styles.timeColumn, { borderRightColor: colors.borderLight }]}>
           {clockTime && (
-            <Text style={styles.clockTime}>{clockTime}</Text>
+            <Text style={[styles.clockTime, { color: colors.textSecondary }]}>{clockTime}</Text>
           )}
           {item.length != null && item.length > 0 && (
-            <Text style={styles.duration}>{formatDuration(item.length)}</Text>
+            <Text style={[styles.duration, { color: colors.textTertiary }]}>{formatDuration(item.length)}</Text>
           )}
         </View>
 
@@ -1294,12 +1299,12 @@ function RunSheetItemRow({
           {/* Title Row */}
           <View style={styles.titleRow}>
             <View style={styles.titleContent}>
-              <Text style={styles.itemTitle} numberOfLines={isExpanded ? undefined : 1}>
+              <Text style={[styles.itemTitle, { color: colors.text }]} numberOfLines={isExpanded ? undefined : 1}>
                 {item.title}
               </Text>
               {/* If title IS a time range, show description inline */}
               {titleIsTimeRange && hasDescription && !isExpanded && (
-                <Text style={styles.inlineDescription} numberOfLines={1}>
+                <Text style={[styles.inlineDescription, { color: colors.textSecondary }]} numberOfLines={1}>
                   {item.description}
                 </Text>
               )}
@@ -1308,7 +1313,7 @@ function RunSheetItemRow({
               <Ionicons
                 name={isExpanded ? "chevron-up" : "chevron-down"}
                 size={18}
-                color="#999"
+                color={colors.textTertiary}
               />
             )}
           </View>
@@ -1330,7 +1335,7 @@ function RunSheetItemRow({
               </View>
             )}
             {item.songDetails?.arrangement && (
-              <Text style={styles.arrangementText}>{item.songDetails.arrangement}</Text>
+              <Text style={[styles.arrangementText, { color: colors.textSecondary }]}>{item.songDetails.arrangement}</Text>
             )}
           </View>
 
@@ -1347,18 +1352,18 @@ function RunSheetItemRow({
 
       {/* Expanded content - OUTSIDE Pressable for text selection and link clicking */}
       {isExpanded && (
-          <View style={styles.expandedContent}>
+          <View style={[styles.expandedContent, { borderTopColor: colors.borderLight }]}>
             {/* Description */}
             {hasDescription && (
-              <View style={styles.descriptionBox}>
-                <Text style={styles.descriptionLabel}>Description</Text>
-                {renderTextWithLinks(item.description!, styles.descriptionText, themeColor)}
+              <View style={[styles.descriptionBox, { backgroundColor: colors.surfaceSecondary }]}>
+                <Text style={[styles.descriptionLabel, { color: colors.textTertiary }]}>Description</Text>
+                {renderTextWithLinks(item.description!, [styles.descriptionText, { color: colors.text }], themeColor)}
               </View>
             )}
 
             {/* Song details */}
             {item.songDetails && (
-              <View style={styles.songDetailsBox}>
+              <View style={[styles.songDetailsBox, { backgroundColor: colors.surfaceSecondary }]}>
                 {item.songDetails.key && (
                   <DetailRow label="Key" value={item.songDetails.key} />
                 )}
@@ -1386,7 +1391,7 @@ function RunSheetItemRow({
                     {role}
                   </Text>
                   {notes.map((content, idx) => (
-                    <SelectableText key={idx} style={styles.roleNoteText}>
+                    <SelectableText key={idx} style={[styles.roleNoteText, { color: colors.text }]}>
                       {sanitizeNoteContent(content)}
                     </SelectableText>
                   ))}
@@ -1402,7 +1407,7 @@ function RunSheetItemRow({
                     { backgroundColor: roleColor + "15", borderLeftColor: roleColor },
                   ]}
                 >
-                  <SelectableText style={styles.roleNoteText}>
+                  <SelectableText style={[styles.roleNoteText, { color: colors.text }]}>
                     {sanitizeNoteContent(note.content)}
                   </SelectableText>
                 </View>
@@ -1411,8 +1416,8 @@ function RunSheetItemRow({
 
             {/* HTML Details from PCO "Detail" tab - shown AFTER notes */}
             {item.htmlDetails && (
-              <View style={styles.descriptionBox}>
-                <Text style={styles.descriptionLabel}>Details</Text>
+              <View style={[styles.descriptionBox, { backgroundColor: colors.surfaceSecondary }]}>
+                <Text style={[styles.descriptionLabel, { color: colors.textTertiary }]}>Details</Text>
                 {renderTextWithLinks(
                   item.htmlDetails.replace(/<[^>]*>/g, ''),
                   styles.descriptionText,
@@ -1423,8 +1428,8 @@ function RunSheetItemRow({
 
             {/* Attachments/Files - shown AFTER notes and details */}
             {item.attachments && item.attachments.length > 0 && (
-              <View style={styles.attachmentsBox}>
-                <Text style={styles.attachmentsLabel}>Files</Text>
+              <View style={[styles.attachmentsBox, { backgroundColor: colors.surfaceSecondary }]}>
+                <Text style={[styles.attachmentsLabel, { color: colors.textSecondary }]}>Files</Text>
                 {item.attachments.map((attachment) => (
                   <Pressable
                     key={attachment.id}
@@ -1440,7 +1445,7 @@ function RunSheetItemRow({
                     <Text style={[styles.attachmentName, { color: themeColor }]} numberOfLines={1}>
                       {attachment.filename}
                     </Text>
-                    <Ionicons name="open-outline" size={14} color="#999" />
+                    <Ionicons name="open-outline" size={14} color={colors.textTertiary} />
                   </Pressable>
                 ))}
               </View>
@@ -1452,10 +1457,11 @@ function RunSheetItemRow({
 }
 
 function DetailRow({ label, value }: { label: string; value: string }) {
+  const { colors } = useTheme();
   return (
     <View style={styles.detailRow}>
-      <Text style={styles.detailLabel}>{label}</Text>
-      <Text style={styles.detailValue}>{value}</Text>
+      <Text style={[styles.detailLabel, { color: colors.textTertiary }]}>{label}</Text>
+      <Text style={[styles.detailValue, { color: colors.text }]}>{value}</Text>
     </View>
   );
 }
@@ -1469,7 +1475,6 @@ function formatDuration(seconds: number): string {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f8f9fa",
   },
   scrollView: {
     flex: 1,
@@ -1483,32 +1488,26 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 12,
     fontSize: 16,
-    color: "#666",
   },
   errorText: {
     marginTop: 12,
     fontSize: 16,
-    color: "#e74c3c",
     textAlign: "center",
   },
   emptyText: {
     marginTop: 12,
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
   },
   hintText: {
     marginTop: 8,
     fontSize: 14,
-    color: "#999",
     textAlign: "center",
   },
 
   // Service Type Tabs
   serviceTypeTabs: {
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
     paddingVertical: 8,
   },
   tabsRow: {
@@ -1521,13 +1520,10 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: "#e0e0e0",
-    backgroundColor: "#fff",
   },
   serviceTabText: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#666",
   },
   serviceTabTextActive: {
     color: "#fff",
@@ -1536,28 +1532,22 @@ const styles = StyleSheet.create({
   // Role Selector
   serviceTimeSelector: {
     flexDirection: "row",
-    backgroundColor: "#fff",
     paddingHorizontal: 12,
     paddingVertical: 8,
     gap: 8,
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   serviceTimeChip: {
     paddingHorizontal: 14,
     paddingVertical: 6,
     borderRadius: 16,
-    backgroundColor: "#f0f0f0",
   },
   serviceTimeChipText: {
     fontSize: 13,
     fontWeight: "600",
-    color: "#666",
   },
   roleSelector: {
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
     paddingVertical: 10,
   },
   roleSelectorContent: {
@@ -1595,39 +1585,31 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
-    backgroundColor: "#fff3cd",
     paddingVertical: 8,
     paddingHorizontal: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#ffc107",
   },
   staleBannerText: {
     fontSize: 13,
     fontWeight: "500",
-    color: "#856404",
   },
 
   // Plan Header
   planHeader: {
     padding: 16,
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   planDate: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#666",
     marginBottom: 4,
   },
   planTitle: {
     fontSize: 20,
     fontWeight: "bold",
-    color: "#333",
   },
   seriesTitle: {
     fontSize: 14,
-    color: "#999",
     fontStyle: "italic",
     marginTop: 4,
   },
@@ -1660,7 +1642,6 @@ const styles = StyleSheet.create({
 
   // Item Row - outer container (card styling)
   itemRowOuter: {
-    backgroundColor: "#fff",
     marginHorizontal: 4,
     marginVertical: 3,
     borderRadius: 10,
@@ -1672,7 +1653,6 @@ const styles = StyleSheet.create({
     elevation: 1,
   },
   currentItem: {
-    backgroundColor: "#FFF9E6",
   },
   // Item Row - pressable header (row layout)
   itemRow: {
@@ -1684,20 +1664,17 @@ const styles = StyleSheet.create({
     width: 52,
     paddingRight: 6,
     borderRightWidth: 1,
-    borderRightColor: "#e8e8e8",
     marginRight: 6,
     alignItems: "flex-end",
     justifyContent: "flex-start",
   },
   clockTime: {
     fontSize: 10,
-    color: "#666",
     fontWeight: "500",
     marginTop: 2,
   },
   duration: {
     fontSize: 11,
-    color: "#999",
     marginTop: 1,
   },
 
@@ -1714,7 +1691,6 @@ const styles = StyleSheet.create({
   itemTitle: {
     fontSize: 15,
     fontWeight: "600",
-    color: "#333",
     flex: 1,
   },
 
@@ -1724,7 +1700,6 @@ const styles = StyleSheet.create({
   },
   inlineDescription: {
     fontSize: 13,
-    color: "#666",
     marginTop: 2,
   },
 
@@ -1757,7 +1732,6 @@ const styles = StyleSheet.create({
   },
   arrangementText: {
     fontSize: 12,
-    color: "#666",
   },
 
   // Note Preview
@@ -1773,32 +1747,27 @@ const styles = StyleSheet.create({
     marginLeft: 26, // Small indent for visual hierarchy
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: "#f0f0f0",
     gap: 10,
   },
 
   // Description Box
   descriptionBox: {
-    backgroundColor: "#f8f9fa",
     padding: 10,
     borderRadius: 8,
   },
   descriptionLabel: {
     fontSize: 10,
     fontWeight: "600",
-    color: "#999",
     textTransform: "uppercase",
     marginBottom: 4,
   },
   descriptionText: {
     fontSize: 13,
-    color: "#333",
     lineHeight: 18,
   },
 
   // Song Details Box
   songDetailsBox: {
-    backgroundColor: "#f8f9fa",
     padding: 10,
     borderRadius: 8,
     gap: 4,
@@ -1809,12 +1778,10 @@ const styles = StyleSheet.create({
   },
   detailLabel: {
     fontSize: 11,
-    color: "#999",
     textTransform: "uppercase",
   },
   detailValue: {
     fontSize: 12,
-    color: "#333",
     fontWeight: "500",
   },
 
@@ -1832,7 +1799,6 @@ const styles = StyleSheet.create({
   },
   roleNoteText: {
     fontSize: 13,
-    color: "#333",
     lineHeight: 18,
   },
 
@@ -1840,13 +1806,11 @@ const styles = StyleSheet.create({
   attachmentsBox: {
     marginTop: 12,
     padding: 12,
-    backgroundColor: "#f8f9fa",
     borderRadius: 8,
   },
   attachmentsLabel: {
     fontSize: 12,
     fontWeight: "600",
-    color: "#666",
     marginBottom: 8,
     textTransform: "uppercase",
   },

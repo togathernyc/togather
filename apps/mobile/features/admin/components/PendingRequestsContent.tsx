@@ -25,8 +25,8 @@ import { formatDistanceToNow } from "date-fns";
 import { useQuery, useMutation } from "@services/api/convex";
 import { api, Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
-import { DEFAULT_PRIMARY_COLOR } from "../../../utils/styles";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 import { GroupCreationRequestsContent } from "./GroupCreationRequestsContent";
 import { formatError } from "@/utils/error-handling";
 
@@ -66,6 +66,7 @@ export function PendingRequestsContent() {
   const insets = useSafeAreaInsets();
   const { community, token } = useAuth();
   const { primaryColor } = useCommunityTheme();
+  const { colors, isDark } = useTheme();
   const [activeSubTab, setActiveSubTab] = useState<RequestSubTab>("join");
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
@@ -253,7 +254,7 @@ export function PendingRequestsContent() {
     return (
       <View style={styles.centerContainer}>
         <ActivityIndicator size="large" color={primaryColor} />
-        <Text style={styles.loadingText}>Loading requests...</Text>
+        <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading requests...</Text>
       </View>
     );
   }
@@ -261,9 +262,9 @@ export function PendingRequestsContent() {
   if (isError) {
     return (
       <View style={styles.centerContainer}>
-        <Ionicons name="alert-circle-outline" size={48} color="#FF6B6B" />
-        <Text style={styles.errorText}>Failed to load requests</Text>
-        <TouchableOpacity style={styles.retryButton} onPress={handleRefresh}>
+        <Ionicons name="alert-circle-outline" size={48} color={colors.error} />
+        <Text style={[styles.errorText, { color: colors.error }]}>Failed to load requests</Text>
+        <TouchableOpacity style={[styles.retryButton, { backgroundColor: primaryColor }]} onPress={handleRefresh}>
           <Text style={styles.retryButtonText}>Retry</Text>
         </TouchableOpacity>
       </View>
@@ -279,9 +280,9 @@ export function PendingRequestsContent() {
   const creationRequestsCount = creationRequests ? creationRequests.length : 0;
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
       {/* Sub-tab selector */}
-      <View style={styles.subTabContainer}>
+      <View style={[styles.subTabContainer, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <TouchableOpacity
           style={[
             styles.subTab,
@@ -292,6 +293,7 @@ export function PendingRequestsContent() {
           <Text
             style={[
               styles.subTabText,
+              { color: colors.textSecondary },
               activeSubTab === "join" && [styles.subTabTextActive, { color: primaryColor }],
             ]}
           >
@@ -313,6 +315,7 @@ export function PendingRequestsContent() {
           <Text
             style={[
               styles.subTabText,
+              { color: colors.textSecondary },
               activeSubTab === "creation" && [styles.subTabTextActive, { color: primaryColor }],
             ]}
           >
@@ -332,8 +335,8 @@ export function PendingRequestsContent() {
       ) : (
         <>
           {/* Summary */}
-          <View style={styles.summary}>
-            <Text style={styles.summaryText}>
+          <View style={[styles.summary, { backgroundColor: colors.surfaceSecondary }]}>
+            <Text style={[styles.summaryText, { color: colors.textSecondary }]}>
               {isEmpty
                 ? "No pending requests"
                 : `${pendingRequests.reduce((acc, u) => acc + u.pending_requests.length, 0)} requests from ${pendingRequests.length} people`}
@@ -353,8 +356,8 @@ export function PendingRequestsContent() {
         {isEmpty ? (
           <View style={styles.emptyContainer}>
             <Ionicons name="checkmark-circle-outline" size={64} color={primaryColor} />
-            <Text style={styles.emptyTitle}>All caught up!</Text>
-            <Text style={styles.emptySubtitle}>
+            <Text style={[styles.emptyTitle, { color: colors.text }]}>All caught up!</Text>
+            <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
               There are no pending group join requests at this time.
             </Text>
           </View>
@@ -383,15 +386,16 @@ export function PendingRequestsContent() {
         animationType="fade"
         onRequestClose={() => setShowDeclineModal(false)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Decline Request</Text>
-            <Text style={styles.modalSubtitle}>
+        <View style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}>
+          <View style={[styles.modalContent, { backgroundColor: colors.modalBackground }]}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Decline Request</Text>
+            <Text style={[styles.modalSubtitle, { color: colors.textSecondary }]}>
               Optionally provide a reason for declining.
             </Text>
             <TextInput
-              style={styles.reasonInput}
+              style={[styles.reasonInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
               placeholder="Reason (optional)"
+              placeholderTextColor={colors.inputPlaceholder}
               value={declineReason}
               onChangeText={setDeclineReason}
               multiline
@@ -402,10 +406,10 @@ export function PendingRequestsContent() {
                 style={styles.modalCancelButton}
                 onPress={() => setShowDeclineModal(false)}
               >
-                <Text style={styles.modalCancelText}>Cancel</Text>
+                <Text style={[styles.modalCancelText, { color: colors.textSecondary }]}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.modalDeclineButton}
+                style={[styles.modalDeclineButton, { backgroundColor: colors.destructive }]}
                 onPress={handleDeclineConfirm}
               >
                 <Text style={styles.modalDeclineText}>Decline</Text>
@@ -423,60 +427,60 @@ export function PendingRequestsContent() {
         onRequestClose={() => setShowHistoryModal(false)}
       >
         <TouchableOpacity
-          style={styles.historyModalOverlay}
+          style={[styles.historyModalOverlay, { backgroundColor: colors.overlay }]}
           activeOpacity={1}
           onPress={() => setShowHistoryModal(false)}
         >
           <TouchableOpacity
             activeOpacity={1}
             onPress={(e) => e.stopPropagation()}
-            style={[styles.historyModalContent, { paddingBottom: insets.bottom }]}
+            style={[styles.historyModalContent, { paddingBottom: insets.bottom, backgroundColor: colors.modalBackground }]}
           >
             <View style={styles.historyModalHeader}>
-              <Text style={styles.historyModalTitle}>Group History</Text>
+              <Text style={[styles.historyModalTitle, { color: colors.text }]}>Group History</Text>
               <TouchableOpacity onPress={() => setShowHistoryModal(false)}>
-                <Ionicons name="close" size={24} color="#333" />
+                <Ionicons name="close" size={24} color={colors.text} />
               </TouchableOpacity>
             </View>
             {isLoadingHistory ? (
               <ActivityIndicator size="large" color={primaryColor} />
             ) : isHistoryError ? (
               <View style={styles.historyErrorContainer}>
-                <Ionicons name="alert-circle-outline" size={48} color="#FF6B6B" />
-                <Text style={styles.historyErrorText}>
+                <Ionicons name="alert-circle-outline" size={48} color={colors.error} />
+                <Text style={[styles.historyErrorText, { color: colors.error }]}>
                   Failed to load history. Please try again.
                 </Text>
               </View>
             ) : userHistory ? (
               <ScrollView style={styles.historyList}>
-                <View style={styles.historyUserInfo}>
-                  <Text style={styles.historyUserName}>
+                <View style={[styles.historyUserInfo, { borderBottomColor: colors.borderLight }]}>
+                  <Text style={[styles.historyUserName, { color: colors.text }]}>
                     {userHistory.first_name} {userHistory.last_name}
                   </Text>
-                  <Text style={styles.historyUserEmail}>{userHistory.email}</Text>
+                  <Text style={[styles.historyUserEmail, { color: colors.textSecondary }]}>{userHistory.email}</Text>
                 </View>
                 {userHistory.history.length === 0 ? (
-                  <Text style={styles.noHistoryText}>No group history</Text>
+                  <Text style={[styles.noHistoryText, { color: colors.textTertiary }]}>No group history</Text>
                 ) : (
                   userHistory.history.map((entry: any, index: number) => (
-                    <View key={`${entry.group_id}-${index}`} style={styles.historyEntry}>
+                    <View key={`${entry.group_id}-${index}`} style={[styles.historyEntry, { borderBottomColor: colors.borderLight }]}>
                       <View style={styles.historyEntryHeader}>
-                        <Text style={styles.historyGroupName}>{entry.group_name}</Text>
+                        <Text style={[styles.historyGroupName, { color: colors.text }]}>{entry.group_name}</Text>
                         <StatusBadge status={entry.request_status} isActive={entry.is_active} />
                       </View>
-                      <Text style={styles.historyGroupType}>{entry.group_type_name}</Text>
+                      <Text style={[styles.historyGroupType, { color: colors.textSecondary }]}>{entry.group_type_name}</Text>
                       {entry.requested_at && (
-                        <Text style={styles.historyDate}>
+                        <Text style={[styles.historyDate, { color: colors.textTertiary }]}>
                           Requested: {formatDate(entry.requested_at)}
                         </Text>
                       )}
                       {entry.joined_at && (
-                        <Text style={styles.historyDate}>
+                        <Text style={[styles.historyDate, { color: colors.textTertiary }]}>
                           Joined: {formatDate(entry.joined_at)}
                         </Text>
                       )}
                       {entry.left_at && (
-                        <Text style={styles.historyDate}>
+                        <Text style={[styles.historyDate, { color: colors.textTertiary }]}>
                           Left: {formatDate(entry.left_at)}
                         </Text>
                       )}
@@ -541,6 +545,7 @@ function UserRequestCard({
   isProcessing,
   primaryColor,
 }: UserRequestCardProps) {
+  const { colors, isDark } = useTheme();
   const userName = `${user.first_name} ${user.last_name}`;
   const hasMultipleRequests = user.pending_requests.length > 1;
   const hasMemberships = user.current_memberships.length > 0;
@@ -551,7 +556,7 @@ function UserRequestCard({
     .join(", ");
 
   return (
-    <View style={styles.userCard}>
+    <View style={[styles.userCard, { backgroundColor: colors.surface }]}>
       {/* User Header */}
       <TouchableOpacity
         style={styles.userHeader}
@@ -562,7 +567,7 @@ function UserRequestCard({
           {user.profile_photo ? (
             <Image source={{ uri: user.profile_photo }} style={styles.avatarImage} />
           ) : (
-            <View style={styles.avatarPlaceholder}>
+            <View style={[styles.avatarPlaceholder, { backgroundColor: primaryColor }]}>
               <Text style={styles.avatarInitials}>
                 {user.first_name?.[0]}
                 {user.last_name?.[0]}
@@ -571,35 +576,35 @@ function UserRequestCard({
           )}
         </View>
         <View style={styles.userInfo}>
-          <Text style={styles.userName}>{userName}</Text>
-          <Text style={styles.userEmail}>{user.email}</Text>
+          <Text style={[styles.userName, { color: colors.text }]}>{userName}</Text>
+          <Text style={[styles.userEmail, { color: colors.textSecondary }]}>{user.email}</Text>
           {hasMemberships && (
-            <Text style={styles.membershipSummary}>
+            <Text style={[styles.membershipSummary, { color: primaryColor }]}>
               Member of: {membershipSummary}
             </Text>
           )}
         </View>
         {hasMultipleRequests && (
           <View style={styles.expandIndicator}>
-            <Text style={styles.requestCount}>{user.pending_requests.length}</Text>
+            <Text style={[styles.requestCount, { color: primaryColor, backgroundColor: `${primaryColor}20` }]}>{user.pending_requests.length}</Text>
             <Ionicons
               name={isExpanded ? "chevron-up" : "chevron-down"}
               size={20}
-              color="#666"
+              color={colors.textSecondary}
             />
           </View>
         )}
       </TouchableOpacity>
 
       {/* View History Button */}
-      <TouchableOpacity style={styles.historyButton} onPress={onViewHistory}>
-        <Ionicons name="time-outline" size={16} color={DEFAULT_PRIMARY_COLOR} />
-        <Text style={styles.historyButtonText}>View Full History</Text>
+      <TouchableOpacity style={[styles.historyButton, { borderTopColor: colors.borderLight, backgroundColor: colors.surfaceSecondary }]} onPress={onViewHistory}>
+        <Ionicons name="time-outline" size={16} color={primaryColor} />
+        <Text style={[styles.historyButtonText, { color: primaryColor }]}>View Full History</Text>
       </TouchableOpacity>
 
       {/* Request List */}
       {(hasMultipleRequests ? isExpanded : true) && (
-        <View style={styles.requestsList}>
+        <View style={[styles.requestsList, { borderTopColor: colors.borderLight }]}>
           {user.pending_requests.map((request) => (
             <RequestItem
               key={request.membership_id}
@@ -619,7 +624,7 @@ function UserRequestCard({
       {/* Collapsed summary for multiple requests */}
       {hasMultipleRequests && !isExpanded && (
         <View style={styles.collapsedSummary}>
-          <Text style={styles.collapsedText}>
+          <Text style={[styles.collapsedText, { color: colors.textSecondary }]}>
             Requesting: {user.pending_requests.map((r) => r.group_name).join(", ")}
           </Text>
         </View>
@@ -650,23 +655,24 @@ function RequestItem({
   isProcessing,
   primaryColor,
 }: RequestItemProps) {
+  const { colors, isDark } = useTheme();
   return (
-    <View style={styles.requestItem}>
+    <View style={[styles.requestItem, { borderBottomColor: colors.borderLight }]}>
       <View style={styles.requestInfo}>
-        <Text style={styles.groupName}>{request.group_name}</Text>
-        <Text style={styles.groupType}>{request.group_type}</Text>
-        <Text style={styles.requestDate}>{formatDate(request.requested_at)}</Text>
+        <Text style={[styles.groupName, { color: colors.text }]}>{request.group_name}</Text>
+        <Text style={[styles.groupType, { color: colors.textSecondary }]}>{request.group_type}</Text>
+        <Text style={[styles.requestDate, { color: colors.textTertiary }]}>{formatDate(request.requested_at)}</Text>
       </View>
       <View style={styles.requestActions}>
         <TouchableOpacity
-          style={[styles.actionButton, styles.declineButton]}
+          style={[styles.actionButton, { backgroundColor: isDark ? 'rgba(255,107,107,0.2)' : '#FF6B6B20' }]}
           onPress={() => onDecline(request.membership_id, String(userId), request.group_name)}
           disabled={isProcessing}
         >
-          <Ionicons name="close" size={18} color="#FF6B6B" />
+          <Ionicons name="close" size={18} color={colors.destructive} />
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.actionButton, styles.acceptButton]}
+          style={[styles.actionButton, { backgroundColor: `${primaryColor}20` }]}
           onPress={() => onAccept(request.membership_id, userName, request.group_name)}
           disabled={isProcessing}
         >
@@ -680,13 +686,10 @@ function RequestItem({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f5f5f5",
   },
   subTabContainer: {
     flexDirection: "row",
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   subTab: {
     flex: 1,
@@ -703,7 +706,6 @@ const styles = StyleSheet.create({
   subTabText: {
     fontSize: 15,
     fontWeight: "500",
-    color: "#666",
   },
   subTabTextActive: {
     fontWeight: "600",
@@ -731,18 +733,15 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 12,
     fontSize: 16,
-    color: "#666",
   },
   errorText: {
     marginTop: 12,
     fontSize: 16,
-    color: "#FF6B6B",
   },
   retryButton: {
     marginTop: 16,
     paddingHorizontal: 24,
     paddingVertical: 12,
-    backgroundColor: DEFAULT_PRIMARY_COLOR,
     borderRadius: 8,
   },
   retryButtonText: {
@@ -752,11 +751,9 @@ const styles = StyleSheet.create({
   summary: {
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: "#f5f5f5",
   },
   summaryText: {
     fontSize: 14,
-    color: "#666",
   },
   emptyContainer: {
     flex: 1,
@@ -767,12 +764,10 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 20,
     fontWeight: "600",
-    color: "#333",
     marginTop: 16,
   },
   emptySubtitle: {
     fontSize: 14,
-    color: "#666",
     textAlign: "center",
     marginTop: 8,
   },
@@ -788,7 +783,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   userCard: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     overflow: "hidden",
     shadowColor: "#000",
@@ -816,7 +810,6 @@ const styles = StyleSheet.create({
   avatarPlaceholder: {
     width: "100%",
     height: "100%",
-    backgroundColor: DEFAULT_PRIMARY_COLOR,
     justifyContent: "center",
     alignItems: "center",
   },
@@ -831,16 +824,13 @@ const styles = StyleSheet.create({
   userName: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
   },
   userEmail: {
     fontSize: 13,
-    color: "#666",
     marginTop: 2,
   },
   membershipSummary: {
     fontSize: 12,
-    color: DEFAULT_PRIMARY_COLOR,
     marginTop: 4,
   },
   expandIndicator: {
@@ -851,8 +841,6 @@ const styles = StyleSheet.create({
   requestCount: {
     fontSize: 14,
     fontWeight: "600",
-    color: DEFAULT_PRIMARY_COLOR,
-    backgroundColor: `${DEFAULT_PRIMARY_COLOR}20`,
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 12,
@@ -864,17 +852,13 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingVertical: 8,
     borderTopWidth: 1,
-    borderTopColor: "#f0f0f0",
-    backgroundColor: "#fafafa",
   },
   historyButtonText: {
     fontSize: 13,
-    color: DEFAULT_PRIMARY_COLOR,
     fontWeight: "500",
   },
   requestsList: {
     borderTopWidth: 1,
-    borderTopColor: "#f0f0f0",
   },
   collapsedSummary: {
     paddingHorizontal: 16,
@@ -882,7 +866,6 @@ const styles = StyleSheet.create({
   },
   collapsedText: {
     fontSize: 13,
-    color: "#666",
     fontStyle: "italic",
   },
   requestItem: {
@@ -891,7 +874,6 @@ const styles = StyleSheet.create({
     padding: 12,
     paddingLeft: 76,
     borderBottomWidth: 1,
-    borderBottomColor: "#f5f5f5",
   },
   requestInfo: {
     flex: 1,
@@ -899,16 +881,13 @@ const styles = StyleSheet.create({
   groupName: {
     fontSize: 15,
     fontWeight: "500",
-    color: "#333",
   },
   groupType: {
     fontSize: 12,
-    color: "#666",
     marginTop: 2,
   },
   requestDate: {
     fontSize: 11,
-    color: "#999",
     marginTop: 2,
   },
   requestActions: {
@@ -922,16 +901,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  acceptButton: {
-    backgroundColor: `${DEFAULT_PRIMARY_COLOR}20`,
-  },
-  declineButton: {
-    backgroundColor: "#FF6B6B20",
-  },
   // Modal styles
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
     justifyContent: "center",
     alignItems: "center",
     padding: 20,
@@ -939,24 +911,20 @@ const styles = StyleSheet.create({
   modalContent: {
     width: "100%",
     maxWidth: 400,
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 20,
   },
   modalTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 8,
   },
   modalSubtitle: {
     fontSize: 14,
-    color: "#666",
     marginBottom: 16,
   },
   reasonInput: {
     borderWidth: 1,
-    borderColor: "#ddd",
     borderRadius: 8,
     padding: 12,
     fontSize: 14,
@@ -975,13 +943,11 @@ const styles = StyleSheet.create({
   },
   modalCancelText: {
     fontSize: 14,
-    color: "#666",
     fontWeight: "500",
   },
   modalDeclineButton: {
     paddingHorizontal: 16,
     paddingVertical: 10,
-    backgroundColor: "#FF6B6B",
     borderRadius: 8,
   },
   modalDeclineText: {
@@ -992,11 +958,9 @@ const styles = StyleSheet.create({
   // History modal styles
   historyModalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
     justifyContent: "flex-end",
   },
   historyModalContent: {
-    backgroundColor: "#fff",
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     minHeight: "50%",
@@ -1012,7 +976,6 @@ const styles = StyleSheet.create({
   historyModalTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
   },
   historyList: {
     flex: 1,
@@ -1025,7 +988,6 @@ const styles = StyleSheet.create({
   },
   historyErrorText: {
     fontSize: 14,
-    color: "#FF6B6B",
     textAlign: "center",
     marginTop: 12,
   },
@@ -1033,21 +995,17 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     paddingBottom: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
   },
   historyUserName: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
   },
   historyUserEmail: {
     fontSize: 14,
-    color: "#666",
     marginTop: 2,
   },
   noHistoryText: {
     fontSize: 14,
-    color: "#999",
     fontStyle: "italic",
     textAlign: "center",
     padding: 20,
@@ -1055,7 +1013,6 @@ const styles = StyleSheet.create({
   historyEntry: {
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#f5f5f5",
   },
   historyEntryHeader: {
     flexDirection: "row",
@@ -1065,16 +1022,13 @@ const styles = StyleSheet.create({
   historyGroupName: {
     fontSize: 15,
     fontWeight: "500",
-    color: "#333",
   },
   historyGroupType: {
     fontSize: 12,
-    color: "#666",
     marginTop: 2,
   },
   historyDate: {
     fontSize: 11,
-    color: "#999",
     marginTop: 2,
   },
   statusBadge: {

@@ -13,6 +13,7 @@ import { useRouter } from "expo-router";
 import { PhoneInput } from "@/components/ui/PhoneInput";
 import { OTPInput } from "@/components/ui/OTPInput";
 import { ProgrammaticTextInput } from "@/components/ui/ProgrammaticTextInput";
+import { useTheme } from "@hooks/useTheme";
 
 interface PhoneSignInFormProps {
   // Phone step
@@ -78,6 +79,7 @@ export function PhoneSignInForm({
 }: PhoneSignInFormProps) {
   const [termsAccepted, setTermsAccepted] = useState(false);
   const router = useRouter();
+  const { colors } = useTheme();
 
   const handleTermsPress = () => {
     router.push("/(landing)/legal/terms");
@@ -96,11 +98,11 @@ export function PhoneSignInForm({
           <View style={styles.content}>
             {/* Back button */}
             <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-              <Ionicons name="arrow-back" size={24} color="#1a1a1a" />
+              <Ionicons name="arrow-back" size={24} color={colors.text} />
             </TouchableOpacity>
 
-            <Text style={styles.title}>Enter your phone number</Text>
-            <Text style={styles.subtitle}>
+            <Text style={[styles.title, { color: colors.text }]}>Enter your phone number</Text>
+            <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
               We'll send you a code to verify your number.
             </Text>
 
@@ -123,15 +125,15 @@ export function PhoneSignInForm({
               <Ionicons
                 name={termsAccepted ? "checkbox" : "square-outline"}
                 size={22}
-                color={termsAccepted ? "#1a1a1a" : "#ccc"}
+                color={termsAccepted ? colors.text : colors.border}
               />
-              <Text style={styles.termsText}>
+              <Text style={[styles.termsText, { color: colors.textSecondary }]}>
                 I agree to the{" "}
-                <Text style={styles.termsLink} onPress={handleTermsPress}>
+                <Text style={[styles.termsLink, { color: colors.text }]} onPress={handleTermsPress}>
                   Terms
                 </Text>
                 {" and "}
-                <Text style={styles.termsLink} onPress={handlePrivacyPress}>
+                <Text style={[styles.termsLink, { color: colors.text }]} onPress={handlePrivacyPress}>
                   Privacy Policy
                 </Text>
               </Text>
@@ -141,7 +143,7 @@ export function PhoneSignInForm({
           {/* Bottom button */}
           <View style={styles.bottomSection}>
             <TouchableOpacity
-              style={[styles.button, isSubmitDisabled && styles.buttonDisabled]}
+              style={[styles.button, { backgroundColor: colors.buttonPrimary }, isSubmitDisabled && [styles.buttonDisabled, { backgroundColor: colors.border }]]}
               onPress={onPhoneSubmit}
               disabled={isSubmitDisabled}
             >
@@ -164,13 +166,13 @@ export function PhoneSignInForm({
           <View style={styles.content}>
             {/* Back button */}
             <TouchableOpacity style={styles.backButton} onPress={onGoBack}>
-              <Ionicons name="arrow-back" size={24} color="#1a1a1a" />
+              <Ionicons name="arrow-back" size={24} color={colors.text} />
             </TouchableOpacity>
 
-            <Text style={styles.title}>Enter verification code</Text>
-            <Text style={styles.subtitle}>
+            <Text style={[styles.title, { color: colors.text }]}>Enter verification code</Text>
+            <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
               We sent a 6-digit code to{"\n"}
-              <Text style={styles.phoneHighlight}>{phone}</Text>
+              <Text style={[styles.phoneHighlight, { color: colors.text }]}>{phone}</Text>
             </Text>
 
             <View style={styles.otpContainer}>
@@ -179,12 +181,12 @@ export function PhoneSignInForm({
 
             <View style={styles.resendContainer}>
               {rateLimitRemaining === 0 ? (
-                <Text style={styles.rateLimitText}>
+                <Text style={[styles.rateLimitText, { color: colors.textSecondary }]}>
                   Too many attempts. Please wait a moment.
                 </Text>
               ) : (
                 <TouchableOpacity onPress={onResendOtp} disabled={isLoading}>
-                  <Text style={styles.resendText}>Didn't get the code? Resend</Text>
+                  <Text style={[styles.resendText, { color: colors.text }]}>Didn't get the code? Resend</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -194,7 +196,8 @@ export function PhoneSignInForm({
             <TouchableOpacity
               style={[
                 styles.button,
-                (isLoading || otp.length !== 6) && styles.buttonDisabled,
+                { backgroundColor: colors.buttonPrimary },
+                (isLoading || otp.length !== 6) && [styles.buttonDisabled, { backgroundColor: colors.border }],
               ]}
               onPress={onOtpSubmit}
               disabled={isLoading || otp.length !== 6}
@@ -217,21 +220,21 @@ export function PhoneSignInForm({
       <View style={styles.container}>
         <View style={styles.content}>
           <TouchableOpacity style={styles.backButton} onPress={onSwitchToPhone}>
-            <Ionicons name="arrow-back" size={24} color="#1a1a1a" />
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
 
-          <Text style={styles.title}>Sign in with email</Text>
-          <Text style={styles.subtitle}>
+          <Text style={[styles.title, { color: colors.text }]}>Sign in with email</Text>
+          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
             Use your email and password to continue
           </Text>
 
-          {error ? <Text style={styles.errorText}>{error}</Text> : null}
+          {error ? <Text style={[styles.errorText, { color: colors.error }]}>{error}</Text> : null}
 
-          <View style={styles.inputContainer}>
+          <View style={[styles.inputContainer, { borderColor: colors.border, backgroundColor: colors.surface }]}>
             <ProgrammaticTextInput
-              style={styles.input}
+              style={[styles.input, { color: colors.text }]}
               placeholder="Email"
-              placeholderTextColor="#999"
+              placeholderTextColor={colors.inputPlaceholder}
               value={email}
               onChangeText={onEmailChange}
               keyboardType="email-address"
@@ -241,11 +244,11 @@ export function PhoneSignInForm({
             />
           </View>
 
-          <View style={styles.inputContainer}>
+          <View style={[styles.inputContainer, { borderColor: colors.border, backgroundColor: colors.surface }]}>
             <ProgrammaticTextInput
-              style={styles.input}
+              style={[styles.input, { color: colors.text }]}
               placeholder="Password"
-              placeholderTextColor="#999"
+              placeholderTextColor={colors.inputPlaceholder}
               value={password}
               onChangeText={onPasswordChange}
               secureTextEntry
@@ -255,7 +258,7 @@ export function PhoneSignInForm({
           </View>
 
           <TouchableOpacity onPress={onForgotPassword} style={styles.forgotButton}>
-            <Text style={styles.forgotText}>Forgot password?</Text>
+            <Text style={[styles.forgotText, { color: colors.text }]}>Forgot password?</Text>
           </TouchableOpacity>
 
           {/* Terms checkbox */}
@@ -267,15 +270,15 @@ export function PhoneSignInForm({
             <Ionicons
               name={termsAccepted ? "checkbox" : "square-outline"}
               size={22}
-              color={termsAccepted ? "#1a1a1a" : "#ccc"}
+              color={termsAccepted ? colors.text : colors.border}
             />
-            <Text style={styles.termsText}>
+            <Text style={[styles.termsText, { color: colors.textSecondary }]}>
               I agree to the{" "}
-              <Text style={styles.termsLink} onPress={handleTermsPress}>
+              <Text style={[styles.termsLink, { color: colors.text }]} onPress={handleTermsPress}>
                 Terms
               </Text>
               {" and "}
-              <Text style={styles.termsLink} onPress={handlePrivacyPress}>
+              <Text style={[styles.termsLink, { color: colors.text }]} onPress={handlePrivacyPress}>
                 Privacy Policy
               </Text>
             </Text>
@@ -286,7 +289,8 @@ export function PhoneSignInForm({
           <TouchableOpacity
             style={[
               styles.button,
-              (isLoading || !termsAccepted) && styles.buttonDisabled,
+              { backgroundColor: colors.buttonPrimary },
+              (isLoading || !termsAccepted) && [styles.buttonDisabled, { backgroundColor: colors.border }],
             ]}
             onPress={onLegacySubmit}
             disabled={isLoading || !termsAccepted}
@@ -299,9 +303,9 @@ export function PhoneSignInForm({
           </TouchableOpacity>
 
           <View style={styles.footer}>
-            <Text style={styles.footerText}>Don't have an account? </Text>
+            <Text style={[styles.footerText, { color: colors.textSecondary }]}>Don't have an account? </Text>
             <TouchableOpacity onPress={onSignUp}>
-              <Text style={styles.signUpLink}>Sign up</Text>
+              <Text style={[styles.signUpLink, { color: colors.text }]}>Sign up</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -332,18 +336,15 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: "700",
-    color: "#1a1a1a",
     marginBottom: 8,
     letterSpacing: -0.5,
   },
   subtitle: {
     fontSize: 16,
-    color: "#666",
     marginBottom: 28,
     lineHeight: 24,
   },
   phoneHighlight: {
-    color: "#1a1a1a",
     fontWeight: "600",
   },
   otpContainer: {
@@ -352,14 +353,11 @@ const styles = StyleSheet.create({
   inputContainer: {
     marginBottom: 16,
     borderWidth: 1.5,
-    borderColor: "#e5e5e5",
     borderRadius: 12,
-    backgroundColor: "#fff",
   },
   input: {
     padding: 16,
     fontSize: 16,
-    color: "#1a1a1a",
   },
   termsRow: {
     flexDirection: "row",
@@ -369,23 +367,18 @@ const styles = StyleSheet.create({
   },
   termsText: {
     fontSize: 14,
-    color: "#666",
     flex: 1,
     lineHeight: 20,
   },
   termsLink: {
-    color: "#1a1a1a",
     fontWeight: "600",
   },
   button: {
-    backgroundColor: "#1a1a1a",
     paddingVertical: 18,
     borderRadius: 30,
     alignItems: "center",
   },
-  buttonDisabled: {
-    backgroundColor: "#ccc",
-  },
+  buttonDisabled: {},
   buttonText: {
     color: "#fff",
     fontSize: 17,
@@ -397,12 +390,10 @@ const styles = StyleSheet.create({
   },
   resendText: {
     fontSize: 15,
-    color: "#1a1a1a",
     fontWeight: "500",
   },
   rateLimitText: {
     fontSize: 14,
-    color: "#666",
   },
   forgotButton: {
     alignSelf: "flex-start",
@@ -410,7 +401,6 @@ const styles = StyleSheet.create({
   },
   forgotText: {
     fontSize: 14,
-    color: "#1a1a1a",
     fontWeight: "500",
   },
   footer: {
@@ -420,18 +410,14 @@ const styles = StyleSheet.create({
   },
   footerText: {
     fontSize: 14,
-    color: "#666",
   },
   signUpLink: {
     fontSize: 14,
-    color: "#1a1a1a",
     fontWeight: "600",
   },
   errorText: {
-    color: "#DC3545",
     fontSize: 14,
     marginBottom: 16,
-    backgroundColor: "rgba(220, 53, 69, 0.08)",
     padding: 12,
     borderRadius: 8,
     overflow: "hidden",

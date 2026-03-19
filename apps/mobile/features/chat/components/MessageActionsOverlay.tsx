@@ -21,6 +21,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useTheme } from "@hooks/useTheme";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
@@ -95,10 +96,6 @@ type MessageActionsOverlayProps = {
   hideReplyAction?: boolean;
 };
 
-// Chat bubble colors (matching MessageItem)
-const IMESSAGE_BLUE = '#e0efff';
-const IMESSAGE_GRAY = '#E5E5EA';
-
 export function MessageActionsOverlay({
   visible,
   message,
@@ -108,6 +105,7 @@ export function MessageActionsOverlay({
   isUserLeader = false,
   hideReplyAction = false,
 }: MessageActionsOverlayProps) {
+  const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(0.9)).current;
@@ -241,7 +239,7 @@ export function MessageActionsOverlay({
     >
       {/* Dimmed Backdrop */}
       <TouchableWithoutFeedback onPress={handleClose}>
-        <Animated.View style={[styles.backdrop, { opacity: fadeAnim }]} />
+        <Animated.View style={[styles.backdrop, { opacity: fadeAnim, backgroundColor: colors.overlay }]} />
       </TouchableWithoutFeedback>
 
       {/* Centered Content */}
@@ -256,7 +254,7 @@ export function MessageActionsOverlay({
           ]}
         >
           {/* Reactions Bar - Above Message */}
-          <View style={styles.reactionsContainer}>
+          <View style={[styles.reactionsContainer, { backgroundColor: colors.surface }]}>
             {REACTIONS.map((reaction) => (
               <TouchableOpacity
                 key={reaction.type}
@@ -285,8 +283,8 @@ export function MessageActionsOverlay({
                     style={styles.avatar}
                   />
                 ) : (
-                  <View style={[styles.avatar, styles.avatarPlaceholder]}>
-                    <Text style={styles.avatarText}>
+                  <View style={[styles.avatar, styles.avatarPlaceholder, { backgroundColor: colors.surfaceSecondary }]}>
+                    <Text style={[styles.avatarText, { color: colors.textSecondary }]}>
                       {getInitials(message.senderName)}
                     </Text>
                   </View>
@@ -304,13 +302,16 @@ export function MessageActionsOverlay({
               <View
                 style={[
                   styles.messageBubble,
-                  isOwnMessage ? styles.ownMessageBubble : styles.otherMessageBubble,
+                  isOwnMessage
+                    ? [styles.ownMessageBubble, { backgroundColor: colors.chatBubbleOwn }]
+                    : [styles.otherMessageBubble, { backgroundColor: colors.chatBubbleOther }],
                 ]}
               >
                 <Text
                   style={[
                     styles.messageText,
-                    isOwnMessage && styles.ownMessageText,
+                    { color: colors.chatBubbleOtherText },
+                    isOwnMessage && { color: colors.chatBubbleOwnText },
                   ]}
                 >
                   {displayContent}
@@ -319,8 +320,8 @@ export function MessageActionsOverlay({
                 {/* Show image attachment preview if exists */}
                 {message.attachments?.some((a) => a.type === "image") && (
                   <View style={styles.attachmentIndicator}>
-                    <Ionicons name="image" size={14} color="#666" />
-                    <Text style={styles.attachmentText}>Image</Text>
+                    <Ionicons name="image" size={14} color={colors.textSecondary} />
+                    <Text style={[styles.attachmentText, { color: colors.textSecondary }]}>Image</Text>
                   </View>
                 )}
               </View>
@@ -328,22 +329,23 @@ export function MessageActionsOverlay({
           </View>
 
           {/* Actions Menu - Below Message */}
-          <View style={styles.actionsContainer}>
+          <View style={[styles.actionsContainer, { backgroundColor: colors.surface }]}>
             {showMoreActions ? (
               <>
                 <TouchableOpacity
-                  style={styles.actionButton}
+                  style={[styles.actionButton, { borderBottomColor: colors.border }]}
                   onPress={handleBackFromMore}
                   activeOpacity={0.7}
                 >
-                  <Ionicons name="chevron-back" size={20} color="#666" />
-                  <Text style={[styles.actionLabel, { color: "#666" }]}>Back</Text>
+                  <Ionicons name="chevron-back" size={20} color={colors.textSecondary} />
+                  <Text style={[styles.actionLabel, { color: colors.textSecondary }]}>Back</Text>
                 </TouchableOpacity>
                 {availableMoreActions.map((action, index) => (
                   <TouchableOpacity
                     key={action.id}
                     style={[
                       styles.actionButton,
+                      { borderBottomColor: colors.border },
                       index === availableMoreActions.length - 1 && styles.actionButtonLast,
                     ]}
                     onPress={() => handleActionTap(action.id)}
@@ -352,11 +354,12 @@ export function MessageActionsOverlay({
                     <Ionicons
                       name={action.icon}
                       size={20}
-                      color={action.color || "#333"}
+                      color={action.color || colors.text}
                     />
                     <Text
                       style={[
                         styles.actionLabel,
+                        { color: colors.text },
                         action.color && { color: action.color },
                       ]}
                     >
@@ -371,6 +374,7 @@ export function MessageActionsOverlay({
                   key={action.id}
                   style={[
                     styles.actionButton,
+                    { borderBottomColor: colors.border },
                     index === availablePrimaryActions.length - 1 && styles.actionButtonLast,
                   ]}
                   onPress={() => handleActionTap(action.id)}
@@ -379,11 +383,12 @@ export function MessageActionsOverlay({
                   <Ionicons
                     name={action.icon}
                     size={20}
-                    color={action.color || "#333"}
+                    color={action.color || colors.text}
                   />
                   <Text
                     style={[
                       styles.actionLabel,
+                      { color: colors.text },
                       action.color && { color: action.color },
                     ]}
                   >
@@ -402,7 +407,6 @@ export function MessageActionsOverlay({
 const styles = StyleSheet.create({
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0, 0, 0, 0.3)",
   },
   centeredContainer: {
     flex: 1,
@@ -418,7 +422,6 @@ const styles = StyleSheet.create({
   // Reactions
   reactionsContainer: {
     flexDirection: "row",
-    backgroundColor: "#fff",
     borderRadius: 24,
     paddingHorizontal: 8,
     paddingVertical: 8,
@@ -462,14 +465,12 @@ const styles = StyleSheet.create({
     borderRadius: 14,
   },
   avatarPlaceholder: {
-    backgroundColor: "#E5E5E5",
     justifyContent: "center",
     alignItems: "center",
   },
   avatarText: {
     fontSize: 11,
     fontWeight: "600",
-    color: "#666",
   },
   bubbleContent: {
     maxWidth: "85%",
@@ -494,20 +495,14 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   ownMessageBubble: {
-    backgroundColor: IMESSAGE_BLUE,
     borderBottomRightRadius: 4,
   },
   otherMessageBubble: {
-    backgroundColor: IMESSAGE_GRAY,
     borderBottomLeftRadius: 4,
   },
   messageText: {
     fontSize: 16,
     lineHeight: 22,
-    color: "#000",
-  },
-  ownMessageText: {
-    color: "#000",
   },
   attachmentIndicator: {
     flexDirection: "row",
@@ -517,12 +512,10 @@ const styles = StyleSheet.create({
   },
   attachmentText: {
     fontSize: 12,
-    color: "#666",
   },
   // Actions
   actionsContainer: {
     width: "100%",
-    backgroundColor: "#fff",
     borderRadius: 14,
     overflow: "hidden",
     shadowColor: "#000",
@@ -537,14 +530,12 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 16,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#e0e0e0",
   },
   actionButtonLast: {
     borderBottomWidth: 0,
   },
   actionLabel: {
     fontSize: 16,
-    color: "#333",
     marginLeft: 12,
   },
 });

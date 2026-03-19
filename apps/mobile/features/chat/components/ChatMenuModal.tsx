@@ -12,6 +12,7 @@ import {
   Pressable,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useTheme } from "@hooks/useTheme";
 
 type ChatMenuModalProps = {
   visible: boolean;
@@ -40,6 +41,7 @@ export const ChatMenuModal = memo(function ChatMenuModal({
   onGroupPagePress,
   onLeaveGroupPress,
 }: ChatMenuModalProps) {
+  const { colors: themeColors } = useTheme();
   return (
     <Modal
       visible={visible}
@@ -47,37 +49,37 @@ export const ChatMenuModal = memo(function ChatMenuModal({
       animationType="fade"
       onRequestClose={onClose}
     >
-      <Pressable style={styles.modalOverlay} onPress={onClose}>
-        <View style={styles.menuContainer}>
+      <Pressable style={[styles.modalOverlay, { backgroundColor: themeColors.overlay }]} onPress={onClose}>
+        <View style={[styles.menuContainer, { backgroundColor: themeColors.modalBackground }]}>
           {/* Members - available to all */}
           {hasGroup && (
-            <TouchableOpacity style={styles.menuItem} onPress={onMembersPress}>
-              <Ionicons name="people-outline" size={20} color="#333" />
-              <Text style={styles.menuItemText}>Members</Text>
+            <TouchableOpacity style={[styles.menuItem, { borderBottomColor: themeColors.borderLight }]} onPress={onMembersPress}>
+              <Ionicons name="people-outline" size={20} color={themeColors.text} />
+              <Text style={[styles.menuItemText, { color: themeColors.text }]}>Members</Text>
             </TouchableOpacity>
           )}
 
           {/* Events - only for non-leaders (leaders have it in toolbar) */}
           {hasGroup && !showLeaderTools && (
-            <TouchableOpacity style={styles.menuItem} onPress={onEventsPress}>
-              <Ionicons name="calendar-outline" size={20} color="#333" />
-              <Text style={styles.menuItemText}>Events</Text>
+            <TouchableOpacity style={[styles.menuItem, { borderBottomColor: themeColors.borderLight }]} onPress={onEventsPress}>
+              <Ionicons name="calendar-outline" size={20} color={themeColors.text} />
+              <Text style={[styles.menuItemText, { color: themeColors.text }]}>Events</Text>
             </TouchableOpacity>
           )}
 
           {/* Group Page - leaders only */}
           {showLeaderTools && (
-            <TouchableOpacity style={styles.menuItem} onPress={onGroupPagePress}>
-              <Ionicons name="globe-outline" size={20} color="#333" />
-              <Text style={styles.menuItemText}>Group Page</Text>
+            <TouchableOpacity style={[styles.menuItem, { borderBottomColor: themeColors.borderLight }]} onPress={onGroupPagePress}>
+              <Ionicons name="globe-outline" size={20} color={themeColors.text} />
+              <Text style={[styles.menuItemText, { color: themeColors.text }]}>Group Page</Text>
             </TouchableOpacity>
           )}
 
           {/* Leave Group - available to all */}
           {hasGroup && (
-            <TouchableOpacity style={styles.menuItem} onPress={onLeaveGroupPress}>
-              <Ionicons name="exit-outline" size={20} color="#e74c3c" />
-              <Text style={[styles.menuItemText, { color: "#e74c3c" }]}>
+            <TouchableOpacity style={[styles.menuItem, { borderBottomColor: themeColors.borderLight }]} onPress={onLeaveGroupPress}>
+              <Ionicons name="exit-outline" size={20} color={themeColors.error} />
+              <Text style={[styles.menuItemText, { color: themeColors.error }]}>
                 Leave Group
               </Text>
             </TouchableOpacity>
@@ -87,8 +89,8 @@ export const ChatMenuModal = memo(function ChatMenuModal({
             style={[styles.menuItem, styles.menuItemLast]}
             onPress={onClose}
           >
-            <Ionicons name="close-outline" size={20} color="#666" />
-            <Text style={[styles.menuItemText, { color: "#666" }]}>Cancel</Text>
+            <Ionicons name="close-outline" size={20} color={themeColors.textSecondary} />
+            <Text style={[styles.menuItemText, { color: themeColors.textSecondary }]}>Cancel</Text>
           </TouchableOpacity>
         </View>
       </Pressable>
@@ -99,14 +101,12 @@ export const ChatMenuModal = memo(function ChatMenuModal({
 const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.4)",
     justifyContent: "flex-start",
     alignItems: "flex-end",
     paddingTop: 80,
     paddingRight: 16,
   },
   menuContainer: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     minWidth: 180,
     shadowColor: "#000",
@@ -121,14 +121,12 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
   },
   menuItemLast: {
     borderBottomWidth: 0,
   },
   menuItemText: {
     fontSize: 16,
-    color: "#333",
     marginLeft: 12,
   },
 });

@@ -14,6 +14,7 @@ import { RecentAttendance } from "./RecentAttendance";
 import { useGroupLeaderTools } from "../hooks/useGroupLeaderTools";
 import { LeaderToolsPage, BottomBarType } from "../types";
 import { DragHandle } from "@components/ui/DragHandle";
+import { useTheme } from "@hooks/useTheme";
 
 // Helper function to get page title
 function getPageTitle(page: LeaderToolsPage): string {
@@ -51,6 +52,7 @@ function getGroupTypeName(type: number): string {
 }
 
 export function GroupLeaderToolsScreen() {
+  const { colors } = useTheme();
   const { group_id } = useLocalSearchParams<{ group_id: string }>();
   const router = useRouter();
   const {
@@ -69,11 +71,11 @@ export function GroupLeaderToolsScreen() {
   if (isLoadingGroup) {
     return (
       <UserRoute>
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
           <DragHandle />
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" />
-            <Text style={styles.loadingText}>Loading...</Text>
+            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading...</Text>
           </View>
         </View>
       </UserRoute>
@@ -83,10 +85,10 @@ export function GroupLeaderToolsScreen() {
   if (groupError || !group) {
     return (
       <UserRoute>
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
           <DragHandle />
           <View style={styles.errorContainer}>
-            <Text style={styles.errorText}>Group not found</Text>
+            <Text style={[styles.errorText, { color: colors.textSecondary }]}>Group not found</Text>
             <TouchableOpacity
               style={styles.backButton}
               onPress={() => {
@@ -97,7 +99,7 @@ export function GroupLeaderToolsScreen() {
                 }
               }}
             >
-              <Text style={styles.errorText}>Go Back</Text>
+              <Text style={[styles.errorText, { color: colors.textSecondary }]}>Go Back</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -109,7 +111,7 @@ export function GroupLeaderToolsScreen() {
     <UserRoute>
       <DragHandle />
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => {
@@ -127,16 +129,16 @@ export function GroupLeaderToolsScreen() {
             }
           }}
         >
-          <Ionicons name="arrow-back" size={24} color="#333" />
+          <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
         <View style={styles.headerContent}>
-          <Text style={styles.headerTitle}>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>
             {activePage === LeaderToolsPage.DEFAULT
               ? group.name || "Leader Tools"
               : getPageTitle(activePage)}
           </Text>
           {group.group_type_name && (
-            <Text style={styles.headerSubtitle}>
+            <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>
               {group.group_type_name}
             </Text>
           )}
@@ -146,7 +148,7 @@ export function GroupLeaderToolsScreen() {
             style={styles.notificationButton}
             onPress={() => handlePageChange(LeaderToolsPage.NOTIFICATIONS)}
           >
-            <Ionicons name="notifications-outline" size={24} color="#333" />
+            <Ionicons name="notifications-outline" size={24} color={colors.text} />
             {/* TODO: Add unread indicator */}
           </TouchableOpacity>
         )}
@@ -177,7 +179,7 @@ export function GroupLeaderToolsScreen() {
 
         {activePage === LeaderToolsPage.EVENT_STATS && (
           <View style={styles.pageContent}>
-            <Text style={styles.placeholderText}>
+            <Text style={[styles.placeholderText, { color: colors.textSecondary }]}>
               Event Stats page will go here
             </Text>
           </View>
@@ -187,7 +189,7 @@ export function GroupLeaderToolsScreen() {
 
         {activePage === LeaderToolsPage.NOTIFICATIONS && (
           <View style={styles.pageContent}>
-            <Text style={styles.placeholderText}>
+            <Text style={[styles.placeholderText, { color: colors.textSecondary }]}>
               Notifications page will go here
             </Text>
           </View>
@@ -196,27 +198,27 @@ export function GroupLeaderToolsScreen() {
 
       {/* Bottom Action Bar */}
       {showBottomBar && (
-        <View style={styles.bottomBar}>
+        <View style={[styles.bottomBar, { backgroundColor: colors.surface, borderTopColor: colors.border }]}>
           {bottomBarType === BottomBarType.HOME &&
             activePage === LeaderToolsPage.DEFAULT && (
               <>
                 <TouchableOpacity
-                  style={styles.bottomBarButton}
+                  style={[styles.bottomBarButton, { backgroundColor: colors.surfaceSecondary }]}
                   onPress={handleAttendanceNavigation}
                 >
-                  <Text style={styles.bottomBarButtonText}>Attendance</Text>
+                  <Text style={[styles.bottomBarButtonText, { color: colors.text }]}>Attendance</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[
                     styles.bottomBarButton,
-                    styles.bottomBarButtonPrimary,
+                    { backgroundColor: colors.buttonPrimary },
                   ]}
                   onPress={handleGroupChat}
                 >
                   <Text
                     style={[
                       styles.bottomBarButtonText,
-                      styles.bottomBarButtonTextPrimary,
+                      { color: colors.textInverse },
                     ]}
                   >
                     Group Chat
@@ -234,7 +236,6 @@ export function GroupLeaderToolsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f5f5f5",
   },
   loadingContainer: {
     flex: 1,
@@ -244,7 +245,6 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 12,
     fontSize: 16,
-    color: "#666",
   },
   errorContainer: {
     flex: 1,
@@ -254,16 +254,13 @@ const styles = StyleSheet.create({
   },
   errorText: {
     fontSize: 18,
-    color: "#666",
     marginBottom: 20,
   },
   header: {
     flexDirection: "row",
     alignItems: "center",
     padding: 16,
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   backButton: {
     marginRight: 12,
@@ -275,11 +272,9 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 20,
     fontWeight: "bold",
-    color: "#333",
   },
   headerSubtitle: {
     fontSize: 14,
-    color: "#666",
     marginTop: 2,
   },
   notificationButton: {
@@ -300,39 +295,30 @@ const styles = StyleSheet.create({
   },
   placeholderText: {
     fontSize: 16,
-    color: "#666",
     textAlign: "center",
     marginVertical: 8,
   },
   bottomBar: {
     flexDirection: "row",
     padding: 16,
-    backgroundColor: "#fff",
     borderTopWidth: 1,
-    borderTopColor: "#e0e0e0",
     gap: 12,
   },
   bottomBarButton: {
     flex: 1,
     paddingVertical: 12,
     paddingHorizontal: 16,
-    backgroundColor: "#f5f5f5",
     borderRadius: 8,
     alignItems: "center",
     justifyContent: "center",
   },
-  bottomBarButtonPrimary: {
-    backgroundColor: "#333",
-  },
+  bottomBarButtonPrimary: {},
   bottomBarButtonDisabled: {
     opacity: 0.5,
   },
   bottomBarButtonText: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
   },
-  bottomBarButtonTextPrimary: {
-    color: "#fff",
-  },
+  bottomBarButtonTextPrimary: {},
 });

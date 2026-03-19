@@ -11,6 +11,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useAuthenticatedQuery, api } from "@services/api/convex";
 import { Id } from "@services/api/convex";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 
 // ============================================================================
 // Types
@@ -45,6 +46,7 @@ export function PeopleViewBar({
   isAdmin,
   specialViews = [],
 }: PeopleViewBarProps) {
+  const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
 
   const views = useAuthenticatedQuery(
@@ -85,21 +87,21 @@ export function PeopleViewBar({
                   styles.chip,
                   isActive
                     ? { backgroundColor: primaryColor, borderColor: primaryColor }
-                    : styles.chipInactive,
+                    : { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
                 ]}
               >
                 {view.icon ? (
                   <Ionicons
                     name={view.icon}
                     size={12}
-                    color={isActive ? "#FFFFFF" : "#9CA3AF"}
+                    color={isActive ? colors.textInverse : colors.iconSecondary}
                     style={styles.lockIcon}
                   />
                 ) : null}
                 <Text
                   style={[
                     styles.chipText,
-                    isActive ? styles.chipTextActive : styles.chipTextInactive,
+                    isActive ? { color: colors.textInverse } : { color: colors.text },
                   ]}
                   numberOfLines={1}
                 >
@@ -126,21 +128,21 @@ export function PeopleViewBar({
                   styles.chip,
                   isActive
                     ? { backgroundColor: primaryColor, borderColor: primaryColor }
-                    : styles.chipInactive,
+                    : { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
                 ]}
               >
                 {view.isDefault && (
                   <Ionicons
                     name="lock-closed"
                     size={12}
-                    color={isActive ? "#FFFFFF" : "#9CA3AF"}
+                    color={isActive ? colors.textInverse : colors.iconSecondary}
                     style={styles.lockIcon}
                   />
                 )}
                 <Text
                   style={[
                     styles.chipText,
-                    isActive ? styles.chipTextActive : styles.chipTextInactive,
+                    isActive ? { color: colors.textInverse } : { color: colors.text },
                   ]}
                   numberOfLines={1}
                 >
@@ -150,7 +152,7 @@ export function PeopleViewBar({
                   <Ionicons
                     name="people-outline"
                     size={12}
-                    color={isActive ? "#FFFFFF" : "#9CA3AF"}
+                    color={isActive ? colors.textInverse : colors.iconSecondary}
                     style={styles.sharedIcon}
                   />
                 )}
@@ -163,7 +165,7 @@ export function PeopleViewBar({
                   <Ionicons
                     name="close-circle"
                     size={14}
-                    color={isActive ? primaryColor : "#9CA3AF"}
+                    color={isActive ? primaryColor : colors.iconSecondary}
                   />
                 </Pressable>
               )}
@@ -172,8 +174,8 @@ export function PeopleViewBar({
         })}
 
         {/* Add view button */}
-        <Pressable onPress={onCreateView} style={styles.addButton}>
-          <Ionicons name="add" size={18} color="#6B7280" />
+        <Pressable onPress={onCreateView} style={[styles.addButton, { borderColor: colors.border }]}>
+          <Ionicons name="add" size={18} color={colors.icon} />
         </Pressable>
       </ScrollView>
     </View>
@@ -206,20 +208,13 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
   },
-  chipInactive: {
-    backgroundColor: "#F3F4F6",
-    borderColor: "#E5E7EB",
-  },
+  chipInactive: {},
   chipText: {
     fontSize: 13,
     fontWeight: "500" as const,
   },
-  chipTextActive: {
-    color: "#FFFFFF",
-  },
-  chipTextInactive: {
-    color: "#374151",
-  },
+  chipTextActive: {},
+  chipTextInactive: {},
   lockIcon: {
     marginRight: 4,
   },
@@ -235,7 +230,6 @@ const styles = StyleSheet.create({
     height: 32,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: "#D1D5DB",
     borderStyle: "dashed",
     justifyContent: "center",
     alignItems: "center",

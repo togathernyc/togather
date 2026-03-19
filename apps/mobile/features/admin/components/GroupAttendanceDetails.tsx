@@ -19,8 +19,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { useQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
-import { DEFAULT_PRIMARY_COLOR } from "../../../utils/styles";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 import { ExportBottomSheet } from "./ExportBottomSheet";
 import {
   generateSingleDayAttendanceCsv,
@@ -43,6 +43,7 @@ export function GroupAttendanceDetails({
 }: GroupAttendanceDetailsProps) {
   const { community, token, user } = useAuth();
   const { primaryColor } = useCommunityTheme();
+  const { colors, isDark } = useTheme();
   const [showExportSheet, setShowExportSheet] = useState(false);
 
   // Convex query for group attendance details
@@ -91,7 +92,7 @@ export function GroupAttendanceDetails({
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={primaryColor} />
-        <Text style={styles.loadingText}>Loading attendance details...</Text>
+        <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading attendance details...</Text>
       </View>
     );
   }
@@ -99,9 +100,9 @@ export function GroupAttendanceDetails({
   if (!detailsData) {
     return (
       <View style={styles.errorContainer}>
-        <Ionicons name="alert-circle-outline" size={48} color="#FF3B30" />
-        <Text style={styles.errorText}>Failed to load attendance</Text>
-        <TouchableOpacity style={styles.backButton} onPress={onBack}>
+        <Ionicons name="alert-circle-outline" size={48} color={colors.error} />
+        <Text style={[styles.errorText, { color: colors.text }]}>Failed to load attendance</Text>
+        <TouchableOpacity style={[styles.backButton, { backgroundColor: primaryColor }]} onPress={onBack}>
           <Text style={styles.backButtonText}>Go Back</Text>
         </TouchableOpacity>
       </View>
@@ -111,15 +112,15 @@ export function GroupAttendanceDetails({
   const data = detailsData;
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <TouchableOpacity style={styles.backIconButton} onPress={onBack}>
-          <Ionicons name="arrow-back" size={24} color="#333" />
+          <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
         <View style={styles.headerText}>
-          <Text style={styles.headerTitle}>{data.groupName}</Text>
-          <Text style={styles.headerSubtitle}>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>{data.groupName}</Text>
+          <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>
             {data.isSingleDay
               ? new Date((data as any).date).toLocaleDateString("en-US", {
                   weekday: "long",
@@ -211,43 +212,44 @@ interface DateRangeData {
 }
 
 function SingleDayView({ data }: { data: SingleDayData }) {
+  const { colors, isDark } = useTheme();
   return (
     <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
       {/* Summary */}
-      <View style={styles.summaryCard}>
+      <View style={[styles.summaryCard, { backgroundColor: colors.surface }]}>
         <View style={styles.summaryRow}>
           <View style={styles.summaryItem}>
-            <View style={[styles.statusDot, { backgroundColor: "#34C759" }]} />
-            <Text style={styles.summaryValue}>{data.presentCount}</Text>
-            <Text style={styles.summaryLabel}>Present</Text>
+            <View style={[styles.statusDot, { backgroundColor: colors.success }]} />
+            <Text style={[styles.summaryValue, { color: colors.text }]}>{data.presentCount}</Text>
+            <Text style={[styles.summaryLabel, { color: colors.textSecondary }]}>Present</Text>
           </View>
           <View style={styles.summaryItem}>
-            <View style={[styles.statusDot, { backgroundColor: "#FF3B30" }]} />
-            <Text style={styles.summaryValue}>{data.absentCount}</Text>
-            <Text style={styles.summaryLabel}>Absent</Text>
+            <View style={[styles.statusDot, { backgroundColor: colors.error }]} />
+            <Text style={[styles.summaryValue, { color: colors.text }]}>{data.absentCount}</Text>
+            <Text style={[styles.summaryLabel, { color: colors.textSecondary }]}>Absent</Text>
           </View>
           <View style={styles.summaryItem}>
-            <View style={[styles.statusDot, { backgroundColor: "#C7C7CC" }]} />
-            <Text style={styles.summaryValue}>{data.notRecordedCount}</Text>
-            <Text style={styles.summaryLabel}>Not Recorded</Text>
+            <View style={[styles.statusDot, { backgroundColor: colors.iconSecondary }]} />
+            <Text style={[styles.summaryValue, { color: colors.text }]}>{data.notRecordedCount}</Text>
+            <Text style={[styles.summaryLabel, { color: colors.textSecondary }]}>Not Recorded</Text>
           </View>
         </View>
       </View>
 
       {/* Member List */}
       {data.memberAttendance.length > 0 ? (
-        <View style={styles.memberList}>
+        <View style={[styles.memberList, { backgroundColor: colors.surface }]}>
           {data.memberAttendance.map((member) => (
-            <View key={member.userId} style={styles.memberItem}>
+            <View key={member.userId} style={[styles.memberItem, { borderBottomColor: colors.border }]}>
               {member.profilePhoto ? (
                 <Image source={{ uri: member.profilePhoto }} style={styles.avatar} />
               ) : (
-                <View style={styles.avatarPlaceholder}>
-                  <Ionicons name="person" size={20} color="#999" />
+                <View style={[styles.avatarPlaceholder, { backgroundColor: colors.border }]}>
+                  <Ionicons name="person" size={20} color={colors.textTertiary} />
                 </View>
               )}
               <View style={styles.memberInfo}>
-                <Text style={styles.memberName}>
+                <Text style={[styles.memberName, { color: colors.text }]}>
                   {member.firstName} {member.lastName}
                 </Text>
               </View>
@@ -255,20 +257,20 @@ function SingleDayView({ data }: { data: SingleDayData }) {
                 style={[
                   styles.statusBadge,
                   member.status === 1
-                    ? styles.statusPresent
+                    ? { backgroundColor: isDark ? 'rgba(52,199,89,0.15)' : '#E8F5E9' }
                     : member.status === 0
-                    ? styles.statusAbsent
-                    : styles.statusNotRecorded,
+                    ? { backgroundColor: isDark ? 'rgba(255,59,48,0.15)' : '#FFEBEE' }
+                    : { backgroundColor: colors.surfaceSecondary },
                 ]}
               >
                 <Text
                   style={[
                     styles.statusBadgeText,
                     member.status === 1
-                      ? styles.statusPresentText
+                      ? { color: colors.success }
                       : member.status === 0
-                      ? styles.statusAbsentText
-                      : styles.statusNotRecordedText,
+                      ? { color: colors.error }
+                      : { color: colors.textTertiary },
                   ]}
                 >
                   {member.statusLabel}
@@ -278,18 +280,19 @@ function SingleDayView({ data }: { data: SingleDayData }) {
           ))}
         </View>
       ) : (
-        <Text style={styles.emptyText}>No members to display</Text>
+        <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No members to display</Text>
       )}
     </ScrollView>
   );
 }
 
 function DateRangeView({ data }: { data: DateRangeData }) {
+  const { colors, isDark } = useTheme();
   if (data.meetingColumns.length === 0) {
     return (
       <View style={styles.emptyContainer}>
-        <Ionicons name="calendar-outline" size={48} color="#ccc" />
-        <Text style={styles.emptyText}>No meetings in this date range</Text>
+        <Ionicons name="calendar-outline" size={48} color={colors.textTertiary} />
+        <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No meetings in this date range</Text>
       </View>
     );
   }
@@ -297,8 +300,8 @@ function DateRangeView({ data }: { data: DateRangeData }) {
   return (
     <ScrollView style={styles.scrollView}>
       {/* Stats Header */}
-      <View style={styles.gridHeader}>
-        <Text style={styles.gridHeaderText}>
+      <View style={[styles.gridHeader, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+        <Text style={[styles.gridHeaderText, { color: colors.textSecondary }]}>
           {data.totalMeetings} meeting{data.totalMeetings !== 1 ? "s" : ""} • {data.memberRows.length} members
         </Text>
       </View>
@@ -307,33 +310,33 @@ function DateRangeView({ data }: { data: DateRangeData }) {
       <ScrollView horizontal showsHorizontalScrollIndicator>
         <View>
           {/* Header Row */}
-          <View style={styles.gridRow}>
-            <View style={styles.gridNameCell}>
-              <Text style={styles.gridHeaderCellText}>Member</Text>
+          <View style={[styles.gridRow, { borderBottomColor: colors.border, backgroundColor: colors.surface }]}>
+            <View style={[styles.gridNameCell, { borderRightColor: colors.border }]}>
+              <Text style={[styles.gridHeaderCellText, { color: colors.textSecondary }]}>Member</Text>
             </View>
             {data.meetingColumns.map((meeting) => (
               <View key={meeting.meetingId} style={styles.gridCell}>
-                <Text style={styles.gridHeaderCellText}>{meeting.dateLabel}</Text>
+                <Text style={[styles.gridHeaderCellText, { color: colors.textSecondary }]}>{meeting.dateLabel}</Text>
               </View>
             ))}
             <View style={styles.gridCell}>
-              <Text style={styles.gridHeaderCellText}>Rate</Text>
+              <Text style={[styles.gridHeaderCellText, { color: colors.textSecondary }]}>Rate</Text>
             </View>
           </View>
 
           {/* Data Rows */}
           {data.memberRows.map((member) => (
-            <View key={member.userId} style={styles.gridRow}>
-              <View style={styles.gridNameCell}>
+            <View key={member.userId} style={[styles.gridRow, { borderBottomColor: colors.border, backgroundColor: colors.surface }]}>
+              <View style={[styles.gridNameCell, { borderRightColor: colors.border }]}>
                 <View style={styles.memberRow}>
                   {member.profilePhoto ? (
                     <Image source={{ uri: member.profilePhoto }} style={styles.gridAvatar} />
                   ) : (
-                    <View style={styles.gridAvatarPlaceholder}>
-                      <Ionicons name="person" size={12} color="#999" />
+                    <View style={[styles.gridAvatarPlaceholder, { backgroundColor: colors.border }]}>
+                      <Ionicons name="person" size={12} color={colors.textTertiary} />
                     </View>
                   )}
-                  <Text style={styles.gridMemberName} numberOfLines={1}>
+                  <Text style={[styles.gridMemberName, { color: colors.text }]} numberOfLines={1}>
                     {member.firstName} {member.lastName}
                   </Text>
                 </View>
@@ -343,11 +346,11 @@ function DateRangeView({ data }: { data: DateRangeData }) {
                 return (
                   <View key={meeting.meetingId} style={styles.gridCell}>
                     {status === 1 ? (
-                      <Ionicons name="checkmark-circle" size={20} color="#34C759" />
+                      <Ionicons name="checkmark-circle" size={20} color={colors.success} />
                     ) : status === 0 ? (
-                      <Ionicons name="close-circle" size={20} color="#FF3B30" />
+                      <Ionicons name="close-circle" size={20} color={colors.error} />
                     ) : (
-                      <Ionicons name="remove-circle-outline" size={20} color="#C7C7CC" />
+                      <Ionicons name="remove-circle-outline" size={20} color={colors.iconSecondary} />
                     )}
                   </View>
                 );
@@ -357,10 +360,10 @@ function DateRangeView({ data }: { data: DateRangeData }) {
                   style={[
                     styles.gridRateText,
                     member.attendanceRate >= 80
-                      ? styles.rateGood
+                      ? { color: colors.success }
                       : member.attendanceRate >= 50
-                      ? styles.rateMedium
-                      : styles.rateLow,
+                      ? { color: colors.warning }
+                      : { color: colors.error },
                   ]}
                 >
                   {member.attendanceRate}%
@@ -377,7 +380,6 @@ function DateRangeView({ data }: { data: DateRangeData }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f5f5f5",
   },
   loadingContainer: {
     flex: 1,
@@ -387,7 +389,6 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: 16,
-    color: "#666",
     marginTop: 12,
   },
   errorContainer: {
@@ -399,12 +400,10 @@ const styles = StyleSheet.create({
   },
   errorText: {
     fontSize: 16,
-    color: "#333",
   },
   backButton: {
     paddingHorizontal: 20,
     paddingVertical: 10,
-    backgroundColor: DEFAULT_PRIMARY_COLOR,
     borderRadius: 8,
     marginTop: 8,
   },
@@ -416,11 +415,9 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#fff",
     paddingHorizontal: 16,
     paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   backIconButton: {
     padding: 4,
@@ -439,11 +436,9 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
   },
   headerSubtitle: {
     fontSize: 14,
-    color: "#666",
     marginTop: 2,
   },
   scrollView: {
@@ -453,7 +448,6 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   summaryCard: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 16,
     marginBottom: 16,
@@ -479,15 +473,12 @@ const styles = StyleSheet.create({
   summaryValue: {
     fontSize: 24,
     fontWeight: "700",
-    color: "#333",
   },
   summaryLabel: {
     fontSize: 12,
-    color: "#666",
     marginTop: 4,
   },
   memberList: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     overflow: "hidden",
     shadowColor: "#000",
@@ -501,7 +492,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
   },
   avatar: {
     width: 40,
@@ -512,7 +502,6 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: "#f0f0f0",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -523,34 +512,15 @@ const styles = StyleSheet.create({
   memberName: {
     fontSize: 16,
     fontWeight: "500",
-    color: "#333",
   },
   statusBadge: {
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 12,
   },
-  statusPresent: {
-    backgroundColor: "#E8F5E9",
-  },
-  statusAbsent: {
-    backgroundColor: "#FFEBEE",
-  },
-  statusNotRecorded: {
-    backgroundColor: "#f0f0f0",
-  },
   statusBadgeText: {
     fontSize: 13,
     fontWeight: "500",
-  },
-  statusPresentText: {
-    color: "#34C759",
-  },
-  statusAbsentText: {
-    color: "#FF3B30",
-  },
-  statusNotRecordedText: {
-    color: "#999",
   },
   emptyContainer: {
     flex: 1,
@@ -560,32 +530,25 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 16,
-    color: "#666",
     textAlign: "center",
     marginTop: 12,
   },
   gridHeader: {
     padding: 16,
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   gridHeaderText: {
     fontSize: 14,
-    color: "#666",
   },
   gridRow: {
     flexDirection: "row",
     borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
-    backgroundColor: "#fff",
   },
   gridNameCell: {
     width: 150,
     padding: 12,
     justifyContent: "center",
     borderRightWidth: 1,
-    borderRightColor: "#f0f0f0",
   },
   gridCell: {
     width: 60,
@@ -596,7 +559,6 @@ const styles = StyleSheet.create({
   gridHeaderCellText: {
     fontSize: 12,
     fontWeight: "600",
-    color: "#666",
   },
   memberRow: {
     flexDirection: "row",
@@ -612,27 +574,16 @@ const styles = StyleSheet.create({
     width: 24,
     height: 24,
     borderRadius: 12,
-    backgroundColor: "#f0f0f0",
     alignItems: "center",
     justifyContent: "center",
     marginRight: 8,
   },
   gridMemberName: {
     fontSize: 14,
-    color: "#333",
     flex: 1,
   },
   gridRateText: {
     fontSize: 14,
     fontWeight: "600",
-  },
-  rateGood: {
-    color: "#34C759",
-  },
-  rateMedium: {
-    color: "#FF9500",
-  },
-  rateLow: {
-    color: "#FF3B30",
   },
 });

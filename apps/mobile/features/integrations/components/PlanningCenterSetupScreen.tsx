@@ -20,6 +20,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@providers/AuthProvider";
 import { Button, Card } from "@components/ui";
+import { useTheme } from "@hooks/useTheme";
 import { usePlanningCenterStatus } from "../hooks/useIntegrations";
 import {
   usePlanningCenterAuth,
@@ -30,6 +31,7 @@ export function PlanningCenterSetupScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
+  const { colors, isDark } = useTheme();
 
   const { data: status, isLoading } = usePlanningCenterStatus();
   const connectMutation = usePlanningCenterAuth();
@@ -89,21 +91,21 @@ export function PlanningCenterSetupScreen() {
 
   if (!isAdmin) {
     return (
-      <View style={[styles.container, { paddingTop: insets.top }]}>
-        <View style={styles.header}>
+      <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.backgroundSecondary }]}>
+        <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
           <TouchableOpacity
             onPress={() => router.back()}
             style={styles.backButton}
           >
-            <Ionicons name="arrow-back" size={24} color="#222224" />
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={styles.title}>Planning Center</Text>
+          <Text style={[styles.title, { color: colors.text }]}>Planning Center</Text>
           <View style={styles.placeholder} />
         </View>
 
         <View style={styles.centerContainer}>
-          <Ionicons name="lock-closed-outline" size={64} color="#ccccd1" />
-          <Text style={styles.emptyText}>
+          <Ionicons name="lock-closed-outline" size={64} color={colors.iconSecondary} />
+          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
             Only community admins can manage integrations
           </Text>
         </View>
@@ -115,22 +117,22 @@ export function PlanningCenterSetupScreen() {
   const isTokenExpired = status?.is_token_expired ?? false;
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
-      <View style={styles.header}>
+    <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.backgroundSecondary }]}>
+      <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <TouchableOpacity
           onPress={() => router.back()}
           style={styles.backButton}
         >
-          <Ionicons name="arrow-back" size={24} color="#222224" />
+          <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={styles.title}>Planning Center</Text>
+        <Text style={[styles.title, { color: colors.text }]}>Planning Center</Text>
         <View style={styles.placeholder} />
       </View>
 
       <ScrollView style={styles.content}>
         {isLoading ? (
           <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#222224" />
+            <ActivityIndicator size="large" color={colors.text} />
           </View>
         ) : (
           <>
@@ -145,10 +147,10 @@ export function PlanningCenterSetupScreen() {
                   }
                   size={48}
                   color={
-                    isConnected && !isTokenExpired ? "#34C759" : "#FF9500"
+                    isConnected && !isTokenExpired ? colors.success : colors.warning
                   }
                 />
-                <Text style={styles.statusTitle}>
+                <Text style={[styles.statusTitle, { color: colors.text }]}>
                   {isConnected && !isTokenExpired
                     ? "Connected"
                     : isTokenExpired
@@ -159,8 +161,8 @@ export function PlanningCenterSetupScreen() {
 
               {isConnected && status?.connected_by && (
                 <View style={styles.statusRow}>
-                  <Text style={styles.statusLabel}>Connected as:</Text>
-                  <Text style={styles.statusValue}>
+                  <Text style={[styles.statusLabel, { color: colors.textSecondary }]}>Connected as:</Text>
+                  <Text style={[styles.statusValue, { color: colors.text }]}>
                     {status.connected_by.firstName} {status.connected_by.lastName}
                   </Text>
                 </View>
@@ -168,30 +170,30 @@ export function PlanningCenterSetupScreen() {
 
               {status?.last_sync_at && (
                 <View style={styles.statusRow}>
-                  <Text style={styles.statusLabel}>Last Sync:</Text>
-                  <Text style={styles.statusValue}>
+                  <Text style={[styles.statusLabel, { color: colors.textSecondary }]}>Last Sync:</Text>
+                  <Text style={[styles.statusValue, { color: colors.text }]}>
                     {new Date(status.last_sync_at).toLocaleString()}
                   </Text>
                 </View>
               )}
 
               {status?.last_error && (
-                <View style={styles.errorContainer}>
-                  <Ionicons name="warning" size={20} color="#FF3B30" />
-                  <Text style={styles.errorText}>{status.last_error}</Text>
+                <View style={[styles.errorContainer, { backgroundColor: isDark ? 'rgba(255,59,48,0.15)' : '#FEF0ED' }]}>
+                  <Ionicons name="warning" size={20} color={colors.error} />
+                  <Text style={[styles.errorText, { color: colors.error }]}>{status.last_error}</Text>
                 </View>
               )}
             </Card>
 
             {/* About Planning Center */}
             <Card style={styles.infoCard}>
-              <Text style={styles.infoTitle}>About Planning Center</Text>
-              <Text style={styles.infoText}>
+              <Text style={[styles.infoTitle, { color: colors.text }]}>About Planning Center</Text>
+              <Text style={[styles.infoText, { color: colors.textSecondary }]}>
                 Connect your Planning Center account to automatically add new
                 community members to Planning Center People when they join your
                 community in Togather.
               </Text>
-              <Text style={styles.infoText}>
+              <Text style={[styles.infoText, { color: colors.textSecondary }]}>
                 This integration requires admin access to your Planning Center
                 organization.
               </Text>
@@ -239,7 +241,6 @@ export function PlanningCenterSetupScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fafafa",
   },
   header: {
     flexDirection: "row",
@@ -247,9 +248,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e5e5ea",
   },
   backButton: {
     padding: 8,
@@ -257,7 +256,6 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 20,
     fontWeight: "600",
-    color: "#222224",
   },
   placeholder: {
     width: 40,
@@ -278,7 +276,6 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 16,
-    color: "#666668",
     marginTop: 16,
     textAlign: "center",
   },
@@ -293,7 +290,6 @@ const styles = StyleSheet.create({
   statusTitle: {
     fontSize: 20,
     fontWeight: "600",
-    color: "#222224",
     marginTop: 12,
   },
   statusRow: {
@@ -303,11 +299,9 @@ const styles = StyleSheet.create({
   },
   statusLabel: {
     fontSize: 16,
-    color: "#666668",
   },
   statusValue: {
     fontSize: 16,
-    color: "#222224",
     fontWeight: "500",
   },
   errorContainer: {
@@ -315,14 +309,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 16,
     padding: 12,
-    backgroundColor: "#FEF0ED",
     borderRadius: 8,
     gap: 8,
   },
   errorText: {
     flex: 1,
     fontSize: 14,
-    color: "#FF3B30",
     lineHeight: 20,
   },
   infoCard: {
@@ -332,12 +324,10 @@ const styles = StyleSheet.create({
   infoTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#222224",
     marginBottom: 12,
   },
   infoText: {
     fontSize: 15,
-    color: "#666668",
     lineHeight: 22,
     marginBottom: 12,
   },

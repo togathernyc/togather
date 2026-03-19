@@ -15,6 +15,7 @@ import { useAction, api } from "@services/api/convex";
 import { PhoneInput } from "@/components/ui/PhoneInput";
 import { OTPInput } from "@/components/ui/OTPInput";
 import { formatAuthError } from "../utils/formatAuthError";
+import { useTheme } from "@hooks/useTheme";
 
 // Check if there's a pending join intent and return the redirect path
 async function getPostAuthRedirect(): Promise<string> {
@@ -51,6 +52,7 @@ export function RegisterPhoneScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { refreshUser, user, token } = useAuth();
+  const { colors } = useTheme();
   const params = useLocalSearchParams<{
     prefillPhone?: string;
     associatedEmails?: string;
@@ -173,27 +175,28 @@ export function RegisterPhoneScreen() {
   if (step === "otp") {
     return (
       <ScrollView
-        style={styles.scrollView}
+        style={[styles.scrollView, { backgroundColor: colors.surface }]}
         contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top }]}
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.container}>
           <TouchableOpacity style={styles.backButton} onPress={handleGoBack}>
-            <Text style={styles.backButtonText}>← Back</Text>
+            <Text style={[styles.backButtonText, { color: colors.link }]}>← Back</Text>
           </TouchableOpacity>
 
-          <Text style={styles.title}>Verify Phone</Text>
-          <Text style={styles.subtitle}>
+          <Text style={[styles.title, { color: colors.text }]}>Verify Phone</Text>
+          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
             We sent a 6-digit code to {phone}
           </Text>
 
-          {error ? <Text style={styles.errorText}>{error}</Text> : null}
+          {error ? <Text style={[styles.errorText, { color: colors.error }]}>{error}</Text> : null}
 
           <OTPInput value={otp} onChange={setOtp} error={error} autoFocus />
 
           <TouchableOpacity
             style={[
               styles.button,
+              { backgroundColor: colors.link },
               (isLoading || otp.length !== 6) && styles.buttonDisabled,
             ]}
             onPress={handleOTPSubmit}
@@ -208,12 +211,12 @@ export function RegisterPhoneScreen() {
 
           <View style={styles.resendContainer}>
             {otpInfo?.rateLimitRemaining === 0 ? (
-              <Text style={styles.footerText}>
+              <Text style={[styles.footerText, { color: colors.textSecondary }]}>
                 Rate limit reached. Please wait before requesting a new code.
               </Text>
             ) : (
               <TouchableOpacity onPress={handleResendOTP} disabled={isLoading}>
-                <Text style={styles.linkText}>Resend Code</Text>
+                <Text style={[styles.linkText, { color: colors.link }]}>Resend Code</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -224,33 +227,33 @@ export function RegisterPhoneScreen() {
 
   return (
     <ScrollView
-      style={styles.scrollView}
+      style={[styles.scrollView, { backgroundColor: colors.surface }]}
       contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top }]}
       keyboardShouldPersistTaps="handled"
     >
       <View style={styles.container}>
         <View style={styles.logoContainer}>
-          <Text style={styles.logoText}>Togather</Text>
+          <Text style={[styles.logoText, { color: colors.link }]}>Togather</Text>
         </View>
 
-        <Text style={styles.title}>Add Your Phone</Text>
-        <Text style={styles.subtitle}>
+        <Text style={[styles.title, { color: colors.text }]}>Add Your Phone</Text>
+        <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
           Phone verification is required to continue using Togather
         </Text>
 
         {/* Previously linked emails notice */}
         {associatedEmails.length > 0 && (
-          <View style={styles.linkedEmailsContainer}>
-            <Text style={styles.linkedEmailsTitle}>Previously Linked Emails</Text>
+          <View style={[styles.linkedEmailsContainer, { backgroundColor: colors.surfaceSecondary }]}>
+            <Text style={[styles.linkedEmailsTitle, { color: colors.textSecondary }]}>Previously Linked Emails</Text>
             {associatedEmails.map((email, index) => (
-              <Text key={index} style={styles.linkedEmail}>
+              <Text key={index} style={[styles.linkedEmail, { color: colors.text }]}>
                 {email}
               </Text>
             ))}
           </View>
         )}
 
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+        {error ? <Text style={[styles.errorText, { color: colors.error }]}>{error}</Text> : null}
 
         <PhoneInput
           value={phone}
@@ -262,7 +265,7 @@ export function RegisterPhoneScreen() {
         />
 
         <TouchableOpacity
-          style={[styles.button, isLoading && styles.buttonDisabled]}
+          style={[styles.button, { backgroundColor: colors.link }, isLoading && styles.buttonDisabled]}
           onPress={handlePhoneSubmit}
           disabled={isLoading}
         >
@@ -274,8 +277,8 @@ export function RegisterPhoneScreen() {
         </TouchableOpacity>
 
         <View style={styles.helpSection}>
-          <Text style={styles.helpText}>Need help?</Text>
-          <Text style={styles.helpLink}>Contact support at help@gettogather.co</Text>
+          <Text style={[styles.helpText, { color: colors.textSecondary }]}>Need help?</Text>
+          <Text style={[styles.helpLink, { color: colors.link }]}>Contact support at help@gettogather.co</Text>
         </View>
       </View>
     </ScrollView>
@@ -285,7 +288,6 @@ export function RegisterPhoneScreen() {
 const styles = StyleSheet.create({
   scrollView: {
     flex: 1,
-    backgroundColor: "#fff",
   },
   scrollContent: {
     flexGrow: 1,
@@ -305,30 +307,25 @@ const styles = StyleSheet.create({
   logoText: {
     fontSize: 32,
     fontWeight: "bold",
-    color: "#007AFF",
   },
   backButton: {
     marginBottom: 16,
   },
   backButtonText: {
     fontSize: 16,
-    color: "#007AFF",
   },
   title: {
     fontSize: 28,
     fontWeight: "bold",
     textAlign: "center",
     marginBottom: 8,
-    color: "#333",
   },
   subtitle: {
     fontSize: 16,
-    color: "#666",
     textAlign: "center",
     marginBottom: 24,
   },
   linkedEmailsContainer: {
-    backgroundColor: "#f8f8f8",
     padding: 16,
     borderRadius: 12,
     marginBottom: 24,
@@ -336,22 +333,18 @@ const styles = StyleSheet.create({
   linkedEmailsTitle: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#666",
     marginBottom: 8,
   },
   linkedEmail: {
     fontSize: 14,
-    color: "#333",
     marginBottom: 4,
   },
   errorText: {
-    color: "#FF3B30",
     textAlign: "center",
     marginBottom: 16,
     fontSize: 14,
   },
   button: {
-    backgroundColor: "#007AFF",
     padding: 16,
     borderRadius: 12,
     alignItems: "center",
@@ -371,11 +364,9 @@ const styles = StyleSheet.create({
   },
   footerText: {
     fontSize: 14,
-    color: "#666",
   },
   linkText: {
     fontSize: 14,
-    color: "#007AFF",
     fontWeight: "500",
   },
   helpSection: {

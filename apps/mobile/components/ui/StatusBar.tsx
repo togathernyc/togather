@@ -15,6 +15,7 @@
 import React from 'react';
 import { Text, View, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useTheme } from '@hooks/useTheme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
   useSharedValue,
@@ -44,11 +45,12 @@ function getActiveConfig(
     isInternetReachable: boolean;
   },
   otaStatus: { status: string },
+  themeColors: { error: string; warning: string; success: string; textTertiary: string },
 ): StatusConfig | null {
   // Priority 1: Disconnected
   if (connectionStatus.status === 'disconnected') {
     return {
-      backgroundColor: '#FF3B30',
+      backgroundColor: themeColors.error,
       icon: 'cloud-offline-outline',
       text: 'No internet connection',
     };
@@ -57,7 +59,7 @@ function getActiveConfig(
   // Priority 2: Network available but internet not reachable
   if (connectionStatus.isNetworkAvailable && !connectionStatus.isInternetReachable) {
     return {
-      backgroundColor: '#FF3B30',
+      backgroundColor: themeColors.error,
       icon: 'cloud-offline-outline',
       text: 'No internet',
     };
@@ -66,7 +68,7 @@ function getActiveConfig(
   // Priority 3: Slow connection
   if (connectionStatus.status === 'slow') {
     return {
-      backgroundColor: '#FF9500',
+      backgroundColor: themeColors.warning,
       icon: 'cellular-outline',
       text: 'Slow connection',
     };
@@ -75,7 +77,7 @@ function getActiveConfig(
   // Priority 4: Reconnecting
   if (connectionStatus.status === 'reconnecting') {
     return {
-      backgroundColor: '#FF9500',
+      backgroundColor: themeColors.warning,
       icon: 'sync-outline',
       text: 'Reconnecting...',
     };
@@ -84,7 +86,7 @@ function getActiveConfig(
   // Priority 5: Reconnected (auto-dismisses via provider transitioning to connected)
   if (connectionStatus.status === 'reconnected') {
     return {
-      backgroundColor: '#34C759',
+      backgroundColor: themeColors.success,
       icon: 'checkmark-circle-outline',
       text: 'Connected',
     };
@@ -93,7 +95,7 @@ function getActiveConfig(
   // Priority 6: OTA checking
   if (otaStatus.status === 'checking') {
     return {
-      backgroundColor: '#8E8E93',
+      backgroundColor: themeColors.textTertiary,
       icon: 'refresh-outline',
       text: 'Checking for updates...',
     };
@@ -102,7 +104,7 @@ function getActiveConfig(
   // Priority 7: OTA error (auto-dismisses via provider transitioning to idle)
   if (otaStatus.status === 'error') {
     return {
-      backgroundColor: '#8E8E93',
+      backgroundColor: themeColors.textTertiary,
       icon: 'alert-circle-outline',
       text: "Couldn't check for updates",
     };
@@ -119,15 +121,17 @@ function getActiveConfig(
 export function useStatusBarVisible(): boolean {
   const connectionStatus = useConnectionStatus();
   const otaStatus = useOTAUpdateStatus();
-  return getActiveConfig(connectionStatus, otaStatus) !== null;
+  const { colors } = useTheme();
+  return getActiveConfig(connectionStatus, otaStatus, colors) !== null;
 }
 
 export function StatusBar() {
   const connectionStatus = useConnectionStatus();
   const otaStatus = useOTAUpdateStatus();
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
 
-  const config = getActiveConfig(connectionStatus, otaStatus);
+  const config = getActiveConfig(connectionStatus, otaStatus, colors);
 
   // Remember the last visible config so the slide-out animation
   // retains the correct colors instead of flashing to a fallback
@@ -159,7 +163,7 @@ export function StatusBar() {
           paddingBottom: insets.bottom,
           height: totalHeight,
         },
-        { backgroundColor: displayConfig?.backgroundColor ?? '#FF3B30' },
+        { backgroundColor: displayConfig?.backgroundColor ?? colors.error },
         animatedStyle,
       ]}
       pointerEvents="none"

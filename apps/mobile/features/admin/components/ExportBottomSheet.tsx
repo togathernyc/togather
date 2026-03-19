@@ -22,6 +22,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 import {
   copyToClipboard,
   saveAndShareCSV,
@@ -50,6 +51,7 @@ export function ExportBottomSheet({
   title = "Export Data",
 }: ExportBottomSheetProps) {
   const { primaryColor } = useCommunityTheme();
+  const { colors } = useTheme();
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const [loadingAction, setLoadingAction] = useState<ExportAction | null>(null);
@@ -150,8 +152,9 @@ export function ExportBottomSheet({
       <TouchableOpacity
         style={[
           styles.optionButton,
+          { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
           isDisabled && styles.optionButtonDisabled,
-          isSuccess && styles.optionButtonSuccess,
+          isSuccess && { backgroundColor: "#E8F5E9", borderColor: "#34C759" },
         ]}
         onPress={onPress}
         disabled={isDisabled}
@@ -166,13 +169,13 @@ export function ExportBottomSheet({
             <Ionicons name={icon} size={22} color={primaryColor} />
           )}
         </View>
-        <Text style={[styles.optionLabel, isDisabled && styles.optionLabelDisabled]}>
+        <Text style={[styles.optionLabel, { color: colors.text }, isDisabled && { color: colors.textTertiary }]}>
           {isSuccess ? "Copied!" : label}
         </Text>
         <Ionicons
           name="chevron-forward"
           size={20}
-          color={isDisabled ? "#ccc" : "#999"}
+          color={isDisabled ? colors.borderLight : colors.textTertiary}
         />
       </TouchableOpacity>
     );
@@ -193,14 +196,15 @@ export function ExportBottomSheet({
           style={[
             styles.bottomSheet,
             {
+              backgroundColor: colors.surface,
               transform: [{ translateY: slideAnim }],
             },
           ]}
         >
-          <View style={styles.handle} />
+          <View style={[styles.handle, { backgroundColor: colors.borderLight }]} />
           <View style={styles.content}>
-            <Text style={styles.title}>{title}</Text>
-            <Text style={styles.subtitle}>Choose how to export</Text>
+            <Text style={[styles.title, { color: colors.text }]}>{title}</Text>
+            <Text style={[styles.subtitle, { color: colors.textSecondary }]}>Choose how to export</Text>
 
             <View style={styles.optionsContainer}>
               {renderButton("copy", "copy-outline", "Copy to Clipboard", handleCopy)}
@@ -215,7 +219,7 @@ export function ExportBottomSheet({
             </View>
 
             <TouchableOpacity style={styles.cancelButton} onPress={onClose}>
-              <Text style={styles.cancelButtonText}>Cancel</Text>
+              <Text style={[styles.cancelButtonText, { color: colors.textSecondary }]}>Cancel</Text>
             </TouchableOpacity>
           </View>
         </Animated.View>
@@ -234,7 +238,6 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0, 0, 0, 0.5)",
   },
   bottomSheet: {
-    backgroundColor: "#fff",
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     paddingTop: 12,
@@ -255,7 +258,6 @@ const styles = StyleSheet.create({
   handle: {
     width: 40,
     height: 4,
-    backgroundColor: "#D1D1D6",
     borderRadius: 2,
     alignSelf: "center",
     marginBottom: 20,
@@ -266,12 +268,10 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 20,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 4,
   },
   subtitle: {
     fontSize: 14,
-    color: "#666",
     marginBottom: 24,
   },
   optionsContainer: {
@@ -281,19 +281,14 @@ const styles = StyleSheet.create({
   optionButton: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f8f8f8",
     borderRadius: 12,
     padding: 14,
     borderWidth: 1,
-    borderColor: "#e0e0e0",
   },
   optionButtonDisabled: {
     opacity: 0.5,
   },
-  optionButtonSuccess: {
-    backgroundColor: "#E8F5E9",
-    borderColor: "#34C759",
-  },
+  optionButtonSuccess: {},
   optionIcon: {
     width: 44,
     height: 44,
@@ -306,11 +301,8 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 16,
     fontWeight: "500",
-    color: "#333",
   },
-  optionLabelDisabled: {
-    color: "#999",
-  },
+  optionLabelDisabled: {},
   cancelButton: {
     marginTop: 16,
     paddingVertical: 14,
@@ -319,6 +311,5 @@ const styles = StyleSheet.create({
   cancelButtonText: {
     fontSize: 16,
     fontWeight: "500",
-    color: "#666",
   },
 });

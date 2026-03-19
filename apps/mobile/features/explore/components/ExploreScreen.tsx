@@ -12,13 +12,13 @@ import { ExploreBottomSheet, ExploreBottomSheetRef } from './ExploreBottomSheet'
 import { FloatingGroupCard } from './FloatingGroupCard';
 import { FilterModal, FilterState } from './FilterModal';
 import { EventsFilterModal } from './EventsFilterModal';
-import { COLORS } from '../constants';
 import { getGroupCoordinates, geocodeZipCode, geocodeAddressAsync } from '@features/groups/utils/geocodeLocation';
 import { useExploreFilters, ExploreView } from '../hooks/useExploreFilters';
 import { filterExploreGroups } from '../utils/filterGroups';
 import { useCommunityEvents, useLeaderGroups, useMyRsvpedEvents, CommunityEvent } from '../hooks/useCommunityEvents';
 import { AppImage } from '@components/ui';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
+import { useTheme } from '@hooks/useTheme';
 import { useQuery, api } from '@services/api/convex';
 import type { Id } from '@services/api/convex';
 import { Alert } from 'react-native';
@@ -35,6 +35,7 @@ export function ExploreScreen() {
   const router = useRouter();
   const { user, community, token } = useAuth();
   const { primaryColor } = useCommunityTheme();
+  const { colors } = useTheme();
   const isAdmin = user?.is_admin === true;
   // Check if user has community context (required for groups and events queries)
   const hasCommunityContext = !!community?.id;
@@ -434,9 +435,9 @@ export function ExploreScreen() {
   // Show error state only if there's an error and no cached data
   if (error && !groupsData) {
     return (
-      <View style={styles.errorContainer}>
-        <Text style={styles.errorText}>Failed to load groups</Text>
-        <Text style={styles.errorSubtext}>Please try again later</Text>
+      <View style={[styles.errorContainer, { backgroundColor: colors.backgroundSecondary }]}>
+        <Text style={[styles.errorText, { color: colors.text }]}>Failed to load groups</Text>
+        <Text style={[styles.errorSubtext, { color: colors.textSecondary }]}>Please try again later</Text>
       </View>
     );
   }
@@ -446,21 +447,21 @@ export function ExploreScreen() {
     const myEvents = myRsvpedEventsData?.events ?? [];
 
     return (
-      <View style={styles.noCommunityContainer}>
-        <View style={[styles.noCommunityHeader, { paddingTop: insets.top + 16 }]}>
-          <Text style={styles.noCommunityTitle}>My Events</Text>
-          <Text style={styles.noCommunitySubtitle}>Events you've RSVPed to</Text>
+      <View style={[styles.noCommunityContainer, { backgroundColor: colors.backgroundSecondary }]}>
+        <View style={[styles.noCommunityHeader, { paddingTop: insets.top + 16, backgroundColor: colors.surface, borderBottomColor: colors.borderLight }]}>
+          <Text style={[styles.noCommunityTitle, { color: colors.text }]}>My Events</Text>
+          <Text style={[styles.noCommunitySubtitle, { color: colors.textSecondary }]}>Events you've RSVPed to</Text>
         </View>
 
         {isLoadingMyRsvps ? (
-          <View style={styles.errorContainer}>
-            <Text style={styles.errorSubtext}>Loading your events...</Text>
+          <View style={[styles.errorContainer, { backgroundColor: colors.backgroundSecondary }]}>
+            <Text style={[styles.errorSubtext, { color: colors.textSecondary }]}>Loading your events...</Text>
           </View>
         ) : myEvents.length === 0 ? (
-          <View style={styles.errorContainer}>
-            <Ionicons name="calendar-outline" size={48} color={COLORS.textMuted} style={{ marginBottom: 16 }} />
-            <Text style={styles.errorText}>No upcoming events</Text>
-            <Text style={styles.errorSubtext}>Events you RSVP to will appear here</Text>
+          <View style={[styles.errorContainer, { backgroundColor: colors.backgroundSecondary }]}>
+            <Ionicons name="calendar-outline" size={48} color={colors.textSecondary} style={{ marginBottom: 16 }} />
+            <Text style={[styles.errorText, { color: colors.text }]}>No upcoming events</Text>
+            <Text style={[styles.errorSubtext, { color: colors.textSecondary }]}>Events you RSVP to will appear here</Text>
           </View>
         ) : (
           <ScrollView
@@ -476,7 +477,7 @@ export function ExploreScreen() {
             {myEvents.map((event) => (
               <TouchableOpacity
                 key={event.id}
-                style={styles.myEventCard}
+                style={[styles.myEventCard, { backgroundColor: colors.surface }]}
                 onPress={() => router.push(`/e/${event.shortId}?source=app`)}
                 activeOpacity={0.7}
               >
@@ -491,7 +492,7 @@ export function ExploreScreen() {
                   }}
                 />
                 <View style={styles.myEventInfo}>
-                  <Text style={styles.myEventTitle} numberOfLines={1}>
+                  <Text style={[styles.myEventTitle, { color: colors.text }]} numberOfLines={1}>
                     {event.title || event.group.name}
                   </Text>
                   <Text style={[styles.myEventDate, { color: primaryColor }]}>
@@ -503,7 +504,7 @@ export function ExploreScreen() {
                       minute: '2-digit',
                     })}
                   </Text>
-                  <Text style={styles.myEventGroup} numberOfLines={1}>
+                  <Text style={[styles.myEventGroup, { color: colors.textSecondary }]} numberOfLines={1}>
                     {event.group.name} • {event.community.name}
                   </Text>
                 </View>
@@ -524,7 +525,7 @@ export function ExploreScreen() {
   const mapMarkers = exploreFilters.view === 'events' ? eventsAsMapMarkers : groupsWithLocation;
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.backgroundSecondary }]}>
       {/* Map layer - shows groups or events based on current view */}
       <ExploreMap
         groups={mapMarkers}
@@ -537,7 +538,7 @@ export function ExploreScreen() {
       {/* Floating filter button - hide when a group is selected */}
       {!selectedGroup && (
         <TouchableOpacity
-          style={[styles.filterButton, { top: insets.top + 12 }]}
+          style={[styles.filterButton, { top: insets.top + 12, backgroundColor: colors.buttonPrimary }]}
           onPress={() => {
             if (exploreFilters.view === 'events') {
               setIsEventsFilterModalVisible(true);
@@ -547,16 +548,16 @@ export function ExploreScreen() {
           }}
           activeOpacity={0.9}
         >
-          <Ionicons name="options-outline" size={20} color="#fff" />
+          <Ionicons name="options-outline" size={20} color={colors.buttonPrimaryText} />
           {/* Show badge for active filters based on current view */}
           {exploreFilters.view === 'groups' && hasActiveGroupFilters && (
             <View style={[styles.filterBadge, { backgroundColor: primaryColor }]}>
-              <Text style={styles.filterBadgeText}>{activeGroupFilterCount}</Text>
+              <Text style={[styles.filterBadgeText, { color: colors.textInverse }]}>{activeGroupFilterCount}</Text>
             </View>
           )}
           {exploreFilters.view === 'events' && hasActiveEventFilters && (
             <View style={[styles.filterBadge, { backgroundColor: primaryColor }]}>
-              <Text style={styles.filterBadgeText}>{activeEventFilterCount}</Text>
+              <Text style={[styles.filterBadgeText, { color: colors.textInverse }]}>{activeEventFilterCount}</Text>
             </View>
           )}
         </TouchableOpacity>
@@ -566,21 +567,21 @@ export function ExploreScreen() {
       {/* Groups view: all users can create/request groups */}
       {!selectedGroup && exploreFilters.view === 'groups' && (
         <TouchableOpacity
-          style={[styles.addButton, { top: insets.top + 64 }]}
+          style={[styles.addButton, { top: insets.top + 64, backgroundColor: colors.buttonPrimary }]}
           onPress={handleRequestGroupPress}
           activeOpacity={0.9}
         >
-          <Ionicons name="add" size={24} color="#fff" />
+          <Ionicons name="add" size={24} color={colors.buttonPrimaryText} />
         </TouchableOpacity>
       )}
       {/* Events view: leaders can create events */}
       {!selectedGroup && exploreFilters.view === 'events' && isLeader && (
         <TouchableOpacity
-          style={[styles.addButton, { top: insets.top + 64 }]}
+          style={[styles.addButton, { top: insets.top + 64, backgroundColor: colors.buttonPrimary }]}
           onPress={() => router.push('/(user)/create-event')}
           activeOpacity={0.9}
         >
-          <Ionicons name="add" size={24} color="#fff" />
+          <Ionicons name="add" size={24} color={colors.buttonPrimaryText} />
         </TouchableOpacity>
       )}
 
@@ -643,24 +644,20 @@ export function ExploreScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
   },
   errorContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#f5f5f5',
     padding: 20,
   },
   errorText: {
     fontSize: 18,
     fontWeight: '600',
-    color: COLORS.text,
     marginBottom: 8,
   },
   errorSubtext: {
     fontSize: 14,
-    color: COLORS.textMuted,
   },
   filterButton: {
     position: 'absolute',
@@ -668,7 +665,6 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: '#222',
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 100,
@@ -699,7 +695,6 @@ const styles = StyleSheet.create({
   filterBadgeText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#fff',
   },
   addButton: {
     position: 'absolute',
@@ -707,7 +702,6 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: '#222',
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 100,
@@ -727,24 +721,19 @@ const styles = StyleSheet.create({
   // No-community view styles
   noCommunityContainer: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
   },
   noCommunityHeader: {
     paddingHorizontal: 20,
     paddingBottom: 16,
-    backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
   },
   noCommunityTitle: {
     fontSize: 28,
     fontWeight: '700',
-    color: COLORS.text,
     marginBottom: 4,
   },
   noCommunitySubtitle: {
     fontSize: 14,
-    color: COLORS.textMuted,
   },
   noCommunityScrollView: {
     flex: 1,
@@ -754,7 +743,6 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   myEventCard: {
-    backgroundColor: '#fff',
     borderRadius: 12,
     padding: 12,
     flexDirection: 'row',
@@ -784,7 +772,6 @@ const styles = StyleSheet.create({
   myEventTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: COLORS.text,
     marginBottom: 4,
   },
   myEventDate: {
@@ -793,7 +780,6 @@ const styles = StyleSheet.create({
   },
   myEventGroup: {
     fontSize: 13,
-    color: COLORS.textMuted,
   },
   myEventStatus: {
     paddingHorizontal: 10,

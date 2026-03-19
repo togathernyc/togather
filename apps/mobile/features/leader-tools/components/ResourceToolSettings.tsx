@@ -31,6 +31,7 @@ import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { ResourceSectionEditor } from "./ResourceSectionEditor";
 import { DragHandle } from "@components/ui/DragHandle";
+import { useTheme } from "@hooks/useTheme";
 
 // ============================================================================
 // Constants
@@ -69,6 +70,7 @@ interface Section {
 // ============================================================================
 
 export function ResourceToolSettings() {
+  const { colors } = useTheme();
   const { group_id, resource_id } = useLocalSearchParams<{
     group_id: string;
     resource_id?: string;
@@ -283,7 +285,7 @@ export function ResourceToolSettings() {
   // Loading state for missing token or existing resource
   if (!token || (!isNew && existingResource === undefined)) {
     return (
-      <View style={styles.centered}>
+      <View style={[styles.centered, { backgroundColor: colors.background }]}>
         <Stack.Screen options={{ title: isNew ? "New Resource" : "Edit Resource" }} />
         <ActivityIndicator color={themeColor} />
       </View>
@@ -293,15 +295,15 @@ export function ResourceToolSettings() {
   // Resource not found
   if (!isNew && existingResource === null) {
     return (
-      <View style={styles.centered}>
+      <View style={[styles.centered, { backgroundColor: colors.background }]}>
         <Stack.Screen options={{ title: "Edit Resource" }} />
-        <Text style={styles.errorText}>Resource not found</Text>
+        <Text style={[styles.errorText, { color: colors.textSecondary }]}>Resource not found</Text>
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       <DragHandle />
       <Stack.Screen
         options={{ title: isNew ? "New Resource" : "Edit Resource" }}
@@ -312,17 +314,17 @@ export function ResourceToolSettings() {
         keyboardShouldPersistTaps="handled"
       >
         {/* Title Input */}
-        <Text style={styles.label}>Title</Text>
+        <Text style={[styles.label, { color: colors.text }]}>Title</Text>
         <TextInput
-          style={styles.input}
+          style={[styles.input, { borderColor: colors.border, color: colors.text, backgroundColor: colors.inputBackground }]}
           value={title}
           onChangeText={setTitle}
           placeholder="Welcome, Roles, Resources..."
-          placeholderTextColor="#999"
+          placeholderTextColor={colors.textTertiary}
         />
 
         {/* Icon Picker */}
-        <Text style={styles.label}>Icon</Text>
+        <Text style={[styles.label, { color: colors.text }]}>Icon</Text>
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -334,9 +336,10 @@ export function ResourceToolSettings() {
               key={iconName}
               style={[
                 styles.iconOption,
+                { backgroundColor: colors.surfaceSecondary },
                 icon === iconName && [
                   styles.iconOptionSelected,
-                  { borderColor: themeColor },
+                  { borderColor: themeColor, backgroundColor: colors.selectedBackground },
                 ],
               ]}
               onPress={() => setIcon(iconName)}
@@ -344,18 +347,19 @@ export function ResourceToolSettings() {
               <Ionicons
                 name={iconName}
                 size={24}
-                color={icon === iconName ? themeColor : "#666"}
+                color={icon === iconName ? themeColor : colors.textSecondary}
               />
             </Pressable>
           ))}
         </ScrollView>
 
         {/* Visibility */}
-        <Text style={styles.label}>Who can see this?</Text>
+        <Text style={[styles.label, { color: colors.text }]}>Who can see this?</Text>
         <View style={styles.visibilityOptions}>
           <Pressable
             style={[
               styles.visibilityOption,
+              { backgroundColor: colors.surfaceSecondary },
               visibilityType === "everyone" && [
                 styles.visibilityOptionSelected,
                 { backgroundColor: themeColor },
@@ -367,7 +371,7 @@ export function ResourceToolSettings() {
               style={
                 visibilityType === "everyone"
                   ? styles.visibilityTextSelected
-                  : styles.visibilityText
+                  : [styles.visibilityText, { color: colors.text }]
               }
             >
               Everyone
@@ -376,6 +380,7 @@ export function ResourceToolSettings() {
           <Pressable
             style={[
               styles.visibilityOption,
+              { backgroundColor: colors.surfaceSecondary },
               visibilityType === "joined_within" && [
                 styles.visibilityOptionSelected,
                 { backgroundColor: themeColor },
@@ -387,7 +392,7 @@ export function ResourceToolSettings() {
               style={
                 visibilityType === "joined_within"
                   ? styles.visibilityTextSelected
-                  : styles.visibilityText
+                  : [styles.visibilityText, { color: colors.text }]
               }
             >
               New members
@@ -396,6 +401,7 @@ export function ResourceToolSettings() {
           <Pressable
             style={[
               styles.visibilityOption,
+              { backgroundColor: colors.surfaceSecondary },
               visibilityType === "channel_members" && [
                 styles.visibilityOptionSelected,
                 { backgroundColor: themeColor },
@@ -407,7 +413,7 @@ export function ResourceToolSettings() {
               style={
                 visibilityType === "channel_members"
                   ? styles.visibilityTextSelected
-                  : styles.visibilityText
+                  : [styles.visibilityText, { color: colors.text }]
               }
             >
               Channels
@@ -417,25 +423,25 @@ export function ResourceToolSettings() {
 
         {visibilityType === "joined_within" && (
           <View style={styles.daysRow}>
-            <Text style={styles.daysText}>Members who joined in the last</Text>
+            <Text style={[styles.daysText, { color: colors.textSecondary }]}>Members who joined in the last</Text>
             <TextInput
-              style={styles.daysInput}
+              style={[styles.daysInput, { borderColor: colors.border, color: colors.text, backgroundColor: colors.inputBackground }]}
               value={daysWithin}
               onChangeText={setDaysWithin}
               keyboardType="number-pad"
               maxLength={3}
             />
-            <Text style={styles.daysText}>days</Text>
+            <Text style={[styles.daysText, { color: colors.textSecondary }]}>days</Text>
           </View>
         )}
 
         {visibilityType === "channel_members" && (
           <View style={styles.channelPicker}>
-            <Text style={styles.channelPickerHint}>
+            <Text style={[styles.channelPickerHint, { color: colors.textSecondary }]}>
               Only members of selected channels will see this resource
             </Text>
             {pickableChannels.length === 0 ? (
-              <Text style={styles.emptyText}>No channels available</Text>
+              <Text style={[styles.emptyText, { color: colors.textTertiary }]}>No channels available</Text>
             ) : (
               pickableChannels.map((channel) => {
                 const isSelected = selectedChannelIds.includes(channel._id);
@@ -454,6 +460,7 @@ export function ResourceToolSettings() {
                     <View
                       style={[
                         styles.channelCheckbox,
+                        { borderColor: colors.border },
                         isSelected && [
                           styles.channelCheckboxSelected,
                           { backgroundColor: themeColor, borderColor: themeColor },
@@ -461,10 +468,10 @@ export function ResourceToolSettings() {
                       ]}
                     >
                       {isSelected && (
-                        <Ionicons name="checkmark" size={14} color="#fff" />
+                        <Ionicons name="checkmark" size={14} color={colors.textInverse} />
                       )}
                     </View>
-                    <Text style={styles.channelName}>{channel.name}</Text>
+                    <Text style={[styles.channelName, { color: colors.text }]}>{channel.name}</Text>
                   </Pressable>
                 );
               })
@@ -475,9 +482,9 @@ export function ResourceToolSettings() {
         {/* Sections - only show for existing resources */}
         {!isNew && (
           <>
-            <Text style={styles.label}>Sections</Text>
+            <Text style={[styles.label, { color: colors.text }]}>Sections</Text>
             {sortedSections.length === 0 ? (
-              <Text style={styles.emptyText}>
+              <Text style={[styles.emptyText, { color: colors.textTertiary }]}>
                 No sections yet. Add a section to provide content.
               </Text>
             ) : (
@@ -497,7 +504,7 @@ export function ResourceToolSettings() {
                         <Ionicons
                           name="chevron-up"
                           size={20}
-                          color={index === 0 ? "#ccc" : "#666"}
+                          color={index === 0 ? colors.iconSecondary : colors.textSecondary}
                         />
                       </TouchableOpacity>
                       <TouchableOpacity
@@ -515,8 +522,8 @@ export function ResourceToolSettings() {
                           size={20}
                           color={
                             index === sortedSections.length - 1
-                              ? "#ccc"
-                              : "#666"
+                              ? colors.iconSecondary
+                              : colors.textSecondary
                           }
                         />
                       </TouchableOpacity>
@@ -556,7 +563,7 @@ export function ResourceToolSettings() {
           disabled={saving}
         >
           {saving ? (
-            <ActivityIndicator color="#fff" size="small" />
+            <ActivityIndicator color={colors.textInverse} size="small" />
           ) : (
             <Text style={styles.saveButtonText}>
               {isNew ? "Create Resource" : "Save Changes"}
@@ -567,7 +574,7 @@ export function ResourceToolSettings() {
         {/* Delete Button */}
         {!isNew && (
           <Pressable style={styles.deleteButton} onPress={handleDelete}>
-            <Text style={styles.deleteButtonText}>Delete Resource</Text>
+            <Text style={[styles.deleteButtonText, { color: colors.destructive }]}>Delete Resource</Text>
           </Pressable>
         )}
       </ScrollView>
@@ -582,7 +589,6 @@ export function ResourceToolSettings() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
   },
   scrollView: {
     flex: 1,
@@ -595,28 +601,22 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#fff",
   },
   errorText: {
     fontSize: 16,
-    color: "#666",
     textAlign: "center",
   },
   label: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#333",
     marginTop: 16,
     marginBottom: 8,
   },
   input: {
     borderWidth: 1,
-    borderColor: "#ddd",
     borderRadius: 8,
     padding: 12,
     fontSize: 16,
-    color: "#333",
-    backgroundColor: "#fff",
   },
   iconPicker: {
     marginBottom: 8,
@@ -628,12 +628,11 @@ const styles = StyleSheet.create({
   iconOption: {
     padding: 12,
     borderRadius: 8,
-    backgroundColor: "#f5f5f5",
     borderWidth: 2,
     borderColor: "transparent",
   },
   iconOptionSelected: {
-    backgroundColor: "#e6f2ff",
+    // backgroundColor and borderColor set dynamically
   },
   visibilityOptions: {
     flexDirection: "row",
@@ -643,14 +642,12 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 12,
     borderRadius: 8,
-    backgroundColor: "#f5f5f5",
     alignItems: "center",
   },
   visibilityOptionSelected: {
     // backgroundColor set dynamically with themeColor
   },
   visibilityText: {
-    color: "#333",
     fontWeight: "500",
   },
   visibilityTextSelected: {
@@ -665,22 +662,17 @@ const styles = StyleSheet.create({
   },
   daysText: {
     fontSize: 14,
-    color: "#666",
   },
   daysInput: {
     borderWidth: 1,
-    borderColor: "#ddd",
     borderRadius: 8,
     padding: 8,
     width: 60,
     textAlign: "center",
     fontSize: 16,
-    color: "#333",
-    backgroundColor: "#fff",
   },
   emptyText: {
     fontSize: 14,
-    color: "#999",
     fontStyle: "italic",
     textAlign: "center",
     padding: 16,
@@ -739,7 +731,6 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   deleteButtonText: {
-    color: "#FF3B30",
     fontWeight: "600",
   },
   channelPicker: {
@@ -748,7 +739,6 @@ const styles = StyleSheet.create({
   },
   channelPickerHint: {
     fontSize: 13,
-    color: "#666",
     marginBottom: 8,
   },
   channelRow: {
@@ -763,7 +753,6 @@ const styles = StyleSheet.create({
     height: 22,
     borderRadius: 4,
     borderWidth: 2,
-    borderColor: "#ccc",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -772,6 +761,5 @@ const styles = StyleSheet.create({
   },
   channelName: {
     fontSize: 15,
-    color: "#333",
   },
 });

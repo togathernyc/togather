@@ -26,6 +26,7 @@ import { useNotifications } from "@providers/NotificationProvider";
 import { useLeaveGroup } from "@features/groups/hooks/useLeaveGroup";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 import { parseStreamChannelId } from "@togather/shared";
 import type { Id } from "@services/api/convex";
 import { useQuery, api } from "@services/api/convex";
@@ -76,6 +77,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   const pathname = usePathname();
   const { user, token } = useAuth();
   const { primaryColor } = useCommunityTheme();
+  const { colors } = useTheme();
   const { addBlockedUser } = useBlockedUsersContext();
 
   // Mutations
@@ -799,19 +801,19 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   // If we have a group ID but channel ID is still loading, the components will handle their own loading states
   if (!resolvedGroupId) {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, { backgroundColor: colors.surface }]}>
         <ChatHeaderPlaceholder
           displayName={displayName}
           onBack={handleBack}
           topInset={insets.top}
         />
-        <View style={styles.centered}>
+        <View style={[styles.centered, { backgroundColor: colors.surface }]}>
           <ActivityIndicator
             size="large"
             color={primaryColor}
             testID="loading-indicator"
           />
-          <Text style={styles.loadingText}>Loading chat...</Text>
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading chat...</Text>
         </View>
       </View>
     );
@@ -823,7 +825,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
 
   if (!currentUserId) {
     return (
-      <View style={styles.centered}>
+      <View style={[styles.centered, { backgroundColor: colors.surface }]}>
         <Text style={styles.errorText}>Not authenticated</Text>
         <TouchableOpacity style={styles.backButtonError} onPress={handleBack}>
           <Text style={styles.backButtonErrorText}>Go Back</Text>
@@ -834,11 +836,11 @@ const ConvexChatRoomScreenInner: React.FC = () => {
 
   return (
     <KeyboardAvoidingView
-      style={[styles.container, { paddingTop: insets.top }]}
+      style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.surface }]}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
       keyboardVerticalOffset={0}
     >
-      <Pressable style={styles.container} onPress={Platform.OS === 'web' ? undefined : dismissKeyboard}>
+      <Pressable style={[styles.container, { backgroundColor: colors.surface }]} onPress={Platform.OS === 'web' ? undefined : dismissKeyboard}>
         <ChatHeader
           displayName={displayName}
           displayType={displayType}
@@ -921,8 +923,8 @@ const ConvexChatRoomScreenInner: React.FC = () => {
                 externalIsSending={isSending}
               />
             ) : (
-              <View style={styles.readOnlyBanner}>
-                <Text style={styles.readOnlyText}>
+              <View style={[styles.readOnlyBanner, { backgroundColor: colors.surfaceSecondary, borderTopColor: colors.border }]}>
+                <Text style={[styles.readOnlyText, { color: colors.textSecondary }]}>
                   Only admins can post in this channel. You can react to messages.
                 </Text>
               </View>
@@ -1013,7 +1015,6 @@ export const ConvexChatRoomScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
   },
   chatContainer: {
     flex: 1,
@@ -1023,12 +1024,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     padding: 20,
-    backgroundColor: "#fff",
   },
   loadingText: {
     marginTop: 16,
     fontSize: 16,
-    color: "#666",
   },
   errorText: {
     fontSize: 18,
@@ -1049,14 +1048,11 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   readOnlyBanner: {
-    backgroundColor: "#F5F5F5",
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderTopWidth: 1,
-    borderTopColor: "#E0E0E0",
   },
   readOnlyText: {
-    color: "#666666",
     fontSize: 14,
     textAlign: "center",
   },
