@@ -43,6 +43,8 @@ import {
 } from '../utils/fileTypes';
 import { VoiceRecorderBar } from './VoiceRecorderBar';
 import { useDraftStore } from '../../../stores/draftStore';
+// @ts-expect-error - Web-only component
+import { AttachmentMenu } from './AttachmentMenu.web';
 
 interface MessageInputProps {
   channelId: Id<"chatChannels"> | null;
@@ -121,6 +123,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   const [isVoiceRecording, setIsVoiceRecording] = useState(false);
   const [nativeScrollEnabled, setNativeScrollEnabled] = useState(false);
   const [debouncedText, setDebouncedText] = useState('');
+  const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
   const isWeb = Platform.OS === 'web';
   const prevChannelIdRef = useRef(channelId);
 
@@ -444,7 +447,10 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
     const showFileOption = isFileUploadAvailable;
     const showVoiceOption = isVoiceRecordingSupported();
 
-    if (Platform.OS === 'ios') {
+    if (isWeb) {
+      // Web: Use custom modal menu
+      setShowAttachmentMenu(true);
+    } else if (Platform.OS === 'ios') {
       const options: string[] = ['Take Photo', 'Choose from Library'];
       if (showFileOption) options.push('Choose File');
       if (showVoiceOption) options.push('Voice Message');
@@ -478,7 +484,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
 
       Alert.alert('Add Attachment', '', buttons, { cancelable: true });
     }
-  }, [takePhoto, pickImage, pickFile, isFileUploadAvailable]);
+  }, [takePhoto, pickImage, pickFile, isFileUploadAvailable, isWeb]);
 
   /**
    * Remove selected image by index
@@ -650,8 +656,35 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
 
   const canSend = (text.trim().length > 0 || uploadedImageUrls.length > 0 || uploadedFile !== null) && !isSending && !uploading;
 
+  // Build attachment menu options for web
+  const attachmentMenuOptions = React.useMemo(() => {
+    const options: Array<{ text: string; onPress: () => void; icon: any }> = [
+      { text: 'Take Photo', onPress: takePhoto, icon: 'camera' },
+      { text: 'Choose from Library', onPress: pickImage, icon: 'images' },
+    ];
+    if (isFileUploadAvailable) {
+      options.push({ text: 'Choose File', onPress: pickFile, icon: 'document' });
+    }
+    if (isVoiceRecordingSupported()) {
+      options.push({ 
+        text: 'Voice Message', 
+        onPress: () => setIsVoiceRecording(true),
+        icon: 'mic',
+      });
+    }
+    return options;
+  }, [takePhoto, pickImage, pickFile, isFileUploadAvailable]);
+
   return (
     <View style={styles.container}>
+      {/* Web Attachment Menu */}
+      {isWeb && (
+        <AttachmentMenu
+          visible={showAttachmentMenu}
+          onClose={() => setShowAttachmentMenu(false)}
+          options={attachmentMenuOptions}
+        />
+      )}
       {/* Mention Autocomplete */}
       {showMentionAutocomplete && (
         <View style={styles.autocompleteContainer}>
