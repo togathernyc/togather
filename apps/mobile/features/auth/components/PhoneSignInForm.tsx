@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   Keyboard,
   TouchableWithoutFeedback,
+  Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -14,6 +15,22 @@ import { PhoneInput } from "@/components/ui/PhoneInput";
 import { OTPInput } from "@/components/ui/OTPInput";
 import { ProgrammaticTextInput } from "@/components/ui/ProgrammaticTextInput";
 import { useTheme } from "@hooks/useTheme";
+
+/**
+ * On native, wraps children in TouchableWithoutFeedback to dismiss the keyboard
+ * when tapping outside inputs. On web, this is unnecessary and
+ * TouchableWithoutFeedback interferes with TextInput focus/typing.
+ */
+function DismissKeyboardWrapper({ children }: { children: React.ReactNode }) {
+  if (Platform.OS === 'web') {
+    return <>{children}</>;
+  }
+  return (
+    <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+      {children}
+    </TouchableWithoutFeedback>
+  );
+}
 
 interface PhoneSignInFormProps {
   // Phone step
@@ -92,7 +109,7 @@ export function PhoneSignInForm({
   if (step === "phone") {
     const isSubmitDisabled = isLoading || !termsAccepted;
     return (
-      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+      <DismissKeyboardWrapper>
         <View style={styles.container}>
           {/* Content area */}
           <View style={styles.content}>
@@ -155,13 +172,13 @@ export function PhoneSignInForm({
             </TouchableOpacity>
           </View>
         </View>
-      </TouchableWithoutFeedback>
+      </DismissKeyboardWrapper>
     );
   }
 
   if (step === "otp") {
     return (
-      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+      <DismissKeyboardWrapper>
         <View style={styles.container}>
           <View style={styles.content}>
             {/* Back button */}
@@ -210,13 +227,13 @@ export function PhoneSignInForm({
             </TouchableOpacity>
           </View>
         </View>
-      </TouchableWithoutFeedback>
+      </DismissKeyboardWrapper>
     );
   }
 
   // Legacy login step
   return (
-    <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+    <DismissKeyboardWrapper>
       <View style={styles.container}>
         <View style={styles.content}>
           <TouchableOpacity style={styles.backButton} onPress={onSwitchToPhone}>
@@ -310,7 +327,7 @@ export function PhoneSignInForm({
           </View>
         </View>
       </View>
-    </TouchableWithoutFeedback>
+    </DismissKeyboardWrapper>
   );
 }
 

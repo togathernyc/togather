@@ -150,19 +150,30 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoading, isAuthenticated, userId]);
 
-  // Don't show loading spinner if forceShow is true
-  if (isLoading && !forceShow) {
-    const timestamp = new Date().toISOString();
-    console.log(`🔄 [AuthGuard] [${timestamp}] Showing loading spinner`, {
-      isLoading,
-      forceShow,
-    });
-    return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-        <ActivityIndicator size="large" />
-      </View>
-    );
-  }
+  // Always render children to preserve focus/mount state (prevents TextInput
+  // focus loss on web when isLoading toggles). Overlay a spinner when loading.
+  const showSpinner = isLoading && !forceShow;
 
-  return <>{children}</>;
+  return (
+    <View style={{ flex: 1 }}>
+      {children}
+      {showSpinner && (
+        <View
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            justifyContent: "center",
+            alignItems: "center",
+            backgroundColor: "rgba(255,255,255,0.85)",
+            zIndex: 999,
+          }}
+        >
+          <ActivityIndicator size="large" />
+        </View>
+      )}
+    </View>
+  );
 }
