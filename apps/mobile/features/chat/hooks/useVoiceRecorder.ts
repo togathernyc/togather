@@ -328,6 +328,7 @@ function useVoiceRecorderNative(): VoiceRecorderResult {
 
       const { recording } = await Audio.Recording.createAsync(
         {
+          isMeteringEnabled: true,
           android: {
             extension: '.m4a',
             outputFormat: Audio.AndroidOutputFormat.MPEG_4,
