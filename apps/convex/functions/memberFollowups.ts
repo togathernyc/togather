@@ -1069,6 +1069,10 @@ export const getCrossGroupConfig = query({
 
     const groups = await Promise.all(leaderGroupIds.map((id) => ctx.db.get(id)));
 
+    // Find the announcement group among the leader's groups
+    const announcementGroup = groups.find((g) => g?.isAnnouncementGroup);
+    const announcementGroupId = announcementGroup?._id.toString() ?? null;
+
     // Use the score config from the first group that has one
     // (cross-group view uses a single score config for sorting)
     let scoreConfigScores: Array<{ id: string; name: string }> = [];
@@ -1125,6 +1129,7 @@ export const getCrossGroupConfig = query({
       scoreConfigScores,
       leaderGroups: leaderGroupsList,
       leaders,
+      announcementGroupId,
     };
   },
 });

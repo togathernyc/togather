@@ -282,7 +282,14 @@ export function FollowupMobileGrid({
     api.functions.memberFollowups.getCrossGroupConfig,
     crossGroupMode ? {} : "skip"
   );
-  const [crossGroupFilter, setCrossGroupFilter] = useState<string>("all");
+  const [crossGroupFilter, setCrossGroupFilter] = useState<string>("");
+
+  useEffect(() => {
+    if (!crossGroupMode || crossGroupFilter) return;
+    const defaultId = crossGroupConfig?.announcementGroupId
+      ?? crossGroupConfig?.leaderGroups?.[0]?._id;
+    if (defaultId) setCrossGroupFilter(defaultId);
+  }, [crossGroupMode, crossGroupFilter, crossGroupConfig]);
 
   const debouncedSearch = useDebounce(searchQuery, 450);
 
@@ -449,7 +456,7 @@ export function FollowupMobileGrid({
     : "score1";
   const serverSortDirection = isClientSideSort ? "desc" : sortDirection;
 
-  const crossGroupFilterArg = crossGroupMode && crossGroupFilter !== "all"
+  const crossGroupFilterArg = crossGroupMode && crossGroupFilter
     ? { groupFilter: crossGroupFilter as Id<"groups"> }
     : {};
 
@@ -577,7 +584,7 @@ export function FollowupMobileGrid({
       ? communityId
         ? {
             communityId,
-            ...(crossGroupFilter !== "all"
+            ...(crossGroupFilter
               ? { groupFilter: crossGroupFilter as Id<"groups"> }
               : {}),
           }

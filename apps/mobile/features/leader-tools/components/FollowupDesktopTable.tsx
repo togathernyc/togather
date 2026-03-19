@@ -371,8 +371,15 @@ export function FollowupDesktopTable({
     }
   }, [crossGroupMode]);
 
-  // Group filter for cross-group mode
-  const [crossGroupFilter, setCrossGroupFilter] = useState<string>("all");
+  // Group filter for cross-group mode — default to announcement group
+  const [crossGroupFilter, setCrossGroupFilter] = useState<string>("");
+
+  useEffect(() => {
+    if (!crossGroupMode || crossGroupFilter) return;
+    const defaultId = crossGroupConfig?.announcementGroupId
+      ?? crossGroupConfig?.leaderGroups?.[0]?._id;
+    if (defaultId) setCrossGroupFilter(defaultId);
+  }, [crossGroupMode, crossGroupFilter, crossGroupConfig]);
 
   // Config query (per-group)
   const perGroupConfig = useAuthenticatedQuery(
@@ -809,7 +816,7 @@ export function FollowupDesktopTable({
 
   // Cross-group group filter arg
   const crossGroupFilterArg =
-    crossGroupMode && crossGroupFilter !== "all"
+    crossGroupMode && crossGroupFilter
       ? { groupFilter: crossGroupFilter as Id<"groups"> }
       : {};
 
@@ -951,7 +958,7 @@ export function FollowupDesktopTable({
       ? communityId
         ? {
             communityId,
-            ...(crossGroupFilter !== "all"
+            ...(crossGroupFilter
               ? { groupFilter: crossGroupFilter as Id<"groups"> }
               : {}),
           }
@@ -2278,7 +2285,6 @@ export function FollowupDesktopTable({
                   minWidth: 140,
                 },
               },
-              React.createElement("option", { value: "all" }, "All Groups"),
               ...crossGroupConfig.leaderGroups.map(
                 (g: { _id: string; name: string }) =>
                   React.createElement(
@@ -2379,7 +2385,7 @@ export function FollowupDesktopTable({
           {hasTextSearch
             ? `${members.length} result${members.length !== 1 ? "s" : ""}`
             : crossGroupMode
-              ? `${members.length} people${hasAnyFilter || crossGroupFilter !== "all" ? " (filtered)" : ""}`
+              ? `${members.length} people${hasAnyFilter ? " (filtered)" : ""}`
               : `${totalCount ?? "\u2014"} members${hasAnyFilter ? " (filtered)" : ""}`}
         </Text>
       </View>
