@@ -45,6 +45,7 @@ export const FILE_TYPES: FileTypeInfo[] = [
   { extension: '.wav', mimeTypes: ['audio/wav', 'audio/x-wav'], category: 'audio', icon: 'musical-notes', label: 'WAV' },
   { extension: '.m4a', mimeTypes: ['audio/m4a', 'audio/x-m4a', 'audio/mp4'], category: 'audio', icon: 'musical-notes', label: 'M4A' },
   { extension: '.aac', mimeTypes: ['audio/aac'], category: 'audio', icon: 'musical-notes', label: 'AAC' },
+  { extension: '.webm', mimeTypes: ['audio/webm'], category: 'audio', icon: 'musical-notes', label: 'WebM' },
 
   // Video
   { extension: '.mp4', mimeTypes: ['video/mp4'], category: 'video', icon: 'videocam', label: 'MP4' },
@@ -334,6 +335,29 @@ export function isLinearGradientSupported(): boolean {
     _linearGradientSupported = false;
     return false;
   }
+}
+
+/**
+ * Check if voice recording is supported
+ *
+ * Returns true when:
+ * - Native (iOS/Android): expo-av is available (isAudioVideoSupported)
+ * - Web: MediaRecorder API and getUserMedia are available
+ *
+ * Use this to show/hide the Voice Message option in the attachment menu.
+ */
+export function isVoiceRecordingSupported(): boolean {
+  // Web: Use MediaRecorder API
+  if (typeof navigator !== 'undefined') {
+    const hasMediaDevices = !!navigator.mediaDevices?.getUserMedia;
+    const hasMediaRecorder = typeof MediaRecorder !== 'undefined';
+    if (hasMediaDevices && hasMediaRecorder) {
+      return true;
+    }
+  }
+
+  // Native: Use expo-av (gated)
+  return isAudioVideoSupported();
 }
 
 /**

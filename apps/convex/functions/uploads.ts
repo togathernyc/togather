@@ -52,8 +52,8 @@ const ALLOWED_DOCUMENT_CONTENT_TYPES = [
   "text/csv",
 ];
 
-// Audio file types
-const ALLOWED_AUDIO_EXTENSIONS = [".mp3", ".wav", ".m4a", ".aac"];
+// Audio file types (includes .webm for web MediaRecorder voice memos)
+const ALLOWED_AUDIO_EXTENSIONS = [".mp3", ".wav", ".m4a", ".aac", ".webm"];
 
 const ALLOWED_AUDIO_CONTENT_TYPES = [
   "audio/mpeg",
@@ -63,6 +63,7 @@ const ALLOWED_AUDIO_CONTENT_TYPES = [
   "audio/m4a",
   "audio/x-m4a",
   "audio/aac",
+  "audio/webm",
 ];
 
 // Video file types

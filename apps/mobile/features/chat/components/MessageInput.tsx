@@ -34,12 +34,14 @@ import { FilePreview } from './FilePreview';
 import { extractFirstExternalUrl } from '../utils/eventLinkUtils';
 import {
   isDocumentPickerSupported,
+  isVoiceRecordingSupported,
   SUPPORTED_MIME_TYPES,
   MAX_FILE_SIZE_BYTES,
   MAX_FILE_SIZE_MB,
   getFileCategoryFromFilename,
   type FileCategory,
 } from '../utils/fileTypes';
+import { VoiceRecorderBar } from './VoiceRecorderBar';
 import { useDraftStore } from '../../../stores/draftStore';
 
 interface MessageInputProps {
@@ -116,6 +118,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   const [uploadedImageUrls, setUploadedImageUrls] = useState<string[]>([]);
   const [selectedFile, setSelectedFile] = useState<SelectedFile | null>(null);
   const [uploadedFile, setUploadedFile] = useState<{ storagePath: string; name: string; category: FileCategory } | null>(null);
+  const [isVoiceRecording, setIsVoiceRecording] = useState(false);
   const [nativeScrollEnabled, setNativeScrollEnabled] = useState(false);
   const [debouncedText, setDebouncedText] = useState('');
   const isWeb = Platform.OS === 'web';
@@ -403,53 +406,77 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   }, [uploadImage, resetImageUpload]);
 
   /**
-   * Handle attachment button press - show action sheet with photo/file options
+   * Handle voice memo send - upload file and send message
+   */
+  const handleVoiceMemoSend = useCallback(
+    async (file: { uri: string; name: string; size: number; mimeType: string }) => {
+      if (!channelId) return;
+      const uploadResult = await uploadFile({
+        uri: file.uri,
+        name: file.name,
+        size: file.size,
+        mimeType: file.mimeType,
+      });
+      if (uploadResult.error) {
+        throw new Error(uploadResult.error);
+      }
+      await sendMessage('', {
+        attachments: [
+          {
+            type: 'audio',
+            url: uploadResult.storagePath,
+            name: uploadResult.name,
+          },
+        ],
+        parentMessageId: replyToMessage?._id,
+      });
+      if (replyToMessage && onCancelReply) {
+        onCancelReply();
+      }
+    },
+    [channelId, uploadFile, sendMessage, replyToMessage, onCancelReply]
+  );
+
+  /**
+   * Handle attachment button press - show action sheet with photo/file/voice options
    */
   const handleAttachmentPress = useCallback(() => {
-    // Build options dynamically based on available features
     const showFileOption = isFileUploadAvailable;
+    const showVoiceOption = isVoiceRecordingSupported();
 
     if (Platform.OS === 'ios') {
-      const options = showFileOption
-        ? ['Take Photo', 'Choose from Library', 'Choose File', 'Cancel']
-        : ['Take Photo', 'Choose from Library', 'Cancel'];
-
-      const cancelIndex = showFileOption ? 3 : 2;
+      const options: string[] = ['Take Photo', 'Choose from Library'];
+      if (showFileOption) options.push('Choose File');
+      if (showVoiceOption) options.push('Voice Message');
+      options.push('Cancel');
+      const cancelIndex = options.length - 1;
 
       ActionSheetIOS.showActionSheetWithOptions(
-        {
-          options,
-          cancelButtonIndex: cancelIndex,
-        },
+        { options, cancelButtonIndex: cancelIndex },
         (buttonIndex) => {
-          if (buttonIndex === 0) {
-            takePhoto();
-          } else if (buttonIndex === 1) {
-            pickImage();
-          } else if (showFileOption && buttonIndex === 2) {
-            pickFile();
+          if (buttonIndex === 0) takePhoto();
+          else if (buttonIndex === 1) pickImage();
+          else if (showFileOption && buttonIndex === 2) pickFile();
+          else if (showVoiceOption && buttonIndex === (showFileOption ? 3 : 2)) {
+            setIsVoiceRecording(true);
           }
         }
       );
     } else {
-      // Android - use Alert
-      const buttons = [
+      const buttons: Array<{ text: string; onPress?: () => void; style?: string }> = [
         { text: 'Take Photo', onPress: takePhoto },
         { text: 'Choose from Library', onPress: pickImage },
       ];
-
-      if (showFileOption) {
-        buttons.push({ text: 'Choose File', onPress: pickFile });
+      if (showFileOption) buttons.push({ text: 'Choose File', onPress: pickFile });
+      if (showVoiceOption) {
+        buttons.push({
+          text: 'Voice Message',
+          onPress: () => setIsVoiceRecording(true),
+        });
       }
+      buttons.push({ text: 'Cancel', style: 'cancel' });
 
-      buttons.push({ text: 'Cancel', style: 'cancel' } as any);
-
-      Alert.alert(
-        'Add Attachment',
-        '',
-        buttons,
-        { cancelable: true }
-      );
+      Alert.alert('Add Attachment', '', buttons, { cancelable: true });
     }
   }, [takePhoto, pickImage, pickFile, isFileUploadAvailable]);
 
@@ -658,7 +685,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
       )}
 
       {/* Reply Preview */}
-      {replyToMessage && !hideReplyPreview && (
+      {replyToMessage && !hideReplyPreview && !isVoiceRecording && (
         <View style={styles.replyPreview}>
           <View style={styles.replyContent}>
             <Text style={styles.replyLabel}>Replying to {replyToMessage.senderName}</Text>
@@ -673,7 +700,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
       )}
 
       {/* Image Previews */}
-      {selectedImages.length > 0 && (
+      {selectedImages.length > 0 && !isVoiceRecording && (
         <View style={styles.imagePreviewContainer}>
           <FlatList
             data={selectedImages}
@@ -711,7 +738,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
       )}
 
       {/* File Preview (before sending) */}
-      {selectedFile && (
+      {selectedFile && !isVoiceRecording && (
         <FilePreview
           name={selectedFile.name}
           size={selectedFile.size}
@@ -724,7 +751,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
       )}
 
       {/* Link Preview (before sending) - compact when keyboard visible */}
-      {externalUrl && !isLinkPreviewDismissed && (linkPreview || linkPreviewLoading) && (
+      {externalUrl && !isLinkPreviewDismissed && !isVoiceRecording && (linkPreview || linkPreviewLoading) && (
         <View style={styles.linkPreviewContainer}>
           {linkPreview ? (
             <LinkPreviewCard
@@ -748,13 +775,21 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
       )}
 
       {/* Offline Hint */}
-      {isEffectivelyOffline && (
+      {isEffectivelyOffline && !isVoiceRecording && (
         <View style={styles.offlineHint}>
           <Ionicons name="time-outline" size={12} color="#999" />
           <Text style={styles.offlineHintText}>Messages will be sent when you're back online</Text>
         </View>
       )}
 
+      {/* Voice Recorder Bar (replaces input when recording) */}
+      {isVoiceRecording ? (
+        <VoiceRecorderBar
+          onSend={handleVoiceMemoSend}
+          onCancel={() => setIsVoiceRecording(false)}
+        />
+      ) : (
+      <>
       {/* Input Row */}
       <View style={styles.inputRow}>
         {/* Attachment Button */}
@@ -802,6 +837,8 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
           )}
         </Pressable>
       </View>
+      </>
+      )}
     </View>
   );
 }

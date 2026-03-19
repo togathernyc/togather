@@ -61,6 +61,7 @@ jest.mock('../../utils/eventLinkUtils', () => ({
 
 jest.mock('../../utils/fileTypes', () => ({
   isDocumentPickerSupported: () => false,
+  isVoiceRecordingSupported: () => false,
   SUPPORTED_MIME_TYPES: [],
   MAX_FILE_SIZE_BYTES: 10000000,
   MAX_FILE_SIZE_MB: 10,
@@ -81,6 +82,10 @@ jest.mock('../LinkPreviewCard', () => ({
 
 jest.mock('../FilePreview', () => ({
   FilePreview: () => null,
+}));
+
+jest.mock('../VoiceRecorderBar', () => ({
+  VoiceRecorderBar: () => null,
 }));
 
 const LINE_HEIGHT = 20;
