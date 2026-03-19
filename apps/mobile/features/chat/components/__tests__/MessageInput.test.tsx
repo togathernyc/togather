@@ -88,6 +88,10 @@ jest.mock('../VoiceRecorderBar', () => ({
   VoiceRecorderBar: () => null,
 }));
 
+jest.mock('../AttachmentBottomSheet', () => ({
+  AttachmentBottomSheet: () => null,
+}));
+
 const LINE_HEIGHT = 20;
 const MAX_INPUT_LINES = 8;
 const INPUT_PADDING_VERTICAL = 10;

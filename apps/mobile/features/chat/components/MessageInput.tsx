@@ -15,8 +15,6 @@ import {
   StyleSheet,
   ActivityIndicator,
   Platform,
-  ActionSheetIOS,
-  Alert,
   Keyboard,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -42,9 +40,8 @@ import {
   type FileCategory,
 } from '../utils/fileTypes';
 import { VoiceRecorderBar } from './VoiceRecorderBar';
+import { AttachmentBottomSheet } from './AttachmentBottomSheet';
 import { useDraftStore } from '../../../stores/draftStore';
-// @ts-expect-error - Web-only component
-import { AttachmentMenu } from './AttachmentMenu.web';
 
 interface MessageInputProps {
   channelId: Id<"chatChannels"> | null;
@@ -441,50 +438,11 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   );
 
   /**
-   * Handle attachment button press - show action sheet with photo/file/voice options
+   * Handle attachment button press - show WhatsApp-style bottom panel
    */
   const handleAttachmentPress = useCallback(() => {
-    const showFileOption = isFileUploadAvailable;
-    const showVoiceOption = isVoiceRecordingSupported();
-
-    if (isWeb) {
-      // Web: Use custom modal menu
-      setShowAttachmentMenu(true);
-    } else if (Platform.OS === 'ios') {
-      const options: string[] = ['Take Photo', 'Choose from Library'];
-      if (showFileOption) options.push('Choose File');
-      if (showVoiceOption) options.push('Voice Message');
-      options.push('Cancel');
-      const cancelIndex = options.length - 1;
-
-      ActionSheetIOS.showActionSheetWithOptions(
-        { options, cancelButtonIndex: cancelIndex },
-        (buttonIndex) => {
-          if (buttonIndex === 0) takePhoto();
-          else if (buttonIndex === 1) pickImage();
-          else if (showFileOption && buttonIndex === 2) pickFile();
-          else if (showVoiceOption && buttonIndex === (showFileOption ? 3 : 2)) {
-            setIsVoiceRecording(true);
-          }
-        }
-      );
-    } else {
-      const buttons: Array<{ text: string; onPress?: () => void; style?: string }> = [
-        { text: 'Take Photo', onPress: takePhoto },
-        { text: 'Choose from Library', onPress: pickImage },
-      ];
-      if (showFileOption) buttons.push({ text: 'Choose File', onPress: pickFile });
-      if (showVoiceOption) {
-        buttons.push({
-          text: 'Voice Message',
-          onPress: () => setIsVoiceRecording(true),
-        });
-      }
-      buttons.push({ text: 'Cancel', style: 'cancel' });
-
-      Alert.alert('Add Attachment', '', buttons, { cancelable: true });
-    }
-  }, [takePhoto, pickImage, pickFile, isFileUploadAvailable, isWeb]);
+    setShowAttachmentMenu(true);
+  }, []);
 
   /**
    * Remove selected image by index
@@ -656,20 +614,28 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
 
   const canSend = (text.trim().length > 0 || uploadedImageUrls.length > 0 || uploadedFile !== null) && !isSending && !uploading;
 
-  // Build attachment menu options for web
-  const attachmentMenuOptions = React.useMemo(() => {
-    const options: Array<{ text: string; onPress: () => void; icon: any }> = [
-      { text: 'Take Photo', onPress: takePhoto, icon: 'camera' },
-      { text: 'Choose from Library', onPress: pickImage, icon: 'images' },
+  // Build attachment bottom sheet options (WhatsApp-style grid)
+  const attachmentOptions = React.useMemo(() => {
+    const options: Array<{ id: string; label: string; icon: keyof typeof Ionicons.glyphMap; iconColor?: string; onPress: () => void }> = [
+      { id: 'photos', label: 'Photos', icon: 'images', iconColor: '#007AFF', onPress: pickImage },
+      { id: 'camera', label: 'Camera', icon: 'camera', iconColor: '#333', onPress: takePhoto },
     ];
-    if (isFileUploadAvailable) {
-      options.push({ text: 'Choose File', onPress: pickFile, icon: 'document' });
-    }
     if (isVoiceRecordingSupported()) {
-      options.push({ 
-        text: 'Voice Message', 
-        onPress: () => setIsVoiceRecording(true),
+      options.push({
+        id: 'voice',
+        label: 'Voice',
         icon: 'mic',
+        iconColor: '#E74C3C',
+        onPress: () => setIsVoiceRecording(true),
+      });
+    }
+    if (isFileUploadAvailable) {
+      options.push({
+        id: 'document',
+        label: 'Document',
+        icon: 'document',
+        iconColor: '#007AFF',
+        onPress: pickFile,
       });
     }
     return options;
@@ -677,14 +643,12 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
 
   return (
     <View style={styles.container}>
-      {/* Web Attachment Menu */}
-      {isWeb && (
-        <AttachmentMenu
-          visible={showAttachmentMenu}
-          onClose={() => setShowAttachmentMenu(false)}
-          options={attachmentMenuOptions}
-        />
-      )}
+      {/* Attachment Bottom Sheet (WhatsApp-style, all platforms) */}
+      <AttachmentBottomSheet
+        visible={showAttachmentMenu}
+        onClose={() => setShowAttachmentMenu(false)}
+        options={attachmentOptions}
+      />
       {/* Mention Autocomplete */}
       {showMentionAutocomplete && (
         <View style={styles.autocompleteContainer}>
