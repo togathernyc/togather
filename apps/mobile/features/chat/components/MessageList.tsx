@@ -372,14 +372,14 @@ export function MessageList({
   // Loading happens in the inbox before navigation, so this should be brief
   if (isLoading && messages.length === 0) {
     return (
-      <View style={[styles.container, { backgroundColor: themeColors.background }]} />
+      <View style={[styles.container, { backgroundColor: themeColors.surface }]} />
     );
   }
 
   // Empty state
   if (!isLoading && messages.length === 0) {
     return (
-      <View style={[styles.centerContainer, { backgroundColor: themeColors.background }]}>
+      <View style={[styles.centerContainer, { backgroundColor: themeColors.surface }]}>
         <Ionicons name="chatbubbles-outline" size={64} color={themeColors.iconSecondary} style={{ marginBottom: 16 }} />
         <Text style={[styles.emptyTitle, { color: themeColors.text }]}>No messages yet</Text>
         <Text style={[styles.emptySubtext, { color: themeColors.textSecondary }]}>Start the conversation!</Text>
@@ -389,7 +389,7 @@ export function MessageList({
 
   return (
     <ReactionsProvider messageIds={messageIds} channelId={channelId}>
-      <View style={[styles.container, { backgroundColor: themeColors.background }]}>
+      <View style={[styles.container, { backgroundColor: themeColors.surface }]}>
         <FlatList
           ref={listRef}
           data={listItems}

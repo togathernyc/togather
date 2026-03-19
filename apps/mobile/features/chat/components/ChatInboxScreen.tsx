@@ -167,7 +167,7 @@ export function ChatInboxScreen({
   if (!hasCommunity) {
     return (
       <Wrapper>
-        <View style={[styles.container, { backgroundColor: colors.background }]}>
+        <View style={[styles.container, { backgroundColor: colors.surface }]}>
           <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
             <Text style={[styles.headerTitle, { color: colors.text }]}>Inbox</Text>
           </View>
@@ -207,7 +207,7 @@ export function ChatInboxScreen({
   if (showLoadingSpinner) {
     return (
       <Wrapper>
-        <View style={[styles.container, { backgroundColor: colors.background }]}>
+        <View style={[styles.container, { backgroundColor: colors.surface }]}>
           <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
             <Text style={[styles.headerTitle, { color: colors.text }]}>Inbox</Text>
           </View>
@@ -223,7 +223,7 @@ export function ChatInboxScreen({
   if (!displayChannels || displayChannels.length === 0) {
     return (
       <Wrapper>
-        <View style={[styles.container, { backgroundColor: colors.background }]}>
+        <View style={[styles.container, { backgroundColor: colors.surface }]}>
           <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
             <Text style={[styles.headerTitle, { color: colors.text }]}>Inbox</Text>
           </View>
@@ -246,7 +246,7 @@ export function ChatInboxScreen({
 
   return (
     <Wrapper>
-      <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <View style={[styles.container, { backgroundColor: colors.surface }]}>
         <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
           <Text style={[styles.headerTitle, { color: colors.text }]}>Inbox</Text>
         </View>

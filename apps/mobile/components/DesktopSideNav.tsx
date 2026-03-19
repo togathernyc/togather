@@ -3,6 +3,7 @@ import { type Href, usePathname, router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 
 type NavItem = {
   key: string;
@@ -22,6 +23,7 @@ export function DesktopSideNav() {
   const pathname = usePathname();
   const { user, community } = useAuth();
   const { primaryColor } = useCommunityTheme();
+  const { colors } = useTheme();
 
   const isAdmin = user?.is_admin === true;
   const hasCommunity = !!community?.id;
@@ -71,10 +73,10 @@ export function DesktopSideNav() {
   ];
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.surface, borderRightColor: colors.border }]}>
       {items.map((item) => {
         const active = item.match(pathname);
-        const color = active ? primaryColor : "#999";
+        const color = active ? primaryColor : colors.tabBarInactive;
         return (
           <Pressable
             key={item.key}
@@ -98,9 +100,7 @@ export function DesktopSideNav() {
 const styles = StyleSheet.create({
   container: {
     width: 64,
-    backgroundColor: "#fff",
     borderRightWidth: 1,
-    borderRightColor: "#E5E5E5",
     paddingTop: 16,
     alignItems: "center",
   },
