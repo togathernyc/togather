@@ -114,15 +114,13 @@ export function FollowupDetailContent({
   const member_id = memberId;
 
   // Fetch member history using Convex.
-  // In cross-group mode, memberId is groupMemberId (from groupMembers) — history resolves to communityPeople.
-  // In per-group mode, memberId is communityPeopleId.
+  // Both per-group and cross-group modes now use communityPeople records via adaptCommunityPerson,
+  // so memberId is always a communityPeople ID.
   const historyData = useAuthenticatedQuery(
     api.functions.communityPeople.history,
     member_id
       ? {
-          ...(crossGroupMode
-            ? { groupMemberId: member_id as Id<"groupMembers"> }
-            : { communityPeopleId: member_id as Id<"communityPeople"> }),
+          communityPeopleId: member_id as Id<"communityPeople">,
           currentUserId: currentUserId,
         }
       : "skip"

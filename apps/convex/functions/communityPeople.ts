@@ -21,7 +21,7 @@ import { isCommunityAdmin } from "../lib/permissions";
 import { isActiveMembership, isLeaderRole } from "../lib/helpers";
 import { VALID_CUSTOM_SLOTS } from "../lib/followupConstants";
 import { SYSTEM_SCORES, SYSTEM_VARIABLE_IDS } from "./systemScoring";
-import { getMediaUrl } from "../lib/utils";
+import { getMediaUrl, safeSliceForJson } from "../lib/utils";
 
 // ============================================================================
 // Auth Helpers
@@ -1409,8 +1409,7 @@ export const addFollowup = mutation({
       updatedAt: timestamp,
     };
     if (args.type === "note" && args.content) {
-      patchFields.latestNote =
-        args.content.length > 200 ? args.content.slice(0, 200) : args.content;
+      patchFields.latestNote = safeSliceForJson(args.content, 200);
       patchFields.latestNoteAt = timestamp;
     }
     await ctx.db.patch(args.communityPeopleId, patchFields);
