@@ -282,7 +282,14 @@ export function FollowupMobileGrid({
     api.functions.memberFollowups.getCrossGroupConfig,
     crossGroupMode ? {} : "skip"
   );
-  const [crossGroupFilter, setCrossGroupFilter] = useState<string>("all");
+  const [crossGroupFilter, setCrossGroupFilter] = useState<string>("");
+
+  useEffect(() => {
+    if (!crossGroupMode || crossGroupFilter) return;
+    const defaultId = crossGroupConfig?.announcementGroupId
+      ?? crossGroupConfig?.leaderGroups?.[0]?._id;
+    if (defaultId) setCrossGroupFilter(defaultId);
+  }, [crossGroupMode, crossGroupFilter, crossGroupConfig]);
 
   const debouncedSearch = useDebounce(searchQuery, 450);
 
@@ -449,7 +456,7 @@ export function FollowupMobileGrid({
     : "score1";
   const serverSortDirection = isClientSideSort ? "desc" : sortDirection;
 
-  const crossGroupFilterArg = crossGroupMode && crossGroupFilter !== "all"
+  const crossGroupFilterArg = crossGroupMode && crossGroupFilter
     ? { groupFilter: crossGroupFilter as Id<"groups"> }
     : {};
 
@@ -482,7 +489,7 @@ export function FollowupMobileGrid({
     isLoading: crossGroupIsLoading,
   } = useAuthenticatedPaginatedQuery(
     api.functions.communityPeople.listAssignedToMe,
-    crossGroupMode && !hasTextSearch && communityId
+    crossGroupMode && !hasTextSearch && communityId && crossGroupFilter
       ? {
           communityId,
           sortBy: serverSortBy,
@@ -527,7 +534,7 @@ export function FollowupMobileGrid({
 
   const crossGroupSearchResultsRaw = useAuthenticatedQuery(
     api.functions.communityPeople.searchAssignedToMe,
-    crossGroupMode && hasTextSearch && communityId
+    crossGroupMode && hasTextSearch && communityId && crossGroupFilter
       ? {
           communityId,
           searchTerm: parsedQuery.searchText,
@@ -574,12 +581,10 @@ export function FollowupMobileGrid({
       ? api.functions.communityPeople.countAssignedToMe
       : api.functions.communityPeople.count,
     crossGroupMode
-      ? communityId
+      ? communityId && crossGroupFilter
         ? {
             communityId,
-            ...(crossGroupFilter !== "all"
-              ? { groupFilter: crossGroupFilter as Id<"groups"> }
-              : {}),
+            groupFilter: crossGroupFilter as Id<"groups">,
           }
         : "skip"
       : groupId
