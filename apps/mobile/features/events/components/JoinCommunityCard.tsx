@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { AppImage } from "@components/ui";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
+import { useTheme } from "@hooks/useTheme";
 
 interface JoinCommunityCardProps {
   communityName: string;
@@ -23,8 +24,9 @@ export function JoinCommunityCard({
   onJoinPress,
   isLoading = false,
 }: JoinCommunityCardProps) {
+  const { colors } = useTheme();
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { borderTopColor: colors.border }]}>
       <View style={styles.header}>
         <AppImage
           source={communityLogo}
@@ -35,11 +37,11 @@ export function JoinCommunityCard({
           }}
         />
         <View style={styles.headerText}>
-          <Text style={styles.title}>Join {communityName}</Text>
+          <Text style={[styles.title, { color: colors.text }]}>Join {communityName}</Text>
         </View>
       </View>
 
-      <Text style={styles.description}>
+      <Text style={[styles.description, { color: colors.textSecondary }]}>
         Join groups and be in the know on all the events and resources{" "}
         {communityName} has for you.
       </Text>
@@ -68,7 +70,6 @@ const styles = StyleSheet.create({
     marginTop: 24,
     paddingTop: 24,
     borderTopWidth: 1,
-    borderTopColor: "#eee",
   },
   header: {
     flexDirection: "row",
@@ -88,11 +89,9 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
   },
   description: {
     fontSize: 15,
-    color: "#666",
     lineHeight: 22,
     marginBottom: 16,
   },

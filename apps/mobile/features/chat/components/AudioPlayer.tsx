@@ -16,6 +16,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { isAudioVideoSupported } from '../utils/fileTypes';
 import { getMediaUrl } from '@/utils/media';
+import { useTheme } from '@hooks/useTheme';
 
 // ============================================================================
 // Types
@@ -35,6 +36,7 @@ interface AudioPlayerProps {
 // ============================================================================
 
 function AudioDownloadFallback({ url, name, isOwnMessage }: AudioPlayerProps) {
+  const { colors, isDark } = useTheme();
   const resolvedUrl = getMediaUrl(url);
   const fileName = name || url.split('/').pop()?.split('?')[0] || 'Audio';
 
@@ -57,19 +59,19 @@ function AudioDownloadFallback({ url, name, isOwnMessage }: AudioPlayerProps) {
   }, [resolvedUrl]);
 
   return (
-    <Pressable style={styles.fallbackContainer} onPress={handleDownload}>
-      <View style={styles.fallbackIconContainer}>
+    <Pressable style={[styles.fallbackContainer, { backgroundColor: isDark ? 'rgba(156, 39, 176, 0.2)' : 'rgba(156, 39, 176, 0.1)' }]} onPress={handleDownload}>
+      <View style={[styles.fallbackIconContainer, { backgroundColor: isDark ? 'rgba(156, 39, 176, 0.3)' : 'rgba(156, 39, 176, 0.2)' }]}>
         <Ionicons name="musical-notes" size={20} color="#9C27B0" />
       </View>
       <View style={styles.fallbackInfo}>
-        <Text style={[styles.fallbackName, isOwnMessage && styles.ownMessageText]} numberOfLines={1}>
+        <Text style={[styles.fallbackName, { color: colors.text }, isOwnMessage && { color: colors.text }]} numberOfLines={1}>
           {displayName}
         </Text>
-        <Text style={[styles.fallbackHint, isOwnMessage && styles.ownMessageMeta]}>
+        <Text style={[styles.fallbackHint, { color: colors.textSecondary }, isOwnMessage && { color: colors.textSecondary }]}>
           Tap to download
         </Text>
       </View>
-      <Ionicons name="download-outline" size={20} color="#666" />
+      <Ionicons name="download-outline" size={20} color={colors.textSecondary} />
     </Pressable>
   );
 }
@@ -93,6 +95,7 @@ export function AudioPlayer({ url, name, isOwnMessage = false }: AudioPlayerProp
 // ============================================================================
 
 function AudioPlayerInner({ url, name, isOwnMessage = false }: AudioPlayerProps) {
+  const { colors, isDark } = useTheme();
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [duration, setDuration] = useState(0);
@@ -202,7 +205,7 @@ function AudioPlayerInner({ url, name, isOwnMessage = false }: AudioPlayerProps)
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: isDark ? 'rgba(156, 39, 176, 0.2)' : 'rgba(156, 39, 176, 0.1)' }]}>
       {/* Play/Pause Button */}
       <Pressable
         style={styles.playButton}
@@ -222,12 +225,12 @@ function AudioPlayerInner({ url, name, isOwnMessage = false }: AudioPlayerProps)
 
       {/* Progress and Info */}
       <View style={styles.progressContainer}>
-        <Text style={[styles.fileName, isOwnMessage && styles.ownMessageText]} numberOfLines={1}>
+        <Text style={[styles.fileName, { color: colors.text }, isOwnMessage && { color: colors.text }]} numberOfLines={1}>
           {displayName}
         </Text>
 
         {/* Progress Bar */}
-        <View style={styles.progressBarBackground}>
+        <View style={[styles.progressBarBackground, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }]}>
           <View
             style={[styles.progressBar, { width: `${progressPercent}%` }]}
           />
@@ -235,10 +238,10 @@ function AudioPlayerInner({ url, name, isOwnMessage = false }: AudioPlayerProps)
 
         {/* Time */}
         <View style={styles.timeContainer}>
-          <Text style={[styles.time, isOwnMessage && styles.ownMessageMeta]}>
+          <Text style={[styles.time, { color: colors.textSecondary }]}>
             {formatTime(position)}
           </Text>
-          <Text style={[styles.time, isOwnMessage && styles.ownMessageMeta]}>
+          <Text style={[styles.time, { color: colors.textSecondary }]}>
             {formatTime(duration)}
           </Text>
         </View>
@@ -255,7 +258,6 @@ const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(156, 39, 176, 0.1)',
     borderRadius: 12,
     padding: 10,
     marginTop: 6,
@@ -284,15 +286,10 @@ const styles = StyleSheet.create({
   fileName: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#333',
     marginBottom: 6,
-  },
-  ownMessageText: {
-    color: '#000',
   },
   progressBarBackground: {
     height: 4,
-    backgroundColor: 'rgba(0, 0, 0, 0.1)',
     borderRadius: 2,
     overflow: 'hidden',
   },
@@ -308,16 +305,11 @@ const styles = StyleSheet.create({
   },
   time: {
     fontSize: 10,
-    color: '#666',
-  },
-  ownMessageMeta: {
-    color: '#666',
   },
   // Fallback styles
   fallbackContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(156, 39, 176, 0.1)',
     borderRadius: 8,
     padding: 10,
     marginTop: 6,
@@ -327,7 +319,6 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: 'rgba(156, 39, 176, 0.2)',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 10,
@@ -339,11 +330,9 @@ const styles = StyleSheet.create({
   fallbackName: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#333',
     marginBottom: 2,
   },
   fallbackHint: {
     fontSize: 11,
-    color: '#666',
   },
 });

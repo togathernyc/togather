@@ -22,6 +22,7 @@ import { BotConfigModal } from "./BotConfigModal";
 import { TaskReminderConfigModal } from "./TaskReminderConfigModal";
 import { CommunicationBotConfigModal } from "./CommunicationBotConfigModal";
 import { DragHandle } from "@components/ui/DragHandle";
+import { useTheme } from "@hooks/useTheme";
 
 type Bot = {
   id: string;
@@ -35,6 +36,7 @@ type Bot = {
 };
 
 export function BotsScreen() {
+  const { colors } = useTheme();
   // NOTE: group_id is expected to be a Convex Id<"groups"> passed from navigation.
   // The leader-tools routes should only receive Convex IDs, not legacy UUIDs.
   const { group_id } = useLocalSearchParams<{ group_id: string }>();
@@ -176,7 +178,7 @@ export function BotsScreen() {
       const err = error as Error;
       return (
         <View style={styles.errorContainer}>
-          <Ionicons name="alert-circle-outline" size={48} color="#e74c3c" />
+          <Ionicons name="alert-circle-outline" size={48} color={colors.destructive} />
           <Text style={styles.errorText}>
             {err.message || "Failed to load bots"}
           </Text>
@@ -217,7 +219,7 @@ export function BotsScreen() {
                   value={bot.enabled}
                   onValueChange={(value) => handleToggle(bot.id, value)}
                   disabled={toggleMutation.isPending}
-                  trackColor={{ false: "#E0E0E0", true: primaryColor }}
+                  trackColor={{ false: colors.border, true: primaryColor }}
                   thumbColor={bot.enabled ? primaryColor : "#f4f3f4"}
                 />
               </View>
@@ -241,7 +243,7 @@ export function BotsScreen() {
 
         {(!bots || bots.length === 0) && (
           <View style={styles.emptyContainer}>
-            <Ionicons name="hardware-chip-outline" size={64} color="#ccc" />
+            <Ionicons name="hardware-chip-outline" size={64} color={colors.iconSecondary} />
             <Text style={styles.emptyTitle}>No bots available</Text>
             <Text style={styles.emptyText}>
               Bots for this group will appear here when available.
@@ -262,7 +264,7 @@ export function BotsScreen() {
           onPress={handleBack}
           testID="back-button"
         >
-          <Ionicons name="arrow-back" size={24} color="#333" />
+          <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
         <View style={styles.headerContent}>
           <Text style={styles.headerTitle}>Bots</Text>

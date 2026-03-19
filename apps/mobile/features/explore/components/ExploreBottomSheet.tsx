@@ -27,6 +27,7 @@ import { ViewToggle } from './ViewToggle';
 import { COLORS } from '../constants';
 import type { ExploreView } from '../hooks/useExploreFilters';
 import type { CommunityEvent } from '../hooks/useCommunityEvents';
+import { useTheme } from '@hooks/useTheme';
 
 interface ExploreBottomSheetProps {
   // View state
@@ -55,32 +56,32 @@ export interface ExploreBottomSheetRef {
 }
 
 // Skeleton card component for loading state
-const SkeletonCard = () => (
-  <View style={skeletonStyles.card}>
-    <View style={skeletonStyles.image} />
-    <View style={skeletonStyles.content}>
-      <View style={skeletonStyles.title} />
-      <View style={skeletonStyles.subtitle} />
-      <View style={skeletonStyles.meta} />
+const SkeletonCard = () => {
+  const { colors } = useTheme();
+  return (
+    <View style={[skeletonStyles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+      <View style={[skeletonStyles.image, { backgroundColor: colors.borderLight }]} />
+      <View style={skeletonStyles.content}>
+        <View style={[skeletonStyles.title, { backgroundColor: colors.borderLight }]} />
+        <View style={[skeletonStyles.subtitle, { backgroundColor: colors.borderLight }]} />
+        <View style={[skeletonStyles.meta, { backgroundColor: colors.borderLight }]} />
+      </View>
     </View>
-  </View>
-);
+  );
+};
 
 const skeletonStyles = StyleSheet.create({
   card: {
     flexDirection: 'row',
-    backgroundColor: '#fff',
     borderRadius: 12,
     padding: 12,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: COLORS.border,
   },
   image: {
     width: 80,
     height: 80,
     borderRadius: 8,
-    backgroundColor: '#E5E7EB',
   },
   content: {
     flex: 1,
@@ -90,21 +91,18 @@ const skeletonStyles = StyleSheet.create({
   title: {
     width: '70%',
     height: 16,
-    backgroundColor: '#E5E7EB',
     borderRadius: 4,
     marginBottom: 8,
   },
   subtitle: {
     width: '50%',
     height: 12,
-    backgroundColor: '#E5E7EB',
     borderRadius: 4,
     marginBottom: 8,
   },
   meta: {
     width: '40%',
     height: 12,
-    backgroundColor: '#E5E7EB',
     borderRadius: 4,
   },
 });
@@ -122,20 +120,21 @@ interface SearchBarProps {
 const SearchBar = memo(function SearchBar({ searchQuery, onSearchChange, onFocus, activeView }: SearchBarProps) {
   const placeholder = activeView === 'events' ? 'Search events...' : 'Search groups...';
   const InputComponent = isWeb ? TextInput : BottomSheetTextInput;
+  const { colors } = useTheme();
 
   return (
     <View style={styles.searchContainer}>
-      <View style={styles.searchInputWrapper}>
+      <View style={[styles.searchInputWrapper, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
         <Ionicons
           name="search"
           size={20}
-          color={COLORS.textMuted}
+          color={colors.inputPlaceholder}
           style={styles.searchIcon}
         />
         <InputComponent
-          style={styles.searchInput}
+          style={[styles.searchInput, { color: colors.text }]}
           placeholder={placeholder}
-          placeholderTextColor={COLORS.textMuted}
+          placeholderTextColor={colors.inputPlaceholder}
           value={searchQuery}
           onChangeText={onSearchChange}
           onFocus={onFocus}
@@ -148,7 +147,7 @@ const SearchBar = memo(function SearchBar({ searchQuery, onSearchChange, onFocus
             <Ionicons
               name="close-circle"
               size={20}
-              color={COLORS.textMuted}
+              color={colors.inputPlaceholder}
             />
           </TouchableOpacity>
         )}
@@ -179,6 +178,7 @@ export const ExploreBottomSheet = forwardRef<ExploreBottomSheetRef, ExploreBotto
   ) {
     const bottomSheetRef = useRef<BottomSheet>(null);
     const insets = useSafeAreaInsets();
+    const { colors, isDark } = useTheme();
     // Use a topInset to ensure the handle is always visible below the status bar/notch
     const topInset = insets.top + 20; // Extra space to keep handle accessible
     const snapPoints = useMemo(() => ['12%', '50%', '75%'], []);
@@ -325,24 +325,24 @@ export const ExploreBottomSheet = forwardRef<ExploreBottomSheetRef, ExploreBotto
     const renderEventSectionHeader = useCallback(
       ({ section }: { section: { title: string; data: CommunityEvent[] } }) => (
         <View style={styles.eventSectionHeader}>
-          <Text style={styles.eventSectionTitle}>{section.title}</Text>
-          <Text style={styles.eventSectionCount}>{section.data.length}</Text>
+          <Text style={[styles.eventSectionTitle, { color: colors.textSecondary }]}>{section.title}</Text>
+          <Text style={[styles.eventSectionCount, { color: COLORS.primary, backgroundColor: isDark ? '#2d1f4e' : '#F3E8FF' }]}>{section.data.length}</Text>
         </View>
       ),
-      []
+      [colors, isDark]
     );
 
     // List header with count and collapsible "Groups not on map" section (search is rendered separately)
     const GroupsListHeaderComponent = useCallback(() => (
       <View style={styles.listHeader}>
         {/* Groups count */}
-        <Text style={styles.sectionTitle}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>
           {isLoadingGroups ? 'Loading groups...' : `${filteredGroups.length + filteredGroupsWithoutLocation.length} ${filteredGroups.length + filteredGroupsWithoutLocation.length === 1 ? 'group' : 'groups'}`}
         </Text>
 
         {/* Collapsible "Groups not on map" section */}
         {filteredGroupsWithoutLocation.length > 0 && (
-          <View style={styles.noLocationSection}>
+          <View style={[styles.noLocationSection, { borderBottomColor: colors.border }]}>
             <TouchableOpacity
               style={styles.noLocationHeader}
               onPress={toggleNoLocationSection}
@@ -352,21 +352,21 @@ export const ExploreBottomSheet = forwardRef<ExploreBottomSheetRef, ExploreBotto
                 <Ionicons
                   name="location-outline"
                   size={18}
-                  color={COLORS.textMuted}
+                  color={colors.textSecondary}
                 />
-                <Text style={styles.noLocationHeaderText}>
+                <Text style={[styles.noLocationHeaderText, { color: colors.textSecondary }]}>
                   Groups not on map ({filteredGroupsWithoutLocation.length})
                 </Text>
               </View>
               <Ionicons
                 name={isNoLocationExpanded ? 'chevron-up' : 'chevron-down'}
                 size={20}
-                color={COLORS.textMuted}
+                color={colors.textSecondary}
               />
             </TouchableOpacity>
 
             {isNoLocationExpanded && (
-              <View style={styles.noLocationContent}>
+              <View style={[styles.noLocationContent, { borderTopColor: colors.border }]}>
                 {filteredGroupsWithoutLocation.map((group) => (
                   <GroupCard
                     key={group.id}
@@ -383,14 +383,14 @@ export const ExploreBottomSheet = forwardRef<ExploreBottomSheetRef, ExploreBotto
         {/* Groups on map section header */}
         {filteredGroups.length > 0 && (
           <View style={styles.onMapHeader}>
-            <Ionicons name="map-outline" size={16} color={COLORS.textMuted} />
-            <Text style={styles.onMapHeaderText}>
+            <Ionicons name="map-outline" size={16} color={colors.textSecondary} />
+            <Text style={[styles.onMapHeaderText, { color: colors.textSecondary }]}>
               Groups on map ({filteredGroups.length})
             </Text>
           </View>
         )}
       </View>
-    ), [filteredGroups.length, filteredGroupsWithoutLocation, isNoLocationExpanded, toggleNoLocationSection, handleGroupCardPress, isLoadingGroups]);
+    ), [filteredGroups.length, filteredGroupsWithoutLocation, isNoLocationExpanded, toggleNoLocationSection, handleGroupCardPress, isLoadingGroups, colors, isDark]);
 
     // Events empty component
     const EventsEmptyComponent = useCallback(() => {
@@ -405,12 +405,12 @@ export const ExploreBottomSheet = forwardRef<ExploreBottomSheetRef, ExploreBotto
       }
       return (
         <View style={styles.emptyContainer}>
-          <Ionicons name="calendar-outline" size={48} color={COLORS.textMuted} />
-          <Text style={styles.emptyTitle}>No upcoming events</Text>
-          <Text style={styles.emptyText}>Check back later for new events</Text>
+          <Ionicons name="calendar-outline" size={48} color={colors.textSecondary} />
+          <Text style={[styles.emptyTitle, { color: colors.text }]}>No upcoming events</Text>
+          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>Check back later for new events</Text>
         </View>
       );
-    }, [isLoadingEvents]);
+    }, [isLoadingEvents, colors]);
 
     // Shared list content for both web and native
     const groupsListContent = (
@@ -433,9 +433,9 @@ export const ExploreBottomSheet = forwardRef<ExploreBottomSheetRef, ExploreBotto
                   </View>
                 ) : filteredGroupsWithoutLocation.length === 0 ? (
                   <View style={styles.emptyContainer}>
-                    <Ionicons name="people-outline" size={48} color={COLORS.textMuted} />
-                    <Text style={styles.emptyTitle}>No groups in view</Text>
-                    <Text style={styles.emptyText}>Pan the map to explore different areas</Text>
+                    <Ionicons name="people-outline" size={48} color={colors.textSecondary} />
+                    <Text style={[styles.emptyTitle, { color: colors.text }]}>No groups in view</Text>
+                    <Text style={[styles.emptyText, { color: colors.textSecondary }]}>Pan the map to explore different areas</Text>
                   </View>
                 ) : null
               }
@@ -457,9 +457,9 @@ export const ExploreBottomSheet = forwardRef<ExploreBottomSheetRef, ExploreBotto
                   </View>
                 ) : filteredGroupsWithoutLocation.length === 0 ? (
                   <View style={styles.emptyContainer}>
-                    <Ionicons name="people-outline" size={48} color={COLORS.textMuted} />
-                    <Text style={styles.emptyTitle}>No groups in view</Text>
-                    <Text style={styles.emptyText}>Pan the map to explore different areas</Text>
+                    <Ionicons name="people-outline" size={48} color={colors.textSecondary} />
+                    <Text style={[styles.emptyTitle, { color: colors.text }]}>No groups in view</Text>
+                    <Text style={[styles.emptyText, { color: colors.textSecondary }]}>Pan the map to explore different areas</Text>
                   </View>
                 ) : null
               }
@@ -496,7 +496,7 @@ export const ExploreBottomSheet = forwardRef<ExploreBottomSheetRef, ExploreBotto
     // On web, render a simple panel instead of BottomSheet
     if (isWeb) {
       return (
-        <View style={[styles.webPanel, isMapMode && styles.webPanelCollapsed]}>
+        <View style={[styles.webPanel, { backgroundColor: colors.surface }, isMapMode && styles.webPanelCollapsed]}>
           {/* View Toggle - hidden when mode is locked */}
           {!isModeLocked && (
             <View style={styles.toggleContainer}>
@@ -523,8 +523,8 @@ export const ExploreBottomSheet = forwardRef<ExploreBottomSheetRef, ExploreBotto
             onPress={() => setIsMapMode(!isMapMode)}
             activeOpacity={0.9}
           >
-            <Text style={styles.mapButtonText}>{isMapMode ? 'List' : 'Map'}</Text>
-            <Ionicons name={isMapMode ? 'list' : 'map'} size={16} color="#fff" />
+            <Text style={[styles.mapButtonText, { color: colors.textInverse }]}>{isMapMode ? 'List' : 'Map'}</Text>
+            <Ionicons name={isMapMode ? 'list' : 'map'} size={16} color={colors.textInverse} />
           </TouchableOpacity>
         </View>
       );
@@ -539,8 +539,8 @@ export const ExploreBottomSheet = forwardRef<ExploreBottomSheetRef, ExploreBotto
         enablePanDownToClose={false}
         enableContentPanningGesture={true}
         enableHandlePanningGesture={true}
-        handleIndicatorStyle={styles.handleIndicator}
-        backgroundStyle={styles.background}
+        handleIndicatorStyle={[styles.handleIndicator, { backgroundColor: colors.iconSecondary }]}
+        backgroundStyle={[styles.background, { backgroundColor: colors.surface }]}
         style={styles.bottomSheet}
         keyboardBehavior="extend"
         keyboardBlurBehavior="restore"
@@ -567,8 +567,8 @@ export const ExploreBottomSheet = forwardRef<ExploreBottomSheetRef, ExploreBotto
           onPress={handleToggleMapList}
           activeOpacity={0.9}
         >
-          <Text style={styles.mapButtonText}>{isMapMode ? 'List' : 'Map'}</Text>
-          <Ionicons name={isMapMode ? 'list' : 'map'} size={16} color="#fff" />
+          <Text style={[styles.mapButtonText, { color: colors.textInverse }]}>{isMapMode ? 'List' : 'Map'}</Text>
+          <Ionicons name={isMapMode ? 'list' : 'map'} size={16} color={colors.textInverse} />
         </TouchableOpacity>
       </BottomSheet>
     );
@@ -582,7 +582,6 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     maxHeight: '75%',
-    backgroundColor: '#fff',
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
     paddingTop: 12,
@@ -607,12 +606,10 @@ const styles = StyleSheet.create({
     }),
   },
   background: {
-    backgroundColor: '#fff',
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
   },
   handleIndicator: {
-    backgroundColor: '#D1D5DB',
     width: 40,
     height: 4,
   },
@@ -626,12 +623,10 @@ const styles = StyleSheet.create({
   searchInputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F5F5F5',
     borderRadius: 12,
     paddingHorizontal: 12,
     height: 44,
     borderWidth: 1,
-    borderColor: COLORS.border,
   },
   searchIcon: {
     marginRight: 8,
@@ -639,12 +634,10 @@ const styles = StyleSheet.create({
   searchInput: {
     flex: 1,
     fontSize: 16,
-    color: COLORS.text,
   },
   sectionTitle: {
     fontSize: 15,
     fontWeight: '600',
-    color: COLORS.text,
     paddingHorizontal: 16,
     marginBottom: 16,
   },
@@ -659,13 +652,11 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: COLORS.text,
     marginTop: 16,
     marginBottom: 8,
   },
   emptyText: {
     fontSize: 14,
-    color: COLORS.textMuted,
     textAlign: 'center',
     paddingHorizontal: 40,
   },
@@ -675,7 +666,7 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#222',
+    backgroundColor: '#222224',
     paddingHorizontal: 20,
     paddingVertical: 12,
     borderRadius: 24,
@@ -696,12 +687,10 @@ const styles = StyleSheet.create({
   mapButtonText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#fff',
   },
   noLocationSection: {
     paddingBottom: 16,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
   },
   noLocationHeader: {
     flexDirection: 'row',
@@ -716,13 +705,11 @@ const styles = StyleSheet.create({
   noLocationHeaderText: {
     fontSize: 14,
     fontWeight: '600',
-    color: COLORS.textMuted,
   },
   noLocationContent: {
     marginTop: 12,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: COLORS.border,
   },
   onMapHeader: {
     flexDirection: 'row',
@@ -734,7 +721,6 @@ const styles = StyleSheet.create({
   onMapHeaderText: {
     fontSize: 14,
     fontWeight: '600',
-    color: COLORS.textMuted,
   },
   toggleContainer: {
     paddingHorizontal: 16,
@@ -749,14 +735,11 @@ const styles = StyleSheet.create({
   eventSectionTitle: {
     fontSize: 12,
     fontWeight: '600',
-    color: COLORS.textMuted,
     letterSpacing: 0.5,
   },
   eventSectionCount: {
     fontSize: 12,
     fontWeight: '500',
-    color: COLORS.primary,
-    backgroundColor: '#F3E8FF',
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 10,

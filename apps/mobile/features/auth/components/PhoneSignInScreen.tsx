@@ -21,6 +21,7 @@ import Constants from "expo-constants";
 import * as Updates from "expo-updates";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { RegisterResult } from "../types";
+import { useTheme } from "@hooks/useTheme";
 
 // Check if there's a pending join intent and return the redirect path
 async function getPostAuthRedirect(): Promise<string> {
@@ -49,6 +50,7 @@ export function PhoneSignInScreen() {
   const phoneAuth = usePhoneAuth();
   const authToken = useStoredAuthToken();
   const hasNavigatedRef = useRef(false);
+  const { colors } = useTheme();
 
   // Handle successful phone OTP verification - wait for auth token to be ready
   useEffect(() => {
@@ -226,7 +228,7 @@ Convex URL: ${convexUrl}
           behavior={Platform.OS === "ios" ? "padding" : "height"}
           keyboardVerticalOffset={0}
         >
-          <View style={[styles.container, { paddingTop: insets.top }]}>
+          <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.surface }]}>
             <PhoneSignInForm
               // Phone step
               phone={phoneAuth.phone}
@@ -263,7 +265,7 @@ Convex URL: ${convexUrl}
               onPress={handleSendDebugLogs}
               style={[styles.debugLink, { paddingBottom: insets.bottom + 8 }]}
             >
-              <Text style={styles.debugLinkText}>Having issues? Send debug logs</Text>
+              <Text style={[styles.debugLinkText, { color: colors.textTertiary }]}>Having issues? Send debug logs</Text>
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
@@ -275,7 +277,6 @@ Convex URL: ${convexUrl}
 const styles = StyleSheet.create({
   keyboardView: {
     flex: 1,
-    backgroundColor: "#fff",
   },
   container: {
     flex: 1,
@@ -289,6 +290,5 @@ const styles = StyleSheet.create({
   },
   debugLinkText: {
     fontSize: 13,
-    color: "#999",
   },
 });

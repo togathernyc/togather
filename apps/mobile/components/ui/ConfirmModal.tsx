@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { CustomModal } from "./Modal";
+import { useTheme } from "@hooks/useTheme";
 
 interface ConfirmModalProps {
   visible: boolean;
@@ -31,6 +32,8 @@ export function ConfirmModal({
   isLoading = false,
   destructive = false,
 }: ConfirmModalProps) {
+  const { colors } = useTheme();
+
   return (
     <CustomModal
       visible={visible}
@@ -39,31 +42,30 @@ export function ConfirmModal({
       withoutCloseBtn
     >
       <View style={styles.container}>
-        <Text style={styles.message}>{message}</Text>
+        <Text style={[styles.message, { color: colors.text }]}>{message}</Text>
 
         <View style={styles.buttonContainer}>
           <TouchableOpacity
-            style={[styles.button, styles.cancelButton]}
+            style={[styles.button, { backgroundColor: colors.surfaceSecondary }]}
             onPress={onCancel}
             disabled={isLoading}
           >
-            <Text style={styles.cancelButtonText}>{cancelText}</Text>
+            <Text style={[styles.cancelButtonText, { color: colors.text }]}>{cancelText}</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             style={[
               styles.button,
-              styles.confirmButton,
-              destructive && styles.destructiveButton,
+              { backgroundColor: destructive ? colors.destructive : colors.link },
               isLoading && styles.buttonDisabled,
             ]}
             onPress={onConfirm}
             disabled={isLoading}
           >
             {isLoading ? (
-              <ActivityIndicator color="#fff" />
+              <ActivityIndicator color={colors.textInverse} />
             ) : (
-              <Text style={styles.confirmButtonText}>{confirmText}</Text>
+              <Text style={[styles.confirmButtonText, { color: colors.textInverse }]}>{confirmText}</Text>
             )}
           </TouchableOpacity>
         </View>
@@ -78,7 +80,6 @@ const styles = StyleSheet.create({
   },
   message: {
     fontSize: 16,
-    color: "#333",
     marginBottom: 24,
     lineHeight: 22,
   },
@@ -94,22 +95,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     minHeight: 48,
   },
-  cancelButton: {
-    backgroundColor: "#f0f0f0",
-  },
   cancelButtonText: {
-    color: "#333",
     fontSize: 16,
     fontWeight: "600",
   },
-  confirmButton: {
-    backgroundColor: "#007AFF",
-  },
-  destructiveButton: {
-    backgroundColor: "#FF3B30",
-  },
   confirmButtonText: {
-    color: "#fff",
     fontSize: 16,
     fontWeight: "600",
   },

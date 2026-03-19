@@ -24,6 +24,7 @@ import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { DragHandle } from "@components/ui/DragHandle";
 import { useContactConfirmation } from "@features/chat/hooks/useContactConfirmation";
+import { useTheme } from "@hooks/useTheme";
 
 type SnoozeDuration = "1_week" | "2_weeks" | "1_month" | "3_months";
 
@@ -51,6 +52,7 @@ export function FollowupDetailContent({
   scrollToNotes?: boolean;
   scrollToTasks?: boolean;
 }) {
+  const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user } = useAuth();
@@ -424,9 +426,9 @@ export function FollowupDetailContent({
   };
 
   const getScoreColor = (value: number): string => {
-    if (value >= 70) return "#4CAF50";
-    if (value >= 40) return "#FF9500";
-    return "#FF6B6B";
+    if (value >= 70) return colors.success;
+    if (value >= 40) return colors.warning;
+    return colors.destructive;
   };
 
   const getFollowupIcon = (type: string) => {
@@ -453,21 +455,21 @@ export function FollowupDetailContent({
   const getFollowupColor = (type: string) => {
     switch (type) {
       case "note":
-        return "#007AFF";
+        return colors.link;
       case "call":
-        return "#34C759";
+        return colors.success;
       case "text":
-        return "#5856D6";
+        return colors.link;
       case "email":
-        return "#FF6B6B";
+        return colors.destructive;
       case "snooze":
-        return "#FF9500";
+        return colors.warning;
       case "followed_up":
-        return "#4CAF50";
+        return colors.success;
       case "reach_out":
-        return "#8E44AD";
+        return colors.link;
       default:
-        return "#666";
+        return colors.textSecondary;
     }
   };
 
@@ -524,25 +526,25 @@ export function FollowupDetailContent({
   const getTaskStatusColor = (status: string) => {
     switch (status) {
       case "open":
-        return "#3B82F6";
+        return colors.link;
       case "snoozed":
-        return "#F59E0B";
+        return colors.warning;
       case "done":
-        return "#10B981";
+        return colors.success;
       case "canceled":
-        return "#6B7280";
+        return colors.icon;
       default:
-        return "#6B7280";
+        return colors.icon;
     }
   };
 
 
   if (isLoading) {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={primaryColor} />
-          <Text style={styles.loadingText}>Loading member details...</Text>
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading member details...</Text>
         </View>
       </View>
     );
@@ -550,13 +552,13 @@ export function FollowupDetailContent({
 
   if (!history) {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
         <View style={styles.errorContainer}>
-          <Ionicons name="alert-circle-outline" size={48} color="#e74c3c" />
-          <Text style={styles.errorText}>
+          <Ionicons name="alert-circle-outline" size={48} color={colors.destructive} />
+          <Text style={[styles.errorText, { color: colors.textSecondary }]}>
             Failed to load member details
           </Text>
-          <TouchableOpacity style={styles.retryButton} onPress={() => refetch()}>
+          <TouchableOpacity style={[styles.retryButton, { backgroundColor: primaryColor }]} onPress={() => refetch()}>
             <Text style={styles.retryButtonText}>Retry</Text>
           </TouchableOpacity>
         </View>
@@ -569,17 +571,17 @@ export function FollowupDetailContent({
   return (
     <>
       {/* Header */}
-      <View style={[styles.header, !onClose && { paddingTop: insets.top + 16 }]}>
+      <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }, !onClose && { paddingTop: insets.top + 16 }]}>
         <TouchableOpacity style={styles.backButton} onPress={handleBack}>
-          <Ionicons name={onClose ? "close" : "arrow-back"} size={24} color="#333" />
+          <Ionicons name={onClose ? "close" : "arrow-back"} size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>{history?.toolDisplayName ?? "People"}</Text>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>{history?.toolDisplayName ?? "People"}</Text>
         <View style={styles.headerSpacer} />
       </View>
 
       <ScrollView ref={scrollViewRef} style={styles.content}>
         {/* Profile Section */}
-        <View style={styles.profileSection}>
+        <View style={[styles.profileSection, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
           <TouchableOpacity
             onPress={() => member.profileImage && setShowImageModal(true)}
             activeOpacity={member.profileImage ? 0.8 : 1}
@@ -590,19 +592,19 @@ export function FollowupDetailContent({
                 style={styles.profileImage}
               />
             ) : (
-              <View style={styles.profileImagePlaceholder}>
-                <Text style={styles.profileInitials}>
+              <View style={[styles.profileImagePlaceholder, { backgroundColor: primaryColor }]}>
+                <Text style={[styles.profileInitials, { color: colors.textInverse }]}>
                   {member.firstName.charAt(0).toUpperCase()}
                   {member.lastName.charAt(0).toUpperCase()}
                 </Text>
               </View>
             )}
           </TouchableOpacity>
-          <Text style={styles.profileName}>
+          <Text style={[styles.profileName, { color: colors.text }]}>
             {member.firstName} {member.lastName}
           </Text>
           {member.joinedAt && (
-            <Text style={styles.profileJoined}>
+            <Text style={[styles.profileJoined, { color: colors.textSecondary }]}>
               Member since {formatDate(member.joinedAt)}
             </Text>
           )}
@@ -616,7 +618,7 @@ export function FollowupDetailContent({
           onRequestClose={() => setShowImageModal(false)}
         >
           <Pressable
-            style={styles.imageModalOverlay}
+            style={[styles.imageModalOverlay, { backgroundColor: 'rgba(0, 0, 0, 0.9)' }]}
             onPress={() => setShowImageModal(false)}
           >
             <View style={styles.imageModalContainer}>
@@ -631,7 +633,7 @@ export function FollowupDetailContent({
                 style={styles.imageModalClose}
                 onPress={() => setShowImageModal(false)}
               >
-                <Ionicons name="close-circle" size={36} color="#fff" />
+                <Ionicons name="close-circle" size={36} color={colors.textInverse} />
               </TouchableOpacity>
             </View>
           </Pressable>
@@ -640,15 +642,15 @@ export function FollowupDetailContent({
 
         {/* Alerts */}
         {history.triggeredAlerts.length > 0 && (
-          <View style={styles.alertSection}>
+          <View style={[styles.alertSection, { backgroundColor: isDark ? colors.surfaceSecondary : '#FEF2F2', borderLeftColor: colors.destructive }]}>
             <View style={styles.alertHeader}>
-              <Ionicons name="warning" size={20} color="#DC2626" />
-              <Text style={styles.alertSectionTitle}>Alerts</Text>
+              <Ionicons name="warning" size={20} color={colors.destructive} />
+              <Text style={[styles.alertSectionTitle, { color: colors.destructive }]}>Alerts</Text>
             </View>
             {history.triggeredAlerts.map((label: string, i: number) => (
               <View key={i} style={styles.alertItem}>
-                <Ionicons name="alert-circle" size={16} color="#DC2626" />
-                <Text style={styles.alertItemText}>{label}</Text>
+                <Ionicons name="alert-circle" size={16} color={colors.destructive} />
+                <Text style={[styles.alertItemText, { color: colors.destructive }]}>{label}</Text>
               </View>
             ))}
           </View>
@@ -656,13 +658,13 @@ export function FollowupDetailContent({
 
         {/* Scores */}
         {history.scoreBreakdown && history.scoreBreakdown.length > 0 && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Scores</Text>
+          <View style={[styles.section, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Scores</Text>
             <View style={styles.scoresContainer}>
               {history.scoreBreakdown.map((score: any) => (
-                <View key={score.id} style={styles.scoreCard}>
+                <View key={score.id} style={[styles.scoreCard, { backgroundColor: colors.surfaceSecondary }]}>
                   <View style={styles.scoreHeader}>
-                    <Text style={styles.scoreName}>{score.name}</Text>
+                    <Text style={[styles.scoreName, { color: colors.text }]}>{score.name}</Text>
                     <View style={[styles.scoreBadge, { backgroundColor: getScoreColor(score.value) }]}>
                       <Text style={styles.scoreBadgeText}>{score.value}</Text>
                     </View>
@@ -671,12 +673,12 @@ export function FollowupDetailContent({
                     {score.variables.map((variable: any) => (
                       <View key={variable.id} style={styles.variableRow}>
                         <View style={styles.variableLabelRow}>
-                          <Text style={styles.variableLabel}>{variable.label}</Text>
-                          <Text style={styles.variableRaw}>
+                          <Text style={[styles.variableLabel, { color: colors.textSecondary }]}>{variable.label}</Text>
+                          <Text style={[styles.variableRaw, { color: colors.textTertiary }]}>
                             {formatRawValue(variable.id, variable.rawValue)}
                           </Text>
                         </View>
-                        <View style={styles.variableBarContainer}>
+                        <View style={[styles.variableBarContainer, { backgroundColor: colors.border }]}>
                           <View
                             style={[
                               styles.variableBar,
@@ -687,7 +689,7 @@ export function FollowupDetailContent({
                             ]}
                           />
                         </View>
-                        <Text style={styles.variableHint}>
+                        <Text style={[styles.variableHint, { color: colors.textTertiary }]}>
                           {variable.normHint}
                           {score.variables.length > 1 ? ` · weight: ${variable.weight}` : ""}
                         </Text>
@@ -701,8 +703,8 @@ export function FollowupDetailContent({
         )}
 
         {/* Quick Actions */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Quick Actions</Text>
+        <View style={[styles.section, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Quick Actions</Text>
           <View style={styles.quickActions}>
             <TouchableOpacity
               style={[styles.quickAction, !member.phone && styles.quickActionDisabled]}
@@ -712,12 +714,13 @@ export function FollowupDetailContent({
               <Ionicons
                 name="call"
                 size={24}
-                color={member.phone ? "#34C759" : "#ccc"}
+                color={member.phone ? colors.success : colors.iconSecondary}
               />
               <Text
                 style={[
                   styles.quickActionText,
-                  !member.phone && styles.quickActionTextDisabled,
+                  { color: colors.text },
+                  !member.phone && { color: colors.textTertiary },
                 ]}
               >
                 Call
@@ -732,12 +735,13 @@ export function FollowupDetailContent({
               <Ionicons
                 name="chatbubble"
                 size={24}
-                color={member.phone ? "#5856D6" : "#ccc"}
+                color={member.phone ? colors.link : colors.iconSecondary}
               />
               <Text
                 style={[
                   styles.quickActionText,
-                  !member.phone && styles.quickActionTextDisabled,
+                  { color: colors.text },
+                  !member.phone && { color: colors.textTertiary },
                 ]}
               >
                 Text
@@ -749,47 +753,47 @@ export function FollowupDetailContent({
               onPress={handleMarkFollowedUp}
               disabled={addFollowupMutation.isPending}
             >
-              <Ionicons name="checkmark-circle" size={24} color="#4CAF50" />
-              <Text style={styles.quickActionText}>Done</Text>
+              <Ionicons name="checkmark-circle" size={24} color={colors.success} />
+              <Text style={[styles.quickActionText, { color: colors.text }]}>Done</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={styles.quickAction}
               onPress={() => setShowSnoozeModal(true)}
             >
-              <Ionicons name="time" size={24} color="#FF9500" />
-              <Text style={styles.quickActionText}>Snooze</Text>
+              <Ionicons name="time" size={24} color={colors.warning} />
+              <Text style={[styles.quickActionText, { color: colors.text }]}>Snooze</Text>
             </TouchableOpacity>
           </View>
         </View>
 
         {/* Contact Info */}
         {(member.phone || member.email) && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Contact</Text>
+          <View style={[styles.section, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Contact</Text>
             {member.phone && (
-              <Text style={styles.contactText}>{member.phone}</Text>
+              <Text style={[styles.contactText, { color: colors.textSecondary }]}>{member.phone}</Text>
             )}
             {member.email && (
-              <Text style={styles.contactText}>{member.email}</Text>
+              <Text style={[styles.contactText, { color: colors.textSecondary }]}>{member.email}</Text>
             )}
           </View>
         )}
 
         {/* Attendance Summary */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Attendance</Text>
+        <View style={[styles.section, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Attendance</Text>
 
           {/* Stats Grid */}
           <View style={styles.statsGrid}>
-            <View style={styles.statCard}>
-              <Text style={styles.statValue}>
+            <View style={[styles.statCard, { backgroundColor: colors.surfaceSecondary }]}>
+              <Text style={[styles.statValue, { color: colors.text }]}>
                 {attendanceHistory.filter((m) => m.status === 1).length}
               </Text>
-              <Text style={styles.statLabel}>Meetings Attended</Text>
+              <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Meetings Attended</Text>
             </View>
-            <View style={styles.statCard}>
-              <Text style={styles.statValue}>
+            <View style={[styles.statCard, { backgroundColor: colors.surfaceSecondary }]}>
+              <Text style={[styles.statValue, { color: colors.text }]}>
                 {attendanceHistory.length > 0
                   ? `${Math.round(
                       (attendanceHistory.filter((m) => m.status === 1).length /
@@ -798,23 +802,23 @@ export function FollowupDetailContent({
                     )}%`
                   : "N/A"}
               </Text>
-              <Text style={styles.statLabel}>Attendance Rate</Text>
+              <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Attendance Rate</Text>
             </View>
           </View>
 
           {/* Recent Attendance List */}
           {attendanceHistory.length === 0 ? (
-            <Text style={styles.noAttendanceText}>
+            <Text style={[styles.noAttendanceText, { color: colors.textTertiary }]}>
               No meetings recorded yet
             </Text>
           ) : (
             <>
-              <Text style={styles.subsectionTitle}>Recent Meetings (tap to edit)</Text>
+              <Text style={[styles.subsectionTitle, { color: colors.textSecondary }]}>Recent Meetings (tap to edit)</Text>
               <View style={styles.attendanceList}>
                 {attendanceHistory.slice(0, 20).map((meeting) => (
                   <TouchableOpacity
                     key={meeting.meetingId}
-                    style={styles.attendanceRow}
+                    style={[styles.attendanceRow, { backgroundColor: colors.surfaceSecondary }]}
                     onPress={() => setEditingMeeting({
                       meetingId: meeting.meetingId,
                       title: meeting.title || '',
@@ -826,17 +830,17 @@ export function FollowupDetailContent({
                     <Ionicons
                       name={meeting.status === 1 ? "checkmark-circle" : "close-circle"}
                       size={24}
-                      color={meeting.status === 1 ? "#4CAF50" : "#FF6B6B"}
+                      color={meeting.status === 1 ? colors.success : colors.destructive}
                     />
                     <View style={styles.attendanceRowText}>
-                      <Text style={styles.attendanceMeetingTitle} numberOfLines={1}>
+                      <Text style={[styles.attendanceMeetingTitle, { color: colors.text }]} numberOfLines={1}>
                         {meeting.title || "Meeting"}
                       </Text>
-                      <Text style={styles.attendanceMeetingDate}>
+                      <Text style={[styles.attendanceMeetingDate, { color: colors.textSecondary }]}>
                         {formatShortDate(meeting.date)}
                       </Text>
                     </View>
-                    <Ionicons name="chevron-forward" size={16} color="#ccc" />
+                    <Ionicons name="chevron-forward" size={16} color={colors.iconSecondary} />
                   </TouchableOpacity>
                 ))}
               </View>
@@ -846,16 +850,16 @@ export function FollowupDetailContent({
 
         {/* Cross-Group Attendance */}
         {history.crossGroupAttendance.length > 0 && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Other Group Attendance</Text>
+          <View style={[styles.section, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Other Group Attendance</Text>
             {history.crossGroupAttendance.map((group: any) => (
               <View key={group.groupId} style={styles.crossGroupSection}>
-                <Text style={styles.crossGroupName}>{group.groupName}</Text>
+                <Text style={[styles.crossGroupName, { color: colors.textSecondary }]}>{group.groupName}</Text>
                 <View style={styles.attendanceList}>
                   {group.meetings.map((meeting: any) => (
                     <TouchableOpacity
                       key={meeting.meetingId}
-                      style={styles.attendanceRow}
+                      style={[styles.attendanceRow, { backgroundColor: colors.surfaceSecondary }]}
                       onPress={() =>
                         group.canEdit &&
                         setEditingMeeting({
@@ -872,18 +876,18 @@ export function FollowupDetailContent({
                       <Ionicons
                         name={meeting.status === 1 ? "checkmark-circle" : "close-circle"}
                         size={24}
-                        color={meeting.status === 1 ? "#4CAF50" : "#FF6B6B"}
+                        color={meeting.status === 1 ? colors.success : colors.destructive}
                       />
                       <View style={styles.attendanceRowText}>
-                        <Text style={styles.attendanceMeetingTitle} numberOfLines={1}>
+                        <Text style={[styles.attendanceMeetingTitle, { color: colors.text }]} numberOfLines={1}>
                           {meeting.title || "Meeting"}
                         </Text>
-                        <Text style={styles.attendanceMeetingDate}>
+                        <Text style={[styles.attendanceMeetingDate, { color: colors.textSecondary }]}>
                           {formatShortDate(new Date(meeting.date).toISOString())}
                         </Text>
                       </View>
                       {group.canEdit && (
-                        <Ionicons name="chevron-forward" size={16} color="#ccc" />
+                        <Ionicons name="chevron-forward" size={16} color={colors.iconSecondary} />
                       )}
                     </TouchableOpacity>
                   ))}
@@ -895,21 +899,21 @@ export function FollowupDetailContent({
 
         {/* Serving History */}
         {history.servingHistory.length > 0 && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Serving History</Text>
+          <View style={[styles.section, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Serving History</Text>
             <View style={styles.servingList}>
               {history.servingHistory.map((entry: any, index: number) => (
-                <View key={`${entry.date}-${entry.teamName}-${index}`} style={styles.servingRow}>
-                  <View style={styles.servingIcon}>
-                    <Ionicons name="hand-left-outline" size={16} color="#666" />
+                <View key={`${entry.date}-${entry.teamName}-${index}`} style={[styles.servingRow, { backgroundColor: colors.surfaceSecondary }]}>
+                  <View style={[styles.servingIcon, { backgroundColor: colors.border }]}>
+                    <Ionicons name="hand-left-outline" size={16} color={colors.textSecondary} />
                   </View>
                   <View style={styles.servingInfo}>
-                    <Text style={styles.servingTitle}>
+                    <Text style={[styles.servingTitle, { color: colors.text }]}>
                       {formatShortDate(new Date(entry.date).toISOString())}{" "}
                       {entry.serviceTypeName}{entry.teamName ? ` ${entry.teamName}` : ""}
                     </Text>
                     {entry.position && (
-                      <Text style={styles.servingPosition}>{entry.position}</Text>
+                      <Text style={[styles.servingPosition, { color: colors.textSecondary }]}>{entry.position}</Text>
                     )}
                   </View>
                 </View>
@@ -920,20 +924,20 @@ export function FollowupDetailContent({
 
         {/* Associated Tasks */}
         <View
-          style={styles.section}
+          style={[styles.section, { backgroundColor: colors.surface }]}
           onLayout={(e) => setTasksSectionY(e.nativeEvent.layout.y)}
         >
-          <Text style={styles.sectionTitle}>Associated Tasks</Text>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Associated Tasks</Text>
           {memberTasks === undefined ? (
             <ActivityIndicator size="small" color={primaryColor} />
           ) : memberTasks.length === 0 ? (
-            <Text style={styles.emptyTimeline}>No tasks associated with this member</Text>
+            <Text style={[styles.emptyTimeline, { color: colors.textTertiary }]}>No tasks associated with this member</Text>
           ) : (
             <View style={{ gap: 8 }}>
               {memberTasks.map((task: any) => (
                 <TouchableOpacity
                   key={task._id}
-                  style={styles.taskCard}
+                  style={[styles.taskCard, { backgroundColor: colors.surfaceSecondary, borderLeftColor: colors.link }]}
                   onPress={() =>
                     router.push(
                       `/(user)/leader-tools/${task.groupId}/tasks/${task._id}` as any
@@ -942,7 +946,7 @@ export function FollowupDetailContent({
                   activeOpacity={0.7}
                 >
                   <View style={styles.taskCardHeader}>
-                    <Text style={styles.taskCardTitle} numberOfLines={1}>
+                    <Text style={[styles.taskCardTitle, { color: colors.text }]} numberOfLines={1}>
                       {task.title}
                     </Text>
                     <View
@@ -967,20 +971,20 @@ export function FollowupDetailContent({
                       </Text>
                     </View>
                   </View>
-                  <Text style={styles.taskCardAssignee}>
+                  <Text style={[styles.taskCardAssignee, { color: colors.textSecondary }]}>
                     {task.assignedToName ?? "Unassigned"}
                   </Text>
                   {task.tags && task.tags.length > 0 && (
                     <View style={styles.taskCardTagsRow}>
                       {task.tags.map((tag: string) => (
-                        <View key={tag} style={styles.taskCardTagChip}>
-                          <Text style={styles.taskCardTagText}>#{tag}</Text>
+                        <View key={tag} style={[styles.taskCardTagChip, { backgroundColor: isDark ? colors.surfaceSecondary : colors.backgroundSecondary }]}>
+                          <Text style={[styles.taskCardTagText, { color: colors.link }]}>#{tag}</Text>
                         </View>
                       ))}
                     </View>
                   )}
                   {task.groupId !== groupId && task.groupName && (
-                    <Text style={styles.taskCardGroup}>{task.groupName}</Text>
+                    <Text style={[styles.taskCardGroup, { color: colors.textTertiary }]}>{task.groupName}</Text>
                   )}
                 </TouchableOpacity>
               ))}
@@ -998,11 +1002,12 @@ export function FollowupDetailContent({
         </View>
 
         {/* Add Note */}
-        <View style={styles.section} onLayout={(e) => setNotesSectionY(e.nativeEvent.layout.y)}>
-          <Text style={styles.sectionTitle}>Add Note</Text>
+        <View style={[styles.section, { backgroundColor: colors.surface }]} onLayout={(e) => setNotesSectionY(e.nativeEvent.layout.y)}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Add Note</Text>
           <TextInput
-            style={styles.noteInput}
+            style={[styles.noteInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
             placeholder="Add a note..."
+            placeholderTextColor={colors.inputPlaceholder}
             value={noteText}
             onChangeText={setNoteText}
             multiline
@@ -1011,25 +1016,26 @@ export function FollowupDetailContent({
           <TouchableOpacity
             style={[
               styles.addNoteButton,
+              { backgroundColor: primaryColor },
               (!noteText.trim() || addFollowupMutation.isPending) &&
-                styles.addNoteButtonDisabled,
+                { backgroundColor: colors.border },
             ]}
             onPress={handleAddNote}
             disabled={!noteText.trim() || addFollowupMutation.isPending}
           >
             {addFollowupMutation.isPending ? (
-              <ActivityIndicator size="small" color="#fff" />
+              <ActivityIndicator size="small" color={colors.textInverse} />
             ) : (
-              <Text style={styles.addNoteButtonText}>Add Note</Text>
+              <Text style={[styles.addNoteButtonText, { color: colors.textInverse }]}>Add Note</Text>
             )}
           </TouchableOpacity>
         </View>
 
         {/* People History */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>People History</Text>
+        <View style={[styles.section, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>People History</Text>
           {followups.length === 0 ? (
-            <Text style={styles.emptyTimeline}>No entries recorded yet</Text>
+            <Text style={[styles.emptyTimeline, { color: colors.textTertiary }]}>No entries recorded yet</Text>
           ) : (
             <View style={styles.timeline}>
               {followups.map((entry, index) => (
@@ -1043,15 +1049,15 @@ export function FollowupDetailContent({
                     <Ionicons
                       name={getFollowupIcon(entry.type) as any}
                       size={16}
-                      color="#fff"
+                      color={colors.textInverse}
                     />
                   </View>
                   {index < followups.length - 1 && (
-                    <View style={styles.timelineLine} />
+                    <View style={[styles.timelineLine, { backgroundColor: colors.border }]} />
                   )}
                   <View style={styles.timelineContent}>
                     <View style={styles.timelineHeader}>
-                      <Text style={styles.timelineType}>
+                      <Text style={[styles.timelineType, { color: colors.text }]}>
                         {entry.type.charAt(0).toUpperCase() + entry.type.slice(1).replace("_", " ")}
                       </Text>
                       {entry.createdBy?.id === currentUserId && (
@@ -1059,14 +1065,14 @@ export function FollowupDetailContent({
                           onPress={() => handleDeleteFollowup(entry.id)}
                           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                         >
-                          <Ionicons name="trash-outline" size={16} color="#FF3B30" />
+                          <Ionicons name="trash-outline" size={16} color={colors.destructive} />
                         </TouchableOpacity>
                       )}
                     </View>
                     {entry.content && (
-                      <Text style={styles.timelineNote}>{entry.content}</Text>
+                      <Text style={[styles.timelineNote, { color: colors.textSecondary }]}>{entry.content}</Text>
                     )}
-                    <Text style={styles.timelineMeta}>
+                    <Text style={[styles.timelineMeta, { color: colors.textTertiary }]}>
                       {entry.createdBy?.firstName} {entry.createdBy?.lastName} -{" "}
                       {formatDate(entry.createdAt)} at {formatTime(entry.createdAt)}
                     </Text>
@@ -1088,18 +1094,19 @@ export function FollowupDetailContent({
         onRequestClose={() => setShowSnoozeModal(false)}
       >
         <Pressable
-          style={styles.modalOverlay}
+          style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}
           onPress={() => setShowSnoozeModal(false)}
         >
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Snooze Member</Text>
-            <Text style={styles.modalSubtitle}>
+          <View style={[styles.modalContent, { backgroundColor: colors.modalBackground }]}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Snooze Member</Text>
+            <Text style={[styles.modalSubtitle, { color: colors.textSecondary }]}>
               How long should we hide this member from the people list?
             </Text>
 
             <TextInput
-              style={styles.snoozeNoteInput}
+              style={[styles.snoozeNoteInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
               placeholder="Add a note (optional)..."
+              placeholderTextColor={colors.inputPlaceholder}
               value={snoozeNote}
               onChangeText={setSnoozeNote}
             />
@@ -1108,11 +1115,11 @@ export function FollowupDetailContent({
               {SNOOZE_OPTIONS.map((option) => (
                 <TouchableOpacity
                   key={option.value}
-                  style={styles.snoozeOption}
+                  style={[styles.snoozeOption, { backgroundColor: colors.surfaceSecondary }]}
                   onPress={() => handleSnooze(option.value)}
                   disabled={snoozeMutation.isPending}
                 >
-                  <Text style={styles.snoozeOptionText}>{option.label}</Text>
+                  <Text style={[styles.snoozeOptionText, { color: colors.text }]}>{option.label}</Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -1121,7 +1128,7 @@ export function FollowupDetailContent({
               style={styles.modalCancelButton}
               onPress={() => setShowSnoozeModal(false)}
             >
-              <Text style={styles.modalCancelText}>Cancel</Text>
+              <Text style={[styles.modalCancelText, { color: colors.textSecondary }]}>Cancel</Text>
             </TouchableOpacity>
           </View>
         </Pressable>
@@ -1135,21 +1142,21 @@ export function FollowupDetailContent({
         onRequestClose={() => setEditingMeeting(null)}
       >
         <Pressable
-          style={styles.modalOverlay}
+          style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}
           onPress={() => setEditingMeeting(null)}
         >
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Edit Attendance</Text>
+          <View style={[styles.modalContent, { backgroundColor: colors.modalBackground }]}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Edit Attendance</Text>
             {editingMeeting && (
               <>
-                <Text style={styles.attendanceModalMeeting}>
+                <Text style={[styles.attendanceModalMeeting, { color: colors.text }]}>
                   {editingMeeting.title || "Meeting"}
                 </Text>
-                <Text style={styles.attendanceModalDate}>
+                <Text style={[styles.attendanceModalDate, { color: colors.textSecondary }]}>
                   {formatDate(editingMeeting.date)}
                 </Text>
 
-                <Text style={styles.attendanceModalCurrentStatus}>
+                <Text style={[styles.attendanceModalCurrentStatus, { color: colors.textSecondary }]}>
                   Current: {editingMeeting.currentStatus === 1 ? "Present ✓" : "Absent ✗"}
                 </Text>
 
@@ -1157,27 +1164,27 @@ export function FollowupDetailContent({
                   <TouchableOpacity
                     style={[
                       styles.attendanceModalOption,
-                      styles.attendanceModalPresent,
+                      { backgroundColor: "#4CAF50" },
                       editingMeeting.currentStatus === 1 && styles.attendanceModalOptionActive,
                     ]}
                     onPress={() => handleUpdateAttendance(1)}
                     disabled={updateAttendanceMutation.isPending}
                   >
                     <Ionicons name="checkmark-circle" size={24} color="#fff" />
-                    <Text style={styles.attendanceModalOptionText}>Mark Present</Text>
+                    <Text style={[styles.attendanceModalOptionText, { color: "#fff" }]}>Mark Present</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
                     style={[
                       styles.attendanceModalOption,
-                      styles.attendanceModalAbsent,
+                      { backgroundColor: "#FF6B6B" },
                       editingMeeting.currentStatus === 0 && styles.attendanceModalOptionActive,
                     ]}
                     onPress={() => handleUpdateAttendance(0)}
                     disabled={updateAttendanceMutation.isPending}
                   >
                     <Ionicons name="close-circle" size={24} color="#fff" />
-                    <Text style={styles.attendanceModalOptionText}>Mark Absent</Text>
+                    <Text style={[styles.attendanceModalOptionText, { color: "#fff" }]}>Mark Absent</Text>
                   </TouchableOpacity>
                 </View>
 
@@ -1191,7 +1198,7 @@ export function FollowupDetailContent({
               style={styles.modalCancelButton}
               onPress={() => setEditingMeeting(null)}
             >
-              <Text style={styles.modalCancelText}>Cancel</Text>
+              <Text style={[styles.modalCancelText, { color: colors.textSecondary }]}>Cancel</Text>
             </TouchableOpacity>
           </View>
         </Pressable>
@@ -1205,64 +1212,67 @@ export function FollowupDetailContent({
         onRequestClose={() => setShowCreateTaskModal(false)}
       >
         <Pressable
-          style={styles.modalOverlay}
+          style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}
           onPress={() => setShowCreateTaskModal(false)}
         >
-          <Pressable style={styles.createTaskModalContent} onPress={(e) => e.stopPropagation()}>
-            <Text style={styles.modalTitle}>Create Task</Text>
-            <Text style={styles.createTaskSubtitle}>
+          <Pressable style={[styles.createTaskModalContent, { backgroundColor: colors.modalBackground }]} onPress={(e) => e.stopPropagation()}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Create Task</Text>
+            <Text style={[styles.createTaskSubtitle, { color: colors.textSecondary }]}>
               For {member?.firstName} {member?.lastName}
             </Text>
 
-            <Text style={styles.createTaskLabel}>Title *</Text>
+            <Text style={[styles.createTaskLabel, { color: colors.textSecondary }]}>Title *</Text>
             <TextInput
-              style={styles.createTaskInput}
+              style={[styles.createTaskInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
               placeholder="Task title..."
+              placeholderTextColor={colors.inputPlaceholder}
               value={newTaskTitle}
               onChangeText={setNewTaskTitle}
               autoFocus
             />
 
-            <Text style={styles.createTaskLabel}>Description</Text>
+            <Text style={[styles.createTaskLabel, { color: colors.textSecondary }]}>Description</Text>
             <TextInput
-              style={[styles.createTaskInput, { minHeight: 60 }]}
+              style={[styles.createTaskInput, { minHeight: 60, borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
               placeholder="Optional description..."
+              placeholderTextColor={colors.inputPlaceholder}
               value={newTaskDescription}
               onChangeText={setNewTaskDescription}
               multiline
               numberOfLines={2}
             />
 
-            <Text style={styles.createTaskLabel}>Assign To</Text>
+            <Text style={[styles.createTaskLabel, { color: colors.textSecondary }]}>Assign To</Text>
             {newTaskAssigneeId ? (
-              <View style={styles.selectedAssigneeRow}>
-                <Text style={styles.selectedAssigneeName}>
+              <View style={[styles.selectedAssigneeRow, { backgroundColor: isDark ? colors.surfaceSecondary : '#EEF2FF' }]}>
+                <Text style={[styles.selectedAssigneeName, { color: colors.link }]}>
                   {allLeaders?.find((l: any) => l.userId === newTaskAssigneeId)?.name ?? "Selected leader"}
                 </Text>
                 <TouchableOpacity onPress={() => { setNewTaskAssigneeId(null); setAssigneeSearchText(""); }}>
-                  <Ionicons name="close-circle" size={20} color="#999" />
+                  <Ionicons name="close-circle" size={20} color={colors.textTertiary} />
                 </TouchableOpacity>
               </View>
             ) : (
               <>
                 <TextInput
-                  style={styles.createTaskInput}
+                  style={[styles.createTaskInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
                   placeholder="Search leaders..."
+                  placeholderTextColor={colors.inputPlaceholder}
                   value={assigneeSearchText}
                   onChangeText={setAssigneeSearchText}
                 />
                 {assignableLeaders && assignableLeaders.length > 0 && (
-                  <View style={styles.leaderSuggestions}>
+                  <View style={[styles.leaderSuggestions, { borderColor: colors.border }]}>
                     {assignableLeaders.map((leader: any) => (
                       <TouchableOpacity
                         key={leader.userId}
-                        style={styles.leaderSuggestionItem}
+                        style={[styles.leaderSuggestionItem, { borderBottomColor: colors.borderLight }]}
                         onPress={() => {
                           setNewTaskAssigneeId(leader.userId);
                           setAssigneeSearchText("");
                         }}
                       >
-                        <Text style={styles.leaderSuggestionText}>{leader.name}</Text>
+                        <Text style={[styles.leaderSuggestionText, { color: colors.text }]}>{leader.name}</Text>
                       </TouchableOpacity>
                     ))}
                   </View>
@@ -1270,22 +1280,23 @@ export function FollowupDetailContent({
               </>
             )}
 
-            <Text style={styles.createTaskLabel}>Tags</Text>
+            <Text style={[styles.createTaskLabel, { color: colors.textSecondary }]}>Tags</Text>
             {selectedTags.length > 0 && (
               <View style={styles.selectedTagsRow}>
                 {selectedTags.map((tag) => (
-                  <View key={tag} style={styles.selectedTagChip}>
-                    <Text style={styles.selectedTagChipText}>#{tag}</Text>
+                  <View key={tag} style={[styles.selectedTagChip, { backgroundColor: isDark ? colors.surfaceSecondary : '#EEF2FF' }]}>
+                    <Text style={[styles.selectedTagChipText, { color: colors.link }]}>#{tag}</Text>
                     <TouchableOpacity onPress={() => handleRemoveTag(tag)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
-                      <Ionicons name="close-circle" size={16} color="#6366F1" />
+                      <Ionicons name="close-circle" size={16} color={colors.link} />
                     </TouchableOpacity>
                   </View>
                 ))}
               </View>
             )}
             <TextInput
-              style={styles.createTaskInput}
+              style={[styles.createTaskInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
               placeholder="Type to search or add tags..."
+              placeholderTextColor={colors.inputPlaceholder}
               value={tagInput}
               onChangeText={setTagInput}
               onSubmitEditing={() => {
@@ -1298,10 +1309,10 @@ export function FollowupDetailContent({
                 {filteredTagSuggestions.slice(0, 6).map((tag) => (
                   <TouchableOpacity
                     key={tag}
-                    style={styles.tagSuggestionItem}
+                    style={[styles.tagSuggestionItem, { backgroundColor: colors.surfaceSecondary }]}
                     onPress={() => handleAddTag(tag)}
                   >
-                    <Text style={styles.tagSuggestionText}>#{tag}</Text>
+                    <Text style={[styles.tagSuggestionText, { color: colors.link }]}>#{tag}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -1311,8 +1322,8 @@ export function FollowupDetailContent({
                 style={styles.tagCreateNew}
                 onPress={() => handleAddTag(tagInput)}
               >
-                <Ionicons name="add-circle-outline" size={16} color="#6366F1" />
-                <Text style={styles.tagCreateNewText}>
+                <Ionicons name="add-circle-outline" size={16} color={colors.link} />
+                <Text style={[styles.tagCreateNewText, { color: colors.link }]}>
                   Create tag "{tagInput.trim().toLowerCase().replace(/\s+/g, "_")}"
                 </Text>
               </TouchableOpacity>
@@ -1331,7 +1342,7 @@ export function FollowupDetailContent({
                   setTagInput("");
                 }}
               >
-                <Text style={styles.createTaskCancelText}>Cancel</Text>
+                <Text style={[styles.createTaskCancelText, { color: colors.textSecondary }]}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[
@@ -1343,9 +1354,9 @@ export function FollowupDetailContent({
                 disabled={!newTaskTitle.trim() || isCreatingTask}
               >
                 {isCreatingTask ? (
-                  <ActivityIndicator size="small" color="#fff" />
+                  <ActivityIndicator size="small" color={colors.textInverse} />
                 ) : (
-                  <Text style={styles.createTaskSubmitText}>Create</Text>
+                  <Text style={[styles.createTaskSubmitText, { color: '#fff' }]}>Create</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -1360,6 +1371,7 @@ export function FollowupDetailContent({
  * Full-screen route wrapper — adds UserRoute guard and DragHandle.
  */
 export function FollowupDetailScreen() {
+  const { colors } = useTheme();
   const { group_id, member_id } = useLocalSearchParams<{
     group_id: string;
     member_id: string;
@@ -1376,7 +1388,6 @@ export function FollowupDetailScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f5f5f5",
   },
   loadingContainer: {
     flex: 1,
@@ -1386,7 +1397,6 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 12,
     fontSize: 16,
-    color: "#666",
   },
   errorContainer: {
     flex: 1,
@@ -1396,19 +1406,16 @@ const styles = StyleSheet.create({
   },
   errorText: {
     fontSize: 16,
-    color: "#666",
     marginTop: 12,
     marginBottom: 20,
     textAlign: "center",
   },
   retryButton: {
-    backgroundColor: DEFAULT_PRIMARY_COLOR,
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 8,
   },
   retryButtonText: {
-    color: "#fff",
     fontSize: 16,
     fontWeight: "600",
   },
@@ -1416,9 +1423,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     padding: 16,
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   backButton: {
     padding: 4,
@@ -1427,7 +1432,6 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     textAlign: "center",
   },
   headerSpacer: {
@@ -1439,9 +1443,7 @@ const styles = StyleSheet.create({
   profileSection: {
     alignItems: "center",
     paddingVertical: 24,
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   profileImage: {
     width: 100,
@@ -1453,7 +1455,6 @@ const styles = StyleSheet.create({
     width: 100,
     height: 100,
     borderRadius: 50,
-    backgroundColor: DEFAULT_PRIMARY_COLOR,
     justifyContent: "center",
     alignItems: "center",
     marginBottom: 12,
@@ -1461,24 +1462,19 @@ const styles = StyleSheet.create({
   profileInitials: {
     fontSize: 36,
     fontWeight: "600",
-    color: "#fff",
   },
   profileName: {
     fontSize: 22,
     fontWeight: "700",
-    color: "#333",
     marginBottom: 4,
   },
   profileJoined: {
     fontSize: 14,
-    color: "#666",
   },
   alertSection: {
-    backgroundColor: "#FEF2F2",
     padding: 16,
     marginBottom: 8,
     borderLeftWidth: 4,
-    borderLeftColor: "#DC2626",
   },
   alertHeader: {
     flexDirection: "row",
@@ -1489,7 +1485,6 @@ const styles = StyleSheet.create({
   alertSectionTitle: {
     fontSize: 16,
     fontWeight: "700",
-    color: "#DC2626",
   },
   alertItem: {
     flexDirection: "row",
@@ -1500,17 +1495,14 @@ const styles = StyleSheet.create({
   alertItemText: {
     fontSize: 14,
     fontWeight: "500",
-    color: "#991B1B",
   },
   section: {
-    backgroundColor: "#fff",
     padding: 16,
     marginBottom: 8,
   },
   sectionTitle: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 12,
   },
   quickActions: {
@@ -1526,15 +1518,13 @@ const styles = StyleSheet.create({
   },
   quickActionText: {
     fontSize: 12,
-    color: "#333",
     marginTop: 4,
   },
   quickActionTextDisabled: {
-    color: "#999",
+    opacity: 0.5,
   },
   contactText: {
     fontSize: 14,
-    color: "#666",
     marginBottom: 4,
   },
   statsGrid: {
@@ -1544,7 +1534,6 @@ const styles = StyleSheet.create({
   },
   statCard: {
     flex: 1,
-    backgroundColor: "#f8f8f8",
     borderRadius: 12,
     padding: 16,
     alignItems: "center",
@@ -1552,18 +1541,15 @@ const styles = StyleSheet.create({
   statValue: {
     fontSize: 28,
     fontWeight: "700",
-    color: "#333",
   },
   statLabel: {
     fontSize: 12,
-    color: "#666",
     marginTop: 4,
     textAlign: "center",
   },
   subsectionTitle: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#666",
     marginBottom: 12,
     marginTop: 8,
   },
@@ -1580,17 +1566,14 @@ const styles = StyleSheet.create({
   },
   noAttendanceText: {
     fontSize: 14,
-    color: "#999",
     fontStyle: "italic",
   },
   attendanceLegend: {
     fontSize: 12,
-    color: "#999",
     marginTop: 12,
   },
   noteInput: {
     borderWidth: 1,
-    borderColor: "#e0e0e0",
     borderRadius: 8,
     padding: 12,
     fontSize: 14,
@@ -1598,23 +1581,17 @@ const styles = StyleSheet.create({
     textAlignVertical: "top",
   },
   addNoteButton: {
-    backgroundColor: DEFAULT_PRIMARY_COLOR,
     paddingVertical: 12,
     borderRadius: 8,
     marginTop: 12,
     alignItems: "center",
   },
-  addNoteButtonDisabled: {
-    backgroundColor: "#ccc",
-  },
   addNoteButtonText: {
-    color: "#fff",
     fontSize: 16,
     fontWeight: "600",
   },
   emptyTimeline: {
     fontSize: 14,
-    color: "#999",
     fontStyle: "italic",
   },
   timeline: {
@@ -1639,7 +1616,6 @@ const styles = StyleSheet.create({
     top: 32,
     bottom: -16,
     width: 2,
-    backgroundColor: "#e0e0e0",
   },
   timelineContent: {
     flex: 1,
@@ -1653,27 +1629,22 @@ const styles = StyleSheet.create({
   timelineType: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#333",
   },
   timelineNote: {
     fontSize: 14,
-    color: "#666",
     marginTop: 4,
   },
   timelineMeta: {
     fontSize: 12,
-    color: "#999",
     marginTop: 4,
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
     justifyContent: "center",
     alignItems: "center",
     padding: 20,
   },
   modalContent: {
-    backgroundColor: "#fff",
     borderRadius: 16,
     padding: 20,
     width: "100%",
@@ -1682,19 +1653,16 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 18,
     fontWeight: "bold",
-    color: "#333",
     textAlign: "center",
   },
   modalSubtitle: {
     fontSize: 14,
-    color: "#666",
     textAlign: "center",
     marginTop: 8,
     marginBottom: 16,
   },
   snoozeNoteInput: {
     borderWidth: 1,
-    borderColor: "#e0e0e0",
     borderRadius: 8,
     padding: 12,
     fontSize: 14,
@@ -1704,14 +1672,12 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   snoozeOption: {
-    backgroundColor: "#f0f0f0",
     paddingVertical: 14,
     borderRadius: 8,
     alignItems: "center",
   },
   snoozeOptionText: {
     fontSize: 16,
-    color: "#333",
     fontWeight: "500",
   },
   modalCancelButton: {
@@ -1721,11 +1687,9 @@ const styles = StyleSheet.create({
   },
   modalCancelText: {
     fontSize: 16,
-    color: "#666",
   },
   imageModalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.9)",
     justifyContent: "center",
     alignItems: "center",
   },
@@ -1751,7 +1715,6 @@ const styles = StyleSheet.create({
   attendanceRow: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f8f8f8",
     borderRadius: 8,
     padding: 12,
     gap: 12,
@@ -1762,11 +1725,9 @@ const styles = StyleSheet.create({
   attendanceMeetingTitle: {
     fontSize: 14,
     fontWeight: "500",
-    color: "#333",
   },
   attendanceMeetingDate: {
     fontSize: 12,
-    color: "#666",
     marginTop: 2,
   },
   // Cross-group attendance styles
@@ -1776,7 +1737,6 @@ const styles = StyleSheet.create({
   crossGroupName: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#555",
     marginBottom: 8,
   },
   // Serving history styles
@@ -1786,7 +1746,6 @@ const styles = StyleSheet.create({
   servingRow: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f8f8f8",
     borderRadius: 8,
     padding: 12,
     gap: 12,
@@ -1795,7 +1754,6 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: "#e8e8e8",
     justifyContent: "center",
     alignItems: "center",
   },
@@ -1805,30 +1763,25 @@ const styles = StyleSheet.create({
   servingTitle: {
     fontSize: 14,
     fontWeight: "500",
-    color: "#333",
   },
   servingPosition: {
     fontSize: 12,
-    color: "#666",
     marginTop: 2,
   },
   // Attendance modal styles
   attendanceModalMeeting: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
     textAlign: "center",
     marginTop: 12,
   },
   attendanceModalDate: {
     fontSize: 14,
-    color: "#666",
     textAlign: "center",
     marginTop: 4,
   },
   attendanceModalCurrentStatus: {
     fontSize: 14,
-    color: "#666",
     textAlign: "center",
     marginTop: 12,
     marginBottom: 16,
@@ -1846,27 +1799,18 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     gap: 8,
   },
-  attendanceModalPresent: {
-    backgroundColor: "#4CAF50",
-  },
-  attendanceModalAbsent: {
-    backgroundColor: "#FF6B6B",
-  },
   attendanceModalOptionActive: {
     opacity: 0.6,
   },
   attendanceModalOptionText: {
-    color: "#fff",
     fontSize: 14,
     fontWeight: "600",
   },
   // Task card styles
   taskCard: {
-    backgroundColor: "#f8f8f8",
     borderRadius: 8,
     padding: 12,
     borderLeftWidth: 3,
-    borderLeftColor: "#4338CA",
   },
   taskCardHeader: {
     flexDirection: "row",
@@ -1878,7 +1822,6 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     fontWeight: "600",
-    color: "#333",
   },
   taskStatusBadge: {
     flexDirection: "row",
@@ -1900,7 +1843,6 @@ const styles = StyleSheet.create({
   },
   taskCardAssignee: {
     fontSize: 12,
-    color: "#666",
     marginTop: 4,
   },
   taskCardTagsRow: {
@@ -1910,19 +1852,16 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   taskCardTagChip: {
-    backgroundColor: "#F3F4F6",
     borderRadius: 4,
     paddingHorizontal: 6,
     paddingVertical: 2,
   },
   taskCardTagText: {
     fontSize: 11,
-    color: "#6366F1",
     fontWeight: "500",
   },
   taskCardGroup: {
     fontSize: 11,
-    color: "#999",
     marginTop: 2,
   },
   addTaskButton: {
@@ -1938,7 +1877,6 @@ const styles = StyleSheet.create({
   },
   // Create task modal styles
   createTaskModalContent: {
-    backgroundColor: "#fff",
     borderRadius: 16,
     padding: 20,
     width: "100%",
@@ -1946,7 +1884,6 @@ const styles = StyleSheet.create({
   },
   createTaskSubtitle: {
     fontSize: 13,
-    color: "#666",
     textAlign: "center",
     marginTop: 4,
     marginBottom: 16,
@@ -1954,34 +1891,28 @@ const styles = StyleSheet.create({
   createTaskLabel: {
     fontSize: 13,
     fontWeight: "600",
-    color: "#555",
     marginBottom: 4,
     marginTop: 8,
   },
   createTaskInput: {
     borderWidth: 1,
-    borderColor: "#e0e0e0",
     borderRadius: 8,
     padding: 10,
     fontSize: 14,
-    backgroundColor: "#fafafa",
   },
   selectedAssigneeRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    backgroundColor: "#EEF2FF",
     borderRadius: 8,
     padding: 10,
   },
   selectedAssigneeName: {
     fontSize: 14,
-    color: "#4338CA",
     fontWeight: "500",
   },
   leaderSuggestions: {
     borderWidth: 1,
-    borderColor: "#e0e0e0",
     borderRadius: 8,
     marginTop: 4,
     maxHeight: 120,
@@ -1991,11 +1922,9 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
   },
   leaderSuggestionText: {
     fontSize: 14,
-    color: "#333",
   },
   selectedTagsRow: {
     flexDirection: "row",
@@ -2006,7 +1935,6 @@ const styles = StyleSheet.create({
   selectedTagChip: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#EEF2FF",
     borderRadius: 6,
     paddingHorizontal: 8,
     paddingVertical: 4,
@@ -2014,7 +1942,6 @@ const styles = StyleSheet.create({
   },
   selectedTagChipText: {
     fontSize: 13,
-    color: "#4338CA",
     fontWeight: "500",
   },
   tagSuggestions: {
@@ -2024,14 +1951,12 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   tagSuggestionItem: {
-    backgroundColor: "#F3F4F6",
     borderRadius: 6,
     paddingHorizontal: 10,
     paddingVertical: 6,
   },
   tagSuggestionText: {
     fontSize: 13,
-    color: "#4338CA",
   },
   tagCreateNew: {
     flexDirection: "row",
@@ -2042,7 +1967,6 @@ const styles = StyleSheet.create({
   },
   tagCreateNewText: {
     fontSize: 13,
-    color: "#6366F1",
     fontWeight: "500",
   },
   createTaskActions: {
@@ -2057,7 +1981,6 @@ const styles = StyleSheet.create({
   },
   createTaskCancelText: {
     fontSize: 15,
-    color: "#666",
   },
   createTaskSubmitBtn: {
     paddingVertical: 10,
@@ -2068,14 +1991,12 @@ const styles = StyleSheet.create({
   createTaskSubmitText: {
     fontSize: 15,
     fontWeight: "600",
-    color: "#fff",
   },
   // Score breakdown styles
   scoresContainer: {
     gap: 12,
   },
   scoreCard: {
-    backgroundColor: "#f8f8f8",
     borderRadius: 12,
     padding: 14,
   },
@@ -2088,7 +2009,6 @@ const styles = StyleSheet.create({
   scoreName: {
     fontSize: 15,
     fontWeight: "600",
-    color: "#333",
   },
   scoreBadge: {
     width: 40,
@@ -2115,16 +2035,13 @@ const styles = StyleSheet.create({
   },
   variableLabel: {
     fontSize: 13,
-    color: "#555",
     fontWeight: "500",
   },
   variableRaw: {
     fontSize: 13,
-    color: "#888",
   },
   variableBarContainer: {
     height: 6,
-    backgroundColor: "#e0e0e0",
     borderRadius: 3,
     overflow: "hidden",
   },
@@ -2134,6 +2051,5 @@ const styles = StyleSheet.create({
   },
   variableHint: {
     fontSize: 11,
-    color: "#aaa",
   },
 });

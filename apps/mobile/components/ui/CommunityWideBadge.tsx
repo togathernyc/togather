@@ -7,6 +7,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useTheme } from '@hooks/useTheme';
 
 interface CommunityWideBadgeProps {
   /** Optional parent event title to display as subtitle */
@@ -19,49 +20,49 @@ interface CommunityWideBadgeProps {
   size?: 'small' | 'medium';
 }
 
-// Community-wide badge uses a muted purple/indigo color
-const BADGE_COLORS = {
-  background: '#EEF2FF', // Light indigo
-  text: '#4338CA', // Indigo-700
-  icon: '#6366F1', // Indigo-500
-  overrideBackground: '#FEF3C7', // Amber-100
-  overrideText: '#92400E', // Amber-800
-};
-
 export function CommunityWideBadge({
   parentEventTitle,
   isOverridden = false,
   showOverrideNote = false,
   size = 'medium',
 }: CommunityWideBadgeProps) {
+  const { isDark } = useTheme();
   const isSmall = size === 'small';
+
+  const badgeColors = {
+    background: isDark ? '#1e1b4b' : '#EEF2FF',
+    text: isDark ? '#a5b4fc' : '#4338CA',
+    icon: isDark ? '#818cf8' : '#6366F1',
+    overrideBackground: isDark ? '#451a03' : '#FEF3C7',
+    overrideText: isDark ? '#fbbf24' : '#92400E',
+  };
 
   return (
     <View style={styles.container}>
       {/* Main Badge */}
-      <View style={[styles.badge, isSmall && styles.badgeSmall]}>
+      <View style={[styles.badge, { backgroundColor: badgeColors.background }, isSmall && styles.badgeSmall]}>
         <Ionicons
           name="globe-outline"
           size={isSmall ? 12 : 14}
-          color={BADGE_COLORS.icon}
+          color={badgeColors.icon}
         />
-        <Text style={[styles.badgeText, isSmall && styles.badgeTextSmall]}>
+        <Text style={[styles.badgeText, { color: badgeColors.text }, isSmall && styles.badgeTextSmall]}>
           Community-wide event
         </Text>
       </View>
 
       {/* Parent Event Title Subtitle */}
       {parentEventTitle && !isSmall && (
-        <Text style={styles.subtitle} numberOfLines={1}>
+        <Text style={[styles.subtitle, { color: badgeColors.text }]} numberOfLines={1}>
           {parentEventTitle}
         </Text>
       )}
 
       {/* Override Note for Leaders */}
       {showOverrideNote && isOverridden && (
-        <View style={styles.overrideNote}>
-          <Ionicons name="pencil" size={12} color={BADGE_COLORS.overrideText} />
-          <Text style={styles.overrideText}>Customized by your group</Text>
+        <View style={[styles.overrideNote, { backgroundColor: badgeColors.overrideBackground }]}>
+          <Ionicons name="pencil" size={12} color={badgeColors.overrideText} />
+          <Text style={[styles.overrideText, { color: badgeColors.overrideText }]}>Customized by your group</Text>
         </View>
       )}
     </View>
@@ -75,7 +76,6 @@ const styles = StyleSheet.create({
   badge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: BADGE_COLORS.background,
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 16,
@@ -103,21 +103,18 @@ const styles = StyleSheet.create({
   badgeText: {
     fontSize: 12,
     fontWeight: '600',
-    color: BADGE_COLORS.text,
   },
   badgeTextSmall: {
     fontSize: 10,
   },
   subtitle: {
     fontSize: 12,
-    color: BADGE_COLORS.text,
     opacity: 0.8,
     marginLeft: 4,
   },
   overrideNote: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: BADGE_COLORS.overrideBackground,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 12,
@@ -128,6 +125,5 @@ const styles = StyleSheet.create({
   overrideText: {
     fontSize: 11,
     fontWeight: '500',
-    color: BADGE_COLORS.overrideText,
   },
 });

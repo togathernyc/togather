@@ -26,6 +26,7 @@ import { Card, Button } from "@components/ui";
 import { useFeatureFlagOverrides } from "@/hooks/useFeatureFlag";
 import { useDevToolsEscapeHatch } from "@/hooks/useDevToolsEscapeHatch";
 import { Environment } from "@/services/environment";
+import { useTheme } from "@hooks/useTheme";
 
 type OverrideState = "on" | "default" | "off";
 
@@ -39,6 +40,7 @@ interface FlagItem {
 
 export default function FeatureFlagsPage() {
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
   const posthog = usePostHog();
   const { isEnabled: devToolsEnabled } = useDevToolsEscapeHatch();
   const {
@@ -199,8 +201,8 @@ export default function FeatureFlagsPage() {
 
   if (!shouldShow) {
     return (
-      <View style={[styles.container, { paddingTop: insets.top }]}>
-        <Text style={styles.errorText}>
+      <View style={[styles.container, { backgroundColor: colors.surfaceSecondary, paddingTop: insets.top }]}>
+        <Text style={[styles.errorText, { color: colors.error }]}>
           This page is only available in dev/staging builds.
         </Text>
       </View>
@@ -208,7 +210,7 @@ export default function FeatureFlagsPage() {
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={[
@@ -219,8 +221,8 @@ export default function FeatureFlagsPage() {
       >
         {/* Header */}
         <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
-          <Text style={styles.headerTitle}>Feature Flags</Text>
-          <Text style={styles.headerSubtitle}>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Feature Flags</Text>
+          <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>
             View and override feature flags for testing
           </Text>
         </View>
@@ -228,19 +230,19 @@ export default function FeatureFlagsPage() {
         {/* Search and Actions */}
         <Card style={styles.section}>
           <View style={styles.searchRow}>
-            <View style={styles.searchContainer}>
+            <View style={[styles.searchContainer, { backgroundColor: colors.surfaceSecondary }]}>
               <Ionicons
                 name="search"
                 size={18}
-                color="#999"
+                color={colors.textTertiary}
                 style={styles.searchIcon}
               />
               <TextInput
-                style={styles.searchInput}
+                style={[styles.searchInput, { color: colors.text }]}
                 value={searchQuery}
                 onChangeText={setSearchQuery}
                 placeholder="Search flags..."
-                placeholderTextColor="#999"
+                placeholderTextColor={colors.textTertiary}
                 autoCapitalize="none"
                 autoCorrect={false}
               />
@@ -249,7 +251,7 @@ export default function FeatureFlagsPage() {
                   onPress={() => setSearchQuery("")}
                   style={styles.clearButton}
                 >
-                  <Ionicons name="close-circle" size={18} color="#999" />
+                  <Ionicons name="close-circle" size={18} color={colors.textTertiary} />
                 </TouchableOpacity>
               )}
             </View>
@@ -258,11 +260,11 @@ export default function FeatureFlagsPage() {
           {/* Add Custom Flag */}
           <View style={styles.customFlagRow}>
             <TextInput
-              style={styles.customFlagInput}
+              style={[styles.customFlagInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surfaceSecondary }]}
               value={customFlagName}
               onChangeText={setCustomFlagName}
               placeholder="Add custom flag for testing..."
-              placeholderTextColor="#999"
+              placeholderTextColor={colors.textTertiary}
               autoCapitalize="none"
               autoCorrect={false}
               onSubmitEditing={handleAddCustomFlag}
@@ -275,7 +277,7 @@ export default function FeatureFlagsPage() {
               <Ionicons
                 name="add-circle"
                 size={28}
-                color={customFlagName.trim() ? "#007AFF" : "#ccc"}
+                color={customFlagName.trim() ? colors.link : colors.iconSecondary}
               />
             </TouchableOpacity>
           </View>
@@ -295,18 +297,18 @@ export default function FeatureFlagsPage() {
         <Card style={styles.section}>
           <View style={styles.statsRow}>
             <View style={styles.statItem}>
-              <Text style={styles.statValue}>{Object.keys(posthogFlags).length}</Text>
-              <Text style={styles.statLabel}>PostHog Flags</Text>
+              <Text style={[styles.statValue, { color: colors.text }]}>{Object.keys(posthogFlags).length}</Text>
+              <Text style={[styles.statLabel, { color: colors.textSecondary }]}>PostHog Flags</Text>
             </View>
-            <View style={styles.statDivider} />
+            <View style={[styles.statDivider, { backgroundColor: colors.border }]} />
             <View style={styles.statItem}>
-              <Text style={styles.statValue}>{Object.keys(overrides).length}</Text>
-              <Text style={styles.statLabel}>Overrides</Text>
+              <Text style={[styles.statValue, { color: colors.text }]}>{Object.keys(overrides).length}</Text>
+              <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Overrides</Text>
             </View>
-            <View style={styles.statDivider} />
+            <View style={[styles.statDivider, { backgroundColor: colors.border }]} />
             <View style={styles.statItem}>
-              <Text style={styles.statValue}>{flagItems.length}</Text>
-              <Text style={styles.statLabel}>Showing</Text>
+              <Text style={[styles.statValue, { color: colors.text }]}>{flagItems.length}</Text>
+              <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Showing</Text>
             </View>
           </View>
         </Card>
@@ -314,18 +316,18 @@ export default function FeatureFlagsPage() {
         {/* Flag List */}
         {overridesLoading ? (
           <Card style={styles.section}>
-            <Text style={styles.loadingText}>Loading overrides...</Text>
+            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading overrides...</Text>
           </Card>
         ) : flagItems.length === 0 ? (
           <Card style={styles.section}>
             <View style={styles.emptyState}>
-              <Ionicons name="flag-outline" size={48} color="#ccc" />
-              <Text style={styles.emptyStateText}>
+              <Ionicons name="flag-outline" size={48} color={colors.iconSecondary} />
+              <Text style={[styles.emptyStateText, { color: colors.textSecondary }]}>
                 {searchQuery
                   ? "No flags match your search"
                   : "No feature flags found"}
               </Text>
-              <Text style={styles.emptyStateSubtext}>
+              <Text style={[styles.emptyStateSubtext, { color: colors.textTertiary }]}>
                 {searchQuery
                   ? "Try a different search term or add a custom flag"
                   : "Feature flags will appear here when configured in PostHog"}
@@ -336,31 +338,32 @@ export default function FeatureFlagsPage() {
           flagItems.map((flag) => (
             <Card key={flag.name} style={styles.flagCard}>
               <View style={styles.flagHeader}>
-                <Text style={styles.flagName} numberOfLines={1}>
+                <Text style={[styles.flagName, { color: colors.text }]} numberOfLines={1}>
                   {flag.name}
                 </Text>
                 {flag.isOverridden && (
-                  <View style={styles.overrideBadge}>
-                    <Text style={styles.overrideBadgeText}>OVERRIDE</Text>
+                  <View style={[styles.overrideBadge, { backgroundColor: colors.warning }]}>
+                    <Text style={[styles.overrideBadgeText, { color: colors.textInverse }]}>OVERRIDE</Text>
                   </View>
                 )}
               </View>
 
-              <View style={styles.flagValues}>
+              <View style={[styles.flagValues, { backgroundColor: colors.surfaceSecondary }]}>
                 <View style={styles.valueRow}>
-                  <Text style={styles.valueLabel}>PostHog:</Text>
-                  <Text style={styles.valueText}>
+                  <Text style={[styles.valueLabel, { color: colors.textSecondary }]}>PostHog:</Text>
+                  <Text style={[styles.valueText, { color: colors.text }]}>
                     {formatPostHogValue(flag.posthogValue)}
                   </Text>
                 </View>
                 <View style={styles.valueRow}>
-                  <Text style={styles.valueLabel}>Effective:</Text>
+                  <Text style={[styles.valueLabel, { color: colors.textSecondary }]}>Effective:</Text>
                   <Text
                     style={[
                       styles.valueText,
+                      { color: colors.text },
                       styles.effectiveValue,
-                      flag.effectiveValue === true && styles.valueEnabled,
-                      flag.effectiveValue === false && styles.valueDisabled,
+                      flag.effectiveValue === true && { color: colors.success },
+                      flag.effectiveValue === false && { color: colors.error },
                     ]}
                   >
                     {formatEffectiveValue(flag.effectiveValue)}
@@ -369,18 +372,19 @@ export default function FeatureFlagsPage() {
               </View>
 
               {/* Three-way Toggle */}
-              <View style={styles.toggleContainer}>
+              <View style={[styles.toggleContainer, { backgroundColor: colors.surfaceSecondary }]}>
                 <TouchableOpacity
                   style={[
                     styles.toggleOption,
-                    flag.overrideState === "on" && styles.toggleOptionOn,
+                    flag.overrideState === "on" && { backgroundColor: colors.success },
                   ]}
                   onPress={() => handleToggle(flag.name, "on")}
                 >
                   <Text
                     style={[
                       styles.toggleOptionText,
-                      flag.overrideState === "on" && styles.toggleOptionTextActive,
+                      { color: colors.textSecondary },
+                      flag.overrideState === "on" && { color: colors.textInverse },
                     ]}
                   >
                     On
@@ -389,15 +393,15 @@ export default function FeatureFlagsPage() {
                 <TouchableOpacity
                   style={[
                     styles.toggleOption,
-                    flag.overrideState === "default" && styles.toggleOptionDefault,
+                    flag.overrideState === "default" && [styles.toggleOptionDefault, { backgroundColor: colors.surface, shadowColor: colors.shadow }],
                   ]}
                   onPress={() => handleToggle(flag.name, "default")}
                 >
                   <Text
                     style={[
                       styles.toggleOptionText,
-                      flag.overrideState === "default" &&
-                        styles.toggleOptionTextDefault,
+                      { color: colors.textSecondary },
+                      flag.overrideState === "default" && { color: colors.text },
                     ]}
                   >
                     Default
@@ -406,14 +410,15 @@ export default function FeatureFlagsPage() {
                 <TouchableOpacity
                   style={[
                     styles.toggleOption,
-                    flag.overrideState === "off" && styles.toggleOptionOff,
+                    flag.overrideState === "off" && { backgroundColor: colors.error },
                   ]}
                   onPress={() => handleToggle(flag.name, "off")}
                 >
                   <Text
                     style={[
                       styles.toggleOptionText,
-                      flag.overrideState === "off" && styles.toggleOptionTextActive,
+                      { color: colors.textSecondary },
+                      flag.overrideState === "off" && { color: colors.textInverse },
                     ]}
                   >
                     Off
@@ -425,10 +430,10 @@ export default function FeatureFlagsPage() {
         )}
 
         {/* Info Card */}
-        <Card style={[styles.section, styles.infoCard]}>
+        <Card style={[styles.section, { backgroundColor: colors.selectedBackground }]}>
           <View style={styles.infoRow}>
-            <Ionicons name="information-circle" size={20} color="#007AFF" />
-            <Text style={styles.infoText}>
+            <Ionicons name="information-circle" size={20} color={colors.link} />
+            <Text style={[styles.infoText, { color: colors.text }]}>
               Overrides are stored locally and take precedence over PostHog values
               in dev/staging builds. Changes take effect immediately.
             </Text>
@@ -442,7 +447,6 @@ export default function FeatureFlagsPage() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f5f5f5",
   },
   scrollView: {
     flex: 1,
@@ -457,11 +461,9 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 28,
     fontWeight: "bold",
-    color: "#333",
   },
   headerSubtitle: {
     fontSize: 15,
-    color: "#666",
     marginTop: 4,
   },
   section: {
@@ -474,7 +476,6 @@ const styles = StyleSheet.create({
   searchContainer: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f5f5f5",
     borderRadius: 10,
     paddingHorizontal: 12,
   },
@@ -485,7 +486,6 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 12,
     fontSize: 16,
-    color: "#333",
   },
   clearButton: {
     padding: 4,
@@ -498,13 +498,10 @@ const styles = StyleSheet.create({
   customFlagInput: {
     flex: 1,
     borderWidth: 1,
-    borderColor: "#ddd",
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 15,
-    color: "#333",
-    backgroundColor: "#fafafa",
     marginRight: 8,
   },
   addButton: {
@@ -525,21 +522,17 @@ const styles = StyleSheet.create({
   statValue: {
     fontSize: 24,
     fontWeight: "bold",
-    color: "#333",
   },
   statLabel: {
     fontSize: 12,
-    color: "#666",
     marginTop: 2,
   },
   statDivider: {
     width: 1,
     height: 32,
-    backgroundColor: "#e0e0e0",
   },
   loadingText: {
     fontSize: 14,
-    color: "#666",
     textAlign: "center",
     padding: 20,
   },
@@ -550,12 +543,10 @@ const styles = StyleSheet.create({
   emptyStateText: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#666",
     marginTop: 12,
   },
   emptyStateSubtext: {
     fontSize: 14,
-    color: "#999",
     textAlign: "center",
     marginTop: 4,
   },
@@ -572,11 +563,9 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 15,
     fontWeight: "600",
-    color: "#333",
     fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
   },
   overrideBadge: {
-    backgroundColor: "#FF9500",
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 4,
@@ -585,10 +574,8 @@ const styles = StyleSheet.create({
   overrideBadgeText: {
     fontSize: 10,
     fontWeight: "700",
-    color: "#fff",
   },
   flagValues: {
-    backgroundColor: "#f5f5f5",
     borderRadius: 8,
     padding: 12,
     marginBottom: 12,
@@ -601,25 +588,16 @@ const styles = StyleSheet.create({
   },
   valueLabel: {
     fontSize: 13,
-    color: "#666",
   },
   valueText: {
     fontSize: 13,
-    color: "#333",
     fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
   },
   effectiveValue: {
     fontWeight: "600",
   },
-  valueEnabled: {
-    color: "#34C759",
-  },
-  valueDisabled: {
-    color: "#FF3B30",
-  },
   toggleContainer: {
     flexDirection: "row",
-    backgroundColor: "#f0f0f0",
     borderRadius: 8,
     padding: 4,
   },
@@ -630,17 +608,12 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     alignItems: "center",
   },
-  toggleOptionOn: {
-    backgroundColor: "#34C759",
-  },
   toggleOptionDefault: {
-    backgroundColor: "#fff",
     ...Platform.select({
       web: {
         boxShadow: "0px 2px 4px rgba(0, 0, 0, 0.1)",
       },
       default: {
-        shadowColor: "#000",
         shadowOffset: { width: 0, height: 1 },
         shadowOpacity: 0.1,
         shadowRadius: 2,
@@ -648,22 +621,9 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  toggleOptionOff: {
-    backgroundColor: "#FF3B30",
-  },
   toggleOptionText: {
     fontSize: 14,
     fontWeight: "500",
-    color: "#666",
-  },
-  toggleOptionTextActive: {
-    color: "#fff",
-  },
-  toggleOptionTextDefault: {
-    color: "#333", // Dark text on white Default background
-  },
-  infoCard: {
-    backgroundColor: "#f0f7ff",
   },
   infoRow: {
     flexDirection: "row",
@@ -672,13 +632,11 @@ const styles = StyleSheet.create({
   infoText: {
     flex: 1,
     fontSize: 13,
-    color: "#333",
     marginLeft: 8,
     lineHeight: 18,
   },
   errorText: {
     fontSize: 16,
-    color: "#FF3B30",
     textAlign: "center",
     padding: 20,
   },

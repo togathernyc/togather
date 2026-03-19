@@ -7,34 +7,36 @@
 import React, { useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useTheme } from "@hooks/useTheme";
 import { DeleteAccountModal } from "./DeleteAccountModal";
 
 export function DeleteAccountSection() {
+  const { colors } = useTheme();
   const [isModalVisible, setIsModalVisible] = useState(false);
 
   return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>Account</Text>
+    <View style={[styles.section, { backgroundColor: colors.surface }]}>
+      <Text style={[styles.sectionTitle, { color: colors.text }]}>Account</Text>
 
-      <View style={styles.warningContainer}>
+      <View style={[styles.warningContainer, { backgroundColor: colors.destructive + '10' }]}>
         <Ionicons
           name="warning-outline"
           size={20}
-          color="#DC2626"
+          color={colors.destructive}
           style={styles.warningIcon}
         />
-        <Text style={styles.warningText}>
+        <Text style={[styles.warningText, { color: colors.destructive }]}>
           Deleting your account is permanent and cannot be undone. You will be
           removed from all communities and groups.
         </Text>
       </View>
 
       <TouchableOpacity
-        style={styles.deleteButton}
+        style={[styles.deleteButton, { backgroundColor: colors.destructive }]}
         onPress={() => setIsModalVisible(true)}
       >
-        <Ionicons name="trash-outline" size={20} color="#fff" />
-        <Text style={styles.deleteButtonText}>Delete Account</Text>
+        <Ionicons name="trash-outline" size={20} color={colors.textInverse} />
+        <Text style={[styles.deleteButtonText, { color: colors.textInverse }]}>Delete Account</Text>
       </TouchableOpacity>
 
       <DeleteAccountModal
@@ -48,18 +50,15 @@ export function DeleteAccountSection() {
 const styles = StyleSheet.create({
   section: {
     marginTop: 12,
-    backgroundColor: "#fff",
     padding: 20,
   },
   sectionTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 16,
   },
   warningContainer: {
     flexDirection: "row",
-    backgroundColor: "#FEF2F2",
     borderRadius: 8,
     padding: 12,
     marginBottom: 16,
@@ -71,20 +70,17 @@ const styles = StyleSheet.create({
   warningText: {
     flex: 1,
     fontSize: 14,
-    color: "#991B1B",
     lineHeight: 20,
   },
   deleteButton: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#DC2626",
     borderRadius: 8,
     padding: 14,
     gap: 8,
   },
   deleteButtonText: {
-    color: "#fff",
     fontSize: 16,
     fontWeight: "600",
   },

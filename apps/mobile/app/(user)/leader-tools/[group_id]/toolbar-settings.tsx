@@ -32,6 +32,7 @@ import {
   createResourceToolId,
   type ToolDefinition,
 } from "@features/chat/constants/toolbarTools";
+import { useTheme } from "@hooks/useTheme";
 
 // Convert TOOLBAR_TOOLS record to array for iteration
 const ALL_TOOLS: readonly ToolDefinition[] = ALL_TOOL_IDS.map(
@@ -54,6 +55,7 @@ type UnifiedToolbarItem = {
 };
 
 export default function ToolbarSettingsScreen() {
+  const { colors } = useTheme();
   const { group_id } = useLocalSearchParams<{ group_id: string }>();
   const groupId = group_id as Id<"groups">;
   const router = useRouter();
@@ -291,8 +293,8 @@ export default function ToolbarSettingsScreen() {
   if (!group_id) {
     return (
       <UserRoute>
-        <View style={styles.container}>
-          <Text style={styles.errorText}>Group not found</Text>
+        <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
+          <Text style={[styles.errorText, { color: colors.textSecondary }]}>Group not found</Text>
         </View>
       </UserRoute>
     );
@@ -301,7 +303,7 @@ export default function ToolbarSettingsScreen() {
   if (group === undefined) {
     return (
       <UserRoute>
-        <View style={[styles.container, styles.centered]}>
+        <View style={[styles.container, styles.centered, { backgroundColor: colors.surfaceSecondary }]}>
           <ActivityIndicator size="large" />
         </View>
       </UserRoute>
@@ -312,12 +314,12 @@ export default function ToolbarSettingsScreen() {
   if (!canAccess) {
     return (
       <UserRoute>
-        <View style={[styles.container, styles.centered]}>
-          <Text style={styles.errorText}>
+        <View style={[styles.container, styles.centered, { backgroundColor: colors.surfaceSecondary }]}>
+          <Text style={[styles.errorText, { color: colors.textSecondary }]}>
             You don't have permission to access this page.
           </Text>
-          <TouchableOpacity style={styles.button} onPress={handleBack}>
-            <Text style={styles.buttonText}>Go Back</Text>
+          <TouchableOpacity style={[styles.button, { backgroundColor: colors.link }]} onPress={handleBack}>
+            <Text style={[styles.buttonText, { color: colors.textInverse }]}>Go Back</Text>
           </TouchableOpacity>
         </View>
       </UserRoute>
@@ -326,21 +328,21 @@ export default function ToolbarSettingsScreen() {
 
   return (
     <UserRoute>
-      <View style={[styles.container, { paddingTop: insets.top }]}>
+      <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.surfaceSecondary }]}>
         <DragHandle />
         {/* Header */}
-        <View style={styles.header}>
+        <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
           <TouchableOpacity style={styles.backButton} onPress={handleBack}>
-            <Ionicons name="arrow-back" size={24} color="#333" />
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Toolbar Settings</Text>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Toolbar Settings</Text>
           {hasChanges ? (
             <TouchableOpacity
               onPress={handleSave}
               disabled={saving}
               style={styles.saveButtonContainer}
             >
-              <Text style={styles.saveButton}>
+              <Text style={[styles.saveButton, { color: colors.link }]}>
                 {saving ? "Saving..." : "Save"}
               </Text>
             </TouchableOpacity>
@@ -351,28 +353,28 @@ export default function ToolbarSettingsScreen() {
 
         <ScrollView style={styles.content}>
           {/* Unified Toolbar Items Section */}
-          <Text style={styles.sectionTitle}>Toolbar Items</Text>
-          <Text style={styles.sectionDescription}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Toolbar Items</Text>
+          <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>
             Select which tools and resources to show in the toolbar. Use arrows
             to reorder.
           </Text>
 
           {/* Enabled items (in order) */}
           {enabledItems.length > 0 && (
-            <View style={styles.section}>
-              <Text style={styles.subsectionTitle}>Visible (in order)</Text>
+            <View style={[styles.section, { backgroundColor: colors.surface }]}>
+              <Text style={[styles.subsectionTitle, { color: colors.textTertiary }]}>Visible (in order)</Text>
               {enabledItems.map((item, index) => (
-                <View key={item.id} style={styles.toolRow}>
+                <View key={item.id} style={[styles.toolRow, { borderBottomColor: colors.borderLight }]}>
                   <View style={styles.toolInfo}>
                     <Ionicons
                       name={item.icon as keyof typeof Ionicons.glyphMap}
                       size={20}
-                      color="#333"
+                      color={colors.text}
                     />
-                    <Text style={styles.toolLabel}>{item.label}</Text>
+                    <Text style={[styles.toolLabel, { color: colors.text }]}>{item.label}</Text>
                     {item.visibilityBadge && (
-                      <View style={styles.visibilityBadgeInline}>
-                        <Text style={styles.visibilityBadgeText}>
+                      <View style={[styles.visibilityBadgeInline, { backgroundColor: colors.surfaceSecondary }]}>
+                        <Text style={[styles.visibilityBadgeText, { color: colors.textSecondary }]}>
                           {item.visibilityBadge}
                         </Text>
                       </View>
@@ -387,7 +389,7 @@ export default function ToolbarSettingsScreen() {
                       <Ionicons
                         name="chevron-up"
                         size={20}
-                        color={index === 0 ? "#ccc" : "#666"}
+                        color={index === 0 ? colors.iconSecondary : colors.textSecondary}
                       />
                     </TouchableOpacity>
                     <TouchableOpacity
@@ -398,7 +400,7 @@ export default function ToolbarSettingsScreen() {
                       <Ionicons
                         name="chevron-down"
                         size={20}
-                        color={index === enabledItems.length - 1 ? "#ccc" : "#666"}
+                        color={index === enabledItems.length - 1 ? colors.iconSecondary : colors.textSecondary}
                       />
                     </TouchableOpacity>
                     {item.hasSettings && (
@@ -406,7 +408,7 @@ export default function ToolbarSettingsScreen() {
                         onPress={() => handleSettingsPress(item)}
                         style={styles.gearButton}
                       >
-                        <Ionicons name="settings-outline" size={18} color="#737373" />
+                        <Ionicons name="settings-outline" size={18} color={colors.icon} />
                       </Pressable>
                     )}
                     <Switch value={true} onValueChange={() => toggleTool(item.id)} />
@@ -418,22 +420,22 @@ export default function ToolbarSettingsScreen() {
 
           {/* Disabled items */}
           {disabledItems.length > 0 && (
-            <View style={styles.section}>
-              <Text style={styles.subsectionTitle}>Hidden</Text>
+            <View style={[styles.section, { backgroundColor: colors.surface }]}>
+              <Text style={[styles.subsectionTitle, { color: colors.textTertiary }]}>Hidden</Text>
               {disabledItems.map((item) => (
-                <View key={item.id} style={styles.toolRow}>
+                <View key={item.id} style={[styles.toolRow, { borderBottomColor: colors.borderLight }]}>
                   <View style={styles.toolInfo}>
                     <Ionicons
                       name={item.icon as keyof typeof Ionicons.glyphMap}
                       size={20}
-                      color="#999"
+                      color={colors.textTertiary}
                     />
-                    <Text style={[styles.toolLabel, styles.disabledLabel]}>
+                    <Text style={[styles.toolLabel, { color: colors.textTertiary }]}>
                       {item.label}
                     </Text>
                     {item.visibilityBadge && (
-                      <View style={[styles.visibilityBadgeInline, styles.visibilityBadgeDisabled]}>
-                        <Text style={[styles.visibilityBadgeText, styles.visibilityBadgeTextDisabled]}>
+                      <View style={[styles.visibilityBadgeInline, { backgroundColor: colors.backgroundSecondary }]}>
+                        <Text style={[styles.visibilityBadgeText, { color: colors.textTertiary }]}>
                           {item.visibilityBadge}
                         </Text>
                       </View>
@@ -445,7 +447,7 @@ export default function ToolbarSettingsScreen() {
                         onPress={() => handleSettingsPress(item)}
                         style={styles.gearButton}
                       >
-                        <Ionicons name="settings-outline" size={18} color="#bbb" />
+                        <Ionicons name="settings-outline" size={18} color={colors.iconSecondary} />
                       </Pressable>
                     )}
                     <Switch value={false} onValueChange={() => toggleTool(item.id)} />
@@ -457,32 +459,32 @@ export default function ToolbarSettingsScreen() {
 
           {/* Empty state info */}
           {enabledItems.length === 0 && disabledItems.length === 0 && (
-            <Text style={styles.emptyText}>
+            <Text style={[styles.emptyText, { color: colors.textTertiary }]}>
               No tools or resources available.
             </Text>
           )}
 
           {/* Create Resource Button */}
-          <View style={styles.section}>
+          <View style={[styles.section, { backgroundColor: colors.surface }]}>
             <Pressable
               style={styles.addResourceButton}
               onPress={() =>
                 router.push(`/(user)/leader-tools/${groupId}/resources/new`)
               }
             >
-              <Ionicons name="add-circle-outline" size={20} color="#007AFF" />
-              <Text style={styles.addResourceText}>Create Resource</Text>
+              <Ionicons name="add-circle-outline" size={20} color={colors.link} />
+              <Text style={[styles.addResourceText, { color: colors.link }]}>Create Resource</Text>
             </Pressable>
           </View>
 
           {/* Visibility Settings Section */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Toolbar Visibility</Text>
+          <View style={[styles.section, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Toolbar Visibility</Text>
 
             <View style={styles.toggleRow}>
               <View style={styles.toggleInfo}>
-                <Text style={styles.toggleLabel}>Show toolbar to members</Text>
-                <Text style={styles.toggleDescription}>
+                <Text style={[styles.toggleLabel, { color: colors.text }]}>Show toolbar to members</Text>
+                <Text style={[styles.toggleDescription, { color: colors.textSecondary }]}>
                   When enabled, non-leader members can see selected tools
                 </Text>
               </View>
@@ -493,9 +495,9 @@ export default function ToolbarSettingsScreen() {
             </View>
 
             {showToolbarToMembers && enabledItems.filter((i) => !i.isResource).length > 0 && (
-              <View style={styles.perToolVisibility}>
-                <Text style={styles.subsectionTitle}>Tool Visibility</Text>
-                <Text style={styles.visibilityHint}>
+              <View style={[styles.perToolVisibility, { borderTopColor: colors.borderLight }]}>
+                <Text style={[styles.subsectionTitle, { color: colors.textTertiary }]}>Tool Visibility</Text>
+                <Text style={[styles.visibilityHint, { color: colors.textSecondary }]}>
                   Control which tools members can see
                 </Text>
                 {enabledItems
@@ -510,27 +512,30 @@ export default function ToolbarSettingsScreen() {
                     const isEveryone = currentVisibility === "everyone";
 
                     return (
-                      <View key={item.id} style={styles.toolVisibilityRow}>
+                      <View key={item.id} style={[styles.toolVisibilityRow, { borderBottomColor: colors.borderLight }]}>
                         <View style={styles.toolVisibilityInfo}>
                           <Ionicons
                             name={item.icon as keyof typeof Ionicons.glyphMap}
                             size={18}
-                            color="#666"
+                            color={colors.textSecondary}
                           />
-                          <Text style={styles.toolVisibilityLabel}>{item.label}</Text>
+                          <Text style={[styles.toolVisibilityLabel, { color: colors.text }]}>{item.label}</Text>
                         </View>
-                        <View style={styles.segmentedControl}>
+                        <View style={[styles.segmentedControl, { borderColor: colors.border }]}>
                           <TouchableOpacity
                             style={[
                               styles.segmentButton,
+                              { backgroundColor: colors.surface },
                               styles.segmentButtonLeft,
-                              !isEveryone && styles.segmentButtonActive,
+                              { borderRightColor: colors.border },
+                              !isEveryone && { backgroundColor: colors.link },
                             ]}
                             onPress={() => handleToolVisibilityChange(item.id, "leaders")}
                           >
                             <Text
                               style={[
                                 styles.segmentButtonText,
+                                { color: colors.textSecondary },
                                 !isEveryone && styles.segmentButtonTextActive,
                               ]}
                             >
@@ -540,14 +545,16 @@ export default function ToolbarSettingsScreen() {
                         <TouchableOpacity
                           style={[
                             styles.segmentButton,
+                            { backgroundColor: colors.surface },
                             styles.segmentButtonRight,
-                            isEveryone && styles.segmentButtonActive,
+                            isEveryone && { backgroundColor: colors.link },
                           ]}
                           onPress={() => handleToolVisibilityChange(item.id, "everyone")}
                         >
                           <Text
                             style={[
                               styles.segmentButtonText,
+                              { color: colors.textSecondary },
                               isEveryone && styles.segmentButtonTextActive,
                             ]}
                           >
@@ -570,7 +577,6 @@ export default function ToolbarSettingsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F5F5F5",
   },
   centered: {
     justifyContent: "center",
@@ -580,9 +586,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     padding: 16,
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   backButton: {
     padding: 4,
@@ -591,7 +595,6 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     textAlign: "center",
   },
   headerSpacer: {
@@ -609,23 +612,19 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: "bold",
     marginBottom: 8,
-    color: "#333",
   },
   sectionDescription: {
     fontSize: 14,
-    color: "#666",
     marginBottom: 24,
   },
   section: {
     marginBottom: 24,
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 16,
   },
   subsectionTitle: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#999",
     marginBottom: 12,
     textTransform: "uppercase",
   },
@@ -635,7 +634,6 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#eee",
   },
   toolInfo: {
     flexDirection: "row",
@@ -644,10 +642,6 @@ const styles = StyleSheet.create({
   },
   toolLabel: {
     fontSize: 16,
-    color: "#333",
-  },
-  disabledLabel: {
-    color: "#999",
   },
   toolActions: {
     flexDirection: "row",
@@ -663,12 +657,10 @@ const styles = StyleSheet.create({
   saveButton: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#007AFF",
   },
   button: {
     paddingHorizontal: 24,
     paddingVertical: 12,
-    backgroundColor: "#007AFF",
     borderRadius: 8,
   },
   buttonText: {
@@ -678,14 +670,12 @@ const styles = StyleSheet.create({
   },
   errorText: {
     fontSize: 16,
-    color: "#666",
     marginBottom: 16,
     textAlign: "center",
     marginTop: 40,
   },
   emptyText: {
     fontSize: 14,
-    color: "#999",
     textAlign: "center",
     marginTop: 24,
   },
@@ -702,22 +692,18 @@ const styles = StyleSheet.create({
   toggleLabel: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 4,
   },
   toggleDescription: {
     fontSize: 13,
-    color: "#666",
   },
   perToolVisibility: {
     marginTop: 16,
     paddingTop: 16,
     borderTopWidth: 1,
-    borderTopColor: "#eee",
   },
   visibilityHint: {
     fontSize: 13,
-    color: "#666",
     marginBottom: 12,
   },
   toolVisibilityRow: {
@@ -726,7 +712,6 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
   },
   toolVisibilityInfo: {
     flexDirection: "row",
@@ -735,34 +720,26 @@ const styles = StyleSheet.create({
   },
   toolVisibilityLabel: {
     fontSize: 15,
-    color: "#333",
   },
   segmentedControl: {
     flexDirection: "row",
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: "#e0e0e0",
     overflow: "hidden",
   },
   segmentButton: {
     paddingHorizontal: 12,
     paddingVertical: 6,
-    backgroundColor: "#fff",
   },
   segmentButtonLeft: {
     borderRightWidth: 1,
-    borderRightColor: "#e0e0e0",
   },
   segmentButtonRight: {
     // No additional styles needed
   },
-  segmentButtonActive: {
-    backgroundColor: "#007AFF",
-  },
   segmentButtonText: {
     fontSize: 13,
     fontWeight: "500",
-    color: "#666",
   },
   segmentButtonTextActive: {
     color: "#fff",
@@ -771,20 +748,12 @@ const styles = StyleSheet.create({
   visibilityBadgeText: {
     fontSize: 12,
     fontWeight: "500",
-    color: "#666",
   },
   visibilityBadgeInline: {
-    backgroundColor: "#f0f0f0",
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
     marginLeft: 4,
-  },
-  visibilityBadgeDisabled: {
-    backgroundColor: "#f5f5f5",
-  },
-  visibilityBadgeTextDisabled: {
-    color: "#aaa",
   },
   addResourceButton: {
     flexDirection: "row",
@@ -796,6 +765,5 @@ const styles = StyleSheet.create({
   addResourceText: {
     fontSize: 15,
     fontWeight: "600",
-    color: "#007AFF",
   },
 });

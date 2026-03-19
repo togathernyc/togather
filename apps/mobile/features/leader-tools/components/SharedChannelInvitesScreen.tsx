@@ -16,8 +16,10 @@ import { useQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { format } from "date-fns";
 import { useRespondToChannelInvite } from "@features/groups/hooks/useRespondToChannelInvite";
+import { useTheme } from "@hooks/useTheme";
 
 export function SharedChannelInvitesScreen() {
+  const { colors } = useTheme();
   const { group_id } = useLocalSearchParams<{ group_id: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -58,7 +60,7 @@ export function SharedChannelInvitesScreen() {
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={handleBack} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={24} color="#000" />
+          <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Shared Channels</Text>
         <View style={styles.headerRight} />
@@ -82,7 +84,7 @@ export function SharedChannelInvitesScreen() {
                 <View key={invite.channelId} style={styles.inviteCard}>
                   <View style={styles.inviteInfo}>
                     <View style={styles.inviteHeader}>
-                      <Ionicons name="link" size={16} color="#8B5CF6" />
+                      <Ionicons name="link" size={16} color={colors.link} />
                       <Text
                         style={styles.inviteChannelName}
                         numberOfLines={1}
@@ -114,7 +116,7 @@ export function SharedChannelInvitesScreen() {
                     >
                       {respondingTo ===
                       `${invite.channelId}-accept` ? (
-                        <ActivityIndicator size="small" color="#fff" />
+                        <ActivityIndicator size="small" color={colors.textInverse} />
                       ) : (
                         <Text style={styles.acceptButtonText}>
                           Accept
@@ -132,7 +134,7 @@ export function SharedChannelInvitesScreen() {
                       `${invite.channelId}-decline` ? (
                         <ActivityIndicator
                           size="small"
-                          color="#FF3B30"
+                          color={colors.destructive}
                         />
                       ) : (
                         <Text style={styles.declineButtonText}>
@@ -165,7 +167,7 @@ export function SharedChannelInvitesScreen() {
                       <Ionicons
                         name="link"
                         size={16}
-                        color="#22C55E"
+                        color={colors.success}
                       />
                       <Text
                         style={styles.activeChannelName}

@@ -11,7 +11,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@providers/AuthProvider";
 import { useQuery, api } from "@services/api/convex";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
-import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
+import { useTheme } from "@hooks/useTheme";
 
 type DashboardRange = "7d" | "30d" | "90d" | "all";
 type ChartMetric = "messages" | "dailyActiveUsers" | "newMembers";
@@ -43,14 +43,15 @@ function MetricCard({
   subtitle: string;
   iconColor: string;
 }) {
+  const { colors } = useTheme();
   return (
-    <View style={styles.metricCard}>
+    <View style={[styles.metricCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
       <View style={[styles.metricIcon, { backgroundColor: `${iconColor}1A` }]}>
         <Ionicons name={icon} size={18} color={iconColor} />
       </View>
-      <Text style={styles.metricTitle}>{title}</Text>
-      <Text style={styles.metricValue}>{formatCompactNumber(value)}</Text>
-      <Text style={styles.metricSubtitle}>{subtitle}</Text>
+      <Text style={[styles.metricTitle, { color: colors.textSecondary }]}>{title}</Text>
+      <Text style={[styles.metricValue, { color: colors.text }]}>{formatCompactNumber(value)}</Text>
+      <Text style={[styles.metricSubtitle, { color: colors.textTertiary }]}>{subtitle}</Text>
     </View>
   );
 }
@@ -58,6 +59,7 @@ function MetricCard({
 export function SuperAdminDashboardContent() {
   const { user, token } = useAuth();
   const { primaryColor } = useCommunityTheme();
+  const { colors, isDark } = useTheme();
   const [range, setRange] = useState<DashboardRange>("30d");
   const [chartMetric, setChartMetric] = useState<ChartMetric>("messages");
 
@@ -88,9 +90,9 @@ export function SuperAdminDashboardContent() {
   if (!isInternalUser) {
     return (
       <View style={styles.emptyState}>
-        <Ionicons name="lock-closed-outline" size={28} color="#999" />
-        <Text style={styles.emptyTitle}>Developers and owners only</Text>
-        <Text style={styles.emptySubtitle}>
+        <Ionicons name="lock-closed-outline" size={28} color={colors.textTertiary} />
+        <Text style={[styles.emptyTitle, { color: colors.text }]}>Developers and owners only</Text>
+        <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
           This dashboard is only available to Togather internal users.
         </Text>
       </View>
@@ -101,7 +103,7 @@ export function SuperAdminDashboardContent() {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={primaryColor} />
-        <Text style={styles.loadingText}>Loading dashboard…</Text>
+        <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading dashboard...</Text>
       </View>
     );
   }
@@ -109,15 +111,15 @@ export function SuperAdminDashboardContent() {
   const rangeLabel = RANGE_OPTIONS.find((option) => option.key === range)?.label ?? "30D";
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <View style={styles.hero}>
+    <ScrollView style={[styles.container, { backgroundColor: colors.backgroundSecondary }]} contentContainerStyle={styles.content}>
+      <View style={[styles.hero, { backgroundColor: colors.surface, borderColor: colors.border }]}>
         <View>
-          <Text style={styles.heroTitle}>Togather Dashboard</Text>
-          <Text style={styles.heroSubtitle}>
+          <Text style={[styles.heroTitle, { color: colors.text }]}>Togather Dashboard</Text>
+          <Text style={[styles.heroSubtitle, { color: colors.textSecondary }]}>
             App-wide health, activity, and growth at a glance.
           </Text>
         </View>
-        <View style={[styles.roleBadge, { borderColor: primaryColor }]}>
+        <View style={[styles.roleBadge, { borderColor: primaryColor, backgroundColor: colors.surface }]}>
           <Text style={[styles.roleBadgeText, { color: primaryColor }]}>Internal</Text>
         </View>
       </View>
@@ -130,11 +132,12 @@ export function SuperAdminDashboardContent() {
               key={option.key}
               style={[
                 styles.rangeButton,
+                { borderColor: colors.border, backgroundColor: colors.surface },
                 selected && { backgroundColor: primaryColor, borderColor: primaryColor },
               ]}
               onPress={() => setRange(option.key)}
             >
-              <Text style={[styles.rangeButtonText, selected && styles.rangeButtonTextSelected]}>
+              <Text style={[styles.rangeButtonText, { color: colors.textSecondary }, selected && styles.rangeButtonTextSelected]}>
                 {option.label}
               </Text>
             </TouchableOpacity>
@@ -148,7 +151,7 @@ export function SuperAdminDashboardContent() {
           title="Messages sent"
           value={dashboardData.overview.messagesSent}
           subtitle={`In ${rangeLabel}`}
-          iconColor={DEFAULT_PRIMARY_COLOR}
+          iconColor={primaryColor}
         />
         <MetricCard
           icon="pulse-outline"
@@ -187,21 +190,22 @@ export function SuperAdminDashboardContent() {
         />
       </View>
 
-      <View style={styles.panel}>
+      <View style={[styles.panel, { backgroundColor: colors.surface, borderColor: colors.border }]}>
         <View style={styles.panelHeader}>
-          <Text style={styles.panelTitle}>Trend over time</Text>
-          <View style={styles.metricToggle}>
+          <Text style={[styles.panelTitle, { color: colors.text }]}>Trend over time</Text>
+          <View style={[styles.metricToggle, { backgroundColor: colors.surfaceSecondary }]}>
             <TouchableOpacity
               style={[
                 styles.metricToggleButton,
-                chartMetric === "messages" && styles.metricToggleButtonActive,
+                chartMetric === "messages" && [styles.metricToggleButtonActive, { backgroundColor: colors.surface }],
               ]}
               onPress={() => setChartMetric("messages")}
             >
               <Text
                 style={[
                   styles.metricToggleText,
-                  chartMetric === "messages" && styles.metricToggleTextActive,
+                  { color: colors.textSecondary },
+                  chartMetric === "messages" && [styles.metricToggleTextActive, { color: colors.text }],
                 ]}
               >
                 Messages
@@ -210,14 +214,15 @@ export function SuperAdminDashboardContent() {
             <TouchableOpacity
               style={[
                 styles.metricToggleButton,
-                chartMetric === "dailyActiveUsers" && styles.metricToggleButtonActive,
+                chartMetric === "dailyActiveUsers" && [styles.metricToggleButtonActive, { backgroundColor: colors.surface }],
               ]}
               onPress={() => setChartMetric("dailyActiveUsers")}
             >
               <Text
                 style={[
                   styles.metricToggleText,
-                  chartMetric === "dailyActiveUsers" && styles.metricToggleTextActive,
+                  { color: colors.textSecondary },
+                  chartMetric === "dailyActiveUsers" && [styles.metricToggleTextActive, { color: colors.text }],
                 ]}
               >
                 DAU
@@ -226,14 +231,15 @@ export function SuperAdminDashboardContent() {
             <TouchableOpacity
               style={[
                 styles.metricToggleButton,
-                chartMetric === "newMembers" && styles.metricToggleButtonActive,
+                chartMetric === "newMembers" && [styles.metricToggleButtonActive, { backgroundColor: colors.surface }],
               ]}
               onPress={() => setChartMetric("newMembers")}
             >
               <Text
                 style={[
                   styles.metricToggleText,
-                  chartMetric === "newMembers" && styles.metricToggleTextActive,
+                  { color: colors.textSecondary },
+                  chartMetric === "newMembers" && [styles.metricToggleTextActive, { color: colors.text }],
                 ]}
               >
                 New
@@ -261,11 +267,11 @@ export function SuperAdminDashboardContent() {
 
               return (
                 <View key={point.bucketStart} style={styles.chartItem}>
-                  <Text style={styles.chartValue}>{value}</Text>
-                  <View style={styles.chartBarTrack}>
+                  <Text style={[styles.chartValue, { color: colors.textSecondary }]}>{value}</Text>
+                  <View style={[styles.chartBarTrack, { backgroundColor: colors.surfaceSecondary }]}>
                     <View style={[styles.chartBar, { height, backgroundColor: barColor }]} />
                   </View>
-                  <Text style={styles.chartLabel}>{point.label}</Text>
+                  <Text style={[styles.chartLabel, { color: colors.textTertiary }]}>{point.label}</Text>
                 </View>
               );
             })}
@@ -273,48 +279,48 @@ export function SuperAdminDashboardContent() {
         </ScrollView>
       </View>
 
-      <View style={styles.panel}>
-        <Text style={styles.panelTitle}>All-time footprint</Text>
+      <View style={[styles.panel, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        <Text style={[styles.panelTitle, { color: colors.text }]}>All-time footprint</Text>
         <View style={styles.footprintRow}>
-          <View style={styles.footprintItem}>
-            <Text style={styles.footprintValue}>{formatCompactNumber(dashboardData.totals.totalMembers)}</Text>
-            <Text style={styles.footprintLabel}>Members</Text>
+          <View style={[styles.footprintItem, { backgroundColor: colors.surfaceSecondary }]}>
+            <Text style={[styles.footprintValue, { color: colors.text }]}>{formatCompactNumber(dashboardData.totals.totalMembers)}</Text>
+            <Text style={[styles.footprintLabel, { color: colors.textSecondary }]}>Members</Text>
           </View>
-          <View style={styles.footprintItem}>
-            <Text style={styles.footprintValue}>{formatCompactNumber(dashboardData.totals.activeMembers30d)}</Text>
-            <Text style={styles.footprintLabel}>Active in 30d</Text>
+          <View style={[styles.footprintItem, { backgroundColor: colors.surfaceSecondary }]}>
+            <Text style={[styles.footprintValue, { color: colors.text }]}>{formatCompactNumber(dashboardData.totals.activeMembers30d)}</Text>
+            <Text style={[styles.footprintLabel, { color: colors.textSecondary }]}>Active in 30d</Text>
           </View>
-          <View style={styles.footprintItem}>
-            <Text style={styles.footprintValue}>{formatCompactNumber(dashboardData.totals.activeGroups)}</Text>
-            <Text style={styles.footprintLabel}>Groups</Text>
+          <View style={[styles.footprintItem, { backgroundColor: colors.surfaceSecondary }]}>
+            <Text style={[styles.footprintValue, { color: colors.text }]}>{formatCompactNumber(dashboardData.totals.activeGroups)}</Text>
+            <Text style={[styles.footprintLabel, { color: colors.textSecondary }]}>Groups</Text>
           </View>
-          <View style={styles.footprintItem}>
-            <Text style={styles.footprintValue}>{formatCompactNumber(dashboardData.totals.activeChannels)}</Text>
-            <Text style={styles.footprintLabel}>Channels</Text>
+          <View style={[styles.footprintItem, { backgroundColor: colors.surfaceSecondary }]}>
+            <Text style={[styles.footprintValue, { color: colors.text }]}>{formatCompactNumber(dashboardData.totals.activeChannels)}</Text>
+            <Text style={[styles.footprintLabel, { color: colors.textSecondary }]}>Channels</Text>
           </View>
-          <View style={styles.footprintItem}>
-            <Text style={styles.footprintValue}>{formatCompactNumber(dashboardData.totals.totalCommunities)}</Text>
-            <Text style={styles.footprintLabel}>Communities</Text>
+          <View style={[styles.footprintItem, { backgroundColor: colors.surfaceSecondary }]}>
+            <Text style={[styles.footprintValue, { color: colors.text }]}>{formatCompactNumber(dashboardData.totals.totalCommunities)}</Text>
+            <Text style={[styles.footprintLabel, { color: colors.textSecondary }]}>Communities</Text>
           </View>
         </View>
       </View>
 
-      <View style={styles.panel}>
-        <Text style={styles.panelTitle}>Top channels ({rangeLabel})</Text>
+      <View style={[styles.panel, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        <Text style={[styles.panelTitle, { color: colors.text }]}>Top channels ({rangeLabel})</Text>
         {dashboardData.topChannels.length > 0 ? (
           dashboardData.topChannels.map((channel, index) => (
-            <View key={channel.channelId} style={styles.channelRow}>
-              <View style={styles.channelRank}>
-                <Text style={styles.channelRankText}>{index + 1}</Text>
+            <View key={channel.channelId} style={[styles.channelRow, { borderBottomColor: colors.borderLight }]}>
+              <View style={[styles.channelRank, { backgroundColor: colors.surfaceSecondary }]}>
+                <Text style={[styles.channelRankText, { color: colors.textSecondary }]}>{index + 1}</Text>
               </View>
-              <Text style={styles.channelName} numberOfLines={1}>
+              <Text style={[styles.channelName, { color: colors.text }]} numberOfLines={1}>
                 {channel.channelName}
               </Text>
-              <Text style={styles.channelCount}>{channel.messagesSent}</Text>
+              <Text style={[styles.channelCount, { color: primaryColor }]}>{channel.messagesSent}</Text>
             </View>
           ))
         ) : (
-          <Text style={styles.noDataText}>No messages in this range.</Text>
+          <Text style={[styles.noDataText, { color: colors.textTertiary }]}>No messages in this range.</Text>
         )}
       </View>
     </ScrollView>
@@ -324,7 +330,6 @@ export function SuperAdminDashboardContent() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f6f7fb",
   },
   content: {
     padding: 16,
@@ -337,7 +342,6 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     marginTop: 12,
-    color: "#666",
     fontSize: 14,
   },
   emptyState: {
@@ -350,20 +354,16 @@ const styles = StyleSheet.create({
     marginTop: 10,
     fontSize: 18,
     fontWeight: "700",
-    color: "#222",
   },
   emptySubtitle: {
     marginTop: 6,
     fontSize: 14,
-    color: "#666",
     textAlign: "center",
   },
   hero: {
-    backgroundColor: "#fff",
     borderRadius: 14,
     padding: 16,
     borderWidth: 1,
-    borderColor: "#ececf4",
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-start",
@@ -372,11 +372,9 @@ const styles = StyleSheet.create({
   heroTitle: {
     fontSize: 20,
     fontWeight: "700",
-    color: "#141721",
   },
   heroSubtitle: {
     marginTop: 4,
-    color: "#5b6170",
     fontSize: 13,
   },
   roleBadge: {
@@ -384,7 +382,6 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 5,
-    backgroundColor: "#fff",
   },
   roleBadgeText: {
     fontSize: 12,
@@ -397,15 +394,12 @@ const styles = StyleSheet.create({
   rangeButton: {
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: "#d8dbe4",
     paddingHorizontal: 12,
     paddingVertical: 8,
-    backgroundColor: "#fff",
   },
   rangeButtonText: {
     fontSize: 12,
     fontWeight: "700",
-    color: "#4a5160",
   },
   rangeButtonTextSelected: {
     color: "#fff",
@@ -416,10 +410,8 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   metricCard: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#ececf4",
     padding: 12,
     minWidth: "48%",
     flex: 1,
@@ -434,24 +426,19 @@ const styles = StyleSheet.create({
   },
   metricTitle: {
     fontSize: 12,
-    color: "#6b7282",
   },
   metricValue: {
     marginTop: 2,
     fontSize: 24,
     fontWeight: "800",
-    color: "#141721",
   },
   metricSubtitle: {
     marginTop: 2,
     fontSize: 11,
-    color: "#8b92a3",
   },
   panel: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#ececf4",
     padding: 14,
   },
   panelHeader: {
@@ -464,12 +451,10 @@ const styles = StyleSheet.create({
   panelTitle: {
     fontSize: 16,
     fontWeight: "700",
-    color: "#141721",
   },
   metricToggle: {
     flexDirection: "row",
     gap: 4,
-    backgroundColor: "#f2f3f8",
     borderRadius: 999,
     padding: 3,
   },
@@ -478,17 +463,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
   },
-  metricToggleButtonActive: {
-    backgroundColor: "#fff",
-  },
+  metricToggleButtonActive: {},
   metricToggleText: {
     fontSize: 11,
     fontWeight: "700",
-    color: "#647081",
   },
-  metricToggleTextActive: {
-    color: "#1f2937",
-  },
+  metricToggleTextActive: {},
   chartRow: {
     flexDirection: "row",
     alignItems: "flex-end",
@@ -502,13 +482,11 @@ const styles = StyleSheet.create({
   },
   chartValue: {
     fontSize: 11,
-    color: "#4b5565",
     marginBottom: 6,
   },
   chartBarTrack: {
     width: 22,
     height: 120,
-    backgroundColor: "#f1f3f8",
     borderRadius: 99,
     justifyContent: "flex-end",
     overflow: "hidden",
@@ -520,7 +498,6 @@ const styles = StyleSheet.create({
   chartLabel: {
     marginTop: 6,
     fontSize: 10,
-    color: "#8b92a3",
     textAlign: "center",
   },
   footprintRow: {
@@ -534,16 +511,13 @@ const styles = StyleSheet.create({
     minWidth: "45%",
     padding: 10,
     borderRadius: 10,
-    backgroundColor: "#f7f8fc",
   },
   footprintValue: {
     fontSize: 20,
     fontWeight: "800",
-    color: "#141721",
   },
   footprintLabel: {
     fontSize: 12,
-    color: "#6b7282",
   },
   channelRow: {
     flexDirection: "row",
@@ -551,35 +525,29 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingVertical: 8,
     borderBottomWidth: 1,
-    borderBottomColor: "#f2f3f8",
   },
   channelRank: {
     width: 22,
     height: 22,
     borderRadius: 11,
-    backgroundColor: "#f2f3f8",
     alignItems: "center",
     justifyContent: "center",
   },
   channelRankText: {
     fontSize: 11,
     fontWeight: "700",
-    color: "#556070",
   },
   channelName: {
     flex: 1,
     fontSize: 13,
-    color: "#293141",
     fontWeight: "500",
   },
   channelCount: {
     fontSize: 13,
     fontWeight: "700",
-    color: DEFAULT_PRIMARY_COLOR,
   },
   noDataText: {
     fontSize: 13,
-    color: "#8b92a3",
     paddingVertical: 8,
   },
 });

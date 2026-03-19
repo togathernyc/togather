@@ -4,12 +4,14 @@ import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@providers/AuthProvider';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
+import { useTheme } from '@hooks/useTheme';
 import { useIsDesktopWeb } from '../../hooks/useIsDesktopWeb';
 import { DesktopSideNav } from '@components/DesktopSideNav';
 
 export default function TabsLayout() {
   const { user, community } = useAuth();
   const { primaryColor } = useCommunityTheme();
+  const { colors } = useTheme();
   const isDesktopWeb = useIsDesktopWeb();
   const isAdmin = user?.is_admin === true;
   const isInternalUser = user?.is_staff === true || user?.is_superuser === true;
@@ -34,13 +36,13 @@ export default function TabsLayout() {
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: primaryColor,
-        tabBarInactiveTintColor: '#999',
+        tabBarInactiveTintColor: colors.tabBarInactive,
         tabBarStyle: isDesktopWeb
           ? { display: 'none' as const }
           : {
-              backgroundColor: '#fff',
+              backgroundColor: colors.tabBar,
               borderTopWidth: 1,
-              borderTopColor: '#e0e0e0',
+              borderTopColor: colors.tabBarBorder,
               paddingBottom: 8,
               paddingTop: 8,
               height: 64,

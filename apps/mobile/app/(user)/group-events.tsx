@@ -39,6 +39,7 @@ import type {
   DateFilterPreset,
   ExploreFilters,
 } from "@features/explore/hooks/useExploreFilters";
+import { useTheme } from "@hooks/useTheme";
 
 const mapboxToken =
   Constants.expoConfig?.extra?.mapboxAccessToken ||
@@ -48,6 +49,7 @@ const mapboxToken =
 export default function GroupEventsModal() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
   const params = useLocalSearchParams<{
     groupId: string;
     groupName?: string;
@@ -327,11 +329,11 @@ export default function GroupEventsModal() {
   const renderSectionHeader = useCallback(
     ({ section }: { section: { title: string; data: CommunityEvent[] } }) => (
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>{section.title}</Text>
-        <Text style={styles.sectionCount}>{section.data.length}</Text>
+        <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>{section.title}</Text>
+        <Text style={[styles.sectionCount, { color: COLORS.primary, backgroundColor: colors.selectedBackground }]}>{section.data.length}</Text>
       </View>
     ),
-    []
+    [colors]
   );
 
   // Handle filter changes from modal
@@ -376,18 +378,18 @@ export default function GroupEventsModal() {
   const hasActiveFilters = dateFilter !== null || selectedGroupIds.length > 0;
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
       {/* Header */}
-      <View style={[styles.header, { paddingTop: insets.top }]}>
+      <View style={[styles.header, { paddingTop: insets.top, backgroundColor: colors.surface, borderBottomColor: colors.border, shadowColor: colors.shadow }]}>
         <TouchableOpacity
           style={styles.closeButton}
           onPress={() => router.back()}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         >
-          <Ionicons name="close" size={28} color="#333" />
+          <Ionicons name="close" size={28} color={colors.text} />
         </TouchableOpacity>
         <View style={styles.headerCenter}>
-          <Text style={styles.headerTitle} numberOfLines={1}>
+          <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
             {headerTitle}
           </Text>
           {selectedGroupIds.length > 0 && groupId && (
@@ -405,7 +407,7 @@ export default function GroupEventsModal() {
           style={styles.filterButton}
           onPress={() => setIsFilterModalVisible(true)}
         >
-          <Ionicons name="options-outline" size={24} color="#333" />
+          <Ionicons name="options-outline" size={24} color={colors.text} />
           {hasActiveFilters && <View style={styles.filterBadge} />}
         </TouchableOpacity>
       </View>
@@ -420,15 +422,15 @@ export default function GroupEventsModal() {
 
       {/* Bottom Sheet with Events List - use regular components on web */}
       {isWeb ? (
-        <View style={styles.webBottomPanel}>
+        <View style={[styles.webBottomPanel, { backgroundColor: colors.surface }]}>
           {/* Search Bar */}
           <View style={styles.searchContainer}>
-            <View style={styles.searchInputWrapper}>
-              <Ionicons name="search" size={20} color={COLORS.textMuted} />
+            <View style={[styles.searchInputWrapper, { backgroundColor: colors.surfaceSecondary }]}>
+              <Ionicons name="search" size={20} color={colors.textSecondary} />
               <TextInput
-                style={styles.searchInput}
+                style={[styles.searchInput, { color: colors.text }]}
                 placeholder="Search events..."
-                placeholderTextColor={COLORS.textMuted}
+                placeholderTextColor={colors.textSecondary}
                 value={searchQuery}
                 onChangeText={setSearchQuery}
               />
@@ -437,7 +439,7 @@ export default function GroupEventsModal() {
                   <Ionicons
                     name="close-circle"
                     size={20}
-                    color={COLORS.textMuted}
+                    color={colors.textSecondary}
                   />
                 </TouchableOpacity>
               )}
@@ -456,17 +458,17 @@ export default function GroupEventsModal() {
             ListEmptyComponent={
               isLoadingEvents ? (
                 <View style={styles.emptyContainer}>
-                  <Text style={styles.emptyText}>Loading events...</Text>
+                  <Text style={[styles.emptyText, { color: colors.textSecondary }]}>Loading events...</Text>
                 </View>
               ) : (
                 <View style={styles.emptyContainer}>
                   <Ionicons
                     name="calendar-outline"
                     size={48}
-                    color={COLORS.textMuted}
+                    color={colors.textSecondary}
                   />
-                  <Text style={styles.emptyTitle}>No upcoming events</Text>
-                  <Text style={styles.emptyText}>
+                  <Text style={[styles.emptyTitle, { color: colors.text }]}>No upcoming events</Text>
+                  <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
                     Check back later for new events
                   </Text>
                 </View>
@@ -482,17 +484,17 @@ export default function GroupEventsModal() {
           snapPoints={snapPoints}
           topInset={topInset}
           enablePanDownToClose={false}
-          handleIndicatorStyle={styles.handleIndicator}
-          backgroundStyle={styles.sheetBackground}
+          handleIndicatorStyle={[styles.handleIndicator, { backgroundColor: colors.border }]}
+          backgroundStyle={[styles.sheetBackground, { backgroundColor: colors.surface }]}
         >
           {/* Search Bar */}
           <View style={styles.searchContainer}>
-            <View style={styles.searchInputWrapper}>
-              <Ionicons name="search" size={20} color={COLORS.textMuted} />
+            <View style={[styles.searchInputWrapper, { backgroundColor: colors.surfaceSecondary }]}>
+              <Ionicons name="search" size={20} color={colors.textSecondary} />
               <BottomSheetTextInput
-                style={styles.searchInput}
+                style={[styles.searchInput, { color: colors.text }]}
                 placeholder="Search events..."
-                placeholderTextColor={COLORS.textMuted}
+                placeholderTextColor={colors.textSecondary}
                 value={searchQuery}
                 onChangeText={setSearchQuery}
               />
@@ -501,7 +503,7 @@ export default function GroupEventsModal() {
                   <Ionicons
                     name="close-circle"
                     size={20}
-                    color={COLORS.textMuted}
+                    color={colors.textSecondary}
                   />
                 </TouchableOpacity>
               )}
@@ -520,17 +522,17 @@ export default function GroupEventsModal() {
             ListEmptyComponent={
               isLoadingEvents ? (
                 <View style={styles.emptyContainer}>
-                  <Text style={styles.emptyText}>Loading events...</Text>
+                  <Text style={[styles.emptyText, { color: colors.textSecondary }]}>Loading events...</Text>
                 </View>
               ) : (
                 <View style={styles.emptyContainer}>
                   <Ionicons
                     name="calendar-outline"
                     size={48}
-                    color={COLORS.textMuted}
+                    color={colors.textSecondary}
                   />
-                  <Text style={styles.emptyTitle}>No upcoming events</Text>
-                  <Text style={styles.emptyText}>
+                  <Text style={[styles.emptyTitle, { color: colors.text }]}>No upcoming events</Text>
+                  <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
                     Check back later for new events
                   </Text>
                 </View>
@@ -544,11 +546,11 @@ export default function GroupEventsModal() {
       {/* Create Event FAB - only show when viewing a specific group */}
       {groupId && (
         <TouchableOpacity
-          style={[styles.fab, { bottom: insets.bottom + 100 }]}
+          style={[styles.fab, { bottom: insets.bottom + 100, shadowColor: colors.shadow }]}
           onPress={handleCreateEvent}
           activeOpacity={0.8}
         >
-          <Ionicons name="add" size={28} color="#fff" />
+          <Ionicons name="add" size={28} color={colors.textInverse} />
         </TouchableOpacity>
       )}
 
@@ -573,7 +575,6 @@ export default function GroupEventsModal() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f5f5f5",
   },
   header: {
     position: "absolute",
@@ -586,12 +587,9 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingBottom: 12,
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#E5E7EB",
     ...Platform.select({
       ios: {
-        shadowColor: "#000",
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.1,
         shadowRadius: 4,
@@ -614,7 +612,6 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 17,
     fontWeight: "600",
-    color: "#333",
   },
   showAllLink: {
     fontSize: 13,
@@ -637,12 +634,10 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.primary,
   },
   handleIndicator: {
-    backgroundColor: "#D1D5DB",
     width: 40,
     height: 4,
   },
   sheetBackground: {
-    backgroundColor: "#fff",
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
   },
@@ -653,7 +648,6 @@ const styles = StyleSheet.create({
   searchInputWrapper: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#F5F5F5",
     borderRadius: 12,
     paddingHorizontal: 12,
     height: 44,
@@ -662,7 +656,6 @@ const styles = StyleSheet.create({
   searchInput: {
     flex: 1,
     fontSize: 16,
-    color: COLORS.text,
   },
   listContent: {
     paddingHorizontal: 16,
@@ -677,14 +670,11 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 12,
     fontWeight: "600",
-    color: COLORS.textMuted,
     letterSpacing: 0.5,
   },
   sectionCount: {
     fontSize: 12,
     fontWeight: "500",
-    color: COLORS.primary,
-    backgroundColor: "#F3E8FF",
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 10,
@@ -697,13 +687,11 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: COLORS.text,
     marginTop: 16,
     marginBottom: 8,
   },
   emptyText: {
     fontSize: 14,
-    color: COLORS.textMuted,
     textAlign: "center",
   },
   separator: {
@@ -715,7 +703,6 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: "50%",
-    backgroundColor: "#fff",
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
     paddingTop: 16,
@@ -732,7 +719,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     ...Platform.select({
       ios: {
-        shadowColor: "#000",
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
         shadowRadius: 4,

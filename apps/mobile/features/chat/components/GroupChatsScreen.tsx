@@ -8,6 +8,7 @@ import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'rea
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '@providers/AuthProvider';
+import { useTheme } from '@hooks/useTheme';
 import { useQuery, api, Id } from '@services/api/convex';
 
 type Chat = {
@@ -23,6 +24,7 @@ export const GroupChatsScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
   const { groupId, groupName } = params;
   const { token } = useAuth();
+  const { colors: themeColors } = useTheme();
 
   // Using Convex getChannelsByGroup from messaging module
   const data = useQuery(

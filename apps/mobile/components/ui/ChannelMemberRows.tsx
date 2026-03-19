@@ -9,6 +9,7 @@
 import React, { ReactNode } from "react";
 import { View, Text, StyleSheet, Image } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useTheme } from "@hooks/useTheme";
 import type { ChannelMember, UnsyncedPerson } from "@/utils/channel-members";
 import { getDebugReasonText } from "@/utils/channel-members";
 
@@ -45,6 +46,7 @@ export function SyncedMemberRowContent({
   isCurrentUser = false,
   rightContent,
 }: SyncedMemberRowContentProps) {
+  const { colors, isDark } = useTheme();
   const isOwner = member.role === "owner";
   const isAdmin = member.role === "admin";
   const isPcoSynced = member.syncSource === "pco_services";
@@ -58,7 +60,7 @@ export function SyncedMemberRowContent({
           <Image source={{ uri: member.profilePhoto }} style={styles.avatarImage} />
         ) : (
           <View style={[styles.avatarPlaceholder, { backgroundColor: primaryColor }]}>
-            <Text style={styles.avatarInitials}>{initials}</Text>
+            <Text style={[styles.avatarInitials, { color: colors.textInverse }]}>{initials}</Text>
           </View>
         )}
       </View>
@@ -66,10 +68,10 @@ export function SyncedMemberRowContent({
       {/* Name and badges */}
       <View style={styles.memberInfo}>
         <View style={styles.memberNameRow}>
-          <Text style={styles.memberName} numberOfLines={1}>
+          <Text style={[styles.memberName, { color: colors.text }]} numberOfLines={1}>
             {member.displayName}
           </Text>
-          {isCurrentUser && <Text style={styles.youBadge}>(you)</Text>}
+          {isCurrentUser && <Text style={[styles.youBadge, { color: colors.textTertiary }]}>(you)</Text>}
         </View>
 
         {/* Role badges */}
@@ -88,9 +90,9 @@ export function SyncedMemberRowContent({
         {isPcoSynced && member.syncMetadata && (
           <View style={styles.syncMetadataRow}>
             {member.syncMetadata.teamName && (
-              <View style={styles.syncBadge}>
+              <View style={[styles.syncBadge, { backgroundColor: isDark ? 'rgba(33, 150, 243, 0.2)' : '#E3F2FD' }]}>
                 <Ionicons name="people" size={10} color="#2196F3" />
-                <Text style={styles.syncBadgeText}>
+                <Text style={[styles.syncBadgeText, { color: '#2196F3' }]}>
                   {member.syncMetadata.serviceTypeName
                     ? `${member.syncMetadata.serviceTypeName} > ${member.syncMetadata.teamName}`
                     : member.syncMetadata.teamName}
@@ -98,9 +100,9 @@ export function SyncedMemberRowContent({
               </View>
             )}
             {member.syncMetadata.position && (
-              <View style={[styles.syncBadge, styles.positionBadge]}>
+              <View style={[styles.syncBadge, { backgroundColor: isDark ? 'rgba(255, 152, 0, 0.2)' : '#FF980020' }]}>
                 <Ionicons name="musical-notes" size={10} color="#FF9800" />
-                <Text style={[styles.syncBadgeText, styles.positionBadgeText]}>
+                <Text style={[styles.syncBadgeText, { color: '#FF9800' }]}>
                   {member.syncMetadata.position}
                 </Text>
               </View>
@@ -124,14 +126,15 @@ interface UnsyncedPersonRowContentProps {
 export function UnsyncedPersonRowContent({
   person,
 }: UnsyncedPersonRowContentProps) {
+  const { colors, isDark } = useTheme();
   const initials = getInitials(person.pcoName);
 
   return (
     <>
       {/* Avatar with warning indicator */}
       <View style={styles.memberAvatar}>
-        <View style={[styles.avatarPlaceholder, styles.unsyncedAvatarPlaceholder]}>
-          <Text style={[styles.avatarInitials, styles.unsyncedAvatarInitials]}>
+        <View style={[styles.avatarPlaceholder, { backgroundColor: '#FFB74D' }]}>
+          <Text style={[styles.avatarInitials, { color: colors.textInverse }]}>
             {initials}
           </Text>
         </View>
@@ -140,7 +143,7 @@ export function UnsyncedPersonRowContent({
       {/* Name and badges */}
       <View style={styles.memberInfo}>
         <View style={styles.memberNameRow}>
-          <Text style={styles.memberName} numberOfLines={1}>
+          <Text style={[styles.memberName, { color: colors.text }]} numberOfLines={1}>
             {person.pcoName}
           </Text>
           <Ionicons name="warning" size={14} color="#B25000" style={{ marginLeft: 4 }} />
@@ -150,9 +153,9 @@ export function UnsyncedPersonRowContent({
         {(person.teamName || person.position) && (
           <View style={styles.syncMetadataRow}>
             {person.teamName && (
-              <View style={styles.syncBadge}>
+              <View style={[styles.syncBadge, { backgroundColor: isDark ? 'rgba(33, 150, 243, 0.2)' : '#E3F2FD' }]}>
                 <Ionicons name="people" size={10} color="#2196F3" />
-                <Text style={styles.syncBadgeText}>
+                <Text style={[styles.syncBadgeText, { color: '#2196F3' }]}>
                   {person.serviceTypeName
                     ? `${person.serviceTypeName} > ${person.teamName}`
                     : person.teamName}
@@ -160,9 +163,9 @@ export function UnsyncedPersonRowContent({
               </View>
             )}
             {person.position && (
-              <View style={[styles.syncBadge, styles.positionBadge]}>
+              <View style={[styles.syncBadge, { backgroundColor: isDark ? 'rgba(255, 152, 0, 0.2)' : '#FF980020' }]}>
                 <Ionicons name="musical-notes" size={10} color="#FF9800" />
-                <Text style={[styles.syncBadgeText, styles.positionBadgeText]}>
+                <Text style={[styles.syncBadgeText, { color: '#FF9800' }]}>
                   {person.position}
                 </Text>
               </View>
@@ -171,7 +174,7 @@ export function UnsyncedPersonRowContent({
         )}
 
         {/* Reason text */}
-        <Text style={styles.unsyncedReasonText}>
+        <Text style={[styles.unsyncedReasonText, { color: isDark ? '#FFB74D' : '#B25000' }]}>
           {getDebugReasonText(person.reason, person)}
         </Text>
       </View>
@@ -200,13 +203,6 @@ const styles = StyleSheet.create({
   avatarInitials: {
     fontSize: 16,
     fontWeight: "700",
-    color: "#fff",
-  },
-  unsyncedAvatarPlaceholder: {
-    backgroundColor: "#FFB74D",
-  },
-  unsyncedAvatarInitials: {
-    color: "#fff",
   },
   memberInfo: {
     flex: 1,
@@ -219,12 +215,10 @@ const styles = StyleSheet.create({
   memberName: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
     flexShrink: 1,
   },
   youBadge: {
     fontSize: 13,
-    color: "#888",
     marginLeft: 4,
   },
   roleBadge: {
@@ -248,7 +242,6 @@ const styles = StyleSheet.create({
   syncBadge: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#E3F2FD",
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 8,
@@ -256,18 +249,10 @@ const styles = StyleSheet.create({
   },
   syncBadgeText: {
     fontSize: 11,
-    color: "#2196F3",
     fontWeight: "500",
-  },
-  positionBadge: {
-    backgroundColor: "#FF980020",
-  },
-  positionBadgeText: {
-    color: "#FF9800",
   },
   unsyncedReasonText: {
     fontSize: 12,
-    color: "#B25000",
     marginTop: 4,
     fontStyle: "italic",
   },

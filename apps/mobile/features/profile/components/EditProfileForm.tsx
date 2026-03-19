@@ -15,6 +15,7 @@ import { FormInput, Button, ImagePicker } from '@components/ui';
 import { profileSchema, ProfileFormData } from '../types';
 import { useUpdateProfile, useUpdateProfilePhoto, useRemoveProfilePhoto } from '../hooks';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
+import { useTheme } from '@hooks/useTheme';
 
 interface EditProfileFormProps {
   onCancel?: () => void;
@@ -24,6 +25,7 @@ export function EditProfileForm({ onCancel }: EditProfileFormProps) {
   const router = useRouter();
   const { user } = useAuth();
   const { primaryColor } = useCommunityTheme();
+  const { colors } = useTheme();
   const [profileImage, setProfileImage] = useState<string | null>(user?.profile_photo || null);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
 
@@ -137,8 +139,8 @@ export function EditProfileForm({ onCancel }: EditProfileFormProps) {
 
   return (
     <>
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Profile Photo</Text>
+      <View style={[styles.section, { backgroundColor: colors.surface }]}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Profile Photo</Text>
         <View style={styles.imagePickerContainer}>
           <ImagePicker
             currentImage={profileImage || undefined}
@@ -153,14 +155,14 @@ export function EditProfileForm({ onCancel }: EditProfileFormProps) {
           {isUploadingImage && (
             <View style={styles.uploadIndicator}>
               <ActivityIndicator size="small" color={primaryColor} />
-              <Text style={styles.uploadText}>Uploading...</Text>
+              <Text style={[styles.uploadText, { color: colors.textSecondary }]}>Uploading...</Text>
             </View>
           )}
         </View>
       </View>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Personal Information</Text>
+      <View style={[styles.section, { backgroundColor: colors.surface }]}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Personal Information</Text>
         
         <FormInput
           name="first_name"
@@ -248,7 +250,6 @@ export function EditProfileForm({ onCancel }: EditProfileFormProps) {
 
 const styles = StyleSheet.create({
   section: {
-    backgroundColor: '#fff',
     borderRadius: 12,
     padding: 20,
     marginBottom: 16,
@@ -268,7 +269,6 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#333',
     marginBottom: 20,
   },
   imagePickerContainer: {
@@ -283,7 +283,6 @@ const styles = StyleSheet.create({
   },
   uploadText: {
     fontSize: 14,
-    color: '#666',
   },
   buttonContainer: {
     gap: 12,

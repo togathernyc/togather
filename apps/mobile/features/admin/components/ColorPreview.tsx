@@ -8,6 +8,7 @@ import {
   StyleSheet,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useTheme } from "@hooks/useTheme";
 
 interface ColorPreviewProps {
   primaryColor: string;
@@ -15,11 +16,12 @@ interface ColorPreviewProps {
 }
 
 export function ColorPreview({ primaryColor, secondaryColor }: ColorPreviewProps) {
+  const { colors } = useTheme();
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Preview</Text>
+      <Text style={[styles.title, { color: colors.textSecondary }]}>Preview</Text>
 
-      <View style={styles.previewCard}>
+      <View style={[styles.previewCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
         {/* Mock app header */}
         <View style={[styles.mockHeader, { backgroundColor: primaryColor }]}>
           <Text style={styles.mockHeaderText}>Community Name</Text>
@@ -28,18 +30,18 @@ export function ColorPreview({ primaryColor, secondaryColor }: ColorPreviewProps
         {/* Mock content */}
         <View style={styles.mockContent}>
           {/* Tab bar preview */}
-          <View style={styles.mockTabBar}>
+          <View style={[styles.mockTabBar, { borderBottomColor: colors.borderLight }]}>
             <View style={styles.mockTab}>
               <Ionicons name="home" size={20} color={primaryColor} />
               <Text style={[styles.mockTabText, { color: primaryColor }]}>Home</Text>
             </View>
             <View style={styles.mockTab}>
-              <Ionicons name="people-outline" size={20} color="#999" />
-              <Text style={styles.mockTabTextInactive}>Groups</Text>
+              <Ionicons name="people-outline" size={20} color={colors.textTertiary} />
+              <Text style={[styles.mockTabTextInactive, { color: colors.textTertiary }]}>Groups</Text>
             </View>
             <View style={styles.mockTab}>
-              <Ionicons name="chatbubble-outline" size={20} color="#999" />
-              <Text style={styles.mockTabTextInactive}>Chat</Text>
+              <Ionicons name="chatbubble-outline" size={20} color={colors.textTertiary} />
+              <Text style={[styles.mockTabTextInactive, { color: colors.textTertiary }]}>Chat</Text>
             </View>
           </View>
 
@@ -59,18 +61,18 @@ export function ColorPreview({ primaryColor, secondaryColor }: ColorPreviewProps
               <Text style={styles.mockBadgeText}>Badge</Text>
             </View>
             <View style={[styles.mockToggle, { backgroundColor: primaryColor }]}>
-              <View style={styles.mockToggleKnob} />
+              <View style={[styles.mockToggleKnob, { backgroundColor: colors.surface }]} />
             </View>
-            <View style={[styles.mockProgressBar]}>
+            <View style={[styles.mockProgressBar, { backgroundColor: colors.border }]}>
               <View style={[styles.mockProgressFill, { backgroundColor: secondaryColor, width: '60%' }]} />
             </View>
           </View>
 
           {/* Link preview */}
           <View style={styles.linkPreview}>
-            <Text style={styles.mockText}>Tap </Text>
+            <Text style={[styles.mockText, { color: colors.text }]}>Tap </Text>
             <Text style={[styles.mockLink, { color: primaryColor }]}>this link</Text>
-            <Text style={styles.mockText}> to see the accent color.</Text>
+            <Text style={[styles.mockText, { color: colors.text }]}> to see the accent color.</Text>
           </View>
         </View>
       </View>
@@ -79,11 +81,11 @@ export function ColorPreview({ primaryColor, secondaryColor }: ColorPreviewProps
       <View style={styles.legend}>
         <View style={styles.legendItem}>
           <View style={[styles.legendSwatch, { backgroundColor: primaryColor }]} />
-          <Text style={styles.legendText}>Primary</Text>
+          <Text style={[styles.legendText, { color: colors.textSecondary }]}>Primary</Text>
         </View>
         <View style={styles.legendItem}>
           <View style={[styles.legendSwatch, { backgroundColor: secondaryColor }]} />
-          <Text style={styles.legendText}>Secondary</Text>
+          <Text style={[styles.legendText, { color: colors.textSecondary }]}>Secondary</Text>
         </View>
       </View>
     </View>
@@ -97,15 +99,12 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#666",
     marginBottom: 12,
   },
   previewCard: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "#e0e0e0",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
@@ -130,7 +129,6 @@ const styles = StyleSheet.create({
     justifyContent: "space-around",
     paddingVertical: 8,
     borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
   },
   mockTab: {
     alignItems: "center",
@@ -142,7 +140,6 @@ const styles = StyleSheet.create({
   },
   mockTabTextInactive: {
     fontSize: 10,
-    color: "#999",
   },
   buttonsPreview: {
     flexDirection: "row",
@@ -200,12 +197,10 @@ const styles = StyleSheet.create({
     width: 16,
     height: 16,
     borderRadius: 8,
-    backgroundColor: "#fff",
   },
   mockProgressBar: {
     flex: 1,
     height: 6,
-    backgroundColor: "#e0e0e0",
     borderRadius: 3,
     overflow: "hidden",
   },
@@ -219,7 +214,6 @@ const styles = StyleSheet.create({
   },
   mockText: {
     fontSize: 12,
-    color: "#333",
   },
   mockLink: {
     fontSize: 12,
@@ -245,6 +239,5 @@ const styles = StyleSheet.create({
   },
   legendText: {
     fontSize: 12,
-    color: "#666",
   },
 });

@@ -42,6 +42,7 @@ import { useQuery, api } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import type { Id } from "@services/api/convex";
 import { formatError } from "@/utils/error-handling";
+import { useTheme } from "@hooks/useTheme";
 
 // Validation schema for group request form
 const groupRequestSchema = z.object({
@@ -85,6 +86,7 @@ export function RequestGroupScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { community, token } = useAuth();
+  const { colors, isDark } = useTheme();
   const { requestGroupAsync, isRequesting } = useRequestGroup();
 
   // Co-leader search state
@@ -260,16 +262,16 @@ export function RequestGroupScreen() {
 
   return (
     <UserRoute>
-      <View style={[styles.container, { paddingTop: insets.top }]}>
+      <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.backgroundSecondary }]}>
         {/* Header */}
-        <View style={styles.header}>
+        <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
           <TouchableOpacity
             onPress={() => router.back()}
             style={styles.backButton}
           >
-            <Ionicons name="arrow-back" size={24} color="#000" />
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Request a Group</Text>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Request a Group</Text>
           <View style={styles.headerRight} />
         </View>
 
@@ -280,26 +282,26 @@ export function RequestGroupScreen() {
           keyboardShouldPersistTaps="handled"
         >
           {/* Info Banner */}
-          <View style={styles.infoBanner}>
-            <Ionicons name="information-circle" size={24} color="#3B82F6" />
-            <Text style={styles.infoBannerText}>
+          <View style={[styles.infoBanner, { backgroundColor: isDark ? '#1a2730' : '#EFF6FF' }]}>
+            <Ionicons name="information-circle" size={24} color={isDark ? '#53bdeb' : '#3B82F6'} />
+            <Text style={[styles.infoBannerText, { color: isDark ? '#53bdeb' : '#1E40AF' }]}>
               Your request will be reviewed by community admins. You'll be automatically added as a leader when approved.
             </Text>
           </View>
 
           {/* Pending Request Warning Banner */}
           {hasPendingRequest && (
-            <View style={styles.warningBanner}>
-              <Ionicons name="warning" size={24} color="#F59E0B" />
-              <Text style={styles.warningBannerText}>
+            <View style={[styles.warningBanner, { backgroundColor: isDark ? '#332b00' : '#FEF3C7' }]}>
+              <Ionicons name="warning" size={24} color={colors.warning} />
+              <Text style={[styles.warningBannerText, { color: isDark ? '#FFD60A' : '#92400E' }]}>
                 You already have a pending group request. Please wait for it to be reviewed before submitting another request.
               </Text>
             </View>
           )}
 
           {/* Basic Information Section */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Basic Information</Text>
+          <View style={[styles.section, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Basic Information</Text>
 
             <Controller
               name="group_type_id"
@@ -321,8 +323,8 @@ export function RequestGroupScreen() {
 
             {/* Show group type description if selected */}
             {selectedGroupType?.description && (
-              <View style={styles.groupTypeDescription}>
-                <Text style={styles.groupTypeDescriptionText}>
+              <View style={[styles.groupTypeDescription, { backgroundColor: isDark ? '#1a2730' : '#F0FDF4' }]}>
+                <Text style={[styles.groupTypeDescriptionText, { color: isDark ? '#30D158' : '#166534' }]}>
                   {selectedGroupType.description}
                 </Text>
               </View>
@@ -360,23 +362,24 @@ export function RequestGroupScreen() {
           </View>
 
           {/* Co-Leaders Section */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Co-Leaders (Optional)</Text>
-            <Text style={styles.sectionDescription}>
+          <View style={[styles.section, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Co-Leaders (Optional)</Text>
+            <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>
               Propose additional leaders for your group
             </Text>
 
             {/* Leader Search Input */}
-            <View style={styles.searchContainer}>
+            <View style={[styles.searchContainer, { backgroundColor: colors.inputBackground }]}>
               <Ionicons
                 name="search"
                 size={20}
-                color="#999"
+                color={colors.inputPlaceholder}
                 style={styles.searchIcon}
               />
               <TextInput
-                style={styles.searchInput}
+                style={[styles.searchInput, { color: colors.text }]}
                 placeholder="Search by name or email..."
+                placeholderTextColor={colors.inputPlaceholder}
                 value={leaderSearchQuery}
                 onChangeText={setLeaderSearchQuery}
                 autoCapitalize="none"
@@ -387,7 +390,7 @@ export function RequestGroupScreen() {
                   onPress={() => setLeaderSearchQuery("")}
                   style={styles.clearButton}
                 >
-                  <Ionicons name="close-circle" size={20} color="#999" />
+                  <Ionicons name="close-circle" size={20} color={colors.inputPlaceholder} />
                 </TouchableOpacity>
               )}
             </View>
@@ -395,8 +398,8 @@ export function RequestGroupScreen() {
             {/* Search Results */}
             {isSearchingLeaders && (
               <View style={styles.searchingContainer}>
-                <ActivityIndicator size="small" color="#007AFF" />
-                <Text style={styles.searchingText}>Searching...</Text>
+                <ActivityIndicator size="small" color={colors.link} />
+                <Text style={[styles.searchingText, { color: colors.textSecondary }]}>Searching...</Text>
               </View>
             )}
 
@@ -408,28 +411,28 @@ export function RequestGroupScreen() {
                   {leaderSearchResults.map((leader) => (
                     <TouchableOpacity
                       key={leader.id}
-                      style={styles.searchResultCard}
+                      style={[styles.searchResultCard, { backgroundColor: colors.surfaceSecondary }]}
                       onPress={() => handleAddLeader(leader)}
                       activeOpacity={0.7}
                     >
-                      <View style={styles.leaderAvatar}>
+                      <View style={[styles.leaderAvatar, { backgroundColor: colors.border }]}>
                         {leader.profilePhoto ? (
                           <Image
                             source={{ uri: leader.profilePhoto }}
                             style={styles.leaderAvatarImage}
                           />
                         ) : (
-                          <Text style={styles.leaderAvatarText}>
+                          <Text style={[styles.leaderAvatarText, { color: colors.textSecondary }]}>
                             {getInitials(leader.firstName, leader.lastName)}
                           </Text>
                         )}
                       </View>
                       <View style={styles.leaderInfo}>
-                        <Text style={styles.leaderName}>
+                        <Text style={[styles.leaderName, { color: colors.text }]}>
                           {leader.firstName} {leader.lastName}
                         </Text>
                       </View>
-                      <Ionicons name="add-circle" size={24} color="#007AFF" />
+                      <Ionicons name="add-circle" size={24} color={colors.link} />
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -438,7 +441,7 @@ export function RequestGroupScreen() {
             {debouncedLeaderSearch.length >= 2 &&
               !isSearchingLeaders &&
               (!leaderSearchResults || leaderSearchResults.length === 0) && (
-                <Text style={styles.noResultsText}>
+                <Text style={[styles.noResultsText, { color: colors.textSecondary }]}>
                   No members found matching "{debouncedLeaderSearch}"
                 </Text>
               )}
@@ -446,25 +449,25 @@ export function RequestGroupScreen() {
             {/* Selected Leaders */}
             {selectedLeaders.length > 0 && (
               <View style={styles.selectedLeadersContainer}>
-                <Text style={styles.selectedLeadersLabel}>
+                <Text style={[styles.selectedLeadersLabel, { color: colors.text }]}>
                   Proposed Co-Leaders ({selectedLeaders.length})
                 </Text>
                 {selectedLeaders.map((leader) => (
-                  <View key={leader.id} style={styles.selectedLeaderCard}>
-                    <View style={styles.leaderAvatar}>
+                  <View key={leader.id} style={[styles.selectedLeaderCard, { backgroundColor: isDark ? '#1a2730' : '#E8F4FD' }]}>
+                    <View style={[styles.leaderAvatar, { backgroundColor: colors.border }]}>
                       {leader.profilePhoto ? (
                         <Image
                           source={{ uri: leader.profilePhoto }}
                           style={styles.leaderAvatarImage}
                         />
                       ) : (
-                        <Text style={styles.leaderAvatarText}>
+                        <Text style={[styles.leaderAvatarText, { color: colors.textSecondary }]}>
                           {getInitials(leader.firstName, leader.lastName)}
                         </Text>
                       )}
                     </View>
                     <View style={styles.leaderInfo}>
-                      <Text style={styles.leaderName}>
+                      <Text style={[styles.leaderName, { color: colors.text }]}>
                         {leader.firstName} {leader.lastName}
                       </Text>
                     </View>
@@ -475,7 +478,7 @@ export function RequestGroupScreen() {
                       <Ionicons
                         name="close-circle"
                         size={24}
-                        color="#FF3B30"
+                        color={colors.destructive}
                       />
                     </TouchableOpacity>
                   </View>
@@ -485,8 +488,8 @@ export function RequestGroupScreen() {
           </View>
 
           {/* Location Section */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Location (Optional)</Text>
+          <View style={[styles.section, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Location (Optional)</Text>
 
             <FormInput
               name="address_line1"
@@ -534,9 +537,9 @@ export function RequestGroupScreen() {
             />
 
             {hasAddressWithoutZip && (
-              <View style={styles.locationWarning}>
-                <Ionicons name="warning" size={20} color="#F59E0B" />
-                <Text style={styles.locationWarningText}>
+              <View style={[styles.locationWarning, { backgroundColor: isDark ? '#332b00' : '#FEF3C7' }]}>
+                <Ionicons name="warning" size={20} color={colors.warning} />
+                <Text style={[styles.locationWarningText, { color: isDark ? '#FFD60A' : '#92400E' }]}>
                   Add a valid ZIP code so your group appears on the map
                 </Text>
               </View>
@@ -544,8 +547,8 @@ export function RequestGroupScreen() {
           </View>
 
           {/* Meeting Schedule Section */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Meeting Schedule (Optional)</Text>
+          <View style={[styles.section, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Meeting Schedule (Optional)</Text>
 
             <Controller
               name="proposed_start_day"
@@ -645,7 +648,6 @@ export function RequestGroupScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F5F5F5",
   },
   header: {
     flexDirection: "row",
@@ -653,9 +655,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#E5E5E5",
   },
   backButton: {
     padding: 8,
@@ -663,7 +663,6 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#000",
   },
   headerRight: {
     width: 40,
@@ -678,7 +677,6 @@ const styles = StyleSheet.create({
   infoBanner: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#EFF6FF",
     borderRadius: 12,
     padding: 16,
     marginBottom: 16,
@@ -687,13 +685,11 @@ const styles = StyleSheet.create({
   infoBannerText: {
     flex: 1,
     fontSize: 14,
-    color: "#1E40AF",
     lineHeight: 20,
   },
   warningBanner: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#FEF3C7",
     borderRadius: 12,
     padding: 16,
     marginBottom: 16,
@@ -702,12 +698,10 @@ const styles = StyleSheet.create({
   warningBannerText: {
     flex: 1,
     fontSize: 14,
-    color: "#92400E",
     lineHeight: 20,
     fontWeight: "500",
   },
   section: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 20,
     marginBottom: 16,
@@ -727,17 +721,14 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 20,
   },
   sectionDescription: {
     fontSize: 14,
-    color: "#666",
     marginTop: -12,
     marginBottom: 16,
   },
   groupTypeDescription: {
-    backgroundColor: "#F0FDF4",
     borderRadius: 8,
     padding: 12,
     marginBottom: 16,
@@ -745,7 +736,6 @@ const styles = StyleSheet.create({
   },
   groupTypeDescriptionText: {
     fontSize: 14,
-    color: "#166534",
     lineHeight: 20,
   },
   textArea: {
@@ -765,7 +755,6 @@ const styles = StyleSheet.create({
   searchContainer: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#F5F5F5",
     borderRadius: 10,
     paddingHorizontal: 12,
     marginBottom: 12,
@@ -777,7 +766,6 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 12,
     fontSize: 16,
-    color: "#333",
   },
   clearButton: {
     padding: 4,
@@ -791,7 +779,6 @@ const styles = StyleSheet.create({
   searchingText: {
     marginLeft: 8,
     fontSize: 14,
-    color: "#666",
   },
   searchResults: {
     marginBottom: 16,
@@ -799,7 +786,6 @@ const styles = StyleSheet.create({
   searchResultCard: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#F9F9F9",
     borderRadius: 10,
     padding: 12,
     marginBottom: 8,
@@ -808,7 +794,6 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: "#E5E5E5",
     justifyContent: "center",
     alignItems: "center",
     marginRight: 12,
@@ -821,7 +806,6 @@ const styles = StyleSheet.create({
   leaderAvatarText: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#666",
   },
   leaderInfo: {
     flex: 1,
@@ -829,11 +813,9 @@ const styles = StyleSheet.create({
   leaderName: {
     fontSize: 16,
     fontWeight: "500",
-    color: "#333",
   },
   noResultsText: {
     fontSize: 14,
-    color: "#666",
     textAlign: "center",
     paddingVertical: 12,
   },
@@ -843,13 +825,11 @@ const styles = StyleSheet.create({
   selectedLeadersLabel: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 12,
   },
   selectedLeaderCard: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#E8F4FD",
     borderRadius: 10,
     padding: 12,
     marginBottom: 8,
@@ -857,7 +837,6 @@ const styles = StyleSheet.create({
   locationWarning: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#FEF3C7",
     borderRadius: 8,
     padding: 12,
     marginTop: 12,
@@ -866,6 +845,5 @@ const styles = StyleSheet.create({
   locationWarningText: {
     flex: 1,
     fontSize: 14,
-    color: "#92400E",
   },
 });

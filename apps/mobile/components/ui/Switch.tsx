@@ -8,6 +8,7 @@ import {
   Platform,
 } from 'react-native';
 import { DEFAULT_PRIMARY_COLOR } from '@utils/styles';
+import { useTheme } from '@hooks/useTheme';
 
 interface SwitchProps {
   value: boolean;
@@ -27,9 +28,12 @@ export function Switch({
   disabled = false,
   style,
   labelStyle,
-  trackColor = { false: '#e0e0e0', true: DEFAULT_PRIMARY_COLOR },
-  thumbColor = { false: '#fff', true: '#fff' },
+  trackColor: trackColorProp,
+  thumbColor: thumbColorProp,
 }: SwitchProps) {
+  const { colors } = useTheme();
+  const trackColor = trackColorProp ?? { false: colors.border, true: DEFAULT_PRIMARY_COLOR };
+  const thumbColor = thumbColorProp ?? { false: colors.surface, true: colors.surface };
   const animatedValue = React.useRef(new Animated.Value(value ? 1 : 0)).current;
 
   useEffect(() => {
@@ -59,7 +63,7 @@ export function Switch({
   return (
     <View style={[styles.container, style]}>
       {label && (
-        <Text style={[styles.label, labelStyle]}>{label}</Text>
+        <Text style={[styles.label, { color: colors.text }, labelStyle]}>{label}</Text>
       )}
       <TouchableOpacity
         onPress={handlePress}
@@ -99,7 +103,6 @@ const styles = StyleSheet.create({
   },
   label: {
     fontSize: 16,
-    color: '#333',
     fontWeight: '500',
     flex: 1,
     marginRight: 12,

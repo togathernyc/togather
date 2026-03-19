@@ -11,6 +11,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { ProgrammaticTextInput } from "@components/ui";
 import { CommunitySearchResult } from "../types";
+import { useTheme } from "@hooks/useTheme";
 
 interface CommunitySearchProps {
   query: string;
@@ -23,9 +24,10 @@ interface CommunitySearchProps {
 
 // Search icon component
 function CommunitySearchIcon() {
+  const { colors } = useTheme();
   return (
     <View style={styles.iconWrapper}>
-      <Ionicons name="search" size={120} color="#000" />
+      <Ionicons name="search" size={120} color={colors.text} />
     </View>
   );
 }
@@ -38,19 +40,21 @@ export function CommunitySearch({
   onSelect,
   onSignUp,
 }: CommunitySearchProps) {
+  const { colors } = useTheme();
+
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.surface }]}>
       {/* Togather branding at top */}
-      <Text style={styles.brandTitle}>Togather</Text>
+      <Text style={[styles.brandTitle, { color: colors.text }]}>Togather</Text>
 
       {/* Large icon in the middle */}
       <CommunitySearchIcon />
 
       {/* Welcome heading */}
-      <Text style={styles.welcomeTitle}>Welcome!</Text>
+      <Text style={[styles.welcomeTitle, { color: colors.text }]}>Welcome!</Text>
 
       {/* Description text */}
-      <Text style={styles.description}>
+      <Text style={[styles.description, { color: colors.text }]}>
         Find your community to login and join your community
       </Text>
 
@@ -92,16 +96,16 @@ export function CommunitySearch({
 
       {results.length > 0 && (
         <View style={styles.resultsContainer}>
-          <Text style={styles.resultsLabel}>Select your community:</Text>
+          <Text style={[styles.resultsLabel, { color: colors.text }]}>Select your community:</Text>
           {results.map((item) => (
             <TouchableOpacity
               key={String(item.id)}
-              style={styles.communityResultItem}
+              style={[styles.communityResultItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
               onPress={() => onSelect(item)}
             >
-              <Text style={styles.communityResultName}>{item.name}</Text>
+              <Text style={[styles.communityResultName, { color: colors.text }]}>{item.name}</Text>
               {item.subdomain && (
-                <Text style={styles.communityResultSubdomain}>
+                <Text style={[styles.communityResultSubdomain, { color: colors.textSecondary }]}>
                   {item.subdomain}
                 </Text>
               )}
@@ -111,7 +115,7 @@ export function CommunitySearch({
       )}
 
       {query.length >= 2 && results.length === 0 && !searching && (
-        <Text style={styles.noResults}>
+        <Text style={[styles.noResults, { color: colors.textSecondary }]}>
           No communities found. Try a different search.
         </Text>
       )}
@@ -126,7 +130,6 @@ const styles = StyleSheet.create({
     maxWidth: 500,
     alignSelf: "center",
     width: "100%",
-    backgroundColor: "#fff",
   },
   brandTitle: {
     fontSize: 20,
@@ -134,7 +137,6 @@ const styles = StyleSheet.create({
     marginTop: 20,
     marginBottom: 40,
     textAlign: "center",
-    color: "#333",
   },
   iconWrapper: {
     alignItems: "center",
@@ -146,11 +148,9 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     marginBottom: 12,
     textAlign: "center",
-    color: "#000",
   },
   description: {
     fontSize: 16,
-    color: "#333",
     marginBottom: 32,
     textAlign: "center",
     lineHeight: 22,
@@ -172,7 +172,6 @@ const styles = StyleSheet.create({
   searchInput: {
     flex: 1,
     fontSize: 16,
-    color: "#fff",
     padding: 0,
   },
   searchLoader: {
@@ -185,29 +184,23 @@ const styles = StyleSheet.create({
   resultsLabel: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 12,
   },
   communityResultItem: {
-    backgroundColor: "#f5f5f5",
     padding: 16,
     borderRadius: 8,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: "#e0e0e0",
   },
   communityResultName: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 4,
   },
   communityResultSubdomain: {
     fontSize: 14,
-    color: "#666",
   },
   noResults: {
-    color: "#666",
     fontSize: 14,
     textAlign: "center",
     marginTop: 16,
@@ -218,7 +211,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   linkText: {
-    color: "#007AFF",
     fontSize: 14,
   },
 });

@@ -17,8 +17,10 @@ import { useQuery, api, Id } from "@services/api/convex";
 import { useAttendanceReport } from "../hooks/useAttendanceReport";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { DragHandle } from "@components/ui/DragHandle";
+import { useTheme } from "@hooks/useTheme";
 
 export function AttendanceScreen() {
+  const { colors } = useTheme();
   // NOTE: group_id is expected to be a Convex Id<"groups"> passed from navigation.
   // The leader-tools routes should only receive Convex IDs, not legacy UUIDs.
   const { group_id, eventDate: queryEventDate } = useLocalSearchParams<{
@@ -91,11 +93,11 @@ export function AttendanceScreen() {
   if (isLoadingGroup) {
     return (
       <UserRoute>
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
           <DragHandle />
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" />
-            <Text style={styles.loadingText}>Loading...</Text>
+            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading...</Text>
           </View>
         </View>
       </UserRoute>
@@ -105,12 +107,12 @@ export function AttendanceScreen() {
   if (groupError || !group) {
     return (
       <UserRoute>
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
           <DragHandle />
           <View style={styles.errorContainer}>
-            <Text style={styles.errorText}>Group not found</Text>
+            <Text style={[styles.errorText, { color: colors.textSecondary }]}>Group not found</Text>
             <TouchableOpacity
-              style={styles.errorBackButton}
+              style={[styles.errorBackButton, { backgroundColor: colors.border }]}
               onPress={() => {
                 if (router.canGoBack()) {
                   router.back();
@@ -119,7 +121,7 @@ export function AttendanceScreen() {
                 }
               }}
             >
-              <Text style={styles.errorText}>Go Back</Text>
+              <Text style={[styles.errorText, { color: colors.textSecondary }]}>Go Back</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -131,13 +133,13 @@ export function AttendanceScreen() {
   // Users can select any date to take attendance or modify RSVPs
   return (
     <UserRoute>
-      <View style={styles.container}>
+      <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
         <DragHandle />
-        <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
+        <View style={[styles.header, { paddingTop: insets.top + 16, backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
           <TouchableOpacity style={styles.backButton} onPress={handleBack}>
-            <Ionicons name="arrow-back" size={24} color="#333" />
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Attendance</Text>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Attendance</Text>
         </View>
 
         <ScrollView
@@ -169,7 +171,7 @@ export function AttendanceScreen() {
             />
           ) : (
             <View style={styles.emptyState}>
-              <Text style={styles.emptyStateText}>
+              <Text style={[styles.emptyStateText, { color: colors.textSecondary }]}>
                 Select an event to view attendance
               </Text>
             </View>
@@ -183,15 +185,12 @@ export function AttendanceScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f5f5f5",
   },
   header: {
     flexDirection: "row",
     alignItems: "center",
     padding: 16,
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   backButton: {
     marginRight: 12,
@@ -200,7 +199,6 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 20,
     fontWeight: "bold",
-    color: "#333",
   },
   scrollView: {
     flex: 1,
@@ -216,7 +214,6 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 12,
     fontSize: 16,
-    color: "#666",
   },
   errorContainer: {
     flex: 1,
@@ -226,12 +223,10 @@ const styles = StyleSheet.create({
   },
   errorText: {
     fontSize: 18,
-    color: "#666",
     marginBottom: 20,
   },
   errorBackButton: {
     padding: 12,
-    backgroundColor: "#e0e0e0",
     borderRadius: 8,
   },
   emptyState: {
@@ -243,12 +238,10 @@ const styles = StyleSheet.create({
   emptyStateTitle: {
     fontSize: 20,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 8,
   },
   emptyStateText: {
     fontSize: 16,
-    color: "#666",
     textAlign: "center",
     marginBottom: 24,
   },
@@ -259,7 +252,6 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   createEventButtonText: {
-    color: "#fff",
     fontSize: 16,
     fontWeight: "600",
   },

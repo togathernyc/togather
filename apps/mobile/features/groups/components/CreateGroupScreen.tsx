@@ -41,6 +41,7 @@ import type { CommunityMember } from "@/types/community";
 import { validateZipCode, normalizeZipCode } from "../utils/geocodeLocation";
 import { useQuery, useAuthenticatedMutation, useAuthenticatedAction, api } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
+import { useTheme } from "@hooks/useTheme";
 import type { Id } from "@services/api/convex";
 
 // Validation schema for group creation form
@@ -79,6 +80,7 @@ export function CreateGroupScreen() {
   const insets = useSafeAreaInsets();
   const { createGroupAsync, isCreating } = useCreateGroup();
   const { user, community } = useAuth();
+  const { colors, isDark } = useTheme();
   const [selectedImageUri, setSelectedImageUri] = useState<string | null>(null);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
 
@@ -292,16 +294,16 @@ export function CreateGroupScreen() {
 
   return (
     <UserRoute>
-      <View style={[styles.container, { paddingTop: insets.top }]}>
+      <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.backgroundSecondary }]}>
         {/* Header */}
-        <View style={styles.header}>
+        <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
           <TouchableOpacity
             onPress={() => router.back()}
             style={styles.backButton}
           >
-            <Ionicons name="arrow-back" size={24} color="#000" />
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Create Group</Text>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Create Group</Text>
           <View style={styles.headerRight} />
         </View>
 
@@ -312,12 +314,12 @@ export function CreateGroupScreen() {
           keyboardShouldPersistTaps="handled"
         >
           {/* Basic Information Section */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Basic Information</Text>
+          <View style={[styles.section, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Basic Information</Text>
 
             {/* Group Picture Upload */}
             <View style={styles.imagePickerContainer}>
-              <Text style={styles.imagePickerLabel}>Group Picture</Text>
+              <Text style={[styles.imagePickerLabel, { color: colors.text }]}>Group Picture</Text>
               <ImagePicker
                 onImageSelected={handleImageSelected}
                 onImageRemoved={handleImageRemoved}
@@ -381,9 +383,9 @@ export function CreateGroupScreen() {
           </View>
 
           {/* Members Section */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Members</Text>
-            <Text style={styles.sectionDescription}>
+          <View style={[styles.section, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Members</Text>
+            <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>
               Search and add members to this group
             </Text>
 
@@ -403,28 +405,28 @@ export function CreateGroupScreen() {
             {/* Selected Members */}
             {selectedMembers.length > 0 && (
               <View style={styles.selectedMembersContainer}>
-                <Text style={styles.selectedMembersLabel}>
+                <Text style={[styles.selectedMembersLabel, { color: colors.text }]}>
                   Selected Members ({selectedMembers.length})
                 </Text>
                 {selectedMembers.map((member) => (
-                  <View key={member.user_id} style={styles.selectedMemberCard}>
-                    <View style={styles.memberAvatar}>
+                  <View key={member.user_id} style={[styles.selectedMemberCard, { backgroundColor: isDark ? '#1a2730' : '#E8F4FD' }]}>
+                    <View style={[styles.memberAvatar, { backgroundColor: colors.border }]}>
                       {member.profile_photo ? (
                         <Image
                           source={{ uri: member.profile_photo }}
                           style={styles.memberAvatarImage}
                         />
                       ) : (
-                        <Text style={styles.memberAvatarText}>
+                        <Text style={[styles.memberAvatarText, { color: colors.textSecondary }]}>
                           {getInitials(member.first_name, member.last_name)}
                         </Text>
                       )}
                     </View>
                     <View style={styles.memberInfo}>
-                      <Text style={styles.memberName}>
+                      <Text style={[styles.memberName, { color: colors.text }]}>
                         {member.first_name} {member.last_name}
                       </Text>
-                      <Text style={styles.memberEmail}>{member.email}</Text>
+                      <Text style={[styles.memberEmail, { color: colors.textSecondary }]}>{member.email}</Text>
                     </View>
                     <TouchableOpacity
                       onPress={() => handleRemoveMember(member.user_id)}
@@ -433,7 +435,7 @@ export function CreateGroupScreen() {
                       <Ionicons
                         name="close-circle"
                         size={24}
-                        color="#FF3B30"
+                        color={colors.destructive}
                       />
                     </TouchableOpacity>
                   </View>
@@ -443,8 +445,8 @@ export function CreateGroupScreen() {
           </View>
 
           {/* Location Section */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Location</Text>
+          <View style={[styles.section, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Location</Text>
 
             <FormInput
               name="address_line1"
@@ -493,9 +495,9 @@ export function CreateGroupScreen() {
 
             {/* Geocoding warning */}
             {hasAddressWithoutZip && (
-              <View style={styles.locationWarning}>
-                <Ionicons name="warning" size={20} color="#F59E0B" />
-                <Text style={styles.locationWarningText}>
+              <View style={[styles.locationWarning, { backgroundColor: isDark ? '#332b00' : '#FEF3C7' }]}>
+                <Ionicons name="warning" size={20} color={colors.warning} />
+                <Text style={[styles.locationWarningText, { color: isDark ? '#FFD60A' : '#92400E' }]}>
                   Add a valid ZIP code so this group appears on the map
                 </Text>
               </View>
@@ -503,8 +505,8 @@ export function CreateGroupScreen() {
           </View>
 
           {/* Meeting Schedule Section */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Meeting Schedule</Text>
+          <View style={[styles.section, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Meeting Schedule</Text>
 
             <Controller
               name="default_day"
@@ -668,7 +670,6 @@ export function CreateGroupScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F5F5F5",
   },
   header: {
     flexDirection: "row",
@@ -676,9 +677,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#E5E5E5",
   },
   backButton: {
     padding: 8,
@@ -686,7 +685,6 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#000",
   },
   headerRight: {
     width: 40,
@@ -699,7 +697,6 @@ const styles = StyleSheet.create({
     paddingBottom: 32,
   },
   section: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 20,
     marginBottom: 16,
@@ -719,12 +716,10 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 20,
   },
   sectionDescription: {
     fontSize: 14,
-    color: "#666",
     marginTop: -12,
     marginBottom: 16,
   },
@@ -748,7 +743,6 @@ const styles = StyleSheet.create({
   imagePickerLabel: {
     fontSize: 16,
     fontWeight: "500",
-    color: "#333",
     marginBottom: 8,
   },
   // Member search styles
@@ -760,7 +754,6 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: "#E5E5E5",
     justifyContent: "center",
     alignItems: "center",
     marginRight: 12,
@@ -773,7 +766,6 @@ const styles = StyleSheet.create({
   memberAvatarText: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#666",
   },
   memberInfo: {
     flex: 1,
@@ -781,12 +773,10 @@ const styles = StyleSheet.create({
   memberName: {
     fontSize: 16,
     fontWeight: "500",
-    color: "#333",
     marginBottom: 2,
   },
   memberEmail: {
     fontSize: 14,
-    color: "#666",
   },
   selectedMembersContainer: {
     marginTop: 8,
@@ -794,13 +784,11 @@ const styles = StyleSheet.create({
   selectedMembersLabel: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 12,
   },
   selectedMemberCard: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#E8F4FD",
     borderRadius: 10,
     padding: 12,
     marginBottom: 8,
@@ -808,7 +796,6 @@ const styles = StyleSheet.create({
   locationWarning: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#FEF3C7",
     borderRadius: 8,
     padding: 12,
     marginTop: 12,
@@ -817,6 +804,5 @@ const styles = StyleSheet.create({
   locationWarningText: {
     flex: 1,
     fontSize: 14,
-    color: "#92400E",
   },
 });

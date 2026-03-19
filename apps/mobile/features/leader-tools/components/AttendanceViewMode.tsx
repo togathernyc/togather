@@ -3,6 +3,7 @@ import { View, Text, StyleSheet } from "react-native";
 import { format } from "date-fns";
 import { MemberItem } from "./MemberItem";
 import { Ionicons } from "@expo/vector-icons";
+import { useTheme } from "@hooks/useTheme";
 
 interface AttendanceViewModeProps {
   isFutureEvent: boolean;
@@ -27,17 +28,18 @@ export function AttendanceViewMode({
   submittedDate,
   submittedBy,
 }: AttendanceViewModeProps) {
+  const { colors } = useTheme();
   if (isFutureEvent) {
     return (
       <View style={styles.statsSection}>
-        <View style={styles.messageContainer}>
+        <View style={[styles.messageContainer, { backgroundColor: colors.surfaceSecondary }]}>
           <Ionicons
             name="time-outline"
             size={24}
-            color="#666"
+            color={colors.textSecondary}
             style={styles.messageIcon}
           />
-          <Text style={styles.messageText}>
+          <Text style={[styles.messageText, { color: colors.textSecondary }]}>
             Wait until the day of the event or after to take attendance
           </Text>
         </View>
@@ -67,44 +69,44 @@ export function AttendanceViewMode({
     <>
       {/* Attendance Stats for Past Events */}
       <View style={styles.statsSection}>
-        <Text style={styles.sectionLabel}>Attendance</Text>
+        <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Attendance</Text>
         {submittedDate && (
           <>
-            <Text style={styles.submittedText}>
+            <Text style={[styles.submittedText, { color: colors.textSecondary }]}>
               Submitted on {format(new Date(submittedDate), "MMM dd, yyyy")}
             </Text>
             {submittedBy && (
-              <Text style={styles.submittedText}>
+              <Text style={[styles.submittedText, { color: colors.textSecondary }]}>
                 By {submittedBy.first_name} {submittedBy.last_name}
               </Text>
             )}
           </>
         )}
-        <View style={styles.noteContainer}>
-          <Text style={styles.noteText}>{report?.note || "No note"}</Text>
+        <View style={[styles.noteContainer, { backgroundColor: colors.surfaceSecondary }]}>
+          <Text style={[styles.noteText, { color: colors.textSecondary }]}>{report?.note || "No note"}</Text>
         </View>
 
         {/* Stats Cards */}
         <View style={styles.statsCards}>
-          <View style={styles.statCard}>
-            <Text style={styles.statCardTitle}>Attended</Text>
-            <Text style={styles.statCardValue}>{totalAttended}</Text>
-            <Text style={styles.statCardSubtitle}>
+          <View style={[styles.statCard, { backgroundColor: colors.surfaceSecondary }]}>
+            <Text style={[styles.statCardTitle, { color: colors.textSecondary }]}>Attended</Text>
+            <Text style={[styles.statCardValue, { color: colors.text }]}>{totalAttended}</Text>
+            <Text style={[styles.statCardSubtitle, { color: colors.textTertiary }]}>
               {memberCount} members, {guestCount} guests
             </Text>
           </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statCardTitle}>Change</Text>
+          <View style={[styles.statCard, { backgroundColor: colors.surfaceSecondary }]}>
+            <Text style={[styles.statCardTitle, { color: colors.textSecondary }]}>Change</Text>
             <Text
               style={[
                 styles.statCardValue,
                 {
                   color:
                     (report?.stats?.prev_diff || 0) > 0
-                      ? "#66D440"
+                      ? colors.success
                       : (report?.stats?.prev_diff || 0) < 0
-                        ? "#F56848"
-                        : "#333",
+                        ? colors.destructive
+                        : colors.text,
                 },
               ]}
             >
@@ -117,17 +119,17 @@ export function AttendanceViewMode({
       {/* Guests Section */}
       {guestList.length > 0 && (
         <View style={styles.attendedSection}>
-          <Text style={styles.sectionLabel}>Guests</Text>
+          <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Guests</Text>
           <View style={styles.membersList}>
             {/* Anonymous Guests Summary Card */}
             {anonymousGuests.length > 0 && (
-              <View style={styles.guestCard}>
-                <View style={styles.guestIconContainer}>
-                  <Ionicons name="people" size={20} color="#666" />
+              <View style={[styles.guestCard, { backgroundColor: colors.surfaceSecondary }]}>
+                <View style={[styles.guestIconContainer, { backgroundColor: colors.border }]}>
+                  <Ionicons name="people" size={20} color={colors.textSecondary} />
                 </View>
                 <View style={styles.guestInfo}>
-                  <Text style={styles.guestName}>Anonymous Guests</Text>
-                  <Text style={styles.guestDetail}>
+                  <Text style={[styles.guestName, { color: colors.text }]}>Anonymous Guests</Text>
+                  <Text style={[styles.guestDetail, { color: colors.textSecondary }]}>
                     {anonymousGuests.length} guest
                     {anonymousGuests.length !== 1 ? "s" : ""}
                   </Text>
@@ -137,19 +139,19 @@ export function AttendanceViewMode({
 
             {/* Named Guests Individual Cards */}
             {namedGuests.map((guest: any) => (
-              <View key={guest.id} style={styles.guestCard}>
-                <View style={styles.guestIconContainer}>
-                  <Ionicons name="person" size={20} color="#666" />
+              <View key={guest.id} style={[styles.guestCard, { backgroundColor: colors.surfaceSecondary }]}>
+                <View style={[styles.guestIconContainer, { backgroundColor: colors.border }]}>
+                  <Ionicons name="person" size={20} color={colors.textSecondary} />
                 </View>
                 <View style={styles.guestInfo}>
-                  <Text style={styles.guestName}>
+                  <Text style={[styles.guestName, { color: colors.text }]}>
                     {guest.first_name} {guest.last_name || ""}
                   </Text>
                   {guest.phone_number && (
-                    <Text style={styles.guestDetail}>{guest.phone_number}</Text>
+                    <Text style={[styles.guestDetail, { color: colors.textSecondary }]}>{guest.phone_number}</Text>
                   )}
                   {guest.notes && (
-                    <Text style={styles.guestDetail}>{guest.notes}</Text>
+                    <Text style={[styles.guestDetail, { color: colors.textSecondary }]}>{guest.notes}</Text>
                   )}
                 </View>
               </View>
@@ -160,7 +162,7 @@ export function AttendanceViewMode({
 
       {/* Attended Members List */}
       <View style={styles.attendedSection}>
-        <Text style={styles.sectionLabel}>Members</Text>
+        <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Members</Text>
         <View style={styles.membersList}>
           {attendedMembers.length > 0 ? (
             attendedMembers.map((member: any) => (
@@ -180,7 +182,7 @@ export function AttendanceViewMode({
             ))
           ) : (
             <View style={styles.emptyState}>
-              <Text style={styles.emptyStateText}>No members attended</Text>
+              <Text style={[styles.emptyStateText, { color: colors.textTertiary }]}>No members attended</Text>
             </View>
           )}
         </View>
@@ -196,7 +198,6 @@ const styles = StyleSheet.create({
   sectionLabel: {
     fontSize: 12,
     fontWeight: "600",
-    color: "#666",
     marginBottom: 8,
     textTransform: "uppercase",
   },
@@ -207,7 +208,6 @@ const styles = StyleSheet.create({
   },
   projectedStatItem: {
     alignItems: "center",
-    backgroundColor: "#f5f5f5",
     borderRadius: 8,
     padding: 16,
     minWidth: 100,
@@ -215,34 +215,28 @@ const styles = StyleSheet.create({
   projectedStatValue: {
     fontSize: 32,
     fontWeight: "bold",
-    color: "#333",
     marginBottom: 4,
   },
   projectedStatLabel: {
     fontSize: 14,
-    color: "#666",
     fontWeight: "500",
   },
   projectedNote: {
     fontSize: 12,
-    color: "#999",
     marginTop: 8,
     fontStyle: "italic",
   },
   submittedText: {
     fontSize: 14,
-    color: "#666",
     marginTop: 8,
   },
   noteContainer: {
-    backgroundColor: "#f5f5f5",
     borderRadius: 8,
     padding: 12,
     marginTop: 8,
   },
   noteText: {
     fontSize: 14,
-    color: "#666",
   },
   statsCards: {
     flexDirection: "row",
@@ -251,24 +245,20 @@ const styles = StyleSheet.create({
   },
   statCard: {
     flex: 1,
-    backgroundColor: "#f5f5f5",
     borderRadius: 8,
     padding: 16,
   },
   statCardTitle: {
     fontSize: 12,
     fontWeight: "600",
-    color: "#666",
     marginBottom: 8,
   },
   statCardValue: {
     fontSize: 24,
     fontWeight: "bold",
-    color: "#333",
   },
   statCardSubtitle: {
     fontSize: 11,
-    color: "#999",
     marginTop: 4,
   },
   guestCard: {
@@ -276,7 +266,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: 12,
     paddingHorizontal: 8,
-    backgroundColor: "#f9f9f9",
     borderRadius: 8,
     marginBottom: 8,
   },
@@ -284,7 +273,6 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: "#e0e0e0",
     alignItems: "center",
     justifyContent: "center",
     marginRight: 12,
@@ -295,11 +283,9 @@ const styles = StyleSheet.create({
   guestName: {
     fontSize: 15,
     fontWeight: "500",
-    color: "#333",
   },
   guestDetail: {
     fontSize: 13,
-    color: "#666",
     marginTop: 2,
   },
   attendedSection: {
@@ -314,10 +300,8 @@ const styles = StyleSheet.create({
   },
   emptyStateText: {
     fontSize: 14,
-    color: "#999",
   },
   messageContainer: {
-    backgroundColor: "#f5f5f5",
     borderRadius: 8,
     padding: 20,
     alignItems: "center",
@@ -329,7 +313,6 @@ const styles = StyleSheet.create({
   },
   messageText: {
     fontSize: 14,
-    color: "#666",
     textAlign: "center",
     lineHeight: 20,
   },

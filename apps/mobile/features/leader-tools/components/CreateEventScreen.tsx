@@ -32,12 +32,12 @@ import { useLeaderGroups } from "../../explore/hooks/useCommunityEvents";
 import { ShareToChatModal } from "./ShareToChatModal";
 import { ConfirmModal } from "@components/ui/ConfirmModal";
 import { getGroupCoordinates, geocodeAddressAsync } from "../../groups/utils/geocodeLocation";
-import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useAuth } from "@providers/AuthProvider";
 import { formatError } from "@/utils/error-handling";
 import { useGroupTypes } from "../../admin/hooks/useGroupTypes";
 import { DragHandle } from "@components/ui/DragHandle";
+import { useTheme } from "@hooks/useTheme";
 
 interface CreateMeetingInput {
   scheduledAt: string;
@@ -53,6 +53,7 @@ interface CreateMeetingInput {
 }
 
 export function CreateEventScreen() {
+  const { colors } = useTheme();
   // All hooks must be called at the top level, before any early returns
   const { group_id, event_id: eventIdParam, hostingGroupId } = useLocalSearchParams<{
     group_id?: string;
@@ -668,22 +669,22 @@ export function CreateEventScreen() {
   if (isEditMode && isLoadingMeeting) {
     return (
       <UserRoute>
-        <View style={[styles.container, { paddingTop: insets.top + 16 }]}>
+        <View style={[styles.container, { paddingTop: insets.top + 16, backgroundColor: colors.backgroundSecondary }]}>
           <DragHandle />
-          <View style={styles.header}>
+          <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
             <TouchableOpacity
               style={styles.backButton}
               onPress={() => router.back()}
             >
-              <Ionicons name="arrow-back" size={24} color="#333" />
+              <Ionicons name="arrow-back" size={24} color={colors.text} />
             </TouchableOpacity>
             <View style={styles.headerContent}>
-              <Text style={styles.headerTitle}>Edit Event</Text>
+              <Text style={[styles.headerTitle, { color: colors.text }]}>Edit Event</Text>
             </View>
           </View>
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={primaryColor} />
-            <Text style={styles.loadingText}>Loading event details...</Text>
+            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading event details...</Text>
           </View>
         </View>
       </UserRoute>
@@ -694,26 +695,26 @@ export function CreateEventScreen() {
   if (isEditMode && !meeting && !isLoadingMeeting) {
     return (
       <UserRoute>
-        <View style={[styles.container, { paddingTop: insets.top + 16 }]}>
+        <View style={[styles.container, { paddingTop: insets.top + 16, backgroundColor: colors.backgroundSecondary }]}>
           <DragHandle />
-          <View style={styles.header}>
+          <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
             <TouchableOpacity
               style={styles.backButton}
               onPress={() => router.back()}
             >
-              <Ionicons name="arrow-back" size={24} color="#333" />
+              <Ionicons name="arrow-back" size={24} color={colors.text} />
             </TouchableOpacity>
             <View style={styles.headerContent}>
-              <Text style={styles.headerTitle}>Edit Event</Text>
+              <Text style={[styles.headerTitle, { color: colors.text }]}>Edit Event</Text>
             </View>
           </View>
           <View style={styles.errorContainer}>
-            <Text style={styles.errorText}>Event not found</Text>
+            <Text style={[styles.errorText, { color: colors.textSecondary }]}>Event not found</Text>
             <TouchableOpacity
-              style={styles.backButtonError}
+              style={[styles.backButtonError, { backgroundColor: primaryColor }]}
               onPress={() => router.back()}
             >
-              <Text style={styles.backButtonErrorText}>Go Back</Text>
+              <Text style={[styles.backButtonErrorText, { color: '#fff' }]}>Go Back</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -724,22 +725,22 @@ export function CreateEventScreen() {
   return (
     <UserRoute>
       <KeyboardAvoidingView
-        style={styles.container}
+        style={[styles.container, { backgroundColor: colors.backgroundSecondary }]}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
         <DragHandle />
         {/* Header */}
-        <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
+        <View style={[styles.header, { paddingTop: insets.top + 16, backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
           <TouchableOpacity
             testID="back-button"
             style={styles.backButton}
             onPress={() => router.back()}
             disabled={isSubmitting}
           >
-            <Ionicons name="arrow-back" size={24} color="#333" />
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
           <View style={styles.headerContent}>
-            <Text style={styles.headerTitle}>
+            <Text style={[styles.headerTitle, { color: colors.text }]}>
               {isEditMode ? "Edit Event" : "Create Event"}
             </Text>
           </View>
@@ -756,7 +757,7 @@ export function CreateEventScreen() {
             <View style={styles.communityWideSection}>
               <View style={styles.communityWideToggleRow}>
                 <View style={styles.communityWideToggleLabel}>
-                  <Text style={styles.label}>Create for all</Text>
+                  <Text style={[styles.label, { color: colors.text }]}>Create for all</Text>
                 </View>
                 <Switch
                   value={isCommunityWideEnabled}
@@ -772,8 +773,8 @@ export function CreateEventScreen() {
                     }
                     setErrors({});
                   }}
-                  trackColor={{ false: "#e0e0e0", true: primaryColor }}
-                  thumbColor="#fff"
+                  trackColor={{ false: colors.border, true: primaryColor }}
+                  thumbColor={colors.textInverse}
                   disabled={isSubmitting}
                 />
               </View>
@@ -782,9 +783,9 @@ export function CreateEventScreen() {
               {isCommunityWideEnabled && (
                 <View style={styles.groupTypeSelector}>
                   {isLoadingGroupTypes ? (
-                    <View style={styles.loadingDropdown}>
+                    <View style={[styles.loadingDropdown, { backgroundColor: colors.surfaceSecondary }]}>
                       <ActivityIndicator size="small" color={primaryColor} />
-                      <Text style={styles.loadingDropdownText}>Loading group types...</Text>
+                      <Text style={[styles.loadingDropdownText, { color: colors.textSecondary }]}>Loading group types...</Text>
                     </View>
                   ) : !groupTypes || groupTypes.length === 0 ? (
                     <View style={styles.noGroupsContainer}>
@@ -797,30 +798,32 @@ export function CreateEventScreen() {
                       <TouchableOpacity
                         style={[
                           styles.dropdownButton,
+                          { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground },
                           errors.groupType && styles.dropdownButtonError,
                         ]}
                         onPress={() => setIsGroupTypeDropdownOpen(!isGroupTypeDropdownOpen)}
                         disabled={isSubmitting}
                       >
                         {selectedGroupType ? (
-                          <Text style={styles.selectedGroupName}>{selectedGroupType.name}</Text>
+                          <Text style={[styles.selectedGroupName, { color: colors.text }]}>{selectedGroupType.name}</Text>
                         ) : (
-                          <Text style={styles.dropdownPlaceholder}>Select group type</Text>
+                          <Text style={[styles.dropdownPlaceholder, { color: colors.inputPlaceholder }]}>Select group type</Text>
                         )}
                         <Ionicons
                           name={isGroupTypeDropdownOpen ? "chevron-up" : "chevron-down"}
                           size={20}
-                          color="#666"
+                          color={colors.textSecondary}
                         />
                       </TouchableOpacity>
                       {isGroupTypeDropdownOpen && (
-                        <View style={styles.dropdownList}>
+                        <View style={[styles.dropdownList, { borderColor: colors.inputBorder, backgroundColor: colors.surface }]}>
                           {groupTypes.map((gt) => (
                             <TouchableOpacity
                               key={gt.id}
                               style={[
                                 styles.dropdownItem,
-                                selectedGroupTypeId === gt.id && styles.dropdownItemSelected,
+                                { borderBottomColor: colors.borderLight },
+                                selectedGroupTypeId === gt.id && [styles.dropdownItemSelected, { backgroundColor: colors.selectedBackground }],
                               ]}
                               onPress={() => {
                                 setSelectedGroupTypeId(gt.id);
@@ -831,12 +834,13 @@ export function CreateEventScreen() {
                               <Text
                                 style={[
                                   styles.dropdownItemText,
-                                  selectedGroupTypeId === gt.id && styles.dropdownItemTextSelected,
+                                  { color: colors.text },
+                                  selectedGroupTypeId === gt.id && [styles.dropdownItemTextSelected, { color: primaryColor }],
                                 ]}
                               >
                                 {gt.name}
                               </Text>
-                              <Text style={styles.dropdownItemSubtext}>
+                              <Text style={[styles.dropdownItemSubtext, { color: colors.textSecondary }]}>
                                 {gt.groupCount} {gt.groupCount === 1 ? "group" : "groups"}
                               </Text>
                               {selectedGroupTypeId === gt.id && (
@@ -855,7 +859,7 @@ export function CreateEventScreen() {
                   {/* Show count of groups that will receive the event */}
                   {selectedGroupTypeId && groupCountForType !== undefined && (
                     <View style={styles.groupCountInfo}>
-                      <Ionicons name="information-circle" size={16} color="#6366F1" />
+                      <Ionicons name="information-circle" size={16} color={colors.link} />
                       <Text style={styles.groupCountText}>
                         This will create events for {groupCountForType} {selectedGroupType?.name || "group"} groups
                       </Text>
@@ -870,7 +874,7 @@ export function CreateEventScreen() {
           {isEditMode && meeting?.communityWideEventId && !meeting?.isOverridden && (
             <View style={styles.communityWideWarning}>
               <View style={styles.communityWideWarningHeader}>
-                <Ionicons name="globe-outline" size={20} color="#4338CA" />
+                <Ionicons name="globe-outline" size={20} color={colors.link} />
                 <Text style={styles.communityWideWarningTitle}>Community-wide event</Text>
               </View>
               <Text style={styles.communityWideWarningText}>
@@ -882,11 +886,11 @@ export function CreateEventScreen() {
           {/* Hosting Group Selector - only show in unified mode when NOT creating community-wide event */}
           {isUnifiedMode && !isEditMode && !isCommunityWideEnabled && (
             <View style={styles.fieldContainer}>
-              <Text style={styles.label}>Hosting Group *</Text>
+              <Text style={[styles.label, { color: colors.text }]}>Hosting Group *</Text>
               {isLoadingLeaderGroups ? (
-                <View style={styles.loadingDropdown}>
+                <View style={[styles.loadingDropdown, { backgroundColor: colors.surfaceSecondary }]}>
                   <ActivityIndicator size="small" color={primaryColor} />
-                  <Text style={styles.loadingDropdownText}>Loading groups...</Text>
+                  <Text style={[styles.loadingDropdownText, { color: colors.textSecondary }]}>Loading groups...</Text>
                 </View>
               ) : !leaderGroups || leaderGroups.length === 0 ? (
                 <View style={styles.noGroupsContainer}>
@@ -899,6 +903,7 @@ export function CreateEventScreen() {
                   <TouchableOpacity
                     style={[
                       styles.dropdownButton,
+                      { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground },
                       errors.hostingGroup && styles.dropdownButtonError,
                     ]}
                     onPress={() => setIsGroupDropdownOpen(!isGroupDropdownOpen)}
@@ -906,26 +911,27 @@ export function CreateEventScreen() {
                   >
                     {selectedGroup ? (
                       <View style={styles.selectedGroupRow}>
-                        <Text style={styles.selectedGroupName}>{selectedGroup.name}</Text>
-                        <Text style={styles.selectedGroupType}>{selectedGroup.groupTypeName}</Text>
+                        <Text style={[styles.selectedGroupName, { color: colors.text }]}>{selectedGroup.name}</Text>
+                        <Text style={[styles.selectedGroupType, { color: colors.textSecondary }]}>{selectedGroup.groupTypeName}</Text>
                       </View>
                     ) : (
-                      <Text style={styles.dropdownPlaceholder}>Select a group</Text>
+                      <Text style={[styles.dropdownPlaceholder, { color: colors.inputPlaceholder }]}>Select a group</Text>
                     )}
                     <Ionicons
                       name={isGroupDropdownOpen ? "chevron-up" : "chevron-down"}
                       size={20}
-                      color="#666"
+                      color={colors.textSecondary}
                     />
                   </TouchableOpacity>
                   {isGroupDropdownOpen && (
-                    <View style={styles.dropdownList}>
+                    <View style={[styles.dropdownList, { borderColor: colors.inputBorder, backgroundColor: colors.surface }]}>
                       {leaderGroups.filter(Boolean).map((group) => (
                         <TouchableOpacity
                           key={group!.id}
                           style={[
                             styles.dropdownItem,
-                            selectedGroupId === group!.id && styles.dropdownItemSelected,
+                            { borderBottomColor: colors.borderLight },
+                            selectedGroupId === group!.id && [styles.dropdownItemSelected, { backgroundColor: colors.selectedBackground }],
                           ]}
                           onPress={() => {
                             setSelectedGroupId(group!.id);
@@ -936,12 +942,13 @@ export function CreateEventScreen() {
                           <Text
                             style={[
                               styles.dropdownItemText,
-                              selectedGroupId === group!.id && styles.dropdownItemTextSelected,
+                              { color: colors.text },
+                              selectedGroupId === group!.id && [styles.dropdownItemTextSelected, { color: primaryColor }],
                             ]}
                           >
                             {group!.name}
                           </Text>
-                          <Text style={styles.dropdownItemSubtext}>{group!.groupTypeName}</Text>
+                          <Text style={[styles.dropdownItemSubtext, { color: colors.textSecondary }]}>{group!.groupTypeName}</Text>
                           {selectedGroupId === group!.id && (
                             <Ionicons name="checkmark" size={18} color={primaryColor} />
                           )}
@@ -970,22 +977,22 @@ export function CreateEventScreen() {
 
           {/* Title */}
           <View style={styles.fieldContainer}>
-            <Text style={styles.label}>Title</Text>
+            <Text style={[styles.label, { color: colors.text }]}>Title</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground, color: colors.text }]}
               placeholder={`e.g., "${groupTypeName}" (leave blank for default)`}
               value={title}
               onChangeText={setTitle}
               editable={!isSubmitting}
             />
-            <Text style={styles.helperText}>
+            <Text style={[styles.helperText, { color: colors.textTertiary }]}>
               Leave blank to use "{groupTypeName}" as the title
             </Text>
           </View>
 
           {/* Cover Photo */}
           <View style={styles.fieldContainer}>
-            <Text style={styles.label}>Cover Photo</Text>
+            <Text style={[styles.label, { color: colors.text }]}>Cover Photo</Text>
             <ImagePickerComponent
               currentImage={coverImage}
               onImageSelected={(uri) => {
@@ -1003,12 +1010,12 @@ export function CreateEventScreen() {
           {/* Meeting Type Toggle */}
           <View style={styles.fieldContainer}>
             <View style={styles.toggleRow}>
-              <Text style={styles.label}>Online Event</Text>
+              <Text style={[styles.label, { color: colors.text }]}>Online Event</Text>
               <Switch
                 value={isOnline}
                 onValueChange={setIsOnline}
-                trackColor={{ false: "#e0e0e0", true: primaryColor }}
-                thumbColor="#fff"
+                trackColor={{ false: colors.border, true: primaryColor }}
+                thumbColor={colors.textInverse}
                 disabled={isSubmitting}
               />
             </View>
@@ -1017,9 +1024,9 @@ export function CreateEventScreen() {
           {/* Meeting Link (only if online) */}
           {isOnline && (
             <View style={styles.fieldContainer}>
-              <Text style={styles.label}>Meeting Link</Text>
+              <Text style={[styles.label, { color: colors.text }]}>Meeting Link</Text>
               <TextInput
-                style={styles.input}
+                style={[styles.input, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground, color: colors.text }]}
                 placeholder="https://zoom.us/j/..."
                 value={meetingLink}
                 onChangeText={setMeetingLink}
@@ -1033,9 +1040,9 @@ export function CreateEventScreen() {
           {/* Location (only if in-person) */}
           {!isOnline && (
             <View style={styles.fieldContainer}>
-              <Text style={styles.label}>Location</Text>
+              <Text style={[styles.label, { color: colors.text }]}>Location</Text>
               <TextInput
-                style={styles.input}
+                style={[styles.input, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground, color: colors.text }]}
                 placeholder="Enter full address with ZIP code"
                 value={location}
                 onChangeText={setLocation}
@@ -1047,12 +1054,12 @@ export function CreateEventScreen() {
                   {isCheckingLocation && (
                     <View style={styles.locationStatus}>
                       <ActivityIndicator size="small" color={primaryColor} />
-                      <Text style={styles.locationStatusText}>Checking location...</Text>
+                      <Text style={[styles.locationStatusText, { color: colors.textSecondary }]}>Checking location...</Text>
                     </View>
                   )}
                   {!isCheckingLocation && locationCanBeGeocoded === false && (
                     <View style={styles.locationWarning}>
-                      <Ionicons name="warning" size={20} color="#F59E0B" />
+                      <Ionicons name="warning" size={20} color={colors.warning} />
                       <Text style={styles.locationWarningText}>
                         This address couldn't be found. Enter a full address with ZIP code (e.g., "123 Main St, Dallas, TX 75201") so this event appears on the map.
                       </Text>
@@ -1060,7 +1067,7 @@ export function CreateEventScreen() {
                   )}
                   {!isCheckingLocation && locationCanBeGeocoded === true && (
                     <View style={styles.locationSuccess}>
-                      <Ionicons name="checkmark-circle" size={16} color="#10B981" />
+                      <Ionicons name="checkmark-circle" size={16} color={colors.success} />
                       <Text style={styles.locationSuccessText}>Location found</Text>
                     </View>
                   )}
@@ -1071,9 +1078,9 @@ export function CreateEventScreen() {
 
           {/* Notes */}
           <View style={styles.fieldContainer}>
-            <Text style={styles.label}>Notes</Text>
+            <Text style={[styles.label, { color: colors.text }]}>Notes</Text>
             <TextInput
-              style={[styles.input, styles.textArea]}
+              style={[styles.input, styles.textArea, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground, color: colors.text }]}
               placeholder="Add any notes about this event..."
               value={note}
               onChangeText={setNote}
@@ -1086,9 +1093,9 @@ export function CreateEventScreen() {
 
           {/* RSVP Options */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>RSVP Options</Text>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>RSVP Options</Text>
             <View style={styles.toggleRow}>
-              <Text style={styles.toggleLabel}>Enable RSVPs</Text>
+              <Text style={[styles.toggleLabel, { color: colors.text }]}>Enable RSVPs</Text>
               <Switch value={rsvpEnabled} onValueChange={setRsvpEnabled} />
             </View>
             {rsvpEnabled && (
@@ -1101,7 +1108,7 @@ export function CreateEventScreen() {
 
           {/* Visibility */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Event Visibility</Text>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Event Visibility</Text>
             <VisibilitySelector value={visibility} onChange={setVisibility} />
           </View>
 
@@ -1110,13 +1117,14 @@ export function CreateEventScreen() {
             testID="submit-button"
             style={[
               styles.submitButton,
+              { backgroundColor: primaryColor },
               isSubmitting && styles.submitButtonDisabled,
             ]}
             onPress={handleSubmit}
             disabled={isSubmitting}
           >
             {isSubmitting ? (
-              <ActivityIndicator color="#fff" />
+              <ActivityIndicator color={colors.textInverse} />
             ) : (
               <Text style={styles.submitButtonText}>
                 {isEditMode ? "Save Changes" : "Create Event"}
@@ -1134,7 +1142,7 @@ export function CreateEventScreen() {
               onPress={handleCancelEvent}
               disabled={isSubmitting}
             >
-              <Ionicons name="close-circle-outline" size={20} color="#DC2626" />
+              <Ionicons name="close-circle-outline" size={20} color={colors.destructive} />
               <Text style={styles.cancelEventButtonText}>Cancel Event</Text>
             </TouchableOpacity>
           )}
@@ -1175,15 +1183,12 @@ export function CreateEventScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f5f5f5",
   },
   header: {
     flexDirection: "row",
     alignItems: "center",
     padding: 16,
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   backButton: {
     marginRight: 12,
@@ -1195,7 +1200,6 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 20,
     fontWeight: "bold",
-    color: "#333",
   },
   content: {
     flex: 1,
@@ -1210,18 +1214,14 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 8,
   },
   input: {
     borderWidth: 2,
-    borderColor: "#ecedf0",
     borderRadius: 8,
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: "#fff",
     fontSize: 16,
-    color: "#333",
   },
   textArea: {
     minHeight: 150,
@@ -1229,7 +1229,6 @@ const styles = StyleSheet.create({
   },
   helperText: {
     fontSize: 12,
-    color: "#999",
     marginTop: 4,
   },
   section: {
@@ -1238,7 +1237,6 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 12,
   },
   toggleRow: {
@@ -1249,15 +1247,12 @@ const styles = StyleSheet.create({
   },
   toggleLabel: {
     fontSize: 15,
-    color: "#333",
   },
   toggleHint: {
     fontSize: 13,
-    color: "#666",
     marginTop: 2,
   },
   submitButton: {
-    backgroundColor: DEFAULT_PRIMARY_COLOR,
     borderRadius: 8,
     paddingVertical: 16,
     alignItems: "center",
@@ -1280,7 +1275,6 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 12,
     fontSize: 16,
-    color: "#666",
   },
   errorContainer: {
     flex: 1,
@@ -1290,17 +1284,14 @@ const styles = StyleSheet.create({
   },
   errorText: {
     fontSize: 18,
-    color: "#666",
     marginBottom: 20,
   },
   backButtonError: {
-    backgroundColor: DEFAULT_PRIMARY_COLOR,
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 8,
   },
   backButtonErrorText: {
-    color: "#fff",
     fontSize: 16,
     fontWeight: "600",
   },
@@ -1309,13 +1300,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     padding: 16,
-    backgroundColor: "#f5f5f5",
     borderRadius: 8,
     gap: 12,
   },
   loadingDropdownText: {
     fontSize: 14,
-    color: "#666",
   },
   noGroupsContainer: {
     padding: 16,
@@ -1331,18 +1320,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     borderWidth: 2,
-    borderColor: "#ecedf0",
     borderRadius: 8,
     paddingHorizontal: 16,
     paddingVertical: 14,
-    backgroundColor: "#fff",
   },
   dropdownButtonError: {
     borderColor: "#DC2626",
   },
   dropdownPlaceholder: {
     fontSize: 16,
-    color: "#999",
   },
   selectedGroupRow: {
     flex: 1,
@@ -1350,19 +1336,15 @@ const styles = StyleSheet.create({
   selectedGroupName: {
     fontSize: 16,
     fontWeight: "500",
-    color: "#333",
   },
   selectedGroupType: {
     fontSize: 12,
-    color: "#666",
     marginTop: 2,
   },
   dropdownList: {
     marginTop: 8,
     borderWidth: 1,
-    borderColor: "#ecedf0",
     borderRadius: 8,
-    backgroundColor: "#fff",
     overflow: "hidden",
   },
   dropdownItem: {
@@ -1371,23 +1353,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
   },
   dropdownItemSelected: {
-    backgroundColor: "#F5F3FF",
   },
   dropdownItemText: {
     flex: 1,
     fontSize: 15,
-    color: "#333",
   },
   dropdownItemTextSelected: {
-    color: DEFAULT_PRIMARY_COLOR,
     fontWeight: "500",
   },
   dropdownItemSubtext: {
     fontSize: 12,
-    color: "#666",
     marginRight: 8,
   },
   fieldErrorText: {
@@ -1424,7 +1401,6 @@ const styles = StyleSheet.create({
   },
   locationStatusText: {
     fontSize: 13,
-    color: "#666",
   },
   locationWarning: {
     flexDirection: "row",

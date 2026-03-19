@@ -1,6 +1,7 @@
 import React from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { format } from "date-fns";
+import { useTheme } from "@hooks/useTheme";
 
 interface AttendanceStat {
   date?: string;
@@ -18,6 +19,7 @@ interface AttendanceChartProps {
 }
 
 export function AttendanceChart({ attendanceStats }: AttendanceChartProps) {
+  const { colors } = useTheme();
   if (!attendanceStats || attendanceStats.length === 0) {
     return null;
   }
@@ -65,17 +67,18 @@ export function AttendanceChart({ attendanceStats }: AttendanceChartProps) {
                     styles.bar,
                     {
                       height: Math.max(height, 20), // Minimum height for visibility
+                      backgroundColor: colors.border,
                     },
                   ]}
                 >
-                  <View style={styles.barCircle}>
-                    <Text style={styles.barText}>
+                  <View style={[styles.barCircle, { backgroundColor: colors.text }]}>
+                    <Text style={[styles.barText, { color: colors.textInverse }]}>
                       {stat.present_count || stat.presentCount || 0}
                     </Text>
                   </View>
                 </View>
               </View>
-              <Text style={styles.dateText}>{dateStr}</Text>
+              <Text style={[styles.dateText, { color: colors.textSecondary }]}>{dateStr}</Text>
             </View>
           );
         })}
@@ -108,7 +111,6 @@ const styles = StyleSheet.create({
   },
   bar: {
     width: "80%",
-    backgroundColor: "#e0e0e0",
     borderTopLeftRadius: 8,
     borderTopRightRadius: 8,
     alignItems: "center",
@@ -120,18 +122,15 @@ const styles = StyleSheet.create({
     width: 24,
     height: 24,
     borderRadius: 12,
-    backgroundColor: "#333",
     alignItems: "center",
     justifyContent: "center",
   },
   barText: {
     fontSize: 10,
     fontWeight: "600",
-    color: "#fff",
   },
   dateText: {
     fontSize: 12,
-    color: "#666",
     marginTop: 8,
     textAlign: "center",
   },

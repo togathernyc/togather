@@ -17,6 +17,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { saveImageToLibrary } from '@/utils/saveImage';
 import { ToastManager } from './Toast';
+import { useTheme } from '@hooks/useTheme';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -26,6 +27,7 @@ interface ImageSlideProps {
 }
 
 function ImageSlide({ imageUrl }: ImageSlideProps) {
+  const { colors } = useTheme();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
@@ -38,8 +40,8 @@ function ImageSlide({ imageUrl }: ImageSlideProps) {
       )}
       {error ? (
         <View style={styles.errorContainer}>
-          <Ionicons name="image-outline" size={64} color="#666" />
-          <Text style={styles.errorText}>Failed to load image</Text>
+          <Ionicons name="image-outline" size={64} color={colors.textSecondary} />
+          <Text style={[styles.errorText, { color: colors.textSecondary }]}>Failed to load image</Text>
         </View>
       ) : (
         <Image
@@ -71,6 +73,7 @@ export function ImageViewer({
   initialIndex,
   onClose,
 }: ImageViewerProps) {
+  const { colors } = useTheme();
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(0.9)).current;
   const scrollX = useRef(new Animated.Value(0)).current;
@@ -316,7 +319,7 @@ export function ImageViewer({
 
             <TouchableOpacity
               onPress={handleSave}
-              style={[styles.button, styles.saveButton]}
+              style={[styles.button, styles.saveButton, { backgroundColor: colors.link }]}
               disabled={isSaving}
             >
               {isSaving ? (
@@ -394,7 +397,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   errorText: {
-    color: '#666',
     fontSize: 16,
     marginTop: 12,
   },
@@ -461,7 +463,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255, 255, 255, 0.3)',
   },
   saveButton: {
-    backgroundColor: '#007AFF',
+    // backgroundColor applied inline via colors.link
   },
   buttonText: {
     color: '#fff',

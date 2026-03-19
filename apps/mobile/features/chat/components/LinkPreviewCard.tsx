@@ -17,6 +17,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { AppImage } from '@components/ui/AppImage';
 import { DEFAULT_PRIMARY_COLOR } from '@utils/styles';
+import { useTheme } from '@hooks/useTheme';
 import type { LinkPreviewData } from '../hooks/useLinkPreview';
 
 // ============================================================================
@@ -53,6 +54,8 @@ export function LinkPreviewCard({
   loading = false,
   compact = false,
 }: LinkPreviewCardProps) {
+  const { colors, isDark } = useTheme();
+
   const handlePress = useCallback(() => {
     if (preview.url) {
       Linking.openURL(preview.url).catch((err) => {
@@ -75,14 +78,17 @@ export function LinkPreviewCard({
     }
   }, [preview.url, preview.siteName]);
 
+  const placeholderBg = isDark ? colors.surfaceSecondary : '#f0f0f0';
+  const skeletonBg = isDark ? colors.surfaceSecondary : '#E5E5E5';
+
   if (loading) {
     // Compact mode: minimal loading indicator (already correct size)
     if (compact) {
       return (
-        <View style={[styles.container, !isMyMessage && styles.containerLeft, embedded && styles.containerEmbedded, styles.containerCompact]}>
+        <View style={[styles.container, { backgroundColor: colors.surface, borderColor: colors.border }, !isMyMessage && styles.containerLeft, embedded && styles.containerEmbedded, styles.containerCompact]}>
           <View style={[styles.loadingContainer, styles.loadingContainerCompact]}>
             <ActivityIndicator size="small" color={DEFAULT_PRIMARY_COLOR} />
-            <Text style={styles.loadingText}>Loading...</Text>
+            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading...</Text>
           </View>
         </View>
       );
@@ -90,21 +96,21 @@ export function LinkPreviewCard({
 
     // Full mode: skeleton placeholder that reserves space for the final preview
     return (
-      <View style={[styles.container, !isMyMessage && styles.containerLeft, embedded && styles.containerEmbedded]}>
+      <View style={[styles.container, { backgroundColor: colors.surface, borderColor: colors.border }, !isMyMessage && styles.containerLeft, embedded && styles.containerEmbedded]}>
         {/* Image skeleton */}
-        <View style={styles.skeletonImage} />
+        <View style={[styles.skeletonImage, { backgroundColor: skeletonBg }]} />
 
         {/* Content skeleton */}
         <View style={styles.content}>
           {/* Site name skeleton */}
           <View style={styles.siteRow}>
-            <View style={styles.skeletonFavicon} />
-            <View style={styles.skeletonSiteName} />
+            <View style={[styles.skeletonFavicon, { backgroundColor: skeletonBg }]} />
+            <View style={[styles.skeletonSiteName, { backgroundColor: skeletonBg }]} />
           </View>
 
           {/* Title skeleton (2 lines) */}
-          <View style={styles.skeletonTitleLine1} />
-          <View style={styles.skeletonTitleLine2} />
+          <View style={[styles.skeletonTitleLine1, { backgroundColor: skeletonBg }]} />
+          <View style={[styles.skeletonTitleLine2, { backgroundColor: skeletonBg }]} />
 
         </View>
       </View>
@@ -117,6 +123,7 @@ export function LinkPreviewCard({
       <View
         style={[
           styles.container,
+          { backgroundColor: colors.surface, borderColor: colors.border },
           !isMyMessage && styles.containerLeft,
           embedded && styles.containerEmbedded,
           styles.containerCompact,
@@ -128,18 +135,18 @@ export function LinkPreviewCard({
               source={preview.favicon}
               style={styles.favicon}
               resizeMode="contain"
-              placeholder={{ type: 'color', backgroundColor: '#f0f0f0' }}
+              placeholder={{ type: 'color', backgroundColor: placeholderBg }}
             />
           )}
           <View style={styles.compactContent}>
-            <Text style={styles.compactTitle} numberOfLines={1}>
+            <Text style={[styles.compactTitle, { color: colors.text }]} numberOfLines={1}>
               {preview.title || hostname}
             </Text>
           </View>
         </Pressable>
         {showDismiss && (
           <Pressable style={styles.compactDismissButton} onPress={handleDismiss} hitSlop={8}>
-            <Ionicons name="close-circle" size={20} color="#666" />
+            <Ionicons name="close-circle" size={20} color={colors.textSecondary} />
           </Pressable>
         )}
       </View>
@@ -150,6 +157,7 @@ export function LinkPreviewCard({
     <Pressable
       style={[
         styles.container,
+        { backgroundColor: colors.surface, borderColor: colors.border },
         !isMyMessage && styles.containerLeft,
         embedded && styles.containerEmbedded,
       ]}
@@ -157,19 +165,19 @@ export function LinkPreviewCard({
     >
       {/* Dismiss button */}
       {showDismiss && (
-        <Pressable style={styles.dismissButton} onPress={handleDismiss} hitSlop={8}>
-          <Ionicons name="close-circle" size={24} color="#666" />
+        <Pressable style={[styles.dismissButton, { backgroundColor: isDark ? 'rgba(0, 0, 0, 0.7)' : 'rgba(255, 255, 255, 0.9)' }]} onPress={handleDismiss} hitSlop={8}>
+          <Ionicons name="close-circle" size={24} color={colors.textSecondary} />
         </Pressable>
       )}
 
       {/* Image - only render when an image is available */}
       {preview.image && (
-        <View style={styles.imageContainer}>
+        <View style={[styles.imageContainer, { backgroundColor: colors.surfaceSecondary }]}>
           <AppImage
             source={preview.image}
             style={styles.image}
             resizeMode="cover"
-            placeholder={{ type: 'color', backgroundColor: '#f0f0f0' }}
+            placeholder={{ type: 'color', backgroundColor: placeholderBg }}
           />
         </View>
       )}
@@ -183,17 +191,17 @@ export function LinkPreviewCard({
               source={preview.favicon}
               style={styles.favicon}
               resizeMode="contain"
-              placeholder={{ type: 'color', backgroundColor: '#f0f0f0' }}
+              placeholder={{ type: 'color', backgroundColor: placeholderBg }}
             />
           )}
-          <Text style={styles.siteName} numberOfLines={1}>
+          <Text style={[styles.siteName, { color: colors.textSecondary }]} numberOfLines={1}>
             {preview.siteName || hostname}
           </Text>
         </View>
 
         {/* Title */}
         {preview.title && (
-          <Text style={styles.title} numberOfLines={2}>
+          <Text style={[styles.title, { color: colors.text }]} numberOfLines={2}>
             {preview.title}
           </Text>
         )}
@@ -215,11 +223,9 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-end',
     marginVertical: 4,
     marginRight: 4,
-    backgroundColor: '#fff',
     borderRadius: 12,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: '#e0e0e0',
   },
   containerLeft: {
     alignSelf: 'flex-start',
@@ -253,7 +259,6 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: 14,
-    color: '#666',
   },
   compactRow: {
     flex: 1,
@@ -268,7 +273,6 @@ const styles = StyleSheet.create({
   compactTitle: {
     fontSize: 14,
     fontWeight: '500',
-    color: '#333',
   },
   compactDismissButton: {
     marginLeft: 8,
@@ -279,13 +283,11 @@ const styles = StyleSheet.create({
     top: 8,
     right: 8,
     zIndex: 10,
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
     borderRadius: 12,
   },
   imageContainer: {
     width: '100%',
     aspectRatio: 1.91, // Standard OG image ratio - fixed height prevents layout shifts
-    backgroundColor: '#f5f5f5',
     overflow: 'hidden',
   },
   image: {
@@ -309,7 +311,6 @@ const styles = StyleSheet.create({
   },
   siteName: {
     fontSize: 12,
-    color: '#666',
     fontWeight: '500',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
@@ -318,39 +319,33 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#333',
     lineHeight: 20,
   },
   // Skeleton loading styles
   skeletonImage: {
     width: '100%',
     aspectRatio: 1.91, // Match the actual image container ratio
-    backgroundColor: '#E5E5E5',
   },
   skeletonFavicon: {
     width: 16,
     height: 16,
     borderRadius: 2,
-    backgroundColor: '#E5E5E5',
   },
   skeletonSiteName: {
     width: 80,
     height: 14,
     borderRadius: 2,
-    backgroundColor: '#E5E5E5',
   },
   skeletonTitleLine1: {
     width: '100%',
     height: 20,
     borderRadius: 2,
-    backgroundColor: '#E5E5E5',
     marginTop: 4,
   },
   skeletonTitleLine2: {
     width: '70%',
     height: 20,
     borderRadius: 2,
-    backgroundColor: '#E5E5E5',
     marginTop: 4,
   },
 });

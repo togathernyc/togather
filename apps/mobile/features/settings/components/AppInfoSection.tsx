@@ -24,6 +24,7 @@ import { logCollector } from "@utils/logCollector";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { Environment } from "@services/environment";
 import { useDevToolsEscapeHatch } from "@hooks/useDevToolsEscapeHatch";
+import { useTheme } from "@hooks/useTheme";
 
 const DEVELOPER_EMAIL = "togather@supa.media";
 
@@ -89,6 +90,7 @@ Timestamp: ${new Date().toISOString()}
 }
 
 export function AppInfoSection() {
+  const { colors } = useTheme();
   const [isSending, setIsSending] = useState(false);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [updateAvailable, setUpdateAvailable] = useState(false);
@@ -239,78 +241,76 @@ ${logs || "No logs captured yet. Try reproducing the issue first."}`;
   };
 
   return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>App Info</Text>
+    <View style={[styles.section, { backgroundColor: colors.surface }]}>
+      <Text style={[styles.sectionTitle, { color: colors.text }]}>App Info</Text>
 
       {/* Version row - tappable for dev tools escape hatch */}
       <TouchableOpacity
-        style={styles.infoRow}
+        style={[styles.infoRow, { borderBottomColor: colors.surfaceSecondary }]}
         onPress={handleVersionTap}
         activeOpacity={0.7}
       >
         <View style={styles.infoLabel}>
-          <Ionicons name="phone-portrait-outline" size={18} color="#666" />
-          <Text style={styles.labelText}>Version</Text>
+          <Ionicons name="phone-portrait-outline" size={18} color={colors.textSecondary} />
+          <Text style={[styles.labelText, { color: colors.textSecondary }]}>Version</Text>
         </View>
         <View style={styles.versionContainer}>
-          <Text style={styles.infoValue}>{otaVersion}</Text>
+          <Text style={[styles.infoValue, { color: colors.text }]}>{otaVersion}</Text>
           {/* Show tap progress indicator when user starts tapping */}
           {tapCount > 0 && tapCount < 5 && (
-            <Text style={styles.tapIndicator}>
+            <Text style={[styles.tapIndicator, { color: colors.textTertiary }]}>
               {".".repeat(tapCount)}
             </Text>
           )}
           {/* Show indicator when dev tools are enabled via escape hatch */}
           {devToolsEnabled && !__DEV__ && (
-            <Ionicons name="construct" size={14} color="#FF9500" style={styles.devIcon} />
+            <Ionicons name="construct" size={14} color={colors.warning} style={styles.devIcon} />
           )}
         </View>
       </TouchableOpacity>
 
       {/* Environment indicator */}
-      <View style={styles.infoRow}>
+      <View style={[styles.infoRow, { borderBottomColor: colors.surfaceSecondary }]}>
         <View style={styles.infoLabel}>
-          <Ionicons name="server-outline" size={18} color="#666" />
-          <Text style={styles.labelText}>Environment</Text>
+          <Ionicons name="server-outline" size={18} color={colors.textSecondary} />
+          <Text style={[styles.labelText, { color: colors.textSecondary }]}>Environment</Text>
         </View>
         <View style={styles.envBadge}>
           <View
             style={[
               styles.envIndicator,
-              currentEnv.name === "staging"
-                ? styles.envIndicatorStaging
-                : styles.envIndicatorProduction,
+              { backgroundColor: currentEnv.name === "staging" ? colors.warning : colors.success },
             ]}
           />
-          <Text style={styles.infoValue}>{currentEnv.displayName}</Text>
+          <Text style={[styles.infoValue, { color: colors.text }]}>{currentEnv.displayName}</Text>
         </View>
       </View>
 
-      <View style={styles.infoRow}>
+      <View style={[styles.infoRow, { borderBottomColor: colors.surfaceSecondary }]}>
         <View style={styles.infoLabel}>
-          <Ionicons name="cloud-download-outline" size={18} color="#666" />
-          <Text style={styles.labelText}>Update Status</Text>
+          <Ionicons name="cloud-download-outline" size={18} color={colors.textSecondary} />
+          <Text style={[styles.labelText, { color: colors.textSecondary }]}>Update Status</Text>
         </View>
-        <Text style={styles.infoValue}>{updateStatus}</Text>
+        <Text style={[styles.infoValue, { color: colors.text }]}>{updateStatus}</Text>
       </View>
 
       {updateTime && (
-        <View style={styles.infoRow}>
+        <View style={[styles.infoRow, { borderBottomColor: colors.surfaceSecondary }]}>
           <View style={styles.infoLabel}>
-            <Ionicons name="time-outline" size={18} color="#666" />
-            <Text style={styles.labelText}>Last Updated</Text>
+            <Ionicons name="time-outline" size={18} color={colors.textSecondary} />
+            <Text style={[styles.labelText, { color: colors.textSecondary }]}>Last Updated</Text>
           </View>
-          <Text style={styles.infoValue}>{updateTime}</Text>
+          <Text style={[styles.infoValue, { color: colors.text }]}>{updateTime}</Text>
         </View>
       )}
 
       {updateId && !__DEV__ && (
-        <View style={styles.infoRow}>
+        <View style={[styles.infoRow, { borderBottomColor: colors.surfaceSecondary }]}>
           <View style={styles.infoLabel}>
-            <Ionicons name="finger-print-outline" size={18} color="#666" />
-            <Text style={styles.labelText}>Update ID</Text>
+            <Ionicons name="finger-print-outline" size={18} color={colors.textSecondary} />
+            <Text style={[styles.labelText, { color: colors.textSecondary }]}>Update ID</Text>
           </View>
-          <Text style={[styles.infoValue, styles.updateId]}>
+          <Text style={[styles.infoValue, styles.updateId, { color: colors.textSecondary }]}>
             {updateId.substring(0, 8)}...
           </Text>
         </View>
@@ -320,7 +320,8 @@ ${logs || "No logs captured yet. Try reproducing the issue first."}`;
       <TouchableOpacity
         style={[
           styles.checkUpdateButton,
-          updateAvailable && styles.checkUpdateButtonHighlight,
+          { backgroundColor: DEFAULT_PRIMARY_COLOR + '10', borderColor: DEFAULT_PRIMARY_COLOR + '30' },
+          updateAvailable && { backgroundColor: DEFAULT_PRIMARY_COLOR + '15', borderColor: DEFAULT_PRIMARY_COLOR },
         ]}
         onPress={handleCheckForUpdates}
         disabled={isCheckingUpdate}
@@ -335,7 +336,7 @@ ${logs || "No logs captured yet. Try reproducing the issue first."}`;
               size={20}
               color={DEFAULT_PRIMARY_COLOR}
             />
-            <Text style={styles.checkUpdateButtonText}>
+            <Text style={[styles.checkUpdateButtonText, { color: DEFAULT_PRIMARY_COLOR }]}>
               {updateAvailable ? "Update Available" : "Check for Updates"}
             </Text>
           </>
@@ -344,22 +345,22 @@ ${logs || "No logs captured yet. Try reproducing the issue first."}`;
 
       {/* Send Logs Button */}
       <TouchableOpacity
-        style={styles.sendLogsButton}
+        style={[styles.sendLogsButton, { backgroundColor: DEFAULT_PRIMARY_COLOR }]}
         onPress={handleSendLogs}
         disabled={isSending}
         activeOpacity={0.7}
       >
         {isSending ? (
-          <ActivityIndicator size="small" color="#fff" />
+          <ActivityIndicator size="small" color={colors.textInverse} />
         ) : (
           <>
-            <Ionicons name="bug-outline" size={20} color="#fff" />
-            <Text style={styles.sendLogsButtonText}>Send Logs to Developer</Text>
+            <Ionicons name="bug-outline" size={20} color={colors.textInverse} />
+            <Text style={[styles.sendLogsButtonText, { color: colors.textInverse }]}>Send Logs to Developer</Text>
           </>
         )}
       </TouchableOpacity>
 
-      <Text style={styles.logsHint}>
+      <Text style={[styles.logsHint, { color: colors.textTertiary }]}>
         Experiencing issues? Send logs to help us debug.
       </Text>
     </View>
@@ -369,13 +370,11 @@ ${logs || "No logs captured yet. Try reproducing the issue first."}`;
 const styles = StyleSheet.create({
   section: {
     marginTop: 12,
-    backgroundColor: "#fff",
     padding: 20,
   },
   sectionTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 16,
   },
   infoRow: {
@@ -384,7 +383,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
   },
   infoLabel: {
     flexDirection: "row",
@@ -393,11 +391,9 @@ const styles = StyleSheet.create({
   },
   labelText: {
     fontSize: 15,
-    color: "#666",
   },
   infoValue: {
     fontSize: 15,
-    color: "#333",
     fontWeight: "500",
   },
   versionContainer: {
@@ -407,7 +403,6 @@ const styles = StyleSheet.create({
   },
   tapIndicator: {
     fontSize: 18,
-    color: "#999",
     letterSpacing: 2,
     marginLeft: 4,
   },
@@ -417,26 +412,18 @@ const styles = StyleSheet.create({
   updateId: {
     fontFamily: "monospace",
     fontSize: 13,
-    color: "#666",
   },
   checkUpdateButton: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#f5f0ff",
     borderRadius: 8,
     padding: 14,
     marginTop: 20,
     gap: 8,
     borderWidth: 1,
-    borderColor: "#e0d4f7",
-  },
-  checkUpdateButtonHighlight: {
-    backgroundColor: "#ede5ff",
-    borderColor: DEFAULT_PRIMARY_COLOR,
   },
   checkUpdateButtonText: {
-    color: DEFAULT_PRIMARY_COLOR,
     fontSize: 16,
     fontWeight: "600",
   },
@@ -444,20 +431,17 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: DEFAULT_PRIMARY_COLOR,
     borderRadius: 8,
     padding: 14,
     marginTop: 20,
     gap: 8,
   },
   sendLogsButtonText: {
-    color: "#fff",
     fontSize: 16,
     fontWeight: "600",
   },
   logsHint: {
     fontSize: 12,
-    color: "#999",
     textAlign: "center",
     marginTop: 8,
   },
@@ -470,11 +454,5 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-  },
-  envIndicatorProduction: {
-    backgroundColor: "#34C759",
-  },
-  envIndicatorStaging: {
-    backgroundColor: "#FF9500",
   },
 });

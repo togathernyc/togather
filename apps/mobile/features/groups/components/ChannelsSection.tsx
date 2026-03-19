@@ -33,6 +33,7 @@ import {
 import type { Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 import { useGroupChannels } from "../hooks/useGroupChannels";
 import { useRespondToChannelInvite } from "../hooks/useRespondToChannelInvite";
 
@@ -60,6 +61,7 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
   const router = useRouter();
   const { token } = useAuth();
   const { primaryColor } = useCommunityTheme();
+  const { colors } = useTheme();
   const [togglingLeaders, setTogglingLeaders] = useState(false);
   const [togglingReachOut, setTogglingReachOut] = useState(false);
   const [leavingChannelId, setLeavingChannelId] = useState<string | null>(null);
@@ -201,8 +203,8 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
   // Loading state
   if (channels === undefined) {
     return (
-      <View style={styles.container}>
-        <Text style={styles.header}>CHANNELS</Text>
+      <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
+        <Text style={[styles.header, { color: colors.text }]}>CHANNELS</Text>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="small" color={primaryColor} />
         </View>
@@ -216,14 +218,14 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
       {/* AUTO CHANNELS Section */}
-      <Text style={styles.header}>AUTO CHANNELS</Text>
-      <View style={styles.channelList}>
+      <Text style={[styles.header, { color: colors.text }]}>AUTO CHANNELS</Text>
+      <View style={[styles.channelList, { backgroundColor: colors.surface }]}>
         {/* General Channel */}
         {mainChannel && (
           <TouchableOpacity
-            style={styles.channelRow}
+            style={[styles.channelRow, { borderBottomColor: colors.border }]}
             onPress={() => handleChannelPress(mainChannel)}
             activeOpacity={0.7}
           >
@@ -231,8 +233,8 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
               <Ionicons name="chatbubbles" size={20} color={primaryColor} />
             </View>
             <View style={styles.channelInfo}>
-              <Text style={styles.channelName}>General</Text>
-              <Text style={styles.channelSubtitle}>All members</Text>
+              <Text style={[styles.channelName, { color: colors.text }]}>General</Text>
+              <Text style={[styles.channelSubtitle, { color: colors.textSecondary }]}>All members</Text>
             </View>
             {mainChannel.unreadCount > 0 && (
               <View style={[styles.unreadBadge, { backgroundColor: primaryColor }]}>
@@ -241,13 +243,13 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
                 </Text>
               </View>
             )}
-            <Ionicons name="chevron-forward" size={20} color="#999" />
+            <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
           </TouchableOpacity>
         )}
 
         {/* Leaders Channel */}
         {(leadersChannel || isLeader) && (
-          <View style={styles.channelRow}>
+          <View style={[styles.channelRow, { borderBottomColor: colors.border }]}>
             <TouchableOpacity
               style={styles.channelContent}
               onPress={() => leadersChannel && leadersChannelEnabled && handleChannelPress(leadersChannel)}
@@ -258,16 +260,16 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
                 <Ionicons name="star" size={20} color="#FFA500" />
               </View>
               <View style={styles.channelInfo}>
-                <Text style={[styles.channelName, !leadersChannelEnabled && styles.disabledText]}>
+                <Text style={[styles.channelName, { color: colors.text }, !leadersChannelEnabled && { color: colors.textTertiary }]}>
                   Leaders
                 </Text>
-                <Text style={styles.channelSubtitle}>
+                <Text style={[styles.channelSubtitle, { color: colors.textSecondary }]}>
                   {leadersChannel
                     ? `${leadersChannel.memberCount} leader${leadersChannel.memberCount !== 1 ? "s" : ""}`
                     : "Disabled"}
                 </Text>
                 {leadersChannel && leadersChannelEnabled && (
-                  <Text style={styles.channelNote}>
+                  <Text style={[styles.channelNote, { color: colors.textTertiary }]}>
                     You're here because you're a leader
                   </Text>
                 )}
@@ -288,30 +290,30 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
                   <Switch
                     value={leadersChannelEnabled}
                     onValueChange={handleToggleLeadersChannel}
-                    trackColor={{ false: "#E0E0E0", true: primaryColor + "80" }}
-                    thumbColor={leadersChannelEnabled ? primaryColor : "#f4f3f4"}
+                    trackColor={{ false: colors.border, true: primaryColor + "80" }}
+                    thumbColor={leadersChannelEnabled ? primaryColor : colors.surfaceSecondary}
                   />
                 )}
               </View>
             )}
             {!isLeader && leadersChannelEnabled && (
-              <Ionicons name="chevron-forward" size={20} color="#999" />
+              <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
             )}
           </View>
         )}
 
         {/* Reach Out Channel */}
         {isLeader && (
-          <View style={styles.channelRow}>
+          <View style={[styles.channelRow, { borderBottomColor: colors.border }]}>
             <View style={styles.channelContent}>
               <View style={[styles.channelIcon, { backgroundColor: "#8E44AD15" }]}>
                 <Ionicons name="hand-left" size={20} color="#8E44AD" />
               </View>
               <View style={styles.channelInfo}>
-                <Text style={[styles.channelName, (!reachOutEnabled || !leadersChannelEnabled) && styles.disabledText]}>
+                <Text style={[styles.channelName, { color: colors.text }, (!reachOutEnabled || !leadersChannelEnabled) && { color: colors.textTertiary }]}>
                   Reach Out
                 </Text>
-                <Text style={styles.channelSubtitle}>
+                <Text style={[styles.channelSubtitle, { color: colors.textSecondary }]}>
                   {!leadersChannelEnabled
                     ? "Requires Leaders channel"
                     : reachOutChannel
@@ -327,8 +329,8 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
                 <Switch
                   value={reachOutEnabled}
                   onValueChange={handleToggleReachOutChannel}
-                  trackColor={{ false: "#E0E0E0", true: primaryColor + "80" }}
-                  thumbColor={reachOutEnabled ? primaryColor : "#f4f3f4"}
+                  trackColor={{ false: colors.border, true: primaryColor + "80" }}
+                  thumbColor={reachOutEnabled ? primaryColor : colors.surfaceSecondary}
                   disabled={!leadersChannelEnabled}
                 />
               )}
@@ -338,7 +340,7 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
 
         {/* PCO Synced Channels */}
         {pcoSyncedChannels.map((channel: Channel) => (
-          <View key={channel._id} style={styles.channelRow}>
+          <View key={channel._id} style={[styles.channelRow, { borderBottomColor: colors.border }]}>
             <TouchableOpacity
               style={styles.channelContent}
               onPress={() => channel.isMember ? handleChannelPress(channel) : handleManageMembers(channel)}
@@ -349,18 +351,18 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
               </View>
               <View style={styles.channelInfo}>
                 <View style={styles.channelNameRow}>
-                  <Text style={[styles.channelName, !channel.isMember && styles.disabledText]}>
+                  <Text style={[styles.channelName, { color: colors.text }, !channel.isMember && { color: colors.textTertiary }]}>
                     {channel.name}
                   </Text>
                   {channel.isPinned && (
-                    <Ionicons name="pin" size={14} color="#888" style={styles.pinIcon} />
+                    <Ionicons name="pin" size={14} color={colors.iconSecondary} style={styles.pinIcon} />
                   )}
                 </View>
-                <Text style={styles.channelSubtitle}>
+                <Text style={[styles.channelSubtitle, { color: colors.textSecondary }]}>
                   {channel.memberCount} member{channel.memberCount !== 1 ? "s" : ""} · PCO Synced
                 </Text>
                 {!channel.isMember && isLeader && (
-                  <Text style={styles.channelNote}>
+                  <Text style={[styles.channelNote, { color: colors.textTertiary }]}>
                     You're not in this channel
                   </Text>
                 )}
@@ -375,15 +377,15 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
             </TouchableOpacity>
             {isLeader && (
               <TouchableOpacity
-                style={styles.actionButton}
+                style={[styles.actionButton, { backgroundColor: colors.surfaceSecondary }]}
                 onPress={() => handleManageMembers(channel)}
                 activeOpacity={0.7}
               >
-                <Ionicons name="settings-outline" size={18} color="#666" />
+                <Ionicons name="settings-outline" size={18} color={colors.icon} />
               </TouchableOpacity>
             )}
             {!isLeader && channel.isMember && (
-              <Ionicons name="chevron-forward" size={20} color="#999" />
+              <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
             )}
           </View>
         ))}
@@ -392,20 +394,20 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
       {/* PENDING SHARED CHANNEL INVITATIONS Section */}
       {isLeader && pendingInvites && pendingInvites.length > 0 && (
         <>
-          <Text style={[styles.header, styles.customHeader]}>SHARED CHANNEL INVITATIONS</Text>
-          <View style={styles.channelList}>
+          <Text style={[styles.header, styles.customHeader, { color: colors.text }]}>SHARED CHANNEL INVITATIONS</Text>
+          <View style={[styles.channelList, { backgroundColor: colors.surface }]}>
             {pendingInvites.map((invite) => (
-              <View key={invite.channelId} style={styles.channelRow}>
+              <View key={invite.channelId} style={[styles.channelRow, { borderBottomColor: colors.border }]}>
                 <View style={styles.channelContent}>
                   <View style={[styles.channelIcon, { backgroundColor: "#8B5CF615" }]}>
                     <Ionicons name="link" size={20} color="#8B5CF6" />
                   </View>
                   <View style={styles.channelInfo}>
-                    <Text style={styles.channelName}>#{invite.channelName}</Text>
-                    <Text style={styles.channelSubtitle}>
+                    <Text style={[styles.channelName, { color: colors.text }]}>#{invite.channelName}</Text>
+                    <Text style={[styles.channelSubtitle, { color: colors.textSecondary }]}>
                       From {invite.primaryGroupName}
                     </Text>
-                    <Text style={styles.channelNote}>
+                    <Text style={[styles.channelNote, { color: colors.textTertiary }]}>
                       Invited by {invite.invitedByName}
                     </Text>
                   </View>
@@ -417,20 +419,20 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
                     disabled={respondingTo !== null}
                   >
                     {respondingTo === `${invite.channelId}-accept` ? (
-                      <ActivityIndicator size="small" color="#fff" />
+                      <ActivityIndicator size="small" color={colors.textInverse} />
                     ) : (
                       <Text style={styles.inviteAcceptText}>Accept</Text>
                     )}
                   </TouchableOpacity>
                   <TouchableOpacity
-                    style={styles.inviteDeclineButton}
+                    style={[styles.inviteDeclineButton, { borderColor: colors.destructive }]}
                     onPress={() => handleRespondToInvite(invite.channelId, "declined")}
                     disabled={respondingTo !== null}
                   >
                     {respondingTo === `${invite.channelId}-decline` ? (
-                      <ActivityIndicator size="small" color="#FF3B30" />
+                      <ActivityIndicator size="small" color={colors.destructive} />
                     ) : (
-                      <Ionicons name="close" size={18} color="#FF3B30" />
+                      <Ionicons name="close" size={18} color={colors.destructive} />
                     )}
                   </TouchableOpacity>
                 </View>
@@ -443,10 +445,10 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
       {/* CUSTOM CHANNELS Section */}
       {(customChannels.length > 0 || isLeader) && (
         <>
-          <Text style={[styles.header, styles.customHeader]}>CUSTOM CHANNELS</Text>
-          <View style={styles.channelList}>
+          <Text style={[styles.header, styles.customHeader, { color: colors.text }]}>CUSTOM CHANNELS</Text>
+          <View style={[styles.channelList, { backgroundColor: colors.surface }]}>
             {customChannels.map((channel: Channel) => (
-              <View key={channel._id} style={styles.channelRow}>
+              <View key={channel._id} style={[styles.channelRow, { borderBottomColor: colors.border }]}>
                 <TouchableOpacity
                   style={styles.channelContent}
                   onPress={() => channel.isMember ? handleChannelPress(channel) : handleManageMembers(channel)}
@@ -457,18 +459,18 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
                   </View>
                   <View style={styles.channelInfo}>
                     <View style={styles.channelNameRow}>
-                      <Text style={[styles.channelName, !channel.isMember && styles.disabledText]}>
+                      <Text style={[styles.channelName, { color: colors.text }, !channel.isMember && { color: colors.textTertiary }]}>
                         {channel.name}
                       </Text>
                       {channel.isPinned && (
-                        <Ionicons name="pin" size={14} color="#888" style={styles.pinIcon} />
+                        <Ionicons name="pin" size={14} color={colors.iconSecondary} style={styles.pinIcon} />
                       )}
                     </View>
-                    <Text style={styles.channelSubtitle}>
+                    <Text style={[styles.channelSubtitle, { color: colors.textSecondary }]}>
                       {channel.memberCount} member{channel.memberCount !== 1 ? "s" : ""}
                     </Text>
                     {!channel.isMember && isLeader && (
-                      <Text style={styles.channelNote}>
+                      <Text style={[styles.channelNote, { color: colors.textTertiary }]}>
                         You're not in this channel
                       </Text>
                     )}
@@ -484,24 +486,24 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
                 <View style={styles.actionButtons}>
                   {isLeader && (
                     <TouchableOpacity
-                      style={styles.actionButton}
+                      style={[styles.actionButton, { backgroundColor: colors.surfaceSecondary }]}
                       onPress={() => handleManageMembers(channel)}
                       activeOpacity={0.7}
                     >
-                      <Ionicons name="people-outline" size={18} color="#666" />
+                      <Ionicons name="people-outline" size={18} color={colors.icon} />
                     </TouchableOpacity>
                   )}
                   {channel.isMember && (
                     <TouchableOpacity
-                      style={styles.actionButton}
+                      style={[styles.actionButton, { backgroundColor: colors.surfaceSecondary }]}
                       onPress={() => handleLeaveChannel(channel)}
                       activeOpacity={0.7}
                       disabled={leavingChannelId === channel._id}
                     >
                       {leavingChannelId === channel._id ? (
-                        <ActivityIndicator size="small" color="#FF3B30" />
+                        <ActivityIndicator size="small" color={colors.destructive} />
                       ) : (
-                        <Ionicons name="exit-outline" size={18} color="#FF3B30" />
+                        <Ionicons name="exit-outline" size={18} color={colors.destructive} />
                       )}
                     </TouchableOpacity>
                   )}
@@ -512,7 +514,7 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
             {/* Empty state for custom channels */}
             {customChannels.length === 0 && isLeader && (
               <View style={styles.emptyState}>
-                <Text style={styles.emptyStateText}>
+                <Text style={[styles.emptyStateText, { color: colors.textTertiary }]}>
                   No custom channels yet
                 </Text>
               </View>
@@ -522,7 +524,7 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
           {/* Create Channel Button (Leaders only) */}
           {isLeader && (
             <TouchableOpacity
-              style={[styles.createButton, { borderColor: primaryColor }]}
+              style={[styles.createButton, { borderColor: primaryColor, backgroundColor: colors.surface }]}
               onPress={handleCreateChannel}
               activeOpacity={0.7}
             >
@@ -540,8 +542,8 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
               onPress={handlePinChannels}
               activeOpacity={0.7}
             >
-              <Ionicons name="pin-outline" size={18} color="#666" />
-              <Text style={styles.pinChannelsButtonText}>Pin Channels</Text>
+              <Ionicons name="pin-outline" size={18} color={colors.icon} />
+              <Text style={[styles.pinChannelsButtonText, { color: colors.icon }]}>Pin Channels</Text>
             </TouchableOpacity>
           )}
 
@@ -552,8 +554,8 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
               onPress={handleToolbarSettings}
               activeOpacity={0.7}
             >
-              <Ionicons name="options-outline" size={18} color="#666" />
-              <Text style={styles.pinChannelsButtonText}>Toolbar Settings</Text>
+              <Ionicons name="options-outline" size={18} color={colors.icon} />
+              <Text style={[styles.pinChannelsButtonText, { color: colors.icon }]}>Toolbar Settings</Text>
             </TouchableOpacity>
           )}
         </>
@@ -564,14 +566,12 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: "#F5F5F5",
     paddingHorizontal: 16,
     paddingVertical: 16,
   },
   header: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 12,
     letterSpacing: 0.5,
   },
@@ -583,7 +583,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   channelList: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     overflow: "hidden",
   },
@@ -593,7 +592,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#E0E0E0",
   },
   channelContent: {
     flex: 1,
@@ -618,7 +616,6 @@ const styles = StyleSheet.create({
   channelName: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 2,
   },
   pinIcon: {
@@ -627,16 +624,11 @@ const styles = StyleSheet.create({
   },
   channelSubtitle: {
     fontSize: 13,
-    color: "#666",
   },
   channelNote: {
     fontSize: 11,
-    color: "#999",
     fontStyle: "italic",
     marginTop: 2,
-  },
-  disabledText: {
-    color: "#999",
   },
   unreadBadge: {
     minWidth: 20,
@@ -667,7 +659,6 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: "#F0F0F0",
     justifyContent: "center",
     alignItems: "center",
   },
@@ -677,7 +668,6 @@ const styles = StyleSheet.create({
   },
   emptyStateText: {
     fontSize: 14,
-    color: "#999",
   },
   createButton: {
     flexDirection: "row",
@@ -688,7 +678,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 2,
     borderStyle: "dashed",
-    backgroundColor: "#fff",
   },
   createButtonText: {
     fontSize: 16,
@@ -706,7 +695,6 @@ const styles = StyleSheet.create({
   pinChannelsButtonText: {
     fontSize: 14,
     fontWeight: "500",
-    color: "#666",
   },
   inviteActions: {
     flexDirection: "row",
@@ -729,7 +717,6 @@ const styles = StyleSheet.create({
     height: 32,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: "#FF3B30",
     justifyContent: "center",
     alignItems: "center",
   },

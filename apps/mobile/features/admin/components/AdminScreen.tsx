@@ -16,6 +16,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@providers/AuthProvider";
+import { useTheme } from "@hooks/useTheme";
 import { PendingRequestsContent } from "./PendingRequestsContent";
 import { StatsContent } from "./StatsContent";
 import { PeopleContent } from "./PeopleContent";
@@ -33,6 +34,7 @@ interface Tab {
 export function AdminScreen() {
   const insets = useSafeAreaInsets();
   const { community, user } = useAuth();
+  const { colors } = useTheme();
   const isInternalDashboardUser =
     user?.is_staff === true || user?.is_superuser === true;
   const isAdmin = user?.is_admin === true;
@@ -81,14 +83,14 @@ export function AdminScreen() {
   // Show message when user has no community context (except for internal dashboard users)
   if (!hasCommunity && !isInternalDashboardUser) {
     return (
-      <View style={styles.container}>
-        <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
-          <Text style={styles.headerTitle}>Admin</Text>
+      <View style={[styles.container, { backgroundColor: colors.surface }]}>
+        <View style={[styles.header, { paddingTop: insets.top + 16, backgroundColor: colors.surface }]}>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Admin</Text>
         </View>
         <View style={styles.noCommunityContainer}>
-          <Ionicons name="shield-outline" size={48} color="#ccc" style={{ marginBottom: 16 }} />
-          <Text style={styles.noCommunityTitle}>No Community Selected</Text>
-          <Text style={styles.noCommunitySubtext}>
+          <Ionicons name="shield-outline" size={48} color={colors.borderLight} style={{ marginBottom: 16 }} />
+          <Text style={[styles.noCommunityTitle, { color: colors.text }]}>No Community Selected</Text>
+          <Text style={[styles.noCommunitySubtext, { color: colors.textSecondary }]}>
             Join a community to access admin features
           </Text>
         </View>
@@ -97,19 +99,19 @@ export function AdminScreen() {
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.surface }]}>
       {/* Header */}
-      <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
-        <Text style={styles.headerTitle}>Admin</Text>
+      <View style={[styles.header, { paddingTop: insets.top + 16, backgroundColor: colors.surface }]}>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>Admin</Text>
 
         {/* Segmented Control */}
-        <View style={styles.segmentedControl}>
+        <View style={[styles.segmentedControl, { backgroundColor: colors.surfaceSecondary }]}>
           {tabs.map((tab) => (
             <TouchableOpacity
               key={tab.key}
               style={[
                 styles.segment,
-                activeTab === tab.key && styles.segmentActive,
+                activeTab === tab.key && [styles.segmentActive, { backgroundColor: colors.surface }],
               ]}
               onPress={() => setActiveTab(tab.key)}
               activeOpacity={0.7}
@@ -117,7 +119,8 @@ export function AdminScreen() {
               <Text
                 style={[
                   styles.segmentText,
-                  activeTab === tab.key && styles.segmentTextActive,
+                  { color: colors.textSecondary },
+                  activeTab === tab.key && [styles.segmentTextActive, { color: colors.text }],
                 ]}
               >
                 {tab.label}
@@ -150,10 +153,8 @@ export function AdminScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
   },
   header: {
-    backgroundColor: "#fff",
     paddingHorizontal: 20,
     paddingTop: 16,
     paddingBottom: 16,
@@ -161,12 +162,10 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 24,
     fontWeight: "bold",
-    color: "#333",
     marginBottom: 16,
   },
   segmentedControl: {
     flexDirection: "row",
-    backgroundColor: "#f0f0f0",
     borderRadius: 10,
     padding: 4,
   },
@@ -177,7 +176,6 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   segmentActive: {
-    backgroundColor: "#fff",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
@@ -187,10 +185,8 @@ const styles = StyleSheet.create({
   segmentText: {
     fontSize: 15,
     fontWeight: "500",
-    color: "#666",
   },
   segmentTextActive: {
-    color: "#333",
     fontWeight: "600",
   },
   content: {
@@ -205,13 +201,11 @@ const styles = StyleSheet.create({
   noCommunityTitle: {
     fontSize: 20,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 8,
     textAlign: "center",
   },
   noCommunitySubtext: {
     fontSize: 16,
-    color: "#666",
     textAlign: "center",
   },
 });

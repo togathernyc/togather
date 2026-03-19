@@ -10,6 +10,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 
 // ============================================================================
 // Types
@@ -103,10 +104,11 @@ export function FloatingRsvpButtons({
   insets,
   tabBarOffset = 0,
 }: FloatingRsvpButtonsProps) {
+  const { colors } = useTheme();
   const enabledOptions = options.filter((opt) => opt.enabled).slice(0, 3);
 
   return (
-    <View style={[styles.container, { paddingBottom: insets.bottom + 20, bottom: tabBarOffset }]}>
+    <View style={[styles.container, { paddingBottom: insets.bottom + 20, bottom: tabBarOffset, backgroundColor: colors.surface, borderTopColor: colors.border }]}>
       <View style={styles.buttonRow}>
         {enabledOptions.map((option) => {
           const emoji = getEmojiForLabel(option.label);
@@ -129,7 +131,7 @@ export function FloatingRsvpButtons({
                   <Text style={styles.emoji}>{emoji}</Text>
                 )}
               </View>
-              <Text style={styles.buttonLabel}>{displayLabel}</Text>
+              <Text style={[styles.buttonLabel, { color: colors.textSecondary }]}>{displayLabel}</Text>
             </TouchableOpacity>
           );
         })}
@@ -148,12 +150,13 @@ export function FloatingRsvpCard({
   insets,
   tabBarOffset = 0,
 }: FloatingRsvpCardProps) {
+  const { colors } = useTheme();
   const selectedOption = options.find((opt) => opt.id === response.optionId);
   const emoji = selectedOption ? getEmojiForLabel(selectedOption.label) : "👍";
   const label = selectedOption ? getCleanLabel(selectedOption.label) : "Going";
 
   return (
-    <View style={[styles.cardContainer, { paddingBottom: insets.bottom + 20, bottom: tabBarOffset }]}>
+    <View style={[styles.cardContainer, { paddingBottom: insets.bottom + 20, bottom: tabBarOffset, backgroundColor: colors.surface, borderTopColor: colors.border }]}>
       <TouchableOpacity
         testID="floating-rsvp-card"
         style={styles.card}
@@ -164,7 +167,7 @@ export function FloatingRsvpCard({
           <Text style={styles.cardEmoji}>{emoji}</Text>
           <View style={styles.cardTextContent}>
             <Text style={styles.statusLabel}>{label}</Text>
-            <Text style={styles.editPrompt}>Edit your RSVP</Text>
+            <Text style={[styles.editPrompt, { color: colors.textSecondary }]}>Edit your RSVP</Text>
           </View>
           <Ionicons name="create-outline" size={20} color={DEFAULT_PRIMARY_COLOR} />
         </View>
@@ -184,6 +187,7 @@ export function RsvpEditModal({
   loadingOptionId,
   onSelect,
 }: RsvpEditModalProps) {
+  const { colors } = useTheme();
   const handleSelect = async (optionId: number) => {
     await onSelect(optionId);
     onClose();
@@ -201,12 +205,12 @@ export function RsvpEditModal({
         activeOpacity={1}
         onPress={onClose}
       >
-        <View style={styles.modalContent}>
+        <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
           <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Change your RSVP</Text>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>Change your RSVP</Text>
               <TouchableOpacity onPress={onClose}>
-                <Ionicons name="close" size={24} color="#333" />
+                <Ionicons name="close" size={24} color={colors.text} />
               </TouchableOpacity>
             </View>
             <View style={styles.modalOptions}>
@@ -268,9 +272,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: "#fff",
     borderTopWidth: 1,
-    borderTopColor: "#e0e0e0",
     paddingTop: 16,
     paddingHorizontal: 20,
   },
@@ -296,7 +298,6 @@ const styles = StyleSheet.create({
   },
   buttonLabel: {
     fontSize: 12,
-    color: "#666",
     textAlign: "center",
     marginTop: 6,
     fontWeight: "500",
@@ -308,9 +309,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: "#fff",
     borderTopWidth: 1,
-    borderTopColor: "#e0e0e0",
     paddingTop: 16,
     paddingHorizontal: 20,
   },
@@ -345,7 +344,6 @@ const styles = StyleSheet.create({
   },
   editPrompt: {
     fontSize: 13,
-    color: "#666",
   },
 
   // Modal
@@ -355,7 +353,6 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
   },
   modalContent: {
-    backgroundColor: "#fff",
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: 20,
@@ -370,7 +367,6 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
   },
   modalOptions: {
     gap: 12,
@@ -391,7 +387,7 @@ const styles = StyleSheet.create({
   },
   modalOptionLabel: {
     fontSize: 16,
-    color: "#333",
+    color: "#333", // Will be overridden dynamically for selected state
   },
   modalOptionLabelSelected: {
     color: DEFAULT_PRIMARY_COLOR,

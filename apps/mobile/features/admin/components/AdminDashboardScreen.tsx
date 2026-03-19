@@ -12,11 +12,13 @@ import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@providers/AuthProvider";
 import { useAdminDashboard } from "../hooks/useAdminDashboard";
+import { useTheme } from "@hooks/useTheme";
 
 export function AdminDashboardScreen() {
   const { user, logout } = useAuth();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
   const { totalAttendance, newSignups, groupsList, dateRange, isLoading } =
     useAdminDashboard();
 
@@ -34,89 +36,89 @@ export function AdminDashboardScreen() {
   };
 
   return (
-    <ScrollView style={styles.container}>
-      <View style={[styles.header, { paddingTop: insets.top }]}>
+    <ScrollView style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
+      <View style={[styles.header, { paddingTop: insets.top, backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <View style={styles.headerTop}>
           <View>
-            <Text style={styles.welcomeText}>
+            <Text style={[styles.welcomeText, { color: colors.text }]}>
               Welcome, {user?.first_name || "Admin"}!
             </Text>
-            <Text style={styles.dateText}>
+            <Text style={[styles.dateText, { color: colors.textSecondary }]}>
               {format(new Date(), "MMM d, yyyy")}
             </Text>
           </View>
-          <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
-            <Text style={styles.logoutText}>Sign Out</Text>
+          <TouchableOpacity onPress={handleLogout} style={[styles.logoutButton, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+            <Text style={[styles.logoutText, { color: colors.text }]}>Sign Out</Text>
           </TouchableOpacity>
         </View>
       </View>
 
       <View style={styles.statsContainer}>
-        <View style={styles.statCard}>
-          <Text style={styles.statLabel}>Total Attendance</Text>
-          <Text style={styles.statValue}>
+        <View style={[styles.statCard, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Total Attendance</Text>
+          <Text style={[styles.statValue, { color: colors.text }]}>
             {totalAttendance?.totalAttendance || 0}
           </Text>
           {dateRange && (
-            <Text style={styles.statSubtext}>
+            <Text style={[styles.statSubtext, { color: colors.textTertiary }]}>
               {format(new Date(dateRange.startDate), "MMM d")} -{" "}
               {format(new Date(dateRange.endDate), "MMM d")}
             </Text>
           )}
         </View>
 
-        <View style={styles.statCard}>
-          <Text style={styles.statLabel}>New Signups</Text>
-          <Text style={styles.statValue}>{newSignups?.newSignups || 0}</Text>
-          {dateRange && <Text style={styles.statSubtext}>Last 7 days</Text>}
+        <View style={[styles.statCard, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.statLabel, { color: colors.textSecondary }]}>New Signups</Text>
+          <Text style={[styles.statValue, { color: colors.text }]}>{newSignups?.newSignups || 0}</Text>
+          {dateRange && <Text style={[styles.statSubtext, { color: colors.textTertiary }]}>Last 7 days</Text>}
         </View>
 
-        <View style={styles.statCard}>
-          <Text style={styles.statLabel}>Active Groups</Text>
-          <Text style={styles.statValue}>{groupsList.length}</Text>
-          <Text style={styles.statSubtext}>Total groups</Text>
+        <View style={[styles.statCard, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Active Groups</Text>
+          <Text style={[styles.statValue, { color: colors.text }]}>{groupsList.length}</Text>
+          <Text style={[styles.statSubtext, { color: colors.textTertiary }]}>Total groups</Text>
         </View>
       </View>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Quick Access</Text>
+      <View style={[styles.section, { backgroundColor: colors.surface }]}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Quick Access</Text>
         <View style={styles.quickActions}>
           <TouchableOpacity
-            style={styles.actionCard}
+            style={[styles.actionCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
             onPress={() => router.push("/(user)/admin/community-wide-events")}
           >
-            <Text style={styles.actionTitle}>Community-Wide Events</Text>
-            <Text style={styles.actionSubtext}>Manage multi-group events</Text>
+            <Text style={[styles.actionTitle, { color: colors.text }]}>Community-Wide Events</Text>
+            <Text style={[styles.actionSubtext, { color: colors.textSecondary }]}>Manage multi-group events</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={styles.actionCard}
+            style={[styles.actionCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
             onPress={() => router.push("/(user)/admin/duplicate-accounts")}
           >
-            <Text style={styles.actionTitle}>Duplicate Accounts</Text>
-            <Text style={styles.actionSubtext}>Merge duplicate users</Text>
+            <Text style={[styles.actionTitle, { color: colors.text }]}>Duplicate Accounts</Text>
+            <Text style={[styles.actionSubtext, { color: colors.textSecondary }]}>Merge duplicate users</Text>
           </TouchableOpacity>
-          <View style={styles.actionCard}>
-            <Text style={styles.actionTitle}>Groups</Text>
-            <Text style={styles.actionSubtext}>Manage small groups</Text>
+          <View style={[styles.actionCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+            <Text style={[styles.actionTitle, { color: colors.text }]}>Groups</Text>
+            <Text style={[styles.actionSubtext, { color: colors.textSecondary }]}>Manage small groups</Text>
           </View>
-          <View style={styles.actionCard}>
-            <Text style={styles.actionTitle}>Members</Text>
-            <Text style={styles.actionSubtext}>View member list</Text>
+          <View style={[styles.actionCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+            <Text style={[styles.actionTitle, { color: colors.text }]}>Members</Text>
+            <Text style={[styles.actionSubtext, { color: colors.textSecondary }]}>View member list</Text>
           </View>
-          <View style={styles.actionCard}>
-            <Text style={styles.actionTitle}>Reports</Text>
-            <Text style={styles.actionSubtext}>View analytics</Text>
+          <View style={[styles.actionCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+            <Text style={[styles.actionTitle, { color: colors.text }]}>Reports</Text>
+            <Text style={[styles.actionSubtext, { color: colors.textSecondary }]}>View analytics</Text>
           </View>
-          <View style={styles.actionCard}>
-            <Text style={styles.actionTitle}>Settings</Text>
-            <Text style={styles.actionSubtext}>Community settings</Text>
+          <View style={[styles.actionCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+            <Text style={[styles.actionTitle, { color: colors.text }]}>Settings</Text>
+            <Text style={[styles.actionSubtext, { color: colors.textSecondary }]}>Community settings</Text>
           </View>
         </View>
       </View>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Recent Activity</Text>
-        <Text style={styles.placeholderText}>
+      <View style={[styles.section, { backgroundColor: colors.surface }]}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Recent Activity</Text>
+        <Text style={[styles.placeholderText, { color: colors.textTertiary }]}>
           Recent activity will appear here
         </Text>
       </View>
@@ -127,7 +129,6 @@ export function AdminDashboardScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f5f5f5",
   },
   centerContainer: {
     flex: 1,
@@ -136,19 +137,15 @@ const styles = StyleSheet.create({
   },
   header: {
     padding: 20,
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   welcomeText: {
     fontSize: 24,
     fontWeight: "bold",
-    color: "#333",
     marginBottom: 4,
   },
   dateText: {
     fontSize: 14,
-    color: "#666",
   },
   statsContainer: {
     flexDirection: "row",
@@ -159,7 +156,6 @@ const styles = StyleSheet.create({
   statCard: {
     flex: 1,
     minWidth: "30%",
-    backgroundColor: "#fff",
     padding: 16,
     borderRadius: 8,
     shadowColor: "#000",
@@ -170,28 +166,23 @@ const styles = StyleSheet.create({
   },
   statLabel: {
     fontSize: 12,
-    color: "#666",
     marginBottom: 8,
   },
   statValue: {
     fontSize: 28,
     fontWeight: "bold",
-    color: "#333",
   },
   statSubtext: {
     fontSize: 11,
-    color: "#999",
     marginTop: 4,
   },
   section: {
     padding: 20,
-    backgroundColor: "#fff",
     marginTop: 12,
   },
   sectionTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 16,
   },
   quickActions: {
@@ -202,25 +193,20 @@ const styles = StyleSheet.create({
   actionCard: {
     flex: 1,
     minWidth: "45%",
-    backgroundColor: "#f8f8f8",
     padding: 16,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: "#e0e0e0",
   },
   actionTitle: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 4,
   },
   actionSubtext: {
     fontSize: 12,
-    color: "#666",
   },
   placeholderText: {
     fontSize: 14,
-    color: "#999",
     fontStyle: "italic",
   },
   headerTop: {
@@ -232,14 +218,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 8,
-    backgroundColor: "#f0f0f0",
     borderWidth: 1,
-    borderColor: "#ddd",
   },
   logoutText: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#333",
   },
 });
 

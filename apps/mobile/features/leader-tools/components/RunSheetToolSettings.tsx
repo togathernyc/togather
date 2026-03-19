@@ -15,6 +15,7 @@ import type { Id } from "@services/api/convex";
 import { ChipConfigEditor } from "./ChipConfigEditor";
 import { normalizeRoleName } from "../utils/runSheetUtils";
 import { DragHandle } from "@components/ui/DragHandle";
+import { useTheme } from "@hooks/useTheme";
 
 // Types for run sheet data
 interface RunSheetItem {
@@ -46,6 +47,7 @@ interface GroupWithRunSheetConfig {
 }
 
 export function RunSheetToolSettings({ groupId }: Props) {
+  const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const themeColor = primaryColor || DEFAULT_PRIMARY_COLOR;
   const [availableServiceTypes, setAvailableServiceTypes] = useState<ServiceType[]>([]);
@@ -214,7 +216,7 @@ export function RunSheetToolSettings({ groupId }: Props) {
 
   if (!groupData) {
     return (
-      <View style={styles.centered}>
+      <View style={[styles.centered, { backgroundColor: colors.backgroundSecondary }]}>
         <ActivityIndicator color={themeColor} />
       </View>
     );
@@ -222,23 +224,23 @@ export function RunSheetToolSettings({ groupId }: Props) {
 
   return (
     <ScrollView
-      style={styles.container}
+      style={[styles.container, { backgroundColor: colors.backgroundSecondary }]}
       contentContainerStyle={styles.content}
     >
       <DragHandle />
       {/* Service Type Selection */}
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>
           Default Service Types
         </Text>
-        <Text style={styles.sectionDescription}>
+        <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>
           Select which service types to show by default in the Run Sheet
         </Text>
 
         {loadingServiceTypes ? (
           <ActivityIndicator style={styles.loader} color={themeColor} />
         ) : availableServiceTypes.length === 0 ? (
-          <Text style={styles.emptyText}>
+          <Text style={[styles.emptyText, { color: colors.textTertiary }]}>
             No PCO service types configured. Set up auto-channels first.
           </Text>
         ) : (
@@ -248,18 +250,18 @@ export function RunSheetToolSettings({ groupId }: Props) {
               return (
                 <Pressable
                   key={serviceType.id}
-                  style={styles.serviceTypeRow}
+                  style={[styles.serviceTypeRow, { borderBottomColor: colors.border }]}
                   onPress={() => handleToggleServiceType(serviceType.id)}
                 >
                   <Ionicons
                     name={isSelected ? "checkbox" : "square-outline"}
                     size={22}
-                    color={isSelected ? themeColor : "#999"}
+                    color={isSelected ? themeColor : colors.textTertiary}
                   />
                   <Text
                     style={[
                       styles.serviceTypeName,
-                      { color: isSelected ? "#333" : "#999" },
+                      { color: isSelected ? colors.text : colors.textTertiary },
                     ]}
                   >
                     {serviceType.name}
@@ -273,16 +275,16 @@ export function RunSheetToolSettings({ groupId }: Props) {
 
       {/* Chip Configuration */}
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>
           Filter Chips
         </Text>
-        <Text style={styles.sectionDescription}>
+        <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>
           Configure which filter chips appear and their order
         </Text>
         {loadingRunSheet ? (
           <ActivityIndicator style={styles.loader} color={themeColor} />
         ) : availableCategories.length === 0 ? (
-          <Text style={styles.emptyText}>
+          <Text style={[styles.emptyText, { color: colors.textTertiary }]}>
             No categories found. Categories will appear after loading a run sheet with notes.
           </Text>
         ) : (
@@ -300,7 +302,7 @@ export function RunSheetToolSettings({ groupId }: Props) {
           style={[styles.saveButton, { backgroundColor: themeColor }]}
           onPress={handleSave}
         >
-          <Text style={styles.saveButtonText}>Save Changes</Text>
+          <Text style={[styles.saveButtonText, { color: colors.textInverse }]}>Save Changes</Text>
         </Pressable>
       )}
     </ScrollView>
@@ -310,13 +312,11 @@ export function RunSheetToolSettings({ groupId }: Props) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f8f9fa",
   },
   centered: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#f8f9fa",
   },
   content: {
     padding: 16,
@@ -328,12 +328,10 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "600",
     marginBottom: 4,
-    color: "#333",
   },
   sectionDescription: {
     fontSize: 14,
     marginBottom: 16,
-    color: "#666",
   },
   loader: {
     marginTop: 16,
@@ -342,7 +340,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontStyle: "italic",
     marginTop: 8,
-    color: "#999",
   },
   serviceTypeList: {
     marginTop: 8,
@@ -352,7 +349,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
     gap: 12,
   },
   serviceTypeName: {
@@ -367,7 +363,6 @@ const styles = StyleSheet.create({
     marginTop: 16,
   },
   saveButtonText: {
-    color: "#FFFFFF",
     fontSize: 16,
     fontWeight: "600",
   },

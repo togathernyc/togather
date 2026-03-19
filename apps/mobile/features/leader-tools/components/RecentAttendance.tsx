@@ -12,6 +12,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRecentAttendanceStats, useMeetingDates } from "../hooks";
 // Removed LeaderToolsPage import - navigation now uses router.push
 
+import { useTheme } from "@hooks/useTheme";
+
 interface RecentAttendanceProps {
   groupId: string;
   group: any;
@@ -48,6 +50,7 @@ export function RecentAttendance({
   onGroupChat,
   onNotifications,
 }: RecentAttendanceProps) {
+  const { colors } = useTheme();
   const router = useRouter();
 
   // Fetch recent attendance stats
@@ -116,7 +119,7 @@ export function RecentAttendance({
       {/* Group Info Header */}
       <View style={styles.header}>
         <View style={styles.membersSection}>
-          <Text style={styles.sectionLabel}>MEMBERS</Text>
+          <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>MEMBERS</Text>
           <TouchableOpacity
             style={styles.membersRow}
             onPress={() => router.push(`/(user)/leader-tools/${groupId}/members`)}
@@ -126,10 +129,10 @@ export function RecentAttendance({
               {Array.from({
                 length: Math.min(group?.members?.length || 0, 5),
               }).map((_, index) => (
-                <View key={index} style={styles.memberAvatarPlaceholder} />
+                <View key={index} style={[styles.memberAvatarPlaceholder, { backgroundColor: colors.border, borderColor: colors.surface }]} />
               ))}
             </View>
-            <Text style={styles.memberCount}>
+            <Text style={[styles.memberCount, { color: colors.text }]}>
               {(() => {
                 // Get member count from the group data
                 const count = group?.members?.length || 0;
@@ -138,19 +141,19 @@ export function RecentAttendance({
             </Text>
           </TouchableOpacity>
         </View>
-        <TouchableOpacity style={styles.chatButton} onPress={onGroupChat}>
-          <Ionicons name="chatbubble-outline" size={20} color="#fff" />
+        <TouchableOpacity style={[styles.chatButton, { backgroundColor: colors.text }]} onPress={onGroupChat}>
+          <Ionicons name="chatbubble-outline" size={20} color={colors.textInverse} />
         </TouchableOpacity>
       </View>
 
-      <View style={styles.divider} />
+      <View style={[styles.divider, { backgroundColor: colors.border }]} />
 
       {/* Recent Attendance Graph */}
       <View style={styles.attendanceSection}>
-        <Text style={styles.sectionTitle}>RECENT ATTENDANCE</Text>
+        <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>RECENT ATTENDANCE</Text>
         {isLoadingStats ? (
           <View style={styles.loadingContainer}>
-            <Text style={styles.loadingText}>Loading attendance...</Text>
+            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading attendance...</Text>
           </View>
         ) : attendanceStats.length > 0 ? (
           <View style={styles.graphContainer}>
@@ -162,18 +165,18 @@ export function RecentAttendance({
                 return (
                   <View key={stat.id || index} style={styles.graphBarContainer}>
                     {!showCountOnBar && (
-                      <Text style={styles.graphCountAbove}>
+                      <Text style={[styles.graphCountAbove, { color: colors.text }]}>
                         {stat.present_count}
                       </Text>
                     )}
                     <View
                       style={[
                         styles.graphBar,
-                        { height: Math.max(height, 32) },
+                        { height: Math.max(height, 32), backgroundColor: colors.text },
                       ]}
                     >
                       {showCountOnBar && (
-                        <Text style={styles.graphCount}>
+                        <Text style={[styles.graphCount, { color: colors.textInverse }]}>
                           {stat.present_count}
                         </Text>
                       )}
@@ -184,7 +187,7 @@ export function RecentAttendance({
             </View>
             <View style={styles.graphDates}>
               {attendanceStats.map((stat: any, index: number) => (
-                <Text key={stat.id || index} style={styles.graphDate}>
+                <Text key={stat.id || index} style={[styles.graphDate, { color: colors.textSecondary }]}>
                   {format(new Date(stat.date_of_meeting), "M/d")}
                 </Text>
               ))}
@@ -192,22 +195,22 @@ export function RecentAttendance({
           </View>
         ) : (
           <View style={styles.emptyState}>
-            <Text style={styles.emptyStateText}>No attendance records yet</Text>
+            <Text style={[styles.emptyStateText, { color: colors.textTertiary }]}>No attendance records yet</Text>
           </View>
         )}
       </View>
 
-      <View style={styles.divider} />
+      <View style={[styles.divider, { backgroundColor: colors.border }]} />
 
       {/* Next Event Section */}
       <View style={styles.eventSection}>
-        <Text style={styles.sectionTitle}>Next Event</Text>
+        <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Next Event</Text>
         <View style={styles.eventRow}>
-          <Text style={styles.eventDate}>
+          <Text style={[styles.eventDate, { color: colors.text }]}>
             {hasNextEvent ? nextEventDate : "Nothing Scheduled"}
           </Text>
           <TouchableOpacity
-            style={styles.eventButton}
+            style={[styles.eventButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
             onPress={() => {
               // Navigate to events modal (matching iOS behavior)
               if (onPageChange) {
@@ -218,18 +221,18 @@ export function RecentAttendance({
               }
             }}
           >
-            <Text style={styles.eventButtonText}>
+            <Text style={[styles.eventButtonText, { color: colors.text }]}>
               {hasNextEvent ? "EDIT" : "CREATE EVENT"}
             </Text>
           </TouchableOpacity>
         </View>
       </View>
 
-      <View style={styles.divider} />
+      <View style={[styles.divider, { backgroundColor: colors.border }]} />
 
       {/* Navigation Tabs */}
       <TouchableOpacity
-        style={styles.navTab}
+        style={[styles.navTab, { borderBottomColor: colors.border }]}
         onPress={() => {
           if (onPageChange) {
             onPageChange("members");
@@ -238,12 +241,12 @@ export function RecentAttendance({
           }
         }}
       >
-        <Text style={styles.navTabText}>Members</Text>
-        <Ionicons name="chevron-forward" size={20} color="#666" />
+        <Text style={[styles.navTabText, { color: colors.text }]}>Members</Text>
+        <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
       </TouchableOpacity>
 
       <TouchableOpacity
-        style={styles.navTab}
+        style={[styles.navTab, { borderBottomColor: colors.border }]}
         onPress={() => {
           if (onPageChange) {
             onPageChange("events");
@@ -253,18 +256,18 @@ export function RecentAttendance({
           }
         }}
       >
-        <Text style={styles.navTabText}>Events</Text>
-        <Ionicons name="chevron-forward" size={20} color="#666" />
+        <Text style={[styles.navTabText, { color: colors.text }]}>Events</Text>
+        <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
       </TouchableOpacity>
 
       <TouchableOpacity
-        style={styles.navTab}
+        style={[styles.navTab, { borderBottomColor: colors.border }]}
         onPress={() => {
           router.push(`/(user)/leader-tools/${groupId}/shared-channels`);
         }}
       >
-        <Text style={styles.navTabText}>Shared Channels</Text>
-        <Ionicons name="chevron-forward" size={20} color="#666" />
+        <Text style={[styles.navTabText, { color: colors.text }]}>Shared Channels</Text>
+        <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
       </TouchableOpacity>
     </ScrollView>
   );
@@ -273,7 +276,6 @@ export function RecentAttendance({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
   },
   contentContainer: {
     padding: 20,
@@ -291,7 +293,6 @@ const styles = StyleSheet.create({
   sectionLabel: {
     fontSize: 12,
     fontWeight: "600",
-    color: "#666",
     marginBottom: 12,
     textTransform: "uppercase",
   },
@@ -308,20 +309,16 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: "#e0e0e0",
     marginLeft: -8,
     borderWidth: 1,
-    borderColor: "#fff",
   },
   memberCount: {
     fontSize: 14,
-    color: "#333",
   },
   chatButton: {
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: "#333",
     justifyContent: "center",
     alignItems: "center",
     shadowColor: "#000",
@@ -332,7 +329,6 @@ const styles = StyleSheet.create({
   },
   divider: {
     height: 1,
-    backgroundColor: "#e0e0e0",
     marginVertical: 24,
   },
   attendanceSection: {
@@ -341,7 +337,6 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 12,
     fontWeight: "600",
-    color: "#666",
     marginBottom: 16,
     textTransform: "uppercase",
   },
@@ -351,7 +346,6 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: 14,
-    color: "#666",
   },
   graphContainer: {
     marginTop: 8,
@@ -370,7 +364,6 @@ const styles = StyleSheet.create({
   },
   graphBar: {
     width: "80%",
-    backgroundColor: "#333",
     borderRadius: 4,
     minHeight: 32,
     justifyContent: "center",
@@ -379,12 +372,10 @@ const styles = StyleSheet.create({
   graphCount: {
     fontSize: 12,
     fontWeight: "600",
-    color: "#fff",
   },
   graphCountAbove: {
     fontSize: 12,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 4,
   },
   graphDates: {
@@ -394,7 +385,6 @@ const styles = StyleSheet.create({
   },
   graphDate: {
     fontSize: 12,
-    color: "#666",
     flex: 1,
     textAlign: "center",
   },
@@ -404,7 +394,6 @@ const styles = StyleSheet.create({
   },
   emptyStateText: {
     fontSize: 14,
-    color: "#999",
   },
   eventSection: {
     marginBottom: 24,
@@ -418,20 +407,16 @@ const styles = StyleSheet.create({
   eventDate: {
     fontSize: 16,
     fontWeight: "500",
-    color: "#333",
   },
   eventButton: {
     paddingVertical: 8,
     paddingHorizontal: 12,
-    backgroundColor: "#fff",
     borderWidth: 1,
-    borderColor: "#e0e0e0",
     borderRadius: 6,
   },
   eventButtonText: {
     fontSize: 12,
     fontWeight: "600",
-    color: "#333",
   },
   navTab: {
     flexDirection: "row",
@@ -439,10 +424,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
   },
   navTabText: {
     fontSize: 16,
-    color: "#333",
   },
 });

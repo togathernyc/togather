@@ -6,6 +6,7 @@
  */
 import { View, Text, StyleSheet, Pressable, Linking } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useTheme } from "@hooks/useTheme";
 import { useLinkPreview } from "@features/chat/hooks/useLinkPreview";
 import { LinkPreviewCard } from "@features/chat/components/LinkPreviewCard";
 import { AppImage } from "./AppImage";
@@ -28,6 +29,7 @@ export interface ResourceSectionData {
 // ============================================================================
 
 export function ResourceSection({ section }: { section: ResourceSectionData }) {
+  const { colors } = useTheme();
   const { preview, loading } = useLinkPreview(section.linkUrl || null);
 
   const handleLinkPress = () => {
@@ -39,11 +41,11 @@ export function ResourceSection({ section }: { section: ResourceSectionData }) {
   };
 
   return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>{section.title}</Text>
+    <View style={[styles.section, { backgroundColor: colors.surfaceSecondary }]}>
+      <Text style={[styles.sectionTitle, { color: colors.text }]}>{section.title}</Text>
 
       {section.description && (
-        <Text style={styles.sectionDescription}>{section.description}</Text>
+        <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>{section.description}</Text>
       )}
 
       {section.imageUrls?.map((url, index) => (
@@ -55,7 +57,7 @@ export function ResourceSection({ section }: { section: ResourceSectionData }) {
             index < (section.imageUrls?.length ?? 0) - 1 && { marginBottom: 8 },
           ]}
           resizeMode="cover"
-          placeholder={{ type: "color", backgroundColor: "#f0f0f0" }}
+          placeholder={{ type: "color", backgroundColor: colors.surfaceSecondary }}
         />
       ))}
 
@@ -71,8 +73,8 @@ export function ResourceSection({ section }: { section: ResourceSectionData }) {
             <LinkPreviewCard preview={preview} embedded />
           ) : (
             <View style={styles.linkFallback}>
-              <Ionicons name="link-outline" size={16} color="#007AFF" />
-              <Text style={styles.linkText} numberOfLines={1}>
+              <Ionicons name="link-outline" size={16} color={colors.link} />
+              <Text style={[styles.linkText, { color: colors.link }]} numberOfLines={1}>
                 {section.linkUrl}
               </Text>
             </View>
@@ -91,18 +93,15 @@ const styles = StyleSheet.create({
   section: {
     marginBottom: 24,
     padding: 16,
-    backgroundColor: "#f9f9f9",
     borderRadius: 12,
   },
   sectionTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 8,
   },
   sectionDescription: {
     fontSize: 14,
-    color: "#666",
     lineHeight: 20,
     marginBottom: 12,
   },
@@ -120,7 +119,6 @@ const styles = StyleSheet.create({
   },
   linkText: {
     fontSize: 14,
-    color: "#007AFF",
     textDecorationLine: "underline",
     flex: 1,
   },

@@ -37,6 +37,7 @@ import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuthenticatedQuery } from "@services/api/convex";
 import { generateId } from "../utils/generateId";
+import { useTheme } from "@hooks/useTheme";
 
 // Schedule days
 const DAYS_OF_WEEK = [
@@ -138,6 +139,7 @@ export function CommunicationBotConfigModal({
   initialConfig,
   onSave,
 }: Props) {
+  const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const { token } = useAuth();
   const insets = useSafeAreaInsets();
@@ -373,16 +375,16 @@ export function CommunicationBotConfigModal({
     >
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={[styles.container, { backgroundColor: "#f5f5f5" }]}
+        style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}
       >
         {/* Header */}
-        <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+        <View style={[styles.header, { paddingTop: insets.top + 8, backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
           <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-            <Ionicons name="close" size={24} color="#333" />
+            <Ionicons name="close" size={24} color={colors.text} />
           </TouchableOpacity>
           <View style={styles.headerCenter}>
             <Text style={styles.headerIcon}>{"💬"}</Text>
-            <Text style={styles.headerTitle}>Communication Bot</Text>
+            <Text style={[styles.headerTitle, { color: colors.text }]}>Communication Bot</Text>
           </View>
           <TouchableOpacity
             style={styles.saveButton}
@@ -410,18 +412,18 @@ export function CommunicationBotConfigModal({
           contentContainerStyle={styles.scrollContent}
         >
           {/* Info Text */}
-          <Text style={styles.infoText}>
+          <Text style={[styles.infoText, { color: colors.textSecondary }]}>
             Schedule automated messages to be sent to group channels. Use {"{{ }}"}
-            to mention PCO team positions.
+            to insert PCO position mentions.
           </Text>
 
           {/* Messages List */}
           <View style={styles.messagesList}>
             {config.messages.length === 0 ? (
               <View style={styles.emptyState}>
-                <Ionicons name="chatbubbles-outline" size={48} color="#ccc" />
-                <Text style={styles.emptyTitle}>No scheduled messages</Text>
-                <Text style={styles.emptyText}>
+                <Ionicons name="chatbubbles-outline" size={48} color={colors.iconSecondary} />
+                <Text style={[styles.emptyTitle, { color: colors.text }]}>No scheduled messages</Text>
+                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
                   Add a message to automatically send at a scheduled time.
                 </Text>
               </View>
@@ -431,6 +433,7 @@ export function CommunicationBotConfigModal({
                   key={message.id}
                   style={[
                     styles.messageCard,
+                    { backgroundColor: colors.surface, shadowColor: '#000' },
                     !message.enabled && styles.messageCardDisabled,
                   ]}
                 >
@@ -441,29 +444,30 @@ export function CommunicationBotConfigModal({
                     <Text
                       style={[
                         styles.messageText,
-                        !message.enabled && styles.messageTextDisabled,
+                        { color: colors.text },
+                        !message.enabled && { color: colors.textTertiary },
                       ]}
                       numberOfLines={2}
                     >
                       {message.message || "(Empty message)"}
                     </Text>
                     <View style={styles.messageInfo}>
-                      <View style={styles.messageBadge}>
-                        <Ionicons name="calendar-outline" size={12} color="#666" />
-                        <Text style={styles.messageBadgeText}>
+                      <View style={[styles.messageBadge, { backgroundColor: colors.surfaceSecondary }]}>
+                        <Ionicons name="calendar-outline" size={12} color={colors.textSecondary} />
+                        <Text style={[styles.messageBadgeText, { color: colors.textSecondary }]}>
                           {getDayLabel(message.schedule.dayOfWeek)} at{" "}
                           {formatTime(message.schedule.hour, message.schedule.minute)}
                         </Text>
                       </View>
-                      <View style={styles.messageBadge}>
-                        <Ionicons name="chatbubble-outline" size={12} color="#666" />
-                        <Text style={styles.messageBadgeText}>
+                      <View style={[styles.messageBadge, { backgroundColor: colors.surfaceSecondary }]}>
+                        <Ionicons name="chatbubble-outline" size={12} color={colors.textSecondary} />
+                        <Text style={[styles.messageBadgeText, { color: colors.textSecondary }]}>
                           {getChannelName(message.targetChannelSlug)}
                         </Text>
                       </View>
                     </View>
                   </TouchableOpacity>
-                  <View style={styles.messageActions}>
+                  <View style={[styles.messageActions, { borderLeftColor: colors.borderLight }]}>
                     <TouchableOpacity
                       style={styles.toggleButton}
                       onPress={() => handleToggleMessage(message.id)}
@@ -471,7 +475,7 @@ export function CommunicationBotConfigModal({
                       <Ionicons
                         name={message.enabled ? "checkmark-circle" : "ellipse-outline"}
                         size={24}
-                        color={message.enabled ? primaryColor : "#ccc"}
+                        color={message.enabled ? primaryColor : colors.iconSecondary}
                       />
                     </TouchableOpacity>
                     <TouchableOpacity
@@ -489,7 +493,7 @@ export function CommunicationBotConfigModal({
                       style={styles.deleteButton}
                       onPress={() => handleDeleteMessage(message.id)}
                     >
-                      <Ionicons name="trash-outline" size={20} color="#e74c3c" />
+                      <Ionicons name="trash-outline" size={20} color={colors.destructive} />
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -499,7 +503,7 @@ export function CommunicationBotConfigModal({
 
           {/* Add Message Button */}
           <TouchableOpacity
-            style={[styles.addButton, { borderColor: primaryColor }]}
+            style={[styles.addButton, { borderColor: primaryColor, backgroundColor: colors.surface }]}
             onPress={handleAddMessage}
           >
             <Ionicons name="add-circle-outline" size={20} color={primaryColor} />
@@ -549,6 +553,7 @@ function MessageEditorModal({
   channelOptions,
   primaryColor,
 }: MessageEditorModalProps) {
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
 
   // Form state
@@ -707,15 +712,15 @@ function MessageEditorModal({
     >
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={[styles.container, { backgroundColor: "#f5f5f5" }]}
+        style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}
       >
         {/* Header */}
-        <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+        <View style={[styles.header, { paddingTop: insets.top + 8, backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
           <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-            <Ionicons name="chevron-back" size={24} color="#333" />
+            <Ionicons name="chevron-back" size={24} color={colors.text} />
           </TouchableOpacity>
           <View style={styles.headerCenter}>
-            <Text style={styles.headerTitle}>
+            <Text style={[styles.headerTitle, { color: colors.text }]}>
               {initialMessage.message ? "Edit Message" : "New Message"}
             </Text>
           </View>
@@ -743,19 +748,19 @@ function MessageEditorModal({
         >
           {/* Message Input */}
           <View style={styles.section}>
-            <Text style={styles.label}>Message</Text>
-            <Text style={styles.hint}>
+            <Text style={[styles.label, { color: colors.text }]}>Message</Text>
+            <Text style={[styles.hint, { color: colors.textSecondary }]}>
               Type {"{{ "} to insert PCO position mentions
             </Text>
             <View style={styles.textInputContainer}>
               <TextInput
                 ref={textInputRef}
-                style={styles.textArea}
+                style={[styles.textArea, { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder, color: colors.text }]}
                 value={message}
                 onChangeText={handleTextChange}
                 onSelectionChange={handleSelectionChange}
                 placeholder="Hey {{MANHATTAN > WORSHIP > Worship Leader}}, don't forget to submit your set list!"
-                placeholderTextColor="#999"
+                placeholderTextColor={colors.textTertiary}
                 multiline
                 numberOfLines={6}
                 textAlignVertical="top"
@@ -763,14 +768,14 @@ function MessageEditorModal({
 
               {/* Autocomplete Dropdown */}
               {showAutocomplete && (
-                <View style={styles.autocomplete}>
+                <View style={[styles.autocomplete, { backgroundColor: colors.surface, borderColor: colors.border, shadowColor: '#000' }]}>
                   {loadingPositions ? (
                     <View style={styles.autocompleteLoading}>
                       <ActivityIndicator size="small" color={primaryColor} />
-                      <Text style={styles.loadingText}>Loading positions...</Text>
+                      <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading positions...</Text>
                     </View>
                   ) : filteredPositions.length === 0 ? (
-                    <Text style={styles.emptyAutocompleteText}>
+                    <Text style={[styles.emptyAutocompleteText, { color: colors.textSecondary }]}>
                       {positions.length === 0
                         ? "No positions available. Configure PCO integration first."
                         : "No positions match your search"}
@@ -784,11 +789,11 @@ function MessageEditorModal({
                       {filteredPositions.map((item) => (
                         <TouchableOpacity
                           key={item.displayName}
-                          style={styles.autocompleteItem}
+                          style={[styles.autocompleteItem, { borderBottomColor: colors.borderLight }]}
                           onPress={() => insertPosition(item)}
                         >
-                          <Ionicons name="person-outline" size={16} color="#666" />
-                          <Text style={styles.positionText}>{item.displayName}</Text>
+                          <Ionicons name="person-outline" size={16} color={colors.textSecondary} />
+                          <Text style={[styles.positionText, { color: colors.text }]}>{item.displayName}</Text>
                         </TouchableOpacity>
                       ))}
                     </ScrollView>
@@ -800,11 +805,11 @@ function MessageEditorModal({
 
           {/* Schedule Section */}
           <View style={styles.section}>
-            <Text style={styles.label}>Schedule</Text>
+            <Text style={[styles.label, { color: colors.text }]}>Schedule</Text>
 
             {/* Day of Week */}
             <View style={styles.scheduleRow}>
-              <Text style={styles.scheduleLabel}>Day</Text>
+              <Text style={[styles.scheduleLabel, { color: colors.textSecondary }]}>Day</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                 <View style={styles.dayPicker}>
                   {DAYS_OF_WEEK.map((day) => (
@@ -812,6 +817,7 @@ function MessageEditorModal({
                       key={day.value}
                       style={[
                         styles.dayButton,
+                        { borderColor: colors.border, backgroundColor: colors.surface },
                         schedule.dayOfWeek === day.value && {
                           backgroundColor: primaryColor,
                           borderColor: primaryColor,
@@ -824,7 +830,8 @@ function MessageEditorModal({
                       <Text
                         style={[
                           styles.dayText,
-                          schedule.dayOfWeek === day.value && { color: "#fff" },
+                          { color: colors.text },
+                          schedule.dayOfWeek === day.value && { color: colors.textInverse },
                         ]}
                       >
                         {day.short}
@@ -837,13 +844,13 @@ function MessageEditorModal({
 
             {/* Time */}
             <View style={styles.scheduleRow}>
-              <Text style={styles.scheduleLabel}>Time</Text>
+              <Text style={[styles.scheduleLabel, { color: colors.textSecondary }]}>Time</Text>
               <TouchableOpacity
-                style={styles.timeButton}
+                style={[styles.timeButton, { borderColor: colors.border, backgroundColor: colors.surface }]}
                 onPress={handleTimePress}
               >
-                <Ionicons name="time-outline" size={18} color="#666" />
-                <Text style={styles.timeButtonText}>
+                <Ionicons name="time-outline" size={18} color={colors.textSecondary} />
+                <Text style={[styles.timeButtonText, { color: colors.text }]}>
                   {formatTime24h(schedule.hour, schedule.minute)}
                 </Text>
               </TouchableOpacity>
@@ -852,7 +859,7 @@ function MessageEditorModal({
 
           {/* Target Channel */}
           <View style={styles.section}>
-            <Text style={styles.label}>Send to Channel</Text>
+            <Text style={[styles.label, { color: colors.text }]}>Send to Channel</Text>
             <View style={styles.channelPicker}>
               {channelOptions.length > 0 ? (
                 channelOptions.map((channel) => (
@@ -860,6 +867,7 @@ function MessageEditorModal({
                     key={channel.slug}
                     style={[
                       styles.channelButton,
+                      { borderColor: colors.border, backgroundColor: colors.surface },
                       targetChannelSlug === channel.slug && {
                         backgroundColor: primaryColor,
                         borderColor: primaryColor,
@@ -870,7 +878,8 @@ function MessageEditorModal({
                     <Text
                       style={[
                         styles.channelText,
-                        targetChannelSlug === channel.slug && { color: "#fff" },
+                        { color: colors.text },
+                        targetChannelSlug === channel.slug && { color: colors.textInverse },
                       ]}
                     >
                       {channel.name}
@@ -884,6 +893,7 @@ function MessageEditorModal({
                       key={channel}
                       style={[
                         styles.channelButton,
+                        { borderColor: colors.border, backgroundColor: colors.surface },
                         targetChannelSlug === channel && {
                           backgroundColor: primaryColor,
                           borderColor: primaryColor,
@@ -894,7 +904,8 @@ function MessageEditorModal({
                       <Text
                         style={[
                           styles.channelText,
-                          targetChannelSlug === channel && { color: "#fff" },
+                          { color: colors.text },
+                          targetChannelSlug === channel && { color: colors.textInverse },
                         ]}
                       >
                         {channel === "leaders" ? "Leaders" : "General"}
@@ -915,13 +926,13 @@ function MessageEditorModal({
             animationType="slide"
             onRequestClose={handleTimeCancel}
           >
-            <View style={styles.timePickerOverlay}>
-              <View style={styles.timePickerContainer}>
-                <View style={styles.timePickerHeader}>
+            <View style={[styles.timePickerOverlay, { backgroundColor: colors.overlay }]}>
+              <View style={[styles.timePickerContainer, { backgroundColor: colors.surface }]}>
+                <View style={[styles.timePickerHeader, { borderBottomColor: colors.border }]}>
                   <TouchableOpacity onPress={handleTimeCancel}>
-                    <Text style={styles.timePickerCancel}>Cancel</Text>
+                    <Text style={[styles.timePickerCancel, { color: colors.textSecondary }]}>Cancel</Text>
                   </TouchableOpacity>
-                  <Text style={styles.timePickerTitle}>Select Time</Text>
+                  <Text style={[styles.timePickerTitle, { color: colors.text }]}>Select Time</Text>
                   <TouchableOpacity onPress={handleTimeConfirm}>
                     <Text style={[styles.timePickerDone, { color: primaryColor }]}>
                       Done
@@ -934,7 +945,7 @@ function MessageEditorModal({
                   display="spinner"
                   onChange={handleTimeChange}
                   style={styles.iosTimePicker}
-                  textColor="#000000"
+                  textColor={colors.text}
                 />
               </View>
             </View>
@@ -966,9 +977,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingBottom: 12,
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   closeButton: {
     padding: 4,
@@ -985,7 +994,6 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
   },
   saveButton: {
     width: 50,
@@ -1007,7 +1015,6 @@ const styles = StyleSheet.create({
   },
   infoText: {
     fontSize: 14,
-    color: "#666",
     marginBottom: 16,
     lineHeight: 20,
   },
@@ -1021,23 +1028,19 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     marginTop: 12,
   },
   emptyText: {
     fontSize: 14,
-    color: "#666",
     marginTop: 8,
     textAlign: "center",
     paddingHorizontal: 20,
   },
   messageCard: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     marginBottom: 12,
     flexDirection: "row",
     overflow: "hidden",
-    shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
     shadowRadius: 2,
@@ -1052,12 +1055,8 @@ const styles = StyleSheet.create({
   },
   messageText: {
     fontSize: 15,
-    color: "#333",
     lineHeight: 20,
     marginBottom: 8,
-  },
-  messageTextDisabled: {
-    color: "#999",
   },
   messageInfo: {
     flexDirection: "row",
@@ -1068,18 +1067,15 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    backgroundColor: "#f0f0f0",
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 4,
   },
   messageBadgeText: {
     fontSize: 12,
-    color: "#666",
   },
   messageActions: {
     borderLeftWidth: 1,
-    borderLeftColor: "#f0f0f0",
     padding: 8,
     justifyContent: "space-around",
   },
@@ -1101,7 +1097,6 @@ const styles = StyleSheet.create({
     borderStyle: "dashed",
     borderRadius: 12,
     paddingVertical: 16,
-    backgroundColor: "#fff",
   },
   addButtonText: {
     fontSize: 16,
@@ -1113,25 +1108,20 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 4,
   },
   hint: {
     fontSize: 13,
-    color: "#666",
     marginBottom: 8,
   },
   textInputContainer: {
     position: "relative",
   },
   textArea: {
-    backgroundColor: "#fff",
     borderWidth: 1,
-    borderColor: "#e0e0e0",
     borderRadius: 8,
     padding: 12,
     fontSize: 16,
-    color: "#333",
     minHeight: 120,
   },
   autocomplete: {
@@ -1140,14 +1130,11 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     maxHeight: 200,
-    backgroundColor: "#fff",
     borderWidth: 1,
-    borderColor: "#e0e0e0",
     borderRadius: 8,
     marginTop: 4,
     zIndex: 1000,
     elevation: 5,
-    shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
@@ -1161,7 +1148,6 @@ const styles = StyleSheet.create({
     padding: 12,
     gap: 8,
     borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
   },
   autocompleteLoading: {
     flexDirection: "row",
@@ -1171,17 +1157,14 @@ const styles = StyleSheet.create({
   },
   positionText: {
     fontSize: 14,
-    color: "#333",
     flex: 1,
   },
   loadingText: {
     fontSize: 14,
-    color: "#666",
   },
   emptyAutocompleteText: {
     padding: 12,
     fontSize: 14,
-    color: "#666",
     textAlign: "center",
   },
   scheduleRow: {
@@ -1189,7 +1172,6 @@ const styles = StyleSheet.create({
   },
   scheduleLabel: {
     fontSize: 14,
-    color: "#666",
     marginBottom: 8,
   },
   dayPicker: {
@@ -1201,37 +1183,29 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: "#e0e0e0",
-    backgroundColor: "#fff",
   },
   dayText: {
     fontSize: 14,
     fontWeight: "500",
-    color: "#333",
   },
   timeButton: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
     borderWidth: 1,
-    borderColor: "#e0e0e0",
     borderRadius: 6,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    backgroundColor: "#fff",
   },
   timeButtonText: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
   },
   timePickerOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
     justifyContent: "flex-end",
   },
   timePickerContainer: {
-    backgroundColor: "#fff",
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
     paddingBottom: 20,
@@ -1243,16 +1217,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: "#eee",
   },
   timePickerTitle: {
     fontSize: 17,
     fontWeight: "600",
-    color: "#333",
   },
   timePickerCancel: {
     fontSize: 17,
-    color: "#666",
   },
   timePickerDone: {
     fontSize: 17,
@@ -1273,13 +1244,10 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: "#e0e0e0",
-    backgroundColor: "#fff",
     alignItems: "center",
   },
   channelText: {
     fontSize: 15,
     fontWeight: "500",
-    color: "#333",
   },
 });

@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { AppImage } from "@components/ui";
+import { useTheme } from "@hooks/useTheme";
 import { getGroupTypeColorScheme } from "../../../constants/groupTypes";
 import { useIsDesktopWeb } from "../../../hooks/useIsDesktopWeb";
 
@@ -33,15 +34,16 @@ export const ChatHeader = memo(function ChatHeader({
   onMenuPress,
   onGroupPagePress,
 }: ChatHeaderProps) {
+  const { colors: themeColors } = useTheme();
   const scheme = getGroupTypeColorScheme(groupTypeId);
   const badgeColors = { bg: scheme.bg, text: scheme.color };
   const isDesktopWeb = useIsDesktopWeb();
 
   return (
-    <View style={styles.header}>
+    <View style={[styles.header, { backgroundColor: themeColors.surface }]}>
       {!isDesktopWeb && (
         <TouchableOpacity onPress={onBack} style={styles.backButton}>
-          <Ionicons name="chevron-back" size={28} color="#000" />
+          <Ionicons name="chevron-back" size={28} color={themeColors.text} />
         </TouchableOpacity>
       )}
 
@@ -61,7 +63,7 @@ export const ChatHeader = memo(function ChatHeader({
 
       {/* Group Info */}
       <View style={styles.headerInfo}>
-        <Text style={styles.groupName} numberOfLines={1}>
+        <Text style={[styles.groupName, { color: themeColors.text }]} numberOfLines={1}>
           {displayName}
         </Text>
         {displayType && (
@@ -75,7 +77,7 @@ export const ChatHeader = memo(function ChatHeader({
 
       {/* Menu Button */}
       <TouchableOpacity onPress={onMenuPress} style={styles.menuButton}>
-        <Ionicons name="ellipsis-vertical" size={20} color="#333" />
+        <Ionicons name="ellipsis-vertical" size={20} color={themeColors.text} />
       </TouchableOpacity>
     </View>
   );
@@ -93,12 +95,13 @@ export const ChatHeaderPlaceholder = memo(function ChatHeaderPlaceholder({
   onBack,
   topInset,
 }: ChatHeaderPlaceholderProps) {
+  const { colors: themeColors } = useTheme();
   return (
-    <View style={[styles.headerPlaceholder, { paddingTop: topInset }]}>
+    <View style={[styles.headerPlaceholder, { paddingTop: topInset, backgroundColor: themeColors.surface }]}>
       <TouchableOpacity onPress={onBack} style={styles.backButton}>
-        <Ionicons name="chevron-back" size={28} color="#000" />
+        <Ionicons name="chevron-back" size={28} color={themeColors.text} />
       </TouchableOpacity>
-      <Text style={styles.groupName}>{displayName}</Text>
+      <Text style={[styles.groupName, { color: themeColors.text }]}>{displayName}</Text>
     </View>
   );
 });
@@ -109,14 +112,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 8,
     paddingVertical: 12,
-    backgroundColor: "#fff",
   },
   headerPlaceholder: {
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 8,
     paddingVertical: 12,
-    backgroundColor: "#fff",
   },
   backButton: {
     padding: 4,
@@ -134,7 +135,6 @@ const styles = StyleSheet.create({
   groupName: {
     fontSize: 17,
     fontWeight: "600",
-    color: "#000",
     marginBottom: 2,
   },
   headerBadge: {

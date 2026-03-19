@@ -1,6 +1,7 @@
 import React from "react";
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useTheme } from "@hooks/useTheme";
 
 interface GuestCounterProps {
   count: number;
@@ -15,24 +16,25 @@ export function GuestCounter({
   onDecrement,
   label = "Guests",
 }: GuestCounterProps) {
+  const { colors } = useTheme();
   return (
-    <View style={styles.container}>
-      <Text style={styles.label}>{label}</Text>
+    <View style={[styles.container, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+      <Text style={[styles.label, { color: colors.text }]}>{label}</Text>
       <View style={styles.counterContainer}>
         <TouchableOpacity
-          style={[styles.button, count === 0 && styles.buttonDisabled]}
+          style={[styles.button, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }, count === 0 && styles.buttonDisabled]}
           onPress={onDecrement}
           disabled={count === 0}
         >
           <Ionicons
             name="remove"
             size={20}
-            color={count === 0 ? "#ccc" : "#333"}
+            color={count === 0 ? colors.iconSecondary : colors.text}
           />
         </TouchableOpacity>
-        <Text style={styles.count}>{count}</Text>
-        <TouchableOpacity style={styles.button} onPress={onIncrement}>
-          <Ionicons name="add" size={20} color="#333" />
+        <Text style={[styles.count, { color: colors.text }]}>{count}</Text>
+        <TouchableOpacity style={[styles.button, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]} onPress={onIncrement}>
+          <Ionicons name="add" size={20} color={colors.text} />
         </TouchableOpacity>
       </View>
     </View>
@@ -46,14 +48,11 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingVertical: 12,
     paddingHorizontal: 16,
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   label: {
     fontSize: 16,
     fontWeight: "500",
-    color: "#333",
   },
   counterContainer: {
     flexDirection: "row",
@@ -64,11 +63,9 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: "#f5f5f5",
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: "#e0e0e0",
   },
   buttonDisabled: {
     opacity: 0.5,
@@ -76,7 +73,6 @@ const styles = StyleSheet.create({
   count: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     minWidth: 30,
     textAlign: "center",
   },

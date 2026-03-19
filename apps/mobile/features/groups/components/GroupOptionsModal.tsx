@@ -18,6 +18,7 @@ import { useRouter } from "expo-router";
 import { useAuth } from "@providers/AuthProvider";
 import { Group } from "../types";
 import { DOMAIN_CONFIG } from "@togather/shared";
+import { useTheme } from "@hooks/useTheme";
 import * as Clipboard from "expo-clipboard";
 
 const { height: SCREEN_HEIGHT } = Dimensions.get("window");
@@ -43,6 +44,7 @@ export function GroupOptionsModal({
 }: GroupOptionsModalProps) {
   const router = useRouter();
   const { user } = useAuth();
+  const { colors } = useTheme();
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
@@ -173,17 +175,18 @@ export function GroupOptionsModal({
     >
       <View style={styles.overlay}>
         <TouchableWithoutFeedback onPress={onClose}>
-          <Animated.View style={[styles.backdrop, { opacity: fadeAnim }]} />
+          <Animated.View style={[styles.backdrop, { opacity: fadeAnim, backgroundColor: colors.overlay }]} />
         </TouchableWithoutFeedback>
         <Animated.View
           style={[
             styles.bottomSheet,
+            { backgroundColor: colors.modalBackground },
             {
               transform: [{ translateY: slideAnim }],
             },
           ]}
         >
-          <View style={styles.handle} />
+          <View style={[styles.handle, { backgroundColor: colors.iconSecondary }]} />
           <View style={styles.modalContent}>
             {/* Share Group button - available to all users */}
             {group?.shortId && (
@@ -221,8 +224,8 @@ export function GroupOptionsModal({
             )}
 
             {group?.is_announcement_group ? (
-              <View style={styles.infoSection}>
-                <Text style={styles.infoText}>
+              <View style={[styles.infoSection, { backgroundColor: colors.surfaceSecondary }]}>
+                <Text style={[styles.infoText, { color: colors.textSecondary }]}>
                   This is your community's announcement channel. To leave, go to Settings and leave the community.
                 </Text>
               </View>
@@ -237,11 +240,11 @@ export function GroupOptionsModal({
             )}
 
             <TouchableOpacity
-              style={[styles.optionButton, styles.cancelButton]}
+              style={[styles.optionButton, styles.cancelButton, { backgroundColor: colors.border }]}
               onPress={onClose}
               disabled={isLeaving}
             >
-              <Text style={styles.cancelButtonText}>Cancel</Text>
+              <Text style={[styles.cancelButtonText, { color: colors.text }]}>Cancel</Text>
             </TouchableOpacity>
           </View>
         </Animated.View>
@@ -257,10 +260,8 @@ const styles = StyleSheet.create({
   },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
   },
   bottomSheet: {
-    backgroundColor: "#fff",
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     paddingTop: 12,
@@ -281,7 +282,6 @@ const styles = StyleSheet.create({
   handle: {
     width: 40,
     height: 4,
-    backgroundColor: "#D1D1D6",
     borderRadius: 2,
     alignSelf: "center",
     marginBottom: 20,
@@ -313,7 +313,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#FF3B30",
   },
   cancelButton: {
-    backgroundColor: "#E0E0E0",
+    // backgroundColor set dynamically via theme
   },
   messageButtonText: {
     color: "#ffffff",
@@ -341,18 +341,15 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   cancelButtonText: {
-    color: "#000000",
     fontSize: 18,
     fontWeight: "600",
   },
   infoSection: {
-    backgroundColor: "#F5F5F5",
     paddingVertical: 16,
     paddingHorizontal: 20,
     borderRadius: 12,
   },
   infoText: {
-    color: "#666666",
     fontSize: 15,
     textAlign: "center",
     lineHeight: 22,

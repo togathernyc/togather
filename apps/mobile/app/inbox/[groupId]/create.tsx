@@ -26,6 +26,7 @@ import { Toast } from "@components/ui/Toast";
 import { useAuthenticatedMutation, api, useQuery } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 import { PcoAutoChannelConfig, type AutoChannelConfig } from "@features/channels";
 import type { Id } from "@services/api/convex";
 
@@ -39,6 +40,7 @@ export default function CreateChannelScreen() {
   const insets = useSafeAreaInsets();
   const { token, community, user } = useAuth();
   const { primaryColor } = useCommunityTheme();
+  const { colors, isDark } = useTheme();
 
   // Check if user is a community admin (required for creating PCO channels)
   const isCommunityAdmin = user?.is_admin ?? false;
@@ -176,13 +178,13 @@ export default function CreateChannelScreen() {
       style={styles.flex}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
-      <View style={[styles.container, { paddingTop: insets.top }]}>
+      <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.surfaceSecondary }]}>
         {/* Header */}
-        <View style={styles.header}>
+        <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
           <TouchableOpacity onPress={handleBack} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={24} color="#000" />
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Create Channel</Text>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Create Channel</Text>
           <View style={styles.headerRight} />
         </View>
 
@@ -193,14 +195,15 @@ export default function CreateChannelScreen() {
           showsVerticalScrollIndicator={false}
         >
           {/* Channel Type Selector */}
-          <View style={styles.section}>
-            <Text style={styles.label}>Channel Type</Text>
+          <View style={[styles.section, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Channel Type</Text>
             <View style={styles.segmentedControl}>
               <TouchableOpacity
                 style={[
                   styles.segmentButton,
+                  { borderColor: colors.inputBorder, backgroundColor: colors.surface },
                   channelType === "custom" && [
-                    styles.segmentButtonSelected,
+                    { backgroundColor: colors.selectedBackground },
                     { borderColor: primaryColor },
                   ],
                 ]}
@@ -210,12 +213,13 @@ export default function CreateChannelScreen() {
                 <Ionicons
                   name="people-outline"
                   size={18}
-                  color={channelType === "custom" ? primaryColor : "#666"}
+                  color={channelType === "custom" ? primaryColor : colors.textSecondary}
                   style={styles.segmentIcon}
                 />
                 <Text
                   style={[
                     styles.segmentText,
+                    { color: colors.textSecondary },
                     channelType === "custom" && [
                       styles.segmentTextSelected,
                       { color: primaryColor },
@@ -228,11 +232,12 @@ export default function CreateChannelScreen() {
               <TouchableOpacity
                 style={[
                   styles.segmentButton,
+                  { borderColor: colors.inputBorder, backgroundColor: colors.surface },
                   channelType === "pco_services" && [
-                    styles.segmentButtonSelected,
+                    { backgroundColor: colors.selectedBackground },
                     { borderColor: primaryColor },
                   ],
-                  !isCommunityAdmin && styles.segmentButtonDisabled,
+                  !isCommunityAdmin && { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
                 ]}
                 onPress={() => isCommunityAdmin && setChannelType("pco_services")}
                 disabled={isLoading || !isCommunityAdmin}
@@ -242,34 +247,35 @@ export default function CreateChannelScreen() {
                   size={18}
                   color={
                     !isCommunityAdmin
-                      ? "#999"
+                      ? colors.textTertiary
                       : channelType === "pco_services"
                         ? primaryColor
-                        : "#666"
+                        : colors.textSecondary
                   }
                   style={styles.segmentIcon}
                 />
                 <Text
                   style={[
                     styles.segmentText,
+                    { color: colors.textSecondary },
                     channelType === "pco_services" && [
                       styles.segmentTextSelected,
                       { color: primaryColor },
                     ],
-                    !isCommunityAdmin && styles.segmentTextDisabled,
+                    !isCommunityAdmin && { color: colors.textTertiary },
                   ]}
                 >
                   Planning Center
                 </Text>
               </TouchableOpacity>
             </View>
-            <Text style={styles.channelTypeHint}>
+            <Text style={[styles.channelTypeHint, { color: colors.textTertiary }]}>
               {channelType === "custom"
                 ? "Manually manage who is in this channel"
                 : "Automatically sync members from Planning Center Services"}
             </Text>
             {!isCommunityAdmin && (
-              <Text style={styles.adminOnlyHint}>
+              <Text style={[styles.adminOnlyHint, { color: colors.textTertiary }]}>
                 Only community admins can create Planning Center synced channels
               </Text>
             )}
@@ -277,7 +283,7 @@ export default function CreateChannelScreen() {
 
           {/* PCO Auto Channel Config */}
           {channelType === "pco_services" && communityId && (
-            <View style={styles.section}>
+            <View style={[styles.section, { backgroundColor: colors.surface }]}>
               <PcoAutoChannelConfig
                 communityId={communityId}
                 onChange={setAutoConfig}
@@ -286,19 +292,19 @@ export default function CreateChannelScreen() {
           )}
 
           {/* Form Section */}
-          <View style={styles.section}>
+          <View style={[styles.section, { backgroundColor: colors.surface }]}>
             {/* Channel Name */}
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>
-                Channel Name <Text style={styles.required}>*</Text>
+              <Text style={[styles.label, { color: colors.textSecondary }]}>
+                Channel Name <Text style={{ color: colors.error }}>*</Text>
               </Text>
-              <View style={styles.inputContainer}>
+              <View style={[styles.inputContainer, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground }]}>
                 <TextInput
-                  style={styles.input}
+                  style={[styles.input, { color: colors.text }]}
                   value={name}
                   onChangeText={handleNameChange}
                   placeholder="Enter channel name"
-                  placeholderTextColor="#bdbdc1"
+                  placeholderTextColor={colors.inputPlaceholder}
                   maxLength={MAX_NAME_LENGTH}
                   autoCapitalize="words"
                   autoCorrect={false}
@@ -307,10 +313,10 @@ export default function CreateChannelScreen() {
                 />
               </View>
               <View style={styles.helperRow}>
-                <Text style={styles.helperText}>
+                <Text style={[styles.helperText, { color: colors.textTertiary }]}>
                   Channel names cannot be changed after creation
                 </Text>
-                <Text style={styles.charCount}>
+                <Text style={[styles.charCount, { color: colors.textTertiary }]}>
                   {name.length}/{MAX_NAME_LENGTH}
                 </Text>
               </View>
@@ -318,14 +324,14 @@ export default function CreateChannelScreen() {
 
             {/* Description */}
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Description</Text>
-              <View style={styles.inputContainer}>
+              <Text style={[styles.label, { color: colors.textSecondary }]}>Description</Text>
+              <View style={[styles.inputContainer, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground }]}>
                 <TextInput
-                  style={[styles.input, styles.textArea]}
+                  style={[styles.input, styles.textArea, { color: colors.text }]}
                   value={description}
                   onChangeText={setDescription}
                   placeholder="Add a description (optional)"
-                  placeholderTextColor="#bdbdc1"
+                  placeholderTextColor={colors.inputPlaceholder}
                   multiline
                   numberOfLines={4}
                   textAlignVertical="top"
@@ -366,7 +372,6 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    backgroundColor: "#F5F5F5",
   },
   header: {
     flexDirection: "row",
@@ -374,9 +379,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#E5E5E5",
   },
   backButton: {
     width: 40,
@@ -387,7 +390,6 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#000",
   },
   headerRight: {
     width: 40,
@@ -400,7 +402,6 @@ const styles = StyleSheet.create({
     paddingBottom: 32,
   },
   section: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 20,
     marginBottom: 16,
@@ -423,22 +424,15 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 8,
-  },
-  required: {
-    color: "#FF3B30",
   },
   inputContainer: {
     borderWidth: 2,
-    borderColor: "#ecedf0",
     borderRadius: 14,
-    backgroundColor: "#ffffff",
   },
   input: {
     padding: 14,
     fontSize: 16,
-    color: "#000000",
     minHeight: 48,
   },
   textArea: {
@@ -454,12 +448,10 @@ const styles = StyleSheet.create({
   },
   helperText: {
     fontSize: 12,
-    color: "#888",
     flex: 1,
   },
   charCount: {
     fontSize: 12,
-    color: "#888",
     marginLeft: 8,
   },
   buttonContainer: {
@@ -482,11 +474,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     borderRadius: 10,
     borderWidth: 2,
-    borderColor: "#ecedf0",
-    backgroundColor: "#fff",
-  },
-  segmentButtonSelected: {
-    backgroundColor: "#f9f5ff",
   },
   segmentIcon: {
     marginRight: 6,
@@ -494,26 +481,16 @@ const styles = StyleSheet.create({
   segmentText: {
     fontSize: 14,
     fontWeight: "500",
-    color: "#666",
   },
   segmentTextSelected: {
     fontWeight: "600",
   },
-  segmentButtonDisabled: {
-    backgroundColor: "#f5f5f5",
-    borderColor: "#e0e0e0",
-  },
-  segmentTextDisabled: {
-    color: "#999",
-  },
   channelTypeHint: {
     fontSize: 12,
-    color: "#888",
     marginTop: 4,
   },
   adminOnlyHint: {
     fontSize: 12,
-    color: "#999",
     fontStyle: "italic",
     marginTop: 8,
   },

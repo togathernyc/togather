@@ -27,6 +27,7 @@ import { useQuery, useMutation } from "@services/api/convex";
 import { api, Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 import { formatError } from "@/utils/error-handling";
 
 const DAYS_OF_WEEK = [
@@ -43,6 +44,7 @@ export function GroupCreationRequestsContent() {
   const insets = useSafeAreaInsets();
   const { community, token } = useAuth();
   const { primaryColor } = useCommunityTheme();
+  const { colors } = useTheme();
   const [expandedRequestId, setExpandedRequestId] = useState<string | null>(null);
   const [showApproveModal, setShowApproveModal] = useState(false);
   const [showDeclineModal, setShowDeclineModal] = useState(false);
@@ -142,7 +144,7 @@ export function GroupCreationRequestsContent() {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={primaryColor} />
-        <Text style={styles.loadingText}>Loading requests...</Text>
+        <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading requests...</Text>
       </View>
     );
   }
@@ -150,9 +152,9 @@ export function GroupCreationRequestsContent() {
   if (isError) {
     return (
       <View style={styles.errorContainer}>
-        <Ionicons name="alert-circle-outline" size={48} color="#FF3B30" />
-        <Text style={styles.errorTitle}>Failed to load requests</Text>
-        <TouchableOpacity style={styles.retryButton} onPress={handleRefresh}>
+        <Ionicons name="alert-circle-outline" size={48} color={colors.error} />
+        <Text style={[styles.errorTitle, { color: colors.text }]}>Failed to load requests</Text>
+        <TouchableOpacity style={[styles.retryButton, { backgroundColor: colors.link }]} onPress={handleRefresh}>
           <Text style={styles.retryText}>Retry</Text>
         </TouchableOpacity>
       </View>
@@ -167,8 +169,8 @@ export function GroupCreationRequestsContent() {
           size={64}
           color={primaryColor}
         />
-        <Text style={styles.emptyTitle}>All caught up!</Text>
-        <Text style={styles.emptySubtext}>
+        <Text style={[styles.emptyTitle, { color: colors.text }]}>All caught up!</Text>
+        <Text style={[styles.emptySubtext, { color: colors.textSecondary }]}>
           No pending group creation requests
         </Text>
       </View>
@@ -177,7 +179,7 @@ export function GroupCreationRequestsContent() {
 
   return (
     <ScrollView
-      style={styles.container}
+      style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}
       contentContainerStyle={styles.contentContainer}
       refreshControl={
         <RefreshControl
@@ -191,7 +193,7 @@ export function GroupCreationRequestsContent() {
       {requests.map((request) => (
         <TouchableOpacity
           key={request.id}
-          style={styles.requestCard}
+          style={[styles.requestCard, { backgroundColor: colors.surface }]}
           onPress={() => toggleExpand(request.id)}
           activeOpacity={0.7}
         >
@@ -213,13 +215,13 @@ export function GroupCreationRequestsContent() {
               )}
             </View>
             <View style={styles.headerInfo}>
-              <Text style={styles.requesterName}>
+              <Text style={[styles.requesterName, { color: colors.text }]}>
                 {request.requester.firstName} {request.requester.lastName}
               </Text>
-              <Text style={styles.groupName}>{request.name}</Text>
+              <Text style={[styles.groupName, { color: colors.link }]}>{request.name}</Text>
               <View style={styles.metaRow}>
-                <Text style={styles.groupType}>{request.groupType.name}</Text>
-                <Text style={styles.timeAgo}>
+                <Text style={[styles.groupType, { color: colors.textSecondary }]}>{request.groupType.name}</Text>
+                <Text style={[styles.timeAgo, { color: colors.textTertiary }]}>
                   {formatDistanceToNow(new Date(request.createdAt), {
                     addSuffix: true,
                   })}
@@ -229,45 +231,45 @@ export function GroupCreationRequestsContent() {
             <Ionicons
               name={expandedRequestId === request.id ? "chevron-up" : "chevron-down"}
               size={24}
-              color="#999"
+              color={colors.textTertiary}
             />
           </View>
 
           {/* Expanded Content */}
           {expandedRequestId === request.id && (
-            <View style={styles.expandedContent}>
+            <View style={[styles.expandedContent, { borderTopColor: colors.borderLight }]}>
               {/* Requester Stats */}
-              <View style={styles.statsRow}>
+              <View style={[styles.statsRow, { backgroundColor: colors.surfaceSecondary }]}>
                 <View style={styles.statItem}>
-                  <Text style={styles.statValue}>{request.requester.groupCount}</Text>
-                  <Text style={styles.statLabel}>Groups</Text>
+                  <Text style={[styles.statValue, { color: colors.text }]}>{request.requester.groupCount}</Text>
+                  <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Groups</Text>
                 </View>
                 <View style={styles.statItem}>
-                  <Text style={styles.statValue}>{request.requester.leaderCount}</Text>
-                  <Text style={styles.statLabel}>Leading</Text>
+                  <Text style={[styles.statValue, { color: colors.text }]}>{request.requester.leaderCount}</Text>
+                  <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Leading</Text>
                 </View>
                 <View style={styles.statItem}>
-                  <Text style={styles.statValue}>
+                  <Text style={[styles.statValue, { color: colors.text }]}>
                     {request.requester.memberSince
                       ? format(new Date(request.requester.memberSince), "MMM yyyy")
                       : "N/A"}
                   </Text>
-                  <Text style={styles.statLabel}>Member Since</Text>
+                  <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Member Since</Text>
                 </View>
               </View>
 
               {/* Group Details */}
               {request.description && (
                 <View style={styles.detailSection}>
-                  <Text style={styles.detailLabel}>Description</Text>
-                  <Text style={styles.detailValue}>{request.description}</Text>
+                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Description</Text>
+                  <Text style={[styles.detailValue, { color: colors.text }]}>{request.description}</Text>
                 </View>
               )}
 
               {request.proposedStartDay != null && (
                 <View style={styles.detailSection}>
-                  <Text style={styles.detailLabel}>Meeting Day</Text>
-                  <Text style={styles.detailValue}>
+                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Meeting Day</Text>
+                  <Text style={[styles.detailValue, { color: colors.text }]}>
                     {DAYS_OF_WEEK[request.proposedStartDay]}
                   </Text>
                 </View>
@@ -275,19 +277,19 @@ export function GroupCreationRequestsContent() {
 
               {request.location && (
                 <View style={styles.detailSection}>
-                  <Text style={styles.detailLabel}>Location</Text>
-                  <Text style={styles.detailValue}>{request.location}</Text>
+                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Location</Text>
+                  <Text style={[styles.detailValue, { color: colors.text }]}>{request.location}</Text>
                 </View>
               )}
 
               {request.proposedLeaders && request.proposedLeaders.length > 0 && (
                 <View style={styles.detailSection}>
-                  <Text style={styles.detailLabel}>Proposed Co-Leaders</Text>
+                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Proposed Co-Leaders</Text>
                   <View style={styles.leadersGrid}>
                     {request.proposedLeaders.map((leader: any) => (
                       <TouchableOpacity
                         key={leader.id}
-                        style={styles.leaderCard}
+                        style={[styles.leaderCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
                         onPress={() => {
                           setSelectedLeader(leader);
                           setShowLeaderModal(true);
@@ -307,16 +309,16 @@ export function GroupCreationRequestsContent() {
                           )}
                         </View>
                         <View style={styles.leaderInfo}>
-                          <Text style={styles.leaderName} numberOfLines={1}>
+                          <Text style={[styles.leaderName, { color: colors.text }]} numberOfLines={1}>
                             {leader.firstName} {leader.lastName}
                           </Text>
-                          <Text style={styles.leaderGroups} numberOfLines={1}>
+                          <Text style={[styles.leaderGroups, { color: colors.textSecondary }]} numberOfLines={1}>
                             {leader.groups && leader.groups.length > 0
                               ? `${leader.groups.length} group${leader.groups.length > 1 ? 's' : ''}`
                               : 'No groups yet'}
                           </Text>
                         </View>
-                        <Ionicons name="chevron-forward" size={16} color="#999" />
+                        <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
                       </TouchableOpacity>
                     ))}
                   </View>
@@ -324,17 +326,17 @@ export function GroupCreationRequestsContent() {
               )}
 
               {/* Contact Info */}
-              <View style={styles.contactSection}>
+              <View style={[styles.contactSection, { borderTopColor: colors.borderLight }]}>
                 {request.requester.email && (
                   <View style={styles.contactRow}>
-                    <Ionicons name="mail-outline" size={16} color="#666" />
-                    <Text style={styles.contactText}>{request.requester.email}</Text>
+                    <Ionicons name="mail-outline" size={16} color={colors.textSecondary} />
+                    <Text style={[styles.contactText, { color: colors.textSecondary }]}>{request.requester.email}</Text>
                   </View>
                 )}
                 {request.requester.phone && (
                   <View style={styles.contactRow}>
-                    <Ionicons name="call-outline" size={16} color="#666" />
-                    <Text style={styles.contactText}>{request.requester.phone}</Text>
+                    <Ionicons name="call-outline" size={16} color={colors.textSecondary} />
+                    <Text style={[styles.contactText, { color: colors.textSecondary }]}>{request.requester.phone}</Text>
                   </View>
                 )}
               </View>
@@ -342,12 +344,12 @@ export function GroupCreationRequestsContent() {
               {/* Action Buttons */}
               <View style={styles.actionRow}>
                 <TouchableOpacity
-                  style={styles.declineButton}
+                  style={[styles.declineButton, { borderColor: colors.destructive }]}
                   onPress={() => handleDecline(request)}
                   disabled={isReviewing}
                 >
-                  <Ionicons name="close" size={20} color="#FF3B30" />
-                  <Text style={styles.declineButtonText}>Decline</Text>
+                  <Ionicons name="close" size={20} color={colors.destructive} />
+                  <Text style={[styles.declineButtonText, { color: colors.destructive }]}>Decline</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.approveButton, { backgroundColor: primaryColor }]}
@@ -376,19 +378,19 @@ export function GroupCreationRequestsContent() {
         animationType="fade"
         onRequestClose={() => setShowApproveModal(false)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Approve Request?</Text>
-            <Text style={styles.modalText}>
+        <View style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}>
+          <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Approve Request?</Text>
+            <Text style={[styles.modalText, { color: colors.textSecondary }]}>
               This will create the group "{selectedRequest?.name}" and add{" "}
               {selectedRequest?.requester?.firstName} as a leader.
             </Text>
             <View style={styles.modalButtons}>
               <TouchableOpacity
-                style={styles.modalCancelButton}
+                style={[styles.modalCancelButton, { borderColor: colors.border }]}
                 onPress={() => setShowApproveModal(false)}
               >
-                <Text style={styles.modalCancelText}>Cancel</Text>
+                <Text style={[styles.modalCancelText, { color: colors.textSecondary }]}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.modalConfirmButton, { backgroundColor: primaryColor }]}
@@ -413,15 +415,16 @@ export function GroupCreationRequestsContent() {
         animationType="fade"
         onRequestClose={() => setShowDeclineModal(false)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Decline Request?</Text>
-            <Text style={styles.modalText}>
+        <View style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}>
+          <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Decline Request?</Text>
+            <Text style={[styles.modalText, { color: colors.textSecondary }]}>
               Add an optional reason (not sent to requester):
             </Text>
             <TextInput
-              style={styles.reasonInput}
+              style={[styles.reasonInput, { borderColor: colors.border, color: colors.text }]}
               placeholder="Reason for declining (optional)"
+              placeholderTextColor={colors.textTertiary}
               value={declineReason}
               onChangeText={setDeclineReason}
               multiline
@@ -429,16 +432,16 @@ export function GroupCreationRequestsContent() {
             />
             <View style={styles.modalButtons}>
               <TouchableOpacity
-                style={styles.modalCancelButton}
+                style={[styles.modalCancelButton, { borderColor: colors.border }]}
                 onPress={() => {
                   setShowDeclineModal(false);
                   setDeclineReason("");
                 }}
               >
-                <Text style={styles.modalCancelText}>Cancel</Text>
+                <Text style={[styles.modalCancelText, { color: colors.textSecondary }]}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.modalConfirmButton, { backgroundColor: "#FF3B30" }]}
+                style={[styles.modalConfirmButton, { backgroundColor: colors.destructive }]}
                 onPress={confirmDecline}
                 disabled={isReviewing}
               >
@@ -460,15 +463,15 @@ export function GroupCreationRequestsContent() {
         animationType="slide"
         onRequestClose={() => setShowLeaderModal(false)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.leaderModalContent}>
-            <View style={styles.leaderModalHeader}>
-              <Text style={styles.modalTitle}>Co-Leader Details</Text>
+        <View style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}>
+          <View style={[styles.leaderModalContent, { backgroundColor: colors.surface }]}>
+            <View style={[styles.leaderModalHeader, { borderBottomColor: colors.borderLight }]}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>Co-Leader Details</Text>
               <TouchableOpacity
                 onPress={() => setShowLeaderModal(false)}
                 style={styles.closeButton}
               >
-                <Ionicons name="close" size={24} color="#666" />
+                <Ionicons name="close" size={24} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
 
@@ -488,37 +491,37 @@ export function GroupCreationRequestsContent() {
                       </Text>
                     )}
                   </View>
-                  <Text style={styles.leaderDetailName}>
+                  <Text style={[styles.leaderDetailName, { color: colors.text }]}>
                     {selectedLeader.firstName} {selectedLeader.lastName}
                   </Text>
                 </View>
 
                 {/* Contact Info */}
                 {selectedLeader.email && (
-                  <View style={styles.leaderDetailRow}>
-                    <Ionicons name="mail-outline" size={20} color="#666" />
-                    <Text style={styles.leaderDetailText}>{selectedLeader.email}</Text>
+                  <View style={[styles.leaderDetailRow, { borderBottomColor: colors.borderLight }]}>
+                    <Ionicons name="mail-outline" size={20} color={colors.textSecondary} />
+                    <Text style={[styles.leaderDetailText, { color: colors.text }]}>{selectedLeader.email}</Text>
                   </View>
                 )}
                 {selectedLeader.phone && (
-                  <View style={styles.leaderDetailRow}>
-                    <Ionicons name="call-outline" size={20} color="#666" />
-                    <Text style={styles.leaderDetailText}>{selectedLeader.phone}</Text>
+                  <View style={[styles.leaderDetailRow, { borderBottomColor: colors.borderLight }]}>
+                    <Ionicons name="call-outline" size={20} color={colors.textSecondary} />
+                    <Text style={[styles.leaderDetailText, { color: colors.text }]}>{selectedLeader.phone}</Text>
                   </View>
                 )}
 
                 {/* Groups */}
                 <View style={styles.leaderGroupsSection}>
-                  <Text style={styles.leaderGroupsTitle}>Current Groups</Text>
+                  <Text style={[styles.leaderGroupsTitle, { color: colors.text }]}>Current Groups</Text>
                   {selectedLeader.groups && selectedLeader.groups.length > 0 ? (
                     selectedLeader.groups.map((groupName: string, index: number) => (
-                      <View key={index} style={styles.leaderGroupItem}>
+                      <View key={index} style={[styles.leaderGroupItem, { backgroundColor: colors.surfaceSecondary }]}>
                         <Ionicons name="people-outline" size={16} color={primaryColor} />
-                        <Text style={styles.leaderGroupText}>{groupName}</Text>
+                        <Text style={[styles.leaderGroupText, { color: colors.text }]}>{groupName}</Text>
                       </View>
                     ))
                   ) : (
-                    <Text style={styles.noGroupsText}>Not currently in any groups</Text>
+                    <Text style={[styles.noGroupsText, { color: colors.textTertiary }]}>Not currently in any groups</Text>
                   )}
                 </View>
               </View>
@@ -533,7 +536,6 @@ export function GroupCreationRequestsContent() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f5f5f5",
   },
   contentContainer: {
     padding: 16,
@@ -548,7 +550,6 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 12,
     fontSize: 16,
-    color: "#666",
   },
   errorContainer: {
     flex: 1,
@@ -559,14 +560,12 @@ const styles = StyleSheet.create({
   errorTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     marginTop: 12,
     marginBottom: 16,
   },
   retryButton: {
     paddingHorizontal: 24,
     paddingVertical: 12,
-    backgroundColor: "#007AFF",
     borderRadius: 8,
   },
   retryText: {
@@ -583,17 +582,14 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 20,
     fontWeight: "600",
-    color: "#333",
     marginTop: 16,
   },
   emptySubtext: {
     fontSize: 16,
-    color: "#666",
     marginTop: 8,
     textAlign: "center",
   },
   requestCard: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     marginBottom: 12,
     ...Platform.select({
@@ -637,12 +633,10 @@ const styles = StyleSheet.create({
   requesterName: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
   },
   groupName: {
     fontSize: 15,
     fontWeight: "500",
-    color: "#007AFF",
     marginTop: 2,
   },
   metaRow: {
@@ -653,23 +647,19 @@ const styles = StyleSheet.create({
   },
   groupType: {
     fontSize: 13,
-    color: "#666",
   },
   timeAgo: {
     fontSize: 12,
-    color: "#999",
   },
   expandedContent: {
     paddingHorizontal: 16,
     paddingBottom: 16,
     borderTopWidth: 1,
-    borderTopColor: "#f0f0f0",
   },
   statsRow: {
     flexDirection: "row",
     justifyContent: "space-around",
     paddingVertical: 16,
-    backgroundColor: "#f9f9f9",
     borderRadius: 8,
     marginTop: 12,
   },
@@ -679,11 +669,9 @@ const styles = StyleSheet.create({
   statValue: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
   },
   statLabel: {
     fontSize: 12,
-    color: "#666",
     marginTop: 2,
   },
   detailSection: {
@@ -692,13 +680,11 @@ const styles = StyleSheet.create({
   detailLabel: {
     fontSize: 12,
     fontWeight: "600",
-    color: "#666",
     textTransform: "uppercase",
     letterSpacing: 0.5,
   },
   detailValue: {
     fontSize: 15,
-    color: "#333",
     marginTop: 4,
     lineHeight: 22,
   },
@@ -706,7 +692,6 @@ const styles = StyleSheet.create({
     marginTop: 16,
     paddingTop: 16,
     borderTopWidth: 1,
-    borderTopColor: "#f0f0f0",
   },
   contactRow: {
     flexDirection: "row",
@@ -716,7 +701,6 @@ const styles = StyleSheet.create({
   },
   contactText: {
     fontSize: 14,
-    color: "#666",
   },
   actionRow: {
     flexDirection: "row",
@@ -732,10 +716,8 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: "#FF3B30",
   },
   declineButtonText: {
-    color: "#FF3B30",
     fontSize: 16,
     fontWeight: "600",
   },
@@ -755,13 +737,11 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
     justifyContent: "center",
     alignItems: "center",
     padding: 20,
   },
   modalContent: {
-    backgroundColor: "#fff",
     borderRadius: 16,
     padding: 24,
     width: "100%",
@@ -770,18 +750,15 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 20,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 12,
   },
   modalText: {
     fontSize: 16,
-    color: "#666",
     lineHeight: 22,
     marginBottom: 16,
   },
   reasonInput: {
     borderWidth: 1,
-    borderColor: "#ddd",
     borderRadius: 8,
     padding: 12,
     fontSize: 16,
@@ -799,12 +776,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: "#ddd",
   },
   modalCancelText: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#666",
   },
   modalConfirmButton: {
     flex: 1,
@@ -825,11 +800,9 @@ const styles = StyleSheet.create({
   leaderCard: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#F9F9F9",
     borderRadius: 8,
     padding: 12,
     borderWidth: 1,
-    borderColor: "#E5E5E5",
   },
   leaderAvatar: {
     width: 40,
@@ -855,16 +828,13 @@ const styles = StyleSheet.create({
   leaderName: {
     fontSize: 15,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 2,
   },
   leaderGroups: {
     fontSize: 13,
-    color: "#666",
   },
   // Leader Detail Modal
   leaderModalContent: {
-    backgroundColor: "#fff",
     borderRadius: 16,
     padding: 0,
     width: "100%",
@@ -877,7 +847,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 20,
     borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
   },
   closeButton: {
     padding: 4,
@@ -910,7 +879,6 @@ const styles = StyleSheet.create({
   leaderDetailName: {
     fontSize: 22,
     fontWeight: "600",
-    color: "#333",
   },
   leaderDetailRow: {
     flexDirection: "row",
@@ -918,11 +886,9 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
   },
   leaderDetailText: {
     fontSize: 16,
-    color: "#333",
   },
   leaderGroupsSection: {
     marginTop: 24,
@@ -930,7 +896,6 @@ const styles = StyleSheet.create({
   leaderGroupsTitle: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 12,
   },
   leaderGroupItem: {
@@ -939,17 +904,14 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingVertical: 8,
     paddingHorizontal: 12,
-    backgroundColor: "#F9F9F9",
     borderRadius: 8,
     marginBottom: 8,
   },
   leaderGroupText: {
     fontSize: 15,
-    color: "#333",
   },
   noGroupsText: {
     fontSize: 15,
-    color: "#999",
     fontStyle: "italic",
   },
 });
