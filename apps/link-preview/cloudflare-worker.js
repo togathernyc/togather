@@ -74,39 +74,42 @@ const ANDROID_SHA256_FINGERPRINTS = {
 function generateAppleAppSiteAssociation(hostname) {
   const env = getEnvironment(hostname);
 
-  // For staging domain, only include staging app
-  // For production domain, include both apps (production first, staging as fallback for testing)
-  const appIDs = env === "staging"
-    ? [`${APPLE_TEAM_ID}.${IOS_BUNDLE_IDS.staging}`]
-    : [
-        `${APPLE_TEAM_ID}.${IOS_BUNDLE_IDS.production}`,
-        `${APPLE_TEAM_ID}.${IOS_BUNDLE_IDS.staging}`,
-      ];
+  // Each domain only includes its own app — no cross-listing
+  const appID = env === "staging"
+    ? `${APPLE_TEAM_ID}.${IOS_BUNDLE_IDS.staging}`
+    : `${APPLE_TEAM_ID}.${IOS_BUNDLE_IDS.production}`;
+
+  // Paths to exclude from universal links (landing/static pages)
+  const excludedPaths = [
+    "/",
+    "/android",
+    "/android-staging",
+    "/download",
+    "/privacy",
+    "/terms",
+    "/contribute",
+    "/issue",
+  ];
 
   return {
     applinks: {
-      apps: [], // Required to be empty array
-      details: appIDs.map(appID => ({
-        appID,
-        paths: [
-          // Use exclusion pattern: open ALL paths EXCEPT landing pages
-          // This allows new app routes to work via OTA without updating AASA
-          "NOT /",           // Exclude root (landing page)
-          "NOT /android",    // Exclude Android download page
-          "NOT /android-staging", // Exclude staging Android page
-          "NOT /download",   // Exclude download page
-          "NOT /privacy",    // Exclude privacy policy
-          "NOT /terms",      // Exclude terms of service
-          "NOT /contribute", // Exclude contribute page
-          "NOT /issue",      // Exclude issue reporting page
-          "NOT /_expo/*",    // Exclude Expo internal routes
-          "*",               // Match everything else (app routes)
-        ],
-      })),
+      // Modern "components" format (iOS 13+, recommended by Apple)
+      details: [
+        {
+          appIDs: [appID],
+          components: [
+            // Exclude landing/static pages
+            ...excludedPaths.map(path => ({ "/": path, exclude: true })),
+            // Exclude Expo internal routes
+            { "/": "/_expo/*", exclude: true },
+            // Match everything else (app routes like /g/*, /e/*, /nearme)
+            { "/": "*" },
+          ],
+        },
+      ],
     },
-    // Web Credentials for password autofill (optional but good practice)
     webcredentials: {
-      apps: appIDs,
+      apps: [appID],
     },
   };
 }
@@ -118,37 +121,19 @@ function generateAppleAppSiteAssociation(hostname) {
 function generateAssetLinks(hostname) {
   const env = getEnvironment(hostname);
 
-  // For staging domain, only include staging app
-  // For production domain, include both apps
-  if (env === "staging") {
-    return [
-      {
-        relation: ["delegate_permission/common.handle_all_urls"],
-        target: {
-          namespace: "android_app",
-          package_name: ANDROID_PACKAGES.staging,
-          sha256_cert_fingerprints: ANDROID_SHA256_FINGERPRINTS.staging,
-        },
-      },
-    ];
-  }
+  // Each domain only includes its own app — no cross-listing
+  const pkg = env === "staging" ? ANDROID_PACKAGES.staging : ANDROID_PACKAGES.production;
+  const fingerprints = env === "staging"
+    ? ANDROID_SHA256_FINGERPRINTS.staging
+    : ANDROID_SHA256_FINGERPRINTS.production;
 
   return [
     {
       relation: ["delegate_permission/common.handle_all_urls"],
       target: {
         namespace: "android_app",
-        package_name: ANDROID_PACKAGES.production,
-        sha256_cert_fingerprints: ANDROID_SHA256_FINGERPRINTS.production,
-      },
-    },
-    // Include staging app for testing on production domain
-    {
-      relation: ["delegate_permission/common.handle_all_urls"],
-      target: {
-        namespace: "android_app",
-        package_name: ANDROID_PACKAGES.staging,
-        sha256_cert_fingerprints: ANDROID_SHA256_FINGERPRINTS.staging,
+        package_name: pkg,
+        sha256_cert_fingerprints: fingerprints,
       },
     },
   ];
