@@ -26,6 +26,7 @@ import { useTheme } from "@hooks/useTheme";
 import {
   ThemeContext,
   type ColorScheme,
+  type ThemePreference,
 } from "@providers/ThemeProvider";
 import {
   lightColors,
@@ -1051,8 +1052,10 @@ export default function ThemeGalleryScreen() {
       colors: effectiveScheme === "dark" ? darkColors : lightColors,
       isDark: effectiveScheme === "dark",
       colorScheme: effectiveScheme,
+      preference: mode,
+      setPreference: () => {},
     }),
-    [effectiveScheme]
+    [effectiveScheme, mode]
   );
 
   return (
@@ -1098,11 +1101,11 @@ export default function ThemeGalleryScreen() {
       </View>
 
       {/* Gallery content - INSIDE the theme override */}
-      <ToastContainer>
-        <ThemeContext.Provider value={overrideValue}>
+      <ThemeContext.Provider value={overrideValue}>
+        <ToastContainer>
           <GalleryContent />
-        </ThemeContext.Provider>
-      </ToastContainer>
+        </ToastContainer>
+      </ThemeContext.Provider>
     </View>
   );
 }

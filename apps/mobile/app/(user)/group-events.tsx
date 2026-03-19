@@ -550,7 +550,7 @@ export default function GroupEventsModal() {
           onPress={handleCreateEvent}
           activeOpacity={0.8}
         >
-          <Ionicons name="add" size={28} color={colors.textInverse} />
+          <Ionicons name="add" size={28} color="#fff" />
         </TouchableOpacity>
       )}
 

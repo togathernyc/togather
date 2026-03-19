@@ -56,6 +56,14 @@ function PrefetchExecutorRegistration({ children }: { children: React.ReactNode 
 }
 
 /**
+ * StatusBar that respects the app's theme preference (not just system).
+ */
+function ThemedStatusBar() {
+  const { isDark } = useTheme();
+  return <StatusBar style={isDark ? "light" : "dark"} />;
+}
+
+/**
  * Stack navigator with theme-aware content styles.
  */
 function ThemedStack() {
@@ -234,7 +242,7 @@ export default function RootLayout() {
         <ErrorBoundary>
           <SafeAreaProvider>
             <ThemeProvider>
-              <StatusBar style="auto" />
+              <ThemedStatusBar />
               <OTAUpdateProvider>
                 <EnvironmentProvider>
                   <AppLayout />

@@ -612,7 +612,7 @@ function DynamicField({
           </View>
           <Text style={[styles.booleanLabel, { color: colors.text }]}>
             {field.label}
-            {field.required && <Text style={styles.required}> *</Text>}
+            {field.required && <Text style={[styles.required, { color: colors.error }]}> *</Text>}
           </Text>
         </TouchableOpacity>
       );
@@ -622,7 +622,7 @@ function DynamicField({
         <View style={styles.field}>
           <Text style={[styles.fieldLabel, { color: colors.text }]}>
             {field.label}
-            {field.required && <Text style={styles.required}> *</Text>}
+            {field.required && <Text style={[styles.required, { color: colors.error }]}> *</Text>}
           </Text>
           <TextInput
             style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
@@ -643,7 +643,7 @@ function DynamicField({
         <View style={styles.field}>
           <Text style={[styles.fieldLabel, { color: colors.text }]}>
             {field.label}
-            {field.required && <Text style={styles.required}> *</Text>}
+            {field.required && <Text style={[styles.required, { color: colors.error }]}> *</Text>}
           </Text>
           <View style={styles.dropdownContainer}>
             {(field.options || []).map((option) => (
@@ -677,7 +677,7 @@ function DynamicField({
         <View style={styles.field}>
           <Text style={[styles.fieldLabel, { color: colors.text }]}>
             {field.label}
-            {field.required && <Text style={styles.required}> *</Text>}
+            {field.required && <Text style={[styles.required, { color: colors.error }]}> *</Text>}
           </Text>
           <View style={styles.multiselectContainer}>
             {(field.options || []).map((option) => {
@@ -727,7 +727,7 @@ function DynamicField({
         <View style={styles.field}>
           <Text style={[styles.fieldLabel, { color: colors.text }]}>
             {field.label}
-            {field.required && <Text style={styles.required}> *</Text>}
+            {field.required && <Text style={[styles.required, { color: colors.error }]}> *</Text>}
           </Text>
           <TextInput
             style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
