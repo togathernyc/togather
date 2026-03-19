@@ -2,6 +2,7 @@ import React from "react";
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Avatar } from "@components/ui/Avatar";
+import { useTheme } from "@hooks/useTheme";
 
 interface MemberItemProps {
   member: any;
@@ -18,8 +19,9 @@ function MemberItemInner({
   onToggleAttendance,
   showCheckbox = true,
 }: MemberItemProps) {
+  const { colors } = useTheme();
   return (
-    <View style={styles.memberItem}>
+    <View style={[styles.memberItem, { borderBottomColor: colors.border }]}>
       {showCheckbox && onToggleAttendance && (
         <TouchableOpacity
           style={styles.attendanceToggle}
@@ -29,7 +31,7 @@ function MemberItemInner({
           <Ionicons
             name={isAttended ? "checkmark-circle" : "ellipse-outline"}
             size={24}
-            color={isAttended ? "#66D440" : "#ccc"}
+            color={isAttended ? colors.success : colors.iconSecondary}
           />
         </TouchableOpacity>
       )}
@@ -40,11 +42,11 @@ function MemberItemInner({
           size={40}
         />
         <View style={styles.memberDetails}>
-          <Text style={styles.memberName}>
+          <Text style={[styles.memberName, { color: colors.text }]}>
             {member.first_name} {member.last_name}
             {isCurrentUser && " (You)"}
           </Text>
-          <Text style={styles.memberRole}>{member.role}</Text>
+          <Text style={[styles.memberRole, { color: colors.textSecondary }]}>{member.role}</Text>
         </View>
       </View>
     </View>
@@ -59,7 +61,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
     gap: 12,
   },
   attendanceToggle: {
@@ -77,12 +78,10 @@ const styles = StyleSheet.create({
   memberName: {
     fontSize: 16,
     fontWeight: "500",
-    color: "#333",
     marginBottom: 2,
   },
   memberRole: {
     fontSize: 14,
-    color: "#666",
   },
 });
 

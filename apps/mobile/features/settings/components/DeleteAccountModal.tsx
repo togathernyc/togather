@@ -19,6 +19,7 @@ import { CustomModal } from "@/components/ui/Modal";
 import { OTPInput } from "@/components/ui/OTPInput";
 import { useAuth } from "@/providers/AuthProvider";
 import { useAction, api } from "@services/api/convex";
+import { useTheme } from "@hooks/useTheme";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 interface DeleteAccountModalProps {
@@ -35,6 +36,7 @@ export function DeleteAccountModal({
   onClose,
 }: DeleteAccountModalProps) {
   const router = useRouter();
+  const { colors } = useTheme();
   const { user, logout } = useAuth();
   const [step, setStep] = useState<Step>("confirm");
   const [otpCode, setOtpCode] = useState("");
@@ -153,50 +155,50 @@ export function DeleteAccountModal({
   const renderConfirmStep = () => (
     <>
       <View style={styles.iconContainer}>
-        <Ionicons name="warning" size={48} color="#DC2626" />
+        <Ionicons name="warning" size={48} color={colors.destructive} />
       </View>
 
-      <Text style={styles.title}>Delete Account?</Text>
+      <Text style={[styles.title, { color: colors.text }]}>Delete Account?</Text>
 
-      <Text style={styles.description}>
+      <Text style={[styles.description, { color: colors.textSecondary }]}>
         This action is permanent and cannot be undone. By deleting your account:
       </Text>
 
       <View style={styles.bulletList}>
-        <Text style={styles.bulletItem}>
+        <Text style={[styles.bulletItem, { color: colors.textSecondary }]}>
           {"\u2022"} You will be removed from all communities
         </Text>
-        <Text style={styles.bulletItem}>
+        <Text style={[styles.bulletItem, { color: colors.textSecondary }]}>
           {"\u2022"} You will be removed from all groups
         </Text>
-        <Text style={styles.bulletItem}>
+        <Text style={[styles.bulletItem, { color: colors.textSecondary }]}>
           {"\u2022"} Your messages will remain but be anonymized
         </Text>
-        <Text style={styles.bulletItem}>
+        <Text style={[styles.bulletItem, { color: colors.textSecondary }]}>
           {"\u2022"} Your personal data will be deleted
         </Text>
       </View>
 
-      {error && <Text style={styles.errorText}>{error}</Text>}
+      {error && <Text style={[styles.errorText, { color: colors.destructive }]}>{error}</Text>}
 
       <View style={styles.buttonRow}>
         <TouchableOpacity
-          style={styles.cancelButton}
+          style={[styles.cancelButton, { backgroundColor: colors.surfaceSecondary }]}
           onPress={onClose}
           disabled={isLoading}
         >
-          <Text style={styles.cancelButtonText}>Cancel</Text>
+          <Text style={[styles.cancelButtonText, { color: colors.text }]}>Cancel</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.continueButton, isLoading && styles.buttonDisabled]}
+          style={[styles.continueButton, { backgroundColor: colors.destructive }, isLoading && styles.buttonDisabled]}
           onPress={handleSendOTP}
           disabled={isLoading}
         >
           {isLoading ? (
-            <ActivityIndicator size="small" color="#fff" />
+            <ActivityIndicator size="small" color={colors.textInverse} />
           ) : (
-            <Text style={styles.continueButtonText}>Continue</Text>
+            <Text style={[styles.continueButtonText, { color: colors.textInverse }]}>Continue</Text>
           )}
         </TouchableOpacity>
       </View>
@@ -206,12 +208,12 @@ export function DeleteAccountModal({
   const renderOTPStep = () => (
     <>
       <TouchableOpacity style={styles.backButton} onPress={() => setStep("confirm")}>
-        <Ionicons name="arrow-back" size={24} color="#333" />
+        <Ionicons name="arrow-back" size={24} color={colors.text} />
       </TouchableOpacity>
 
-      <Text style={styles.title}>Verify Your Phone</Text>
+      <Text style={[styles.title, { color: colors.text }]}>Verify Your Phone</Text>
 
-      <Text style={styles.description}>
+      <Text style={[styles.description, { color: colors.textSecondary }]}>
         Enter the 6-digit code sent to the phone number ending in {phoneLast4}
       </Text>
 
@@ -232,7 +234,8 @@ export function DeleteAccountModal({
         <Text
           style={[
             styles.resendButtonText,
-            resendCooldown > 0 && styles.resendButtonTextDisabled,
+            { color: colors.link },
+            resendCooldown > 0 && { color: colors.textTertiary },
           ]}
         >
           {resendCooldown > 0
@@ -243,25 +246,26 @@ export function DeleteAccountModal({
 
       <View style={styles.buttonRow}>
         <TouchableOpacity
-          style={styles.cancelButton}
+          style={[styles.cancelButton, { backgroundColor: colors.surfaceSecondary }]}
           onPress={onClose}
           disabled={isLoading}
         >
-          <Text style={styles.cancelButtonText}>Cancel</Text>
+          <Text style={[styles.cancelButtonText, { color: colors.text }]}>Cancel</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={[
             styles.deleteButton,
+            { backgroundColor: colors.destructive },
             (isLoading || otpCode.length !== 6) && styles.buttonDisabled,
           ]}
           onPress={handleConfirmDelete}
           disabled={isLoading || otpCode.length !== 6}
         >
           {isLoading ? (
-            <ActivityIndicator size="small" color="#fff" />
+            <ActivityIndicator size="small" color={colors.textInverse} />
           ) : (
-            <Text style={styles.deleteButtonText}>Delete Account</Text>
+            <Text style={[styles.deleteButtonText, { color: colors.textInverse }]}>Delete Account</Text>
           )}
         </TouchableOpacity>
       </View>
@@ -297,13 +301,11 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 22,
     fontWeight: "700",
-    color: "#333",
     marginBottom: 12,
     textAlign: "center",
   },
   description: {
     fontSize: 15,
-    color: "#666",
     textAlign: "center",
     lineHeight: 22,
     marginBottom: 16,
@@ -314,7 +316,6 @@ const styles = StyleSheet.create({
   },
   bulletItem: {
     fontSize: 14,
-    color: "#666",
     lineHeight: 24,
     paddingLeft: 8,
   },
@@ -328,11 +329,7 @@ const styles = StyleSheet.create({
   },
   resendButtonText: {
     fontSize: 14,
-    color: "#007AFF",
     fontWeight: "500",
-  },
-  resendButtonTextDisabled: {
-    color: "#999",
   },
   buttonRow: {
     flexDirection: "row",
@@ -341,7 +338,6 @@ const styles = StyleSheet.create({
   },
   cancelButton: {
     flex: 1,
-    backgroundColor: "#f0f0f0",
     borderRadius: 8,
     padding: 14,
     alignItems: "center",
@@ -349,11 +345,9 @@ const styles = StyleSheet.create({
   cancelButtonText: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
   },
   continueButton: {
     flex: 1,
-    backgroundColor: "#DC2626",
     borderRadius: 8,
     padding: 14,
     alignItems: "center",
@@ -361,11 +355,9 @@ const styles = StyleSheet.create({
   continueButtonText: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#fff",
   },
   deleteButton: {
     flex: 1,
-    backgroundColor: "#DC2626",
     borderRadius: 8,
     padding: 14,
     alignItems: "center",
@@ -373,14 +365,12 @@ const styles = StyleSheet.create({
   deleteButtonText: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#fff",
   },
   buttonDisabled: {
     opacity: 0.6,
   },
   errorText: {
     fontSize: 14,
-    color: "#DC2626",
     textAlign: "center",
     marginBottom: 16,
   },

@@ -15,6 +15,7 @@ import type { Id } from "@services/api/convex";
 import { CalendarGrid } from "@components/ui/CalendarGrid";
 import { EventScheduleType } from "../../types";
 import { getTimezoneAbbreviation } from "@togather/shared";
+import { useTheme } from "@hooks/useTheme";
 
 interface MeetingSummary {
   id?: number;
@@ -59,6 +60,7 @@ export function EventSchedule({
   groupId,
   currentDate,
 }: EventScheduleProps) {
+  const { colors, isDark } = useTheme();
   // Fetch group data to get community timezone using Convex
   const groupData = useQuery(
     api.functions.groups.queries.getByIdWithRole,
@@ -354,6 +356,10 @@ export function EventSchedule({
     return checkIfMeetingOnCurrentDate();
   };
 
+  // Warning colors - semantic, using isDark for appropriate tones
+  const warningBg = isDark ? '#3a3520' : '#fff3cd';
+  const warningTextColor = isDark ? '#FF9F0A' : '#856404';
+
   return (
     <Modal
       visible={visible}
@@ -361,17 +367,17 @@ export function EventSchedule({
       animationType="slide"
       onRequestClose={handleClose}
     >
-      <View style={styles.overlay}>
+      <View style={[styles.overlay, { backgroundColor: colors.overlay }]}>
         <TouchableOpacity
           style={styles.backdrop}
           activeOpacity={1}
           onPress={handleClose}
         />
-        <View style={styles.modalContent}>
-          <View style={styles.header}>
-            <Text style={styles.headerTitle}>Set Date</Text>
+        <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
+          <View style={[styles.header, { borderBottomColor: colors.border }]}>
+            <Text style={[styles.headerTitle, { color: colors.text }]}>Set Date</Text>
             <TouchableOpacity onPress={handleClose} style={styles.closeButton}>
-              <Ionicons name="close" size={24} color="#333" />
+              <Ionicons name="close" size={24} color={colors.text} />
             </TouchableOpacity>
           </View>
 
@@ -379,12 +385,12 @@ export function EventSchedule({
             style={styles.content}
             contentContainerStyle={styles.contentContainer}
           >
-            <Text style={styles.description}>
+            <Text style={[styles.description, { color: colors.textSecondary }]}>
               Select the date and time for your event.
             </Text>
-            <View style={styles.timezoneNote}>
-              <Ionicons name="time-outline" size={16} color="#666" />
-              <Text style={styles.timezoneNoteText}>
+            <View style={[styles.timezoneNote, { backgroundColor: colors.surfaceSecondary }]}>
+              <Ionicons name="time-outline" size={16} color={colors.textSecondary} />
+              <Text style={[styles.timezoneNoteText, { color: colors.textSecondary }]}>
                 Times are in {timezoneAbbreviation}
               </Text>
             </View>
@@ -403,27 +409,27 @@ export function EventSchedule({
 
             {/* Time Picker - iOS style selector */}
             <View style={styles.pickerSection}>
-              <Text style={styles.sectionLabel}>Time</Text>
+              <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Time</Text>
               <TouchableOpacity
-                style={styles.timeSelectorButton}
+                style={[styles.timeSelectorButton, { borderColor: colors.borderLight, backgroundColor: colors.surface }]}
                 onPress={() => setShowTimePicker(true)}
               >
-                <Text style={styles.timeSelectorText}>
+                <Text style={[styles.timeSelectorText, { color: colors.text }]}>
                   {format(selectedTime, "h:mm a")}
                 </Text>
-                <Ionicons name="chevron-down" size={16} color="#333" />
+                <Ionicons name="chevron-down" size={16} color={colors.text} />
               </TouchableOpacity>
             </View>
 
             {error ? (
-              <View style={styles.errorContainer}>
-                <Text style={styles.errorText}>{error}</Text>
+              <View style={[styles.errorContainer, { backgroundColor: warningBg }]}>
+                <Text style={[styles.errorText, { color: warningTextColor }]}>{error}</Text>
               </View>
             ) : null}
 
             {isCheckingMeetings && (
               <View style={styles.loadingContainer}>
-                <Text style={styles.loadingText}>
+                <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
                   Checking for existing events...
                 </Text>
               </View>
@@ -431,30 +437,30 @@ export function EventSchedule({
           </ScrollView>
 
           {/* Action Buttons */}
-          <View style={styles.buttonContainer}>
+          <View style={[styles.buttonContainer, { borderTopColor: colors.border }]}>
             <TouchableOpacity
               style={[
                 styles.button,
-                isDeleteAction() ? styles.deleteButton : styles.submitButton,
+                isDeleteAction()
+                  ? { backgroundColor: colors.destructive }
+                  : { backgroundColor: colors.buttonPrimary },
               ]}
               onPress={handleSchedule}
             >
               <Text
                 style={[
                   styles.buttonText,
-                  isDeleteAction()
-                    ? styles.deleteButtonText
-                    : styles.submitButtonText,
+                  { color: isDeleteAction() ? '#fff' : colors.buttonPrimaryText },
                 ]}
               >
                 {getActionButtonText()}
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.button, styles.cancelButton]}
+              style={[styles.button, { backgroundColor: colors.borderLight }]}
               onPress={handleClose}
             >
-              <Text style={[styles.buttonText, styles.cancelButtonText]}>
+              <Text style={[styles.buttonText, { color: colors.textSecondary }]}>
                 Cancel
               </Text>
             </TouchableOpacity>
@@ -467,15 +473,15 @@ export function EventSchedule({
             animationType="slide"
             onRequestClose={() => setShowTimePicker(false)}
           >
-            <View style={styles.timePickerOverlay}>
+            <View style={[styles.timePickerOverlay, { backgroundColor: colors.overlay }]}>
               <TouchableOpacity
                 style={styles.timePickerBackdrop}
                 activeOpacity={1}
                 onPress={() => setShowTimePicker(false)}
               />
-              <View style={styles.timePickerModal}>
-                <View style={styles.timePickerHeader}>
-                  <Text style={styles.timePickerTitle}>Select Time</Text>
+              <View style={[styles.timePickerModal, { backgroundColor: colors.surface }]}>
+                <View style={[styles.timePickerHeader, { borderBottomColor: colors.border }]}>
+                  <Text style={[styles.timePickerTitle, { color: colors.text }]}>Select Time</Text>
                 </View>
                 <View style={styles.timePickerContent}>
                   {Platform.OS === "web" ? (
@@ -504,32 +510,32 @@ export function EventSchedule({
                     />
                   ) : (
                     <View style={styles.timePickerWheel}>
-                      <Text style={styles.timePickerWheelText}>
+                      <Text style={[styles.timePickerWheelText, { color: colors.text }]}>
                         {format(selectedTime, "h:mm a")}
                       </Text>
-                      <Text style={styles.timePickerWheelHint}>
+                      <Text style={[styles.timePickerWheelHint, { color: colors.textSecondary }]}>
                         Use native time picker when available
                       </Text>
                     </View>
                   )}
                 </View>
-                <View style={styles.timePickerButtons}>
+                <View style={[styles.timePickerButtons, { borderTopColor: colors.border }]}>
                   <TouchableOpacity
-                    style={[styles.button, styles.submitButton]}
+                    style={[styles.button, { backgroundColor: colors.buttonPrimary }]}
                     onPress={() => setShowTimePicker(false)}
                   >
-                    <Text style={[styles.buttonText, styles.submitButtonText]}>
+                    <Text style={[styles.buttonText, { color: colors.buttonPrimaryText }]}>
                       Change Time
                     </Text>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    style={[styles.button, styles.cancelButton]}
+                    style={[styles.button, { backgroundColor: colors.borderLight }]}
                     onPress={() => {
                       setSelectedTime(new Date());
                       setShowTimePicker(false);
                     }}
                   >
-                    <Text style={[styles.buttonText, styles.cancelButtonText]}>
+                    <Text style={[styles.buttonText, { color: colors.textSecondary }]}>
                       Cancel
                     </Text>
                   </TouchableOpacity>
@@ -547,19 +553,19 @@ export function EventSchedule({
         animationType="fade"
         onRequestClose={handleCancelRemove}
       >
-        <View style={styles.confirmOverlay}>
-          <View style={styles.confirmModal}>
-            <Text style={styles.confirmTitle}>
+        <View style={[styles.confirmOverlay, { backgroundColor: colors.overlay }]}>
+          <View style={[styles.confirmModal, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.confirmTitle, { color: colors.text }]}>
               Attendance Already Submitted
             </Text>
-            <Text style={styles.confirmText}>
+            <Text style={[styles.confirmText, { color: colors.textSecondary }]}>
               An attendance report was already submitted for this date.
             </Text>
 
             {getCurrentDateMeeting()?.logDetails &&
               getCurrentDateMeeting()!.logDetails!.length > 0 && (
-                <View style={styles.attendanceInfo}>
-                  <Text style={styles.attendanceInfoText}>
+                <View style={[styles.attendanceInfo, { backgroundColor: colors.surfaceSecondary }]}>
+                  <Text style={[styles.attendanceInfoText, { color: colors.text }]}>
                     Submitted by:{" "}
                     {
                       getCurrentDateMeeting()!.logDetails![0].updatedBy
@@ -570,7 +576,7 @@ export function EventSchedule({
                         .last_name
                     }
                   </Text>
-                  <Text style={styles.attendanceInfoText}>
+                  <Text style={[styles.attendanceInfoText, { color: colors.text }]}>
                     Date:{" "}
                     {format(
                       new Date(
@@ -582,25 +588,25 @@ export function EventSchedule({
                 </View>
               )}
 
-            <Text style={styles.confirmWarning}>
+            <Text style={[styles.confirmWarning, { color: colors.textSecondary }]}>
               Removing this event from this date will also delete the attendance
               report. Are you sure you want to do that?
             </Text>
 
             <TouchableOpacity
-              style={[styles.button, styles.removeButton]}
+              style={[styles.button, { backgroundColor: colors.destructive }]}
               onPress={handleConfirmRemove}
             >
-              <Text style={[styles.buttonText, styles.removeButtonText]}>
+              <Text style={[styles.buttonText, { color: '#fff' }]}>
                 Yes, Remove Event
               </Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={[styles.button, styles.cancelButton]}
+              style={[styles.button, { backgroundColor: colors.borderLight }]}
               onPress={handleCancelRemove}
             >
-              <Text style={[styles.buttonText, styles.cancelButtonText]}>
+              <Text style={[styles.buttonText, { color: colors.textSecondary }]}>
                 Cancel
               </Text>
             </TouchableOpacity>
@@ -614,14 +620,12 @@ export function EventSchedule({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
     justifyContent: "flex-end",
   },
   backdrop: {
     flex: 1,
   },
   modalContent: {
-    backgroundColor: "#fff",
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     maxHeight: "90%",
@@ -633,12 +637,10 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   headerTitle: {
     fontSize: 20,
     fontWeight: "bold",
-    color: "#333",
   },
   closeButton: {
     padding: 4,
@@ -651,7 +653,6 @@ const styles = StyleSheet.create({
   },
   description: {
     fontSize: 16,
-    color: "#7f7f82",
     textAlign: "center",
     marginBottom: 12,
     lineHeight: 24,
@@ -660,7 +661,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#f0f0f0",
     paddingVertical: 8,
     paddingHorizontal: 16,
     borderRadius: 8,
@@ -669,7 +669,6 @@ const styles = StyleSheet.create({
   },
   timezoneNoteText: {
     fontSize: 14,
-    color: "#666",
     fontWeight: "500",
   },
   pickerSection: {
@@ -678,7 +677,6 @@ const styles = StyleSheet.create({
   sectionLabel: {
     fontSize: 12,
     fontWeight: "600",
-    color: "#666",
     marginBottom: 8,
     textTransform: "uppercase",
   },
@@ -687,14 +685,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     borderWidth: 1,
-    borderColor: "#e0e0e0",
     borderRadius: 8,
     padding: 12,
-    backgroundColor: "#fff",
   },
   pickerButtonText: {
     fontSize: 16,
-    color: "#333",
   },
   datePickerContainer: {
     marginTop: 12,
@@ -704,29 +699,24 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     borderWidth: 2,
-    borderColor: "#ecedf0",
     borderRadius: 14,
     paddingHorizontal: 24,
     paddingVertical: 12,
-    backgroundColor: "#fff",
     height: 48,
     width: 180,
   },
   timeSelectorText: {
     fontSize: 16,
-    color: "#333",
     fontWeight: "500",
   },
   timePickerOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
     justifyContent: "flex-end",
   },
   timePickerBackdrop: {
     flex: 1,
   },
   timePickerModal: {
-    backgroundColor: "#fff",
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     maxHeight: "50%",
@@ -735,13 +725,11 @@ const styles = StyleSheet.create({
   timePickerHeader: {
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
     alignItems: "center",
   },
   timePickerTitle: {
     fontSize: 24,
     fontWeight: "bold",
-    color: "#333",
   },
   timePickerContent: {
     padding: 40,
@@ -755,27 +743,22 @@ const styles = StyleSheet.create({
   timePickerWheelText: {
     fontSize: 32,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 8,
   },
   timePickerWheelHint: {
     fontSize: 14,
-    color: "#666",
   },
   timePickerButtons: {
     padding: 16,
     borderTopWidth: 1,
-    borderTopColor: "#e0e0e0",
   },
   errorContainer: {
-    backgroundColor: "#fff3cd",
     padding: 12,
     borderRadius: 8,
     marginTop: 12,
   },
   errorText: {
     fontSize: 14,
-    color: "#856404",
     textAlign: "center",
   },
   loadingContainer: {
@@ -784,12 +767,10 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: 14,
-    color: "#666",
   },
   buttonContainer: {
     padding: 16,
     borderTopWidth: 1,
-    borderTopColor: "#e0e0e0",
   },
   button: {
     borderRadius: 100,
@@ -798,31 +779,17 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginBottom: 12,
   },
-  submitButton: {
-    backgroundColor: "#222224",
-  },
-  cancelButton: {
-    backgroundColor: "#ecedf0",
-  },
   buttonText: {
     fontSize: 18,
     fontWeight: "600",
   },
-  submitButtonText: {
-    color: "#fff",
-  },
-  cancelButtonText: {
-    color: "#4b4b4d",
-  },
   confirmOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
     justifyContent: "center",
     alignItems: "center",
     padding: 20,
   },
   confirmModal: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 24,
     width: "100%",
@@ -831,44 +798,26 @@ const styles = StyleSheet.create({
   confirmTitle: {
     fontSize: 24,
     fontWeight: "bold",
-    color: "#333",
     marginBottom: 8,
     textAlign: "center",
   },
   confirmText: {
     fontSize: 16,
-    color: "#666",
     marginBottom: 16,
     textAlign: "center",
   },
   confirmWarning: {
     fontSize: 16,
-    color: "#666",
     marginBottom: 24,
     textAlign: "center",
   },
   attendanceInfo: {
-    backgroundColor: "#f5f5f5",
     padding: 12,
     borderRadius: 8,
     marginBottom: 16,
   },
   attendanceInfoText: {
     fontSize: 14,
-    color: "#333",
     marginBottom: 4,
-  },
-  removeButton: {
-    backgroundColor: "#dc3545",
-    marginBottom: 12,
-  },
-  removeButtonText: {
-    color: "#fff",
-  },
-  deleteButton: {
-    backgroundColor: "#dc3545",
-  },
-  deleteButtonText: {
-    color: "#fff",
   },
 });

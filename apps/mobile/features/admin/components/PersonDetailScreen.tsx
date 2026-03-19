@@ -27,8 +27,8 @@ import { formatDistanceToNow, format } from "date-fns";
 import { useQuery, useAuthenticatedMutation, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { useAuth } from "@/providers/AuthProvider";
-import { DEFAULT_PRIMARY_COLOR } from "../../../utils/styles";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 import { formatError } from "@/utils/error-handling";
 
 // Role constants (matching backend)
@@ -46,6 +46,7 @@ export function PersonDetailScreen() {
   const userId = params.user_id || null;
   const { user: currentUser, community, refreshUser, token } = useAuth();
   const { primaryColor } = useCommunityTheme();
+  const { colors, isDark } = useTheme();
   const [isUpdatingRole, setIsUpdatingRole] = useState(false);
   const [isTransferring, setIsTransferring] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
@@ -290,17 +291,17 @@ export function PersonDetailScreen() {
 
   if (isLoading || userId === null) {
     return (
-      <View style={[styles.container, { paddingTop: insets.top }]}>
-        <View style={styles.header}>
+      <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.surfaceSecondary }]}>
+        <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={24} color="#333" />
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Member Details</Text>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Member Details</Text>
           <View style={styles.headerSpacer} />
         </View>
         <View style={styles.centerContainer}>
           <ActivityIndicator size="large" color={primaryColor} />
-          <Text style={styles.loadingText}>Loading member details...</Text>
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading member details...</Text>
         </View>
       </View>
     );
@@ -308,19 +309,19 @@ export function PersonDetailScreen() {
 
   if (!member) {
     return (
-      <View style={[styles.container, { paddingTop: insets.top }]}>
-        <View style={styles.header}>
+      <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.surfaceSecondary }]}>
+        <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={24} color="#333" />
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Member Details</Text>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Member Details</Text>
           <View style={styles.headerSpacer} />
         </View>
         <View style={styles.centerContainer}>
-          <Ionicons name="alert-circle-outline" size={48} color="#FF6B6B" />
-          <Text style={styles.errorText}>Failed to load member details</Text>
-          <TouchableOpacity style={styles.retryButton} onPress={() => router.back()}>
-            <Text style={styles.retryButtonText}>Go Back</Text>
+          <Ionicons name="alert-circle-outline" size={48} color={colors.error} />
+          <Text style={[styles.errorText, { color: colors.text }]}>Failed to load member details</Text>
+          <TouchableOpacity style={[styles.retryButton, { backgroundColor: colors.buttonPrimary }]} onPress={() => router.back()}>
+            <Text style={[styles.retryButtonText, { color: colors.buttonPrimaryText }]}>Go Back</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -333,95 +334,95 @@ export function PersonDetailScreen() {
   const inactiveGroups = member.groups.filter((g) => !g.is_active);
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
+    <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.surfaceSecondary }]}>
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={24} color="#333" />
+          <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Member Details</Text>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>Member Details</Text>
         <View style={styles.headerSpacer} />
       </View>
 
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
         {/* Profile Section */}
-        <View style={styles.section}>
+        <View style={[styles.section, { backgroundColor: colors.surface }]}>
           <View style={styles.profileHeader}>
             <View style={styles.profileAvatar}>
               {member.profile_photo ? (
                 <Image source={{ uri: member.profile_photo }} style={styles.avatarImage} />
               ) : (
-                <View style={styles.avatarPlaceholder}>
+                <View style={[styles.avatarPlaceholder, { backgroundColor: primaryColor }]}>
                   <Text style={styles.avatarInitials}>{initials}</Text>
                 </View>
               )}
             </View>
             <View style={styles.profileInfo}>
               <View style={styles.nameRow}>
-                <Text style={styles.profileName}>{fullName}</Text>
+                <Text style={[styles.profileName, { color: colors.text }]}>{fullName}</Text>
                 {member.is_primary_admin && (
-                  <View style={styles.primaryAdminBadge}>
+                  <View style={[styles.primaryAdminBadge, { backgroundColor: primaryColor }]}>
                     <Text style={styles.primaryAdminBadgeText}>Primary Admin</Text>
                   </View>
                 )}
                 {member.is_admin && !member.is_primary_admin && (
-                  <View style={styles.adminBadge}>
-                    <Text style={styles.adminBadgeText}>Admin</Text>
+                  <View style={[styles.adminBadge, { backgroundColor: isDark ? 'rgba(255,152,0,0.2)' : '#FF980020' }]}>
+                    <Text style={[styles.adminBadgeText, { color: isDark ? '#FFB74D' : '#FF9800' }]}>Admin</Text>
                   </View>
                 )}
               </View>
-              <Text style={styles.profileEmail}>{member.email}</Text>
+              <Text style={[styles.profileEmail, { color: colors.textSecondary }]}>{member.email}</Text>
               {member.phone && (
-                <Text style={styles.profilePhone}>{member.phone}</Text>
+                <Text style={[styles.profilePhone, { color: colors.textSecondary }]}>{member.phone}</Text>
               )}
             </View>
           </View>
         </View>
 
         {/* Account Activity Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Account Activity</Text>
+        <View style={[styles.section, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Account Activity</Text>
           <View style={styles.infoGrid}>
-            <View style={styles.infoItem}>
-              <Text style={styles.infoLabel}>Last Login</Text>
-              <Text style={styles.infoValue}>{formatRelativeTime(member.last_login)}</Text>
+            <View style={[styles.infoItem, { backgroundColor: colors.surfaceSecondary }]}>
+              <Text style={[styles.infoLabel, { color: colors.textSecondary }]}>Last Login</Text>
+              <Text style={[styles.infoValue, { color: colors.text }]}>{formatRelativeTime(member.last_login)}</Text>
               {member.last_login && (
-                <Text style={styles.infoSubtext}>{formatDateTime(member.last_login)}</Text>
+                <Text style={[styles.infoSubtext, { color: colors.textTertiary }]}>{formatDateTime(member.last_login)}</Text>
               )}
             </View>
-            <View style={styles.infoItem}>
-              <Text style={styles.infoLabel}>Account Created</Text>
-              <Text style={styles.infoValue}>{formatDate(member.created_at)}</Text>
+            <View style={[styles.infoItem, { backgroundColor: colors.surfaceSecondary }]}>
+              <Text style={[styles.infoLabel, { color: colors.textSecondary }]}>Account Created</Text>
+              <Text style={[styles.infoValue, { color: colors.text }]}>{formatDate(member.created_at)}</Text>
               {member.created_at && (
-                <Text style={styles.infoSubtext}>{formatRelativeTime(member.created_at)}</Text>
+                <Text style={[styles.infoSubtext, { color: colors.textTertiary }]}>{formatRelativeTime(member.created_at)}</Text>
               )}
             </View>
           </View>
         </View>
 
         {/* Groups Section */}
-        <View style={styles.section}>
+        <View style={[styles.section, { backgroundColor: colors.surface }]}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Group Memberships</Text>
-            <View style={styles.badge}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Group Memberships</Text>
+            <View style={[styles.badge, { backgroundColor: primaryColor }]}>
               <Text style={styles.badgeText}>{member.groups_count}</Text>
             </View>
           </View>
 
           {activeGroups.length > 0 && (
             <>
-              <Text style={styles.subsectionTitle}>Active Groups</Text>
+              <Text style={[styles.subsectionTitle, { color: colors.textSecondary }]}>Active Groups</Text>
               {activeGroups.map((group) => (
-                <View key={group.group_id} style={styles.groupCard}>
+                <View key={group.group_id} style={[styles.groupCard, { backgroundColor: colors.surfaceSecondary }]}>
                   <View style={styles.groupInfo}>
-                    <Text style={styles.groupName}>{group.group_name}</Text>
-                    <Text style={styles.groupType}>{group.group_type_name}</Text>
-                    <Text style={styles.groupDate}>
+                    <Text style={[styles.groupName, { color: colors.text }]}>{group.group_name}</Text>
+                    <Text style={[styles.groupType, { color: colors.textSecondary }]}>{group.group_type_name}</Text>
+                    <Text style={[styles.groupDate, { color: colors.textTertiary }]}>
                       Joined: {formatDate(group.joined_at)}
                     </Text>
                   </View>
-                  <View style={[styles.roleBadge, group.role === "leader" && styles.roleBadgeLeader]}>
-                    <Text style={[styles.roleBadgeText, group.role === "leader" && styles.roleBadgeTextLeader]}>
+                  <View style={[styles.roleBadge, { backgroundColor: colors.border }, group.role === "leader" && { backgroundColor: `${primaryColor}20` }]}>
+                    <Text style={[styles.roleBadgeText, { color: colors.textSecondary }, group.role === "leader" && { color: primaryColor }]}>
                       {group.role}
                     </Text>
                   </View>
@@ -432,18 +433,18 @@ export function PersonDetailScreen() {
 
           {inactiveGroups.length > 0 && (
             <>
-              <Text style={[styles.subsectionTitle, { marginTop: 16 }]}>Past Groups</Text>
+              <Text style={[styles.subsectionTitle, { marginTop: 16, color: colors.textSecondary }]}>Past Groups</Text>
               {inactiveGroups.map((group) => (
-                <View key={group.group_id} style={[styles.groupCard, styles.groupCardInactive]}>
+                <View key={group.group_id} style={[styles.groupCard, styles.groupCardInactive, { backgroundColor: colors.surfaceSecondary }]}>
                   <View style={styles.groupInfo}>
-                    <Text style={styles.groupName}>{group.group_name}</Text>
-                    <Text style={styles.groupType}>{group.group_type_name}</Text>
-                    <Text style={styles.groupDate}>
+                    <Text style={[styles.groupName, { color: colors.text }]}>{group.group_name}</Text>
+                    <Text style={[styles.groupType, { color: colors.textSecondary }]}>{group.group_type_name}</Text>
+                    <Text style={[styles.groupDate, { color: colors.textTertiary }]}>
                       Left: {formatDate(group.left_at)}
                     </Text>
                   </View>
-                  <View style={styles.inactiveBadge}>
-                    <Text style={styles.inactiveBadgeText}>Inactive</Text>
+                  <View style={[styles.inactiveBadge, { backgroundColor: isDark ? 'rgba(255,69,58,0.15)' : '#FF6B6B20' }]}>
+                    <Text style={[styles.inactiveBadgeText, { color: colors.destructive }]}>Inactive</Text>
                   </View>
                 </View>
               ))}
@@ -451,58 +452,57 @@ export function PersonDetailScreen() {
           )}
 
           {member.groups_count === 0 && (
-            <Text style={styles.emptyText}>Not a member of any groups</Text>
+            <Text style={[styles.emptyText, { color: colors.textTertiary }]}>Not a member of any groups</Text>
           )}
         </View>
 
         {/* Attendance Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Attendance</Text>
+        <View style={[styles.section, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Attendance</Text>
           <View style={styles.statsGrid}>
-            <View style={styles.statCard}>
-              <Text style={styles.statValue}>{member.total_meetings_attended}</Text>
-              <Text style={styles.statLabel}>Meetings Attended</Text>
+            <View style={[styles.statCard, { backgroundColor: `${primaryColor}10` }]}>
+              <Text style={[styles.statValue, { color: primaryColor }]}>{member.total_meetings_attended}</Text>
+              <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Meetings Attended</Text>
             </View>
-            <View style={styles.statCard}>
-              <Text style={styles.statValue}>
+            <View style={[styles.statCard, { backgroundColor: `${primaryColor}10` }]}>
+              <Text style={[styles.statValue, { color: primaryColor }]}>
                 {member.attendance_rate !== null
                   ? `${Math.round(member.attendance_rate)}%`
                   : "N/A"}
               </Text>
-              <Text style={styles.statLabel}>Attendance Rate</Text>
+              <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Attendance Rate</Text>
             </View>
           </View>
 
           {member.recent_attendance.length > 0 && (
             <>
-              <Text style={styles.subsectionTitle}>Recent Attendance</Text>
+              <Text style={[styles.subsectionTitle, { color: colors.textSecondary }]}>Recent Attendance</Text>
               {member.recent_attendance.map((record, index) => (
-                <View key={`${record.meeting_id}-${index}`} style={styles.attendanceCard}>
+                <View key={`${record.meeting_id}-${index}`} style={[styles.attendanceCard, { backgroundColor: colors.surfaceSecondary }]}>
                   <View style={styles.attendanceInfo}>
-                    <Text style={styles.attendanceName}>{record.group_name}</Text>
-                    <Text style={styles.attendanceDate}>
+                    <Text style={[styles.attendanceName, { color: colors.text }]}>{record.group_name}</Text>
+                    <Text style={[styles.attendanceDate, { color: colors.textSecondary }]}>
                       {formatDateTime(record.meeting_date)}
                     </Text>
                   </View>
                   <View
                     style={[
                       styles.attendanceStatus,
-                      record.attended
-                        ? styles.attendanceStatusPresent
-                        : styles.attendanceStatusAbsent,
+                      { backgroundColor: record.attended
+                          ? (isDark ? 'rgba(48,209,88,0.15)' : '#4CAF5020')
+                          : (isDark ? 'rgba(255,69,58,0.15)' : '#FF6B6B20')
+                      },
                     ]}
                   >
                     <Ionicons
                       name={record.attended ? "checkmark-circle" : "close-circle"}
                       size={20}
-                      color={record.attended ? "#4CAF50" : "#FF6B6B"}
+                      color={record.attended ? colors.success : colors.destructive}
                     />
                     <Text
                       style={[
                         styles.attendanceStatusText,
-                        record.attended
-                          ? styles.attendanceStatusTextPresent
-                          : styles.attendanceStatusTextAbsent,
+                        { color: record.attended ? colors.success : colors.destructive },
                       ]}
                     >
                       {record.attended ? "Present" : "Absent"}
@@ -514,18 +514,18 @@ export function PersonDetailScreen() {
           )}
 
           {member.recent_attendance.length === 0 && (
-            <Text style={styles.emptyText}>No attendance records</Text>
+            <Text style={[styles.emptyText, { color: colors.textTertiary }]}>No attendance records</Text>
           )}
         </View>
 
         {/* Admin Role Management Section - Only visible to Primary Admin */}
         {canManageAdmins && !isSelf && !member.is_primary_admin && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Admin Role</Text>
+          <View style={[styles.section, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Admin Role</Text>
             <View style={styles.adminActions}>
               {!member.is_admin ? (
                 <TouchableOpacity
-                  style={styles.promoteButton}
+                  style={[styles.promoteButton, { backgroundColor: primaryColor }]}
                   onPress={handleMakeAdmin}
                   disabled={isUpdatingRole}
                 >
@@ -540,32 +540,32 @@ export function PersonDetailScreen() {
                 </TouchableOpacity>
               ) : (
                 <TouchableOpacity
-                  style={styles.demoteButton}
+                  style={[styles.demoteButton, { borderColor: colors.destructive }]}
                   onPress={handleRemoveAdmin}
                   disabled={isUpdatingRole}
                 >
                   {isUpdatingRole ? (
-                    <ActivityIndicator size="small" color="#FF6B6B" />
+                    <ActivityIndicator size="small" color={colors.destructive} />
                   ) : (
                     <>
-                      <Ionicons name="shield-outline" size={20} color="#FF6B6B" />
-                      <Text style={styles.demoteButtonText}>Remove Admin</Text>
+                      <Ionicons name="shield-outline" size={20} color={colors.destructive} />
+                      <Text style={[styles.demoteButtonText, { color: colors.destructive }]}>Remove Admin</Text>
                     </>
                   )}
                 </TouchableOpacity>
               )}
             </View>
-            <Text style={styles.adminHelpText}>
+            <Text style={[styles.adminHelpText, { color: colors.textSecondary }]}>
               {member.is_admin
                 ? "This member is currently an Admin and can manage groups, members, and settings."
                 : "Promote this member to Admin to give them access to manage groups, members, and settings."}
             </Text>
 
             {/* Transfer Primary Admin Section */}
-            <View style={styles.transferSection}>
-              <Text style={styles.transferSectionTitle}>Transfer Ownership</Text>
+            <View style={[styles.transferSection, { borderTopColor: colors.border }]}>
+              <Text style={[styles.transferSectionTitle, { color: colors.textSecondary }]}>Transfer Ownership</Text>
               <TouchableOpacity
-                style={styles.transferButton}
+                style={[styles.transferButton, { backgroundColor: `${primaryColor}10`, borderColor: primaryColor }]}
                 onPress={handleTransferPrimaryAdmin}
                 disabled={isTransferring}
               >
@@ -578,7 +578,7 @@ export function PersonDetailScreen() {
                   </>
                 )}
               </TouchableOpacity>
-              <Text style={styles.transferHelpText}>
+              <Text style={[styles.transferHelpText, { color: colors.textTertiary }]}>
                 This will make {member.first_name} the Primary Admin. You will be demoted to a regular Admin. This action cannot be undone.
               </Text>
             </View>
@@ -589,10 +589,10 @@ export function PersonDetailScreen() {
             - Primary admin: can remove anyone except themselves
             - Regular admin: can only remove regular members (not other admins) */}
         {isCurrentUserAdmin && !isSelf && (canManageAdmins ? !member.is_primary_admin : !member.is_admin) && (
-          <View style={styles.dangerSection}>
-            <Text style={styles.dangerSectionTitle}>Danger Zone</Text>
+          <View style={[styles.dangerSection, { backgroundColor: colors.surface, borderColor: isDark ? 'rgba(255,69,58,0.2)' : '#FF6B6B30' }]}>
+            <Text style={[styles.dangerSectionTitle, { color: colors.destructive }]}>Danger Zone</Text>
             <TouchableOpacity
-              style={styles.removeButton}
+              style={[styles.removeButton, { backgroundColor: colors.destructive }]}
               onPress={handleRemoveMember}
               disabled={isRemoving}
             >
@@ -605,7 +605,7 @@ export function PersonDetailScreen() {
                 </>
               )}
             </TouchableOpacity>
-            <Text style={styles.dangerHelpText}>
+            <Text style={[styles.dangerHelpText, { color: colors.textTertiary }]}>
               This will remove {member.first_name} from all groups in this community and revoke their access. This action cannot be undone.
             </Text>
           </View>
@@ -618,7 +618,6 @@ export function PersonDetailScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f5f5f5",
   },
   header: {
     flexDirection: "row",
@@ -626,9 +625,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   backButton: {
     padding: 4,
@@ -636,7 +633,6 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
   },
   headerSpacer: {
     width: 32,
@@ -650,22 +646,18 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 12,
     fontSize: 16,
-    color: "#666",
   },
   errorText: {
     marginTop: 12,
     fontSize: 16,
-    color: "#FF6B6B",
   },
   retryButton: {
     marginTop: 16,
     paddingHorizontal: 24,
     paddingVertical: 12,
-    backgroundColor: DEFAULT_PRIMARY_COLOR,
     borderRadius: 8,
   },
   retryButtonText: {
-    color: "#fff",
     fontWeight: "600",
   },
   scrollView: {
@@ -676,7 +668,6 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   section: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 16,
     shadowColor: "#000",
@@ -703,7 +694,6 @@ const styles = StyleSheet.create({
   avatarPlaceholder: {
     width: "100%",
     height: "100%",
-    backgroundColor: DEFAULT_PRIMARY_COLOR,
     justifyContent: "center",
     alignItems: "center",
   },
@@ -718,22 +708,18 @@ const styles = StyleSheet.create({
   profileName: {
     fontSize: 22,
     fontWeight: "bold",
-    color: "#333",
   },
   profileEmail: {
     fontSize: 15,
-    color: "#666",
     marginTop: 4,
   },
   profilePhone: {
     fontSize: 15,
-    color: "#666",
     marginTop: 2,
   },
   sectionTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 12,
   },
   sectionHeader: {
@@ -743,7 +729,6 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   badge: {
-    backgroundColor: DEFAULT_PRIMARY_COLOR,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
@@ -756,7 +741,6 @@ const styles = StyleSheet.create({
   subsectionTitle: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#666",
     marginBottom: 8,
     textTransform: "uppercase",
     letterSpacing: 0.5,
@@ -767,23 +751,19 @@ const styles = StyleSheet.create({
   },
   infoItem: {
     flex: 1,
-    backgroundColor: "#f9f9f9",
     padding: 12,
     borderRadius: 8,
   },
   infoLabel: {
     fontSize: 12,
-    color: "#666",
     marginBottom: 4,
   },
   infoValue: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
   },
   infoSubtext: {
     fontSize: 11,
-    color: "#999",
     marginTop: 2,
   },
   groupCard: {
@@ -791,7 +771,6 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     padding: 12,
-    backgroundColor: "#f9f9f9",
     borderRadius: 8,
     marginBottom: 8,
   },
@@ -804,46 +783,33 @@ const styles = StyleSheet.create({
   groupName: {
     fontSize: 15,
     fontWeight: "600",
-    color: "#333",
   },
   groupType: {
     fontSize: 13,
-    color: "#666",
     marginTop: 2,
   },
   groupDate: {
     fontSize: 12,
-    color: "#999",
     marginTop: 2,
   },
   roleBadge: {
     paddingHorizontal: 10,
     paddingVertical: 4,
-    backgroundColor: "#e0e0e0",
     borderRadius: 12,
-  },
-  roleBadgeLeader: {
-    backgroundColor: `${DEFAULT_PRIMARY_COLOR}20`,
   },
   roleBadgeText: {
     fontSize: 12,
     fontWeight: "500",
-    color: "#666",
     textTransform: "capitalize",
-  },
-  roleBadgeTextLeader: {
-    color: DEFAULT_PRIMARY_COLOR,
   },
   inactiveBadge: {
     paddingHorizontal: 10,
     paddingVertical: 4,
-    backgroundColor: "#FF6B6B20",
     borderRadius: 12,
   },
   inactiveBadgeText: {
     fontSize: 12,
     fontWeight: "500",
-    color: "#FF6B6B",
   },
   statsGrid: {
     flexDirection: "row",
@@ -852,7 +818,6 @@ const styles = StyleSheet.create({
   },
   statCard: {
     flex: 1,
-    backgroundColor: `${DEFAULT_PRIMARY_COLOR}10`,
     padding: 16,
     borderRadius: 8,
     alignItems: "center",
@@ -860,11 +825,9 @@ const styles = StyleSheet.create({
   statValue: {
     fontSize: 28,
     fontWeight: "bold",
-    color: DEFAULT_PRIMARY_COLOR,
   },
   statLabel: {
     fontSize: 12,
-    color: "#666",
     marginTop: 4,
     textAlign: "center",
   },
@@ -873,7 +836,6 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     padding: 12,
-    backgroundColor: "#f9f9f9",
     borderRadius: 8,
     marginBottom: 8,
   },
@@ -883,11 +845,9 @@ const styles = StyleSheet.create({
   attendanceName: {
     fontSize: 14,
     fontWeight: "500",
-    color: "#333",
   },
   attendanceDate: {
     fontSize: 12,
-    color: "#666",
     marginTop: 2,
   },
   attendanceStatus: {
@@ -898,25 +858,12 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 12,
   },
-  attendanceStatusPresent: {
-    backgroundColor: "#4CAF5020",
-  },
-  attendanceStatusAbsent: {
-    backgroundColor: "#FF6B6B20",
-  },
   attendanceStatusText: {
     fontSize: 12,
     fontWeight: "500",
   },
-  attendanceStatusTextPresent: {
-    color: "#4CAF50",
-  },
-  attendanceStatusTextAbsent: {
-    color: "#FF6B6B",
-  },
   emptyText: {
     fontSize: 14,
-    color: "#999",
     fontStyle: "italic",
     textAlign: "center",
     padding: 20,
@@ -929,7 +876,6 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   primaryAdminBadge: {
-    backgroundColor: DEFAULT_PRIMARY_COLOR,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
@@ -940,7 +886,6 @@ const styles = StyleSheet.create({
     color: "#fff",
   },
   adminBadge: {
-    backgroundColor: "#FF9800",
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
@@ -948,7 +893,6 @@ const styles = StyleSheet.create({
   adminBadgeText: {
     fontSize: 12,
     fontWeight: "600",
-    color: "#fff",
   },
   adminActions: {
     marginBottom: 12,
@@ -958,7 +902,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
-    backgroundColor: DEFAULT_PRIMARY_COLOR,
     paddingVertical: 14,
     paddingHorizontal: 20,
     borderRadius: 10,
@@ -973,21 +916,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
-    backgroundColor: "#fff",
     borderWidth: 2,
-    borderColor: "#FF6B6B",
     paddingVertical: 12,
     paddingHorizontal: 20,
     borderRadius: 10,
   },
   demoteButtonText: {
-    color: "#FF6B6B",
     fontSize: 16,
     fontWeight: "600",
   },
   adminHelpText: {
     fontSize: 13,
-    color: "#666",
     lineHeight: 18,
   },
   // Transfer Primary Admin styles
@@ -995,12 +934,10 @@ const styles = StyleSheet.create({
     marginTop: 20,
     paddingTop: 16,
     borderTopWidth: 1,
-    borderTopColor: "#e0e0e0",
   },
   transferSectionTitle: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#666",
     marginBottom: 12,
     textTransform: "uppercase",
     letterSpacing: 0.5,
@@ -1010,9 +947,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
-    backgroundColor: `${DEFAULT_PRIMARY_COLOR}10`,
     borderWidth: 2,
-    borderColor: DEFAULT_PRIMARY_COLOR,
     paddingVertical: 14,
     paddingHorizontal: 20,
     borderRadius: 10,
@@ -1023,24 +958,20 @@ const styles = StyleSheet.create({
   },
   transferHelpText: {
     fontSize: 12,
-    color: "#999",
     lineHeight: 16,
     marginTop: 8,
     fontStyle: "italic",
   },
   // Danger zone / Remove from community styles
   dangerSection: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 16,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: "#FF6B6B30",
   },
   dangerSectionTitle: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#FF6B6B",
     marginBottom: 12,
     textTransform: "uppercase",
     letterSpacing: 0.5,
@@ -1050,7 +981,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
-    backgroundColor: "#FF6B6B",
     paddingVertical: 14,
     paddingHorizontal: 20,
     borderRadius: 10,
@@ -1062,7 +992,6 @@ const styles = StyleSheet.create({
   },
   dangerHelpText: {
     fontSize: 12,
-    color: "#999",
     lineHeight: 16,
     marginTop: 12,
   },

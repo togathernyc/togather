@@ -21,6 +21,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { GroupType } from "../hooks";
 import { DEFAULT_PRIMARY_COLOR } from "../../../utils/styles";
+import { useTheme } from "@hooks/useTheme";
 
 interface GroupTypeEditModalProps {
   visible: boolean;
@@ -37,6 +38,7 @@ export function GroupTypeEditModal({
   onSave,
   isSaving,
 }: GroupTypeEditModalProps) {
+  const { colors } = useTheme();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
 
@@ -70,14 +72,14 @@ export function GroupTypeEditModal({
           behavior={Platform.OS === "ios" ? "padding" : "height"}
           style={styles.keyboardView}
         >
-          <Pressable style={styles.container} onPress={(e) => e.stopPropagation()}>
+          <Pressable style={[styles.container, { backgroundColor: colors.surface }]} onPress={(e) => e.stopPropagation()}>
             {/* Header */}
-            <View style={styles.header}>
-              <Text style={styles.title}>
+            <View style={[styles.header, { borderBottomColor: colors.border }]}>
+              <Text style={[styles.title, { color: colors.text }]}>
                 {isEditMode ? "Edit Group Type" : "New Group Type"}
               </Text>
               <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                <Ionicons name="close" size={24} color="#666" />
+                <Ionicons name="close" size={24} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
 
@@ -95,25 +97,25 @@ export function GroupTypeEditModal({
             {/* Form */}
             <View style={styles.form}>
               <View style={styles.field}>
-                <Text style={styles.label}>Name *</Text>
+                <Text style={[styles.label, { color: colors.textSecondary }]}>Name *</Text>
                 <TextInput
-                  style={styles.input}
+                  style={[styles.input, { backgroundColor: colors.surfaceSecondary, color: colors.text, borderColor: colors.border }]}
                   value={name}
                   onChangeText={setName}
                   placeholder="e.g., Small Group, Bible Study"
-                  placeholderTextColor="#999"
+                  placeholderTextColor={colors.textTertiary}
                   autoFocus
                 />
               </View>
 
               <View style={styles.field}>
-                <Text style={styles.label}>Description</Text>
+                <Text style={[styles.label, { color: colors.textSecondary }]}>Description</Text>
                 <TextInput
-                  style={[styles.input, styles.textArea]}
+                  style={[styles.input, styles.textArea, { backgroundColor: colors.surfaceSecondary, color: colors.text, borderColor: colors.border }]}
                   value={description}
                   onChangeText={setDescription}
                   placeholder="Brief description of this group type..."
-                  placeholderTextColor="#999"
+                  placeholderTextColor={colors.textTertiary}
                   multiline
                   numberOfLines={3}
                   textAlignVertical="top"
@@ -123,8 +125,8 @@ export function GroupTypeEditModal({
 
             {/* Actions */}
             <View style={styles.actions}>
-              <TouchableOpacity style={styles.cancelButton} onPress={onClose}>
-                <Text style={styles.cancelButtonText}>Cancel</Text>
+              <TouchableOpacity style={[styles.cancelButton, { backgroundColor: colors.surfaceSecondary }]} onPress={onClose}>
+                <Text style={[styles.cancelButtonText, { color: colors.textSecondary }]}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[
@@ -160,7 +162,6 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
   },
   container: {
-    backgroundColor: "#fff",
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     paddingBottom: Platform.OS === "ios" ? 34 : 20,
@@ -171,12 +172,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   title: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
   },
   warningBanner: {
     flexDirection: "row",
@@ -202,17 +201,13 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: "500",
-    color: "#666",
     marginBottom: 8,
   },
   input: {
-    backgroundColor: "#f8f8f8",
     borderRadius: 8,
     padding: 12,
     fontSize: 16,
-    color: "#333",
     borderWidth: 1,
-    borderColor: "#e0e0e0",
   },
   textArea: {
     minHeight: 80,
@@ -228,13 +223,11 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 16,
     borderRadius: 8,
-    backgroundColor: "#f0f0f0",
     alignItems: "center",
   },
   cancelButtonText: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#666",
   },
   saveButton: {
     flex: 1,

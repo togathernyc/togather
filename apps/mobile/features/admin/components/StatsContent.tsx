@@ -22,8 +22,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { DatePicker } from "@components/ui";
 import { useQuery, useAction, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
-import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 import { useAuth } from "@providers/AuthProvider";
 import { useGroupTypes } from "../hooks";
 import { GroupAttendanceDetails } from "./GroupAttendanceDetails";
@@ -37,6 +37,7 @@ type MemberModalType = "active" | "new" | null;
 
 export function StatsContent() {
   const { primaryColor } = useCommunityTheme();
+  const { colors, isDark } = useTheme();
   const { user, community, token } = useAuth();
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [dateMode, setDateMode] = useState<DateMode>("range");
@@ -173,7 +174,7 @@ export function StatsContent() {
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
@@ -184,103 +185,105 @@ export function StatsContent() {
         {/* Overview Stats */}
         <View style={styles.statsRow}>
           <TouchableOpacity
-            style={styles.statCard}
+            style={[styles.statCard, { backgroundColor: colors.surface }]}
             onPress={() => setMemberModalType("active")}
             activeOpacity={0.7}
           >
-            <View style={styles.statIconContainer}>
+            <View style={[styles.statIconContainer, { backgroundColor: isDark ? `${primaryColor}1A` : '#F3E8FF' }]}>
               <Ionicons name="people" size={24} color={primaryColor} />
             </View>
             {activeMembersLoading ? (
               <ActivityIndicator size="small" color={primaryColor} />
             ) : (
               <>
-                <Text style={styles.statValue}>
+                <Text style={[styles.statValue, { color: colors.text }]}>
                   {activeMembers?.activeCount ?? 0}
                 </Text>
-                <Text style={styles.statLabel}>Active Members</Text>
-                <Text style={styles.statSubtext}>
+                <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Active Members</Text>
+                <Text style={[styles.statSubtext, { color: colors.textTertiary }]}>
                   of {activeMembers?.totalMembers ?? 0} total
                 </Text>
               </>
             )}
             <View style={styles.tapHint}>
-              <Text style={styles.tapHintText}>Tap to view</Text>
-              <Ionicons name="chevron-forward" size={14} color="#999" />
+              <Text style={[styles.tapHintText, { color: colors.textTertiary }]}>Tap to view</Text>
+              <Ionicons name="chevron-forward" size={14} color={colors.textTertiary} />
             </View>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={styles.statCard}
+            style={[styles.statCard, { backgroundColor: colors.surface }]}
             onPress={() => setMemberModalType("new")}
             activeOpacity={0.7}
           >
-            <View style={[styles.statIconContainer, { backgroundColor: "#E3F2FD" }]}>
+            <View style={[styles.statIconContainer, { backgroundColor: isDark ? 'rgba(33,150,243,0.1)' : '#E3F2FD' }]}>
               <Ionicons name="person-add" size={24} color="#2196F3" />
             </View>
             {newMembersLoading ? (
               <ActivityIndicator size="small" color="#2196F3" />
             ) : (
               <>
-                <Text style={styles.statValue}>
+                <Text style={[styles.statValue, { color: colors.text }]}>
                   {newMembers?.newMembersCount ?? 0}
                 </Text>
-                <Text style={styles.statLabel}>New Members</Text>
-                <Text style={styles.statSubtext}>
+                <Text style={[styles.statLabel, { color: colors.textSecondary }]}>New Members</Text>
+                <Text style={[styles.statSubtext, { color: colors.textTertiary }]}>
                   {newMembers?.monthName ?? "this month"}
                 </Text>
               </>
             )}
             <View style={styles.tapHint}>
-              <Text style={styles.tapHintText}>Tap to view</Text>
-              <Ionicons name="chevron-forward" size={14} color="#999" />
+              <Text style={[styles.tapHintText, { color: colors.textTertiary }]}>Tap to view</Text>
+              <Ionicons name="chevron-forward" size={14} color={colors.textTertiary} />
             </View>
           </TouchableOpacity>
         </View>
 
         {/* Attendance Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Attendance</Text>
+        <View style={[styles.section, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Attendance</Text>
 
           {/* Group Type Selector */}
           <View style={styles.field}>
-            <Text style={styles.label}>Group Type</Text>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Group Type</Text>
             <TouchableOpacity
-              style={styles.picker}
+              style={[styles.picker, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
               onPress={() => setShowGroupTypePicker(true)}
             >
-              <Text style={styles.pickerText}>
+              <Text style={[styles.pickerText, { color: colors.text }]}>
                 {selectedGroupType?.name ?? "Select group type"}
               </Text>
-              <Ionicons name="chevron-down" size={20} color="#666" />
+              <Ionicons name="chevron-down" size={20} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
 
           {/* Date Mode Toggle */}
           <View style={styles.field}>
-            <Text style={styles.label}>Date Selection</Text>
-            <View style={styles.toggleRow}>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Date Selection</Text>
+            <View style={[styles.toggleRow, { backgroundColor: colors.surfaceSecondary }]}>
               <TouchableOpacity
-                style={[styles.toggleButton, dateMode === "single" && styles.toggleButtonActive]}
+                style={[styles.toggleButton, dateMode === "single" && [styles.toggleButtonActive, { backgroundColor: colors.surface }]]}
                 onPress={() => setDateMode("single")}
               >
                 <Text
                   style={[
                     styles.toggleButtonText,
-                    dateMode === "single" && styles.toggleButtonTextActive,
+                    { color: colors.textSecondary },
+                    dateMode === "single" && [styles.toggleButtonTextActive, { color: colors.text }],
                   ]}
                 >
                   Single Date
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.toggleButton, dateMode === "range" && styles.toggleButtonActive]}
+                style={[styles.toggleButton, dateMode === "range" && [styles.toggleButtonActive, { backgroundColor: colors.surface }]]}
                 onPress={() => setDateMode("range")}
               >
                 <Text
                   style={[
                     styles.toggleButtonText,
-                    dateMode === "range" && styles.toggleButtonTextActive,
+                    { color: colors.textSecondary },
+                    dateMode === "range" && [styles.toggleButtonTextActive, { color: colors.text }],
                   ]}
                 >
                   Date Range
@@ -328,40 +331,40 @@ export function StatsContent() {
               {attendanceLoading ? (
                 <View style={styles.loadingContainer}>
                   <ActivityIndicator size="large" color={primaryColor} />
-                  <Text style={styles.loadingText}>Loading attendance...</Text>
+                  <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading attendance...</Text>
                 </View>
               ) : attendanceData ? (
                 <>
                   {/* Total Summary */}
-                  <View style={styles.summaryCard}>
+                  <View style={[styles.summaryCard, { backgroundColor: colors.surfaceSecondary }]}>
                     <View style={styles.summaryRow}>
                       <View style={styles.summaryItem}>
-                        <Text style={styles.summaryValue}>
+                        <Text style={[styles.summaryValue, { color: colors.text }]}>
                           {attendanceData.totalAttended}
                         </Text>
-                        <Text style={styles.summaryLabel}>Total Present</Text>
+                        <Text style={[styles.summaryLabel, { color: colors.textSecondary }]}>Total Present</Text>
                       </View>
                       <View style={styles.summaryItem}>
-                        <Text style={styles.summaryValue}>
+                        <Text style={[styles.summaryValue, { color: colors.text }]}>
                           {attendanceData.totalMeetings}
                         </Text>
-                        <Text style={styles.summaryLabel}>Meetings</Text>
+                        <Text style={[styles.summaryLabel, { color: colors.textSecondary }]}>Meetings</Text>
                       </View>
                       <View style={styles.summaryItem}>
-                        <Text style={styles.summaryValue}>
+                        <Text style={[styles.summaryValue, { color: colors.text }]}>
                           {attendanceData.overallRate}%
                         </Text>
-                        <Text style={styles.summaryLabel}>Rate</Text>
+                        <Text style={[styles.summaryLabel, { color: colors.textSecondary }]}>Rate</Text>
                       </View>
                     </View>
                   </View>
 
                   {/* Group Breakdown */}
                   <View style={styles.breakdownHeader}>
-                    <Text style={styles.breakdownTitle}>By Group</Text>
+                    <Text style={[styles.breakdownTitle, { color: colors.text }]}>By Group</Text>
                     {attendanceData.groupBreakdown.length > 0 && (
                       <TouchableOpacity
-                        style={[styles.exportButton, isExporting && styles.exportButtonDisabled]}
+                        style={[styles.exportButton, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }, isExporting && styles.exportButtonDisabled]}
                         onPress={handleExportAttendance}
                         disabled={isExporting}
                         hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
@@ -382,24 +385,24 @@ export function StatsContent() {
                       {attendanceData.groupBreakdown.map((group) => (
                         <TouchableOpacity
                           key={group.groupId}
-                          style={styles.groupItem}
+                          style={[styles.groupItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
                           onPress={() => setSelectedGroupId(group.groupId)}
                         >
                           <View style={styles.groupInfo}>
-                            <Text style={styles.groupName}>{group.groupName}</Text>
-                            <Text style={styles.groupStats}>
+                            <Text style={[styles.groupName, { color: colors.text }]}>{group.groupName}</Text>
+                            <Text style={[styles.groupStats, { color: colors.textSecondary }]}>
                               {group.attended} present • {group.meetingCount} meetings
                             </Text>
                           </View>
                           <View style={styles.groupRateContainer}>
-                            <Text style={styles.groupRate}>{group.rate}%</Text>
-                            <Ionicons name="chevron-forward" size={16} color="#999" />
+                            <Text style={[styles.groupRate, { color: primaryColor }]}>{group.rate}%</Text>
+                            <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
                           </View>
                         </TouchableOpacity>
                       ))}
                     </View>
                   ) : (
-                    <Text style={styles.emptyText}>
+                    <Text style={[styles.emptyText, { color: colors.textTertiary }]}>
                       No attendance data for this period
                     </Text>
                   )}
@@ -418,11 +421,11 @@ export function StatsContent() {
         onRequestClose={() => setShowGroupTypePicker(false)}
       >
         <Pressable
-          style={styles.modalOverlay}
+          style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}
           onPress={() => setShowGroupTypePicker(false)}
         >
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Select Group Type</Text>
+          <View style={[styles.modalContent, { backgroundColor: colors.modalBackground }]}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Select Group Type</Text>
             {groupTypesLoading ? (
               <ActivityIndicator size="large" color={primaryColor} />
             ) : (
@@ -432,7 +435,8 @@ export function StatsContent() {
                     key={gt.id}
                     style={[
                       styles.modalItem,
-                      selectedGroupTypeId === gt.id && styles.modalItemSelected,
+                      { borderBottomColor: colors.borderLight },
+                      selectedGroupTypeId === gt.id && [styles.modalItemSelected, { backgroundColor: colors.selectedBackground }],
                     ]}
                     onPress={() => {
                       setSelectedGroupTypeId(gt.id);
@@ -442,7 +446,8 @@ export function StatsContent() {
                     <Text
                       style={[
                         styles.modalItemText,
-                        selectedGroupTypeId === gt.id && styles.modalItemTextSelected,
+                        { color: colors.text },
+                        selectedGroupTypeId === gt.id && [styles.modalItemTextSelected, { color: primaryColor }],
                       ]}
                     >
                       {gt.name}
@@ -484,7 +489,6 @@ export function StatsContent() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f5f5f5",
   },
   scrollView: {
     flex: 1,
@@ -499,7 +503,6 @@ const styles = StyleSheet.create({
   },
   statCard: {
     flex: 1,
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 16,
     alignItems: "center",
@@ -513,7 +516,6 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: "#F3E8FF",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 12,
@@ -521,12 +523,10 @@ const styles = StyleSheet.create({
   statValue: {
     fontSize: 28,
     fontWeight: "700",
-    color: "#333",
   },
   statLabel: {
     fontSize: 14,
     fontWeight: "500",
-    color: "#666",
     marginTop: 4,
   },
   tapHint: {
@@ -537,15 +537,12 @@ const styles = StyleSheet.create({
   },
   tapHintText: {
     fontSize: 12,
-    color: "#999",
   },
   statSubtext: {
     fontSize: 12,
-    color: "#999",
     marginTop: 2,
   },
   section: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 16,
     marginBottom: 16,
@@ -558,7 +555,6 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 16,
   },
   field: {
@@ -567,26 +563,21 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: "500",
-    color: "#666",
     marginBottom: 8,
   },
   picker: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    backgroundColor: "#f8f8f8",
     borderRadius: 8,
     padding: 12,
     borderWidth: 1,
-    borderColor: "#e0e0e0",
   },
   pickerText: {
     fontSize: 16,
-    color: "#333",
   },
   toggleRow: {
     flexDirection: "row",
-    backgroundColor: "#f0f0f0",
     borderRadius: 8,
     padding: 4,
   },
@@ -597,7 +588,6 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   toggleButtonActive: {
-    backgroundColor: "#fff",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
@@ -607,10 +597,8 @@ const styles = StyleSheet.create({
   toggleButtonText: {
     fontSize: 14,
     fontWeight: "500",
-    color: "#666",
   },
   toggleButtonTextActive: {
-    color: "#333",
     fontWeight: "600",
   },
   dateRow: {
@@ -630,11 +618,9 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: 14,
-    color: "#666",
     marginTop: 12,
   },
   summaryCard: {
-    backgroundColor: "#f8f8f8",
     borderRadius: 12,
     padding: 16,
     marginBottom: 16,
@@ -649,11 +635,9 @@ const styles = StyleSheet.create({
   summaryValue: {
     fontSize: 24,
     fontWeight: "700",
-    color: "#333",
   },
   summaryLabel: {
     fontSize: 12,
-    color: "#666",
     marginTop: 4,
   },
   breakdownHeader: {
@@ -665,7 +649,6 @@ const styles = StyleSheet.create({
   breakdownTitle: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
   },
   exportButton: {
     flexDirection: "row",
@@ -673,10 +656,8 @@ const styles = StyleSheet.create({
     gap: 4,
     paddingVertical: 6,
     paddingHorizontal: 10,
-    backgroundColor: "#f8f8f8",
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: "#e0e0e0",
     minWidth: 100,
     justifyContent: "center",
   },
@@ -693,11 +674,9 @@ const styles = StyleSheet.create({
   groupItem: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f8f8f8",
     borderRadius: 8,
     padding: 12,
     borderWidth: 1,
-    borderColor: "#e0e0e0",
   },
   groupInfo: {
     flex: 1,
@@ -705,11 +684,9 @@ const styles = StyleSheet.create({
   groupName: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
   },
   groupStats: {
     fontSize: 13,
-    color: "#666",
     marginTop: 2,
   },
   groupRateContainer: {
@@ -720,23 +697,19 @@ const styles = StyleSheet.create({
   groupRate: {
     fontSize: 16,
     fontWeight: "600",
-    color: DEFAULT_PRIMARY_COLOR,
   },
   emptyText: {
     fontSize: 14,
-    color: "#999",
     textAlign: "center",
     paddingVertical: 20,
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
     justifyContent: "center",
     alignItems: "center",
     padding: 20,
   },
   modalContent: {
-    backgroundColor: "#fff",
     borderRadius: 16,
     padding: 20,
     width: "100%",
@@ -746,7 +719,6 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 16,
     textAlign: "center",
   },
@@ -760,20 +732,16 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
   },
   modalItemSelected: {
-    backgroundColor: "#F3E8FF",
     borderRadius: 8,
     borderBottomWidth: 0,
     marginBottom: 4,
   },
   modalItemText: {
     fontSize: 16,
-    color: "#333",
   },
   modalItemTextSelected: {
     fontWeight: "600",
-    color: DEFAULT_PRIMARY_COLOR,
   },
 });

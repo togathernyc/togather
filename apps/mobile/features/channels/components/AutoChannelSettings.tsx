@@ -28,6 +28,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery, useMutation, useAction, api } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 import { formatDistanceToNow } from "date-fns";
 import type { Id } from "@services/api/convex";
 import { PcoAutoChannelConfig, type AutoChannelConfig } from "./PcoAutoChannelConfig";
@@ -50,6 +51,7 @@ export function AutoChannelSettings({
   const insets = useSafeAreaInsets();
   const { token } = useAuth();
   const { primaryColor } = useCommunityTheme();
+  const { colors, isDark } = useTheme();
 
   // State
   const [isEditing, setIsEditing] = useState(false);
@@ -191,17 +193,17 @@ export function AutoChannelSettings({
   // Loading state
   if (!config) {
     return (
-      <View style={[styles.container, { paddingTop: insets.top }]}>
-        <View style={styles.header}>
+      <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.background }]}>
+        <View style={[styles.header, { borderBottomColor: colors.border }]}>
           <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-            <Ionicons name="close" size={24} color="#000" />
+            <Ionicons name="close" size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Auto Channel Settings</Text>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Auto Channel Settings</Text>
           <View style={styles.headerRight} />
         </View>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={primaryColor} />
-          <Text style={styles.loadingText}>Loading settings...</Text>
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading settings...</Text>
         </View>
       </View>
     );
@@ -209,19 +211,19 @@ export function AutoChannelSettings({
 
   const pcoConfig = config.config;
   const isActive = config.isActive;
-  const statusColor = config.lastSyncStatus === "success" ? "#34C759" : "#FF3B30";
+  const statusColor = config.lastSyncStatus === "success" ? colors.success : colors.error;
   const lastSyncText = config.lastSyncAt
     ? `Last synced ${formatDistanceToNow(config.lastSyncAt, { addSuffix: true })}`
     : "Never synced";
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
+    <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.background }]}>
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-          <Ionicons name="close" size={24} color="#000" />
+          <Ionicons name="close" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Auto Channel Settings</Text>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>Auto Channel Settings</Text>
         {canEdit && !isEditing ? (
           <TouchableOpacity
             onPress={() => setIsEditing(true)}
@@ -234,7 +236,7 @@ export function AutoChannelSettings({
         ) : isEditing ? (
           <View style={styles.editActions}>
             <TouchableOpacity onPress={handleCancelEdit} style={styles.cancelButton}>
-              <Text style={styles.cancelButtonText}>Cancel</Text>
+              <Text style={[styles.cancelButtonText, { color: colors.textSecondary }]}>Cancel</Text>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={handleSave}
@@ -261,18 +263,18 @@ export function AutoChannelSettings({
         showsVerticalScrollIndicator={false}
       >
         {/* Sync Status Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Sync Status</Text>
+        <View style={[styles.section, { backgroundColor: colors.surfaceSecondary }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Sync Status</Text>
 
           <View style={styles.statusRow}>
             <View style={styles.statusInfo}>
               <View style={styles.statusIndicator}>
-                <View style={[styles.statusDot, { backgroundColor: isActive ? "#34C759" : "#999" }]} />
-                <Text style={styles.statusLabel}>
+                <View style={[styles.statusDot, { backgroundColor: isActive ? colors.success : colors.textTertiary }]} />
+                <Text style={[styles.statusLabel, { color: colors.text }]}>
                   {isActive ? "Active" : "Disabled"}
                 </Text>
               </View>
-              <Text style={styles.statusSubtext}>
+              <Text style={[styles.statusSubtext, { color: colors.textSecondary }]}>
                 {isActive
                   ? "Membership is being synced from Planning Center"
                   : "Syncing is disabled for this channel"}
@@ -282,26 +284,26 @@ export function AutoChannelSettings({
               <Switch
                 value={isActive}
                 onValueChange={handleToggleActive}
-                trackColor={{ false: "#E0E0E0", true: `${primaryColor}80` }}
-                thumbColor={isActive ? primaryColor : "#f4f3f4"}
+                trackColor={{ false: colors.border, true: `${primaryColor}80` }}
+                thumbColor={isActive ? primaryColor : colors.surfaceSecondary}
               />
             )}
           </View>
 
-          <View style={styles.lastSyncRow}>
+          <View style={[styles.lastSyncRow, { borderTopColor: colors.border }]}>
             <View style={styles.lastSyncInfo}>
               <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
-              <Text style={styles.lastSyncText}>{lastSyncText}</Text>
+              <Text style={[styles.lastSyncText, { color: colors.textSecondary }]}>{lastSyncText}</Text>
             </View>
             {config.lastSyncError && (
-              <Text style={styles.errorText}>{config.lastSyncError}</Text>
+              <Text style={[styles.errorText, { color: colors.error }]}>{config.lastSyncError}</Text>
             )}
           </View>
 
           {config.currentEventDate && (
             <View style={styles.currentEventRow}>
-              <Ionicons name="calendar-outline" size={16} color="#666" />
-              <Text style={styles.currentEventText}>
+              <Ionicons name="calendar-outline" size={16} color={colors.textSecondary} />
+              <Text style={[styles.currentEventText, { color: colors.textSecondary }]}>
                 Current service: {new Date(config.currentEventDate).toLocaleDateString()}
               </Text>
             </View>
@@ -309,16 +311,16 @@ export function AutoChannelSettings({
 
           {/* Sync Results */}
           {config.lastSyncResults && (
-            <View style={styles.syncResultsRow}>
+            <View style={[styles.syncResultsRow, { borderTopColor: colors.border }]}>
               <View style={styles.syncResultsHeader}>
-                <Ionicons name="checkmark-circle" size={16} color="#34C759" />
-                <Text style={styles.syncResultsText}>
+                <Ionicons name="checkmark-circle" size={16} color={colors.success} />
+                <Text style={[styles.syncResultsText, { color: colors.success }]}>
                   {config.lastSyncResults.matchedCount} matched
                 </Text>
                 {config.lastSyncResults.unmatchedCount > 0 && (
                   <>
-                    <Ionicons name="alert-circle" size={16} color="#FF9500" style={{ marginLeft: 12 }} />
-                    <Text style={[styles.syncResultsText, { color: "#FF9500" }]}>
+                    <Ionicons name="alert-circle" size={16} color={colors.warning} style={{ marginLeft: 12 }} />
+                    <Text style={[styles.syncResultsText, { color: colors.warning }]}>
                       {config.lastSyncResults.unmatchedCount} unmatched
                     </Text>
                   </>
@@ -329,23 +331,24 @@ export function AutoChannelSettings({
 
           {/* Unmatched People Details */}
           {config.lastSyncResults?.unmatchedPeople && config.lastSyncResults.unmatchedPeople.length > 0 && (
-            <View style={styles.unmatchedSection}>
-              <Text style={styles.unmatchedTitle}>People not found in Togather:</Text>
+            <View style={[styles.unmatchedSection, { backgroundColor: isDark ? '#332b00' : '#FFF8E6' }]}>
+              <Text style={[styles.unmatchedTitle, { color: isDark ? '#FFD60A' : '#B25000' }]}>People not found in Togather:</Text>
               {config.lastSyncResults.unmatchedPeople.map((person, index) => (
                 <View key={person.pcoPersonId} style={[
                   styles.unmatchedPerson,
+                  { borderBottomColor: isDark ? '#554400' : '#FFE0A3' },
                   index === config.lastSyncResults!.unmatchedPeople!.length - 1 && { borderBottomWidth: 0 }
                 ]}>
                   <View style={styles.unmatchedPersonInfo}>
-                    <Text style={styles.unmatchedName}>{person.pcoName}</Text>
+                    <Text style={[styles.unmatchedName, { color: colors.text }]}>{person.pcoName}</Text>
                     {person.pcoPhone && (
-                      <Text style={styles.unmatchedContact}>📞 {person.pcoPhone}</Text>
+                      <Text style={[styles.unmatchedContact, { color: colors.textSecondary }]}>📞 {person.pcoPhone}</Text>
                     )}
                     {person.pcoEmail && (
-                      <Text style={styles.unmatchedContact}>✉️ {person.pcoEmail}</Text>
+                      <Text style={[styles.unmatchedContact, { color: colors.textSecondary }]}>✉️ {person.pcoEmail}</Text>
                     )}
                   </View>
-                  <View style={styles.unmatchedReasonBadge}>
+                  <View style={[styles.unmatchedReasonBadge, { backgroundColor: colors.warning }]}>
                     <Text style={styles.unmatchedReasonText}>
                       {person.reason === "not_in_group" ? "Not in group" :
                        person.reason === "not_in_community" ? "Not in community" :
@@ -381,8 +384,8 @@ export function AutoChannelSettings({
         </View>
 
         {/* Configuration Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Configuration</Text>
+        <View style={[styles.section, { backgroundColor: colors.surfaceSecondary }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Configuration</Text>
 
           {isEditing && editedConfig ? (
             <PcoAutoChannelConfig
@@ -394,9 +397,9 @@ export function AutoChannelSettings({
           ) : (
             <View style={styles.configDisplay}>
               {/* Service Types - prefer filter-based, fall back to legacy */}
-              <View style={styles.configItem}>
-                <Text style={styles.configLabel}>Service Types</Text>
-                <Text style={styles.configValue}>
+              <View style={[styles.configItem, { borderBottomColor: colors.borderLight }]}>
+                <Text style={[styles.configLabel, { color: colors.textSecondary }]}>Service Types</Text>
+                <Text style={[styles.configValue, { color: colors.text }]}>
                   {pcoConfig.filters?.serviceTypeNames?.length
                     ? pcoConfig.filters.serviceTypeNames.join(", ")
                     : pcoConfig.serviceTypeName || "Not set"}
@@ -404,9 +407,9 @@ export function AutoChannelSettings({
               </View>
 
               {/* Teams */}
-              <View style={styles.configItem}>
-                <Text style={styles.configLabel}>Teams</Text>
-                <Text style={styles.configValue}>
+              <View style={[styles.configItem, { borderBottomColor: colors.borderLight }]}>
+                <Text style={[styles.configLabel, { color: colors.textSecondary }]}>Teams</Text>
+                <Text style={[styles.configValue, { color: colors.text }]}>
                   {pcoConfig.syncScope === "all_teams"
                     ? "All Teams"
                     : pcoConfig.filters?.teamNames?.length
@@ -416,9 +419,9 @@ export function AutoChannelSettings({
               </View>
 
               {/* Positions */}
-              <View style={styles.configItem}>
-                <Text style={styles.configLabel}>Positions</Text>
-                <Text style={styles.configValue}>
+              <View style={[styles.configItem, { borderBottomColor: colors.borderLight }]}>
+                <Text style={[styles.configLabel, { color: colors.textSecondary }]}>Positions</Text>
+                <Text style={[styles.configValue, { color: colors.text }]}>
                   {pcoConfig.filters?.positions?.length
                     ? pcoConfig.filters.positions
                         .map((p) => {
@@ -437,16 +440,16 @@ export function AutoChannelSettings({
                 </Text>
               </View>
 
-              <View style={styles.configItem}>
-                <Text style={styles.configLabel}>Add Members</Text>
-                <Text style={styles.configValue}>
+              <View style={[styles.configItem, { borderBottomColor: colors.borderLight }]}>
+                <Text style={[styles.configLabel, { color: colors.textSecondary }]}>Add Members</Text>
+                <Text style={[styles.configValue, { color: colors.text }]}>
                   {pcoConfig.addMembersDaysBefore} days before service
                 </Text>
               </View>
 
-              <View style={styles.configItem}>
-                <Text style={styles.configLabel}>Remove Members</Text>
-                <Text style={styles.configValue}>
+              <View style={[styles.configItem, { borderBottomColor: colors.borderLight }]}>
+                <Text style={[styles.configLabel, { color: colors.textSecondary }]}>Remove Members</Text>
+                <Text style={[styles.configValue, { color: colors.text }]}>
                   {pcoConfig.removeMembersDaysAfter} days after service
                 </Text>
               </View>
@@ -455,9 +458,9 @@ export function AutoChannelSettings({
         </View>
 
         {/* Info Section */}
-        <View style={styles.infoSection}>
-          <Ionicons name="information-circle-outline" size={20} color="#666" />
-          <Text style={styles.infoText}>
+        <View style={[styles.infoSection, { backgroundColor: isDark ? '#1a2730' : '#F0F7FF' }]}>
+          <Ionicons name="information-circle-outline" size={20} color={colors.textSecondary} />
+          <Text style={[styles.infoText, { color: colors.textSecondary }]}>
             This channel automatically syncs members from Planning Center Services.
             Members scheduled for upcoming services will be added, and removed after
             the service ends based on the timing settings above.
@@ -471,7 +474,6 @@ export function AutoChannelSettings({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
   },
   header: {
     flexDirection: "row",
@@ -480,7 +482,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#E0E0E0",
   },
   closeButton: {
     width: 40,
@@ -491,7 +492,6 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#000",
   },
   headerRight: {
     width: 60,
@@ -513,7 +513,6 @@ const styles = StyleSheet.create({
   },
   cancelButtonText: {
     fontSize: 16,
-    color: "#666",
   },
   saveButton: {
     padding: 4,
@@ -532,7 +531,6 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 12,
     fontSize: 16,
-    color: "#666",
   },
   scrollView: {
     flex: 1,
@@ -542,7 +540,6 @@ const styles = StyleSheet.create({
     paddingBottom: 32,
   },
   section: {
-    backgroundColor: "#F9F9F9",
     borderRadius: 12,
     padding: 16,
     marginBottom: 16,
@@ -550,7 +547,6 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 16,
   },
   statusRow: {
@@ -577,18 +573,15 @@ const styles = StyleSheet.create({
   statusLabel: {
     fontSize: 15,
     fontWeight: "600",
-    color: "#333",
   },
   statusSubtext: {
     fontSize: 13,
-    color: "#666",
     marginLeft: 16,
   },
   lastSyncRow: {
     marginBottom: 12,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: "#E0E0E0",
   },
   lastSyncInfo: {
     flexDirection: "row",
@@ -597,11 +590,9 @@ const styles = StyleSheet.create({
   },
   lastSyncText: {
     fontSize: 13,
-    color: "#666",
   },
   errorText: {
     fontSize: 12,
-    color: "#FF3B30",
     marginTop: 4,
     marginLeft: 16,
   },
@@ -613,7 +604,6 @@ const styles = StyleSheet.create({
   },
   currentEventText: {
     fontSize: 13,
-    color: "#666",
   },
   syncButton: {
     flexDirection: "row",
@@ -638,17 +628,14 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     paddingVertical: 8,
     borderBottomWidth: 1,
-    borderBottomColor: "#E8E8E8",
   },
   configLabel: {
     fontSize: 14,
-    color: "#666",
     flex: 1,
   },
   configValue: {
     fontSize: 14,
     fontWeight: "500",
-    color: "#333",
     flex: 1,
     textAlign: "right",
   },
@@ -656,20 +643,17 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 12,
     padding: 16,
-    backgroundColor: "#F0F7FF",
     borderRadius: 12,
   },
   infoText: {
     flex: 1,
     fontSize: 13,
-    color: "#666",
     lineHeight: 18,
   },
   syncResultsRow: {
     marginBottom: 12,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: "#E0E0E0",
   },
   syncResultsHeader: {
     flexDirection: "row",
@@ -678,11 +662,9 @@ const styles = StyleSheet.create({
   },
   syncResultsText: {
     fontSize: 13,
-    color: "#34C759",
     fontWeight: "500",
   },
   unmatchedSection: {
-    backgroundColor: "#FFF8E6",
     borderRadius: 8,
     padding: 12,
     marginBottom: 12,
@@ -690,7 +672,6 @@ const styles = StyleSheet.create({
   unmatchedTitle: {
     fontSize: 13,
     fontWeight: "600",
-    color: "#B25000",
     marginBottom: 8,
   },
   unmatchedPerson: {
@@ -699,7 +680,6 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     paddingVertical: 8,
     borderBottomWidth: 1,
-    borderBottomColor: "#FFE0A3",
   },
   unmatchedPersonInfo: {
     flex: 1,
@@ -708,16 +688,13 @@ const styles = StyleSheet.create({
   unmatchedName: {
     fontSize: 14,
     fontWeight: "500",
-    color: "#333",
     marginBottom: 2,
   },
   unmatchedContact: {
     fontSize: 12,
-    color: "#666",
     marginTop: 2,
   },
   unmatchedReasonBadge: {
-    backgroundColor: "#FF9500",
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 4,

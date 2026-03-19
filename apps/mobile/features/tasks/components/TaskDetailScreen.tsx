@@ -20,6 +20,8 @@ import {
 } from "@services/api/convex";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { parseTagsInput } from "./taskHelpers";
+import { useTheme } from "@hooks/useTheme";
+import type { ThemeColors } from "@/theme/colors";
 
 type TaskDetail = {
   _id: Id<"tasks">;
@@ -59,11 +61,11 @@ function formatDateTime(timestamp?: number) {
   return new Date(timestamp).toLocaleString();
 }
 
-function statusColor(status: string): string {
-  if (status === "done") return "#16A34A";
-  if (status === "snoozed") return "#CA8A04";
-  if (status === "canceled") return "#DC2626";
-  return "#2563EB";
+function statusColor(status: string, colors: ThemeColors): string {
+  if (status === "done") return colors.success;
+  if (status === "snoozed") return colors.warning;
+  if (status === "canceled") return colors.destructive;
+  return colors.link;
 }
 
 function eventLabel(type: string): string {
@@ -78,6 +80,7 @@ function eventLabel(type: string): string {
 }
 
 export function TaskDetailScreen() {
+  const { colors } = useTheme();
   const params = useLocalSearchParams<{ group_id?: string; task_id?: string }>();
   const groupId =
     typeof params.group_id === "string" ? (params.group_id as Id<"groups">) : null;
@@ -259,8 +262,8 @@ export function TaskDetailScreen() {
   if (!taskId || !groupId) {
     return (
       <UserRoute>
-        <View style={styles.centered}>
-          <Text style={styles.errorText}>Missing task route params.</Text>
+        <View style={[styles.centered, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.errorText, { color: colors.error }]}>Missing task route params.</Text>
         </View>
       </UserRoute>
     );
@@ -269,9 +272,9 @@ export function TaskDetailScreen() {
   if (!task) {
     return (
       <UserRoute>
-        <View style={styles.centered}>
+        <View style={[styles.centered, { backgroundColor: colors.surface }]}>
           <ActivityIndicator size="large" color={primaryColor} />
-          <Text style={styles.loadingText}>Loading task details...</Text>
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading task details...</Text>
         </View>
       </UserRoute>
     );
@@ -279,8 +282,8 @@ export function TaskDetailScreen() {
 
   return (
     <UserRoute>
-      <View style={styles.container}>
-        <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
+      <View style={[styles.container, { backgroundColor: colors.surface }]}>
+        <View style={[styles.header, { paddingTop: insets.top + 12, borderBottomColor: colors.borderLight }]}>
           <Pressable
             style={styles.backButton}
             onPress={() => {
@@ -291,16 +294,16 @@ export function TaskDetailScreen() {
               router.push(`/(user)/leader-tools/${groupId}/tasks`);
             }}
           >
-            <Ionicons name="arrow-back" size={22} color="#0F172A" />
+            <Ionicons name="arrow-back" size={22} color={colors.text} />
           </Pressable>
           <View style={styles.headerCopy}>
-            <Text style={styles.headerTitle}>Task details</Text>
-            <Text style={styles.headerSubtitle}>
+            <Text style={[styles.headerTitle, { color: colors.text }]}>Task details</Text>
+            <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>
               Edit fields and review full history
             </Text>
           </View>
-          <View style={[styles.statusBadge, { backgroundColor: `${statusColor(task.status)}20` }]}>
-            <Text style={[styles.statusBadgeText, { color: statusColor(task.status) }]}>
+          <View style={[styles.statusBadge, { backgroundColor: `${statusColor(task.status, colors)}20` }]}>
+            <Text style={[styles.statusBadgeText, { color: statusColor(task.status, colors) }]}>
               {task.status.toUpperCase()}
             </Text>
           </View>
@@ -313,44 +316,52 @@ export function TaskDetailScreen() {
           }}
           keyboardShouldPersistTaps="handled"
         >
-          <View style={styles.metaCard}>
-            <Text style={styles.metaRow}>Group: {task.groupName ?? "Group"}</Text>
-            <Text style={styles.metaRow}>
+          <View style={[styles.metaCard, { borderColor: colors.borderLight, backgroundColor: colors.surfaceSecondary }]}>
+            <Text style={[styles.metaRow, { color: colors.text }]}>Group: {task.groupName ?? "Group"}</Text>
+            <Text style={[styles.metaRow, { color: colors.text }]}>
               Created by: {task.createdByName ?? "System"}
             </Text>
-            <Text style={styles.metaRow}>Created: {formatDateTime(task.createdAt)}</Text>
-            <Text style={styles.metaRow}>Updated: {formatDateTime(task.updatedAt)}</Text>
+            <Text style={[styles.metaRow, { color: colors.text }]}>Created: {formatDateTime(task.createdAt)}</Text>
+            <Text style={[styles.metaRow, { color: colors.text }]}>Updated: {formatDateTime(task.updatedAt)}</Text>
           </View>
 
-          <Text style={styles.inputLabel}>Title *</Text>
-          <TextInput value={title} onChangeText={setTitle} style={styles.textInput} />
+          <Text style={[styles.inputLabel, { color: colors.text }]}>Title *</Text>
+          <TextInput
+            value={title}
+            onChangeText={setTitle}
+            style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
+            placeholderTextColor={colors.inputPlaceholder}
+          />
 
-          <Text style={styles.inputLabel}>Description</Text>
+          <Text style={[styles.inputLabel, { color: colors.text }]}>Description</Text>
           <TextInput
             value={description}
             onChangeText={setDescription}
-            style={[styles.textInput, styles.multilineInput]}
+            style={[styles.textInput, styles.multilineInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
             multiline
             placeholder="Optional details"
+            placeholderTextColor={colors.inputPlaceholder}
           />
 
-          <Text style={styles.inputLabel}>Tags (comma separated)</Text>
+          <Text style={[styles.inputLabel, { color: colors.text }]}>Tags (comma separated)</Text>
           <TextInput
             value={tagsInput}
             onChangeText={setTagsInput}
-            style={styles.textInput}
+            style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
             placeholder="care, prayer_request"
+            placeholderTextColor={colors.inputPlaceholder}
           />
 
-          <Text style={styles.helperText}>
+          <Text style={[styles.helperText, { color: colors.textSecondary }]}>
             Target defaults to group. Add a relevant member only when needed.
           </Text>
-          <Text style={styles.inputLabel}>Relevant member</Text>
+          <Text style={[styles.inputLabel, { color: colors.text }]}>Relevant member</Text>
           <TextInput
             value={relevantSearch}
             onChangeText={setRelevantSearch}
-            style={styles.textInput}
+            style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
             placeholder="Search members (server search)"
+            placeholderTextColor={colors.inputPlaceholder}
           />
           {relevantMemberId && relevantMemberName ? (
             <Pressable
@@ -358,15 +369,15 @@ export function TaskDetailScreen() {
                 setRelevantMemberId(null);
                 setRelevantMemberName(null);
               }}
-              style={styles.selectionPill}
+              style={[styles.selectionPill, { borderColor: colors.link, backgroundColor: colors.selectedBackground }]}
             >
-              <Text style={styles.selectionPillText}>
+              <Text style={[styles.selectionPillText, { color: colors.link }]}>
                 {relevantMemberName} • Tap to clear
               </Text>
             </Pressable>
           ) : null}
           {relevantSearch.trim().length >= 2 ? (
-            <ScrollView style={styles.searchResultsList} nestedScrollEnabled>
+            <ScrollView style={[styles.searchResultsList, { borderColor: colors.borderLight, backgroundColor: colors.surface }]} nestedScrollEnabled>
               {(relevantMemberResults ?? []).map((member) => (
                 <Pressable
                   key={member.userId}
@@ -375,20 +386,21 @@ export function TaskDetailScreen() {
                     setRelevantMemberName(member.name);
                     setRelevantSearch("");
                   }}
-                  style={styles.searchResultRow}
+                  style={[styles.searchResultRow, { borderBottomColor: colors.borderLight }]}
                 >
-                  <Text style={styles.searchResultText}>{member.name}</Text>
+                  <Text style={[styles.searchResultText, { color: colors.text }]}>{member.name}</Text>
                 </Pressable>
               ))}
             </ScrollView>
           ) : null}
 
-          <Text style={styles.inputLabel}>Assigned to</Text>
+          <Text style={[styles.inputLabel, { color: colors.text }]}>Assigned to</Text>
           <TextInput
             value={assignedSearch}
             onChangeText={setAssignedSearch}
-            style={styles.textInput}
+            style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
             placeholder="Search leaders (server search)"
+            placeholderTextColor={colors.inputPlaceholder}
           />
           {assignedToId && assignedToName ? (
             <Pressable
@@ -396,17 +408,17 @@ export function TaskDetailScreen() {
                 setAssignedToId(null);
                 setAssignedToName(null);
               }}
-              style={styles.selectionPill}
+              style={[styles.selectionPill, { borderColor: colors.link, backgroundColor: colors.selectedBackground }]}
             >
-              <Text style={styles.selectionPillText}>
+              <Text style={[styles.selectionPillText, { color: colors.link }]}>
                 {assignedToName} • Tap to clear
               </Text>
             </Pressable>
           ) : (
-            <Text style={styles.helperText}>Leave empty for group responsibility.</Text>
+            <Text style={[styles.helperText, { color: colors.textSecondary }]}>Leave empty for group responsibility.</Text>
           )}
           {assignedSearch.trim().length >= 2 ? (
-            <ScrollView style={styles.searchResultsList} nestedScrollEnabled>
+            <ScrollView style={[styles.searchResultsList, { borderColor: colors.borderLight, backgroundColor: colors.surface }]} nestedScrollEnabled>
               {(assigneeResults ?? []).map((leader) => (
                 <Pressable
                   key={leader.userId}
@@ -415,30 +427,32 @@ export function TaskDetailScreen() {
                     setAssignedToName(leader.name);
                     setAssignedSearch("");
                   }}
-                  style={styles.searchResultRow}
+                  style={[styles.searchResultRow, { borderBottomColor: colors.borderLight }]}
                 >
-                  <Text style={styles.searchResultText}>{leader.name}</Text>
+                  <Text style={[styles.searchResultText, { color: colors.text }]}>{leader.name}</Text>
                 </Pressable>
               ))}
             </ScrollView>
           ) : null}
 
-          <Text style={styles.inputLabel}>Parent task</Text>
+          <Text style={[styles.inputLabel, { color: colors.text }]}>Parent task</Text>
           <TextInput
             value={parentTaskSearch}
             onChangeText={setParentTaskSearch}
-            style={styles.textInput}
+            style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
             placeholder="Search tasks (server search)"
+            placeholderTextColor={colors.inputPlaceholder}
           />
-          <ScrollView style={styles.searchResultsList} nestedScrollEnabled>
+          <ScrollView style={[styles.searchResultsList, { borderColor: colors.borderLight, backgroundColor: colors.surface }]} nestedScrollEnabled>
             <Pressable
               onPress={() => setParentTaskId(null)}
               style={[
                 styles.searchResultRow,
-                parentTaskId === null && styles.searchResultRowActive,
+                { borderBottomColor: colors.borderLight },
+                parentTaskId === null && { backgroundColor: colors.selectedBackground },
               ]}
             >
-              <Text style={styles.searchResultText}>None</Text>
+              <Text style={[styles.searchResultText, { color: colors.text }]}>None</Text>
             </Pressable>
             {parentTaskOptions.map((candidate) => (
               <Pressable
@@ -446,43 +460,44 @@ export function TaskDetailScreen() {
                 onPress={() => setParentTaskId(candidate._id.toString())}
                 style={[
                   styles.searchResultRow,
-                  parentTaskId === candidate._id.toString() && styles.searchResultRowActive,
+                  { borderBottomColor: colors.borderLight },
+                  parentTaskId === candidate._id.toString() && { backgroundColor: colors.selectedBackground },
                 ]}
               >
-                <Text style={styles.searchResultText}>{candidate.title}</Text>
+                <Text style={[styles.searchResultText, { color: colors.text }]}>{candidate.title}</Text>
               </Pressable>
             ))}
           </ScrollView>
 
-          {saveError ? <Text style={styles.errorText}>{saveError}</Text> : null}
-          {saveSuccess ? <Text style={styles.successText}>{saveSuccess}</Text> : null}
+          {saveError ? <Text style={[styles.errorText, { color: colors.error }]}>{saveError}</Text> : null}
+          {saveSuccess ? <Text style={[styles.successText, { color: colors.success }]}>{saveSuccess}</Text> : null}
 
           {(task.status === "open" || task.status === "snoozed") ? (
             <View style={styles.quickActionsRow}>
               <Pressable
-                style={styles.quickAction}
+                style={[styles.quickAction, { borderColor: colors.border, backgroundColor: colors.surface }]}
                 onPress={() => runStatusAction("done")}
                 disabled={statusBusy !== null}
               >
-                <Text style={styles.quickActionText}>
+                <Text style={[styles.quickActionText, { color: colors.text }]}>
                   {statusBusy === "done" ? "..." : "Done"}
                 </Text>
               </Pressable>
               <Pressable
-                style={styles.quickAction}
+                style={[styles.quickAction, { borderColor: colors.border, backgroundColor: colors.surface }]}
                 onPress={() => runStatusAction("snooze")}
                 disabled={statusBusy !== null}
               >
-                <Text style={styles.quickActionText}>
+                <Text style={[styles.quickActionText, { color: colors.text }]}>
                   {statusBusy === "snooze" ? "..." : "Snooze 1w"}
                 </Text>
               </Pressable>
               <Pressable
-                style={styles.quickAction}
+                style={[styles.quickAction, { borderColor: colors.border, backgroundColor: colors.surface }]}
                 onPress={() => runStatusAction("cancel")}
                 disabled={statusBusy !== null}
               >
-                <Text style={[styles.quickActionText, { color: "#DC2626" }]}>
+                <Text style={[styles.quickActionText, { color: colors.destructive }]}>
                   {statusBusy === "cancel" ? "..." : "Cancel"}
                 </Text>
               </Pressable>
@@ -490,25 +505,25 @@ export function TaskDetailScreen() {
           ) : null}
 
           <Pressable
-            style={[styles.saveButton, saving && { opacity: 0.6 }]}
+            style={[styles.saveButton, { backgroundColor: colors.buttonPrimary }, saving && { opacity: 0.6 }]}
             onPress={handleSave}
             disabled={saving}
           >
-            <Text style={styles.saveButtonText}>{saving ? "Saving..." : "Save changes"}</Text>
+            <Text style={[styles.saveButtonText, { color: colors.buttonPrimaryText }]}>{saving ? "Saving..." : "Save changes"}</Text>
           </Pressable>
 
-          <Text style={styles.sectionTitle}>History</Text>
-          <View style={styles.historyCard}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>History</Text>
+          <View style={[styles.historyCard, { borderColor: colors.borderLight, backgroundColor: colors.surface }]}>
             {(history ?? []).map((event) => (
-              <View key={event._id} style={styles.historyRow}>
-                <Text style={styles.historyTitle}>{eventLabel(event.type)}</Text>
-                <Text style={styles.historySubtitle}>
+              <View key={event._id} style={[styles.historyRow, { borderBottomColor: colors.borderLight }]}>
+                <Text style={[styles.historyTitle, { color: colors.text }]}>{eventLabel(event.type)}</Text>
+                <Text style={[styles.historySubtitle, { color: colors.textSecondary }]}>
                   {event.performedByName ?? "System"} • {formatDateTime(event.createdAt)}
                 </Text>
               </View>
             ))}
             {history !== undefined && history.length === 0 ? (
-              <Text style={styles.helperText}>No history yet.</Text>
+              <Text style={[styles.helperText, { color: colors.textSecondary }]}>No history yet.</Text>
             ) : null}
           </View>
         </ScrollView>
@@ -520,18 +535,15 @@ export function TaskDetailScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
   },
   centered: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 20,
-    backgroundColor: "#fff",
   },
   loadingText: {
     marginTop: 10,
-    color: "#64748B",
   },
   header: {
     flexDirection: "row",
@@ -540,7 +552,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#E2E8F0",
   },
   backButton: {
     borderRadius: 999,
@@ -552,12 +563,10 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 20,
     fontWeight: "700",
-    color: "#0F172A",
   },
   headerSubtitle: {
     marginTop: 2,
     fontSize: 12,
-    color: "#64748B",
   },
   statusBadge: {
     borderRadius: 999,
@@ -572,31 +581,24 @@ const styles = StyleSheet.create({
     marginTop: 16,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: "#E2E8F0",
     padding: 12,
     gap: 4,
-    backgroundColor: "#F8FAFC",
   },
   metaRow: {
-    color: "#334155",
     fontSize: 12,
   },
   inputLabel: {
     marginTop: 12,
     marginBottom: 6,
-    color: "#334155",
     fontSize: 13,
     fontWeight: "700",
   },
   textInput: {
     borderWidth: 1,
-    borderColor: "#CBD5E1",
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 14,
-    color: "#0F172A",
-    backgroundColor: "#fff",
   },
   multilineInput: {
     minHeight: 80,
@@ -604,7 +606,6 @@ const styles = StyleSheet.create({
   },
   helperText: {
     marginTop: 8,
-    color: "#64748B",
     fontSize: 12,
   },
   selectionPill: {
@@ -612,13 +613,10 @@ const styles = StyleSheet.create({
     alignSelf: "flex-start",
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: "#BFDBFE",
-    backgroundColor: "#EFF6FF",
     paddingHorizontal: 10,
     paddingVertical: 6,
   },
   selectionPillText: {
-    color: "#1D4ED8",
     fontSize: 12,
     fontWeight: "600",
   },
@@ -626,21 +624,14 @@ const styles = StyleSheet.create({
     maxHeight: 180,
     marginTop: 8,
     borderWidth: 1,
-    borderColor: "#E2E8F0",
     borderRadius: 10,
-    backgroundColor: "#fff",
   },
   searchResultRow: {
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: "#F1F5F9",
-  },
-  searchResultRowActive: {
-    backgroundColor: "#EFF6FF",
   },
   searchResultText: {
-    color: "#0F172A",
     fontSize: 13,
     fontWeight: "500",
   },
@@ -652,16 +643,13 @@ const styles = StyleSheet.create({
   },
   quickAction: {
     borderWidth: 1,
-    borderColor: "#CBD5E1",
     borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: 8,
-    backgroundColor: "#fff",
   },
   quickActionText: {
     fontSize: 12,
     fontWeight: "600",
-    color: "#0F172A",
   },
   saveButton: {
     marginTop: 16,
@@ -669,21 +657,17 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#2563EB",
   },
   saveButtonText: {
-    color: "#fff",
     fontWeight: "700",
   },
   errorText: {
     marginTop: 10,
-    color: "#DC2626",
     fontSize: 12,
     fontWeight: "600",
   },
   successText: {
     marginTop: 10,
-    color: "#16A34A",
     fontSize: 12,
     fontWeight: "600",
   },
@@ -692,28 +676,22 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     fontSize: 16,
     fontWeight: "700",
-    color: "#0F172A",
   },
   historyCard: {
     borderWidth: 1,
-    borderColor: "#E2E8F0",
     borderRadius: 10,
     paddingHorizontal: 12,
-    backgroundColor: "#fff",
   },
   historyRow: {
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: "#F1F5F9",
   },
   historyTitle: {
     fontSize: 13,
     fontWeight: "700",
-    color: "#0F172A",
   },
   historySubtitle: {
     marginTop: 2,
-    color: "#64748B",
     fontSize: 12,
   },
 });

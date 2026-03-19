@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery, useAuthenticatedMutation } from "@services/api/convex";
 import { api, Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
+import { useTheme } from "@hooks/useTheme";
 
 // Local type definitions
 interface CommunityMembership {
@@ -115,6 +116,8 @@ function ConfirmModal({
   cancelText?: string;
   isLoading?: boolean;
 }) {
+  const { colors, isDark } = useTheme();
+
   return (
     <Modal
       visible={visible}
@@ -122,24 +125,24 @@ function ConfirmModal({
       animationType="fade"
       onRequestClose={onCancel}
     >
-      <Pressable style={styles.modalOverlay} onPress={onCancel}>
-        <Pressable style={styles.modalContent} onPress={(e) => e.stopPropagation()}>
-          <Text style={styles.modalTitle}>{title}</Text>
-          <Text style={styles.modalMessage}>{message}</Text>
+      <Pressable style={[styles.modalOverlay, { backgroundColor: colors.overlay }]} onPress={onCancel}>
+        <Pressable style={[styles.modalContent, { backgroundColor: colors.modalBackground }]} onPress={(e) => e.stopPropagation()}>
+          <Text style={[styles.modalTitle, { color: colors.text }]}>{title}</Text>
+          <Text style={[styles.modalMessage, { color: colors.textSecondary }]}>{message}</Text>
           <View style={styles.modalButtons}>
             <TouchableOpacity
-              style={[styles.modalButton, styles.modalCancelButton]}
+              style={[styles.modalButton, { backgroundColor: colors.buttonSecondary }]}
               onPress={onCancel}
               disabled={isLoading}
             >
-              <Text style={styles.modalCancelText}>{cancelText}</Text>
+              <Text style={[styles.modalCancelText, { color: colors.textSecondary }]}>{cancelText}</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.modalButton, styles.modalConfirmButton, isLoading && styles.modalButtonDisabled]}
+              style={[styles.modalButton, { backgroundColor: colors.destructive }, isLoading && { backgroundColor: colors.buttonDisabled }]}
               onPress={onConfirm}
               disabled={isLoading}
             >
-              <Text style={styles.modalConfirmText}>
+              <Text style={[styles.modalConfirmText, { color: '#fff' }]}>
                 {isLoading ? "Merging..." : confirmText}
               </Text>
             </TouchableOpacity>
@@ -151,6 +154,7 @@ function ConfirmModal({
 }
 
 export function DuplicateAccountsScreen() {
+  const { colors, isDark } = useTheme();
   const { user, isLoading: authLoading, community, token } = useAuth();
   const insets = useSafeAreaInsets();
   const [selectedPrimary, setSelectedPrimary] = useState<
@@ -336,8 +340,8 @@ export function DuplicateAccountsScreen() {
     if (authLoading || isLoading) {
       return (
         <View style={styles.centerContainer}>
-          <ActivityIndicator size="large" color="#007AFF" />
-          <Text style={styles.loadingText}>Loading duplicate accounts...</Text>
+          <ActivityIndicator size="large" color={colors.link} />
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading duplicate accounts...</Text>
         </View>
       );
     }
@@ -345,8 +349,8 @@ export function DuplicateAccountsScreen() {
     if (error) {
       return (
         <View style={styles.centerContainer}>
-          <Text style={styles.errorText}>Failed to load duplicate accounts</Text>
-          <TouchableOpacity style={styles.retryButton} onPress={() => {}}>
+          <Text style={[styles.errorText, { color: colors.error }]}>Failed to load duplicate accounts</Text>
+          <TouchableOpacity style={[styles.retryButton, { backgroundColor: colors.link }]} onPress={() => {}}>
             <Text style={styles.retryButtonText}>Retry</Text>
           </TouchableOpacity>
         </View>
@@ -356,8 +360,8 @@ export function DuplicateAccountsScreen() {
     if (duplicates.length === 0) {
       return (
         <View style={styles.centerContainer}>
-          <Text style={styles.successText}>No duplicate accounts found!</Text>
-          <Text style={styles.subtitleText}>
+          <Text style={[styles.successText, { color: colors.success }]}>No duplicate accounts found!</Text>
+          <Text style={[styles.subtitleText, { color: colors.textSecondary }]}>
             All accounts have unique phone numbers.
           </Text>
         </View>
@@ -367,31 +371,31 @@ export function DuplicateAccountsScreen() {
     return (
       <ScrollView style={styles.scrollContainer}>
         {/* Stats Header */}
-        <View style={styles.statsHeader}>
+        <View style={[styles.statsHeader, { backgroundColor: colors.surface }]}>
           <View style={styles.statBox}>
-            <Text style={styles.statNumber}>
+            <Text style={[styles.statNumber, { color: colors.text }]}>
               {duplicatesData?.total_duplicate_phones}
             </Text>
-            <Text style={styles.statLabel}>Duplicate Phones</Text>
+            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Duplicate Phones</Text>
           </View>
           <View style={styles.statBox}>
-            <Text style={styles.statNumber}>
+            <Text style={[styles.statNumber, { color: colors.text }]}>
               {duplicatesData?.total_affected_accounts}
             </Text>
-            <Text style={styles.statLabel}>Total Accounts</Text>
+            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Total Accounts</Text>
           </View>
           <View style={styles.statBox}>
-            <Text style={styles.statNumber}>
+            <Text style={[styles.statNumber, { color: colors.text }]}>
               {duplicatesData?.accounts_to_merge}
             </Text>
-            <Text style={styles.statLabel}>To Merge</Text>
+            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>To Merge</Text>
           </View>
         </View>
 
         {/* Quick Actions */}
         <View style={styles.actionsBar}>
           <TouchableOpacity
-            style={styles.actionButton}
+            style={[styles.actionButton, { backgroundColor: colors.link }]}
             onPress={selectRecommendedForAll}
           >
             <Text style={styles.actionButtonText}>
@@ -402,27 +406,27 @@ export function DuplicateAccountsScreen() {
 
         {/* Duplicate Groups */}
         {duplicates.map((group: DuplicateGroup) => (
-          <View key={group.phone} style={styles.groupCard}>
-            <View style={styles.groupHeader}>
+          <View key={group.phone} style={[styles.groupCard, { backgroundColor: colors.surface }]}>
+            <View style={[styles.groupHeader, { borderBottomColor: colors.borderLight }]}>
               <TouchableOpacity
                 style={styles.groupHeaderTouchable}
                 onPress={() => toggleGroup(group.phone)}
               >
                 <View style={styles.groupHeaderLeft}>
-                  <Text style={styles.phoneNumber}>{group.phone}</Text>
+                  <Text style={[styles.phoneNumber, { color: colors.text }]}>{group.phone}</Text>
                   <View style={styles.groupSubInfo}>
-                    <Text style={styles.accountCount}>
+                    <Text style={[styles.accountCount, { color: colors.textSecondary }]}>
                       {group.accounts.length} accounts
                     </Text>
                     {group.most_recent_login && (
-                      <Text style={styles.lastLoginText}>
+                      <Text style={[styles.lastLoginText, { color: colors.textTertiary }]}>
                         {" "}Last login:{" "}
                         {formatRelativeDate(group.most_recent_login)}
                       </Text>
                     )}
                   </View>
                 </View>
-                <Text style={styles.expandIcon}>
+                <Text style={[styles.expandIcon, { color: colors.textSecondary }]}>
                   {expandedGroups.has(group.phone) ? "v" : ">"}
                 </Text>
               </TouchableOpacity>
@@ -430,7 +434,8 @@ export function DuplicateAccountsScreen() {
                 <TouchableOpacity
                   style={[
                     styles.mergeButton,
-                    isMerging && styles.mergeButtonDisabled,
+                    { backgroundColor: colors.success },
+                    isMerging && { backgroundColor: colors.buttonDisabled },
                   ]}
                   onPress={() => handleMerge(group)}
                   disabled={isMerging}
@@ -473,8 +478,8 @@ export function DuplicateAccountsScreen() {
     if (authLoading || mergedLoading) {
       return (
         <View style={styles.centerContainer}>
-          <ActivityIndicator size="large" color="#007AFF" />
-          <Text style={styles.loadingText}>Loading merged accounts...</Text>
+          <ActivityIndicator size="large" color={colors.link} />
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading merged accounts...</Text>
         </View>
       );
     }
@@ -482,8 +487,8 @@ export function DuplicateAccountsScreen() {
     if (mergedError) {
       return (
         <View style={styles.centerContainer}>
-          <Text style={styles.errorText}>Failed to load merged accounts</Text>
-          <TouchableOpacity style={styles.retryButton} onPress={() => {}}>
+          <Text style={[styles.errorText, { color: colors.error }]}>Failed to load merged accounts</Text>
+          <TouchableOpacity style={[styles.retryButton, { backgroundColor: colors.link }]} onPress={() => {}}>
             <Text style={styles.retryButtonText}>Retry</Text>
           </TouchableOpacity>
         </View>
@@ -493,8 +498,8 @@ export function DuplicateAccountsScreen() {
     if (mergedDecisions.length === 0) {
       return (
         <View style={styles.centerContainer}>
-          <Text style={styles.subtitleText}>No accounts have been merged yet.</Text>
-          <Text style={styles.hintText}>
+          <Text style={[styles.subtitleText, { color: colors.textSecondary }]}>No accounts have been merged yet.</Text>
+          <Text style={[styles.hintText, { color: colors.textTertiary }]}>
             Merged account decisions will appear here.
           </Text>
         </View>
@@ -503,8 +508,8 @@ export function DuplicateAccountsScreen() {
 
     return (
       <ScrollView style={styles.scrollContainer}>
-        <View style={styles.mergedStatsHeader}>
-          <Text style={styles.mergedStatsText}>
+        <View style={[styles.mergedStatsHeader, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.mergedStatsText, { color: colors.textSecondary }]}>
             {mergedDecisions.length} merge decision{mergedDecisions.length !== 1 ? "s" : ""} recorded
           </Text>
         </View>
@@ -519,31 +524,31 @@ export function DuplicateAccountsScreen() {
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.backgroundSecondary }]}>
       {/* Tabs */}
-      <View style={[styles.tabBar, { paddingTop: insets.top }]}>
+      <View style={[styles.tabBar, { paddingTop: insets.top, backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <TouchableOpacity
-          style={[styles.tab, activeTab === "pending" && styles.tabActive]}
+          style={[styles.tab, activeTab === "pending" && [styles.tabActive, { borderBottomColor: colors.link }]]}
           onPress={() => setActiveTab("pending")}
         >
-          <Text style={[styles.tabText, activeTab === "pending" && styles.tabTextActive]}>
+          <Text style={[styles.tabText, { color: colors.textSecondary }, activeTab === "pending" && { color: colors.link }]}>
             Pending
           </Text>
           {duplicates.length > 0 && (
-            <View style={styles.tabBadge}>
+            <View style={[styles.tabBadge, { backgroundColor: colors.error }]}>
               <Text style={styles.tabBadgeText}>{duplicates.length}</Text>
             </View>
           )}
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.tab, activeTab === "merged" && styles.tabActive]}
+          style={[styles.tab, activeTab === "merged" && [styles.tabActive, { borderBottomColor: colors.link }]]}
           onPress={() => setActiveTab("merged")}
         >
-          <Text style={[styles.tabText, activeTab === "merged" && styles.tabTextActive]}>
+          <Text style={[styles.tabText, { color: colors.textSecondary }, activeTab === "merged" && { color: colors.link }]}>
             Merged
           </Text>
           {mergedDecisions.length > 0 && (
-            <View style={[styles.tabBadge, styles.tabBadgeMerged]}>
+            <View style={[styles.tabBadge, { backgroundColor: colors.success }]}>
               <Text style={styles.tabBadgeText}>{mergedDecisions.length}</Text>
             </View>
           )}
@@ -569,49 +574,50 @@ export function DuplicateAccountsScreen() {
 
 // Component for displaying a merged decision with full details
 function MergedDecisionCard({ decision, formatRelativeDate }: { decision: MergeDecision; formatRelativeDate: (d: number | string | null) => string }) {
+  const { colors, isDark } = useTheme();
   const [expanded, setExpanded] = useState(false);
   const transferredGroupsCount = decision.groups?.filter((g: any) => g.was_transferred).length || 0;
   const originalGroupsCount = (decision.groups?.length || 0) - transferredGroupsCount;
 
   return (
-    <View style={styles.mergedCard}>
+    <View style={[styles.mergedCard, { backgroundColor: colors.surface }]}>
       {/* Header with phone and badge */}
       <TouchableOpacity
-        style={styles.mergedCardHeader}
+        style={[styles.mergedCardHeader, { borderBottomColor: colors.borderLight }]}
         onPress={() => setExpanded(!expanded)}
       >
         <View style={styles.mergedHeaderLeft}>
-          <Text style={styles.mergedPhoneNumber}>{decision.phone}</Text>
-          <Text style={styles.mergedSubtitle}>
+          <Text style={[styles.mergedPhoneNumber, { color: colors.text }]}>{decision.phone}</Text>
+          <Text style={[styles.mergedSubtitle, { color: colors.textSecondary }]}>
             {decision.primary_name || "Unknown"} {decision.groups?.length || 0} groups
           </Text>
         </View>
         <View style={styles.mergedHeaderRight}>
-          <View style={styles.mergedBadge}>
+          <View style={[styles.mergedBadge, { backgroundColor: colors.success }]}>
             <Text style={styles.mergedBadgeText}>Merged</Text>
           </View>
-          <Text style={styles.expandIcon}>{expanded ? "v" : ">"}</Text>
+          <Text style={[styles.expandIcon, { color: colors.textSecondary }]}>{expanded ? "v" : ">"}</Text>
         </View>
       </TouchableOpacity>
 
       {/* Primary Account Info */}
       <View style={styles.mergedPrimarySection}>
-        <Text style={styles.mergedSectionTitle}>Primary Account</Text>
-        <Text style={styles.mergedPrimaryEmail}>{decision.primary_email || "Unknown"}</Text>
-        <Text style={styles.mergedPrimaryName}>{decision.primary_name || "Unknown"}</Text>
+        <Text style={[styles.mergedSectionTitle, { color: colors.textTertiary }]}>Primary Account</Text>
+        <Text style={[styles.mergedPrimaryEmail, { color: colors.text }]}>{decision.primary_email || "Unknown"}</Text>
+        <Text style={[styles.mergedPrimaryName, { color: colors.textSecondary }]}>{decision.primary_name || "Unknown"}</Text>
       </View>
 
       {/* Removed/Merged Accounts */}
       {decision.secondary_accounts && decision.secondary_accounts.length > 0 && (
-        <View style={styles.mergedRemovedSection}>
-          <Text style={styles.mergedSectionTitle}>Removed Accounts</Text>
+        <View style={[styles.mergedRemovedSection, { borderTopColor: colors.borderLight }]}>
+          <Text style={[styles.mergedSectionTitle, { color: colors.textTertiary }]}>Removed Accounts</Text>
           {decision.secondary_accounts.map((acc: any) => (
-            <View key={String(acc.id)} style={styles.removedAccountRow}>
-              <Text style={styles.removedAccountEmail}>{acc.email}</Text>
-              <Text style={styles.removedAccountName}>
+            <View key={String(acc.id)} style={[styles.removedAccountRow, { borderLeftColor: colors.error }]}>
+              <Text style={[styles.removedAccountEmail, { color: colors.error }]}>{acc.email}</Text>
+              <Text style={[styles.removedAccountName, { color: colors.textSecondary }]}>
                 {acc.first_name} {acc.last_name}
                 {acc.groups_transferred > 0 && (
-                  <Text style={styles.removedGroupsCount}>
+                  <Text style={[styles.removedGroupsCount, { color: colors.success }]}>
                     {" "}({acc.groups_transferred} group{acc.groups_transferred !== 1 ? "s" : ""} transferred)
                   </Text>
                 )}
@@ -623,11 +629,11 @@ function MergedDecisionCard({ decision, formatRelativeDate }: { decision: MergeD
 
       {/* Groups Section - always visible but collapsible for details */}
       {decision.groups && decision.groups.length > 0 && (
-        <View style={styles.mergedGroupsSection}>
-          <Text style={styles.mergedSectionTitle}>
+        <View style={[styles.mergedGroupsSection, { borderTopColor: colors.borderLight }]}>
+          <Text style={[styles.mergedSectionTitle, { color: colors.textTertiary }]}>
             Groups ({decision.groups.length})
             {transferredGroupsCount > 0 && (
-              <Text style={styles.transferredCount}> {transferredGroupsCount} transferred</Text>
+              <Text style={[styles.transferredCount, { color: colors.warning }]}> {transferredGroupsCount} transferred</Text>
             )}
           </Text>
           {expanded ? (
@@ -637,30 +643,39 @@ function MergedDecisionCard({ decision, formatRelativeDate }: { decision: MergeD
                   key={String(group.group_id)}
                   style={[
                     styles.mergedGroupChip,
-                    group.was_transferred && styles.mergedGroupChipTransferred,
+                    { backgroundColor: isDark ? 'rgba(13,110,253,0.15)' : '#e7f1ff' },
+                    group.was_transferred && {
+                      backgroundColor: isDark ? 'rgba(255,149,0,0.15)' : '#fff3e0',
+                      borderWidth: 1,
+                      borderColor: colors.warning,
+                    },
                   ]}
                 >
                   <Text
                     style={[
                       styles.mergedGroupChipText,
-                      group.was_transferred && styles.mergedGroupChipTextTransferred,
+                      { color: isDark ? '#53bdeb' : '#0d6efd' },
+                      group.was_transferred && {
+                        color: isDark ? '#FF9F0A' : '#e65100',
+                        fontWeight: "500",
+                      },
                     ]}
                   >
                     {group.group_name}
                     {group.role === 2 && " (Leader)"}
                   </Text>
                   {group.was_transferred && (
-                    <Text style={styles.transferredLabel}>NEW</Text>
+                    <Text style={[styles.transferredLabel, { backgroundColor: colors.warning }]}>NEW</Text>
                   )}
                 </View>
               ))}
             </View>
           ) : (
-            <Text style={styles.groupsPreview}>
+            <Text style={[styles.groupsPreview, { color: colors.textSecondary }]}>
               {originalGroupsCount > 0 && `${originalGroupsCount} original`}
               {originalGroupsCount > 0 && transferredGroupsCount > 0 && " + "}
               {transferredGroupsCount > 0 && (
-                <Text style={styles.transferredPreview}>{transferredGroupsCount} transferred</Text>
+                <Text style={{ color: colors.warning, fontWeight: "500" }}>{transferredGroupsCount} transferred</Text>
               )}
             </Text>
           )}
@@ -668,14 +683,14 @@ function MergedDecisionCard({ decision, formatRelativeDate }: { decision: MergeD
       )}
 
       {/* Meta info */}
-      <View style={styles.mergedMetaSection}>
+      <View style={[styles.mergedMetaSection, { borderTopColor: colors.borderLight }]}>
         {decision.merged_at && (
-          <Text style={styles.mergedMetaText}>
+          <Text style={[styles.mergedMetaText, { color: colors.textTertiary }]}>
             Merged {formatRelativeDate(decision.merged_at)}
           </Text>
         )}
         {decision.merged_by && (
-          <Text style={styles.mergedMetaText}>by {decision.merged_by}</Text>
+          <Text style={[styles.mergedMetaText, { color: colors.textTertiary }]}>by {decision.merged_by}</Text>
         )}
       </View>
     </View>
@@ -695,41 +710,44 @@ function AccountRow({
   formatDate: (d: number | string | null) => string;
   formatRelativeDate: (d: number | string | null) => string;
 }) {
+  const { colors, isDark } = useTheme();
+
   return (
     <TouchableOpacity
       style={[
         styles.accountRow,
-        isSelected && styles.accountRowSelected,
-        account.is_recommended && styles.accountRowRecommended,
+        { backgroundColor: isDark ? colors.surfaceSecondary : '#f8f9fa', borderColor: 'transparent' },
+        isSelected && { borderColor: colors.link, backgroundColor: isDark ? 'rgba(0,122,255,0.15)' : '#e7f3ff' },
+        account.is_recommended && !isSelected && { backgroundColor: isDark ? 'rgba(52,199,89,0.1)' : '#f0fff4' },
       ]}
       onPress={onSelect}
     >
       <View style={styles.radioContainer}>
-        <View style={[styles.radio, isSelected && styles.radioSelected]}>
-          {isSelected && <View style={styles.radioInner} />}
+        <View style={[styles.radio, { borderColor: colors.border }, isSelected && { borderColor: colors.link }]}>
+          {isSelected && <View style={[styles.radioInner, { backgroundColor: colors.link }]} />}
         </View>
       </View>
 
       <View style={styles.accountInfo}>
         <View style={styles.accountHeader}>
-          <Text style={styles.accountName}>
+          <Text style={[styles.accountName, { color: colors.text }]}>
             {account.first_name} {account.last_name}
           </Text>
           {account.is_recommended && (
-            <View style={styles.recommendedBadge}>
+            <View style={[styles.recommendedBadge, { backgroundColor: colors.success }]}>
               <Text style={styles.recommendedText}>Recommended</Text>
             </View>
           )}
         </View>
 
-        <Text style={styles.accountEmail}>{account.email}</Text>
+        <Text style={[styles.accountEmail, { color: colors.textSecondary }]}>{account.email}</Text>
 
         <View style={styles.accountMeta}>
-          <Text style={styles.metaText}>
+          <Text style={[styles.metaText, { color: colors.textTertiary }]}>
             Created:{" "}
             {formatDate(account.created_at)}
           </Text>
-          <Text style={styles.metaText}>
+          <Text style={[styles.metaText, { color: colors.textTertiary }]}>
             Last login:{" "}
             {formatRelativeDate(account.last_login)}
           </Text>
@@ -737,8 +755,8 @@ function AccountRow({
 
         <View style={styles.accountStats}>
           {account.communities.map((community: CommunityMembership) => (
-            <View key={String(community.community_id)} style={styles.communityChip}>
-              <Text style={styles.communityChipText}>
+            <View key={String(community.community_id)} style={[styles.communityChip, { backgroundColor: isDark ? 'rgba(52,199,89,0.15)' : '#d4edda' }]}>
+              <Text style={[styles.communityChipText, { color: isDark ? colors.success : '#155724' }]}>
                 {community.community_name} ({ROLE_LABELS[community.role] || "Unknown"})
               </Text>
             </View>
@@ -747,11 +765,11 @@ function AccountRow({
 
         {account.groups && account.groups.length > 0 && (
           <View style={styles.groupsSection}>
-            <Text style={styles.groupsSectionLabel}>Groups:</Text>
+            <Text style={[styles.groupsSectionLabel, { color: colors.textSecondary }]}>Groups:</Text>
             <View style={styles.groupsList}>
               {account.groups.map((group: GroupMembership) => (
-                <View key={String(group.group_id)} style={styles.groupChip}>
-                  <Text style={styles.groupChipText}>
+                <View key={String(group.group_id)} style={[styles.groupChip, { backgroundColor: isDark ? 'rgba(13,110,253,0.15)' : '#e7f1ff' }]}>
+                  <Text style={[styles.groupChipText, { color: isDark ? '#53bdeb' : '#0d6efd' }]}>
                     {group.group_name}
                     {group.role === 2 && " (Leader)"}
                   </Text>
@@ -768,7 +786,6 @@ function AccountRow({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f5f5f5",
   },
   centerContainer: {
     flex: 1,
@@ -779,25 +796,20 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 12,
     fontSize: 16,
-    color: "#666",
   },
   errorText: {
     fontSize: 16,
-    color: "#dc3545",
     marginBottom: 12,
   },
   successText: {
     fontSize: 20,
     fontWeight: "600",
-    color: "#28a745",
     marginBottom: 8,
   },
   subtitleText: {
     fontSize: 14,
-    color: "#666",
   },
   retryButton: {
-    backgroundColor: "#007AFF",
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 8,
@@ -808,7 +820,6 @@ const styles = StyleSheet.create({
   },
   statsHeader: {
     flexDirection: "row",
-    backgroundColor: "#fff",
     padding: 16,
     marginBottom: 8,
     ...Platform.select({
@@ -830,11 +841,9 @@ const styles = StyleSheet.create({
   statNumber: {
     fontSize: 28,
     fontWeight: "700",
-    color: "#333",
   },
   statLabel: {
     fontSize: 12,
-    color: "#666",
     marginTop: 4,
   },
   actionsBar: {
@@ -843,7 +852,6 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   actionButton: {
-    backgroundColor: "#007AFF",
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 8,
@@ -854,7 +862,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   groupCard: {
-    backgroundColor: "#fff",
     marginHorizontal: 12,
     marginBottom: 12,
     borderRadius: 12,
@@ -877,7 +884,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#eee",
     gap: 12,
   },
   groupHeaderTouchable: {
@@ -892,7 +898,6 @@ const styles = StyleSheet.create({
   phoneNumber: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
   },
   groupSubInfo: {
     flexDirection: "row",
@@ -903,20 +908,14 @@ const styles = StyleSheet.create({
   },
   accountCount: {
     fontSize: 13,
-    color: "#666",
   },
   lastLoginText: {
     fontSize: 13,
-    color: "#888",
   },
   mergeButton: {
-    backgroundColor: "#28a745",
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 6,
-  },
-  mergeButtonDisabled: {
-    backgroundColor: "#999",
   },
   mergeButtonText: {
     color: "#fff",
@@ -925,7 +924,6 @@ const styles = StyleSheet.create({
   },
   expandIcon: {
     fontSize: 14,
-    color: "#666",
   },
   accountsList: {
     padding: 8,
@@ -935,16 +933,7 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 8,
     marginBottom: 8,
-    backgroundColor: "#f8f9fa",
     borderWidth: 2,
-    borderColor: "transparent",
-  },
-  accountRowSelected: {
-    borderColor: "#007AFF",
-    backgroundColor: "#e7f3ff",
-  },
-  accountRowRecommended: {
-    backgroundColor: "#f0fff4",
   },
   radioContainer: {
     marginRight: 12,
@@ -955,18 +944,13 @@ const styles = StyleSheet.create({
     height: 22,
     borderRadius: 11,
     borderWidth: 2,
-    borderColor: "#ccc",
     justifyContent: "center",
     alignItems: "center",
-  },
-  radioSelected: {
-    borderColor: "#007AFF",
   },
   radioInner: {
     width: 12,
     height: 12,
     borderRadius: 6,
-    backgroundColor: "#007AFF",
   },
   accountInfo: {
     flex: 1,
@@ -980,10 +964,8 @@ const styles = StyleSheet.create({
   accountName: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
   },
   recommendedBadge: {
-    backgroundColor: "#28a745",
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 4,
@@ -995,7 +977,6 @@ const styles = StyleSheet.create({
   },
   accountEmail: {
     fontSize: 14,
-    color: "#666",
     marginBottom: 8,
   },
   accountMeta: {
@@ -1006,7 +987,6 @@ const styles = StyleSheet.create({
   },
   metaText: {
     fontSize: 12,
-    color: "#888",
   },
   accountStats: {
     flexDirection: "row",
@@ -1014,21 +994,18 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   communityChip: {
-    backgroundColor: "#d4edda",
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
   },
   communityChipText: {
     fontSize: 12,
-    color: "#155724",
   },
   groupsSection: {
     marginTop: 8,
   },
   groupsSectionLabel: {
     fontSize: 12,
-    color: "#666",
     fontWeight: "500",
     marginBottom: 4,
   },
@@ -1038,14 +1015,12 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   groupChip: {
-    backgroundColor: "#e7f1ff",
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
   },
   groupChipText: {
     fontSize: 12,
-    color: "#0d6efd",
   },
   bottomPadding: {
     height: 40,
@@ -1053,9 +1028,7 @@ const styles = StyleSheet.create({
   // Tab styles
   tabBar: {
     flexDirection: "row",
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   tab: {
     flex: 1,
@@ -1067,26 +1040,17 @@ const styles = StyleSheet.create({
   },
   tabActive: {
     borderBottomWidth: 2,
-    borderBottomColor: "#007AFF",
   },
   tabText: {
     fontSize: 15,
     fontWeight: "500",
-    color: "#666",
-  },
-  tabTextActive: {
-    color: "#007AFF",
   },
   tabBadge: {
-    backgroundColor: "#dc3545",
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 10,
     minWidth: 20,
     alignItems: "center",
-  },
-  tabBadgeMerged: {
-    backgroundColor: "#28a745",
   },
   tabBadgeText: {
     color: "#fff",
@@ -1099,13 +1063,11 @@ const styles = StyleSheet.create({
   // Modal styles
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
     justifyContent: "center",
     alignItems: "center",
     padding: 20,
   },
   modalContent: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 24,
     width: "100%",
@@ -1125,12 +1087,10 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 20,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 12,
   },
   modalMessage: {
     fontSize: 15,
-    color: "#555",
     lineHeight: 22,
     marginBottom: 24,
   },
@@ -1144,42 +1104,27 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: "center",
   },
-  modalCancelButton: {
-    backgroundColor: "#f0f0f0",
-  },
-  modalConfirmButton: {
-    backgroundColor: "#dc3545",
-  },
-  modalButtonDisabled: {
-    backgroundColor: "#999",
-  },
   modalCancelText: {
     fontSize: 15,
     fontWeight: "600",
-    color: "#666",
   },
   modalConfirmText: {
     fontSize: 15,
     fontWeight: "600",
-    color: "#fff",
   },
   // Merged accounts styles
   hintText: {
     fontSize: 13,
-    color: "#888",
     marginTop: 4,
   },
   mergedStatsHeader: {
-    backgroundColor: "#fff",
     padding: 16,
     marginBottom: 8,
   },
   mergedStatsText: {
     fontSize: 15,
-    color: "#666",
   },
   mergedCard: {
-    backgroundColor: "#fff",
     marginHorizontal: 12,
     marginBottom: 12,
     borderRadius: 12,
@@ -1202,7 +1147,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingBottom: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#eee",
     marginBottom: 12,
   },
   mergedHeaderLeft: {
@@ -1216,15 +1160,12 @@ const styles = StyleSheet.create({
   mergedPhoneNumber: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
   },
   mergedSubtitle: {
     fontSize: 13,
-    color: "#666",
     marginTop: 2,
   },
   mergedBadge: {
-    backgroundColor: "#28a745",
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
@@ -1237,7 +1178,6 @@ const styles = StyleSheet.create({
   mergedSectionTitle: {
     fontSize: 12,
     fontWeight: "600",
-    color: "#888",
     textTransform: "uppercase",
     letterSpacing: 0.5,
     marginBottom: 6,
@@ -1248,60 +1188,45 @@ const styles = StyleSheet.create({
   mergedPrimaryEmail: {
     fontSize: 15,
     fontWeight: "500",
-    color: "#333",
   },
   mergedPrimaryName: {
     fontSize: 14,
-    color: "#666",
     marginTop: 2,
   },
   mergedRemovedSection: {
     marginBottom: 16,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: "#f0f0f0",
   },
   removedAccountRow: {
     paddingVertical: 6,
     paddingLeft: 8,
     borderLeftWidth: 3,
-    borderLeftColor: "#dc3545",
     marginBottom: 4,
   },
   removedAccountEmail: {
     fontSize: 14,
-    color: "#dc3545",
     fontWeight: "500",
   },
   removedAccountName: {
     fontSize: 13,
-    color: "#666",
     marginTop: 2,
   },
   removedGroupsCount: {
-    color: "#28a745",
     fontWeight: "500",
   },
   mergedGroupsSection: {
     marginBottom: 12,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: "#f0f0f0",
   },
   transferredCount: {
-    color: "#ff9500",
     fontWeight: "500",
   },
   groupsPreview: {
     fontSize: 14,
-    color: "#666",
-  },
-  transferredPreview: {
-    color: "#ff9500",
-    fontWeight: "500",
   },
   mergedGroupChip: {
-    backgroundColor: "#e7f1ff",
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 16,
@@ -1309,24 +1234,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
   },
-  mergedGroupChipTransferred: {
-    backgroundColor: "#fff3e0",
-    borderWidth: 1,
-    borderColor: "#ff9500",
-  },
   mergedGroupChipText: {
     fontSize: 13,
-    color: "#0d6efd",
-  },
-  mergedGroupChipTextTransferred: {
-    color: "#e65100",
-    fontWeight: "500",
   },
   transferredLabel: {
     fontSize: 10,
     fontWeight: "700",
     color: "#fff",
-    backgroundColor: "#ff9500",
     paddingHorizontal: 5,
     paddingVertical: 2,
     borderRadius: 4,
@@ -1337,10 +1251,8 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: "#f0f0f0",
   },
   mergedMetaText: {
     fontSize: 12,
-    color: "#888",
   },
 });

@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 import { useAuth } from "@providers/AuthProvider";
 import { api, Id, useAuthenticatedQuery } from "@services/api/convex";
 
@@ -13,6 +14,7 @@ import { api, Id, useAuthenticatedQuery } from "@services/api/convex";
 export function LeaderToolsSection() {
   const router = useRouter();
   const { primaryColor } = useCommunityTheme();
+  const { colors } = useTheme();
   const { community } = useAuth();
 
   const hasLeaderAccess = useAuthenticatedQuery(
@@ -27,11 +29,11 @@ export function LeaderToolsSection() {
   }
 
   return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>Leader Tools</Text>
+    <View style={[styles.section, { backgroundColor: colors.surface }]}>
+      <Text style={[styles.sectionTitle, { color: colors.text }]}>Leader Tools</Text>
 
       <TouchableOpacity
-        style={styles.menuItem}
+        style={[styles.menuItem, { backgroundColor: colors.surfaceSecondary }]}
         onPress={() =>
           router.push({
             pathname: "/tasks",
@@ -44,12 +46,12 @@ export function LeaderToolsSection() {
           <Ionicons
             name="checkmark-done-outline"
             size={22}
-            color="#666"
+            color={colors.icon}
             style={styles.icon}
           />
           <View style={styles.menuItemText}>
-            <Text style={styles.menuItemLabel}>Tasks</Text>
-            <Text style={styles.menuItemDescription}>
+            <Text style={[styles.menuItemLabel, { color: colors.text }]}>Tasks</Text>
+            <Text style={[styles.menuItemDescription, { color: colors.textSecondary }]}>
               Manage leader tasks
             </Text>
           </View>
@@ -63,20 +65,17 @@ export function LeaderToolsSection() {
 const styles = StyleSheet.create({
   section: {
     marginTop: 12,
-    backgroundColor: "#fff",
     padding: 20,
   },
   sectionTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 16,
   },
   menuItem: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    backgroundColor: "#f8f9fa",
     borderRadius: 12,
     padding: 16,
   },
@@ -94,11 +93,9 @@ const styles = StyleSheet.create({
   menuItemLabel: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
   },
   menuItemDescription: {
     fontSize: 13,
-    color: "#666",
     marginTop: 2,
   },
 });

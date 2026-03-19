@@ -19,6 +19,7 @@ import type { RsvpOption } from '../types';
 import { handleImageLongPress, handleEventLongPress } from '../utils/imageActions';
 import { getRsvpStatsForOption, hasPrefetchedRsvpOptions } from '../utils/rsvpStats';
 import { DEFAULT_PRIMARY_COLOR } from '@utils/styles';
+import { useTheme } from '@hooks/useTheme';
 import type { PrefetchedEventData } from '../context/ChatPrefetchContext';
 
 interface EventLinkCardProps {
@@ -46,6 +47,7 @@ const EMOJI_MAP: Record<string, string> = {
 
 export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, prefetchedData }: EventLinkCardProps) {
   const router = useRouter();
+  const { colors, isDark } = useTheme();
   const [loadingOptionId, setLoadingOptionId] = useState<number | null>(null);
   const { token } = useAuth();
 
@@ -198,7 +200,7 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
           />
         ))}
         {remainingCount > 0 && (
-          <Text style={styles.remainingCount}>+{remainingCount}</Text>
+          <Text style={[styles.remainingCount, { color: colors.textSecondary }]}>+{remainingCount}</Text>
         )}
       </View>
     );
@@ -206,7 +208,7 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
 
   // Progress bar component
   const ProgressBar = ({ percentage }: { percentage: number }) => (
-    <View style={styles.progressBarContainer}>
+    <View style={[styles.progressBarContainer, { backgroundColor: colors.borderLight }]}>
       <View style={[styles.progressBar, { width: `${percentage}%` }]} />
     </View>
   );
@@ -233,18 +235,19 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
             ) : (
               <View style={[
                 styles.radioButton,
+                { borderColor: colors.iconSecondary },
                 isSelected && styles.radioButtonSelected
               ]}>
                 {isSelected && <View style={styles.radioButtonInner} />}
               </View>
             )}
-            <Text style={styles.rsvpLabel}>
+            <Text style={[styles.rsvpLabel, { color: colors.text }]}>
               {option.label} {emoji}
             </Text>
           </View>
           <View style={styles.rsvpStats}>
             <AvatarStack users={stats.users} />
-            <Text style={styles.rsvpCount}>{stats.count}</Text>
+            <Text style={[styles.rsvpCount, { color: colors.textSecondary }]}>{stats.count}</Text>
           </View>
         </View>
         <ProgressBar percentage={stats.percentage} />
@@ -256,17 +259,17 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
   if (isLoading) {
     return (
       <View style={[styles.bubbleContainer, !isMyMessage && styles.bubbleContainerLeft, embedded && styles.bubbleContainerEmbedded]}>
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: isDark ? colors.surface : '#DCEEFF' }]}>
           {/* Skeleton cover image */}
-          <View style={styles.skeletonCoverImage} />
+          <View style={[styles.skeletonCoverImage, { backgroundColor: isDark ? colors.surfaceSecondary : '#E5E5E5' }]} />
           {/* Skeleton event info */}
-          <View style={styles.skeletonEventInfo}>
-            <View style={styles.skeletonTitle} />
-            <View style={styles.skeletonDate} />
+          <View style={[styles.skeletonEventInfo, { borderBottomColor: colors.borderLight }]}>
+            <View style={[styles.skeletonTitle, { backgroundColor: isDark ? colors.surfaceSecondary : '#E5E5E5' }]} />
+            <View style={[styles.skeletonDate, { backgroundColor: isDark ? colors.surfaceSecondary : '#E5E5E5' }]} />
           </View>
           {/* Skeleton button */}
-          <View style={styles.skeletonButton}>
-            <View style={styles.skeletonButtonText} />
+          <View style={[styles.skeletonButton, { borderTopColor: colors.borderLight }]}>
+            <View style={[styles.skeletonButtonText, { backgroundColor: isDark ? colors.surfaceSecondary : '#E5E5E5' }]} />
           </View>
         </View>
       </View>
@@ -286,7 +289,7 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
         onLongPress={handleCardLongPress}
         delayLongPress={300}
       >
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: isDark ? colors.surface : '#DCEEFF' }]}>
           {/* Cover Image */}
           {event.displayCoverImage ? (
             <TouchableOpacity
@@ -296,39 +299,39 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
             >
               <AppImage
                 source={event.coverImage}
-                style={styles.coverImage}
+                style={[styles.coverImage, { backgroundColor: colors.surfaceSecondary }]}
                 resizeMode="cover"
-                placeholder={{ type: 'icon', icon: 'calendar-outline', iconSize: 48, iconColor: '#ccc' }}
+                placeholder={{ type: 'icon', icon: 'calendar-outline', iconSize: 48, iconColor: colors.iconSecondary }}
               />
             </TouchableOpacity>
           ) : (
-            <View style={styles.coverImagePlaceholder}>
-              <Ionicons name="calendar" size={48} color="#ccc" />
+            <View style={[styles.coverImagePlaceholder, { backgroundColor: colors.surfaceSecondary }]}>
+              <Ionicons name="calendar" size={48} color={colors.iconSecondary} />
             </View>
           )}
 
           {/* Limited Event Info */}
-          <View style={styles.eventInfo}>
-            <Text style={styles.eventTitle} numberOfLines={2}>
+          <View style={[styles.eventInfo, { borderBottomColor: colors.borderLight }]}>
+            <Text style={[styles.eventTitle, { color: colors.text }]} numberOfLines={2}>
               {event.title || 'Event'}
             </Text>
-            <Text style={styles.eventDate}>
+            <Text style={[styles.eventDate, { color: colors.textSecondary }]}>
               {formatEventDate(event.scheduledAt)}
             </Text>
-            <Text style={styles.eventGroup}>
+            <Text style={[styles.eventGroup, { color: colors.textSecondary }]}>
               {event.groupName}{event.communityName ? ` · ${event.communityName}` : ''}
             </Text>
           </View>
 
           {/* Access Prompt */}
-          <View style={styles.accessPromptSection}>
+          <View style={[styles.accessPromptSection, { backgroundColor: isDark ? colors.surfaceSecondary : '#F8F4FF', borderBottomColor: colors.borderLight }]}>
             <Ionicons name="lock-closed" size={20} color={DEFAULT_PRIMARY_COLOR} />
             <Text style={styles.accessPromptText}>{event.accessPrompt.message}</Text>
           </View>
 
           {/* View Details Button */}
           <TouchableOpacity
-            style={styles.viewDetailsButton}
+            style={[styles.viewDetailsButton, { borderTopColor: colors.borderLight }]}
             onPress={handleViewDetails}
           >
             <Text style={styles.viewDetailsText}>View Details</Text>
@@ -343,10 +346,10 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
 
   // Cancelled Overlay Component
   const CancelledOverlay = () => (
-    <View style={styles.cancelledOverlay}>
-      <View style={styles.cancelledBadge}>
-        <Ionicons name="close-circle" size={24} color="#DC2626" />
-        <Text style={styles.cancelledText}>Event Cancelled</Text>
+    <View style={[styles.cancelledOverlay, { backgroundColor: isDark ? 'rgba(0, 0, 0, 0.75)' : 'rgba(255, 255, 255, 0.85)' }]}>
+      <View style={[styles.cancelledBadge, { backgroundColor: isDark ? '#450a0a' : '#FEF2F2', borderColor: isDark ? '#7f1d1d' : '#FECACA' }]}>
+        <Ionicons name="close-circle" size={24} color={colors.error} />
+        <Text style={[styles.cancelledText, { color: colors.error }]}>Event Cancelled</Text>
       </View>
     </View>
   );
@@ -357,7 +360,7 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
       onLongPress={handleCardLongPress}
       delayLongPress={300}
     >
-      <View style={styles.container}>
+      <View style={[styles.container, { backgroundColor: isDark ? colors.surface : '#DCEEFF' }]}>
         {/* Cover Image */}
         {event.displayCoverImage ? (
           <TouchableOpacity
@@ -367,33 +370,33 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
           >
             <AppImage
               source={event.coverImage}
-              style={styles.coverImage}
+              style={[styles.coverImage, { backgroundColor: colors.surfaceSecondary }]}
               resizeMode="cover"
-              placeholder={{ type: 'icon', icon: 'calendar-outline', iconSize: 48, iconColor: '#ccc' }}
+              placeholder={{ type: 'icon', icon: 'calendar-outline', iconSize: 48, iconColor: colors.iconSecondary }}
             />
           </TouchableOpacity>
         ) : (
-          <View style={styles.coverImagePlaceholder}>
-            <Ionicons name="calendar" size={48} color="#ccc" />
+          <View style={[styles.coverImagePlaceholder, { backgroundColor: colors.surfaceSecondary }]}>
+            <Ionicons name="calendar" size={48} color={colors.iconSecondary} />
           </View>
         )}
 
         {/* Event Info */}
-        <View style={styles.eventInfo}>
-          <Text style={[styles.eventTitle, isCancelled && styles.cancelledTitle]} numberOfLines={2}>
+        <View style={[styles.eventInfo, { borderBottomColor: colors.borderLight }]}>
+          <Text style={[styles.eventTitle, { color: colors.text }, isCancelled && { textDecorationLine: 'line-through', color: colors.textTertiary }]} numberOfLines={2}>
             {event.title || 'Event'}
           </Text>
-          <Text style={styles.eventDate}>
+          <Text style={[styles.eventDate, { color: colors.textSecondary }]}>
             {formatEventDate(event.scheduledAt)}
           </Text>
           {isPastEvent && !isCancelled && (
-            <View style={styles.pastEventBadge}>
-              <Ionicons name="time-outline" size={14} color="#6B7280" />
-              <Text style={styles.pastEventText}>Past Event</Text>
+            <View style={[styles.pastEventBadge, { backgroundColor: colors.surfaceSecondary }]}>
+              <Ionicons name="time-outline" size={14} color={colors.textSecondary} />
+              <Text style={[styles.pastEventText, { color: colors.textSecondary }]}>Past Event</Text>
             </View>
           )}
           {location && (
-            <Text style={styles.eventLocation}>
+            <Text style={[styles.eventLocation, { color: colors.textSecondary }]}>
               {location.icon} {location.text}
             </Text>
           )}
@@ -405,7 +408,7 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
             {rsvpsLoading ? (
               <View style={styles.loadingContainer}>
                 <ActivityIndicator size="small" color={DEFAULT_PRIMARY_COLOR} />
-                <Text style={styles.loadingText}>Loading RSVPs...</Text>
+                <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading RSVPs...</Text>
               </View>
             ) : (
               rsvpOptions.map((option) => (
@@ -417,7 +420,7 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
 
         {/* View Details Button */}
         <TouchableOpacity
-          style={styles.viewDetailsButton}
+          style={[styles.viewDetailsButton, { borderTopColor: colors.borderLight }]}
           onPress={handleViewDetails}
         >
           <Text style={styles.viewDetailsText}>View Details</Text>
@@ -454,7 +457,6 @@ const styles = StyleSheet.create({
     marginLeft: 0,
   },
   container: {
-    backgroundColor: '#DCEEFF',
     borderRadius: 12,
     overflow: 'hidden',
     width: '100%',
@@ -474,45 +476,35 @@ const styles = StyleSheet.create({
   coverImage: {
     width: '100%',
     aspectRatio: 16 / 9,
-    backgroundColor: '#f5f5f5',
-    // Apply border radius directly to image for proper clipping
-    // (overflow: hidden on parent doesn't always clip correctly in RN)
     borderTopLeftRadius: 12,
     borderTopRightRadius: 12,
   },
   coverImagePlaceholder: {
     width: '100%',
     aspectRatio: 16 / 9,
-    backgroundColor: '#f5f5f5',
     justifyContent: 'center',
     alignItems: 'center',
-    // Match image border radius for consistency
     borderTopLeftRadius: 12,
     borderTopRightRadius: 12,
   },
   eventInfo: {
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
   },
   eventTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#333',
     marginBottom: 8,
   },
   eventDate: {
     fontSize: 14,
-    color: '#666',
     marginBottom: 4,
   },
   eventLocation: {
     fontSize: 14,
-    color: '#666',
   },
   eventGroup: {
     fontSize: 14,
-    color: '#666',
     marginTop: 4,
   },
   accessPromptSection: {
@@ -520,9 +512,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     padding: 16,
-    backgroundColor: '#F8F4FF',
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
   },
   accessPromptText: {
     flex: 1,
@@ -543,7 +533,6 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: 14,
-    color: '#666',
   },
   rsvpRow: {
     gap: 8,
@@ -567,7 +556,6 @@ const styles = StyleSheet.create({
     height: 20,
     borderRadius: 10,
     borderWidth: 2,
-    borderColor: '#ccc',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -582,7 +570,6 @@ const styles = StyleSheet.create({
   },
   rsvpLabel: {
     fontSize: 15,
-    color: '#333',
     fontWeight: '500',
   },
   rsvpStats: {
@@ -596,20 +583,17 @@ const styles = StyleSheet.create({
   },
   remainingCount: {
     fontSize: 12,
-    color: '#666',
     fontWeight: '600',
     marginLeft: 4,
   },
   rsvpCount: {
     fontSize: 14,
-    color: '#666',
     fontWeight: '600',
     minWidth: 20,
     textAlign: 'right',
   },
   progressBarContainer: {
     height: 6,
-    backgroundColor: '#f0f0f0',
     borderRadius: 3,
     overflow: 'hidden',
   },
@@ -621,7 +605,6 @@ const styles = StyleSheet.create({
   viewDetailsButton: {
     padding: 16,
     borderTopWidth: 1,
-    borderTopColor: '#f0f0f0',
     alignItems: 'center',
   },
   viewDetailsText: {
@@ -631,7 +614,6 @@ const styles = StyleSheet.create({
   },
   cancelledOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255, 255, 255, 0.85)',
     justifyContent: 'center',
     alignItems: 'center',
     borderRadius: 12,
@@ -640,28 +622,20 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#FEF2F2',
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#FECACA',
   },
   cancelledText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#DC2626',
-  },
-  cancelledTitle: {
-    textDecorationLine: 'line-through',
-    color: '#999',
   },
   pastEventBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
     marginTop: 6,
-    backgroundColor: '#F3F4F6',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 4,
@@ -669,14 +643,12 @@ const styles = StyleSheet.create({
   },
   pastEventText: {
     fontSize: 12,
-    color: '#6B7280',
     fontWeight: '500',
   },
   // Skeleton loading styles
   skeletonCoverImage: {
     width: '100%',
     aspectRatio: 16 / 9,
-    backgroundColor: '#E5E5E5',
     borderTopLeftRadius: 12,
     borderTopRightRadius: 12,
   },
@@ -684,30 +656,25 @@ const styles = StyleSheet.create({
     padding: 16,
     gap: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
   },
   skeletonTitle: {
     height: 20,
     width: '80%',
-    backgroundColor: '#E5E5E5',
     borderRadius: 4,
   },
   skeletonDate: {
     height: 16,
     width: '60%',
-    backgroundColor: '#E5E5E5',
     borderRadius: 4,
   },
   skeletonButton: {
     padding: 16,
     borderTopWidth: 1,
-    borderTopColor: '#f0f0f0',
     alignItems: 'center',
   },
   skeletonButtonText: {
     height: 16,
     width: 100,
-    backgroundColor: '#E5E5E5',
     borderRadius: 4,
   },
 });

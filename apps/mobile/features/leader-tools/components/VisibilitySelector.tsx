@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 
 export type VisibilityLevel = "group" | "community" | "public";
 
@@ -40,6 +41,7 @@ const VISIBILITY_OPTIONS: VisibilityOption[] = [
 ];
 
 export function VisibilitySelector({ value, onChange }: VisibilitySelectorProps) {
+  const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
 
   return (
@@ -49,7 +51,7 @@ export function VisibilitySelector({ value, onChange }: VisibilitySelectorProps)
         return (
           <TouchableOpacity
             key={option.value}
-            style={[styles.option, isSelected && { borderColor: primaryColor, backgroundColor: "#faf5ff" }]}
+            style={[styles.option, isSelected && { borderColor: primaryColor, backgroundColor: colors.surfaceSecondary }]}
             onPress={() => onChange(option.value)}
             activeOpacity={0.7}
           >
@@ -60,7 +62,7 @@ export function VisibilitySelector({ value, onChange }: VisibilitySelectorProps)
               <Ionicons
                 name={option.icon}
                 size={20}
-                color={isSelected ? primaryColor : "#666"}
+                color={isSelected ? primaryColor : colors.textSecondary}
                 style={styles.icon}
               />
               <Text style={[styles.label, isSelected && { color: primaryColor }]}>

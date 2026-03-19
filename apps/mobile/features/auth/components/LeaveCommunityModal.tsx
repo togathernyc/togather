@@ -8,6 +8,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { CustomModal } from "@/components/ui/Modal";
+import { useTheme } from "@hooks/useTheme";
 
 interface LeaveCommunityModalProps {
   visible: boolean;
@@ -24,6 +25,7 @@ export function LeaveCommunityModal({
   onConfirm,
   isLoading = false,
 }: LeaveCommunityModalProps) {
+  const { colors } = useTheme();
   return (
     <CustomModal
       visible={visible}
@@ -33,27 +35,27 @@ export function LeaveCommunityModal({
     >
       <View style={styles.content}>
         <View style={styles.iconContainer}>
-          <Ionicons name="warning" size={48} color="#DC2626" />
+          <Ionicons name="warning" size={48} color={colors.error} />
         </View>
 
-        <Text style={styles.title}>Leave {communityName}</Text>
+        <Text style={[styles.title, { color: colors.text }]}>Leave {communityName}</Text>
 
-        <Text style={styles.description}>
+        <Text style={[styles.description, { color: colors.textSecondary }]}>
           This action cannot be undone. You will lose all your group memberships
           and RSVPs in this community.
         </Text>
 
         <View style={styles.buttonRow}>
           <TouchableOpacity
-            style={styles.cancelButton}
+            style={[styles.cancelButton, { backgroundColor: colors.surfaceSecondary }]}
             onPress={onCancel}
             disabled={isLoading}
           >
-            <Text style={styles.cancelButtonText}>Cancel</Text>
+            <Text style={[styles.cancelButtonText, { color: colors.text }]}>Cancel</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.leaveButton, isLoading && styles.buttonDisabled]}
+            style={[styles.leaveButton, { backgroundColor: colors.error }, isLoading && styles.buttonDisabled]}
             onPress={onConfirm}
             disabled={isLoading}
           >
@@ -79,13 +81,11 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 22,
     fontWeight: "700",
-    color: "#333",
     marginBottom: 12,
     textAlign: "center",
   },
   description: {
     fontSize: 15,
-    color: "#666",
     textAlign: "center",
     lineHeight: 22,
     marginBottom: 24,
@@ -97,7 +97,6 @@ const styles = StyleSheet.create({
   },
   cancelButton: {
     flex: 1,
-    backgroundColor: "#f0f0f0",
     borderRadius: 8,
     padding: 14,
     alignItems: "center",
@@ -105,11 +104,9 @@ const styles = StyleSheet.create({
   cancelButtonText: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
   },
   leaveButton: {
     flex: 1,
-    backgroundColor: "#DC2626",
     borderRadius: 8,
     padding: 14,
     alignItems: "center",

@@ -8,6 +8,7 @@ import {
   ScrollView,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useTheme } from "@hooks/useTheme";
 
 interface SubmitAttendanceProps {
   visible: boolean;
@@ -26,6 +27,7 @@ export function SubmitAttendance({
   attendanceCount = 0,
   guestCount = 0,
 }: SubmitAttendanceProps) {
+  const { colors } = useTheme();
   const handleSubmit = () => {
     onSubmit();
     onClose();
@@ -47,7 +49,7 @@ export function SubmitAttendance({
         <View style={styles.modalContent}>
           <View style={styles.header}>
             <View style={styles.iconContainer}>
-              <Ionicons name="warning" size={32} color="#FF9500" />
+              <Ionicons name="warning" size={32} color={colors.warning} />
             </View>
             <Text style={styles.title}>Submit Attendance?</Text>
           </View>
@@ -71,7 +73,7 @@ export function SubmitAttendance({
             </View>
 
             <View style={styles.infoBox}>
-              <Ionicons name="information-circle-outline" size={20} color="#666" />
+              <Ionicons name="information-circle-outline" size={20} color={colors.textSecondary} />
               <Text style={styles.infoText}>
                 Once submitted, attendance cannot be edited. Please verify all information is correct before submitting.
               </Text>

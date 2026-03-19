@@ -19,6 +19,7 @@ import { SwipeableCommunityRow } from './SwipeableCommunityRow';
 import { LeaveCommunityModal } from './LeaveCommunityModal';
 import { useConvex, useAuthenticatedMutation, api, Id, useStoredAuthToken } from '@services/api/convex';
 import { Avatar } from '@components/ui/Avatar';
+import { useTheme } from '@hooks/useTheme';
 
 // Check if there's a pending join intent and return the redirect path
 async function getPostAuthRedirect(): Promise<string> {
@@ -50,6 +51,7 @@ interface Community {
 export function CommunitySelectionScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
   const { setCommunity, refreshUser, clearCommunity, community: currentCommunity, signIn } = useAuth();
   const params = useLocalSearchParams<{
     communities?: string;
@@ -490,26 +492,26 @@ export function CommunitySelectionScreen() {
 
   return (
     <ScrollView
-      style={styles.scrollView}
+      style={[styles.scrollView, { backgroundColor: colors.surface }]}
       contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top }]}
       keyboardShouldPersistTaps="handled"
     >
       <View style={styles.container}>
-        <Text style={styles.title}>Select Community</Text>
-        <Text style={styles.subtitle}>
+        <Text style={[styles.title, { color: colors.text }]}>Select Community</Text>
+        <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
           {userCommunities.length > 0
             ? "Choose a community to continue or search for a new one"
             : "Search for your community to get started"}
         </Text>
 
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+        {error ? <Text style={[styles.errorText, { color: colors.error }]}>{error}</Text> : null}
 
         {/* Featured Communities section - only show if found and user is not already a member */}
         {featuredCommunity && !isExistingCommunity(featuredCommunity.id) && (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Featured Communities</Text>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Featured Communities</Text>
             <TouchableOpacity
-              style={styles.communityItem}
+              style={[styles.communityItem, { backgroundColor: colors.surfaceSecondary }]}
               onPress={() => handleSelectCommunity(featuredCommunity)}
               disabled={selectingCommunityId !== null}
             >
@@ -520,15 +522,15 @@ export function CommunitySelectionScreen() {
                 style={styles.communityAvatar}
               />
               <View style={styles.communityInfo}>
-                <Text style={styles.communityName}>{featuredCommunity.name}</Text>
+                <Text style={[styles.communityName, { color: colors.text }]}>{featuredCommunity.name}</Text>
                 {featuredCommunity.subdomain && (
-                  <Text style={styles.communitySubdomain}>
+                  <Text style={[styles.communitySubdomain, { color: colors.textSecondary }]}>
                     {featuredCommunity.subdomain}
                   </Text>
                 )}
               </View>
               {selectingCommunityId === featuredCommunity.id && (
-                <ActivityIndicator size="small" color="#007AFF" />
+                <ActivityIndicator size="small" color={colors.link} />
               )}
             </TouchableOpacity>
           </View>
@@ -537,7 +539,7 @@ export function CommunitySelectionScreen() {
         {/* User's existing communities */}
         {userCommunities.length > 0 && (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Your Communities</Text>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Your Communities</Text>
             {userCommunities.map((community) => {
               console.log('[CommunitySelection] Community data:', {
                 name: community.name,
@@ -560,14 +562,14 @@ export function CommunitySelectionScreen() {
 
         {/* Search section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>
             {userCommunities.length > 0 ? "Or Join Another" : "Find Your Community"}
           </Text>
-          <View style={styles.searchContainer}>
+          <View style={[styles.searchContainer, { borderColor: colors.border, backgroundColor: colors.surface }]}>
             <TextInput
-              style={styles.searchInput}
+              style={[styles.searchInput, { color: colors.text }]}
               placeholder="Search communities..."
-              placeholderTextColor="#999"
+              placeholderTextColor={colors.inputPlaceholder}
               value={searchQuery}
               onChangeText={handleSearch}
               autoCapitalize="none"
@@ -576,7 +578,7 @@ export function CommunitySelectionScreen() {
             {isSearching && (
               <ActivityIndicator
                 size="small"
-                color="#007AFF"
+                color={colors.link}
                 style={styles.searchSpinner}
               />
             )}
@@ -590,7 +592,7 @@ export function CommunitySelectionScreen() {
                 return (
                   <TouchableOpacity
                     key={result.id}
-                    style={styles.communityItem}
+                    style={[styles.communityItem, { backgroundColor: colors.surfaceSecondary }]}
                     onPress={() => handleSelectCommunity(result)}
                     disabled={selectingCommunityId !== null}
                   >
@@ -601,15 +603,15 @@ export function CommunitySelectionScreen() {
                       style={styles.communityAvatar}
                     />
                     <View style={styles.communityInfo}>
-                      <Text style={styles.communityName}>{result.name}</Text>
+                      <Text style={[styles.communityName, { color: colors.text }]}>{result.name}</Text>
                       {result.subdomain && (
-                        <Text style={styles.communitySubdomain}>
+                        <Text style={[styles.communitySubdomain, { color: colors.textSecondary }]}>
                           {result.subdomain}
                         </Text>
                       )}
                     </View>
                     {selectingCommunityId === resultId && (
-                      <ActivityIndicator size="small" color="#007AFF" />
+                      <ActivityIndicator size="small" color={colors.link} />
                     )}
                   </TouchableOpacity>
                 );
@@ -618,22 +620,22 @@ export function CommunitySelectionScreen() {
           )}
 
           {searchQuery.length >= 2 && searchResults.length === 0 && !isSearching && (
-            <Text style={styles.noResultsText}>
+            <Text style={[styles.noResultsText, { color: colors.textSecondary }]}>
               No communities found matching "{searchQuery}"
             </Text>
           )}
         </View>
 
         {/* Help section */}
-        <View style={styles.helpSection}>
-          <Text style={styles.helpText}>Can't find your community?</Text>
+        <View style={[styles.helpSection, { borderTopColor: colors.borderLight }]}>
+          <Text style={[styles.helpText, { color: colors.textSecondary }]}>Can't find your community?</Text>
           <TouchableOpacity
             onPress={() => {
               // Link to support
               // For now just show a message - this could open an email or support page
             }}
           >
-            <Text style={styles.helpLink}>Contact support at help@gettogather.co</Text>
+            <Text style={[styles.helpLink, { color: colors.link }]}>Contact support at help@gettogather.co</Text>
           </TouchableOpacity>
         </View>
 
@@ -645,9 +647,9 @@ export function CommunitySelectionScreen() {
           activeOpacity={0.5}
         >
           {isContinuingWithout ? (
-            <ActivityIndicator size="small" color="#bbb" />
+            <ActivityIndicator size="small" color={colors.textTertiary} />
           ) : (
-            <Text style={styles.continueWithoutText}>
+            <Text style={[styles.continueWithoutText, { color: colors.textTertiary }]}>
               Continue without community
             </Text>
           )}
@@ -691,7 +693,6 @@ export function CommunitySelectionScreen() {
 const styles = StyleSheet.create({
   scrollView: {
     flex: 1,
-    backgroundColor: "#fff",
   },
   scrollContent: {
     flexGrow: 1,
@@ -709,16 +710,13 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 40,
     marginBottom: 8,
-    color: "#333",
   },
   subtitle: {
     fontSize: 16,
-    color: "#666",
     textAlign: "center",
     marginBottom: 32,
   },
   errorText: {
-    color: "#FF3B30",
     textAlign: "center",
     marginBottom: 16,
     fontSize: 14,
@@ -730,13 +728,11 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "600",
     marginBottom: 12,
-    color: "#333",
   },
   communityItem: {
     flexDirection: "row",
     alignItems: "center",
     padding: 16,
-    backgroundColor: "#f8f8f8",
     borderRadius: 12,
     marginBottom: 8,
   },
@@ -749,25 +745,20 @@ const styles = StyleSheet.create({
   communityName: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
   },
   communityRole: {
     fontSize: 14,
-    color: "#666",
     marginTop: 2,
   },
   communitySubdomain: {
     fontSize: 14,
-    color: "#666",
     marginTop: 2,
   },
   searchContainer: {
     flexDirection: "row",
     alignItems: "center",
     borderWidth: 1,
-    borderColor: "#ddd",
     borderRadius: 12,
-    backgroundColor: "#fff",
   },
   searchInput: {
     flex: 1,
@@ -782,7 +773,6 @@ const styles = StyleSheet.create({
   },
   noResultsText: {
     textAlign: "center",
-    color: "#666",
     marginTop: 16,
     fontSize: 14,
   },
@@ -791,16 +781,13 @@ const styles = StyleSheet.create({
     marginTop: 24,
     paddingTop: 24,
     borderTopWidth: 1,
-    borderTopColor: "#eee",
   },
   helpText: {
     fontSize: 14,
-    color: "#666",
     marginBottom: 8,
   },
   helpLink: {
     fontSize: 14,
-    color: "#007AFF",
     fontWeight: "500",
   },
   continueWithoutContainer: {
@@ -811,7 +798,6 @@ const styles = StyleSheet.create({
   },
   continueWithoutText: {
     fontSize: 13,
-    color: "#bbb",
     textDecorationLine: "underline",
   },
 });

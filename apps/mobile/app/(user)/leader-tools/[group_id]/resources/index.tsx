@@ -18,6 +18,7 @@ import { useAuthenticatedQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { DragHandle } from "@components/ui/DragHandle";
+import { useTheme } from "@hooks/useTheme";
 
 // ============================================================================
 // Types
@@ -63,6 +64,7 @@ function formatVisibility(visibility: Resource["visibility"]): string {
 // ============================================================================
 
 export default function ResourcesListScreen() {
+  const { colors } = useTheme();
   const { group_id } = useLocalSearchParams<{ group_id: string }>();
 
   const resources = useAuthenticatedQuery(
@@ -108,7 +110,7 @@ export default function ResourcesListScreen() {
                     "document-outline") as keyof typeof Ionicons.glyphMap
                 }
                 size={24}
-                color="#333"
+                color={colors.text}
               />
               <View style={styles.resourceText}>
                 <Text style={styles.resourceTitle}>{resource.title}</Text>
@@ -119,14 +121,14 @@ export default function ResourcesListScreen() {
                 </Text>
               </View>
             </View>
-            <Ionicons name="chevron-forward" size={20} color="#ccc" />
+            <Ionicons name="chevron-forward" size={20} color={colors.iconSecondary} />
           </Pressable>
         ))}
 
         {/* Empty state */}
         {resources?.length === 0 && (
           <View style={styles.emptyContainer}>
-            <Ionicons name="document-text-outline" size={48} color="#ccc" />
+            <Ionicons name="document-text-outline" size={48} color={colors.iconSecondary} />
             <Text style={styles.emptyTitle}>No resources yet</Text>
             <Text style={styles.emptyText}>
               Create resources like welcome guides, FAQs, or helpful links for
@@ -140,7 +142,7 @@ export default function ResourcesListScreen() {
           style={styles.addButton}
           onPress={() => router.push(`/(user)/leader-tools/${group_id}/resources/new`)}
         >
-          <Ionicons name="add-circle-outline" size={24} color="#007AFF" />
+          <Ionicons name="add-circle-outline" size={24} color={colors.link} />
           <Text style={styles.addButtonText}>Add Resource</Text>
         </Pressable>
       </ScrollView>

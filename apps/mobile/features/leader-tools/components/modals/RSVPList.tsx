@@ -11,6 +11,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { format } from "date-fns";
 import { Avatar } from "@components/ui/Avatar";
+import { useTheme } from "@hooks/useTheme";
 
 interface RSVPMember {
   id: number;
@@ -38,6 +39,7 @@ export function RSVPList({
   members,
   rsvpMode = "going",
 }: RSVPListProps) {
+  const { colors } = useTheme();
   const getStatusLabel = () => {
     switch (rsvpMode) {
       case "going":
@@ -54,13 +56,13 @@ export function RSVPList({
   const getStatusColor = (status?: string) => {
     switch (status) {
       case "going":
-        return "#4CAF50";
+        return colors.success;
       case "not_going":
-        return "#F44336";
+        return colors.destructive;
       case "not_answered":
-        return "#FF9800";
+        return colors.warning;
       default:
-        return "#9E9E9E";
+        return colors.iconSecondary;
     }
   };
 
@@ -83,7 +85,7 @@ export function RSVPList({
     const statusIcon = getStatusIcon(status);
 
     return (
-      <View style={styles.memberItem}>
+      <View style={[styles.memberItem, { borderBottomColor: colors.border }]}>
         <View style={styles.memberInfo}>
           <Avatar
             name={`${item.first_name || ""} ${item.last_name || ""}`}
@@ -91,11 +93,11 @@ export function RSVPList({
             size={48}
           />
           <View style={styles.memberDetails}>
-            <Text style={styles.memberName}>
+            <Text style={[styles.memberName, { color: colors.text }]}>
               {item.first_name} {item.last_name}
             </Text>
             {item.role && (
-              <Text style={styles.memberRole}>
+              <Text style={[styles.memberRole, { color: colors.textTertiary }]}>
                 {typeof item.role === "string"
                   ? item.role.charAt(0).toUpperCase() + item.role.slice(1)
                   : item.role === 2
@@ -122,27 +124,27 @@ export function RSVPList({
       animationType="slide"
       onRequestClose={onClose}
     >
-      <View style={styles.overlay}>
+      <View style={[styles.overlay, { backgroundColor: colors.overlay }]}>
         <TouchableOpacity
           style={styles.backdrop}
           activeOpacity={1}
           onPress={onClose}
         />
-        <View style={styles.modalContent}>
-          <View style={styles.header}>
+        <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
+          <View style={[styles.header, { borderBottomColor: colors.border }]}>
             <View style={styles.headerContent}>
-              <Text style={styles.headerTitle}>
+              <Text style={[styles.headerTitle, { color: colors.text }]}>
                 {format(new Date(eventDate), "MMM dd, yyyy")}
               </Text>
-              <Text style={styles.groupTitle}>{groupTitle}</Text>
+              <Text style={[styles.groupTitle, { color: colors.textSecondary }]}>{groupTitle}</Text>
             </View>
             <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-              <Ionicons name="close" size={24} color="#333" />
+              <Ionicons name="close" size={24} color={colors.text} />
             </TouchableOpacity>
           </View>
 
-          <View style={styles.modeContainer}>
-            <Text style={styles.modeLabel}>{getStatusLabel()} RSVPs</Text>
+          <View style={[styles.modeContainer, { borderBottomColor: colors.border }]}>
+            <Text style={[styles.modeLabel, { color: colors.textTertiary }]}>{getStatusLabel()} RSVPs</Text>
           </View>
 
           {members.length > 0 ? (
@@ -160,8 +162,8 @@ export function RSVPList({
             />
           ) : (
             <View style={styles.emptyContainer}>
-              <Ionicons name="people-outline" size={48} color="#bdbdc1" />
-              <Text style={styles.emptyText}>RSVP list is empty</Text>
+              <Ionicons name="people-outline" size={48} color={colors.iconSecondary} />
+              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>RSVP list is empty</Text>
             </View>
           )}
         </View>
@@ -173,14 +175,12 @@ export function RSVPList({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
     justifyContent: "flex-end",
   },
   backdrop: {
     flex: 1,
   },
   modalContent: {
-    backgroundColor: "#fff",
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     maxHeight: "90%",
@@ -192,7 +192,6 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   headerContent: {
     flex: 1,
@@ -200,12 +199,10 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 28,
     fontWeight: "800",
-    color: "#222224",
     marginBottom: 4,
   },
   groupTitle: {
     fontSize: 16,
-    color: "#7f7f82",
     marginTop: 4,
   },
   closeButton: {

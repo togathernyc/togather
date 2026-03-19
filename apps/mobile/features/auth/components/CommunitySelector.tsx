@@ -3,6 +3,7 @@
 import React from "react";
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import { Community } from "../types";
+import { useTheme } from "@hooks/useTheme";
 
 interface CommunitySelectorProps {
   community: Community;
@@ -10,13 +11,14 @@ interface CommunitySelectorProps {
 }
 
 export function CommunitySelector({ community, onChange }: CommunitySelectorProps) {
+  const { colors } = useTheme();
   return (
-    <View style={styles.communityInfo}>
-      <Text style={styles.communityText}>
+    <View style={[styles.communityInfo, { backgroundColor: colors.surfaceSecondary }]}>
+      <Text style={[styles.communityText, { color: colors.text }]}>
         {community.name || community.subdomain}
       </Text>
       <TouchableOpacity onPress={onChange}>
-        <Text style={styles.changeCommunityText}>Change Community</Text>
+        <Text style={[styles.changeCommunityText, { color: colors.link }]}>Change Community</Text>
       </TouchableOpacity>
     </View>
   );
@@ -24,7 +26,6 @@ export function CommunitySelector({ community, onChange }: CommunitySelectorProp
 
 const styles = StyleSheet.create({
   communityInfo: {
-    backgroundColor: "#f5f5f5",
     padding: 12,
     borderRadius: 8,
     marginBottom: 20,
@@ -35,11 +36,9 @@ const styles = StyleSheet.create({
   communityText: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#333",
   },
   changeCommunityText: {
     fontSize: 12,
-    color: "#007AFF",
   },
 });
 

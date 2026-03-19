@@ -13,6 +13,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuthenticatedMutation, api } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
+import { useTheme } from "@hooks/useTheme";
 import {
   COMMON_TIMEZONES,
   getTimezoneAbbreviation,
@@ -23,6 +24,7 @@ import type { Id } from "@services/api/convex";
 export function TimezoneSection() {
   const { user, refreshUser } = useAuth();
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [isPending, setIsPending] = useState(false);
@@ -55,23 +57,23 @@ export function TimezoneSection() {
   };
 
   return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>Time Zone</Text>
-      <Text style={styles.sectionDescription}>
+    <View style={[styles.section, { backgroundColor: colors.surface }]}>
+      <Text style={[styles.sectionTitle, { color: colors.text }]}>Time Zone</Text>
+      <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>
         Events and meetings will be displayed in your selected time zone.
       </Text>
 
       <TouchableOpacity
-        style={styles.selector}
+        style={[styles.selector, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
         onPress={() => setIsModalVisible(true)}
       >
         <View style={styles.selectorContent}>
-          <Text style={styles.selectorLabel}>
+          <Text style={[styles.selectorLabel, { color: colors.text }]}>
             {getTimezoneDisplayName(currentTimezone)}
           </Text>
-          <Text style={styles.selectorValue}>{currentAbbreviation}</Text>
+          <Text style={[styles.selectorValue, { color: colors.textSecondary }]}>{currentAbbreviation}</Text>
         </View>
-        <Ionicons name="chevron-forward" size={20} color="#666" />
+        <Ionicons name="chevron-forward" size={20} color={colors.icon} />
       </TouchableOpacity>
 
       <Modal
@@ -80,28 +82,29 @@ export function TimezoneSection() {
         presentationStyle="pageSheet"
         onRequestClose={() => setIsModalVisible(false)}
       >
-        <View style={[styles.modalContainer, { paddingTop: insets.top }]}>
-          <View style={styles.modalHeader}>
+        <View style={[styles.modalContainer, { paddingTop: insets.top, backgroundColor: colors.modalBackground }]}>
+          <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
             <TouchableOpacity
               onPress={() => setIsModalVisible(false)}
               style={styles.closeButton}
             >
-              <Ionicons name="close" size={24} color="#333" />
+              <Ionicons name="close" size={24} color={colors.text} />
             </TouchableOpacity>
-            <Text style={styles.modalTitle}>Select Time Zone</Text>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Select Time Zone</Text>
             <View style={styles.closeButton} />
           </View>
 
-          <View style={styles.searchContainer}>
+          <View style={[styles.searchContainer, { backgroundColor: colors.surfaceSecondary }]}>
             <Ionicons
               name="search"
               size={20}
-              color="#666"
+              color={colors.icon}
               style={styles.searchIcon}
             />
             <TextInput
-              style={styles.searchInput}
+              style={[styles.searchInput, { color: colors.text }]}
               placeholder="Search time zones..."
+              placeholderTextColor={colors.inputPlaceholder}
               value={searchQuery}
               onChangeText={setSearchQuery}
               autoCapitalize="none"
@@ -109,14 +112,14 @@ export function TimezoneSection() {
             />
             {searchQuery.length > 0 && (
               <TouchableOpacity onPress={() => setSearchQuery("")}>
-                <Ionicons name="close-circle" size={20} color="#999" />
+                <Ionicons name="close-circle" size={20} color={colors.textTertiary} />
               </TouchableOpacity>
             )}
           </View>
 
           {isPending && (
-            <View style={styles.loadingOverlay}>
-              <ActivityIndicator size="large" color="#007AFF" />
+            <View style={[styles.loadingOverlay, { backgroundColor: colors.overlay }]}>
+              <ActivityIndicator size="large" color={colors.link} />
             </View>
           )}
 
@@ -127,7 +130,7 @@ export function TimezoneSection() {
               <TouchableOpacity
                 style={[
                   styles.timezoneItem,
-                  currentTimezone === item.value && styles.timezoneItemSelected,
+                  currentTimezone === item.value && { backgroundColor: colors.selectedBackground },
                 ]}
                 onPress={() => handleSelectTimezone(item.value)}
               >
@@ -135,20 +138,25 @@ export function TimezoneSection() {
                   <Text
                     style={[
                       styles.timezoneLabel,
-                      currentTimezone === item.value &&
-                        styles.timezoneLabelSelected,
+                      { color: colors.text },
+                      currentTimezone === item.value && {
+                        fontWeight: "600",
+                        color: colors.link,
+                      },
                     ]}
                   >
                     {item.label}
                   </Text>
-                  <Text style={styles.timezoneOffset}>{item.offset}</Text>
+                  <Text style={[styles.timezoneOffset, { color: colors.textTertiary }]}>{item.offset}</Text>
                 </View>
                 {currentTimezone === item.value && (
-                  <Ionicons name="checkmark" size={24} color="#007AFF" />
+                  <Ionicons name="checkmark" size={24} color={colors.link} />
                 )}
               </TouchableOpacity>
             )}
-            ItemSeparatorComponent={() => <View style={styles.separator} />}
+            ItemSeparatorComponent={() => (
+              <View style={[styles.separator, { backgroundColor: colors.borderLight }]} />
+            )}
             contentContainerStyle={styles.listContent}
           />
         </View>
@@ -160,29 +168,24 @@ export function TimezoneSection() {
 const styles = StyleSheet.create({
   section: {
     marginTop: 12,
-    backgroundColor: "#fff",
     padding: 20,
   },
   sectionTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 8,
   },
   sectionDescription: {
     fontSize: 14,
-    color: "#666",
     marginBottom: 16,
   },
   selector: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    backgroundColor: "#f8f8f8",
     borderRadius: 10,
     padding: 16,
     borderWidth: 1,
-    borderColor: "#e0e0e0",
   },
   selectorContent: {
     flex: 1,
@@ -190,16 +193,13 @@ const styles = StyleSheet.create({
   selectorLabel: {
     fontSize: 16,
     fontWeight: "500",
-    color: "#333",
     marginBottom: 4,
   },
   selectorValue: {
     fontSize: 14,
-    color: "#666",
   },
   modalContainer: {
     flex: 1,
-    backgroundColor: "#fff",
   },
   modalHeader: {
     flexDirection: "row",
@@ -207,7 +207,6 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   closeButton: {
     width: 40,
@@ -218,12 +217,10 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
   },
   searchContainer: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f0f0f0",
     margin: 16,
     borderRadius: 10,
     paddingHorizontal: 12,
@@ -246,28 +243,18 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     paddingHorizontal: 20,
   },
-  timezoneItemSelected: {
-    backgroundColor: "#f0f8ff",
-  },
   timezoneItemContent: {
     flex: 1,
   },
   timezoneLabel: {
     fontSize: 16,
-    color: "#333",
     marginBottom: 2,
-  },
-  timezoneLabelSelected: {
-    fontWeight: "600",
-    color: "#007AFF",
   },
   timezoneOffset: {
     fontSize: 13,
-    color: "#999",
   },
   separator: {
     height: 1,
-    backgroundColor: "#f0f0f0",
     marginLeft: 20,
   },
   loadingOverlay: {
@@ -276,7 +263,6 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "rgba(255, 255, 255, 0.8)",
     justifyContent: "center",
     alignItems: "center",
     zIndex: 1000,

@@ -13,6 +13,7 @@ import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 import { useQuery, useAuthenticatedMutation, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { AppImage } from "@components/ui";
@@ -30,6 +31,7 @@ type ArchivedGroup = {
 export function ArchivedGroupsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
   const { user, community, token } = useAuth();
   const { primaryColor } = useCommunityTheme();
 
@@ -73,7 +75,7 @@ export function ArchivedGroupsScreen() {
 
   const renderItem = useCallback(
     ({ item }: { item: ArchivedGroup }) => (
-      <View style={styles.row}>
+      <View style={[styles.row, { backgroundColor: colors.surfaceSecondary }]}>
         <TouchableOpacity
           style={styles.rowLeft}
           onPress={() => router.push(`/groups/${item._id}`)}
@@ -85,42 +87,42 @@ export function ArchivedGroupsScreen() {
             placeholder={{
               type: "initials",
               name: item.name,
-              backgroundColor: "#E5E5E5",
+              backgroundColor: colors.border,
             }}
           />
           <View style={styles.rowText}>
-            <Text style={styles.name} numberOfLines={1}>
+            <Text style={[styles.name, { color: colors.text }]} numberOfLines={1}>
               {item.name}
             </Text>
-            <Text style={styles.meta} numberOfLines={1}>
+            <Text style={[styles.meta, { color: colors.textSecondary }]} numberOfLines={1}>
               {item.groupTypeName || "Group"}
             </Text>
           </View>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.restoreButton, { borderColor: primaryColor }]}
+          style={[styles.restoreButton, { borderColor: primaryColor, backgroundColor: colors.surface }]}
           onPress={() => handleUnarchive(item._id, item.name)}
         >
           <Text style={[styles.restoreButtonText, { color: primaryColor }]}>Restore</Text>
         </TouchableOpacity>
       </View>
     ),
-    [handleUnarchive, primaryColor, router]
+    [handleUnarchive, primaryColor, router, colors]
   );
 
   if (!isAdmin) {
     return (
-      <View style={[styles.container, { paddingTop: insets.top + 20 }]}>
-        <View style={styles.header}>
+      <View style={[styles.container, { paddingTop: insets.top + 20, backgroundColor: colors.background }]}>
+        <View style={[styles.header, { borderBottomColor: colors.border, backgroundColor: colors.surface }]}>
           <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={24} color="#333" />
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Archived Groups</Text>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Archived Groups</Text>
         </View>
         <View style={styles.center}>
-          <Text style={styles.emptyTitle}>Admins only</Text>
-          <Text style={styles.emptySubtext}>You don’t have access to this page.</Text>
+          <Text style={[styles.emptyTitle, { color: colors.text }]}>Admins only</Text>
+          <Text style={[styles.emptySubtext, { color: colors.textSecondary }]}>You don't have access to this page.</Text>
         </View>
       </View>
     );
@@ -129,8 +131,8 @@ export function ArchivedGroupsScreen() {
   const isLoading = archivedGroups === undefined && queryArgs !== "skip";
 
   return (
-    <View style={styles.container}>
-      <View style={[styles.header, { paddingTop: insets.top + 20 }]}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <View style={[styles.header, { paddingTop: insets.top + 20, borderBottomColor: colors.border, backgroundColor: colors.surface }]}>
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => {
@@ -138,21 +140,21 @@ export function ArchivedGroupsScreen() {
             else router.push("/(user)/settings");
           }}
         >
-          <Ionicons name="arrow-back" size={24} color="#333" />
+          <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Archived Groups</Text>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>Archived Groups</Text>
       </View>
 
       {isLoading ? (
         <View style={styles.center}>
           <ActivityIndicator size="large" color={primaryColor} />
-          <Text style={styles.loadingText}>Loading archived groups...</Text>
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading archived groups...</Text>
         </View>
       ) : (archivedGroups?.length ?? 0) === 0 ? (
         <View style={styles.center}>
-          <Ionicons name="archive-outline" size={48} color="#ccc" style={{ marginBottom: 12 }} />
-          <Text style={styles.emptyTitle}>No archived groups</Text>
-          <Text style={styles.emptySubtext}>Archived groups will appear here.</Text>
+          <Ionicons name="archive-outline" size={48} color={colors.iconSecondary} style={{ marginBottom: 12 }} />
+          <Text style={[styles.emptyTitle, { color: colors.text }]}>No archived groups</Text>
+          <Text style={[styles.emptySubtext, { color: colors.textSecondary }]}>Archived groups will appear here.</Text>
         </View>
       ) : (
         <FlatList
@@ -169,7 +171,6 @@ export function ArchivedGroupsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
   },
   header: {
     flexDirection: "row",
@@ -177,8 +178,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
-    backgroundColor: "#fff",
   },
   backButton: {
     marginRight: 12,
@@ -188,7 +187,6 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 20,
     fontWeight: "700",
-    color: "#333",
   },
   listContent: {
     padding: 16,
@@ -198,7 +196,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    backgroundColor: "#f8f9fa",
     borderRadius: 12,
     padding: 12,
   },
@@ -220,19 +217,16 @@ const styles = StyleSheet.create({
   name: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#111",
   },
   meta: {
     marginTop: 2,
     fontSize: 13,
-    color: "#666",
   },
   restoreButton: {
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 10,
     borderWidth: 1,
-    backgroundColor: "#fff",
   },
   restoreButtonText: {
     fontSize: 14,
@@ -247,18 +241,15 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 12,
     fontSize: 14,
-    color: "#666",
   },
   emptyTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 6,
     textAlign: "center",
   },
   emptySubtext: {
     fontSize: 14,
-    color: "#666",
     textAlign: "center",
   },
 });

@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, Switch, Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
+import { useTheme } from "@hooks/useTheme";
 
 interface ChipConfig {
   hidden: string[];
@@ -16,6 +17,7 @@ interface Props {
 }
 
 export function ChipConfigEditor({ availableCategories, config, onChange }: Props) {
+  const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const themeColor = primaryColor || DEFAULT_PRIMARY_COLOR;
 
@@ -108,7 +110,7 @@ export function ChipConfigEditor({ availableCategories, config, onChange }: Prop
   if (availableCategories.length === 0) {
     return (
       <View style={styles.emptyContainer}>
-        <Text style={styles.emptyText}>
+        <Text style={[styles.emptyText, { color: colors.textTertiary }]}>
           No categories available. Categories will appear after loading a run sheet.
         </Text>
       </View>
@@ -120,7 +122,7 @@ export function ChipConfigEditor({ availableCategories, config, onChange }: Prop
       {/* Visible Categories */}
       {visibleCategories.length > 0 && (
         <View style={styles.section}>
-          <Text style={styles.subsectionTitle}>
+          <Text style={[styles.subsectionTitle, { color: colors.textTertiary }]}>
             Visible (in order)
           </Text>
           {visibleCategories.map((category, index) => (
@@ -140,7 +142,7 @@ export function ChipConfigEditor({ availableCategories, config, onChange }: Prop
                   <Ionicons
                     name="chevron-up"
                     size={20}
-                    color={index === 0 ? "#ccc" : "#666"}
+                    color={index === 0 ? colors.iconSecondary : colors.textSecondary}
                   />
                 </Pressable>
                 <Pressable
@@ -151,13 +153,13 @@ export function ChipConfigEditor({ availableCategories, config, onChange }: Prop
                   <Ionicons
                     name="chevron-down"
                     size={20}
-                    color={index === visibleCategories.length - 1 ? "#ccc" : "#666"}
+                    color={index === visibleCategories.length - 1 ? colors.iconSecondary : colors.textSecondary}
                   />
                 </Pressable>
                 <Switch
                   value={true}
                   onValueChange={() => handleToggleVisibility(category)}
-                  trackColor={{ false: "#e0e0e0", true: themeColor }}
+                  trackColor={{ false: colors.border, true: themeColor }}
                 />
               </View>
             </View>
@@ -183,7 +185,7 @@ export function ChipConfigEditor({ availableCategories, config, onChange }: Prop
                 <Switch
                   value={false}
                   onValueChange={() => handleToggleVisibility(category)}
-                  trackColor={{ false: "#e0e0e0", true: themeColor }}
+                  trackColor={{ false: colors.border, true: themeColor }}
                 />
               </View>
             </View>

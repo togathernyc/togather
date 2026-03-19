@@ -12,8 +12,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { UserRoute } from "@components/guards/UserRoute";
 import { ChannelPinningScreen } from "@features/leader-tools/components/ChannelPinningScreen";
 import type { Id } from "@services/api/convex";
+import { useTheme } from "@hooks/useTheme";
 
 export default function PinChannelsRoute() {
+  const { colors } = useTheme();
   const { group_id } = useLocalSearchParams<{ group_id: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -29,8 +31,8 @@ export default function PinChannelsRoute() {
   if (!group_id) {
     return (
       <UserRoute>
-        <View style={styles.container}>
-          <Text style={styles.errorText}>Group not found</Text>
+        <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
+          <Text style={[styles.errorText, { color: colors.textSecondary }]}>Group not found</Text>
         </View>
       </UserRoute>
     );
@@ -38,13 +40,13 @@ export default function PinChannelsRoute() {
 
   return (
     <UserRoute>
-      <View style={[styles.container, { paddingTop: insets.top }]}>
+      <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.surfaceSecondary }]}>
         {/* Header */}
-        <View style={styles.header}>
+        <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
           <TouchableOpacity style={styles.backButton} onPress={handleBack}>
-            <Ionicons name="arrow-back" size={24} color="#333" />
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Pin Channels</Text>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Pin Channels</Text>
           <View style={styles.headerSpacer} />
         </View>
 
@@ -61,15 +63,12 @@ export default function PinChannelsRoute() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F5F5F5",
   },
   header: {
     flexDirection: "row",
     alignItems: "center",
     padding: 16,
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   backButton: {
     padding: 4,
@@ -78,7 +77,6 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     textAlign: "center",
     marginRight: 32, // Balance the back button
   },
@@ -87,7 +85,6 @@ const styles = StyleSheet.create({
   },
   errorText: {
     fontSize: 16,
-    color: "#666",
     textAlign: "center",
     marginTop: 40,
   },

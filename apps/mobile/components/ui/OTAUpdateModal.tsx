@@ -21,8 +21,10 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Updates from 'expo-updates';
 import { DEFAULT_PRIMARY_COLOR } from '@utils/styles';
 import { useOTAUpdateStatus } from '@providers/OTAUpdateProvider';
+import { useTheme } from '@hooks/useTheme';
 
 export function OTAUpdateModal() {
+  const { colors } = useTheme();
   const { status } = useOTAUpdateStatus();
   const [isRestarting, setIsRestarting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -51,27 +53,27 @@ export function OTAUpdateModal() {
       animationType="fade"
       onRequestClose={() => {}}
     >
-      <View style={styles.overlay}>
-        <View style={styles.modal}>
-          <View style={styles.iconContainer}>
+      <View style={[styles.overlay, { backgroundColor: colors.overlay }]}>
+        <View style={[styles.modal, { backgroundColor: colors.modalBackground }]}>
+          <View style={[styles.iconContainer, { backgroundColor: colors.surfaceSecondary }]}>
             {isReady ? (
-              <Ionicons name="checkmark-circle" size={48} color="#34C759" />
+              <Ionicons name="checkmark-circle" size={48} color={colors.success} />
             ) : (
               <ActivityIndicator size="large" color={DEFAULT_PRIMARY_COLOR} />
             )}
           </View>
 
-          <Text style={styles.title}>
+          <Text style={[styles.title, { color: colors.text }]}>
             {isReady ? 'Update Ready' : 'Updating'}
           </Text>
 
-          <Text style={styles.message}>
+          <Text style={[styles.message, { color: colors.textSecondary }]}>
             {isReady
               ? 'A new update has been downloaded. Restart to apply it.'
               : 'Downloading the latest update. This will only take a moment.'}
           </Text>
 
-          {error && <Text style={styles.errorText}>{error}</Text>}
+          {error && <Text style={[styles.errorText, { color: colors.error }]}>{error}</Text>}
 
           {isReady && (
             <TouchableOpacity
@@ -81,11 +83,11 @@ export function OTAUpdateModal() {
               disabled={isRestarting}
             >
               {isRestarting ? (
-                <ActivityIndicator size="small" color="#fff" />
+                <ActivityIndicator size="small" color={colors.textInverse} />
               ) : (
                 <>
-                  <Ionicons name="refresh-outline" size={20} color="#fff" />
-                  <Text style={styles.installButtonText}>{error ? 'Retry' : 'Restart Now'}</Text>
+                  <Ionicons name="refresh-outline" size={20} color={colors.textInverse} />
+                  <Text style={[styles.installButtonText, { color: colors.textInverse }]}>{error ? 'Retry' : 'Restart Now'}</Text>
                 </>
               )}
             </TouchableOpacity>
@@ -99,13 +101,11 @@ export function OTAUpdateModal() {
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
   },
   modal: {
-    backgroundColor: '#fff',
     borderRadius: 20,
     padding: 24,
     width: '100%',
@@ -121,7 +121,6 @@ const styles = StyleSheet.create({
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: '#f5f5f5',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 16,
@@ -129,13 +128,11 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 22,
     fontWeight: '700',
-    color: '#1a1a1a',
     marginBottom: 12,
     textAlign: 'center',
   },
   message: {
     fontSize: 15,
-    color: '#666',
     textAlign: 'center',
     lineHeight: 22,
     marginBottom: 16,
@@ -155,12 +152,10 @@ const styles = StyleSheet.create({
     opacity: 0.7,
   },
   installButtonText: {
-    color: '#fff',
     fontSize: 16,
     fontWeight: '600',
   },
   errorText: {
-    color: '#FF3B30',
     fontSize: 14,
     textAlign: 'center',
     marginBottom: 12,

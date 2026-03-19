@@ -16,6 +16,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Avatar } from '@components/ui/Avatar';
 import { Ionicons } from '@expo/vector-icons';
+import { useTheme } from '@hooks/useTheme';
 
 const isWeb = Platform.OS === 'web';
 
@@ -44,6 +45,7 @@ export function SwipeableCommunityRow({
   const translateX = useSharedValue(0);
   const isOpen = useSharedValue(false);
   const [isHovered, setIsHovered] = useState(false);
+  const { colors, isDark } = useTheme();
 
   const closeSwipe = useCallback(() => {
     translateX.value = withSpring(0, { damping: 20, stiffness: 200 });
@@ -100,16 +102,16 @@ export function SwipeableCommunityRow({
 
       <View style={styles.textContainer}>
         <View style={styles.nameRow}>
-          <Text style={styles.communityName} numberOfLines={1}>
+          <Text style={[styles.communityName, { color: colors.text }]} numberOfLines={1}>
             {community.name}
           </Text>
           {isCurrentCommunity && (
-            <Ionicons name="checkmark-circle" size={20} color="#0A84FF" />
+            <Ionicons name="checkmark-circle" size={20} color={colors.link} />
           )}
         </View>
 
         {community.memberCount !== undefined && (
-          <Text style={styles.memberCount}>
+          <Text style={[styles.memberCount, { color: colors.textSecondary }]}>
             {community.memberCount === 1
               ? '1 member'
               : `${community.memberCount.toLocaleString()} members`}
@@ -120,18 +122,18 @@ export function SwipeableCommunityRow({
       {/* Show leave button on hover for web, chevron otherwise */}
       {isWeb && isHovered ? (
         <TouchableOpacity
-          style={styles.webLeaveButton}
+          style={[styles.webLeaveButton, { backgroundColor: isDark ? 'rgba(255, 59, 48, 0.2)' : '#FFF0F0' }]}
           onPress={(e) => {
             e.stopPropagation();
             onLeavePress();
           }}
           activeOpacity={0.7}
         >
-          <Ionicons name="exit-outline" size={16} color="#FF3B30" />
-          <Text style={styles.webLeaveButtonText}>Leave</Text>
+          <Ionicons name="exit-outline" size={16} color={colors.destructive} />
+          <Text style={[styles.webLeaveButtonText, { color: colors.destructive }]}>Leave</Text>
         </TouchableOpacity>
       ) : (
-        <Ionicons name="chevron-forward" size={20} color="#C7C7CC" />
+        <Ionicons name="chevron-forward" size={20} color={colors.iconSecondary} />
       )}
     </View>
   );
@@ -147,7 +149,8 @@ export function SwipeableCommunityRow({
           disabled={disabled}
           style={({ pressed }) => [
             styles.row,
-            isCurrentCommunity && styles.currentCommunityRow,
+            { backgroundColor: colors.surface },
+            isCurrentCommunity && { backgroundColor: colors.selectedBackground, borderWidth: 1, borderColor: colors.link },
             pressed && styles.rowPressed,
             disabled && styles.rowDisabled,
           ]}
@@ -162,7 +165,7 @@ export function SwipeableCommunityRow({
   return (
     <View style={styles.container}>
       {/* Hidden "Leave" button underneath */}
-      <View style={styles.hiddenButtonContainer}>
+      <View style={[styles.hiddenButtonContainer, { backgroundColor: colors.destructive }]}>
         <TouchableOpacity
           style={styles.leaveButton}
           onPress={handleLeavePress}
@@ -175,13 +178,14 @@ export function SwipeableCommunityRow({
 
       {/* Swipeable row content */}
       <GestureDetector gesture={panGesture}>
-        <Animated.View style={[styles.rowWrapper, animatedStyle]}>
+        <Animated.View style={[styles.rowWrapper, { backgroundColor: colors.surface }, animatedStyle]}>
           <Pressable
             onPress={handleRowPress}
             disabled={disabled}
             style={({ pressed }) => [
               styles.row,
-              isCurrentCommunity && styles.currentCommunityRow,
+              { backgroundColor: colors.surface },
+              isCurrentCommunity && { backgroundColor: colors.selectedBackground, borderWidth: 1, borderColor: colors.link },
               pressed && styles.rowPressed,
               disabled && styles.rowDisabled,
             ]}
@@ -209,7 +213,6 @@ const styles = StyleSheet.create({
     width: BUTTON_WIDTH,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#FF3B30',
     borderTopRightRadius: 16,
     borderBottomRightRadius: 16,
   },
@@ -228,11 +231,9 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   rowWrapper: {
-    backgroundColor: '#fff',
     borderRadius: 16,
   },
   row: {
-    backgroundColor: '#fff',
     borderRadius: 16,
     paddingVertical: 16,
     paddingHorizontal: 16,
@@ -255,11 +256,6 @@ const styles = StyleSheet.create({
   rowDisabled: {
     opacity: 0.5,
   },
-  currentCommunityRow: {
-    backgroundColor: '#F0F9FF',
-    borderWidth: 1,
-    borderColor: '#0A84FF',
-  },
   content: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -279,12 +275,10 @@ const styles = StyleSheet.create({
   communityName: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#222224',
     flex: 1,
   },
   memberCount: {
     fontSize: 14,
-    color: '#8E8E93',
     marginTop: 2,
   },
   webLeaveButton: {
@@ -293,11 +287,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 8,
-    backgroundColor: '#FFF0F0',
     gap: 4,
   },
   webLeaveButtonText: {
-    color: '#FF3B30',
     fontSize: 14,
     fontWeight: '600',
   },

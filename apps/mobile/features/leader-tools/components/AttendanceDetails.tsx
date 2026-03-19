@@ -18,6 +18,7 @@ import {
 import { AttendanceEditMode } from "./AttendanceEditMode";
 import { AttendanceViewMode } from "./AttendanceViewMode";
 import { isFutureEvent, isAnonymousGuest } from "../utils/attendanceUtils";
+import { useTheme } from "@hooks/useTheme";
 
 interface AttendanceDetailsProps {
   groupId: string;
@@ -58,6 +59,7 @@ export function AttendanceDetails({
   onAddGuest,
   onSelectDate,
 }: AttendanceDetailsProps) {
+  const { colors } = useTheme();
   const { user } = useAuth();
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState<string>("");
@@ -190,7 +192,7 @@ export function AttendanceDetails({
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" />
-        <Text style={styles.loadingText}>Loading attendance...</Text>
+        <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading attendance...</Text>
       </View>
     );
   }
@@ -212,13 +214,13 @@ export function AttendanceDetails({
   const modalGuestCount = anonymousGuestCount + namedGuests.length;
 
   return (
-    <View style={[styles.container, editMode && styles.containerEditMode]}>
+    <View style={[styles.container, { backgroundColor: colors.surface }, editMode && styles.containerEditMode]}>
       {/* Edit Button (only in view mode, not for future events) */}
       {/* Leaders can always edit attendance, even after it's been submitted */}
       {!editMode && !futureEvent && (
         <View style={styles.headerActions}>
           <TouchableOpacity style={styles.editButton} onPress={onEdit}>
-            <Text style={styles.editButtonText}>Edit</Text>
+            <Text style={[styles.editButtonText, { color: colors.text }]}>Edit</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -275,7 +277,6 @@ export function AttendanceDetails({
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: "#fff",
     padding: 20,
   },
   containerEditMode: {
@@ -290,7 +291,6 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 12,
     fontSize: 16,
-    color: "#666",
   },
   headerActions: {
     flexDirection: "row",
@@ -305,6 +305,5 @@ const styles = StyleSheet.create({
   editButtonText: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
   },
 });

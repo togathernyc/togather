@@ -54,6 +54,7 @@ import { Environment } from '@/services/environment';
 import { useDevToolsEscapeHatch } from '@/hooks/useDevToolsEscapeHatch';
 import { UserRoute } from '@components/guards/UserRoute';
 import { useQuery, useAction, useMutation, api } from '@services/api/convex';
+import { useTheme } from '@hooks/useTheme';
 
 // Available notification channels
 type NotificationChannel = 'push' | 'email' | 'chat' | 'sms';
@@ -70,6 +71,7 @@ const CHANNEL_INFO: Record<NotificationChannel, { label: string; icon: string; n
 
 export default function NotificationTesterPage() {
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
   const { handleNotificationTap, expoPushToken } = useNotifications();
   const { community, user, token: authToken } = useAuth();
   const { isEnabled: devToolsEnabled } = useDevToolsEscapeHatch();
@@ -444,8 +446,8 @@ export default function NotificationTesterPage() {
   if (!shouldShow) {
     return (
       <UserRoute>
-        <View style={[styles.container, { paddingTop: insets.top }]}>
-          <Text style={styles.errorText}>
+        <View style={[styles.container, { backgroundColor: colors.surfaceSecondary, paddingTop: insets.top }]}>
+          <Text style={[styles.errorText, { color: colors.error }]}>
             This page is only available in dev/staging builds.
           </Text>
         </View>
@@ -456,7 +458,7 @@ export default function NotificationTesterPage() {
   return (
     <UserRoute>
       <KeyboardAvoidingView
-        style={styles.container}
+        style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 64 : 0}
       >
@@ -470,40 +472,40 @@ export default function NotificationTesterPage() {
         >
           {/* Header */}
           <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
-            <Text style={styles.headerTitle}>Notification Tester</Text>
-            <Text style={styles.headerSubtitle}>
+            <Text style={[styles.headerTitle, { color: colors.text }]}>Notification Tester</Text>
+            <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>
               Test push notifications and deep links
             </Text>
           </View>
 
           {/* Environment Info */}
           <Card style={styles.section}>
-            <Text style={styles.sectionTitle}>Environment</Text>
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>Environment:</Text>
-              <Text style={styles.infoValue}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Environment</Text>
+            <View style={[styles.infoRow, { borderBottomColor: colors.surfaceSecondary }]}>
+              <Text style={[styles.infoLabel, { color: colors.textSecondary }]}>Environment:</Text>
+              <Text style={[styles.infoValue, { color: colors.text }]}>
                 {Environment.isStaging() ? 'Staging' : 'Development'}
               </Text>
             </View>
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>Community:</Text>
-              <Text style={styles.infoValue}>
+            <View style={[styles.infoRow, { borderBottomColor: colors.surfaceSecondary }]}>
+              <Text style={[styles.infoLabel, { color: colors.textSecondary }]}>Community:</Text>
+              <Text style={[styles.infoValue, { color: colors.text }]}>
                 {community?.name || 'None'} (ID: {community?.id || 'N/A'})
               </Text>
             </View>
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>User ID:</Text>
+            <View style={[styles.infoRow, { borderBottomColor: colors.surfaceSecondary }]}>
+              <Text style={[styles.infoLabel, { color: colors.textSecondary }]}>User ID:</Text>
               <Text
-                style={[styles.infoValue, styles.tokenText]}
+                style={[styles.infoValue, { color: colors.text }, styles.tokenText]}
                 numberOfLines={1}
               >
                 {user?.id || 'Not authenticated'}
               </Text>
             </View>
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>Push Token:</Text>
+            <View style={[styles.infoRow, { borderBottomColor: colors.surfaceSecondary }]}>
+              <Text style={[styles.infoLabel, { color: colors.textSecondary }]}>Push Token:</Text>
               <Text
-                style={[styles.infoValue, styles.tokenText]}
+                style={[styles.infoValue, { color: colors.text }, styles.tokenText]}
                 numberOfLines={1}
               >
                 {expoPushToken || 'Not registered'}
@@ -511,27 +513,27 @@ export default function NotificationTesterPage() {
             </View>
             {tokenDebugData && (
               <>
-                <View style={styles.infoRow}>
-                  <Text style={styles.infoLabel}>Backend Env:</Text>
-                  <Text style={styles.infoValue}>
+                <View style={[styles.infoRow, { borderBottomColor: colors.surfaceSecondary }]}>
+                  <Text style={[styles.infoLabel, { color: colors.textSecondary }]}>Backend Env:</Text>
+                  <Text style={[styles.infoValue, { color: colors.text }]}>
                     {tokenDebugData.currentEnvironment}
                   </Text>
                 </View>
 
                 {/* Push State - based on active tokens (single source of truth) */}
-                <View style={[styles.infoRow, { backgroundColor: tokenDebugData.pushEnabled ? '#E8F5E9' : '#FFEBEE', marginTop: 8, borderRadius: 8, padding: 12 }]}>
-                  <Text style={[styles.infoLabel, { fontWeight: '600' }]}>Push Notifications:</Text>
+                <View style={[styles.infoRow, { backgroundColor: tokenDebugData.pushEnabled ? colors.success + '15' : colors.error + '15', marginTop: 8, borderRadius: 8, padding: 12, borderBottomColor: 'transparent' }]}>
+                  <Text style={[styles.infoLabel, { color: colors.textSecondary, fontWeight: '600' }]}>Push Notifications:</Text>
                   <Text style={[
                     styles.infoValue,
                     {
-                      color: tokenDebugData.pushEnabled ? '#34C759' : '#FF3B30',
+                      color: tokenDebugData.pushEnabled ? colors.success : colors.error,
                       fontWeight: '600',
                     }
                   ]}>
                     {tokenDebugData.pushEnabled ? 'ENABLED' : 'DISABLED'}
                   </Text>
                 </View>
-                <Text style={{ fontSize: 12, color: '#666', marginTop: 4, marginBottom: 8 }}>
+                <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 4, marginBottom: 8 }}>
                   {tokenDebugData.pushEnabledReason}
                 </Text>
 
@@ -567,18 +569,18 @@ export default function NotificationTesterPage() {
                   </Button>
                 )}
 
-                <View style={[styles.infoRow, { marginTop: 12 }]}>
-                  <Text style={styles.infoLabel}>Diagnosis:</Text>
+                <View style={[styles.infoRow, { marginTop: 12, borderBottomColor: colors.surfaceSecondary }]}>
+                  <Text style={[styles.infoLabel, { color: colors.textSecondary }]}>Diagnosis:</Text>
                   <Text style={[
                     styles.infoValue,
-                    { color: tokenDebugData.diagnosis.startsWith('OK') ? '#34C759' : '#FF3B30' }
+                    { color: tokenDebugData.diagnosis.startsWith('OK') ? colors.success : colors.error }
                   ]}>
                     {tokenDebugData.diagnosis}
                   </Text>
                 </View>
                 {tokenDebugData.tokens.map((t: any, i: number) => (
-                  <View key={i} style={[styles.infoRow, { flexDirection: 'column', alignItems: 'flex-start' }]}>
-                    <Text style={styles.tokenText}>
+                  <View key={i} style={[styles.infoRow, { flexDirection: 'column', alignItems: 'flex-start', borderBottomColor: colors.surfaceSecondary }]}>
+                    <Text style={[styles.tokenText, { color: colors.text }]}>
                       Token {i + 1}: {t.environment} / {t.platform} / {t.isActive ? 'active' : 'inactive'}
                       {t.matchesCurrentEnv ? ' ✓' : ' ✗'}
                     </Text>
@@ -600,11 +602,11 @@ export default function NotificationTesterPage() {
 
           {/* Notification Type Selector */}
           <Card style={styles.section}>
-            <Text style={styles.sectionTitle}>Notification Type</Text>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Notification Type</Text>
             {typesLoading && useRealPush ? (
               <View style={styles.loadingContainer}>
-                <ActivityIndicator size="small" color="#666" />
-                <Text style={styles.loadingText}>Loading notification types...</Text>
+                <ActivityIndicator size="small" color={colors.textSecondary} />
+                <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading notification types...</Text>
               </View>
             ) : (
               <>
@@ -617,12 +619,12 @@ export default function NotificationTesterPage() {
                   searchable
                 />
                 {getNotificationSample(selectedType) && (
-                  <Text style={styles.typeDescription}>
+                  <Text style={[styles.typeDescription, { color: colors.textSecondary }]}>
                     {getNotificationSample(selectedType)?.description}
                   </Text>
                 )}
                 {currentTypeDefinition && (
-                  <Text style={styles.typeChannels}>
+                  <Text style={[styles.typeChannels, { color: colors.link }]}>
                     Supports: {currentTypeDefinition.availableChannels.join(', ')}
                   </Text>
                 )}
@@ -633,10 +635,10 @@ export default function NotificationTesterPage() {
           {/* Multi-Channel Options (only for real push mode) */}
           {useRealPush && (
             <Card style={styles.section}>
-              <Text style={styles.sectionTitle}>Channels & Mode</Text>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Channels & Mode</Text>
 
               {/* Channel Selection */}
-              <Text style={styles.inputLabel}>Select Channels</Text>
+              <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Select Channels</Text>
               <View style={styles.channelGrid}>
                 {(Object.keys(CHANNEL_INFO) as NotificationChannel[]).map((channel) => {
                   const info = CHANNEL_INFO[channel];
@@ -648,8 +650,9 @@ export default function NotificationTesterPage() {
                       key={channel}
                       style={[
                         styles.channelChip,
-                        isSelected && styles.channelChipSelected,
-                        !isAvailable && styles.channelChipDisabled,
+                        { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
+                        isSelected && { backgroundColor: colors.link, borderColor: colors.link },
+                        !isAvailable && { backgroundColor: colors.surfaceSecondary, borderColor: colors.border, opacity: 0.6 },
                       ]}
                       onPress={() => toggleChannel(channel)}
                       disabled={!isAvailable}
@@ -657,20 +660,21 @@ export default function NotificationTesterPage() {
                       <Ionicons
                         name={info.icon as any}
                         size={16}
-                        color={isSelected ? '#fff' : isAvailable ? '#666' : '#ccc'}
+                        color={isSelected ? colors.textInverse : isAvailable ? colors.textSecondary : colors.iconSecondary}
                       />
                       <Text
                         style={[
                           styles.channelChipText,
-                          isSelected && styles.channelChipTextSelected,
-                          !isAvailable && styles.channelChipTextDisabled,
+                          { color: colors.text },
+                          isSelected && { color: colors.textInverse },
+                          !isAvailable && { color: colors.textTertiary },
                         ]}
                       >
                         {info.label}
-                        {info.note && <Text style={styles.channelNote}> {info.note}</Text>}
+                        {info.note && <Text style={[styles.channelNote, { color: colors.textTertiary }]}> {info.note}</Text>}
                       </Text>
                       {isSelected && (
-                        <Ionicons name="checkmark" size={14} color="#fff" />
+                        <Ionicons name="checkmark" size={14} color={colors.textInverse} />
                       )}
                     </TouchableOpacity>
                   );
@@ -678,19 +682,20 @@ export default function NotificationTesterPage() {
               </View>
 
               {/* Mode Toggle */}
-              <Text style={[styles.inputLabel, { marginTop: 16 }]}>Send Mode</Text>
-              <View style={styles.modeToggle}>
+              <Text style={[styles.inputLabel, { color: colors.textSecondary, marginTop: 16 }]}>Send Mode</Text>
+              <View style={[styles.modeToggle, { backgroundColor: colors.surfaceSecondary }]}>
                 <TouchableOpacity
                   style={[
                     styles.modeOption,
-                    sendMode === 'cascade' && styles.modeOptionSelected,
+                    sendMode === 'cascade' && [styles.modeOptionSelected, { backgroundColor: colors.surface, shadowColor: colors.shadow }],
                   ]}
                   onPress={() => setSendMode('cascade')}
                 >
                   <Text
                     style={[
                       styles.modeOptionText,
-                      sendMode === 'cascade' && styles.modeOptionTextSelected,
+                      { color: colors.textSecondary },
+                      sendMode === 'cascade' && { color: colors.text },
                     ]}
                   >
                     Cascade
@@ -699,21 +704,22 @@ export default function NotificationTesterPage() {
                 <TouchableOpacity
                   style={[
                     styles.modeOption,
-                    sendMode === 'multi' && styles.modeOptionSelected,
+                    sendMode === 'multi' && [styles.modeOptionSelected, { backgroundColor: colors.surface, shadowColor: colors.shadow }],
                   ]}
                   onPress={() => setSendMode('multi')}
                 >
                   <Text
                     style={[
                       styles.modeOptionText,
-                      sendMode === 'multi' && styles.modeOptionTextSelected,
+                      { color: colors.textSecondary },
+                      sendMode === 'multi' && { color: colors.text },
                     ]}
                   >
                     Multi
                   </Text>
                 </TouchableOpacity>
               </View>
-              <Text style={styles.modeDescription}>
+              <Text style={[styles.modeDescription, { color: colors.textSecondary }]}>
                 {sendMode === 'cascade'
                   ? 'Stops on first successful channel'
                   : 'Sends to all selected channels'}
@@ -722,19 +728,20 @@ export default function NotificationTesterPage() {
               {/* Chat Target (only when chat is selected) */}
               {selectedChannels.includes('chat') && (
                 <>
-                  <Text style={[styles.inputLabel, { marginTop: 16 }]}>Chat Target</Text>
-                  <View style={styles.modeToggle}>
+                  <Text style={[styles.inputLabel, { color: colors.textSecondary, marginTop: 16 }]}>Chat Target</Text>
+                  <View style={[styles.modeToggle, { backgroundColor: colors.surfaceSecondary }]}>
                     <TouchableOpacity
                       style={[
                         styles.modeOption,
-                        chatTarget === 'main' && styles.modeOptionSelected,
+                        chatTarget === 'main' && [styles.modeOptionSelected, { backgroundColor: colors.surface, shadowColor: colors.shadow }],
                       ]}
                       onPress={() => setChatTarget('main')}
                     >
                       <Text
                         style={[
                           styles.modeOptionText,
-                          chatTarget === 'main' && styles.modeOptionTextSelected,
+                          { color: colors.textSecondary },
+                          chatTarget === 'main' && { color: colors.text },
                         ]}
                       >
                         Main Chat
@@ -743,14 +750,15 @@ export default function NotificationTesterPage() {
                     <TouchableOpacity
                       style={[
                         styles.modeOption,
-                        chatTarget === 'leaders' && styles.modeOptionSelected,
+                        chatTarget === 'leaders' && [styles.modeOptionSelected, { backgroundColor: colors.surface, shadowColor: colors.shadow }],
                       ]}
                       onPress={() => setChatTarget('leaders')}
                     >
                       <Text
                         style={[
                           styles.modeOptionText,
-                          chatTarget === 'leaders' && styles.modeOptionTextSelected,
+                          { color: colors.textSecondary },
+                          chatTarget === 'leaders' && { color: colors.text },
                         ]}
                       >
                         Leaders Chat
@@ -775,27 +783,27 @@ export default function NotificationTesterPage() {
 
           {/* Content Fields */}
           <Card style={styles.section}>
-            <Text style={styles.sectionTitle}>Notification Content</Text>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Notification Content</Text>
 
             <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Title</Text>
+              <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Title</Text>
               <TextInput
-                style={styles.input}
+                style={[styles.input, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surfaceSecondary }]}
                 value={title}
                 onChangeText={setTitle}
                 placeholder="Notification title"
-                placeholderTextColor="#999"
+                placeholderTextColor={colors.textTertiary}
               />
             </View>
 
             <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Body</Text>
+              <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Body</Text>
               <TextInput
-                style={[styles.input, styles.inputMultiline]}
+                style={[styles.input, styles.inputMultiline, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surfaceSecondary }]}
                 value={body}
                 onChangeText={setBody}
                 placeholder="Notification body"
-                placeholderTextColor="#999"
+                placeholderTextColor={colors.textTertiary}
                 multiline
                 numberOfLines={3}
               />
@@ -804,28 +812,28 @@ export default function NotificationTesterPage() {
 
           {/* Data Fields */}
           <Card style={styles.section}>
-            <Text style={styles.sectionTitle}>Payload Data</Text>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Payload Data</Text>
 
             <View style={styles.inputRow}>
               <View style={styles.inputHalf}>
-                <Text style={styles.inputLabel}>Group ID</Text>
+                <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Group ID</Text>
                 <TextInput
-                  style={styles.input}
+                  style={[styles.input, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surfaceSecondary }]}
                   value={groupId}
                   onChangeText={setGroupId}
                   placeholder="abc123-uuid"
-                  placeholderTextColor="#999"
+                  placeholderTextColor={colors.textTertiary}
                 />
               </View>
 
               <View style={styles.inputHalf}>
-                <Text style={styles.inputLabel}>Community ID</Text>
+                <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Community ID</Text>
                 <TextInput
-                  style={styles.input}
+                  style={[styles.input, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surfaceSecondary }]}
                   value={communityId}
                   onChangeText={setCommunityId}
                   placeholder="1"
-                  placeholderTextColor="#999"
+                  placeholderTextColor={colors.textTertiary}
                   keyboardType="numeric"
                 />
               </View>
@@ -833,24 +841,24 @@ export default function NotificationTesterPage() {
 
             <View style={styles.inputRow}>
               <View style={styles.inputHalf}>
-                <Text style={styles.inputLabel}>Channel ID</Text>
+                <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Channel ID</Text>
                 <TextInput
-                  style={styles.input}
+                  style={[styles.input, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surfaceSecondary }]}
                   value={channelId}
                   onChangeText={setChannelId}
                   placeholder="Optional"
-                  placeholderTextColor="#999"
+                  placeholderTextColor={colors.textTertiary}
                 />
               </View>
 
               <View style={styles.inputHalf}>
-                <Text style={styles.inputLabel}>Short ID (Event)</Text>
+                <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Short ID (Event)</Text>
                 <TextInput
-                  style={styles.input}
+                  style={[styles.input, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surfaceSecondary }]}
                   value={shortId}
                   onChangeText={setShortId}
                   placeholder="abc123"
-                  placeholderTextColor="#999"
+                  placeholderTextColor={colors.textTertiary}
                 />
               </View>
             </View>
@@ -858,8 +866,8 @@ export default function NotificationTesterPage() {
 
           {/* Live Preview */}
           <Card style={styles.section}>
-            <Text style={styles.sectionTitle}>Preview</Text>
-            <Text style={styles.previewHint}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Preview</Text>
+            <Text style={[styles.previewHint, { color: colors.textTertiary }]}>
               Tap the preview to test the deep link
             </Text>
             <NotificationPreview
@@ -871,15 +879,15 @@ export default function NotificationTesterPage() {
 
           {/* Action Buttons */}
           <Card style={styles.section}>
-            <Text style={styles.sectionTitle}>Actions</Text>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Actions</Text>
 
             {/* Toggle for Real vs Local Push */}
-            <View style={styles.toggleRow}>
+            <View style={[styles.toggleRow, { backgroundColor: colors.selectedBackground }]}>
               <View style={styles.toggleInfo}>
-                <Text style={styles.toggleLabel}>
+                <Text style={[styles.toggleLabel, { color: colors.text }]}>
                   {useRealPush ? '🚀 Real Push' : '📱 Local Only'}
                 </Text>
-                <Text style={styles.toggleDescription}>
+                <Text style={[styles.toggleDescription, { color: colors.textSecondary }]}>
                   {useRealPush
                     ? 'Uses centralized notification system (recommended)'
                     : 'Local notification - does NOT test real flow'}
@@ -914,13 +922,13 @@ export default function NotificationTesterPage() {
           {/* Result Display */}
           {lastResult && (
             <Card style={styles.section}>
-              <Text style={styles.sectionTitle}>Result</Text>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Result</Text>
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 style={styles.resultScroll}
               >
-                <Text style={styles.resultText}>{lastResult}</Text>
+                <Text style={[styles.resultText, { color: colors.text, backgroundColor: colors.surfaceSecondary }]}>{lastResult}</Text>
               </ScrollView>
             </Card>
           )}
@@ -935,35 +943,35 @@ export default function NotificationTesterPage() {
       >
         {emailPreviewLoading || emailPreviewFetching ? (
           <View style={styles.emailPreviewLoading}>
-            <ActivityIndicator size="large" color="#666" />
-            <Text style={styles.loadingText}>Loading email preview...</Text>
+            <ActivityIndicator size="large" color={colors.textSecondary} />
+            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading email preview...</Text>
           </View>
         ) : emailPreviewError ? (
           <View style={styles.emailPreviewError}>
-            <Ionicons name="alert-circle" size={48} color="#FF3B30" />
-            <Text style={styles.emailPreviewErrorText}>
+            <Ionicons name="alert-circle" size={48} color={colors.error} />
+            <Text style={[styles.emailPreviewErrorText, { color: colors.textSecondary }]}>
               Failed to load email preview.{'\n'}
               {emailPreviewError.message || 'Make sure the notification type has an email formatter.'}
             </Text>
           </View>
         ) : emailPreviewData ? (
           <View style={styles.emailPreviewContent}>
-            <View style={styles.emailSubjectRow}>
-              <Text style={styles.emailSubjectLabel}>Subject:</Text>
-              <Text style={styles.emailSubjectValue}>{emailPreviewData.subject}</Text>
+            <View style={[styles.emailSubjectRow, { borderBottomColor: colors.border }]}>
+              <Text style={[styles.emailSubjectLabel, { color: colors.textSecondary }]}>Subject:</Text>
+              <Text style={[styles.emailSubjectValue, { color: colors.text }]}>{emailPreviewData.subject}</Text>
             </View>
-            <Text style={styles.emailHtmlLabel}>HTML Preview:</Text>
-            <ScrollView style={styles.emailHtmlScroll}>
-              <Text style={styles.emailHtmlText}>{emailPreviewData.html}</Text>
+            <Text style={[styles.emailHtmlLabel, { color: colors.textSecondary }]}>HTML Preview:</Text>
+            <ScrollView style={[styles.emailHtmlScroll, { backgroundColor: colors.surfaceSecondary }]}>
+              <Text style={[styles.emailHtmlText, { color: colors.text }]}>{emailPreviewData.html}</Text>
             </ScrollView>
-            <Text style={styles.emailHtmlNote}>
+            <Text style={[styles.emailHtmlNote, { color: colors.textTertiary }]}>
               Note: Install react-native-webview for rendered preview
             </Text>
           </View>
         ) : (
           <View style={styles.emailPreviewError}>
-            <Ionicons name="alert-circle" size={48} color="#FF3B30" />
-            <Text style={styles.emailPreviewErrorText}>
+            <Ionicons name="alert-circle" size={48} color={colors.error} />
+            <Text style={[styles.emailPreviewErrorText, { color: colors.textSecondary }]}>
               Failed to load email preview.{'\n'}
               Make sure the notification type has an email formatter.
             </Text>
@@ -977,7 +985,6 @@ export default function NotificationTesterPage() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
   },
   scrollView: {
     flex: 1,
@@ -992,11 +999,9 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 28,
     fontWeight: 'bold',
-    color: '#333',
   },
   headerSubtitle: {
     fontSize: 15,
-    color: '#666',
     marginTop: 4,
   },
   section: {
@@ -1006,7 +1011,6 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 17,
     fontWeight: '600',
-    color: '#333',
     marginBottom: 12,
   },
   infoRow: {
@@ -1015,15 +1019,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
   },
   infoLabel: {
     fontSize: 14,
-    color: '#666',
   },
   infoValue: {
     fontSize: 14,
-    color: '#333',
     fontWeight: '500',
     flex: 1,
     textAlign: 'right',
@@ -1040,18 +1041,15 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: 14,
-    color: '#666',
     marginLeft: 8,
   },
   typeDescription: {
     fontSize: 13,
-    color: '#666',
     fontStyle: 'italic',
     marginTop: 8,
   },
   typeChannels: {
     fontSize: 12,
-    color: '#007AFF',
     marginTop: 4,
   },
   inputGroup: {
@@ -1068,18 +1066,14 @@ const styles = StyleSheet.create({
   inputLabel: {
     fontSize: 14,
     fontWeight: '500',
-    color: '#666',
     marginBottom: 6,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#ddd',
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 15,
-    color: '#333',
-    backgroundColor: '#fafafa',
   },
   inputMultiline: {
     minHeight: 80,
@@ -1098,39 +1092,19 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 20,
-    backgroundColor: '#f0f0f0',
     borderWidth: 1,
-    borderColor: '#e0e0e0',
     gap: 6,
-  },
-  channelChipSelected: {
-    backgroundColor: '#007AFF',
-    borderColor: '#007AFF',
-  },
-  channelChipDisabled: {
-    backgroundColor: '#f5f5f5',
-    borderColor: '#e5e5e5',
-    opacity: 0.6,
   },
   channelChipText: {
     fontSize: 14,
-    color: '#333',
     fontWeight: '500',
-  },
-  channelChipTextSelected: {
-    color: '#fff',
-  },
-  channelChipTextDisabled: {
-    color: '#999',
   },
   channelNote: {
     fontSize: 11,
-    color: '#999',
   },
   // Mode toggle styles
   modeToggle: {
     flexDirection: 'row',
-    backgroundColor: '#f0f0f0',
     borderRadius: 8,
     padding: 4,
     marginTop: 8,
@@ -1143,13 +1117,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modeOptionSelected: {
-    backgroundColor: '#fff',
     ...Platform.select({
       web: {
         boxShadow: '0px 2px 4px rgba(0, 0, 0, 0.1)',
       },
       default: {
-        shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.1,
         shadowRadius: 4,
@@ -1160,21 +1132,15 @@ const styles = StyleSheet.create({
   modeOptionText: {
     fontSize: 14,
     fontWeight: '500',
-    color: '#666',
-  },
-  modeOptionTextSelected: {
-    color: '#333',
   },
   modeDescription: {
     fontSize: 12,
-    color: '#666',
     fontStyle: 'italic',
     marginTop: 8,
     textAlign: 'center',
   },
   previewHint: {
     fontSize: 12,
-    color: '#999',
     marginBottom: 12,
     fontStyle: 'italic',
   },
@@ -1185,7 +1151,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#f0f7ff',
     borderRadius: 8,
     padding: 12,
     marginBottom: 16,
@@ -1197,11 +1162,9 @@ const styles = StyleSheet.create({
   toggleLabel: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#333',
   },
   toggleDescription: {
     fontSize: 12,
-    color: '#666',
     marginTop: 2,
   },
   toggleButton: {
@@ -1214,15 +1177,12 @@ const styles = StyleSheet.create({
   resultText: {
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
     fontSize: 12,
-    color: '#333',
-    backgroundColor: '#f5f5f5',
     padding: 12,
     borderRadius: 8,
     minWidth: '100%',
   },
   errorText: {
     fontSize: 16,
-    color: '#FF3B30',
     textAlign: 'center',
     padding: 20,
   },
@@ -1241,39 +1201,32 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     paddingBottom: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
   },
   emailSubjectLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#666',
     marginRight: 8,
   },
   emailSubjectValue: {
     fontSize: 14,
-    color: '#333',
     flex: 1,
   },
   emailHtmlLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#666',
     marginBottom: 8,
   },
   emailHtmlScroll: {
     maxHeight: 300,
-    backgroundColor: '#f5f5f5',
     borderRadius: 8,
     padding: 12,
   },
   emailHtmlText: {
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
     fontSize: 11,
-    color: '#333',
   },
   emailHtmlNote: {
     fontSize: 11,
-    color: '#999',
     fontStyle: 'italic',
     marginTop: 8,
     textAlign: 'center',
@@ -1285,7 +1238,6 @@ const styles = StyleSheet.create({
   },
   emailPreviewErrorText: {
     fontSize: 14,
-    color: '#666',
     textAlign: 'center',
     marginTop: 16,
   },

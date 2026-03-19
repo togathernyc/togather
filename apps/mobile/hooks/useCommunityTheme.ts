@@ -5,7 +5,7 @@
  * falling back to the default app colors when not configured.
  *
  * Usage:
- * const { primaryColor, secondaryColor, accentLight } = useCommunityTheme();
+ * const { primaryColor, secondaryColor, accentLight, primaryColorDark } = useCommunityTheme();
  */
 import { useMemo } from 'react';
 import { useAuth } from '@providers/AuthProvider';
@@ -18,6 +18,8 @@ interface CommunityTheme {
   secondaryColor: string;
   /** Light version of primary color (for backgrounds, highlights) */
   accentLight: string;
+  /** Darkened primary color for dark-mode chat bubbles */
+  primaryColorDark: string;
   /** Whether the theme is using custom community colors vs defaults */
   isCustomTheme: boolean;
 }
@@ -36,6 +38,19 @@ function hexToRgba(hex: string, opacity: number): string {
   return `rgba(${r}, ${g}, ${b}, ${opacity})`;
 }
 
+/**
+ * Darkens a hex color by a given factor (0-1).
+ * factor=0.4 means the result is 40% of the original brightness.
+ */
+export function darkenColor(hex: string, factor: number = 0.4): string {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  if (!result) return '#005c4b'; // Fallback dark green
+  const r = Math.round(parseInt(result[1], 16) * factor);
+  const g = Math.round(parseInt(result[2], 16) * factor);
+  const b = Math.round(parseInt(result[3], 16) * factor);
+  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+}
+
 export function useCommunityTheme(): CommunityTheme {
   const { user } = useAuth();
 
@@ -48,6 +63,7 @@ export function useCommunityTheme(): CommunityTheme {
       primaryColor,
       secondaryColor,
       accentLight: hexToRgba(primaryColor, 0.1),
+      primaryColorDark: darkenColor(primaryColor, 0.4),
       isCustomTheme,
     };
   }, [user?.community_primary_color, user?.community_secondary_color]);

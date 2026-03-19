@@ -20,6 +20,7 @@ import type { Id } from "@services/api/convex";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useAuth } from "@providers/AuthProvider";
+import { useTheme } from "@hooks/useTheme";
 
 type SelectOption = {
   value: string;
@@ -53,6 +54,7 @@ export function BotConfigModal({
   botName,
   botIcon,
 }: BotConfigModalProps) {
+  const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const { primaryColor } = useCommunityTheme();
 
@@ -197,6 +199,11 @@ export function BotConfigModal({
   // For now, use empty array as placeholder - feature needs Convex function update
   const leaders = (groupData as any)?.leaders || [];
 
+  // Warning banner colors (semantic)
+  const warningBannerBg = isDark ? '#3a3520' : '#fef3cd';
+  const warningBorderColor = isDark ? '#FF9F0A' : '#ffc107';
+  const warningTextColor = isDark ? '#FF9F0A' : '#856404';
+
   const renderField = (field: ConfigField) => {
     const value = formValues[field.key];
 
@@ -204,19 +211,19 @@ export function BotConfigModal({
       case "textarea":
         return (
           <View key={field.key} style={styles.fieldContainer}>
-            <Text style={styles.fieldLabel}>{field.label}</Text>
+            <Text style={[styles.fieldLabel, { color: colors.text }]}>{field.label}</Text>
             <TextInput
-              style={[styles.input, styles.textareaInput]}
+              style={[styles.input, styles.textareaInput, { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder, color: colors.text }]}
               value={String(value || "")}
               onChangeText={(text) => handleFieldChange(field.key, text)}
               placeholder={field.placeholder}
-              placeholderTextColor="#999"
+              placeholderTextColor={colors.textTertiary}
               multiline
               numberOfLines={4}
               textAlignVertical="top"
             />
             {field.helpText && (
-              <Text style={styles.helpText}>{field.helpText}</Text>
+              <Text style={[styles.helpText, { color: colors.textSecondary }]}>{field.helpText}</Text>
             )}
           </View>
         );
@@ -224,18 +231,18 @@ export function BotConfigModal({
       case "boolean":
         return (
           <View key={field.key} style={styles.fieldContainer}>
-            <View style={styles.switchRow}>
+            <View style={[styles.switchRow, { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder }]}>
               <View style={styles.switchLabelContainer}>
-                <Text style={styles.fieldLabel}>{field.label}</Text>
+                <Text style={[styles.fieldLabel, { color: colors.text }]}>{field.label}</Text>
                 {field.helpText && (
-                  <Text style={styles.helpText}>{field.helpText}</Text>
+                  <Text style={[styles.helpText, { color: colors.textSecondary }]}>{field.helpText}</Text>
                 )}
               </View>
               <Switch
                 value={Boolean(value)}
                 onValueChange={(val) => handleFieldChange(field.key, val)}
-                trackColor={{ false: "#E0E0E0", true: primaryColor }}
-                thumbColor={value ? primaryColor : "#f4f3f4"}
+                trackColor={{ false: colors.border, true: primaryColor }}
+                thumbColor={value ? primaryColor : colors.surfaceSecondary}
               />
             </View>
           </View>
@@ -244,19 +251,19 @@ export function BotConfigModal({
       case "number":
         return (
           <View key={field.key} style={styles.fieldContainer}>
-            <Text style={styles.fieldLabel}>{field.label}</Text>
+            <Text style={[styles.fieldLabel, { color: colors.text }]}>{field.label}</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder, color: colors.text }]}
               value={value !== undefined ? String(value) : ""}
               onChangeText={(text) =>
                 handleFieldChange(field.key, text ? Number(text) : undefined)
               }
               placeholder={field.placeholder}
-              placeholderTextColor="#999"
+              placeholderTextColor={colors.textTertiary}
               keyboardType="numeric"
             />
             {field.helpText && (
-              <Text style={styles.helpText}>{field.helpText}</Text>
+              <Text style={[styles.helpText, { color: colors.textSecondary }]}>{field.helpText}</Text>
             )}
           </View>
         );
@@ -264,21 +271,23 @@ export function BotConfigModal({
       case "select":
         return (
           <View key={field.key} style={styles.fieldContainer}>
-            <Text style={styles.fieldLabel}>{field.label}</Text>
+            <Text style={[styles.fieldLabel, { color: colors.text }]}>{field.label}</Text>
             <View style={styles.selectContainer}>
               {field.options?.map((option) => (
                 <TouchableOpacity
                   key={option.value}
                   style={[
                     styles.selectOption,
-                    value === option.value && styles.selectOptionSelected,
+                    { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder },
+                    value === option.value && { backgroundColor: primaryColor, borderColor: primaryColor },
                   ]}
                   onPress={() => handleFieldChange(field.key, option.value)}
                 >
                   <Text
                     style={[
                       styles.selectOptionText,
-                      value === option.value && styles.selectOptionTextSelected,
+                      { color: colors.text },
+                      value === option.value && { color: colors.textInverse, fontWeight: "600" as const },
                     ]}
                   >
                     {option.label}
@@ -287,7 +296,7 @@ export function BotConfigModal({
               ))}
             </View>
             {field.helpText && (
-              <Text style={styles.helpText}>{field.helpText}</Text>
+              <Text style={[styles.helpText, { color: colors.textSecondary }]}>{field.helpText}</Text>
             )}
           </View>
         );
@@ -295,21 +304,23 @@ export function BotConfigModal({
       case "leader_select":
         return (
           <View key={field.key} style={styles.fieldContainer}>
-            <Text style={styles.fieldLabel}>{field.label}</Text>
+            <Text style={[styles.fieldLabel, { color: colors.text }]}>{field.label}</Text>
             <View style={styles.selectContainer}>
               {leaders.map((leader: { id: string; user: { firstName: string; lastName: string } }) => (
                 <TouchableOpacity
                   key={leader.id}
                   style={[
                     styles.selectOption,
-                    value === leader.id && styles.selectOptionSelected,
+                    { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder },
+                    value === leader.id && { backgroundColor: primaryColor, borderColor: primaryColor },
                   ]}
                   onPress={() => handleFieldChange(field.key, leader.id)}
                 >
                   <Text
                     style={[
                       styles.selectOptionText,
-                      value === leader.id && styles.selectOptionTextSelected,
+                      { color: colors.text },
+                      value === leader.id && { color: colors.textInverse, fontWeight: "600" as const },
                     ]}
                   >
                     {leader.user.firstName} {leader.user.lastName}
@@ -318,7 +329,7 @@ export function BotConfigModal({
               ))}
             </View>
             {field.helpText && (
-              <Text style={styles.helpText}>{field.helpText}</Text>
+              <Text style={[styles.helpText, { color: colors.textSecondary }]}>{field.helpText}</Text>
             )}
           </View>
         );
@@ -336,13 +347,13 @@ export function BotConfigModal({
 
         return (
           <View key={field.key} style={styles.fieldContainer}>
-            <Text style={styles.fieldLabel}>{field.label}</Text>
+            <Text style={[styles.fieldLabel, { color: colors.text }]}>{field.label}</Text>
 
             {/* Warning banner if selected channel is archived */}
             {isSelectedArchived && (
-              <View style={styles.warningBanner}>
-                <Ionicons name="warning" size={16} color="#f59e0b" />
-                <Text style={styles.warningText}>
+              <View style={[styles.warningBanner, { backgroundColor: warningBannerBg, borderColor: warningBorderColor }]}>
+                <Ionicons name="warning" size={16} color={colors.warning} />
+                <Text style={[styles.warningText, { color: warningTextColor }]}>
                   Selected channel is archived. Bot messages will fail until you select another channel.
                 </Text>
               </View>
@@ -363,14 +374,16 @@ export function BotConfigModal({
                     key={channel.slug}
                     style={[
                       styles.selectOption,
-                      value === channel.slug && styles.selectOptionSelected,
+                      { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder },
+                      value === channel.slug && { backgroundColor: primaryColor, borderColor: primaryColor },
                     ]}
                     onPress={() => handleFieldChange(field.key, channel.slug)}
                   >
                     <Text
                       style={[
                         styles.selectOptionText,
-                        value === channel.slug && styles.selectOptionTextSelected,
+                        { color: colors.text },
+                        value === channel.slug && { color: colors.textInverse, fontWeight: "600" as const },
                       ]}
                     >
                       {displayName}
@@ -380,7 +393,7 @@ export function BotConfigModal({
               })}
             </View>
             {field.helpText && (
-              <Text style={styles.helpText}>{field.helpText}</Text>
+              <Text style={[styles.helpText, { color: colors.textSecondary }]}>{field.helpText}</Text>
             )}
           </View>
         );
@@ -390,16 +403,16 @@ export function BotConfigModal({
       default:
         return (
           <View key={field.key} style={styles.fieldContainer}>
-            <Text style={styles.fieldLabel}>{field.label}</Text>
+            <Text style={[styles.fieldLabel, { color: colors.text }]}>{field.label}</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder, color: colors.text }]}
               value={String(value || "")}
               onChangeText={(text) => handleFieldChange(field.key, text)}
               placeholder={field.placeholder}
-              placeholderTextColor="#999"
+              placeholderTextColor={colors.textTertiary}
             />
             {field.helpText && (
-              <Text style={styles.helpText}>{field.helpText}</Text>
+              <Text style={[styles.helpText, { color: colors.textSecondary }]}>{field.helpText}</Text>
             )}
           </View>
         );
@@ -414,17 +427,17 @@ export function BotConfigModal({
       onRequestClose={onClose}
     >
       <KeyboardAvoidingView
-        style={styles.container}
+        style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
         {/* Header */}
-        <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+        <View style={[styles.header, { paddingTop: insets.top + 8, backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
           <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-            <Ionicons name="close" size={24} color="#333" />
+            <Ionicons name="close" size={24} color={colors.text} />
           </TouchableOpacity>
           <View style={styles.headerCenter}>
             <Text style={styles.headerIcon}>{botIcon}</Text>
-            <Text style={styles.headerTitle}>{botName} Settings</Text>
+            <Text style={[styles.headerTitle, { color: colors.text }]}>{botName} Settings</Text>
           </View>
           <View style={styles.headerRight} />
         </View>
@@ -433,12 +446,12 @@ export function BotConfigModal({
         {isLoading ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={primaryColor} />
-            <Text style={styles.loadingText}>Loading configuration...</Text>
+            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading configuration...</Text>
           </View>
         ) : error ? (
           <View style={styles.errorContainer}>
-            <Ionicons name="alert-circle-outline" size={48} color="#e74c3c" />
-            <Text style={styles.errorText}>Failed to load configuration</Text>
+            <Ionicons name="alert-circle-outline" size={48} color={colors.destructive} />
+            <Text style={[styles.errorText, { color: colors.textSecondary }]}>Failed to load configuration</Text>
           </View>
         ) : (
           <>
@@ -456,28 +469,29 @@ export function BotConfigModal({
                 style={styles.resetButton}
                 onPress={handleResetToDefault}
               >
-                <Ionicons name="refresh-outline" size={18} color="#666" />
-                <Text style={styles.resetButtonText}>Reset to default</Text>
+                <Ionicons name="refresh-outline" size={18} color={colors.textSecondary} />
+                <Text style={[styles.resetButtonText, { color: colors.textSecondary }]}>Reset to default</Text>
               </TouchableOpacity>
             </ScrollView>
 
             {/* Save button */}
             <View
-              style={[styles.footer, { paddingBottom: insets.bottom + 16 }]}
+              style={[styles.footer, { paddingBottom: insets.bottom + 16, backgroundColor: colors.surface, borderTopColor: colors.border }]}
             >
               <TouchableOpacity
                 style={[
                   styles.saveButton,
+                  { backgroundColor: primaryColor },
                   (!isDirty || updateMutation.isPending) &&
-                    styles.saveButtonDisabled,
+                    { backgroundColor: colors.buttonDisabled },
                 ]}
                 onPress={handleSave}
                 disabled={!isDirty || updateMutation.isPending}
               >
                 {updateMutation.isPending ? (
-                  <ActivityIndicator size="small" color="#fff" />
+                  <ActivityIndicator size="small" color={colors.textInverse} />
                 ) : (
-                  <Text style={styles.saveButtonText}>Save Changes</Text>
+                  <Text style={[styles.saveButtonText, { color: colors.textInverse }]}>Save Changes</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -491,7 +505,6 @@ export function BotConfigModal({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f5f5f5",
   },
   header: {
     flexDirection: "row",
@@ -499,9 +512,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingBottom: 12,
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   closeButton: {
     padding: 4,
@@ -518,7 +529,6 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
   },
   headerRight: {
     width: 40,
@@ -531,7 +541,6 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 12,
     fontSize: 16,
-    color: "#666",
   },
   errorContainer: {
     flex: 1,
@@ -541,7 +550,6 @@ const styles = StyleSheet.create({
   },
   errorText: {
     fontSize: 16,
-    color: "#666",
     marginTop: 12,
     textAlign: "center",
   },
@@ -557,17 +565,13 @@ const styles = StyleSheet.create({
   fieldLabel: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 8,
   },
   input: {
-    backgroundColor: "#fff",
     borderWidth: 1,
-    borderColor: "#e0e0e0",
     borderRadius: 8,
     padding: 12,
     fontSize: 16,
-    color: "#333",
   },
   textareaInput: {
     minHeight: 100,
@@ -575,7 +579,6 @@ const styles = StyleSheet.create({
   },
   helpText: {
     fontSize: 12,
-    color: "#666",
     marginTop: 6,
     fontStyle: "italic",
   },
@@ -583,11 +586,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    backgroundColor: "#fff",
     padding: 12,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: "#e0e0e0",
   },
   switchLabelContainer: {
     flex: 1,
@@ -599,31 +600,18 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   selectOption: {
-    backgroundColor: "#fff",
     borderWidth: 1,
-    borderColor: "#e0e0e0",
     borderRadius: 8,
     paddingVertical: 10,
     paddingHorizontal: 16,
   },
-  selectOptionSelected: {
-    backgroundColor: DEFAULT_PRIMARY_COLOR,
-    borderColor: DEFAULT_PRIMARY_COLOR,
-  },
   selectOptionText: {
     fontSize: 14,
-    color: "#333",
-  },
-  selectOptionTextSelected: {
-    color: "#fff",
-    fontWeight: "600",
   },
   warningBanner: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#fef3cd",
     borderWidth: 1,
-    borderColor: "#ffc107",
     borderRadius: 8,
     padding: 12,
     marginBottom: 12,
@@ -632,7 +620,6 @@ const styles = StyleSheet.create({
   warningText: {
     flex: 1,
     fontSize: 13,
-    color: "#856404",
     lineHeight: 18,
   },
   resetButton: {
@@ -644,27 +631,19 @@ const styles = StyleSheet.create({
   },
   resetButtonText: {
     fontSize: 14,
-    color: "#666",
     marginLeft: 6,
   },
   footer: {
     padding: 16,
-    backgroundColor: "#fff",
     borderTopWidth: 1,
-    borderTopColor: "#e0e0e0",
   },
   saveButton: {
-    backgroundColor: DEFAULT_PRIMARY_COLOR,
     borderRadius: 8,
     paddingVertical: 14,
     alignItems: "center",
     justifyContent: "center",
   },
-  saveButtonDisabled: {
-    backgroundColor: "#ccc",
-  },
   saveButtonText: {
-    color: "#fff",
     fontSize: 16,
     fontWeight: "600",
   },

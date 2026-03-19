@@ -5,6 +5,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { format, parseISO } from "date-fns";
 import { AppImage } from "@components/ui";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
+import { useTheme } from "@hooks/useTheme";
 
 interface AccessPrompt {
   type: "sign_in" | "join_community" | "request_group";
@@ -36,6 +37,7 @@ interface AccessPromptScreenProps {
  */
 export function AccessPromptScreen({ event, prompt }: AccessPromptScreenProps) {
   const router = useRouter();
+  const { colors } = useTheme();
 
   const eventDate = event.scheduledAt ? parseISO(event.scheduledAt) : null;
 
@@ -73,7 +75,7 @@ export function AccessPromptScreen({ event, prompt }: AccessPromptScreenProps) {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
+    <ScrollView style={[styles.container, { backgroundColor: colors.surface }]} contentContainerStyle={styles.scrollContent}>
       {/* Cover Image with overlay */}
       <View style={styles.coverContainer}>
         <AppImage
@@ -93,20 +95,20 @@ export function AccessPromptScreen({ event, prompt }: AccessPromptScreenProps) {
       {/* Content */}
       <View style={styles.content}>
         {/* Event Title */}
-        <Text style={styles.title}>{event.title || "Event"}</Text>
+        <Text style={[styles.title, { color: colors.text }]}>{event.title || "Event"}</Text>
 
         {/* Date */}
         {eventDate && (
           <View style={styles.infoRow}>
-            <Ionicons name="calendar-outline" size={20} color="#666" />
-            <Text style={styles.infoText}>
+            <Ionicons name="calendar-outline" size={20} color={colors.textSecondary} />
+            <Text style={[styles.infoText, { color: colors.textSecondary }]}>
               {format(eventDate, "EEEE, MMMM d, yyyy 'at' h:mm a")}
             </Text>
           </View>
         )}
 
         {/* Community/Group Info */}
-        <View style={styles.organizerCard}>
+        <View style={[styles.organizerCard, { backgroundColor: colors.surfaceSecondary }]}>
           <AppImage
             source={event.communityLogo}
             style={styles.communityLogo}
@@ -117,29 +119,29 @@ export function AccessPromptScreen({ event, prompt }: AccessPromptScreenProps) {
             }}
           />
           <View style={styles.organizerInfo}>
-            <Text style={styles.organizerLabel}>Hosted by</Text>
-            <Text style={styles.organizerName}>{event.groupName}</Text>
-            <Text style={styles.communityName}>{event.communityName}</Text>
+            <Text style={[styles.organizerLabel, { color: colors.textSecondary }]}>Hosted by</Text>
+            <Text style={[styles.organizerName, { color: colors.text }]}>{event.groupName}</Text>
+            <Text style={[styles.communityName, { color: colors.textSecondary }]}>{event.communityName}</Text>
           </View>
         </View>
 
         {/* Access Prompt */}
         <View style={styles.promptCard}>
-          <View style={styles.promptIconContainer}>
+          <View style={[styles.promptIconContainer, { backgroundColor: colors.surface }]}>
             <Ionicons name="lock-closed" size={24} color={DEFAULT_PRIMARY_COLOR} />
           </View>
-          <Text style={styles.promptTitle}>Access Required</Text>
-          <Text style={styles.promptMessage}>{prompt.message}</Text>
+          <Text style={[styles.promptTitle, { color: colors.text }]}>Access Required</Text>
+          <Text style={[styles.promptMessage, { color: colors.textSecondary }]}>{prompt.message}</Text>
         </View>
 
         {/* Action Button */}
         <TouchableOpacity style={styles.actionButton} onPress={handleAction}>
           <Text style={styles.actionButtonText}>{getActionButtonText()}</Text>
-          <Ionicons name="arrow-forward" size={20} color="#fff" />
+          <Ionicons name="arrow-forward" size={20} color={colors.textInverse} />
         </TouchableOpacity>
 
         {/* Info Text */}
-        <Text style={styles.infoFooter}>
+        <Text style={[styles.infoFooter, { color: colors.textTertiary }]}>
           Complete the required action to view full event details and RSVP
         </Text>
       </View>
@@ -150,7 +152,6 @@ export function AccessPromptScreen({ event, prompt }: AccessPromptScreenProps) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
   },
   scrollContent: {
     paddingBottom: 40,
@@ -186,7 +187,6 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: "700",
-    color: "#333",
     marginBottom: 16,
   },
   infoRow: {
@@ -197,13 +197,11 @@ const styles = StyleSheet.create({
   },
   infoText: {
     fontSize: 15,
-    color: "#666",
     flex: 1,
   },
   organizerCard: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f8f8f8",
     borderRadius: 12,
     padding: 16,
     marginBottom: 24,
@@ -220,18 +218,15 @@ const styles = StyleSheet.create({
   },
   organizerLabel: {
     fontSize: 12,
-    color: "#666",
     marginBottom: 4,
   },
   organizerName: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 2,
   },
   communityName: {
     fontSize: 14,
-    color: "#666",
   },
   promptCard: {
     backgroundColor: "#F8F0FF",
@@ -246,7 +241,6 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: "#fff",
     justifyContent: "center",
     alignItems: "center",
     marginBottom: 16,
@@ -254,13 +248,11 @@ const styles = StyleSheet.create({
   promptTitle: {
     fontSize: 20,
     fontWeight: "700",
-    color: "#333",
     marginBottom: 12,
     textAlign: "center",
   },
   promptMessage: {
     fontSize: 15,
-    color: "#666",
     textAlign: "center",
     lineHeight: 22,
   },
@@ -281,7 +273,6 @@ const styles = StyleSheet.create({
   },
   infoFooter: {
     fontSize: 13,
-    color: "#999",
     textAlign: "center",
     lineHeight: 18,
   },

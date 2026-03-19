@@ -11,6 +11,7 @@ import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { AppImage } from '@components/ui';
 import { getMediaUrl } from '@/utils/media';
+import { useTheme } from '@hooks/useTheme';
 
 interface ImageAttachment {
   url: string;
@@ -40,6 +41,8 @@ export function ImageAttachmentsGrid({
   onImagePress,
   maxWidth = MAX_GRID_WIDTH,
 }: ImageAttachmentsGridProps) {
+  const { colors, isDark } = useTheme();
+
   if (!images || images.length === 0) {
     return null;
   }
@@ -47,6 +50,7 @@ export function ImageAttachmentsGrid({
   const count = images.length;
   const displayImages = images.slice(0, 4);
   const extraCount = count > 4 ? count - 4 : 0;
+  const placeholderBg = isDark ? colors.surfaceSecondary : '#f0f0f0';
 
   // Single image - full width
   if (count === 1) {
@@ -60,7 +64,7 @@ export function ImageAttachmentsGrid({
           placeholder={{
             type: 'icon',
             icon: 'image-outline',
-            backgroundColor: '#f0f0f0',
+            backgroundColor: placeholderBg,
           }}
         />
       </Pressable>
@@ -81,7 +85,7 @@ export function ImageAttachmentsGrid({
               placeholder={{
                 type: 'icon',
                 icon: 'image-outline',
-                backgroundColor: '#f0f0f0',
+                backgroundColor: placeholderBg,
               }}
             />
           </Pressable>
@@ -105,7 +109,7 @@ export function ImageAttachmentsGrid({
                 placeholder={{
                   type: 'icon',
                   icon: 'image-outline',
-                  backgroundColor: '#f0f0f0',
+                  backgroundColor: placeholderBg,
                 }}
               />
             </Pressable>
@@ -120,7 +124,7 @@ export function ImageAttachmentsGrid({
             placeholder={{
               type: 'icon',
               icon: 'image-outline',
-              backgroundColor: '#f0f0f0',
+              backgroundColor: placeholderBg,
             }}
           />
         </Pressable>
@@ -142,7 +146,7 @@ export function ImageAttachmentsGrid({
               placeholder={{
                 type: 'icon',
                 icon: 'image-outline',
-                backgroundColor: '#f0f0f0',
+                backgroundColor: placeholderBg,
               }}
             />
           </Pressable>
@@ -158,7 +162,7 @@ export function ImageAttachmentsGrid({
             placeholder={{
               type: 'icon',
               icon: 'image-outline',
-              backgroundColor: '#f0f0f0',
+              backgroundColor: placeholderBg,
             }}
           />
         </Pressable>
@@ -172,7 +176,7 @@ export function ImageAttachmentsGrid({
               placeholder={{
                 type: 'icon',
                 icon: 'image-outline',
-                backgroundColor: '#f0f0f0',
+                backgroundColor: placeholderBg,
               }}
             />
             {extraCount > 0 && (

@@ -13,6 +13,7 @@ import { format, addMonths, subMonths } from "date-fns";
 import { useRouter } from "expo-router";
 import { useMeetingDatesForMonth } from "../hooks";
 import { MeetingSummary } from "../types";
+import { useTheme } from "@hooks/useTheme";
 
 interface EventHistoryProps {
   groupId: string;
@@ -29,6 +30,7 @@ export function EventHistory({
   groupTypeName = "Event",
   isLeader = false,
 }: EventHistoryProps) {
+  const { colors } = useTheme();
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const router = useRouter();
 
@@ -144,13 +146,13 @@ export function EventHistory({
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.sectionTitle}>EVENT HISTORY</Text>
+        <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>EVENT HISTORY</Text>
         {isLeader && (
           <TouchableOpacity
-            style={styles.newEventButton}
+            style={[styles.newEventButton, { backgroundColor: colors.buttonPrimary }]}
             onPress={handleNewEvent}
           >
-            <Text style={styles.newEventButtonText}>New Event</Text>
+            <Text style={[styles.newEventButtonText, { color: colors.textInverse }]}>New Event</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -161,27 +163,27 @@ export function EventHistory({
           style={styles.monthNavButton}
           onPress={handlePreviousMonth}
         >
-          <Ionicons name="chevron-back" size={20} color="#666" />
+          <Ionicons name="chevron-back" size={20} color={colors.textSecondary} />
         </TouchableOpacity>
-        <Text style={styles.monthText}>
+        <Text style={[styles.monthText, { color: colors.text }]}>
           {format(currentMonth, "MMMM yyyy")}
         </Text>
         <TouchableOpacity
           style={styles.monthNavButton}
           onPress={handleNextMonth}
         >
-          <Ionicons name="chevron-forward" size={20} color="#666" />
+          <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
         </TouchableOpacity>
       </View>
 
       {/* Events List */}
       {isLoading ? (
         <View style={styles.loadingContainer}>
-          <Text style={styles.loadingText}>Loading events...</Text>
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading events...</Text>
         </View>
       ) : sortedEvents.length === 0 ? (
         <View style={styles.emptyContainer}>
-          <Text style={styles.emptyText}>
+          <Text style={[styles.emptyText, { color: colors.textTertiary }]}>
             No events scheduled for this month
           </Text>
         </View>
@@ -217,6 +219,7 @@ export function EventHistory({
                 key={event.meeting_id || event.id || event.date}
                 style={({ pressed }) => [
                   styles.eventCard,
+                  { backgroundColor: colors.surface, borderColor: colors.border },
                   pressed && styles.eventCardPressed,
                 ]}
                 onPress={() => {
@@ -228,32 +231,32 @@ export function EventHistory({
                 {(event as any).cover_image_url ? (
                   <AppImage
                     source={(event as any).cover_image_url}
-                    style={styles.cardImage}
+                    style={[styles.cardImage, { backgroundColor: colors.surfaceSecondary }]}
                     resizeMode="cover"
                     optimizedWidth={300}
                     placeholder={{ type: 'icon', icon: 'calendar' }}
                   />
                 ) : (
-                  <View style={styles.cardImagePlaceholder}>
-                    <Text style={styles.cardImagePlaceholderText}>
+                  <View style={[styles.cardImagePlaceholder, { backgroundColor: colors.border }]}>
+                    <Text style={[styles.cardImagePlaceholderText, { color: colors.textTertiary }]}>
                       {format(eventDate, "MMM")}
                     </Text>
                   </View>
                 )}
 
                 {/* Event Title */}
-                <Text style={styles.cardName} numberOfLines={2}>
+                <Text style={[styles.cardName, { color: colors.text }]} numberOfLines={2}>
                   {title}
                 </Text>
 
                 {/* Date */}
-                <Text style={styles.cardDate}>{formattedDate}</Text>
+                <Text style={[styles.cardDate, { color: colors.textSecondary }]}>{formattedDate}</Text>
 
                 {/* Attendee Count (only show if > 0) */}
                 {isPast && attendeeCount > 0 && (
                   <View style={styles.cardStats}>
-                    <Text style={styles.cardStatsValue}>{attendeeCount}</Text>
-                    <Text style={styles.cardStatsLabel}>
+                    <Text style={[styles.cardStatsValue, { color: colors.text }]}>{attendeeCount}</Text>
+                    <Text style={[styles.cardStatsLabel, { color: colors.textSecondary }]}>
                       {attendeeCount === 1 ? "person" : "people"}
                     </Text>
                   </View>
@@ -280,17 +283,14 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 12,
     fontWeight: "600",
-    color: "#666",
     textTransform: "uppercase",
   },
   newEventButton: {
-    backgroundColor: "#000",
     borderRadius: 8,
     paddingHorizontal: 16,
     paddingVertical: 8,
   },
   newEventButtonText: {
-    color: "#fff",
     fontSize: 14,
     fontWeight: "600",
   },
@@ -307,7 +307,6 @@ const styles = StyleSheet.create({
   monthText: {
     fontSize: 18,
     fontWeight: "bold",
-    color: "#333",
   },
   eventsScrollContent: {
     paddingHorizontal: 20,
@@ -315,13 +314,11 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
   eventCard: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     overflow: "hidden",
     minWidth: 140,
     maxWidth: 160,
     borderWidth: 1,
-    borderColor: "#e0e0e0",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
@@ -335,32 +332,27 @@ const styles = StyleSheet.create({
   cardImage: {
     width: "100%",
     height: 100,
-    backgroundColor: "#f0f0f0",
   },
   cardImagePlaceholder: {
     width: "100%",
     height: 100,
-    backgroundColor: "#e8e8e8",
     justifyContent: "center",
     alignItems: "center",
   },
   cardImagePlaceholderText: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#999",
     textTransform: "uppercase",
   },
   cardName: {
     fontSize: 15,
     fontWeight: "600",
-    color: "#333",
     paddingHorizontal: 12,
     paddingTop: 12,
     paddingBottom: 4,
   },
   cardDate: {
     fontSize: 13,
-    color: "#666",
     paddingHorizontal: 12,
     paddingBottom: 8,
   },
@@ -374,11 +366,9 @@ const styles = StyleSheet.create({
   cardStatsValue: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
   },
   cardStatsLabel: {
     fontSize: 12,
-    color: "#666",
   },
   loadingContainer: {
     padding: 20,
@@ -386,7 +376,6 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: 14,
-    color: "#666",
   },
   emptyContainer: {
     padding: 20,
@@ -394,6 +383,5 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 14,
-    color: "#999",
   },
 });

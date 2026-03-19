@@ -23,6 +23,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 import {
   useSlackBotConfig,
   type SlackBotTeamMember,
@@ -42,6 +43,7 @@ export function SlackBotConfigScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { primaryColor } = useCommunityTheme();
+  const { colors, isDark } = useTheme();
   const {
     config,
     status,
@@ -711,11 +713,11 @@ export function SlackBotConfigScreen() {
   if (!config) {
     return (
       <View style={styles.centered}>
-        <Ionicons name="warning-outline" size={48} color="#999" />
-        <Text style={styles.emptyText}>
+        <Ionicons name="warning-outline" size={48} color={colors.textTertiary} />
+        <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
           Slack bot not configured for this community.
         </Text>
-        <Text style={styles.emptySubtext}>
+        <Text style={[styles.emptySubtext, { color: colors.textTertiary }]}>
           Run the seed script to set up initial configuration.
         </Text>
       </View>
@@ -724,22 +726,22 @@ export function SlackBotConfigScreen() {
 
   return (
     <ScrollView
-      style={styles.container}
+      style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}
       contentContainerStyle={{ paddingBottom: insets.bottom + 20 }}
     >
       {/* Status Section */}
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Status</Text>
-        <View style={styles.card}>
+        <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Status</Text>
+        <View style={[styles.card, { backgroundColor: colors.surface }]}>
           <View style={styles.row}>
             <View style={styles.rowLeft}>
               <View
                 style={[
                   styles.statusDot,
-                  { backgroundColor: config.enabled ? "#34C759" : "#FF3B30" },
+                  { backgroundColor: config.enabled ? colors.success : colors.error },
                 ]}
               />
-              <Text style={styles.rowLabel}>
+              <Text style={[styles.rowLabel, { color: colors.text }]}>
                 Bot {config.enabled ? "Enabled" : "Disabled"}
               </Text>
             </View>
@@ -750,78 +752,78 @@ export function SlackBotConfigScreen() {
               trackColor={{ true: primaryColor }}
             />
           </View>
-          <View style={styles.divider} />
+          <View style={[styles.divider, { backgroundColor: colors.border }]} />
           <View style={styles.row}>
             <View style={styles.rowLeft}>
               <Ionicons
                 name="bug-outline"
                 size={18}
-                color={config.devMode ? "#FF9500" : "#999"}
+                color={config.devMode ? colors.warning : colors.iconSecondary}
               />
-              <Text style={styles.rowLabel}>Dev Mode</Text>
+              <Text style={[styles.rowLabel, { color: colors.text }]}>Dev Mode</Text>
             </View>
             <Switch
               value={config.devMode}
               onValueChange={handleToggleDevMode}
-              trackColor={{ true: "#FF9500" }}
+              trackColor={{ true: colors.warning }}
             />
           </View>
-          <View style={styles.divider} />
+          <View style={[styles.divider, { backgroundColor: colors.border }]} />
           <TouchableOpacity
             style={styles.row}
             onPress={() => router.push("/(user)/admin/slackbot/activity")}
           >
             <View style={styles.rowLeft}>
-              <Ionicons name="list-outline" size={18} color="#666" />
-              <Text style={styles.rowLabel}>Activity Log</Text>
+              <Ionicons name="list-outline" size={18} color={colors.textSecondary} />
+              <Text style={[styles.rowLabel, { color: colors.text }]}>Activity Log</Text>
             </View>
-            <Ionicons name="chevron-forward" size={16} color="#ccc" />
+            <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
           </TouchableOpacity>
         </View>
       </View>
 
       {/* Slack Channel Section */}
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Slack Channel</Text>
-        <Text style={styles.sectionSubtitle}>
+        <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Slack Channel</Text>
+        <Text style={[styles.sectionSubtitle, { color: colors.textTertiary }]}>
           Channel where service planning threads are posted
         </Text>
-        <TouchableOpacity style={styles.card} onPress={handleOpenChannelPicker} activeOpacity={0.7}>
+        <TouchableOpacity style={[styles.card, { backgroundColor: colors.surface }]} onPress={handleOpenChannelPicker} activeOpacity={0.7}>
           <View style={styles.row}>
             <View style={styles.rowLeft}>
-              <Ionicons name="chatbubbles-outline" size={18} color="#666" />
-              <Text style={styles.rowLabel}>
+              <Ionicons name="chatbubbles-outline" size={18} color={colors.textSecondary} />
+              <Text style={[styles.rowLabel, { color: colors.text }]}>
                 {slackChannels.length > 0
                   ? resolveChannelName(config.slackChannelId)
                   : config.slackChannelId}
               </Text>
             </View>
-            <Ionicons name="chevron-forward" size={16} color="#ccc" />
+            <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
           </View>
         </TouchableOpacity>
       </View>
 
       {/* Thread Schedule Section */}
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Thread Schedule</Text>
-        <Text style={styles.sectionSubtitle}>
+        <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Thread Schedule</Text>
+        <Text style={[styles.sectionSubtitle, { color: colors.textTertiary }]}>
           When new weekly service planning threads are created
         </Text>
-        <View style={styles.card}>
-          <Text style={styles.configLabel}>Day of Week</Text>
+        <View style={[styles.card, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.configLabel, { color: colors.textSecondary }]}>Day of Week</Text>
           <View style={[styles.chipContainer, { marginTop: 6, marginBottom: 12 }]}>
             {DAY_NAMES.map((day, i) => (
               <TouchableOpacity
                 key={day}
                 style={[
-                  styles.selectChip,
+                  styles.selectChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
                   config.threadCreation.dayOfWeek === i && { backgroundColor: primaryColor },
                 ]}
                 onPress={() => handleUpdateThreadDay(i)}
               >
                 <Text
                   style={[
-                    styles.selectChipText,
+                    styles.selectChipText, { color: colors.text },
                     config.threadCreation.dayOfWeek === i && { color: "#fff" },
                   ]}
                 >
@@ -830,20 +832,20 @@ export function SlackBotConfigScreen() {
               </TouchableOpacity>
             ))}
           </View>
-          <Text style={styles.configLabel}>Hour (ET)</Text>
+          <Text style={[styles.configLabel, { color: colors.textSecondary }]}>Hour (ET)</Text>
           <View style={[styles.chipContainer, { marginTop: 6 }]}>
             {[7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17].map((h) => (
               <TouchableOpacity
                 key={h}
                 style={[
-                  styles.selectChip,
+                  styles.selectChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
                   config.threadCreation.hourET === h && { backgroundColor: primaryColor },
                 ]}
                 onPress={() => handleUpdateThreadHour(h)}
               >
                 <Text
                   style={[
-                    styles.selectChipText,
+                    styles.selectChipText, { color: colors.text },
                     config.threadCreation.hourET === h && { color: "#fff" },
                   ]}
                 >
@@ -858,7 +860,7 @@ export function SlackBotConfigScreen() {
       {/* Team Members Section */}
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>
+          <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
             Team Members ({config.teamMembers.length})
           </Text>
           <TouchableOpacity
@@ -869,25 +871,25 @@ export function SlackBotConfigScreen() {
             <Text style={styles.addButtonText}>Add</Text>
           </TouchableOpacity>
         </View>
-        <View style={styles.card}>
+        <View style={[styles.card, { backgroundColor: colors.surface }]}>
           {config.teamMembers.length === 0 ? (
-            <Text style={styles.emptyCardText}>No team members yet. Tap "Add" to add from Slack.</Text>
+            <Text style={[styles.emptyCardText, { color: colors.textTertiary }]}>No team members yet. Tap "Add" to add from Slack.</Text>
           ) : (
             config.teamMembers.map((member: SlackBotTeamMember, index: number) => (
               <View key={member.slackUserId}>
-                {index > 0 && <View style={styles.divider} />}
+                {index > 0 && <View style={[styles.divider, { backgroundColor: colors.border }]} />}
                 <TouchableOpacity
                   style={styles.memberRow}
                   onPress={() => handleEditExistingMember(member)}
                   onLongPress={() => handleRemoveMember(member.slackUserId)}
                 >
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.memberName}>{member.name}</Text>
-                    <Text style={styles.memberDetail}>
+                    <Text style={[styles.memberName, { color: colors.text }]}>{member.name}</Text>
+                    <Text style={[styles.memberDetail, { color: colors.textTertiary }]}>
                       {member.roles.join(", ")} | {member.locations.join(", ")}
                     </Text>
                   </View>
-                  <Ionicons name="chevron-forward" size={16} color="#ccc" />
+                  <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
                 </TouchableOpacity>
               </View>
             ))
@@ -897,8 +899,8 @@ export function SlackBotConfigScreen() {
 
       {/* Thread Mentions Section */}
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Thread Mentions</Text>
-        <Text style={styles.sectionSubtitle}>
+        <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Thread Mentions</Text>
+        <Text style={[styles.sectionSubtitle, { color: colors.textTertiary }]}>
           Who gets @mentioned when new service planning threads are created
         </Text>
         {AVAILABLE_LOCATIONS.map((location) => {
@@ -906,7 +908,7 @@ export function SlackBotConfigScreen() {
           return (
             <View key={location} style={[styles.card, { marginBottom: 8 }]}>
               <View style={styles.row}>
-                <Text style={styles.rowLabel}>{location}</Text>
+                <Text style={[styles.rowLabel, { color: colors.text }]}>{location}</Text>
                 <TouchableOpacity
                   style={[styles.addButton, { backgroundColor: primaryColor }]}
                   onPress={() => handleOpenMentionPicker(location)}
@@ -918,14 +920,14 @@ export function SlackBotConfigScreen() {
               {mentions.length > 0 && (
                 <View style={styles.mentionChips}>
                   {mentions.map((id: string) => (
-                    <View key={id} style={styles.chip}>
-                      <Text style={styles.chipText}>{resolveSlackName(id)}</Text>
+                    <View key={id} style={[styles.chip, { backgroundColor: colors.surfaceSecondary }]}>
+                      <Text style={[styles.chipText, { color: colors.text }]}>{resolveSlackName(id)}</Text>
                     </View>
                   ))}
                 </View>
               )}
               {mentions.length === 0 && (
-                <Text style={styles.emptyCardText}>No mentions configured</Text>
+                <Text style={[styles.emptyCardText, { color: colors.textTertiary }]}>No mentions configured</Text>
               )}
             </View>
           );
@@ -935,7 +937,7 @@ export function SlackBotConfigScreen() {
       {/* Nag Schedule Section */}
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Nag Schedule</Text>
+          <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Nag Schedule</Text>
           <TouchableOpacity
             style={[styles.addButton, { backgroundColor: primaryColor }]}
             onPress={() => handleOpenNagEditor(null)}
@@ -944,18 +946,18 @@ export function SlackBotConfigScreen() {
             <Text style={styles.addButtonText}>Add</Text>
           </TouchableOpacity>
         </View>
-        <View style={styles.card}>
+        <View style={[styles.card, { backgroundColor: colors.surface }]}>
           {config.nagSchedule.map((nag: SlackBotNagEntry, index: number) => (
             <View key={`${nag.dayOfWeek}-${nag.hourET}-${nag.urgency}`}>
-              {index > 0 && <View style={styles.divider} />}
+              {index > 0 && <View style={[styles.divider, { backgroundColor: colors.border }]} />}
               <TouchableOpacity
                 style={styles.row}
                 onPress={() => handleOpenNagEditor(index)}
                 onLongPress={() => handleRemoveNagEntry(index)}
               >
                 <View>
-                  <Text style={styles.rowLabel}>{nag.label}</Text>
-                  <Text style={styles.memberDetail}>
+                  <Text style={[styles.rowLabel, { color: colors.text }]}>{nag.label}</Text>
+                  <Text style={[styles.memberDetail, { color: colors.textTertiary }]}>
                     {DAY_NAMES[nag.dayOfWeek]} at {nag.hourET}:00 ET
                   </Text>
                 </View>
@@ -966,18 +968,18 @@ export function SlackBotConfigScreen() {
                       {
                         backgroundColor:
                           nag.urgency === "critical"
-                            ? "#FF3B30"
+                            ? colors.error
                             : nag.urgency === "urgent"
-                              ? "#FF9500"
+                              ? colors.warning
                               : nag.urgency === "direct"
-                                ? "#007AFF"
-                                : "#34C759",
+                                ? colors.link
+                                : colors.success,
                       },
                     ]}
                   >
                     <Text style={styles.urgencyText}>{nag.urgency}</Text>
                   </View>
-                  <Ionicons name="chevron-forward" size={16} color="#ccc" />
+                  <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
                 </View>
               </TouchableOpacity>
             </View>
@@ -987,25 +989,25 @@ export function SlackBotConfigScreen() {
 
       {/* Send Nag Section */}
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Send Nag Now</Text>
-        <Text style={styles.sectionSubtitle}>
+        <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Send Nag Now</Text>
+        <Text style={[styles.sectionSubtitle, { color: colors.textTertiary }]}>
           Manually trigger a nag for active service threads
         </Text>
-        <View style={styles.card}>
-          <Text style={styles.configLabel}>Location</Text>
+        <View style={[styles.card, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.configLabel, { color: colors.textSecondary }]}>Location</Text>
           <View style={[styles.chipContainer, { marginTop: 6, marginBottom: 12 }]}>
             {AVAILABLE_LOCATIONS.map((loc) => (
               <TouchableOpacity
                 key={loc}
                 style={[
-                  styles.selectChip,
+                  styles.selectChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
                   nagLocation === loc && { backgroundColor: primaryColor },
                 ]}
                 onPress={() => setNagLocation(loc)}
               >
                 <Text
                   style={[
-                    styles.selectChipText,
+                    styles.selectChipText, { color: colors.text },
                     nagLocation === loc && { color: "#fff" },
                   ]}
                 >
@@ -1014,29 +1016,29 @@ export function SlackBotConfigScreen() {
               </TouchableOpacity>
             ))}
           </View>
-          <Text style={styles.configLabel}>Urgency</Text>
+          <Text style={[styles.configLabel, { color: colors.textSecondary }]}>Urgency</Text>
           <View style={[styles.chipContainer, { marginTop: 6, marginBottom: 16 }]}>
             {(["gentle", "direct", "urgent", "critical"] as const).map((u) => (
               <TouchableOpacity
                 key={u}
                 style={[
-                  styles.selectChip,
+                  styles.selectChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
                   nagUrgency === u && {
                     backgroundColor:
                       u === "critical"
-                        ? "#FF3B30"
+                        ? colors.error
                         : u === "urgent"
-                          ? "#FF9500"
+                          ? colors.warning
                           : u === "direct"
-                            ? "#007AFF"
-                            : "#34C759",
+                            ? colors.link
+                            : colors.success,
                   },
                 ]}
                 onPress={() => setNagUrgency(u)}
               >
                 <Text
                   style={[
-                    styles.selectChipText,
+                    styles.selectChipText, { color: colors.text },
                     nagUrgency === u && { color: "#fff" },
                   ]}
                 >
@@ -1068,8 +1070,8 @@ export function SlackBotConfigScreen() {
               style={[
                 styles.memberDetail,
                 { marginTop: 10, textAlign: "center" },
-                nagResult.startsWith("Failed") && { color: "#FF3B30" },
-                !nagResult.startsWith("Failed") && { color: "#34C759" },
+                nagResult.startsWith("Failed") && { color: colors.error },
+                !nagResult.startsWith("Failed") && { color: colors.success },
               ]}
             >
               {nagResult}
@@ -1081,7 +1083,7 @@ export function SlackBotConfigScreen() {
       {/* AI Config Section */}
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>AI Configuration</Text>
+          <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>AI Configuration</Text>
           <TouchableOpacity
             style={[styles.addButton, { backgroundColor: primaryColor }]}
             onPress={handleOpenAiEditor}
@@ -1090,29 +1092,29 @@ export function SlackBotConfigScreen() {
             <Text style={styles.addButtonText}>Edit</Text>
           </TouchableOpacity>
         </View>
-        <TouchableOpacity style={styles.card} onPress={handleOpenAiEditor} activeOpacity={0.7}>
+        <TouchableOpacity style={[styles.card, { backgroundColor: colors.surface }]} onPress={handleOpenAiEditor} activeOpacity={0.7}>
           <View style={styles.configRow}>
-            <Text style={styles.configLabel}>Model</Text>
-            <Text style={styles.configValue}>{config.aiConfig.model}</Text>
+            <Text style={[styles.configLabel, { color: colors.textSecondary }]}>Model</Text>
+            <Text style={[styles.configValue, { color: colors.text }]}>{config.aiConfig.model}</Text>
           </View>
-          <View style={styles.divider} />
+          <View style={[styles.divider, { backgroundColor: colors.border }]} />
           <View style={styles.configRow}>
-            <Text style={styles.configLabel}>Personality</Text>
-            <Text style={styles.configValueSmall} numberOfLines={3}>
+            <Text style={[styles.configLabel, { color: colors.textSecondary }]}>Personality</Text>
+            <Text style={[styles.configValueSmall, { color: colors.text }]} numberOfLines={3}>
               {config.aiConfig.botPersonality}
             </Text>
           </View>
-          <View style={styles.divider} />
+          <View style={[styles.divider, { backgroundColor: colors.border }]} />
           <View style={styles.configRow}>
-            <Text style={styles.configLabel}>Response Rules</Text>
-            <Text style={styles.configValueSmall} numberOfLines={3}>
+            <Text style={[styles.configLabel, { color: colors.textSecondary }]}>Response Rules</Text>
+            <Text style={[styles.configValueSmall, { color: colors.text }]} numberOfLines={3}>
               {config.aiConfig.responseRules}
             </Text>
           </View>
-          <View style={styles.divider} />
+          <View style={[styles.divider, { backgroundColor: colors.border }]} />
           <View style={styles.configRow}>
-            <Text style={styles.configLabel}>Team Context</Text>
-            <Text style={styles.configValueSmall} numberOfLines={2}>
+            <Text style={[styles.configLabel, { color: colors.textSecondary }]}>Team Context</Text>
+            <Text style={[styles.configValueSmall, { color: colors.text }]} numberOfLines={2}>
               {config.aiConfig.teamContext}
             </Text>
           </View>
@@ -1122,7 +1124,7 @@ export function SlackBotConfigScreen() {
       {/* PCO Config Section */}
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Planning Center</Text>
+          <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Planning Center</Text>
           <TouchableOpacity
             style={[styles.addButton, { backgroundColor: primaryColor }]}
             onPress={handleOpenPcoEditor}
@@ -1131,22 +1133,22 @@ export function SlackBotConfigScreen() {
             <Text style={styles.addButtonText}>Edit</Text>
           </TouchableOpacity>
         </View>
-        <TouchableOpacity style={styles.card} onPress={handleOpenPcoEditor} activeOpacity={0.7}>
+        <TouchableOpacity style={[styles.card, { backgroundColor: colors.surface }]} onPress={handleOpenPcoEditor} activeOpacity={0.7}>
           <View style={styles.configRow}>
-            <Text style={styles.configLabel}>Community ID</Text>
-            <Text style={styles.configValue} numberOfLines={1}>
+            <Text style={[styles.configLabel, { color: colors.textSecondary }]}>Community ID</Text>
+            <Text style={[styles.configValue, { color: colors.text }]} numberOfLines={1}>
               {config.pcoConfig.communityId.slice(0, 12)}...
             </Text>
           </View>
-          <View style={styles.divider} />
+          <View style={[styles.divider, { backgroundColor: colors.border }]} />
           {Object.entries(config.pcoConfig.serviceTypeIds as Record<string, string>).map(
             ([location, typeId]) => (
               <View key={location}>
                 <View style={styles.configRow}>
-                  <Text style={styles.configLabel}>{location} Service Type</Text>
-                  <Text style={styles.configValue}>{typeId}</Text>
+                  <Text style={[styles.configLabel, { color: colors.textSecondary }]}>{location} Service Type</Text>
+                  <Text style={[styles.configValue, { color: colors.text }]}>{typeId}</Text>
                 </View>
-                <View style={styles.divider} />
+                <View style={[styles.divider, { backgroundColor: colors.border }]} />
               </View>
             )
           )}
@@ -1154,8 +1156,8 @@ export function SlackBotConfigScreen() {
             ([role, mapping]) => (
               <View key={role}>
                 <View style={styles.configRow}>
-                  <Text style={styles.configLabel}>{role}</Text>
-                  <Text style={styles.configValueSmall}>
+                  <Text style={[styles.configLabel, { color: colors.textSecondary }]}>{role}</Text>
+                  <Text style={[styles.configValueSmall, { color: colors.text }]}>
                     Team: {mapping.teamNamePattern} | Position: {mapping.positionName}
                   </Text>
                 </View>
@@ -1168,7 +1170,7 @@ export function SlackBotConfigScreen() {
       {/* Service Plan Items Section */}
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Service Plan Items</Text>
+          <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Service Plan Items</Text>
           <TouchableOpacity
             style={[styles.addButton, { backgroundColor: primaryColor }]}
             onPress={() => handleOpenItemEditor(null)}
@@ -1177,21 +1179,21 @@ export function SlackBotConfigScreen() {
             <Text style={styles.addButtonText}>Add</Text>
           </TouchableOpacity>
         </View>
-        <View style={styles.card}>
+        <View style={[styles.card, { backgroundColor: colors.surface }]}>
           {getV2Items().length === 0 ? (
-            <Text style={styles.emptyCardText}>No items configured. Tap "Add" to create one.</Text>
+            <Text style={[styles.emptyCardText, { color: colors.textTertiary }]}>No items configured. Tap "Add" to create one.</Text>
           ) : (
             getV2Items().map((item: ServicePlanItemV2, index: number) => (
               <View key={item.id}>
-                {index > 0 && <View style={styles.divider} />}
+                {index > 0 && <View style={[styles.divider, { backgroundColor: colors.border }]} />}
                 <View style={styles.memberRow}>
                   <TouchableOpacity
                     style={{ flex: 1, flexDirection: "row", alignItems: "center" }}
                     onPress={() => handleOpenItemEditor(index)}
                   >
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.memberName}>{item.label}</Text>
-                      <Text style={styles.memberDetail}>
+                      <Text style={[styles.memberName, { color: colors.text }]}>{item.label}</Text>
+                      <Text style={[styles.memberDetail, { color: colors.textTertiary }]}>
                         {item.responsibleRoles.join(", ") || "no roles"}
                       </Text>
                     </View>
@@ -1202,10 +1204,10 @@ export function SlackBotConfigScreen() {
                           {
                             backgroundColor:
                               item.actionType === "assign_role"
-                                ? "#007AFF"
+                                ? colors.link
                                 : item.actionType === "update_plan_item"
-                                  ? "#34C759"
-                                  : "#999",
+                                  ? colors.success
+                                  : colors.textTertiary,
                           },
                         ]}
                       >
@@ -1217,7 +1219,7 @@ export function SlackBotConfigScreen() {
                               : "Track"}
                         </Text>
                       </View>
-                      <Ionicons name="chevron-forward" size={16} color="#ccc" />
+                      <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
                     </View>
                   </TouchableOpacity>
                   <TouchableOpacity
@@ -1225,7 +1227,7 @@ export function SlackBotConfigScreen() {
                     onPress={() => handleRemoveItem(index)}
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   >
-                    <Ionicons name="trash-outline" size={18} color="#FF3B30" />
+                    <Ionicons name="trash-outline" size={18} color={colors.destructive} />
                   </TouchableOpacity>
                 </View>
               </View>
@@ -1236,7 +1238,7 @@ export function SlackBotConfigScreen() {
 
       {/* Last Updated */}
       <View style={styles.footer}>
-        <Text style={styles.footerText}>
+        <Text style={[styles.footerText, { color: colors.textTertiary }]}>
           Last updated:{" "}
           {new Date(config.updatedAt).toLocaleString("en-US", {
             month: "short",
@@ -1255,18 +1257,18 @@ export function SlackBotConfigScreen() {
         presentationStyle="pageSheet"
         onRequestClose={() => setShowMemberPicker(false)}
       >
-        <View style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
+        <View style={[styles.modalContainer, { backgroundColor: colors.surface }]}>
+          <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
             <TouchableOpacity onPress={() => setShowMemberPicker(false)}>
               <Text style={[styles.modalAction, { color: primaryColor }]}>Cancel</Text>
             </TouchableOpacity>
-            <Text style={styles.modalTitle}>Add Team Member</Text>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Add Team Member</Text>
             <View style={{ width: 60 }} />
           </View>
-          <View style={styles.searchBar}>
-            <Ionicons name="search" size={18} color="#999" />
+          <View style={[styles.searchBar, { backgroundColor: colors.surfaceSecondary }]}>
+            <Ionicons name="search" size={18} color={colors.textTertiary} />
             <TextInput
-              style={styles.searchInput}
+              style={[styles.searchInput, { color: colors.text }]}
               placeholder="Search Slack members..."
               value={memberSearch}
               onChangeText={setMemberSearch}
@@ -1285,7 +1287,7 @@ export function SlackBotConfigScreen() {
                 );
                 return (
                   <TouchableOpacity
-                    style={styles.pickerRow}
+                    style={[styles.pickerRow, { borderBottomColor: colors.border }]}
                     onPress={() => handleSelectSlackMember(item)}
                     disabled={alreadyAdded}
                   >
@@ -1293,21 +1295,22 @@ export function SlackBotConfigScreen() {
                       <Text
                         style={[
                           styles.pickerName,
-                          alreadyAdded && { color: "#999" },
+                          { color: colors.text },
+                          alreadyAdded && { color: colors.textTertiary },
                         ]}
                       >
                         {item.realName}
                       </Text>
-                      <Text style={styles.pickerSubtext}>@{item.name}</Text>
+                      <Text style={[styles.pickerSubtext, { color: colors.textTertiary }]}>@{item.name}</Text>
                     </View>
                     {alreadyAdded && (
-                      <Text style={styles.addedBadge}>Added</Text>
+                      <Text style={[styles.addedBadge, { color: colors.textTertiary }]}>Added</Text>
                     )}
                   </TouchableOpacity>
                 );
               }}
               ListEmptyComponent={
-                <Text style={styles.emptyListText}>
+                <Text style={[styles.emptyListText, { color: colors.textTertiary }]}>
                   {memberSearch ? "No matching members" : "No members found"}
                 </Text>
               }
@@ -1323,12 +1326,12 @@ export function SlackBotConfigScreen() {
         presentationStyle="pageSheet"
         onRequestClose={() => setShowRoleEditor(false)}
       >
-        <View style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
+        <View style={[styles.modalContainer, { backgroundColor: colors.surface }]}>
+          <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
             <TouchableOpacity onPress={() => setShowRoleEditor(false)}>
-              <Text style={[styles.modalAction, { color: "#FF3B30" }]}>Cancel</Text>
+              <Text style={[styles.modalAction, { color: colors.destructive }]}>Cancel</Text>
             </TouchableOpacity>
-            <Text style={styles.modalTitle}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>
               {editingMember?.name ?? "Edit Member"}
             </Text>
             <TouchableOpacity onPress={handleSaveMember}>
@@ -1339,7 +1342,7 @@ export function SlackBotConfigScreen() {
           </View>
 
           <ScrollView style={{ padding: 16 }}>
-            <Text style={styles.editorLabel}>Roles</Text>
+            <Text style={[styles.editorLabel, { color: colors.textSecondary }]}>Roles</Text>
             <View style={styles.chipContainer}>
               {AVAILABLE_ROLES.map((role) => {
                 const selected = editingRoles.includes(role);
@@ -1347,7 +1350,7 @@ export function SlackBotConfigScreen() {
                   <TouchableOpacity
                     key={role}
                     style={[
-                      styles.selectChip,
+                      styles.selectChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
                       selected && { backgroundColor: primaryColor },
                     ]}
                     onPress={() => {
@@ -1360,7 +1363,7 @@ export function SlackBotConfigScreen() {
                   >
                     <Text
                       style={[
-                        styles.selectChipText,
+                        styles.selectChipText, { color: colors.text },
                         selected && { color: "#fff" },
                       ]}
                     >
@@ -1371,7 +1374,7 @@ export function SlackBotConfigScreen() {
               })}
             </View>
 
-            <Text style={[styles.editorLabel, { marginTop: 24 }]}>Locations</Text>
+            <Text style={[styles.editorLabel, { marginTop: 24, color: colors.textSecondary }]}>Locations</Text>
             <View style={styles.chipContainer}>
               {AVAILABLE_LOCATIONS.map((loc) => {
                 const selected = editingLocations.includes(loc);
@@ -1379,7 +1382,7 @@ export function SlackBotConfigScreen() {
                   <TouchableOpacity
                     key={loc}
                     style={[
-                      styles.selectChip,
+                      styles.selectChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
                       selected && { backgroundColor: primaryColor },
                     ]}
                     onPress={() => {
@@ -1392,7 +1395,7 @@ export function SlackBotConfigScreen() {
                   >
                     <Text
                       style={[
-                        styles.selectChipText,
+                        styles.selectChipText, { color: colors.text },
                         selected && { color: "#fff" },
                       ]}
                     >
@@ -1413,12 +1416,12 @@ export function SlackBotConfigScreen() {
         presentationStyle="pageSheet"
         onRequestClose={() => setShowAiEditor(false)}
       >
-        <View style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
+        <View style={[styles.modalContainer, { backgroundColor: colors.surface }]}>
+          <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
             <TouchableOpacity onPress={() => setShowAiEditor(false)}>
-              <Text style={[styles.modalAction, { color: "#FF3B30" }]}>Cancel</Text>
+              <Text style={[styles.modalAction, { color: colors.destructive }]}>Cancel</Text>
             </TouchableOpacity>
-            <Text style={styles.modalTitle}>AI Configuration</Text>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>AI Configuration</Text>
             <TouchableOpacity onPress={handleSaveAiConfig}>
               <Text style={[styles.modalAction, { color: primaryColor, fontWeight: "600" }]}>
                 Save
@@ -1426,18 +1429,18 @@ export function SlackBotConfigScreen() {
             </TouchableOpacity>
           </View>
           <ScrollView style={{ padding: 16 }} keyboardShouldPersistTaps="handled">
-            <Text style={styles.editorLabel}>Model</Text>
+            <Text style={[styles.editorLabel, { color: colors.textSecondary }]}>Model</Text>
             <TextInput
-              style={styles.textFieldSingle}
+              style={[styles.textFieldSingle, { backgroundColor: colors.surfaceSecondary, color: colors.text }]}
               value={editAiModel}
               onChangeText={setEditAiModel}
               placeholder="e.g. gpt-4o"
               autoCapitalize="none"
             />
 
-            <Text style={[styles.editorLabel, { marginTop: 20 }]}>Bot Personality</Text>
+            <Text style={[styles.editorLabel, { marginTop: 20, color: colors.textSecondary }]}>Bot Personality</Text>
             <TextInput
-              style={styles.textFieldMulti}
+              style={[styles.textFieldMulti, { backgroundColor: colors.surfaceSecondary, color: colors.text }]}
               value={editAiPersonality}
               onChangeText={setEditAiPersonality}
               placeholder="Describe the bot's personality..."
@@ -1445,9 +1448,9 @@ export function SlackBotConfigScreen() {
               textAlignVertical="top"
             />
 
-            <Text style={[styles.editorLabel, { marginTop: 20 }]}>Response Rules</Text>
+            <Text style={[styles.editorLabel, { marginTop: 20, color: colors.textSecondary }]}>Response Rules</Text>
             <TextInput
-              style={styles.textFieldMulti}
+              style={[styles.textFieldMulti, { backgroundColor: colors.surfaceSecondary, color: colors.text }]}
               value={editAiRules}
               onChangeText={setEditAiRules}
               placeholder="Rules for how the bot should respond..."
@@ -1455,9 +1458,9 @@ export function SlackBotConfigScreen() {
               textAlignVertical="top"
             />
 
-            <Text style={[styles.editorLabel, { marginTop: 20 }]}>Team Context</Text>
+            <Text style={[styles.editorLabel, { marginTop: 20, color: colors.textSecondary }]}>Team Context</Text>
             <TextInput
-              style={styles.textFieldMulti}
+              style={[styles.textFieldMulti, { backgroundColor: colors.surfaceSecondary, color: colors.text }]}
               value={editAiTeamContext}
               onChangeText={setEditAiTeamContext}
               placeholder="Context about the team/organization..."
@@ -1465,12 +1468,12 @@ export function SlackBotConfigScreen() {
               textAlignVertical="top"
             />
 
-            <Text style={[styles.editorLabel, { marginTop: 20 }]}>Nag Tone by Level</Text>
+            <Text style={[styles.editorLabel, { marginTop: 20, color: colors.textSecondary }]}>Nag Tone by Level</Text>
             {["gentle", "direct", "urgent", "critical"].map((level) => (
               <View key={level} style={{ marginBottom: 12 }}>
-                <Text style={styles.configLabel}>{level}</Text>
+                <Text style={[styles.configLabel, { color: colors.textSecondary }]}>{level}</Text>
                 <TextInput
-                  style={styles.textFieldMulti}
+                  style={[styles.textFieldMulti, { backgroundColor: colors.surfaceSecondary, color: colors.text }]}
                   value={editNagTones[level] ?? ""}
                   onChangeText={(text) =>
                     setEditNagTones((prev) => ({ ...prev, [level]: text }))
@@ -1493,12 +1496,12 @@ export function SlackBotConfigScreen() {
         presentationStyle="pageSheet"
         onRequestClose={() => setShowNagEditor(false)}
       >
-        <View style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
+        <View style={[styles.modalContainer, { backgroundColor: colors.surface }]}>
+          <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
             <TouchableOpacity onPress={() => setShowNagEditor(false)}>
-              <Text style={[styles.modalAction, { color: "#FF3B30" }]}>Cancel</Text>
+              <Text style={[styles.modalAction, { color: colors.destructive }]}>Cancel</Text>
             </TouchableOpacity>
-            <Text style={styles.modalTitle}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>
               {editingNagIndex !== null ? "Edit Nag" : "New Nag"}
             </Text>
             <TouchableOpacity onPress={handleSaveNagEntry}>
@@ -1508,28 +1511,28 @@ export function SlackBotConfigScreen() {
             </TouchableOpacity>
           </View>
           <ScrollView style={{ padding: 16 }}>
-            <Text style={styles.editorLabel}>Label</Text>
+            <Text style={[styles.editorLabel, { color: colors.textSecondary }]}>Label</Text>
             <TextInput
-              style={styles.textFieldSingle}
+              style={[styles.textFieldSingle, { backgroundColor: colors.surfaceSecondary, color: colors.text }]}
               value={editNagLabel}
               onChangeText={setEditNagLabel}
               placeholder="e.g. Mid-week check-in"
             />
 
-            <Text style={[styles.editorLabel, { marginTop: 20 }]}>Day of Week</Text>
+            <Text style={[styles.editorLabel, { marginTop: 20, color: colors.textSecondary }]}>Day of Week</Text>
             <View style={styles.chipContainer}>
               {DAY_NAMES.map((day, i) => (
                 <TouchableOpacity
                   key={day}
                   style={[
-                    styles.selectChip,
+                    styles.selectChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
                     editNagDay === i && { backgroundColor: primaryColor },
                   ]}
                   onPress={() => setEditNagDay(i)}
                 >
                   <Text
                     style={[
-                      styles.selectChipText,
+                      styles.selectChipText, { color: colors.text },
                       editNagDay === i && { color: "#fff" },
                     ]}
                   >
@@ -1539,20 +1542,20 @@ export function SlackBotConfigScreen() {
               ))}
             </View>
 
-            <Text style={[styles.editorLabel, { marginTop: 20 }]}>Hour (ET)</Text>
+            <Text style={[styles.editorLabel, { marginTop: 20, color: colors.textSecondary }]}>Hour (ET)</Text>
             <View style={styles.chipContainer}>
               {[8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20].map((h) => (
                 <TouchableOpacity
                   key={h}
                   style={[
-                    styles.selectChip,
+                    styles.selectChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
                     editNagHour === h && { backgroundColor: primaryColor },
                   ]}
                   onPress={() => setEditNagHour(h)}
                 >
                   <Text
                     style={[
-                      styles.selectChipText,
+                      styles.selectChipText, { color: colors.text },
                       editNagHour === h && { color: "#fff" },
                     ]}
                   >
@@ -1562,29 +1565,29 @@ export function SlackBotConfigScreen() {
               ))}
             </View>
 
-            <Text style={[styles.editorLabel, { marginTop: 20 }]}>Urgency</Text>
+            <Text style={[styles.editorLabel, { marginTop: 20, color: colors.textSecondary }]}>Urgency</Text>
             <View style={styles.chipContainer}>
               {(["gentle", "direct", "urgent", "critical"] as const).map((u) => (
                 <TouchableOpacity
                   key={u}
                   style={[
-                    styles.selectChip,
+                    styles.selectChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
                     editNagUrgency === u && {
                       backgroundColor:
                         u === "critical"
-                          ? "#FF3B30"
+                          ? colors.error
                           : u === "urgent"
-                            ? "#FF9500"
+                            ? colors.warning
                             : u === "direct"
-                              ? "#007AFF"
-                              : "#34C759",
+                              ? colors.link
+                              : colors.success,
                     },
                   ]}
                   onPress={() => setEditNagUrgency(u)}
                 >
                   <Text
                     style={[
-                      styles.selectChipText,
+                      styles.selectChipText, { color: colors.text },
                       editNagUrgency === u && { color: "#fff" },
                     ]}
                   >
@@ -1604,12 +1607,12 @@ export function SlackBotConfigScreen() {
         presentationStyle="pageSheet"
         onRequestClose={() => setShowPcoEditor(false)}
       >
-        <View style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
+        <View style={[styles.modalContainer, { backgroundColor: colors.surface }]}>
+          <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
             <TouchableOpacity onPress={() => setShowPcoEditor(false)}>
-              <Text style={[styles.modalAction, { color: "#FF3B30" }]}>Cancel</Text>
+              <Text style={[styles.modalAction, { color: colors.destructive }]}>Cancel</Text>
             </TouchableOpacity>
-            <Text style={styles.modalTitle}>Planning Center</Text>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Planning Center</Text>
             <TouchableOpacity onPress={handleSavePcoConfig}>
               <Text style={[styles.modalAction, { color: primaryColor, fontWeight: "600" }]}>
                 Save
@@ -1617,21 +1620,21 @@ export function SlackBotConfigScreen() {
             </TouchableOpacity>
           </View>
           <ScrollView style={{ padding: 16 }} keyboardShouldPersistTaps="handled">
-            <Text style={styles.editorLabel}>Community ID</Text>
+            <Text style={[styles.editorLabel, { color: colors.textSecondary }]}>Community ID</Text>
             <TextInput
-              style={styles.textFieldSingle}
+              style={[styles.textFieldSingle, { backgroundColor: colors.surfaceSecondary, color: colors.text }]}
               value={editPcoCommunityId}
               onChangeText={setEditPcoCommunityId}
               placeholder="Convex community ID"
               autoCapitalize="none"
             />
 
-            <Text style={[styles.editorLabel, { marginTop: 20 }]}>Service Type IDs</Text>
+            <Text style={[styles.editorLabel, { marginTop: 20, color: colors.textSecondary }]}>Service Type IDs</Text>
             {Object.entries(editPcoServiceTypeIds).map(([location, typeId]) => (
               <View key={location} style={{ marginBottom: 12 }}>
-                <Text style={styles.configLabel}>{location}</Text>
+                <Text style={[styles.configLabel, { color: colors.textSecondary }]}>{location}</Text>
                 <TextInput
-                  style={styles.textFieldSingle}
+                  style={[styles.textFieldSingle, { backgroundColor: colors.surfaceSecondary, color: colors.text }]}
                   value={typeId}
                   onChangeText={(text) =>
                     setEditPcoServiceTypeIds((prev) => ({ ...prev, [location]: text }))
@@ -1643,13 +1646,13 @@ export function SlackBotConfigScreen() {
               </View>
             ))}
 
-            <Text style={[styles.editorLabel, { marginTop: 20 }]}>Role Mappings</Text>
+            <Text style={[styles.editorLabel, { marginTop: 20, color: colors.textSecondary }]}>Role Mappings</Text>
             {Object.entries(editPcoRoleMappings).map(([role, mapping]) => (
-              <View key={role} style={styles.roleMappingCard}>
-                <Text style={[styles.configLabel, { fontSize: 15, fontWeight: "600" }]}>{role}</Text>
-                <Text style={[styles.configLabel, { marginTop: 8 }]}>Team Name Pattern</Text>
+              <View key={role} style={[styles.roleMappingCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+                <Text style={[styles.configLabel, { fontSize: 15, fontWeight: "600", color: colors.textSecondary }]}>{role}</Text>
+                <Text style={[styles.configLabel, { marginTop: 8, color: colors.textSecondary }]}>Team Name Pattern</Text>
                 <TextInput
-                  style={styles.textFieldSingle}
+                  style={[styles.textFieldSingle, { backgroundColor: colors.surfaceSecondary, color: colors.text }]}
                   value={mapping.teamNamePattern}
                   onChangeText={(text) =>
                     setEditPcoRoleMappings((prev) => ({
@@ -1660,9 +1663,9 @@ export function SlackBotConfigScreen() {
                   placeholder="e.g. Worship"
                   autoCapitalize="none"
                 />
-                <Text style={[styles.configLabel, { marginTop: 8 }]}>Position Name</Text>
+                <Text style={[styles.configLabel, { marginTop: 8, color: colors.textSecondary }]}>Position Name</Text>
                 <TextInput
-                  style={styles.textFieldSingle}
+                  style={[styles.textFieldSingle, { backgroundColor: colors.surfaceSecondary, color: colors.text }]}
                   value={mapping.positionName}
                   onChangeText={(text) =>
                     setEditPcoRoleMappings((prev) => ({
@@ -1687,12 +1690,12 @@ export function SlackBotConfigScreen() {
         presentationStyle="pageSheet"
         onRequestClose={() => setShowItemEditor(false)}
       >
-        <View style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
+        <View style={[styles.modalContainer, { backgroundColor: colors.surface }]}>
+          <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
             <TouchableOpacity onPress={() => setShowItemEditor(false)}>
-              <Text style={[styles.modalAction, { color: "#FF3B30" }]}>Cancel</Text>
+              <Text style={[styles.modalAction, { color: colors.destructive }]}>Cancel</Text>
             </TouchableOpacity>
-            <Text style={styles.modalTitle}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>
               {editingItemIndex !== null ? "Edit Item" : "New Item"}
             </Text>
             <TouchableOpacity onPress={handleSaveItem}>
@@ -1702,9 +1705,9 @@ export function SlackBotConfigScreen() {
             </TouchableOpacity>
           </View>
           <ScrollView style={{ padding: 16 }} keyboardShouldPersistTaps="handled">
-            <Text style={styles.editorLabel}>Label</Text>
+            <Text style={[styles.editorLabel, { color: colors.textSecondary }]}>Label</Text>
             <TextInput
-              style={styles.textFieldSingle}
+              style={[styles.textFieldSingle, { backgroundColor: colors.surfaceSecondary, color: colors.text }]}
               value={editItemLabel}
               onChangeText={(text) => {
                 setEditItemLabel(text);
@@ -1716,9 +1719,9 @@ export function SlackBotConfigScreen() {
               placeholder="e.g. Preacher, Service Video"
             />
 
-            <Text style={[styles.editorLabel, { marginTop: 16 }]}>ID</Text>
+            <Text style={[styles.editorLabel, { marginTop: 16, color: colors.textSecondary }]}>ID</Text>
             <TextInput
-              style={[styles.textFieldSingle, editingItemIndex !== null && { color: "#999" }]}
+              style={[styles.textFieldSingle, { backgroundColor: colors.surfaceSecondary, color: colors.text }, editingItemIndex !== null && { color: colors.textTertiary }]}
               value={editItemId}
               onChangeText={setEditItemId}
               placeholder="Auto-generated from label"
@@ -1726,7 +1729,7 @@ export function SlackBotConfigScreen() {
               editable={editingItemIndex === null}
             />
 
-            <Text style={[styles.editorLabel, { marginTop: 20 }]}>Responsible Roles</Text>
+            <Text style={[styles.editorLabel, { marginTop: 20, color: colors.textSecondary }]}>Responsible Roles</Text>
             <View style={styles.chipContainer}>
               {AVAILABLE_ROLES.map((role) => {
                 const selected = editItemRoles.includes(role);
@@ -1734,7 +1737,7 @@ export function SlackBotConfigScreen() {
                   <TouchableOpacity
                     key={role}
                     style={[
-                      styles.selectChip,
+                      styles.selectChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
                       selected && { backgroundColor: primaryColor },
                     ]}
                     onPress={() => {
@@ -1744,7 +1747,7 @@ export function SlackBotConfigScreen() {
                     }}
                   >
                     <Text
-                      style={[styles.selectChipText, selected && { color: "#fff" }]}
+                      style={[styles.selectChipText, { color: colors.text }, selected && { color: "#fff" }]}
                     >
                       {role}
                     </Text>
@@ -1753,7 +1756,7 @@ export function SlackBotConfigScreen() {
               })}
             </View>
 
-            <Text style={[styles.editorLabel, { marginTop: 20 }]}>Action Type</Text>
+            <Text style={[styles.editorLabel, { marginTop: 20, color: colors.textSecondary }]}>Action Type</Text>
             <View style={styles.chipContainer}>
               {([
                 { key: "assign_role", label: "Assign Role" },
@@ -1763,19 +1766,19 @@ export function SlackBotConfigScreen() {
                 <TouchableOpacity
                   key={key}
                   style={[
-                    styles.selectChip,
+                    styles.selectChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
                     editItemActionType === key && {
                       backgroundColor:
-                        key === "assign_role" ? "#007AFF"
-                          : key === "update_plan_item" ? "#34C759"
-                          : "#666",
+                        key === "assign_role" ? colors.link
+                          : key === "update_plan_item" ? colors.success
+                          : colors.textSecondary,
                     },
                   ]}
                   onPress={() => setEditItemActionType(key)}
                 >
                   <Text
                     style={[
-                      styles.selectChipText,
+                      styles.selectChipText, { color: colors.text },
                       editItemActionType === key && { color: "#fff" },
                     ]}
                   >
@@ -1787,13 +1790,13 @@ export function SlackBotConfigScreen() {
 
             {/* Assign Role fields */}
             {editItemActionType === "assign_role" && (
-              <View style={[styles.roleMappingCard, { marginTop: 16 }]}>
-                <Text style={[styles.configLabel, { fontSize: 14, fontWeight: "600" }]}>
+              <View style={[styles.roleMappingCard, { marginTop: 16, backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+                <Text style={[styles.configLabel, { fontSize: 14, fontWeight: "600", color: colors.textSecondary }]}>
                   PCO Role Assignment
                 </Text>
-                <Text style={[styles.configLabel, { marginTop: 10 }]}>Team Name Pattern</Text>
+                <Text style={[styles.configLabel, { marginTop: 10, color: colors.textSecondary }]}>Team Name Pattern</Text>
                 <TextInput
-                  style={styles.textFieldSingle}
+                  style={[styles.textFieldSingle, { backgroundColor: colors.surfaceSecondary, color: colors.text }]}
                   value={editItemTeamPattern}
                   onChangeText={setEditItemTeamPattern}
                   placeholder="e.g. platform, worship"
@@ -1805,7 +1808,7 @@ export function SlackBotConfigScreen() {
                       <TouchableOpacity
                         key={team.id}
                         style={[
-                          styles.selectChip,
+                          styles.selectChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
                           editItemTeamPattern.toLowerCase() === team.name.toLowerCase() && {
                             backgroundColor: primaryColor,
                           },
@@ -1814,7 +1817,7 @@ export function SlackBotConfigScreen() {
                       >
                         <Text
                           style={[
-                            styles.selectChipText,
+                            styles.selectChipText, { color: colors.text },
                             { fontSize: 12 },
                             editItemTeamPattern.toLowerCase() === team.name.toLowerCase() && {
                               color: "#fff",
@@ -1827,9 +1830,9 @@ export function SlackBotConfigScreen() {
                     ))}
                   </View>
                 )}
-                <Text style={[styles.configLabel, { marginTop: 10 }]}>Position Name</Text>
+                <Text style={[styles.configLabel, { marginTop: 10, color: colors.textSecondary }]}>Position Name</Text>
                 <TextInput
-                  style={styles.textFieldSingle}
+                  style={[styles.textFieldSingle, { backgroundColor: colors.surfaceSecondary, color: colors.text }]}
                   value={editItemPositionName}
                   onChangeText={setEditItemPositionName}
                   placeholder="e.g. Preacher, Meeting Leader"
@@ -1839,15 +1842,15 @@ export function SlackBotConfigScreen() {
 
             {/* Update Plan Item fields */}
             {editItemActionType === "update_plan_item" && (
-              <View style={[styles.roleMappingCard, { marginTop: 16 }]}>
-                <Text style={[styles.configLabel, { fontSize: 14, fontWeight: "600" }]}>
+              <View style={[styles.roleMappingCard, { marginTop: 16, backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+                <Text style={[styles.configLabel, { fontSize: 14, fontWeight: "600", color: colors.textSecondary }]}>
                   PCO Plan Item Update
                 </Text>
-                <Text style={[styles.configLabel, { marginTop: 10 }]}>
+                <Text style={[styles.configLabel, { marginTop: 10, color: colors.textSecondary }]}>
                   Item Title Pattern (pipe-separated)
                 </Text>
                 <TextInput
-                  style={styles.textFieldSingle}
+                  style={[styles.textFieldSingle, { backgroundColor: colors.surfaceSecondary, color: colors.text }]}
                   value={editItemTitlePattern}
                   onChangeText={setEditItemTitlePattern}
                   placeholder="e.g. message|preach|sermon"
@@ -1859,7 +1862,7 @@ export function SlackBotConfigScreen() {
                       <TouchableOpacity
                         key={item.title}
                         style={[
-                          styles.selectChip,
+                          styles.selectChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
                           editItemTitlePattern.toLowerCase().includes(item.title.toLowerCase()) && {
                             backgroundColor: primaryColor,
                           },
@@ -1875,7 +1878,7 @@ export function SlackBotConfigScreen() {
                       >
                         <Text
                           style={[
-                            styles.selectChipText,
+                            styles.selectChipText, { color: colors.text },
                             { fontSize: 12 },
                             editItemTitlePattern.toLowerCase().includes(item.title.toLowerCase()) && {
                               color: "#fff",
@@ -1888,20 +1891,20 @@ export function SlackBotConfigScreen() {
                     ))}
                   </View>
                 )}
-                <Text style={[styles.configLabel, { marginTop: 10 }]}>Field to Update</Text>
+                <Text style={[styles.configLabel, { marginTop: 10, color: colors.textSecondary }]}>Field to Update</Text>
                 <View style={styles.chipContainer}>
                   {(["description", "notes"] as const).map((field) => (
                     <TouchableOpacity
                       key={field}
                       style={[
-                        styles.selectChip,
+                        styles.selectChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
                         editItemField === field && { backgroundColor: primaryColor },
                       ]}
                       onPress={() => setEditItemField(field)}
                     >
                       <Text
                         style={[
-                          styles.selectChipText,
+                          styles.selectChipText, { color: colors.text },
                           editItemField === field && { color: "#fff" },
                         ]}
                       >
@@ -1910,11 +1913,11 @@ export function SlackBotConfigScreen() {
                     </TouchableOpacity>
                   ))}
                 </View>
-                <Text style={[styles.configLabel, { marginTop: 10 }]}>
+                <Text style={[styles.configLabel, { marginTop: 10, color: colors.textSecondary }]}>
                   Preserve Sections (comma-separated)
                 </Text>
                 <TextInput
-                  style={styles.textFieldSingle}
+                  style={[styles.textFieldSingle, { backgroundColor: colors.surfaceSecondary, color: colors.text }]}
                   value={editItemPreserveSections}
                   onChangeText={setEditItemPreserveSections}
                   placeholder="e.g. GIVING"
@@ -1923,9 +1926,9 @@ export function SlackBotConfigScreen() {
               </View>
             )}
 
-            <Text style={[styles.editorLabel, { marginTop: 20 }]}>AI Instructions (optional)</Text>
+            <Text style={[styles.editorLabel, { marginTop: 20, color: colors.textSecondary }]}>AI Instructions (optional)</Text>
             <TextInput
-              style={styles.textFieldMulti}
+              style={[styles.textFieldMulti, { backgroundColor: colors.surfaceSecondary, color: colors.text }]}
               value={editItemAiInstructions}
               onChangeText={setEditItemAiInstructions}
               placeholder="Special instructions for the AI when handling this item..."
@@ -1936,7 +1939,7 @@ export function SlackBotConfigScreen() {
             {isLoadingPcoData && (
               <View style={{ alignItems: "center", marginTop: 12 }}>
                 <ActivityIndicator size="small" color={primaryColor} />
-                <Text style={[styles.memberDetail, { marginTop: 4 }]}>Loading PCO data...</Text>
+                <Text style={[styles.memberDetail, { marginTop: 4, color: colors.textTertiary }]}>Loading PCO data...</Text>
               </View>
             )}
 
@@ -1952,18 +1955,18 @@ export function SlackBotConfigScreen() {
         presentationStyle="pageSheet"
         onRequestClose={() => setShowMentionPicker(false)}
       >
-        <View style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
+        <View style={[styles.modalContainer, { backgroundColor: colors.surface }]}>
+          <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
             <TouchableOpacity onPress={() => setShowMentionPicker(false)}>
               <Text style={[styles.modalAction, { color: primaryColor }]}>Done</Text>
             </TouchableOpacity>
-            <Text style={styles.modalTitle}>{mentionLocation} Mentions</Text>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>{mentionLocation} Mentions</Text>
             <View style={{ width: 60 }} />
           </View>
-          <View style={styles.searchBar}>
-            <Ionicons name="search" size={18} color="#999" />
+          <View style={[styles.searchBar, { backgroundColor: colors.surfaceSecondary }]}>
+            <Ionicons name="search" size={18} color={colors.textTertiary} />
             <TextInput
-              style={styles.searchInput}
+              style={[styles.searchInput, { color: colors.text }]}
               placeholder="Search members..."
               value={memberSearch}
               onChangeText={setMemberSearch}
@@ -1981,23 +1984,23 @@ export function SlackBotConfigScreen() {
                 );
                 return (
                   <TouchableOpacity
-                    style={styles.pickerRow}
+                    style={[styles.pickerRow, { borderBottomColor: colors.border }]}
                     onPress={() => handleToggleMention(item.id)}
                   >
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.pickerName}>{item.realName}</Text>
-                      <Text style={styles.pickerSubtext}>@{item.name}</Text>
+                      <Text style={[styles.pickerName, { color: colors.text }]}>{item.realName}</Text>
+                      <Text style={[styles.pickerSubtext, { color: colors.textTertiary }]}>@{item.name}</Text>
                     </View>
                     <Ionicons
                       name={isMentioned ? "checkmark-circle" : "ellipse-outline"}
                       size={24}
-                      color={isMentioned ? primaryColor : "#ccc"}
+                      color={isMentioned ? primaryColor : colors.iconSecondary}
                     />
                   </TouchableOpacity>
                 );
               }}
               ListEmptyComponent={
-                <Text style={styles.emptyListText}>
+                <Text style={[styles.emptyListText, { color: colors.textTertiary }]}>
                   {memberSearch ? "No matching members" : "No members found"}
                 </Text>
               }
@@ -2012,18 +2015,18 @@ export function SlackBotConfigScreen() {
         presentationStyle="pageSheet"
         onRequestClose={() => setShowChannelPicker(false)}
       >
-        <View style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
+        <View style={[styles.modalContainer, { backgroundColor: colors.surface }]}>
+          <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
             <TouchableOpacity onPress={() => setShowChannelPicker(false)}>
               <Text style={[styles.modalAction, { color: primaryColor }]}>Cancel</Text>
             </TouchableOpacity>
-            <Text style={styles.modalTitle}>Select Channel</Text>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Select Channel</Text>
             <View style={{ width: 60 }} />
           </View>
-          <View style={styles.searchBar}>
-            <Ionicons name="search" size={18} color="#999" />
+          <View style={[styles.searchBar, { backgroundColor: colors.surfaceSecondary }]}>
+            <Ionicons name="search" size={18} color={colors.textTertiary} />
             <TextInput
-              style={styles.searchInput}
+              style={[styles.searchInput, { color: colors.text }]}
               placeholder="Search channels..."
               value={channelSearch}
               onChangeText={setChannelSearch}
@@ -2040,13 +2043,14 @@ export function SlackBotConfigScreen() {
                 const isSelected = config?.slackChannelId === item.id;
                 return (
                   <TouchableOpacity
-                    style={styles.pickerRow}
+                    style={[styles.pickerRow, { borderBottomColor: colors.border }]}
                     onPress={() => handleSelectChannel(item)}
                   >
                     <View style={{ flex: 1 }}>
                       <Text
                         style={[
                           styles.pickerName,
+                          { color: colors.text },
                           isSelected && { color: primaryColor, fontWeight: "600" },
                         ]}
                       >
@@ -2060,7 +2064,7 @@ export function SlackBotConfigScreen() {
                 );
               }}
               ListEmptyComponent={
-                <Text style={styles.emptyListText}>
+                <Text style={[styles.emptyListText, { color: colors.textTertiary }]}>
                   {channelSearch ? "No matching channels" : "No channels found"}
                 </Text>
               }
@@ -2075,7 +2079,6 @@ export function SlackBotConfigScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F2F2F7",
   },
   centered: {
     flex: 1,
@@ -2085,13 +2088,11 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 16,
-    color: "#666",
     marginTop: 12,
     textAlign: "center",
   },
   emptySubtext: {
     fontSize: 14,
-    color: "#999",
     marginTop: 4,
     textAlign: "center",
   },
@@ -2110,19 +2111,16 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 13,
     fontWeight: "600",
-    color: "#666",
     textTransform: "uppercase",
     marginBottom: 8,
     marginLeft: 4,
   },
   sectionSubtitle: {
     fontSize: 12,
-    color: "#999",
     marginBottom: 8,
     marginLeft: 4,
   },
   card: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 16,
     ...Platform.select({
@@ -2137,7 +2135,6 @@ const styles = StyleSheet.create({
   },
   emptyCardText: {
     fontSize: 14,
-    color: "#999",
     textAlign: "center",
     paddingVertical: 8,
   },
@@ -2154,11 +2151,9 @@ const styles = StyleSheet.create({
   },
   rowLabel: {
     fontSize: 16,
-    color: "#000",
   },
   divider: {
     height: StyleSheet.hairlineWidth,
-    backgroundColor: "#E5E5EA",
     marginVertical: 10,
   },
   statusDot: {
@@ -2192,11 +2187,9 @@ const styles = StyleSheet.create({
   memberName: {
     fontSize: 16,
     fontWeight: "500",
-    color: "#000",
   },
   memberDetail: {
     fontSize: 13,
-    color: "#999",
     marginTop: 2,
   },
   mentionChips: {
@@ -2206,14 +2199,12 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   chip: {
-    backgroundColor: "#F0F0F0",
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
   },
   chipText: {
     fontSize: 13,
-    color: "#333",
   },
   urgencyBadge: {
     paddingHorizontal: 8,
@@ -2231,16 +2222,13 @@ const styles = StyleSheet.create({
   configLabel: {
     fontSize: 13,
     fontWeight: "600",
-    color: "#666",
     marginBottom: 2,
   },
   configValue: {
     fontSize: 15,
-    color: "#000",
   },
   configValueSmall: {
     fontSize: 14,
-    color: "#333",
     lineHeight: 20,
   },
   footer: {
@@ -2249,12 +2237,10 @@ const styles = StyleSheet.create({
   },
   footerText: {
     fontSize: 12,
-    color: "#999",
   },
   // Modal styles
   modalContainer: {
     flex: 1,
-    backgroundColor: "#fff",
   },
   modalHeader: {
     flexDirection: "row",
@@ -2263,12 +2249,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#E5E5EA",
   },
   modalTitle: {
     fontSize: 17,
     fontWeight: "600",
-    color: "#000",
   },
   modalAction: {
     fontSize: 16,
@@ -2277,7 +2261,6 @@ const styles = StyleSheet.create({
   searchBar: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#F2F2F7",
     margin: 12,
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -2287,7 +2270,6 @@ const styles = StyleSheet.create({
   searchInput: {
     flex: 1,
     fontSize: 16,
-    color: "#000",
   },
   pickerRow: {
     flexDirection: "row",
@@ -2295,25 +2277,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#F0F0F0",
   },
   pickerName: {
     fontSize: 16,
-    color: "#000",
   },
   pickerSubtext: {
     fontSize: 13,
-    color: "#999",
     marginTop: 1,
   },
   addedBadge: {
     fontSize: 13,
-    color: "#999",
     fontStyle: "italic",
   },
   emptyListText: {
     fontSize: 15,
-    color: "#999",
     textAlign: "center",
     marginTop: 40,
   },
@@ -2321,7 +2298,6 @@ const styles = StyleSheet.create({
   editorLabel: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#666",
     marginBottom: 10,
     textTransform: "uppercase",
   },
@@ -2334,31 +2310,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 18,
-    backgroundColor: "#F0F0F0",
     borderWidth: 1,
-    borderColor: "#E0E0E0",
   },
   selectChipText: {
     fontSize: 14,
-    color: "#333",
     fontWeight: "500",
   },
   textFieldSingle: {
-    backgroundColor: "#F2F2F7",
     borderRadius: 10,
     paddingHorizontal: 14,
     paddingVertical: 10,
     fontSize: 16,
-    color: "#000",
     marginTop: 4,
   },
   textFieldMulti: {
-    backgroundColor: "#F2F2F7",
     borderRadius: 10,
     paddingHorizontal: 14,
     paddingVertical: 10,
     fontSize: 15,
-    color: "#000",
     minHeight: 80,
     marginTop: 4,
     lineHeight: 22,
@@ -2377,11 +2346,9 @@ const styles = StyleSheet.create({
     color: "#fff",
   },
   roleMappingCard: {
-    backgroundColor: "#F9F9F9",
     borderRadius: 10,
     padding: 12,
     marginBottom: 12,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#E5E5EA",
   },
 });

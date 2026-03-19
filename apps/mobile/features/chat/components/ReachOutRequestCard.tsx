@@ -12,6 +12,7 @@ import { Ionicons } from "@expo/vector-icons";
 import type { Id } from "@services/api/convex";
 import { useAuthenticatedMutation, api } from "@services/api/convex";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 import { AppImage } from "@components/ui";
 import { ReachOutResolveModal } from "./ReachOutResolveModal";
 import { useContactConfirmation } from "../hooks/useContactConfirmation";
@@ -89,6 +90,7 @@ export function ReachOutRequestCard({
   groupId,
   leaders,
 }: ReachOutRequestCardProps) {
+  const { colors, isDark } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const statusConfig = STATUS_CONFIG[request.status] ?? STATUS_CONFIG.pending;
   const [showResolveModal, setShowResolveModal] = useState(false);
@@ -210,15 +212,15 @@ export function ReachOutRequestCard({
     // Revoked cards: collapsed, greyed out
     if (isRevoked) {
       return (
-        <View style={[styles.card, styles.revokedCard]}>
+        <View style={[styles.card, { backgroundColor: colors.surface, borderLeftColor: colors.border }, styles.revokedCard]}>
           <View style={styles.cardHeader}>
-            <View style={[styles.statusBadge, { backgroundColor: "#99915" }]}>
-              <Ionicons name="close-circle-outline" size={14} color="#999" />
-              <Text style={[styles.statusText, { color: "#999" }]}>Withdrawn</Text>
+            <View style={[styles.statusBadge, { backgroundColor: colors.textTertiary + "15" }]}>
+              <Ionicons name="close-circle-outline" size={14} color={colors.textTertiary} />
+              <Text style={[styles.statusText, { color: colors.textTertiary }]}>Withdrawn</Text>
             </View>
-            <Text style={styles.timeText}>{formatTime(request.createdAt)}</Text>
+            <Text style={[styles.timeText, { color: colors.textTertiary }]}>{formatTime(request.createdAt)}</Text>
           </View>
-          <Text style={styles.revokedContent} numberOfLines={1}>
+          <Text style={[styles.revokedContent, { color: colors.textTertiary }]} numberOfLines={1}>
             {request.content}
           </Text>
         </View>
@@ -226,7 +228,7 @@ export function ReachOutRequestCard({
     }
 
     return (
-      <View style={[styles.card, { borderLeftColor: statusConfig.color }]}>
+      <View style={[styles.card, { backgroundColor: colors.surface, borderLeftColor: statusConfig.color }]}>
         {/* Header */}
         <View style={styles.cardHeader}>
           <View style={[styles.statusBadge, { backgroundColor: statusConfig.color + "15" }]}>
@@ -235,22 +237,22 @@ export function ReachOutRequestCard({
               {statusConfig.label}
             </Text>
           </View>
-          <Text style={styles.timeText}>{formatTime(request.createdAt)}</Text>
+          <Text style={[styles.timeText, { color: colors.textTertiary }]}>{formatTime(request.createdAt)}</Text>
         </View>
 
         {/* Content */}
-        <Text style={styles.contentText}>{request.content}</Text>
+        <Text style={[styles.contentText, { color: colors.text }]}>{request.content}</Text>
 
         {/* Warm status detail */}
         {statusDetail && (
-          <Text style={styles.memberStatusDetail}>{statusDetail}</Text>
+          <Text style={[styles.memberStatusDetail, { color: colors.textSecondary }]}>{statusDetail}</Text>
         )}
 
         {/* Resolved indicator (simple, no notes) */}
         {request.status === "resolved" && (
-          <View style={styles.resolvedBanner}>
-            <Ionicons name="checkmark-circle" size={16} color="#34C759" />
-            <Text style={styles.resolvedBannerText}>
+          <View style={[styles.resolvedBanner, { backgroundColor: colors.success + "10" }]}>
+            <Ionicons name="checkmark-circle" size={16} color={colors.success} />
+            <Text style={[styles.resolvedBannerText, { color: colors.success }]}>
               Your leader has followed up on this
             </Text>
           </View>
@@ -264,9 +266,9 @@ export function ReachOutRequestCard({
             disabled={actionLoading === "revoke"}
           >
             {actionLoading === "revoke" ? (
-              <ActivityIndicator size="small" color="#999" />
+              <ActivityIndicator size="small" color={colors.textTertiary} />
             ) : (
-              <Text style={styles.withdrawText}>Withdraw</Text>
+              <Text style={[styles.withdrawText, { color: colors.textTertiary }]}>Withdraw</Text>
             )}
           </TouchableOpacity>
         )}
@@ -281,7 +283,7 @@ export function ReachOutRequestCard({
   const contactActions = request.contactActions ?? [];
 
   return (
-    <View style={[styles.card, { borderLeftColor: isRevoked ? "#999" : statusConfig.color }, isRevoked && styles.revokedCard]}>
+    <View style={[styles.card, { backgroundColor: colors.surface, borderLeftColor: isRevoked ? colors.textTertiary : statusConfig.color }, isRevoked && styles.revokedCard]}>
       {/* Header */}
       <View style={styles.cardHeader}>
         <View style={[styles.statusBadge, { backgroundColor: statusConfig.color + "15" }]}>
@@ -290,7 +292,7 @@ export function ReachOutRequestCard({
             {statusConfig.label}
           </Text>
         </View>
-        <Text style={styles.timeText}>{formatTime(request.createdAt)}</Text>
+        <Text style={[styles.timeText, { color: colors.textTertiary }]}>{formatTime(request.createdAt)}</Text>
       </View>
 
       {/* Submitter info */}
@@ -299,24 +301,24 @@ export function ReachOutRequestCard({
           {request.submitter.profilePhoto ? (
             <AppImage source={request.submitter.profilePhoto} style={styles.avatar} />
           ) : (
-            <View style={[styles.avatar, styles.avatarPlaceholder]}>
-              <Ionicons name="person" size={14} color="#999" />
+            <View style={[styles.avatar, styles.avatarPlaceholder, { backgroundColor: colors.surfaceSecondary }]}>
+              <Ionicons name="person" size={14} color={colors.textTertiary} />
             </View>
           )}
-          <Text style={styles.submitterName}>{request.submitter.name}</Text>
+          <Text style={[styles.submitterName, { color: colors.text }]}>{request.submitter.name}</Text>
         </View>
       )}
 
       {/* Content */}
-      <Text style={[styles.contentText, isRevoked && styles.revokedContent]}>
+      <Text style={[styles.contentText, { color: colors.text }, isRevoked && { color: colors.textTertiary }]}>
         {request.content}
       </Text>
 
       {/* Assignee info */}
       {request.assignee && !isRevoked && (
         <View style={styles.assigneeRow}>
-          <Ionicons name="person-circle-outline" size={16} color="#666" />
-          <Text style={styles.assigneeText}>Assigned to {request.assignee.name}</Text>
+          <Ionicons name="person-circle-outline" size={16} color={colors.textSecondary} />
+          <Text style={[styles.assigneeText, { color: colors.textSecondary }]}>Assigned to {request.assignee.name}</Text>
         </View>
       )}
 
@@ -328,9 +330,9 @@ export function ReachOutRequestCard({
               <Ionicons
                 name={action.type === "call" ? "call-outline" : action.type === "text" ? "chatbubble-outline" : "mail-outline"}
                 size={12}
-                color="#666"
+                color={colors.textSecondary}
               />
-              <Text style={styles.actionText}>
+              <Text style={[styles.actionText, { color: colors.textSecondary }]}>
                 {action.performerName ?? "Leader"}{" "}
                 {action.type === "call" ? "called" : action.type === "text" ? "texted" : "emailed"}
                 {" · "}{formatTime(action.performedAt)}
@@ -342,18 +344,18 @@ export function ReachOutRequestCard({
 
       {/* Resolution notes (leaders only) */}
       {request.status === "resolved" && request.resolutionNotes && (
-        <View style={styles.resolutionSection}>
-          <Text style={styles.resolutionLabel}>Resolution</Text>
-          <Text style={styles.resolutionText}>{request.resolutionNotes}</Text>
+        <View style={[styles.resolutionSection, { backgroundColor: colors.success + "10" }]}>
+          <Text style={[styles.resolutionLabel, { color: colors.success }]}>Resolution</Text>
+          <Text style={[styles.resolutionText, { color: colors.text }]}>{request.resolutionNotes}</Text>
           {request.resolvedBy && (
-            <Text style={styles.resolvedByText}>— {request.resolvedBy.name}</Text>
+            <Text style={[styles.resolvedByText, { color: colors.textSecondary }]}>— {request.resolvedBy.name}</Text>
           )}
         </View>
       )}
 
       {/* Revoked indicator for leaders */}
       {isRevoked && (
-        <Text style={styles.revokedNote}>Member withdrew this request</Text>
+        <Text style={[styles.revokedNote, { color: colors.textTertiary }]}>Member withdrew this request</Text>
       )}
 
       {/* Leader action buttons */}
@@ -395,16 +397,16 @@ export function ReachOutRequestCard({
               {request.submitter?.phone && (
                 <>
                   <TouchableOpacity
-                    style={[styles.actionButton, { backgroundColor: "#34C75915" }]}
+                    style={[styles.actionButton, { backgroundColor: colors.success + "15" }]}
                     onPress={() => handleContact("call")}
                     disabled={actionLoading === "call"}
                   >
                     {actionLoading === "call" ? (
-                      <ActivityIndicator size="small" color="#34C759" />
+                      <ActivityIndicator size="small" color={colors.success} />
                     ) : (
                       <>
-                        <Ionicons name="call-outline" size={16} color="#34C759" />
-                        <Text style={[styles.actionButtonText, { color: "#34C759" }]}>Call</Text>
+                        <Ionicons name="call-outline" size={16} color={colors.success} />
+                        <Text style={[styles.actionButtonText, { color: colors.success }]}>Call</Text>
                       </>
                     )}
                   </TouchableOpacity>
@@ -426,16 +428,16 @@ export function ReachOutRequestCard({
               )}
               {request.submitter?.email && (
                 <TouchableOpacity
-                  style={[styles.actionButton, { backgroundColor: "#007AFF15" }]}
+                  style={[styles.actionButton, { backgroundColor: colors.link + "15" }]}
                   onPress={() => handleContact("email")}
                   disabled={actionLoading === "email"}
                 >
                   {actionLoading === "email" ? (
-                    <ActivityIndicator size="small" color="#007AFF" />
+                    <ActivityIndicator size="small" color={colors.link} />
                   ) : (
                     <>
-                      <Ionicons name="mail-outline" size={16} color="#007AFF" />
-                      <Text style={[styles.actionButtonText, { color: "#007AFF" }]}>Email</Text>
+                      <Ionicons name="mail-outline" size={16} color={colors.link} />
+                      <Text style={[styles.actionButtonText, { color: colors.link }]}>Email</Text>
                     </>
                   )}
                 </TouchableOpacity>
@@ -447,23 +449,23 @@ export function ReachOutRequestCard({
           {(request.status === "assigned" || request.status === "contacted") && (
             <View style={styles.actionRow}>
               <TouchableOpacity
-                style={[styles.actionButton, { backgroundColor: "#34C75915" }]}
+                style={[styles.actionButton, { backgroundColor: colors.success + "15" }]}
                 onPress={() => setShowResolveModal(true)}
               >
-                <Ionicons name="checkmark-circle-outline" size={16} color="#34C759" />
-                <Text style={[styles.actionButtonText, { color: "#34C759" }]}>Resolve</Text>
+                <Ionicons name="checkmark-circle-outline" size={16} color={colors.success} />
+                <Text style={[styles.actionButtonText, { color: colors.success }]}>Resolve</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.actionButton, { backgroundColor: "#FF3B3015" }]}
+                style={[styles.actionButton, { backgroundColor: colors.error + "15" }]}
                 onPress={handleUnassign}
                 disabled={actionLoading === "unassign"}
               >
                 {actionLoading === "unassign" ? (
-                  <ActivityIndicator size="small" color="#FF3B30" />
+                  <ActivityIndicator size="small" color={colors.error} />
                 ) : (
                   <>
-                    <Ionicons name="close-circle-outline" size={16} color="#FF3B30" />
-                    <Text style={[styles.actionButtonText, { color: "#FF3B30" }]}>Unassign</Text>
+                    <Ionicons name="close-circle-outline" size={16} color={colors.error} />
+                    <Text style={[styles.actionButtonText, { color: colors.error }]}>Unassign</Text>
                   </>
                 )}
               </TouchableOpacity>
@@ -486,7 +488,6 @@ export function ReachOutRequestCard({
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 14,
     marginBottom: 12,
@@ -498,7 +499,6 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   revokedCard: {
-    borderLeftColor: "#ddd",
     opacity: 0.6,
   },
   cardHeader: {
@@ -521,23 +521,19 @@ const styles = StyleSheet.create({
   },
   timeText: {
     fontSize: 12,
-    color: "#999",
   },
   contentText: {
     fontSize: 15,
-    color: "#333",
     lineHeight: 21,
     marginBottom: 8,
   },
   revokedContent: {
-    color: "#999",
     fontSize: 14,
   },
 
   // ─── Member variant ────────────────────────────────────────────────────
   memberStatusDetail: {
     fontSize: 14,
-    color: "#666",
     fontStyle: "italic",
     marginBottom: 8,
   },
@@ -547,13 +543,11 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingVertical: 8,
     paddingHorizontal: 10,
-    backgroundColor: "#34C75910",
     borderRadius: 8,
     marginBottom: 4,
   },
   resolvedBannerText: {
     fontSize: 14,
-    color: "#34C759",
     fontWeight: "500",
   },
   withdrawButton: {
@@ -564,11 +558,9 @@ const styles = StyleSheet.create({
   },
   withdrawText: {
     fontSize: 13,
-    color: "#999",
   },
   revokedNote: {
     fontSize: 13,
-    color: "#999",
     fontStyle: "italic",
     marginTop: 4,
   },
@@ -586,14 +578,12 @@ const styles = StyleSheet.create({
     borderRadius: 14,
   },
   avatarPlaceholder: {
-    backgroundColor: "#f0f0f0",
     justifyContent: "center",
     alignItems: "center",
   },
   submitterName: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#333",
   },
   assigneeRow: {
     flexDirection: "row",
@@ -603,7 +593,6 @@ const styles = StyleSheet.create({
   },
   assigneeText: {
     fontSize: 13,
-    color: "#666",
   },
   actionsHistory: {
     marginTop: 4,
@@ -616,30 +605,25 @@ const styles = StyleSheet.create({
   },
   actionText: {
     fontSize: 12,
-    color: "#666",
   },
   resolutionSection: {
     marginTop: 8,
     padding: 10,
-    backgroundColor: "#34C75910",
     borderRadius: 8,
   },
   resolutionLabel: {
     fontSize: 11,
     fontWeight: "700",
-    color: "#34C759",
     textTransform: "uppercase",
     letterSpacing: 0.5,
     marginBottom: 4,
   },
   resolutionText: {
     fontSize: 14,
-    color: "#333",
     lineHeight: 20,
   },
   resolvedByText: {
     fontSize: 12,
-    color: "#666",
     marginTop: 4,
     fontStyle: "italic",
   },

@@ -20,8 +20,10 @@ import { useAuth } from "@providers/AuthProvider";
 import { MemberSearch, CommunityMember } from "@components/ui";
 import { formatError } from "@/utils/error-handling";
 import { DragHandle } from "@components/ui/DragHandle";
+import { useTheme } from "@hooks/useTheme";
 
 export function MembersScreen() {
+  const { colors } = useTheme();
   // NOTE: group_id is expected to be a Convex Id<"groups"> passed from navigation.
   // The leader-tools routes should only receive Convex IDs, not legacy UUIDs.
   const { group_id } = useLocalSearchParams<{ group_id: string }>();
@@ -72,11 +74,11 @@ export function MembersScreen() {
   if (isLoadingGroup) {
     return (
       <UserRoute>
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
           <DragHandle />
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" />
-            <Text style={styles.loadingText}>Loading...</Text>
+            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading...</Text>
           </View>
         </View>
       </UserRoute>
@@ -86,15 +88,15 @@ export function MembersScreen() {
   if (groupError || !group) {
     return (
       <UserRoute>
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
           <DragHandle />
           <View style={styles.errorContainer}>
-            <Text style={styles.errorText}>Group not found</Text>
+            <Text style={[styles.errorText, { color: colors.textSecondary }]}>Group not found</Text>
             <TouchableOpacity
               style={styles.backButton}
               onPress={() => handleBack()}
             >
-              <Text style={styles.errorText}>Go Back</Text>
+              <Text style={[styles.errorText, { color: colors.textSecondary }]}>Go Back</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -106,17 +108,17 @@ export function MembersScreen() {
     <UserRoute>
       <DragHandle />
       {/* Header */}
-      <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
+      <View style={[styles.header, { paddingTop: insets.top + 16, backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <TouchableOpacity
           style={styles.backButton}
           onPress={handleBack}
           testID="back-button"
         >
-          <Ionicons name="arrow-back" size={24} color="#333" />
+          <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
         <View style={styles.headerContent}>
-          <Text style={styles.headerTitle}>Members</Text>
-          <Text style={styles.headerSubtitle}>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Members</Text>
+          <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>
             {group.name || "Group"}
           </Text>
         </View>
@@ -130,7 +132,7 @@ export function MembersScreen() {
             <Ionicons
               name={showAddMember ? "close" : "person-add"}
               size={24}
-              color="#007AFF"
+              color={colors.link}
             />
           </TouchableOpacity>
         )}
@@ -138,7 +140,7 @@ export function MembersScreen() {
 
       {/* Add Member Search (Admins and Leaders) */}
       {canManageMembers && showAddMember && (
-        <View style={styles.addMemberContainer}>
+        <View style={[styles.addMemberContainer, { backgroundColor: colors.surfaceSecondary, borderBottomColor: colors.border }]}>
           <MemberSearch
             onSelect={handleAddMember}
             excludeGroupMembersOfGroupId={group_id || ""}
@@ -165,7 +167,6 @@ export function MembersScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f5f5f5",
   },
   loadingContainer: {
     flex: 1,
@@ -175,7 +176,6 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 12,
     fontSize: 16,
-    color: "#666",
   },
   errorContainer: {
     flex: 1,
@@ -185,7 +185,6 @@ const styles = StyleSheet.create({
   },
   errorText: {
     fontSize: 18,
-    color: "#666",
     marginBottom: 20,
   },
   backButton: {
@@ -197,18 +196,14 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   addMemberContainer: {
-    backgroundColor: "#f5f5f5",
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   header: {
     flexDirection: "row",
     alignItems: "center",
     padding: 16,
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   headerContent: {
     flex: 1,
@@ -216,11 +211,9 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 20,
     fontWeight: "bold",
-    color: "#333",
   },
   headerSubtitle: {
     fontSize: 14,
-    color: "#666",
     marginTop: 2,
   },
   content: {

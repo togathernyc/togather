@@ -25,6 +25,7 @@ import { api } from "@services/api/convex";
 import { Select } from "@components/ui/Select";
 import { Input } from "@components/ui/Input";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 import { useAuth } from "@providers/AuthProvider";
 import { PositionSelector } from "./PositionSelector";
 import type { Id } from "@services/api/convex";
@@ -114,6 +115,7 @@ export function PcoAutoChannelConfig({
   initialConfig,
 }: PcoAutoChannelConfigProps) {
   const { primaryColor } = useCommunityTheme();
+  const { colors, isDark } = useTheme();
   const { token } = useAuth();
 
   // State for data loading
@@ -586,7 +588,7 @@ export function PcoAutoChannelConfig({
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="small" color={primaryColor} />
-        <Text style={styles.loadingText}>Loading Planning Center...</Text>
+        <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading Planning Center...</Text>
       </View>
     );
   }
@@ -594,7 +596,7 @@ export function PcoAutoChannelConfig({
   if (error) {
     return (
       <View style={styles.errorContainer}>
-        <Text style={styles.errorText}>{error}</Text>
+        <Text style={[styles.errorText, { color: colors.error }]}>{error}</Text>
       </View>
     );
   }
@@ -607,14 +609,14 @@ export function PcoAutoChannelConfig({
 
   return (
     <View style={styles.container}>
-      <Text style={styles.sectionTitle}>Planning Center Sync Settings</Text>
+      <Text style={[styles.sectionTitle, { color: colors.text }]}>Planning Center Sync Settings</Text>
 
       {/* Service Type Selection - Multi-select */}
       <View style={styles.field}>
-        <Text style={styles.label}>
-          Service Types <Text style={styles.required}>*</Text>
+        <Text style={[styles.label, { color: colors.text }]}>
+          Service Types <Text style={[styles.required, { color: colors.error }]}>*</Text>
         </Text>
-        <Text style={styles.hint}>
+        <Text style={[styles.hint, { color: colors.textTertiary }]}>
           Select which services to sync members from
         </Text>
         <View style={styles.checkboxList}>
@@ -630,16 +632,16 @@ export function PcoAutoChannelConfig({
                 <Ionicons
                   name={isSelected ? "checkmark-circle" : "ellipse-outline"}
                   size={24}
-                  color={isSelected ? primaryColor : "#ccc"}
+                  color={isSelected ? primaryColor : colors.iconSecondary}
                 />
-                <Text style={styles.checkboxLabel}>{st.name}</Text>
+                <Text style={[styles.checkboxLabel, { color: colors.text }]}>{st.name}</Text>
               </TouchableOpacity>
             );
           })}
         </View>
         {selectedServiceTypes.length > 0 && (
-          <View style={styles.selectedChips}>
-            <Text style={styles.selectedChipsLabel}>
+          <View style={[styles.selectedChips, { backgroundColor: colors.surfaceSecondary }]}>
+            <Text style={[styles.selectedChipsLabel, { color: colors.textSecondary }]}>
               Selected ({selectedServiceTypes.length}):
             </Text>
             <View style={styles.chipContainer}>
@@ -678,13 +680,13 @@ export function PcoAutoChannelConfig({
           {/* Team Selection */}
           {(syncScope === "single_team" || syncScope === "multi_team") && (
             <View style={styles.field}>
-              <Text style={styles.label}>
+              <Text style={[styles.label, { color: colors.text }]}>
                 {syncScope === "single_team" ? "Select Team" : "Select Teams"}
               </Text>
               {loadingTeams ? (
                 <View style={styles.loadingInline}>
                   <ActivityIndicator size="small" color={primaryColor} />
-                  <Text style={styles.loadingInlineText}>Loading teams...</Text>
+                  <Text style={[styles.loadingInlineText, { color: colors.textSecondary }]}>Loading teams...</Text>
                 </View>
               ) : (
                 <View style={styles.checkboxList}>
@@ -704,9 +706,9 @@ export function PcoAutoChannelConfig({
                         <Ionicons
                           name={isSelected ? "checkmark-circle" : "ellipse-outline"}
                           size={24}
-                          color={isSelected ? primaryColor : "#ccc"}
+                          color={isSelected ? primaryColor : colors.iconSecondary}
                         />
-                        <Text style={styles.checkboxLabel}>
+                        <Text style={[styles.checkboxLabel, { color: colors.text }]}>
                           {team.displayName || team.name}
                         </Text>
                       </TouchableOpacity>
@@ -715,8 +717,8 @@ export function PcoAutoChannelConfig({
                 </View>
               )}
               {selectedTeams.length > 0 && (
-                <View style={styles.selectedChips}>
-                  <Text style={styles.selectedChipsLabel}>
+                <View style={[styles.selectedChips, { backgroundColor: colors.surfaceSecondary }]}>
+                  <Text style={[styles.selectedChipsLabel, { color: colors.textSecondary }]}>
                     Selected ({selectedTeams.length}):
                   </Text>
                   <View style={styles.chipContainer}>
@@ -756,18 +758,18 @@ export function PcoAutoChannelConfig({
               <Ionicons
                 name={showPositionFilter ? "checkbox" : "square-outline"}
                 size={22}
-                color={showPositionFilter ? primaryColor : "#666"}
+                color={showPositionFilter ? primaryColor : colors.textSecondary}
               />
-              <Text style={styles.filterToggleText}>Filter by positions</Text>
-              <Text style={styles.filterToggleHint}>(optional)</Text>
+              <Text style={[styles.filterToggleText, { color: colors.text }]}>Filter by positions</Text>
+              <Text style={[styles.filterToggleHint, { color: colors.textTertiary }]}>(optional)</Text>
             </TouchableOpacity>
           </View>
 
           {/* Position Selector */}
           {showPositionFilter && (
-            <View style={styles.positionSection}>
-              <Text style={styles.label}>Positions</Text>
-              <Text style={styles.hint}>
+            <View style={[styles.positionSection, { borderLeftColor: colors.border }]}>
+              <Text style={[styles.label, { color: colors.text }]}>Positions</Text>
+              <Text style={[styles.hint, { color: colors.textTertiary }]}>
                 Only include people with specific positions (e.g., Director, Lead Vocals)
               </Text>
               <PositionSelector
@@ -781,14 +783,14 @@ export function PcoAutoChannelConfig({
 
           {/* Timing */}
           <View style={styles.timingSection}>
-            <Text style={styles.label}>Membership Timing</Text>
-            <Text style={styles.hint}>
+            <Text style={[styles.label, { color: colors.text }]}>Membership Timing</Text>
+            <Text style={[styles.hint, { color: colors.textTertiary }]}>
               Control when members are added and removed from the channel
             </Text>
 
             <View style={styles.timingFields}>
               <View style={styles.timingField}>
-                <Text style={styles.smallLabel}>Add members</Text>
+                <Text style={[styles.smallLabel, { color: colors.textSecondary }]}>Add members</Text>
                 <View style={styles.inputRow}>
                   <View style={styles.numberInputContainer}>
                     <Input
@@ -797,12 +799,12 @@ export function PcoAutoChannelConfig({
                       style={styles.numberInput}
                     />
                   </View>
-                  <Text style={styles.inputSuffix}>days before service</Text>
+                  <Text style={[styles.inputSuffix, { color: colors.textSecondary }]}>days before service</Text>
                 </View>
               </View>
 
               <View style={styles.timingField}>
-                <Text style={styles.smallLabel}>Remove members</Text>
+                <Text style={[styles.smallLabel, { color: colors.textSecondary }]}>Remove members</Text>
                 <View style={styles.inputRow}>
                   <View style={styles.numberInputContainer}>
                     <Input
@@ -811,13 +813,13 @@ export function PcoAutoChannelConfig({
                       style={styles.numberInput}
                     />
                   </View>
-                  <Text style={styles.inputSuffix}>days after service</Text>
+                  <Text style={[styles.inputSuffix, { color: colors.textSecondary }]}>days after service</Text>
                 </View>
               </View>
             </View>
 
-            <View style={styles.timingPreview}>
-              <Text style={styles.previewText}>
+            <View style={[styles.timingPreview, { backgroundColor: colors.surfaceSecondary }]}>
+              <Text style={[styles.previewText, { color: colors.textSecondary }]}>
                 Example: For a Sunday service, members will be added on{" "}
                 {getDayName(7 - (parseInt(addDaysBefore) || 5))} and removed on{" "}
                 {getDayName(parseInt(removeDaysAfter) || 1)}.
@@ -826,15 +828,15 @@ export function PcoAutoChannelConfig({
           </View>
 
           {/* Preview Results */}
-          <View style={styles.previewSection}>
-            <Text style={styles.label}>Preview</Text>
+          <View style={[styles.previewSection, { borderTopColor: colors.border }]}>
+            <Text style={[styles.label, { color: colors.text }]}>Preview</Text>
             {loadingPreview ? (
               <View style={styles.loadingInline}>
                 <ActivityIndicator size="small" color={primaryColor} />
-                <Text style={styles.loadingInlineText}>Loading preview...</Text>
+                <Text style={[styles.loadingInlineText, { color: colors.textSecondary }]}>Loading preview...</Text>
               </View>
             ) : preview ? (
-              <View style={[styles.previewCard, { borderColor: primaryColor + "40" }]}>
+              <View style={[styles.previewCard, { borderColor: primaryColor + "40", backgroundColor: colors.surfaceSecondary }]}>
                 <View style={styles.previewHeader}>
                   <Ionicons name="people" size={20} color={primaryColor} />
                   <Text style={[styles.previewCount, { color: primaryColor }]}>
@@ -842,35 +844,35 @@ export function PcoAutoChannelConfig({
                   </Text>
                 </View>
                 {preview.nextServiceDate && (
-                  <Text style={styles.previewNextService}>
+                  <Text style={[styles.previewNextService, { color: colors.textSecondary }]}>
                     Next service: {new Date(preview.nextServiceDate).toLocaleDateString()}
                   </Text>
                 )}
                 {preview.sample.length > 0 && (
                   <View style={styles.previewSample}>
-                    <Text style={styles.previewSampleLabel}>Sample members:</Text>
+                    <Text style={[styles.previewSampleLabel, { color: colors.textSecondary }]}>Sample members:</Text>
                     {preview.sample.map((person, i) => (
-                      <Text key={i} style={styles.previewSampleItem}>
+                      <Text key={i} style={[styles.previewSampleItem, { color: colors.text }]}>
                         {person.name}
                         {person.position && ` - ${person.position}`}
                         {person.team && ` (${person.team})`}
                       </Text>
                     ))}
                     {preview.totalCount > 5 && (
-                      <Text style={styles.previewMore}>
+                      <Text style={[styles.previewMore, { color: colors.textTertiary }]}>
                         ...and {preview.totalCount - 5} more
                       </Text>
                     )}
                   </View>
                 )}
                 {preview.totalCount === 0 && (
-                  <Text style={styles.previewEmpty}>
+                  <Text style={[styles.previewEmpty, { color: colors.textTertiary }]}>
                     No one matches the current filters. Try adjusting your selection.
                   </Text>
                 )}
               </View>
             ) : (
-              <Text style={styles.previewPlaceholder}>
+              <Text style={[styles.previewPlaceholder, { color: colors.textTertiary }]}>
                 Select service types to see a preview
               </Text>
             )}
@@ -907,7 +909,6 @@ const styles = StyleSheet.create({
   loadingText: {
     marginLeft: 8,
     fontSize: 14,
-    color: "#666",
   },
   loadingInline: {
     flexDirection: "row",
@@ -917,19 +918,16 @@ const styles = StyleSheet.create({
   loadingInlineText: {
     marginLeft: 8,
     fontSize: 13,
-    color: "#666",
   },
   errorContainer: {
     padding: 16,
   },
   errorText: {
     fontSize: 14,
-    color: "#FF3B30",
   },
   sectionTitle: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 16,
   },
   field: {
@@ -938,20 +936,16 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: "500",
-    color: "#333",
     marginBottom: 8,
   },
   required: {
-    color: "#FF3B30",
   },
   smallLabel: {
     fontSize: 13,
-    color: "#666",
     marginBottom: 4,
   },
   hint: {
     fontSize: 13,
-    color: "#999",
     marginBottom: 12,
   },
   checkboxList: {
@@ -966,17 +960,14 @@ const styles = StyleSheet.create({
   },
   checkboxLabel: {
     fontSize: 15,
-    color: "#333",
   },
   selectedChips: {
     marginTop: 12,
     padding: 12,
-    backgroundColor: "#f5f5f5",
     borderRadius: 8,
   },
   selectedChipsLabel: {
     fontSize: 12,
-    color: "#666",
     marginBottom: 8,
   },
   chipContainer: {
@@ -1005,17 +996,14 @@ const styles = StyleSheet.create({
   filterToggleText: {
     fontSize: 14,
     fontWeight: "500",
-    color: "#333",
   },
   filterToggleHint: {
     fontSize: 13,
-    color: "#999",
   },
   positionSection: {
     marginBottom: 16,
     paddingLeft: 8,
     borderLeftWidth: 2,
-    borderLeftColor: "#e0e0e0",
   },
   timingSection: {
     marginTop: 8,
@@ -1038,29 +1026,24 @@ const styles = StyleSheet.create({
   },
   inputSuffix: {
     fontSize: 14,
-    color: "#666",
     marginLeft: 8,
   },
   timingPreview: {
     padding: 12,
-    backgroundColor: "#f9f9f9",
     borderRadius: 8,
     marginTop: 12,
   },
   previewText: {
     fontSize: 13,
     fontStyle: "italic",
-    color: "#666",
   },
   previewSection: {
     marginTop: 20,
     paddingTop: 16,
     borderTopWidth: 1,
-    borderTopColor: "#e0e0e0",
   },
   previewCard: {
     padding: 16,
-    backgroundColor: "#fafafa",
     borderRadius: 12,
     borderWidth: 1,
   },
@@ -1076,7 +1059,6 @@ const styles = StyleSheet.create({
   },
   previewNextService: {
     fontSize: 13,
-    color: "#666",
     marginBottom: 12,
   },
   previewSample: {
@@ -1084,28 +1066,23 @@ const styles = StyleSheet.create({
   },
   previewSampleLabel: {
     fontSize: 12,
-    color: "#666",
     marginBottom: 4,
   },
   previewSampleItem: {
     fontSize: 13,
-    color: "#333",
     paddingVertical: 2,
   },
   previewMore: {
     fontSize: 12,
-    color: "#999",
     fontStyle: "italic",
     marginTop: 4,
   },
   previewEmpty: {
     fontSize: 13,
-    color: "#999",
     fontStyle: "italic",
   },
   previewPlaceholder: {
     fontSize: 13,
-    color: "#999",
     fontStyle: "italic",
   },
 });

@@ -24,6 +24,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '@providers/AuthProvider';
 import { useAuthenticatedMutation, api } from '@services/api/convex';
 import { storage } from '@utils/storage';
+import { useTheme } from '@hooks/useTheme';
 
 // Must match the version in TermsAcceptanceModal
 const CURRENT_TERMS_VERSION = '1.0';
@@ -44,6 +45,7 @@ export function BirthdayCollectionModal({ onCompleted }: BirthdayCollectionModal
   const [error, setError] = useState<string | null>(null);
   const [termsAccepted, setTermsAccepted] = useState(false);
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
 
   // Use mutation hook for auth-aware updates
   const updateUser = useAuthenticatedMutation(api.functions.users.update);
@@ -179,45 +181,45 @@ export function BirthdayCollectionModal({ onCompleted }: BirthdayCollectionModal
       statusBarTranslucent
     >
       <KeyboardAvoidingView
-        style={styles.overlay}
+        style={[styles.overlay, { backgroundColor: colors.overlay }]}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <View style={[styles.container, { paddingBottom: insets.bottom + 20 }]}>
+        <View style={[styles.container, { backgroundColor: colors.modalBackground, paddingBottom: insets.bottom + 20 }]}>
           <View style={styles.content}>
-            <Text style={styles.title}>When's Your Birthday?</Text>
-            <Text style={styles.subtitle}>
+            <Text style={[styles.title, { color: colors.text }]}>When's Your Birthday?</Text>
+            <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
               We use your birthday to celebrate with your community and show you age-appropriate content.
             </Text>
 
             <View style={styles.inputContainer}>
               <TextInput
-                style={styles.input}
+                style={[styles.input, { backgroundColor: colors.surfaceSecondary, color: colors.text }]}
                 value={birthday}
                 onChangeText={handleBirthdayChange}
                 placeholder="MM/DD/YYYY"
-                placeholderTextColor="#999"
+                placeholderTextColor={colors.inputPlaceholder}
                 keyboardType="number-pad"
                 maxLength={10}
                 autoFocus
               />
-              {error && <Text style={styles.errorText}>{error}</Text>}
+              {error && <Text style={[styles.errorText, { color: colors.error }]}>{error}</Text>}
             </View>
 
-            <View style={styles.infoSection}>
-              <Text style={styles.infoText}>
+            <View style={[styles.infoSection, { backgroundColor: colors.surfaceSecondary }]}>
+              <Text style={[styles.infoText, { color: colors.textSecondary }]}>
                 Your birthday helps us:
               </Text>
               <View style={styles.bulletList}>
-                <Text style={styles.bulletItem}>• Celebrate your special day with the community</Text>
-                <Text style={styles.bulletItem}>• Ensure age-appropriate experiences</Text>
-                <Text style={styles.bulletItem}>• Connect you with others in your life stage</Text>
+                <Text style={[styles.bulletItem, { color: colors.textSecondary }]}>• Celebrate your special day with the community</Text>
+                <Text style={[styles.bulletItem, { color: colors.textSecondary }]}>• Ensure age-appropriate experiences</Text>
+                <Text style={[styles.bulletItem, { color: colors.textSecondary }]}>• Connect you with others in your life stage</Text>
               </View>
             </View>
           </View>
 
-          <View style={styles.buttonContainer}>
+          <View style={[styles.buttonContainer, { borderTopColor: colors.border, backgroundColor: colors.modalBackground }]}>
             <TouchableOpacity
-              style={[styles.submitButton, (saving || birthday.length < 10) && styles.submitButtonDisabled]}
+              style={[styles.submitButton, { backgroundColor: colors.link }, (saving || birthday.length < 10) && styles.submitButtonDisabled]}
               onPress={handleSubmit}
               disabled={saving || birthday.length < 10}
             >
@@ -227,7 +229,7 @@ export function BirthdayCollectionModal({ onCompleted }: BirthdayCollectionModal
                 <Text style={styles.submitButtonText}>Continue</Text>
               )}
             </TouchableOpacity>
-            <Text style={styles.privacyNote}>
+            <Text style={[styles.privacyNote, { color: colors.textTertiary }]}>
               Your birthday is kept private and only shared with community leaders.
             </Text>
           </View>
@@ -240,12 +242,10 @@ export function BirthdayCollectionModal({ onCompleted }: BirthdayCollectionModal
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
     justifyContent: 'center',
     alignItems: 'center',
   },
   container: {
-    backgroundColor: '#fff',
     borderRadius: 20,
     width: '92%',
     maxWidth: 500,
@@ -271,13 +271,11 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: 'bold',
-    color: '#1a1a1a',
     marginBottom: 8,
     textAlign: 'center',
   },
   subtitle: {
     fontSize: 16,
-    color: '#666',
     marginBottom: 24,
     textAlign: 'center',
     lineHeight: 22,
@@ -286,29 +284,24 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   input: {
-    backgroundColor: '#f5f5f5',
     borderRadius: 12,
     padding: 16,
     fontSize: 24,
     textAlign: 'center',
     fontWeight: '600',
-    color: '#1a1a1a',
     letterSpacing: 2,
   },
   errorText: {
-    color: '#dc3545',
     fontSize: 14,
     marginTop: 8,
     textAlign: 'center',
   },
   infoSection: {
-    backgroundColor: '#f8f9fa',
     borderRadius: 12,
     padding: 16,
   },
   infoText: {
     fontSize: 15,
-    color: '#555',
     marginBottom: 8,
   },
   bulletList: {
@@ -316,18 +309,14 @@ const styles = StyleSheet.create({
   },
   bulletItem: {
     fontSize: 14,
-    color: '#666',
     lineHeight: 22,
   },
   buttonContainer: {
     paddingHorizontal: 24,
     paddingTop: 16,
     borderTopWidth: 1,
-    borderTopColor: '#e0e0e0',
-    backgroundColor: '#fff',
   },
   submitButton: {
-    backgroundColor: '#007AFF',
     paddingVertical: 16,
     borderRadius: 12,
     alignItems: 'center',
@@ -343,7 +332,6 @@ const styles = StyleSheet.create({
   },
   privacyNote: {
     fontSize: 12,
-    color: '#888',
     textAlign: 'center',
     lineHeight: 18,
     paddingBottom: 8,

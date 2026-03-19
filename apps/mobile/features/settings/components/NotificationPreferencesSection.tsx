@@ -20,6 +20,7 @@ import Constants from 'expo-constants';
 import { useNotifications } from '@providers/NotificationProvider';
 import { useQuery, useAuthenticatedMutation, useMutation, api } from '@services/api/convex';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
+import { useTheme } from '@hooks/useTheme';
 import { useAuth } from '@providers/AuthProvider';
 import type { Id } from '@services/api/convex';
 
@@ -31,6 +32,14 @@ type GroupNotificationToggleProps = {
   disabled?: boolean;
   primaryColor: string;
   userId: Id<"users">;
+  colors: {
+    text: string;
+    textSecondary: string;
+    textTertiary: string;
+    border: string;
+    borderLight: string;
+    textInverse: string;
+  };
 };
 
 const GroupNotificationToggle: React.FC<GroupNotificationToggleProps> = ({
@@ -41,6 +50,7 @@ const GroupNotificationToggle: React.FC<GroupNotificationToggleProps> = ({
   disabled = false,
   primaryColor,
   userId,
+  colors,
 }) => {
   const [isPending, setIsPending] = useState(false);
   const setGroupNotifications = useAuthenticatedMutation(api.functions.notifications.preferences.setGroupNotifications);
@@ -57,13 +67,13 @@ const GroupNotificationToggle: React.FC<GroupNotificationToggleProps> = ({
   };
 
   return (
-    <View style={styles.groupRow}>
+    <View style={[styles.groupRow, { borderBottomColor: colors.borderLight }]}>
       <View style={styles.groupInfo}>
-        <Text style={[styles.groupName, disabled && styles.disabledText]}>
+        <Text style={[styles.groupName, { color: colors.text }, disabled && { color: colors.textTertiary }]}>
           {groupName}
         </Text>
         {groupType && (
-          <Text style={[styles.groupType, disabled && styles.disabledText]}>
+          <Text style={[styles.groupType, { color: colors.textSecondary }, disabled && { color: colors.textTertiary }]}>
             {groupType}
           </Text>
         )}
@@ -72,8 +82,8 @@ const GroupNotificationToggle: React.FC<GroupNotificationToggleProps> = ({
         value={enabled}
         onValueChange={handleToggle}
         disabled={disabled || isPending}
-        trackColor={{ false: '#e0e0e0', true: primaryColor }}
-        thumbColor="#fff"
+        trackColor={{ false: colors.border, true: primaryColor }}
+        thumbColor={colors.textInverse}
       />
     </View>
   );
@@ -83,6 +93,7 @@ export const NotificationPreferencesSection: React.FC = () => {
   const { user, token } = useAuth();
   const { isEnabled, requestPermissions, expoPushToken } = useNotifications();
   const { primaryColor } = useCommunityTheme();
+  const { colors } = useTheme();
   const userId = user?.id as Id<"users"> | undefined;
   const [isUpdating, setIsUpdating] = useState(false);
 
@@ -118,8 +129,8 @@ export const NotificationPreferencesSection: React.FC = () => {
 
   if (isLoading) {
     return (
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Notifications</Text>
+      <View style={[styles.section, { backgroundColor: colors.surface }]}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Notifications</Text>
         <ActivityIndicator style={styles.loader} />
       </View>
     );
@@ -127,11 +138,14 @@ export const NotificationPreferencesSection: React.FC = () => {
 
   if (!preferences) {
     return (
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Notifications</Text>
-        <Text style={styles.errorText}>Failed to load notification settings</Text>
-        <TouchableOpacity style={styles.retryButton} onPress={handleRetry}>
-          <Text style={styles.retryButtonText}>Retry</Text>
+      <View style={[styles.section, { backgroundColor: colors.surface }]}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Notifications</Text>
+        <Text style={[styles.errorText, { color: colors.error }]}>Failed to load notification settings</Text>
+        <TouchableOpacity
+          style={[styles.retryButton, { backgroundColor: colors.surfaceSecondary }]}
+          onPress={handleRetry}
+        >
+          <Text style={[styles.retryButtonText, { color: colors.text }]}>Retry</Text>
         </TouchableOpacity>
       </View>
     );
@@ -191,14 +205,14 @@ export const NotificationPreferencesSection: React.FC = () => {
   };
 
   return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>Notifications</Text>
+    <View style={[styles.section, { backgroundColor: colors.surface }]}>
+      <Text style={[styles.sectionTitle, { color: colors.text }]}>Notifications</Text>
 
       {/* Master toggle for notifications */}
-      <View style={styles.masterToggleContainer}>
+      <View style={[styles.masterToggleContainer, { backgroundColor: colors.surfaceSecondary }]}>
         <View style={styles.masterToggleText}>
-          <Text style={styles.masterToggleLabel}>Push Notifications</Text>
-          <Text style={styles.masterToggleDescription}>
+          <Text style={[styles.masterToggleLabel, { color: colors.text }]}>Push Notifications</Text>
+          <Text style={[styles.masterToggleDescription, { color: colors.textSecondary }]}>
             {notificationsEnabled
               ? devicePermissionsGranted
                 ? 'Enabled'
@@ -210,21 +224,21 @@ export const NotificationPreferencesSection: React.FC = () => {
           value={notificationsEnabled}
           onValueChange={handleToggleMaster}
           disabled={isUpdating}
-          trackColor={{ false: '#e0e0e0', true: primaryColor }}
-          thumbColor="#fff"
+          trackColor={{ false: colors.border, true: primaryColor }}
+          thumbColor={colors.textInverse}
         />
       </View>
 
       {notificationsEnabled && !devicePermissionsGranted && (
-        <View style={styles.warningBox}>
-          <Text style={styles.warningText}>
+        <View style={[styles.warningBox, { backgroundColor: colors.warning + '1A' }]}>
+          <Text style={[styles.warningText, { color: colors.warning }]}>
             Push notifications are enabled but device permissions are needed.
           </Text>
           <TouchableOpacity
-            style={styles.enableButton}
+            style={[styles.enableButton, { backgroundColor: colors.warning }]}
             onPress={handleEnableNotifications}
           >
-            <Text style={styles.enableButtonText}>Grant Permission</Text>
+            <Text style={[styles.enableButtonText, { color: colors.textInverse }]}>Grant Permission</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -232,8 +246,8 @@ export const NotificationPreferencesSection: React.FC = () => {
       {/* Per-group notification toggles */}
       {preferences?.groups && preferences.groups.length > 0 && userId && (
         <View style={styles.groupsContainer}>
-          <Text style={styles.subsectionTitle}>Group Notifications</Text>
-          <Text style={styles.subsectionDescription}>
+          <Text style={[styles.subsectionTitle, { color: colors.text }]}>Group Notifications</Text>
+          <Text style={[styles.subsectionDescription, { color: colors.textSecondary }]}>
             Choose which groups can send you notifications
           </Text>
 
@@ -247,6 +261,7 @@ export const NotificationPreferencesSection: React.FC = () => {
               disabled={groupTogglesDisabled}
               primaryColor={primaryColor}
               userId={userId}
+              colors={colors}
             />
           ))}
         </View>
@@ -254,7 +269,7 @@ export const NotificationPreferencesSection: React.FC = () => {
 
       {preferences?.groups && preferences.groups.length === 0 && (
         <View style={styles.emptyState}>
-          <Text style={styles.emptyStateText}>
+          <Text style={[styles.emptyStateText, { color: colors.textSecondary }]}>
             Join a group to manage its notification settings
           </Text>
         </View>
@@ -262,8 +277,8 @@ export const NotificationPreferencesSection: React.FC = () => {
 
       {isUpdating && (
         <View style={styles.savingIndicator}>
-          <ActivityIndicator size="small" color="#666" />
-          <Text style={styles.savingText}>Saving...</Text>
+          <ActivityIndicator size="small" color={colors.textSecondary} />
+          <Text style={[styles.savingText, { color: colors.textSecondary }]}>Saving...</Text>
         </View>
       )}
     </View>
@@ -273,20 +288,17 @@ export const NotificationPreferencesSection: React.FC = () => {
 const styles = StyleSheet.create({
   section: {
     marginTop: 12,
-    backgroundColor: '#fff',
     padding: 20,
   },
   sectionTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#333',
     marginBottom: 16,
   },
   masterToggleContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#f8f9fa',
     borderRadius: 12,
     padding: 16,
     marginBottom: 16,
@@ -298,22 +310,18 @@ const styles = StyleSheet.create({
   masterToggleLabel: {
     fontSize: 17,
     fontWeight: '600',
-    color: '#333',
   },
   masterToggleDescription: {
     fontSize: 13,
-    color: '#666',
     marginTop: 4,
   },
   subsectionTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#333',
     marginBottom: 4,
   },
   subsectionDescription: {
     fontSize: 13,
-    color: '#666',
     marginBottom: 16,
   },
   groupsContainer: {
@@ -325,7 +333,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
   },
   groupInfo: {
     flex: 1,
@@ -333,35 +340,26 @@ const styles = StyleSheet.create({
   },
   groupName: {
     fontSize: 16,
-    color: '#333',
   },
   groupType: {
     fontSize: 13,
-    color: '#666',
     marginTop: 2,
   },
-  disabledText: {
-    color: '#aaa',
-  },
   warningBox: {
-    backgroundColor: '#FFF3E0',
     borderRadius: 8,
     padding: 16,
     marginBottom: 16,
   },
   warningText: {
     fontSize: 14,
-    color: '#E65100',
     marginBottom: 12,
   },
   enableButton: {
-    backgroundColor: '#FF9800',
     borderRadius: 6,
     padding: 12,
     alignItems: 'center',
   },
   enableButtonText: {
-    color: '#fff',
     fontSize: 14,
     fontWeight: '600',
   },
@@ -371,25 +369,21 @@ const styles = StyleSheet.create({
   },
   emptyStateText: {
     fontSize: 14,
-    color: '#666',
     textAlign: 'center',
   },
   loader: {
     marginVertical: 20,
   },
   errorText: {
-    color: '#e53935',
     fontSize: 14,
     marginBottom: 12,
   },
   retryButton: {
-    backgroundColor: '#f0f0f0',
     borderRadius: 6,
     padding: 12,
     alignItems: 'center',
   },
   retryButtonText: {
-    color: '#333',
     fontSize: 14,
     fontWeight: '600',
   },
@@ -402,6 +396,5 @@ const styles = StyleSheet.create({
   savingText: {
     marginLeft: 8,
     fontSize: 12,
-    color: '#666',
   },
 });

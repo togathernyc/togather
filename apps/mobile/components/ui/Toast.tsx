@@ -9,6 +9,7 @@ import {
   Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useTheme } from '@hooks/useTheme';
 
 export type ToastType = 'success' | 'error' | 'warning' | 'info';
 
@@ -29,6 +30,7 @@ export function Toast({
   onClose,
   position = 'top',
 }: ToastProps) {
+  const { colors } = useTheme();
   const fadeAnim = React.useRef(new Animated.Value(0)).current;
   const slideAnim = React.useRef(new Animated.Value(position === 'top' ? -100 : position === 'bottom' ? 100 : 0)).current;
 
@@ -91,14 +93,15 @@ export function Toast({
     }
   };
 
+  // Toast background colors are intentionally branded/semantic status colors
   const getColor = () => {
     switch (type) {
       case 'success':
-        return '#28a745';
+        return colors.success;
       case 'error':
-        return '#FF3B30';
+        return colors.error;
       case 'warning':
-        return '#ffc107';
+        return colors.warning;
       case 'info':
         return '#17a2b8';
       default:
@@ -264,4 +267,3 @@ export function ToastContainer({ children }: ToastContainerProps) {
     </>
   );
 }
-

@@ -17,6 +17,7 @@ import {
   StyleProp,
 } from 'react-native';
 import { getMediaUrlWithTransform } from '@/utils/media';
+import { useTheme } from '@hooks/useTheme';
 
 interface AppImageBackgroundProps {
   /** Single image URL or r2: storage path */
@@ -63,6 +64,7 @@ export const AppImageBackground = memo(function AppImageBackground({
   optimizedHeight,
   optimizedQuality,
 }: AppImageBackgroundProps) {
+  const { colors } = useTheme();
   const [hasError, setHasError] = useState(false);
 
   // Apply Cloudflare image transforms if optimization params provided
@@ -89,7 +91,7 @@ export const AppImageBackground = memo(function AppImageBackground({
   if (!hasValidUrl || hasError) {
     return (
       <View
-        style={[styles.placeholder, style]}
+        style={[styles.placeholder, { backgroundColor: colors.surfaceSecondary }, style]}
         testID={testID ? `${testID}-placeholder` : undefined}
       >
         {children}
@@ -112,7 +114,5 @@ export const AppImageBackground = memo(function AppImageBackground({
 });
 
 const styles = StyleSheet.create({
-  placeholder: {
-    backgroundColor: '#f0f0f0',
-  },
+  placeholder: {},
 });

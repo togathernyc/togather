@@ -4,6 +4,7 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { ProgrammaticTextInput } from "@components/ui";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 import { GroupSearchList } from "./GroupSearchList";
 import { useGroupSearch, useGroupTypes } from "../hooks";
 
@@ -18,6 +19,7 @@ try {
 export function GroupSearchScreen() {
   const router = useRouter();
   const { primaryColor } = useCommunityTheme();
+  const { colors } = useTheme();
   const [selectedType, setSelectedType] = useState<string | null>(null);
   const { searchQuery, setSearchQuery, debouncedQuery, groupsList, isLoading } =
     useGroupSearch(selectedType);
@@ -93,8 +95,8 @@ export function GroupSearchScreen() {
   };
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <View style={[styles.header, { backgroundColor: colors.background, borderBottomColor: colors.border }]}>
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => {
@@ -105,18 +107,18 @@ export function GroupSearchScreen() {
             }
           }}
         >
-          <Ionicons name="arrow-back" size={24} color="#333" />
+          <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Group Search</Text>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>Group Search</Text>
       </View>
 
-      <View style={styles.searchContainer}>
-        <View style={styles.searchInputContainer}>
-          <Ionicons name="search" size={20} color="#999" style={styles.searchIcon} />
+      <View style={[styles.searchContainer, { backgroundColor: colors.background, borderBottomColor: colors.border }]}>
+        <View style={[styles.searchInputContainer, { backgroundColor: colors.surfaceSecondary }]}>
+          <Ionicons name="search" size={20} color={colors.textTertiary} style={styles.searchIcon} />
           <ProgrammaticTextInput
-            style={styles.searchInput}
+            style={[styles.searchInput, { color: colors.text }]}
             placeholder="Keyword or zip code"
-            placeholderTextColor="#999"
+            placeholderTextColor={colors.inputPlaceholder}
             value={searchQuery}
             onChangeText={setSearchQuery}
             autoCapitalize="none"
@@ -128,16 +130,16 @@ export function GroupSearchScreen() {
             disabled={isLocationLoading}
           >
             {isLocationLoading ? (
-              <Ionicons name="hourglass" size={20} color="#666" />
+              <Ionicons name="hourglass" size={20} color={colors.textSecondary} />
             ) : (
-              <Ionicons name="locate" size={20} color="#666" />
+              <Ionicons name="locate" size={20} color={colors.textSecondary} />
             )}
           </TouchableOpacity>
         </View>
       </View>
 
       {/* Filter Row */}
-      <View style={styles.filterContainer}>
+      <View style={[styles.filterContainer, { backgroundColor: colors.background, borderBottomColor: colors.border }]}>
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -150,6 +152,7 @@ export function GroupSearchScreen() {
                 key={option.value ?? "all"}
                 style={[
                   styles.filterChip,
+                  { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
                   isSelected && { backgroundColor: primaryColor, borderColor: primaryColor },
                 ]}
                 onPress={() => setSelectedType(option.value)}
@@ -158,6 +161,7 @@ export function GroupSearchScreen() {
                 <Text
                   style={[
                     styles.filterChipText,
+                    { color: colors.textSecondary },
                     isSelected && styles.filterChipTextSelected,
                   ]}
                 >
@@ -182,15 +186,12 @@ export function GroupSearchScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
   },
   header: {
     flexDirection: "row",
     alignItems: "center",
     padding: 20,
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   backButton: {
     marginRight: 12,
@@ -200,18 +201,14 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 24,
     fontWeight: "bold",
-    color: "#333",
   },
   searchContainer: {
     padding: 12,
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   searchInputContainer: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f5f5f5",
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -222,7 +219,6 @@ const styles = StyleSheet.create({
   searchInput: {
     flex: 1,
     fontSize: 16,
-    color: "#333",
     paddingVertical: Platform.OS === "web" ? 8 : 4,
   },
   locationButton: {
@@ -230,9 +226,7 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   filterContainer: {
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
     paddingVertical: 12,
   },
   filterScrollContent: {
@@ -242,9 +236,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
-    backgroundColor: "#f5f5f5",
     borderWidth: 1,
-    borderColor: "#e0e0e0",
     marginRight: 8,
   },
   filterChipSelected: {
@@ -253,7 +245,6 @@ const styles = StyleSheet.create({
   filterChipText: {
     fontSize: 14,
     fontWeight: "500",
-    color: "#666",
   },
   filterChipTextSelected: {
     color: "#fff",

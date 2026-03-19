@@ -16,8 +16,10 @@ import { useQuery, api, Id } from "@services/api/convex";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { Avatar } from "@components/ui/Avatar";
 import { CustomModal } from "@components/ui/Modal";
+import { useTheme } from "@hooks/useTheme";
 
 function GuestListPage() {
+  const { colors } = useTheme();
   const { group_id, event_id: eventIdParam } = useLocalSearchParams<{
     group_id: string;
     event_id: string;
@@ -115,18 +117,18 @@ function GuestListPage() {
 
   return (
     <UserRoute>
-      <View style={styles.container}>
+      <View style={[styles.container, { backgroundColor: colors.backgroundSecondary }]}>
         <DragHandle />
         {/* Header */}
-        <View style={styles.header}>
+        <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
           <TouchableOpacity
             style={styles.backButton}
             onPress={handleBack}
           >
-            <Ionicons name="arrow-back" size={24} color="#333" />
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
           <View style={styles.headerContent}>
-            <Text style={styles.headerTitle}>Guest List</Text>
+            <Text style={[styles.headerTitle, { color: colors.text }]}>Guest List</Text>
           </View>
         </View>
 
@@ -145,18 +147,18 @@ function GuestListPage() {
                 {/* Going Section */}
                 {goingUsers.length > 0 && (
                   <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>
+                    <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
                       Going ({goingUsers.length})
                     </Text>
                     {goingUsers.map((user) => (
-                      <View key={user.id} style={styles.userRow}>
+                      <View key={user.id} style={[styles.userRow, { backgroundColor: colors.surface }]}>
                         <Avatar
                           name={`${user.firstName} ${user.lastName}`}
                           imageUrl={user.profileImage}
                           size={48}
                         />
                         <View style={styles.userInfo}>
-                          <Text style={styles.userName}>
+                          <Text style={[styles.userName, { color: colors.text }]}>
                             {user.firstName} {user.lastName}
                           </Text>
                         </View>
@@ -171,18 +173,18 @@ function GuestListPage() {
                 {/* Maybe Section */}
                 {maybeUsers.length > 0 && (
                   <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>
+                    <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
                       Maybe ({maybeUsers.length})
                     </Text>
                     {maybeUsers.map((user) => (
-                      <View key={user.id} style={styles.userRow}>
+                      <View key={user.id} style={[styles.userRow, { backgroundColor: colors.surface }]}>
                         <Avatar
                           name={`${user.firstName} ${user.lastName}`}
                           imageUrl={user.profileImage}
                           size={48}
                         />
                         <View style={styles.userInfo}>
-                          <Text style={styles.userName}>
+                          <Text style={[styles.userName, { color: colors.text }]}>
                             {user.firstName} {user.lastName}
                           </Text>
                         </View>
@@ -197,18 +199,18 @@ function GuestListPage() {
                 {/* Can't Go Section */}
                 {cantGoUsers.length > 0 && (
                   <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>
+                    <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
                       Can't Go ({cantGoUsers.length})
                     </Text>
                     {cantGoUsers.map((user) => (
-                      <View key={user.id} style={styles.userRow}>
+                      <View key={user.id} style={[styles.userRow, { backgroundColor: colors.surface }]}>
                         <Avatar
                           name={`${user.firstName} ${user.lastName}`}
                           imageUrl={user.profileImage}
                           size={48}
                         />
                         <View style={styles.userInfo}>
-                          <Text style={styles.userName}>
+                          <Text style={[styles.userName, { color: colors.text }]}>
                             {user.firstName} {user.lastName}
                           </Text>
                         </View>
@@ -222,8 +224,8 @@ function GuestListPage() {
 
                 {rsvpData?.total === 0 && (
                   <View style={styles.emptyState}>
-                    <Ionicons name="people-outline" size={48} color="#9CA3AF" />
-                    <Text style={styles.emptyStateText}>No RSVPs yet</Text>
+                    <Ionicons name="people-outline" size={48} color={colors.iconSecondary} />
+                    <Text style={[styles.emptyStateText, { color: colors.textSecondary }]}>No RSVPs yet</Text>
                   </View>
                 )}
               </>
@@ -253,8 +255,8 @@ function GuestListPage() {
             <View style={styles.lockIconContainer}>
               <Ionicons name="lock-closed" size={48} color={DEFAULT_PRIMARY_COLOR} />
             </View>
-            <Text style={styles.modalTitle}>Restricted Access</Text>
-            <Text style={styles.modalMessage}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Restricted Access</Text>
+            <Text style={[styles.modalMessage, { color: colors.textSecondary }]}>
               Only RSVP'd guests can view event activity & see who's going
             </Text>
 
@@ -266,16 +268,16 @@ function GuestListPage() {
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={[styles.modalButton, styles.modalButtonSecondary]}
+              style={[styles.modalButton, styles.modalButtonSecondary, { backgroundColor: colors.surfaceSecondary }]}
               onPress={handleRemindLater}
             >
-              <Ionicons name="time-outline" size={20} color="#6B7280" />
-              <Text style={styles.modalButtonTextSecondary}>Remind me later</Text>
+              <Ionicons name="time-outline" size={20} color={colors.icon} />
+              <Text style={[styles.modalButtonTextSecondary, { color: colors.textSecondary }]}>Remind me later</Text>
             </TouchableOpacity>
 
             <View style={styles.modalHint}>
-              <Ionicons name="information-circle-outline" size={16} color="#6B7280" />
-              <Text style={styles.modalHintText}>Not sure? Pick "Maybe"</Text>
+              <Ionicons name="information-circle-outline" size={16} color={colors.icon} />
+              <Text style={[styles.modalHintText, { color: colors.textSecondary }]}>Not sure? Pick "Maybe"</Text>
             </View>
           </View>
         </CustomModal>
@@ -287,15 +289,12 @@ function GuestListPage() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F3F4F6",
   },
   header: {
     flexDirection: "row",
     alignItems: "center",
     padding: 16,
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#E5E7EB",
   },
   backButton: {
     marginRight: 12,
@@ -311,7 +310,6 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 20,
     fontWeight: "bold",
-    color: "#111827",
   },
   loadingContainer: {
     flex: 1,
@@ -330,14 +328,12 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#6B7280",
     marginBottom: 12,
     textTransform: "uppercase",
   },
   userRow: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 12,
     marginBottom: 8,
@@ -349,7 +345,6 @@ const styles = StyleSheet.create({
   userName: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#111827",
   },
   badge: {
     paddingHorizontal: 12,
@@ -377,7 +372,6 @@ const styles = StyleSheet.create({
   },
   emptyStateText: {
     fontSize: 16,
-    color: "#6B7280",
     marginTop: 12,
   },
   blurredList: {
@@ -398,7 +392,7 @@ const styles = StyleSheet.create({
     height: 16,
     backgroundColor: "#D1D5DB",
     borderRadius: 4,
-    width: "70%",
+    width: "70%" as any,
   },
   modalContent: {
     alignItems: "center",
@@ -410,13 +404,11 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 24,
     fontWeight: "bold",
-    color: "#111827",
     marginBottom: 12,
     textAlign: "center",
   },
   modalMessage: {
     fontSize: 16,
-    color: "#6B7280",
     textAlign: "center",
     marginBottom: 24,
     lineHeight: 24,
@@ -434,7 +426,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
   },
   modalButtonSecondary: {
-    backgroundColor: "#F3F4F6",
     flexDirection: "row",
     gap: 8,
   },
@@ -446,7 +437,6 @@ const styles = StyleSheet.create({
   modalButtonTextSecondary: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#6B7280",
   },
   modalHint: {
     flexDirection: "row",
@@ -456,7 +446,6 @@ const styles = StyleSheet.create({
   },
   modalHintText: {
     fontSize: 14,
-    color: "#6B7280",
   },
 });
 

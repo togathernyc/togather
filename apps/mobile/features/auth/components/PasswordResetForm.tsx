@@ -9,6 +9,7 @@ import {
   StyleSheet,
   ActivityIndicator,
 } from "react-native";
+import { useTheme } from "@hooks/useTheme";
 
 interface PasswordResetFormProps {
   step: "email" | "reset";
@@ -49,24 +50,26 @@ export function PasswordResetForm({
   onBackToEmail,
   onSignIn,
 }: PasswordResetFormProps) {
+  const { colors } = useTheme();
   if (step === "email") {
     return (
       <View style={styles.container}>
         <TouchableOpacity style={styles.backButton} onPress={onBack}>
-          <Text style={styles.backButtonText}>← Back</Text>
+          <Text style={[styles.backButtonText, { color: colors.link }]}>← Back</Text>
         </TouchableOpacity>
 
-        <Text style={styles.title}>Reset Password</Text>
-        <Text style={styles.subtitle}>
+        <Text style={[styles.title, { color: colors.text }]}>Reset Password</Text>
+        <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
           Enter your email address and we'll send you a code to reset your
           password
         </Text>
 
-        {error ? <Text style={styles.error}>{error}</Text> : null}
+        {error ? <Text style={[styles.error, { color: colors.error }]}>{error}</Text> : null}
 
         <TextInput
-          style={styles.input}
+          style={[styles.input, { borderColor: colors.border, backgroundColor: colors.surface, color: colors.text }]}
           placeholder="Email"
+          placeholderTextColor={colors.inputPlaceholder}
           value={email}
           onChangeText={(text) => {
             if (!/\s/.test(text)) {
@@ -79,7 +82,7 @@ export function PasswordResetForm({
         />
 
         <TouchableOpacity
-          style={[styles.button, isSendingEmail && styles.buttonDisabled]}
+          style={[styles.button, { backgroundColor: colors.buttonPrimary }, isSendingEmail && styles.buttonDisabled]}
           onPress={onSendEmail}
           disabled={isSendingEmail}
         >
@@ -91,7 +94,7 @@ export function PasswordResetForm({
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.linkButton} onPress={onSignIn}>
-          <Text style={styles.linkText}>Back to Sign In</Text>
+          <Text style={[styles.linkText, { color: colors.textSecondary }]}>Back to Sign In</Text>
         </TouchableOpacity>
       </View>
     );
@@ -100,20 +103,21 @@ export function PasswordResetForm({
   return (
     <View style={styles.container}>
       <TouchableOpacity style={styles.backButton} onPress={onBackToEmail}>
-        <Text style={styles.backButtonText}>← Back</Text>
+        <Text style={[styles.backButtonText, { color: colors.link }]}>← Back</Text>
       </TouchableOpacity>
 
-      <Text style={styles.title}>Reset Password</Text>
-      <Text style={styles.subtitle}>
+      <Text style={[styles.title, { color: colors.text }]}>Reset Password</Text>
+      <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
         Enter the code sent to your email and your new password
       </Text>
 
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+      {error ? <Text style={[styles.error, { color: colors.error }]}>{error}</Text> : null}
 
-      <Text style={styles.label}>Reset Code</Text>
+      <Text style={[styles.label, { color: colors.textSecondary }]}>Reset Code</Text>
       <TextInput
-        style={styles.input}
+        style={[styles.input, { borderColor: colors.border, backgroundColor: colors.surface, color: colors.text }]}
         placeholder="Enter code"
+        placeholderTextColor={colors.inputPlaceholder}
         value={code}
         onChangeText={(text) => {
           if (!/\s/.test(text)) {
@@ -123,10 +127,11 @@ export function PasswordResetForm({
         autoCapitalize="none"
       />
 
-      <Text style={styles.label}>New Password</Text>
+      <Text style={[styles.label, { color: colors.textSecondary }]}>New Password</Text>
       <TextInput
-        style={styles.input}
+        style={[styles.input, { borderColor: colors.border, backgroundColor: colors.surface, color: colors.text }]}
         placeholder="New password"
+        placeholderTextColor={colors.inputPlaceholder}
         value={newPassword}
         onChangeText={(text) => {
           if (!/\s/.test(text)) {
@@ -137,10 +142,11 @@ export function PasswordResetForm({
         autoCapitalize="none"
       />
 
-      <Text style={styles.label}>Confirm Password</Text>
+      <Text style={[styles.label, { color: colors.textSecondary }]}>Confirm Password</Text>
       <TextInput
-        style={styles.input}
+        style={[styles.input, { borderColor: colors.border, backgroundColor: colors.surface, color: colors.text }]}
         placeholder="Confirm password"
+        placeholderTextColor={colors.inputPlaceholder}
         value={confirmPassword}
         onChangeText={(text) => {
           if (!/\s/.test(text)) {
@@ -152,7 +158,7 @@ export function PasswordResetForm({
       />
 
       <TouchableOpacity
-        style={[styles.button, isResettingPassword && styles.buttonDisabled]}
+        style={[styles.button, { backgroundColor: colors.buttonPrimary }, isResettingPassword && styles.buttonDisabled]}
         onPress={onResetPassword}
         disabled={isResettingPassword}
       >
@@ -164,7 +170,7 @@ export function PasswordResetForm({
       </TouchableOpacity>
 
       <TouchableOpacity style={styles.linkButton} onPress={onSignIn}>
-        <Text style={styles.linkText}>Back to Sign In</Text>
+        <Text style={[styles.linkText, { color: colors.textSecondary }]}>Back to Sign In</Text>
       </TouchableOpacity>
     </View>
   );
@@ -183,38 +189,31 @@ const styles = StyleSheet.create({
   },
   backButtonText: {
     fontSize: 16,
-    color: "#007AFF",
   },
   title: {
     fontSize: 32,
     fontWeight: "bold",
     marginBottom: 8,
-    color: "#333",
   },
   subtitle: {
     fontSize: 16,
-    color: "#666",
     marginBottom: 32,
   },
   label: {
     fontSize: 12,
     fontWeight: "600",
-    color: "#7f7f82",
     marginTop: 16,
     marginBottom: 8,
     textTransform: "uppercase",
   },
   input: {
     borderWidth: 2,
-    borderColor: "#ecedf0",
     borderRadius: 16,
     padding: 16,
     marginBottom: 16,
     fontSize: 16,
-    backgroundColor: "#fff",
   },
   button: {
-    backgroundColor: "#000",
     borderRadius: 16,
     padding: 16,
     alignItems: "center",
@@ -230,7 +229,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   error: {
-    color: "#FF3B30",
     marginBottom: 16,
     fontSize: 14,
   },
@@ -240,7 +238,6 @@ const styles = StyleSheet.create({
   },
   linkText: {
     fontSize: 14,
-    color: "#666",
   },
 });
 

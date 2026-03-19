@@ -2,6 +2,7 @@ import React from "react";
 import { View, StyleSheet, Dimensions, ScrollView } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Skeleton, SkeletonAvatar, SkeletonText } from "@components/ui";
+import { useTheme } from "@hooks/useTheme";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 // Match GroupHeader.tsx which uses SCREEN_WIDTH * 0.6
@@ -13,9 +14,10 @@ const HERO_HEIGHT = SCREEN_WIDTH * 0.6;
  */
 export function GroupDetailSkeleton() {
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
+    <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.background }]}>
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
@@ -44,13 +46,13 @@ export function GroupDetailSkeleton() {
       </View>
 
         {/* Description Section */}
-        <View style={styles.descriptionSection}>
+        <View style={[styles.descriptionSection, { backgroundColor: colors.surfaceSecondary }]}>
           <SkeletonText lines={2} />
         </View>
 
         {/* Chat Card Section */}
-        <View style={styles.cardSection}>
-          <View style={styles.chatCard}>
+        <View style={[styles.cardSection, { backgroundColor: colors.surfaceSecondary }]}>
+          <View style={[styles.chatCard, { backgroundColor: colors.surface }]}>
             <Skeleton width={44} height={44} variant="circular" />
             <View style={styles.chatCardContent}>
               <Skeleton width={100} height={16} />
@@ -61,7 +63,7 @@ export function GroupDetailSkeleton() {
         </View>
 
         {/* Map Section */}
-        <View style={styles.mapSection}>
+        <View style={[styles.mapSection, { backgroundColor: colors.surfaceSecondary }]}>
           <Skeleton width="100%" height={120} borderRadius={12} />
           <View style={styles.mapAddress}>
             <Skeleton width={24} height={24} variant="circular" />
@@ -73,9 +75,9 @@ export function GroupDetailSkeleton() {
         </View>
 
         {/* Next Event Section */}
-        <View style={styles.eventSection}>
+        <View style={[styles.eventSection, { backgroundColor: colors.surfaceSecondary }]}>
           <Skeleton width={100} height={14} style={styles.sectionLabel} />
-          <View style={styles.eventCard}>
+          <View style={[styles.eventCard, { backgroundColor: colors.surface }]}>
             <View style={styles.eventDate}>
               <Skeleton width={40} height={16} />
               <Skeleton width={30} height={28} style={{ marginTop: 4 }} />
@@ -88,7 +90,7 @@ export function GroupDetailSkeleton() {
         </View>
 
         {/* Members Row */}
-        <View style={styles.membersSection}>
+        <View style={[styles.membersSection, { backgroundColor: colors.surfaceSecondary }]}>
           <Skeleton width={80} height={14} style={styles.sectionLabel} />
           <View style={styles.membersRow}>
             {[...Array(6)].map((_, index) => (
@@ -104,7 +106,6 @@ export function GroupDetailSkeleton() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
   },
   scrollView: {
     flex: 1,
@@ -135,19 +136,16 @@ const styles = StyleSheet.create({
     opacity: 0.9,
   },
   descriptionSection: {
-    backgroundColor: "#F5F5F5",
     paddingHorizontal: 16,
     paddingVertical: 16,
   },
   cardSection: {
-    backgroundColor: "#F5F5F5",
     paddingHorizontal: 16,
     paddingBottom: 16,
   },
   chatCard: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 12,
   },
@@ -156,7 +154,6 @@ const styles = StyleSheet.create({
     marginLeft: 12,
   },
   mapSection: {
-    backgroundColor: "#F5F5F5",
     paddingHorizontal: 16,
     paddingBottom: 16,
   },
@@ -170,7 +167,6 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   eventSection: {
-    backgroundColor: "#F5F5F5",
     paddingHorizontal: 16,
     paddingBottom: 16,
   },
@@ -180,7 +176,6 @@ const styles = StyleSheet.create({
   eventCard: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 16,
   },
@@ -192,7 +187,6 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   membersSection: {
-    backgroundColor: "#F5F5F5",
     paddingHorizontal: 16,
     paddingVertical: 16,
   },

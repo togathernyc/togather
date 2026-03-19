@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { CustomModal } from "@/components/ui/Modal";
+import { useTheme } from "@hooks/useTheme";
 
 // ============================================================================
 // Types
@@ -127,6 +128,7 @@ export function ColumnPickerModal({
   onSave,
   isSaving = false,
 }: ColumnPickerModalProps) {
+  const { colors, isDark } = useTheme();
   // Local editing state
   const [order, setOrder] = useState<string[]>([]);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
@@ -265,6 +267,15 @@ export function ColumnPickerModal({
     return getNextAvailableSlot(type, usedSlots) !== null;
   };
 
+  // Type badge background colors (branded/semantic, kept as-is per rules)
+  const typeBadgeColors: Record<string, string> = {
+    text: isDark ? '#1e3a5f' : '#DBEAFE',
+    number: isDark ? '#1a3a2a' : '#D1FAE5',
+    boolean: isDark ? '#3a3520' : '#FEF3C7',
+    dropdown: isDark ? '#2d1f4e' : '#EDE9FE',
+    multiselect: isDark ? '#3a1f30' : '#FCE7F3',
+  };
+
   return (
     <CustomModal
       visible={visible}
@@ -274,13 +285,13 @@ export function ColumnPickerModal({
     >
       <View style={styles.container}>
         {/* Section 1: Column Order & Visibility */}
-        <Text style={styles.sectionTitle}>Column Order & Visibility</Text>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Column Order & Visibility</Text>
         <ScrollView style={styles.columnList}>
           {order.map((key, idx) => {
             const label = labelMap.get(key) ?? key;
             const isHidden = hidden.has(key);
             return (
-              <View key={key} style={styles.columnRow}>
+              <View key={key} style={[styles.columnRow, { borderBottomColor: colors.borderLight }]}>
                 <View style={styles.columnArrows}>
                   <TouchableOpacity
                     onPress={() => moveColumn(idx, -1)}
@@ -290,7 +301,7 @@ export function ColumnPickerModal({
                     <Ionicons
                       name="chevron-up"
                       size={16}
-                      color={idx === 0 ? "#D1D5DB" : "#6B7280"}
+                      color={idx === 0 ? colors.buttonDisabled : colors.icon}
                     />
                   </TouchableOpacity>
                   <TouchableOpacity
@@ -301,14 +312,15 @@ export function ColumnPickerModal({
                     <Ionicons
                       name="chevron-down"
                       size={16}
-                      color={idx === order.length - 1 ? "#D1D5DB" : "#6B7280"}
+                      color={idx === order.length - 1 ? colors.buttonDisabled : colors.icon}
                     />
                   </TouchableOpacity>
                 </View>
                 <Text
                   style={[
                     styles.columnLabel,
-                    isHidden && styles.columnLabelHidden,
+                    { color: colors.text },
+                    isHidden && { color: colors.buttonDisabled, textDecorationLine: "line-through" as const },
                   ]}
                 >
                   {label}
@@ -320,7 +332,7 @@ export function ColumnPickerModal({
                   <Ionicons
                     name={isHidden ? "eye-off-outline" : "eye-outline"}
                     size={18}
-                    color={isHidden ? "#D1D5DB" : "#6B7280"}
+                    color={isHidden ? colors.buttonDisabled : colors.icon}
                   />
                 </TouchableOpacity>
               </View>
@@ -329,14 +341,14 @@ export function ColumnPickerModal({
         </ScrollView>
 
         {/* Section 2: Custom Fields */}
-        <View style={styles.sectionDivider} />
-        <Text style={styles.sectionTitle}>Custom Fields</Text>
+        <View style={[styles.sectionDivider, { backgroundColor: colors.border }]} />
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Custom Fields</Text>
 
         {/* Capacity indicators */}
         <View style={styles.capacityRow}>
           {Object.entries(SLOT_CAPACITIES).map(([key, info]) => (
-            <View key={key} style={styles.capacityBadge}>
-              <Text style={styles.capacityText}>
+            <View key={key} style={[styles.capacityBadge, { backgroundColor: colors.surfaceSecondary }]}>
+              <Text style={[styles.capacityText, { color: colors.textSecondary }]}>
                 {info.label}: {capacityInfo[key] ?? 0}/{info.total}
               </Text>
             </View>
@@ -345,22 +357,20 @@ export function ColumnPickerModal({
 
         {/* Existing custom fields */}
         {fields.map((field, idx) => (
-          <View key={field.slot} style={styles.fieldRow}>
+          <View key={field.slot} style={[styles.fieldRow, { backgroundColor: colors.surfaceSecondary }]}>
             <View style={styles.fieldInfo}>
-              <Text style={styles.fieldName}>{field.name}</Text>
+              <Text style={[styles.fieldName, { color: colors.text }]}>{field.name}</Text>
               <View
                 style={[
                   styles.typeBadge,
-                  styles[
-                    `typeBadge_${field.type}` as keyof typeof styles
-                  ] as any,
+                  { backgroundColor: typeBadgeColors[field.type] || colors.border },
                 ]}
               >
-                <Text style={styles.typeBadgeText}>{field.type}</Text>
+                <Text style={[styles.typeBadgeText, { color: colors.textSecondary }]}>{field.type}</Text>
               </View>
               {(field.type === "dropdown" || field.type === "multiselect") &&
                 field.options && (
-                  <Text style={styles.fieldOptions} numberOfLines={1}>
+                  <Text style={[styles.fieldOptions, { color: colors.textTertiary }]} numberOfLines={1}>
                     ({field.options.join(", ")})
                   </Text>
                 )}
@@ -369,19 +379,20 @@ export function ColumnPickerModal({
               onPress={() => handleDeleteField(idx)}
               style={styles.deleteBtn}
             >
-              <Ionicons name="trash-outline" size={16} color="#EF4444" />
+              <Ionicons name="trash-outline" size={16} color={colors.destructive} />
             </TouchableOpacity>
           </View>
         ))}
 
         {/* Add custom field form */}
         {showAddField ? (
-          <View style={styles.addFieldForm}>
+          <View style={[styles.addFieldForm, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
             <TextInput
-              style={styles.fieldInput}
+              style={[styles.fieldInput, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground, color: colors.text }]}
               value={newFieldName}
               onChangeText={setNewFieldName}
               placeholder="Field name..."
+              placeholderTextColor={colors.inputPlaceholder}
               autoFocus
             />
             <View style={styles.typePickerRow}>
@@ -393,7 +404,8 @@ export function ColumnPickerModal({
                     key={ft.value}
                     style={[
                       styles.typeOption,
-                      isActive && styles.typeOptionActive,
+                      { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground },
+                      isActive && { borderColor: colors.link, backgroundColor: colors.selectedBackground },
                       !enabled && styles.typeOptionDisabled,
                     ]}
                     onPress={() => enabled && setNewFieldType(ft.value)}
@@ -402,8 +414,9 @@ export function ColumnPickerModal({
                     <Text
                       style={[
                         styles.typeOptionText,
-                        isActive && styles.typeOptionTextActive,
-                        !enabled && styles.typeOptionTextDisabled,
+                        { color: colors.text },
+                        isActive && { color: colors.link, fontWeight: "600" as const },
+                        !enabled && { color: colors.textTertiary },
                       ]}
                     >
                       {ft.label}
@@ -417,11 +430,11 @@ export function ColumnPickerModal({
             {(newFieldType === "dropdown" ||
               newFieldType === "multiselect") && (
               <View style={styles.optionsEditor}>
-                <Text style={styles.optionsLabel}>Options:</Text>
+                <Text style={[styles.optionsLabel, { color: colors.textSecondary }]}>Options:</Text>
                 {newFieldOptions.map((opt, i) => (
                   <View key={i} style={styles.optionRow}>
                     <TextInput
-                      style={styles.optionInput}
+                      style={[styles.optionInput, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground, color: colors.text }]}
                       value={opt}
                       onChangeText={(text) => {
                         const next = [...newFieldOptions];
@@ -429,6 +442,7 @@ export function ColumnPickerModal({
                         setNewFieldOptions(next);
                       }}
                       placeholder={`Option ${i + 1}`}
+                      placeholderTextColor={colors.inputPlaceholder}
                     />
                     <TouchableOpacity
                       onPress={() =>
@@ -438,7 +452,7 @@ export function ColumnPickerModal({
                       }
                       style={styles.optionDeleteBtn}
                     >
-                      <Ionicons name="close-circle" size={18} color="#9CA3AF" />
+                      <Ionicons name="close-circle" size={18} color={colors.iconSecondary} />
                     </TouchableOpacity>
                   </View>
                 ))}
@@ -446,8 +460,8 @@ export function ColumnPickerModal({
                   onPress={() => setNewFieldOptions([...newFieldOptions, ""])}
                   style={styles.addOptionBtn}
                 >
-                  <Ionicons name="add" size={14} color="#2563EB" />
-                  <Text style={styles.addOptionText}>Add option</Text>
+                  <Ionicons name="add" size={14} color={colors.link} />
+                  <Text style={[styles.addOptionText, { color: colors.link }]}>Add option</Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -462,18 +476,19 @@ export function ColumnPickerModal({
                 }}
                 style={styles.cancelFieldBtn}
               >
-                <Text style={styles.cancelFieldText}>Cancel</Text>
+                <Text style={[styles.cancelFieldText, { color: colors.textSecondary }]}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={handleAddField}
                 style={[
                   styles.confirmFieldBtn,
+                  { backgroundColor: colors.link },
                   (!newFieldName.trim() || !canAddType(newFieldType)) &&
                     styles.btnDisabled,
                 ]}
                 disabled={!newFieldName.trim() || !canAddType(newFieldType)}
               >
-                <Text style={styles.confirmFieldText}>Add Field</Text>
+                <Text style={[styles.confirmFieldText, { color: colors.textInverse }]}>Add Field</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -482,29 +497,29 @@ export function ColumnPickerModal({
             onPress={() => setShowAddField(true)}
             style={styles.addFieldButton}
           >
-            <Ionicons name="add-circle-outline" size={18} color="#2563EB" />
-            <Text style={styles.addFieldButtonText}>Add Custom Field</Text>
+            <Ionicons name="add-circle-outline" size={18} color={colors.link} />
+            <Text style={[styles.addFieldButtonText, { color: colors.link }]}>Add Custom Field</Text>
           </TouchableOpacity>
         )}
 
         {/* Footer */}
-        <View style={styles.footer}>
+        <View style={[styles.footer, { borderTopColor: colors.border }]}>
           <TouchableOpacity
             onPress={onClose}
-            style={styles.footerCancelBtn}
+            style={[styles.footerCancelBtn, { backgroundColor: colors.surfaceSecondary }]}
             disabled={isSaving}
           >
-            <Text style={styles.footerCancelText}>Cancel</Text>
+            <Text style={[styles.footerCancelText, { color: colors.text }]}>Cancel</Text>
           </TouchableOpacity>
           <TouchableOpacity
             onPress={handleSave}
-            style={[styles.footerSaveBtn, isSaving && styles.btnDisabled]}
+            style={[styles.footerSaveBtn, { backgroundColor: colors.link }, isSaving && styles.btnDisabled]}
             disabled={isSaving}
           >
             {isSaving ? (
-              <ActivityIndicator size="small" color="#fff" />
+              <ActivityIndicator size="small" color={colors.textInverse} />
             ) : (
-              <Text style={styles.footerSaveText}>Save</Text>
+              <Text style={[styles.footerSaveText, { color: colors.textInverse }]}>Save</Text>
             )}
           </TouchableOpacity>
         </View>
@@ -524,13 +539,11 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 14,
     fontWeight: "600" as const,
-    color: "#374151",
     textTransform: "uppercase" as const,
     letterSpacing: 0.5,
   },
   sectionDivider: {
     height: 1,
-    backgroundColor: "#E5E7EB",
     marginVertical: 4,
   },
   columnList: {
@@ -542,7 +555,6 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     paddingHorizontal: 4,
     borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
   },
   columnArrows: {
     flexDirection: "row" as const,
@@ -555,11 +567,6 @@ const styles = StyleSheet.create({
   columnLabel: {
     flex: 1,
     fontSize: 14,
-    color: "#374151",
-  },
-  columnLabelHidden: {
-    color: "#D1D5DB",
-    textDecorationLine: "line-through" as const,
   },
   eyeBtn: {
     padding: 4,
@@ -572,14 +579,12 @@ const styles = StyleSheet.create({
     flexWrap: "wrap" as const,
   },
   capacityBadge: {
-    backgroundColor: "#F3F4F6",
     borderRadius: 4,
     paddingHorizontal: 8,
     paddingVertical: 3,
   },
   capacityText: {
     fontSize: 11,
-    color: "#6B7280",
     fontWeight: "500" as const,
   },
 
@@ -589,7 +594,6 @@ const styles = StyleSheet.create({
     alignItems: "center" as const,
     paddingVertical: 8,
     paddingHorizontal: 8,
-    backgroundColor: "#F9FAFB",
     borderRadius: 8,
     gap: 8,
   },
@@ -601,28 +605,19 @@ const styles = StyleSheet.create({
   },
   fieldName: {
     fontSize: 14,
-    color: "#374151",
     fontWeight: "500" as const,
   },
   typeBadge: {
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
-    backgroundColor: "#E5E7EB",
   },
-  typeBadge_text: { backgroundColor: "#DBEAFE" },
-  typeBadge_number: { backgroundColor: "#D1FAE5" },
-  typeBadge_boolean: { backgroundColor: "#FEF3C7" },
-  typeBadge_dropdown: { backgroundColor: "#EDE9FE" },
-  typeBadge_multiselect: { backgroundColor: "#FCE7F3" },
   typeBadgeText: {
     fontSize: 11,
     fontWeight: "600" as const,
-    color: "#6B7280",
   },
   fieldOptions: {
     fontSize: 12,
-    color: "#9CA3AF",
     flex: 1,
   },
   deleteBtn: {
@@ -631,21 +626,17 @@ const styles = StyleSheet.create({
 
   // Add field form
   addFieldForm: {
-    backgroundColor: "#F9FAFB",
     borderRadius: 8,
     padding: 12,
     gap: 10,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
   },
   fieldInput: {
     fontSize: 14,
     borderWidth: 1,
-    borderColor: "#D1D5DB",
     borderRadius: 6,
     paddingHorizontal: 10,
     paddingVertical: 8,
-    backgroundColor: "#fff",
   },
   typePickerRow: {
     flexDirection: "row" as const,
@@ -656,26 +647,12 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: "#D1D5DB",
-    backgroundColor: "#fff",
-  },
-  typeOptionActive: {
-    borderColor: "#2563EB",
-    backgroundColor: "#EFF6FF",
   },
   typeOptionDisabled: {
     opacity: 0.4,
   },
   typeOptionText: {
     fontSize: 13,
-    color: "#374151",
-  },
-  typeOptionTextActive: {
-    color: "#2563EB",
-    fontWeight: "600" as const,
-  },
-  typeOptionTextDisabled: {
-    color: "#9CA3AF",
   },
 
   // Dropdown options editor
@@ -684,7 +661,6 @@ const styles = StyleSheet.create({
   },
   optionsLabel: {
     fontSize: 12,
-    color: "#6B7280",
     fontWeight: "500" as const,
   },
   optionRow: {
@@ -696,11 +672,9 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 13,
     borderWidth: 1,
-    borderColor: "#D1D5DB",
     borderRadius: 4,
     paddingHorizontal: 8,
     paddingVertical: 5,
-    backgroundColor: "#fff",
   },
   optionDeleteBtn: {
     padding: 2,
@@ -713,7 +687,6 @@ const styles = StyleSheet.create({
   },
   addOptionText: {
     fontSize: 12,
-    color: "#2563EB",
   },
 
   // Add field actions
@@ -729,17 +702,14 @@ const styles = StyleSheet.create({
   },
   cancelFieldText: {
     fontSize: 13,
-    color: "#6B7280",
   },
   confirmFieldBtn: {
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 6,
-    backgroundColor: "#2563EB",
   },
   confirmFieldText: {
     fontSize: 13,
-    color: "#fff",
     fontWeight: "600" as const,
   },
   btnDisabled: {
@@ -755,7 +725,6 @@ const styles = StyleSheet.create({
   },
   addFieldButtonText: {
     fontSize: 14,
-    color: "#2563EB",
     fontWeight: "500" as const,
   },
 
@@ -766,31 +735,26 @@ const styles = StyleSheet.create({
     gap: 10,
     marginTop: 8,
     borderTopWidth: 1,
-    borderTopColor: "#E5E7EB",
     paddingTop: 16,
   },
   footerCancelBtn: {
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 8,
-    backgroundColor: "#F3F4F6",
   },
   footerCancelText: {
     fontSize: 14,
-    color: "#374151",
     fontWeight: "500" as const,
   },
   footerSaveBtn: {
     paddingHorizontal: 20,
     paddingVertical: 10,
     borderRadius: 8,
-    backgroundColor: "#2563EB",
     minWidth: 80,
     alignItems: "center" as const,
   },
   footerSaveText: {
     fontSize: 14,
-    color: "#fff",
     fontWeight: "600" as const,
   },
 });

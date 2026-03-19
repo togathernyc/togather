@@ -22,6 +22,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { DEFAULT_PRIMARY_COLOR } from '@utils/styles';
 import { getMediaUrl, getMediaUrlWithTransform } from '@/utils/media';
+import { useTheme } from '@hooks/useTheme';
 
 type PlaceholderType = 'icon' | 'initials' | 'color' | 'custom';
 
@@ -117,6 +118,7 @@ export const AppImage = memo(function AppImage({
   optimizedHeight,
   optimizedQuality,
 }: AppImageProps) {
+  const { colors } = useTheme();
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
 
@@ -164,7 +166,7 @@ export const AppImage = memo(function AppImage({
         <View
           style={[
             styles.placeholder,
-            { backgroundColor: '#f0f0f0' },
+            { backgroundColor: colors.surfaceSecondary },
             style as ViewStyle,
           ]}
           testID={testID ? `${testID}-placeholder` : undefined}
@@ -176,7 +178,7 @@ export const AppImage = memo(function AppImage({
       placeholder.backgroundColor ||
       (placeholder.type === 'initials'
         ? getColorFromName(placeholder.name)
-        : '#f0f0f0');
+        : colors.surfaceSecondary);
 
     return (
       <View
@@ -191,7 +193,7 @@ export const AppImage = memo(function AppImage({
           <Ionicons
             name={placeholder.icon || 'image-outline'}
             size={placeholder.iconSize || 48}
-            color={placeholder.iconColor || '#ccc'}
+            color={placeholder.iconColor || colors.iconSecondary}
           />
         )}
         {placeholder.type === 'initials' && (
@@ -199,6 +201,7 @@ export const AppImage = memo(function AppImage({
             style={[
               styles.initialsText,
               {
+                color: colors.textInverse,
                 fontSize: Math.min(
                   (typeof width === 'number' ? width : 48) * 0.4,
                   (typeof height === 'number' ? height : 48) * 0.4
@@ -231,7 +234,7 @@ export const AppImage = memo(function AppImage({
         testID={testID}
       />
       {showLoadingIndicator && isLoading && (
-        <View style={styles.loadingOverlay}>
+        <View style={[styles.loadingOverlay, { backgroundColor: colors.overlay }]}>
           <ActivityIndicator size="small" color={DEFAULT_PRIMARY_COLOR} />
         </View>
       )}
@@ -249,13 +252,11 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   initialsText: {
-    color: '#fff',
     fontWeight: '600',
   },
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.5)',
   },
 });

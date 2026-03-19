@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useTheme } from "@hooks/useTheme";
 import {
   format,
   startOfMonth,
@@ -24,6 +25,7 @@ export function CalendarGrid({
   onDateSelect,
   minimumDate = new Date(),
 }: CalendarGridProps) {
+  const { colors, isDark } = useTheme();
   const [currentMonth, setCurrentMonth] = useState(selectedDate);
 
   useEffect(() => {
@@ -83,19 +85,19 @@ export function CalendarGrid({
       {/* Month Navigation */}
       <View style={styles.monthNavigation}>
         <TouchableOpacity
-          style={styles.monthNavButton}
+          style={[styles.monthNavButton, { borderColor: colors.border, backgroundColor: colors.surface }]}
           onPress={handlePreviousMonth}
         >
-          <Ionicons name="chevron-back" size={16} color="#666" />
+          <Ionicons name="chevron-back" size={16} color={colors.textSecondary} />
         </TouchableOpacity>
-        <Text style={styles.monthText}>
+        <Text style={[styles.monthText, { color: colors.textSecondary }]}>
           {format(currentMonth, "MMM yyyy")}
         </Text>
         <TouchableOpacity
-          style={styles.monthNavButton}
+          style={[styles.monthNavButton, { borderColor: colors.border, backgroundColor: colors.surface }]}
           onPress={handleNextMonth}
         >
-          <Ionicons name="chevron-forward" size={16} color="#666" />
+          <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
         </TouchableOpacity>
       </View>
 
@@ -103,7 +105,7 @@ export function CalendarGrid({
       <View style={styles.weekDayHeaders}>
         {weekDays.map((day, index) => (
           <View key={index} style={styles.weekDayHeader}>
-            <Text style={styles.weekDayText}>{day}</Text>
+            <Text style={[styles.weekDayText, { color: colors.textSecondary }]}>{day}</Text>
           </View>
         ))}
       </View>
@@ -126,7 +128,7 @@ export function CalendarGrid({
                   key={dayIndex}
                   style={[
                     styles.dayCell,
-                    isSelected && styles.dayCellSelected,
+                    isSelected && [styles.dayCellSelected, { backgroundColor: isDark ? colors.textInverse : colors.text }],
                     !isCurrentMonth && styles.dayCellOtherMonth,
                   ]}
                   onPress={() => !isDisabled && onDateSelect(day)}
@@ -135,9 +137,10 @@ export function CalendarGrid({
                   <Text
                     style={[
                       styles.dayText,
-                      isSelected && styles.dayTextSelected,
-                      isDisabled && styles.dayTextDisabled,
-                      !isCurrentMonth && styles.dayTextOtherMonth,
+                      { color: colors.text },
+                      isSelected && { color: isDark ? colors.text : colors.textInverse },
+                      isDisabled && { color: colors.textTertiary },
+                      !isCurrentMonth && { color: colors.textTertiary },
                     ]}
                   >
                     {format(day, "d")}
@@ -168,15 +171,12 @@ const styles = StyleSheet.create({
     height: 36,
     borderRadius: 18,
     borderWidth: 2,
-    borderColor: "#e0e0e0",
-    backgroundColor: "#fff",
     alignItems: "center",
     justifyContent: "center",
   },
   monthText: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
   },
   weekDayHeaders: {
     flexDirection: "row",
@@ -190,7 +190,6 @@ const styles = StyleSheet.create({
   weekDayText: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#666",
   },
   calendarGrid: {
     marginTop: 8,
@@ -207,7 +206,6 @@ const styles = StyleSheet.create({
     marginHorizontal: 4,
   },
   dayCellSelected: {
-    backgroundColor: "#000",
     borderRadius: 15,
   },
   dayCellOtherMonth: {
@@ -216,16 +214,6 @@ const styles = StyleSheet.create({
   dayText: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
-  },
-  dayTextSelected: {
-    color: "#fff",
-  },
-  dayTextDisabled: {
-    color: "#ccc",
-  },
-  dayTextOtherMonth: {
-    color: "#999",
   },
 });
 

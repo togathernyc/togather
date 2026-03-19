@@ -61,6 +61,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppImage } from "@components/ui";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
+import { useTheme } from "@hooks/useTheme";
 import {
   FloatingRsvpButtons,
   FloatingRsvpCard,
@@ -119,6 +120,7 @@ interface EventPageClientProps {
  * Convex queries will take over for real-time updates.
  */
 export default function EventPageClient({ initialEventData }: EventPageClientProps) {
+  const { colors } = useTheme();
   const { shortId, source, confirmAttendance, token } = useLocalSearchParams<{
     shortId: string;
     source?: string;
@@ -221,7 +223,7 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
 
   if (isLoading) {
     return (
-      <SafeAreaView style={styles.centered}>
+      <SafeAreaView style={[styles.centered, { backgroundColor: colors.background }]}>
         <ActivityIndicator size="large" color={DEFAULT_PRIMARY_COLOR} />
       </SafeAreaView>
     );
@@ -229,9 +231,9 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
 
   if (error === true || !eventData) {
     return (
-      <SafeAreaView style={styles.centered}>
-        <Ionicons name="calendar-outline" size={48} color="#ccc" />
-        <Text style={styles.errorText}>Event not found</Text>
+      <SafeAreaView style={[styles.centered, { backgroundColor: colors.background }]}>
+        <Ionicons name="calendar-outline" size={48} color={colors.iconSecondary} />
+        <Text style={[styles.errorText, { color: colors.textSecondary }]}>Event not found</Text>
         <TouchableOpacity
           style={styles.backButtonError}
           onPress={() => {
@@ -497,9 +499,9 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
   // ============================================================================
 
   return (
-    <SafeAreaView style={styles.container} edges={["top"]}>
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.surface }]} edges={["top"]}>
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => {
@@ -511,19 +513,19 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
             }
           }}
         >
-          <Ionicons name="arrow-back" size={24} color="#333" />
+          <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
         <View style={styles.headerContent}>
-          <Text style={styles.headerTitle} numberOfLines={1}>
+          <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
             {eventData.title || "Event"}
           </Text>
         </View>
         <TouchableOpacity style={styles.shareButton} onPress={handleShare}>
-          <Ionicons name="share-outline" size={22} color="#333" />
+          <Ionicons name="share-outline" size={22} color={colors.text} />
         </TouchableOpacity>
         {isLeader && (
-          <TouchableOpacity style={styles.editButton} onPress={handleEdit}>
-            <Text style={styles.editButtonText}>Edit</Text>
+          <TouchableOpacity style={[styles.editButton, { backgroundColor: colors.surfaceSecondary }]} onPress={handleEdit}>
+            <Text style={[styles.editButtonText, { color: colors.text }]}>Edit</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -538,19 +540,19 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
         {/* Cover Image - falls back to group image if no event cover */}
         <AppImage
           source={eventData.coverImage || eventData.groupImage}
-          style={styles.coverImage}
+          style={[styles.coverImage, { backgroundColor: colors.surfaceSecondary }]}
           resizeMode="cover"
           placeholder={{
             type: 'icon',
             icon: 'calendar',
             iconSize: 48,
-            iconColor: '#ccc',
+            iconColor: colors.iconSecondary,
           }}
         />
 
         <View style={styles.content}>
           {/* Community/Group Info */}
-          <View style={styles.organizerRow}>
+          <View style={[styles.organizerRow, { borderBottomColor: colors.surfaceSecondary }]}>
             <AppImage
               source={eventData.groupImage}
               style={styles.groupAvatar}
@@ -560,16 +562,16 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
               }}
             />
             <View style={styles.organizerInfo}>
-              <Text style={styles.organizerName}>{eventData.groupName}</Text>
-              <Text style={styles.communityName}>{eventData.communityName}</Text>
+              <Text style={[styles.organizerName, { color: colors.text }]}>{eventData.groupName}</Text>
+              <Text style={[styles.communityName, { color: colors.textSecondary }]}>{eventData.communityName}</Text>
             </View>
           </View>
 
           {/* Date */}
           {eventDate && (
             <View style={styles.infoRow}>
-              <Ionicons name="calendar-outline" size={20} color="#666" />
-              <Text style={styles.infoText}>
+              <Ionicons name="calendar-outline" size={20} color={colors.textSecondary} />
+              <Text style={[styles.infoText, { color: colors.textSecondary }]}>
                 {format(
                   toZonedTime(eventDate, userTimezone),
                   "EEEE, MMMM d, yyyy 'at' h:mm a zzz",
@@ -611,15 +613,15 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
           {/* Description */}
           {eventData.note && (
             <View style={styles.descriptionSection}>
-              <Text style={styles.sectionTitle}>About</Text>
-              <TextWithLinks text={eventData.note} style={styles.description} />
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>About</Text>
+              <TextWithLinks text={eventData.note} style={[styles.description, { color: colors.textSecondary }]} />
             </View>
           )}
 
           {/* Event Status */}
           {isPastEvent && (
-            <View style={styles.statusContainer}>
-              <Text style={styles.statusText}>This event has passed</Text>
+            <View style={[styles.statusContainer, { backgroundColor: colors.surfaceSecondary }]}>
+              <Text style={[styles.statusText, { color: colors.textSecondary }]}>This event has passed</Text>
             </View>
           )}
           {eventData.status === 'cancelled' && (
@@ -669,6 +671,8 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
               {
                 paddingBottom: insets.bottom + 16,
                 bottom: shouldShowTabBar ? 64 : 0, // Offset for tab bar
+                backgroundColor: colors.surface,
+                borderTopColor: colors.border,
               }
             ]}>
               <TouchableOpacity
@@ -746,12 +750,11 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
 // ============================================================================
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#fff" },
+  container: { flex: 1 },
   centered: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#fff",
   },
   scroll: { flex: 1 },
   scrollContent: { paddingBottom: 140 },
@@ -761,9 +764,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     padding: 16,
-    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
   },
   backButton: {
     marginRight: 12,
@@ -775,14 +776,12 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 20,
     fontWeight: "bold",
-    color: "#333",
   },
   shareButton: {
     padding: 8,
     marginRight: 8,
   },
   editButton: {
-    backgroundColor: "#f0f0f0",
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 8,
@@ -790,14 +789,12 @@ const styles = StyleSheet.create({
   editButtonText: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#333",
   },
 
   // Cover Image
   coverImage: {
     width: "100%",
     aspectRatio: 16 / 9,
-    backgroundColor: "#f5f5f5",
   },
 
   // Content
@@ -811,13 +808,11 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     paddingBottom: 20,
     borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
   },
   groupAvatar: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: "#f0f0f0",
   },
   organizerInfo: {
     flex: 1,
@@ -825,12 +820,10 @@ const styles = StyleSheet.create({
   organizerName: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 2,
   },
   communityName: {
     fontSize: 14,
-    color: "#666",
   },
 
   // Info Rows
@@ -840,7 +833,7 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 12,
   },
-  infoText: { fontSize: 15, color: "#666", flex: 1 },
+  infoText: { fontSize: 15, flex: 1 },
   linkText: { color: DEFAULT_PRIMARY_COLOR, fontWeight: "600" },
 
   // Description
@@ -848,27 +841,24 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 12,
   },
-  description: { fontSize: 15, color: "#444", lineHeight: 22 },
+  description: { fontSize: 15, lineHeight: 22 },
   linkInText: { color: DEFAULT_PRIMARY_COLOR, textDecorationLine: "underline" as const },
 
   // Status
   statusContainer: {
-    backgroundColor: "#f5f5f5",
     borderRadius: 12,
     padding: 16,
     marginTop: 16,
   },
   statusText: {
     fontSize: 14,
-    color: "#666",
     textAlign: "center",
   },
 
   // Error State
-  errorText: { fontSize: 16, color: "#666", marginTop: 12 },
+  errorText: { fontSize: 16, marginTop: 12 },
   backButtonError: {
     marginTop: 20,
     padding: 12,
@@ -883,11 +873,9 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: "#fff",
     paddingTop: 16,
     paddingHorizontal: 20,
     borderTopWidth: 1,
-    borderTopColor: "#e0e0e0",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: -2 },
     shadowOpacity: 0.1,

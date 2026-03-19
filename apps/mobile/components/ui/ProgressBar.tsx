@@ -7,6 +7,7 @@ import {
   Platform,
 } from 'react-native';
 import { DEFAULT_PRIMARY_COLOR } from '@utils/styles';
+import { useTheme } from '@hooks/useTheme';
 
 interface ProgressBarProps {
   progress: number; // 0 to 1
@@ -22,11 +23,13 @@ export function ProgressBar({
   progress,
   height = 8,
   color = DEFAULT_PRIMARY_COLOR,
-  backgroundColor = '#e0e0e0',
+  backgroundColor: backgroundColorProp,
   showPercentage = false,
   style,
   animated = true,
 }: ProgressBarProps) {
+  const { colors } = useTheme();
+  const backgroundColor = backgroundColorProp ?? colors.border;
   const animatedProgress = React.useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -71,7 +74,7 @@ export function ProgressBar({
         />
       </View>
       {showPercentage && (
-        <Text style={styles.percentage}>{percentage}%</Text>
+        <Text style={[styles.percentage, { color: colors.text }]}>{percentage}%</Text>
       )}
     </View>
   );
@@ -87,7 +90,6 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: 4,
     overflow: 'hidden',
-    backgroundColor: '#e0e0e0',
   },
   fill: {
     borderRadius: 4,
@@ -101,7 +103,6 @@ const styles = StyleSheet.create({
     marginLeft: 12,
     fontSize: 14,
     fontWeight: '600',
-    color: '#333',
     minWidth: 40,
     textAlign: 'right',
   },

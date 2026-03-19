@@ -29,6 +29,7 @@ import { Ionicons } from '@expo/vector-icons';
 import type { Id } from '@services/api/convex';
 import { useMessages } from '../hooks/useMessages';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
+import { useTheme } from '@hooks/useTheme';
 import { MessageItem } from './MessageItem';
 import { ReactionsProvider } from '../context/ReactionsContext';
 import { useChatPrefetch } from '../context/ChatPrefetchContext';
@@ -145,6 +146,7 @@ export function MessageList({
   onDismissMessage,
 }: MessageListProps) {
   const { primaryColor } = useCommunityTheme();
+  const { colors: themeColors } = useTheme();
   const listRef = useRef<FlatList<ListItem>>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
 
@@ -308,9 +310,9 @@ export function MessageList({
       if (item.type === 'dateSeparator') {
         return (
           <View style={styles.dateSeparatorContainer}>
-            <View style={styles.dateSeparatorLine} />
-            <Text style={styles.dateSeparatorText}>{item.date}</Text>
-            <View style={styles.dateSeparatorLine} />
+            <View style={[styles.dateSeparatorLine, { backgroundColor: themeColors.border }]} />
+            <Text style={[styles.dateSeparatorText, { color: themeColors.textTertiary }]}>{item.date}</Text>
+            <View style={[styles.dateSeparatorLine, { backgroundColor: themeColors.border }]} />
           </View>
         );
       }
@@ -370,24 +372,24 @@ export function MessageList({
   // Loading happens in the inbox before navigation, so this should be brief
   if (isLoading && messages.length === 0) {
     return (
-      <View style={styles.container} />
+      <View style={[styles.container, { backgroundColor: themeColors.background }]} />
     );
   }
 
   // Empty state
   if (!isLoading && messages.length === 0) {
     return (
-      <View style={styles.centerContainer}>
-        <Ionicons name="chatbubbles-outline" size={64} color="#ccc" style={{ marginBottom: 16 }} />
-        <Text style={styles.emptyTitle}>No messages yet</Text>
-        <Text style={styles.emptySubtext}>Start the conversation!</Text>
+      <View style={[styles.centerContainer, { backgroundColor: themeColors.background }]}>
+        <Ionicons name="chatbubbles-outline" size={64} color={themeColors.iconSecondary} style={{ marginBottom: 16 }} />
+        <Text style={[styles.emptyTitle, { color: themeColors.text }]}>No messages yet</Text>
+        <Text style={[styles.emptySubtext, { color: themeColors.textSecondary }]}>Start the conversation!</Text>
       </View>
     );
   }
 
   return (
     <ReactionsProvider messageIds={messageIds} channelId={channelId}>
-      <View style={styles.container}>
+      <View style={[styles.container, { backgroundColor: themeColors.background }]}>
         <FlatList
           ref={listRef}
           data={listItems}
@@ -413,13 +415,13 @@ export function MessageList({
               {isStale && (
                 <View style={styles.staleBanner}>
                   <Ionicons name="cloud-offline-outline" size={14} color="#FF9500" />
-                  <Text style={styles.staleText}>Showing cached messages</Text>
+                  <Text style={[styles.staleText, { color: themeColors.warning }]}>Showing cached messages</Text>
                 </View>
               )}
               {hasMore ? (
                 <View style={styles.loadMoreContainer}>
                   <ActivityIndicator size="small" color={primaryColor} />
-                  <Text style={styles.loadMoreText}>Loading more messages...</Text>
+                  <Text style={[styles.loadMoreText, { color: themeColors.textSecondary }]}>Loading more messages...</Text>
                 </View>
               ) : null}
             </>
@@ -443,13 +445,11 @@ export function MessageList({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f9f9f9',
   },
   centerContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#f9f9f9',
     padding: 20,
   },
   listContent: {
@@ -459,18 +459,15 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 16,
     fontSize: 16,
-    color: '#666',
   },
   emptyTitle: {
     fontSize: 20,
     fontWeight: '600',
-    color: '#333',
     marginBottom: 8,
     textAlign: 'center',
   },
   emptySubtext: {
     fontSize: 16,
-    color: '#666',
     textAlign: 'center',
   },
   loadMoreContainer: {
@@ -482,7 +479,6 @@ const styles = StyleSheet.create({
   },
   loadMoreText: {
     fontSize: 14,
-    color: '#666',
   },
   dateSeparatorContainer: {
     flexDirection: 'row',
@@ -493,12 +489,10 @@ const styles = StyleSheet.create({
   dateSeparatorLine: {
     flex: 1,
     height: 1,
-    backgroundColor: '#e0e0e0',
   },
   dateSeparatorText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#999',
     marginHorizontal: 12,
     textTransform: 'uppercase',
   },
@@ -526,7 +520,6 @@ const styles = StyleSheet.create({
   },
   staleText: {
     fontSize: 12,
-    color: '#FF9500',
     fontWeight: '500',
   },
 });

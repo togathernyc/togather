@@ -10,6 +10,7 @@ import { useRouter } from "expo-router";
 import { getGroupTypeLabel, getGroupTypeColors } from "../utils";
 import { Group } from "../types";
 import { AppImageBackground } from "@components/ui/AppImageBackground";
+import { useTheme } from "@hooks/useTheme";
 
 interface GroupCardProps {
   group: Group;
@@ -19,6 +20,7 @@ interface GroupCardProps {
 
 export function GroupCard({ group, user, onPress }: GroupCardProps) {
   const router = useRouter();
+  const { colors } = useTheme();
   const typeLabel = getGroupTypeLabel(group.type || 1, user);
   const typeColors = getGroupTypeColors(group.type || 1);
   const previewUrl = group.preview || group.image_url;
@@ -73,7 +75,7 @@ export function GroupCard({ group, user, onPress }: GroupCardProps) {
               styles.locationText,
               hasImage
                 ? styles.locationTextWithImage
-                : styles.locationTextWithoutImage,
+                : { color: colors.text },
             ]}
             numberOfLines={1}
           >
@@ -88,7 +90,7 @@ export function GroupCard({ group, user, onPress }: GroupCardProps) {
     <Pressable
       style={({ pressed }) => [
         styles.groupItem,
-        !hasImage && styles.groupItemWithoutImage,
+        !hasImage && [styles.groupItemWithoutImage, { backgroundColor: colors.surfaceSecondary }],
         pressed && styles.groupItemPressed,
       ]}
       onPress={handlePress}
@@ -131,7 +133,7 @@ const styles = StyleSheet.create({
     }),
   },
   groupItemWithoutImage: {
-    backgroundColor: "#F8F8F8", // Light grey background when no image (matching homepage)
+    // backgroundColor set dynamically via theme
   },
   groupItemPressed: {
     opacity: 0.8,
@@ -205,6 +207,6 @@ const styles = StyleSheet.create({
     color: "#ffffff", // White text on dark gradient
   },
   locationTextWithoutImage: {
-    color: "#333", // Dark text on light grey background
+    // color set dynamically via theme
   },
 });
