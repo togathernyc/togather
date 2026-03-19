@@ -807,7 +807,11 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
       {isVoiceRecording ? (
         <VoiceRecorderBar
           onSend={handleVoiceMemoSend}
-          onCancel={() => setIsVoiceRecording(false)}
+          onCancel={() => {
+            setIsVoiceRecording(false);
+            setShowAttachmentMenu(false);
+            rotateAnim.setValue(0);
+          }}
         />
       ) : (
       <>

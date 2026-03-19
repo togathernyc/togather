@@ -48,7 +48,7 @@ export function AttachmentPanel({ visible, options, onOptionPress }: AttachmentP
 
   return (
     <Animated.View style={[styles.container, { height: heightAnim }]}>
-      <View style={[styles.inner, { backgroundColor: colors.surfaceSecondary, borderTopColor: colors.border }]}>
+      <View style={[styles.inner, { backgroundColor: colors.surface }]}>
         <View style={styles.grid}>
           {options.map((option) => (
             <Pressable
@@ -96,7 +96,6 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     paddingBottom: 16,
     paddingHorizontal: 24,
-    borderTopWidth: 1,
   },
   grid: {
     flexDirection: 'row',

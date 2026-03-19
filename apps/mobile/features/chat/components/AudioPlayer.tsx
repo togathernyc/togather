@@ -223,7 +223,9 @@ function AudioPlayerWeb({ url, name, isOwnMessage = false, waveform, storedDurat
 
   const playedFraction = duration > 0 ? position / duration : 0;
   const displayDuration = duration || storedDuration || 0;
-  const accentColor = isOwnMessage ? '#fff' : (isDark ? '#aaa' : '#555');
+  const accentColor = isOwnMessage
+    ? (isDark ? '#fff' : 'rgba(0,0,0,0.55)')
+    : (isDark ? '#aaa' : '#333');
 
   if (error) {
     return <AudioDownloadFallback url={url} name={name} isOwnMessage={isOwnMessage} />;
@@ -232,7 +234,7 @@ function AudioPlayerWeb({ url, name, isOwnMessage = false, waveform, storedDurat
   return (
     <View style={styles.container}>
       <Pressable
-        style={[styles.playButton, { backgroundColor: isOwnMessage ? 'rgba(255,255,255,0.25)' : (isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)') }]}
+        style={[styles.playButton, { backgroundColor: isOwnMessage ? (isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.12)') : (isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)') }]}
         onPress={togglePlayPause}
         disabled={isLoading}
       >
@@ -242,7 +244,7 @@ function AudioPlayerWeb({ url, name, isOwnMessage = false, waveform, storedDurat
           <Ionicons
             name={isPlaying ? 'pause' : 'play'}
             size={18}
-            color={isOwnMessage ? '#fff' : colors.text}
+            color={isOwnMessage ? (isDark ? '#fff' : 'rgba(0,0,0,0.6)') : colors.text}
           />
         )}
       </Pressable>
@@ -257,7 +259,7 @@ function AudioPlayerWeb({ url, name, isOwnMessage = false, waveform, storedDurat
         />
       </Pressable>
 
-      <Text style={[styles.time, { color: isOwnMessage ? 'rgba(255,255,255,0.7)' : colors.textSecondary }]}>
+      <Text style={[styles.time, { color: isOwnMessage ? (isDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.45)') : colors.textSecondary }]}>
         {formatTime(isPlaying ? position : displayDuration)}
       </Text>
     </View>
@@ -382,7 +384,9 @@ function AudioPlayerInner({ url, name, isOwnMessage = false, waveform, storedDur
 
   const playedFraction = duration > 0 ? position / duration : 0;
   const displayDuration = duration || storedDuration || 0;
-  const accentColor = isOwnMessage ? '#fff' : (isDark ? '#aaa' : '#555');
+  const accentColor = isOwnMessage
+    ? (isDark ? '#fff' : 'rgba(0,0,0,0.55)')
+    : (isDark ? '#aaa' : '#333');
 
   if (error) {
     return <AudioDownloadFallback url={url} name={name} isOwnMessage={isOwnMessage} />;
@@ -391,7 +395,7 @@ function AudioPlayerInner({ url, name, isOwnMessage = false, waveform, storedDur
   return (
     <View style={styles.container}>
       <Pressable
-        style={[styles.playButton, { backgroundColor: isOwnMessage ? 'rgba(255,255,255,0.25)' : (isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)') }]}
+        style={[styles.playButton, { backgroundColor: isOwnMessage ? (isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.12)') : (isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)') }]}
         onPress={togglePlayPause}
         disabled={isLoading}
       >
@@ -401,7 +405,7 @@ function AudioPlayerInner({ url, name, isOwnMessage = false, waveform, storedDur
           <Ionicons
             name={isPlaying ? 'pause' : 'play'}
             size={18}
-            color={isOwnMessage ? '#fff' : colors.text}
+            color={isOwnMessage ? (isDark ? '#fff' : 'rgba(0,0,0,0.6)') : colors.text}
           />
         )}
       </Pressable>
@@ -422,7 +426,7 @@ function AudioPlayerInner({ url, name, isOwnMessage = false, waveform, storedDur
         />
       </Pressable>
 
-      <Text style={[styles.time, { color: isOwnMessage ? 'rgba(255,255,255,0.7)' : colors.textSecondary }]}>
+      <Text style={[styles.time, { color: isOwnMessage ? (isDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.45)') : colors.textSecondary }]}>
         {formatTime(isPlaying ? position : displayDuration)}
       </Text>
     </View>

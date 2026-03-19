@@ -7,7 +7,7 @@
  * - 7-day auto-delete disclaimer
  */
 
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useContext } from 'react';
 import {
   View,
   Text,
@@ -22,6 +22,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { WaveformBars } from './WaveformBars';
 import { useVoiceRecorder } from '../hooks/useVoiceRecorder';
 import { isAudioVideoSupported } from '../utils/fileTypes';
+import { ThemeContext } from '@/providers/ThemeProvider';
 
 const DISCLAIMER_TEXT = 'Voice messages delete after 7 days';
 
@@ -38,6 +39,7 @@ interface VoiceRecorderBarProps {
 }
 
 export function VoiceRecorderBar({ onSend, onCancel }: VoiceRecorderBarProps) {
+  const { colors } = useContext(ThemeContext);
   const {
     state,
     durationMs,
@@ -181,10 +183,10 @@ export function VoiceRecorderBar({ onSend, onCancel }: VoiceRecorderBarProps) {
 
   if (state === 'sending') {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, { backgroundColor: colors.surface, borderTopColor: colors.border }]}>
         <View style={styles.row}>
-          <ActivityIndicator size="small" color="#007AFF" />
-          <Text style={styles.sendingText}>Sending...</Text>
+          <ActivityIndicator size="small" color={colors.link} />
+          <Text style={[styles.sendingText, { color: colors.textSecondary }]}>Sending...</Text>
         </View>
       </View>
     );
@@ -194,13 +196,13 @@ export function VoiceRecorderBar({ onSend, onCancel }: VoiceRecorderBarProps) {
   const isPreview = state === 'preview';
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.disclaimer}>{DISCLAIMER_TEXT}</Text>
+    <View style={[styles.container, { backgroundColor: colors.surface, borderTopColor: colors.border }]}>
+      <Text style={[styles.disclaimer, { color: colors.textTertiary }]}>{DISCLAIMER_TEXT}</Text>
 
       <View style={styles.row}>
         {/* Delete */}
         <Pressable style={styles.iconButton} onPress={handleDelete}>
-          <Ionicons name="trash-outline" size={22} color="#e74c3c" />
+          <Ionicons name="trash-outline" size={22} color={colors.destructive} />
         </Pressable>
 
         {/* Waveform */}
@@ -208,11 +210,12 @@ export function VoiceRecorderBar({ onSend, onCancel }: VoiceRecorderBarProps) {
           <WaveformBars
             meteringData={meteringData}
             playedFraction={isPreview ? previewPlayedFraction : 1}
+            accentColor={colors.textSecondary}
           />
         </View>
 
         {/* Timer */}
-        <Text style={styles.timer}>{formatDuration(durationMs)}</Text>
+        <Text style={[styles.timer, { color: colors.text }]}>{formatDuration(durationMs)}</Text>
 
         {isRecording && (
           <>
@@ -224,12 +227,12 @@ export function VoiceRecorderBar({ onSend, onCancel }: VoiceRecorderBarProps) {
               <Ionicons
                 name={state === 'recording' ? 'pause' : 'play'}
                 size={24}
-                color="#007AFF"
+                color={colors.link}
               />
             </Pressable>
             {/* Stop */}
             <Pressable style={styles.iconButton} onPress={stopRecording}>
-              <Ionicons name="stop" size={24} color="#007AFF" />
+              <Ionicons name="stop" size={24} color={colors.link} />
             </Pressable>
           </>
         )}
@@ -241,11 +244,11 @@ export function VoiceRecorderBar({ onSend, onCancel }: VoiceRecorderBarProps) {
               <Ionicons
                 name={previewPlaying ? 'pause' : 'play'}
                 size={24}
-                color="#007AFF"
+                color={colors.link}
               />
             </Pressable>
             {/* Send */}
-            <Pressable style={[styles.iconButton, styles.sendButton]} onPress={handleSend}>
+            <Pressable style={[styles.iconButton, styles.sendButton, { backgroundColor: colors.link }]} onPress={handleSend}>
               <Ionicons name="send" size={20} color="#fff" />
             </Pressable>
           </>
@@ -257,15 +260,12 @@ export function VoiceRecorderBar({ onSend, onCancel }: VoiceRecorderBarProps) {
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: '#fff',
     borderTopWidth: 1,
-    borderTopColor: '#e0e0e0',
     paddingVertical: 12,
     paddingHorizontal: 8,
   },
   disclaimer: {
     fontSize: 11,
-    color: '#999',
     textAlign: 'center',
     marginBottom: 8,
   },
@@ -282,9 +282,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  sendButton: {
-    backgroundColor: '#007AFF',
-  },
+  sendButton: {},
   waveformContainer: {
     flex: 1,
     maxWidth: 200,
@@ -292,13 +290,11 @@ const styles = StyleSheet.create({
   timer: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#333',
     minWidth: 36,
     textAlign: 'center',
   },
   sendingText: {
     fontSize: 14,
-    color: '#666',
     marginLeft: 8,
   },
 });
