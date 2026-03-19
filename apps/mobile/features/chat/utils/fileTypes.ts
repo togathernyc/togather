@@ -243,7 +243,13 @@ function hasNativeModule(...moduleNames: string[]): boolean {
     if (NativeModules[name]) return true;
   }
 
-  // New architecture: try expo-modules-core's requireNativeModule
+  // On web, native modules don't exist — skip expo-modules-core
+  // (it ships TypeScript source which can't be required on web)
+  if (Platform.OS === 'web') {
+    return false;
+  }
+
+  // New architecture (native only): try expo-modules-core's requireNativeModule
   try {
     const expoModulesCore = require('expo-modules-core');
     for (const name of moduleNames) {
