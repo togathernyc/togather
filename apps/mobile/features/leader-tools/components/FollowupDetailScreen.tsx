@@ -44,12 +44,15 @@ export function FollowupDetailContent({
   onClose,
   scrollToNotes,
   scrollToTasks,
+  crossGroupMode,
 }: {
   groupId: string;
   memberId: string;
   onClose?: () => void;
   scrollToNotes?: boolean;
   scrollToTasks?: boolean;
+  /** When true, memberId is groupMemberId (from cross-group view). When false, memberId is communityPeopleId. */
+  crossGroupMode?: boolean;
 }) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -110,12 +113,16 @@ export function FollowupDetailContent({
   const group_id = groupId;
   const member_id = memberId;
 
-  // Fetch member history using Convex
+  // Fetch member history using Convex.
+  // In cross-group mode, memberId is groupMemberId (from groupMembers) — history resolves to communityPeople.
+  // In per-group mode, memberId is communityPeopleId.
   const historyData = useAuthenticatedQuery(
     api.functions.communityPeople.history,
     member_id
       ? {
-          communityPeopleId: member_id as Id<"communityPeople">,
+          ...(crossGroupMode
+            ? { groupMemberId: member_id as Id<"groupMembers"> }
+            : { communityPeopleId: member_id as Id<"communityPeople"> }),
           currentUserId: currentUserId,
         }
       : "skip"
@@ -1360,15 +1367,20 @@ export function FollowupDetailContent({
  * Full-screen route wrapper — adds UserRoute guard and DragHandle.
  */
 export function FollowupDetailScreen() {
-  const { group_id, member_id } = useLocalSearchParams<{
+  const { group_id, member_id, cross_group } = useLocalSearchParams<{
     group_id: string;
     member_id: string;
+    cross_group?: string;
   }>();
 
   return (
     <UserRoute>
       <DragHandle />
-      <FollowupDetailContent groupId={group_id || ""} memberId={member_id || ""} />
+      <FollowupDetailContent
+        groupId={group_id || ""}
+        memberId={member_id || ""}
+        crossGroupMode={cross_group === "1"}
+      />
     </UserRoute>
   );
 }

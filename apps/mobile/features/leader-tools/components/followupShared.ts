@@ -198,5 +198,7 @@ export function adaptCommunityPerson(cp: any) {
     customBool3: cp.customBool3,
     customBool4: cp.customBool4,
     customBool5: cp.customBool5,
+    latestNote: cp.latestNote,
+    latestNoteAt: cp.latestNoteAt,
   };
 }

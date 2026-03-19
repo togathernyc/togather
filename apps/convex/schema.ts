@@ -1742,6 +1742,8 @@ export default defineSchema({
     lastActiveAt: v.optional(v.number()),
     lastAttendedAt: v.optional(v.number()),
     addedAt: v.optional(v.number()),
+    latestNote: v.optional(v.string()),
+    latestNoteAt: v.optional(v.number()),
 
     // Alerts
     alerts: v.optional(v.array(v.string())),

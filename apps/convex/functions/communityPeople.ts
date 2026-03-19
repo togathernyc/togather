@@ -630,10 +630,15 @@ export const count = query({
 /**
  * Get detailed history for a community person.
  * Aggregates attendance and followup history across all groups.
+ *
+ * Accepts either communityPeopleId (from per-group People view) or groupMemberId
+ * (from cross-group view which uses memberFollowupScores). When groupMemberId
+ * is provided, resolves it to the corresponding communityPeople record.
  */
 export const history = query({
   args: {
-    communityPeopleId: v.id("communityPeople"),
+    communityPeopleId: v.optional(v.id("communityPeople")),
+    groupMemberId: v.optional(v.id("groupMembers")),
     token: v.optional(v.string()),
     currentUserId: v.optional(v.id("users")),
   },
@@ -641,7 +646,28 @@ export const history = query({
     const authUserId = await requireAuth(ctx, args.token ?? "");
     const currentTime = Date.now();
 
-    const cpRecord = await ctx.db.get(args.communityPeopleId);
+    let cpRecord: any;
+    if (args.communityPeopleId) {
+      cpRecord = await ctx.db.get(args.communityPeopleId);
+    } else if (args.groupMemberId) {
+      const groupMember = await ctx.db.get(args.groupMemberId);
+      if (!groupMember) {
+        throw new ConvexError("Group member not found");
+      }
+      const group = await ctx.db.get(groupMember.groupId);
+      if (!group?.communityId) {
+        throw new ConvexError("Group or community not found");
+      }
+      cpRecord = await ctx.db
+        .query("communityPeople")
+        .withIndex("by_group_user", (q: any) =>
+          q.eq("groupId", groupMember.groupId).eq("userId", groupMember.userId),
+        )
+        .first();
+    } else {
+      throw new ConvexError("Either communityPeopleId or groupMemberId is required");
+    }
+
     if (!cpRecord) {
       throw new ConvexError("Community person not found");
     }
@@ -869,7 +895,7 @@ export const history = query({
 
     return {
       member: {
-        id: args.communityPeopleId,
+        id: cpRecord._id,
         odUserId: cpRecord.userId,
         firstName: user.firstName || cpRecord.firstName || "",
         lastName: user.lastName || cpRecord.lastName || "",
@@ -1070,14 +1096,20 @@ export const addFollowup = mutation({
 
     await requireCommunityLeader(ctx, cpRecord.communityId, userId);
 
-    // Update lastFollowupAt on communityPeople
-    await ctx.db.patch(args.communityPeopleId, {
+    // Update lastFollowupAt and latestNote on communityPeople when adding a note
+    const patchFields: Record<string, any> = {
       lastFollowupAt: timestamp,
       updatedAt: timestamp,
-    });
+    };
+    if (args.type === "note" && args.content) {
+      patchFields.latestNote =
+        args.content.length > 200 ? args.content.slice(0, 200) : args.content;
+      patchFields.latestNoteAt = timestamp;
+    }
+    await ctx.db.patch(args.communityPeopleId, patchFields);
 
     // Sync to sibling records in the same community
-    await syncToSiblingRecords(ctx, cpRecord, { lastFollowupAt: timestamp });
+    await syncToSiblingRecords(ctx, cpRecord, patchFields);
 
     // Find announcement group membership
     const announcementGroup = await ctx.db
@@ -1221,6 +1253,8 @@ export const upsertFromSubmission = internalMutation({
       lastActiveAt: (scoreDoc as any).lastActiveAt,
       lastAttendedAt: (scoreDoc as any).lastAttendedAt,
       addedAt: (scoreDoc as any).addedAt ?? groupMember.joinedAt,
+      latestNote: (scoreDoc as any).latestNote,
+      latestNoteAt: (scoreDoc as any).latestNoteAt,
       alerts: (scoreDoc as any).alerts ?? [],
       isSnoozed: (scoreDoc as any).isSnoozed ?? false,
       snoozedUntil: (scoreDoc as any).snoozedUntil,

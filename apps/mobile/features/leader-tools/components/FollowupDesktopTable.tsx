@@ -2798,6 +2798,7 @@ export function FollowupDesktopTable({
                     onClose={() => setSelectedMemberId(null)}
                     scrollToNotes={scrollToNotes}
                     scrollToTasks={scrollToTasks}
+                    crossGroupMode={crossGroupMode}
                   />
                 </View>
               </>

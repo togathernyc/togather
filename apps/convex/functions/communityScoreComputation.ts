@@ -25,7 +25,7 @@ import {
 } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
-import { now, getMediaUrl } from "../lib/utils";
+import { now, getMediaUrl, safeSliceForJson } from "../lib/utils";
 import {
   extractSystemRawValues,
   calculateAllSystemScores,
@@ -290,6 +290,15 @@ export const computeCommunityScoresBatch = internalQuery({
           }
         }
 
+        // Latest note for display in notes cell
+        const latestNoteEntry = followups.find(
+          (f) => f.type === "note" && f.content,
+        );
+        const latestNote = latestNoteEntry?.content
+          ? safeSliceForJson(latestNoteEntry.content, 200)
+          : undefined;
+        const latestNoteAt = latestNoteEntry?.createdAt ?? undefined;
+
         // Cross-group attendance percentage
         const crossGroupPct =
           (args.crossGroupAttendanceMap?.[member.userId.toString()] as
@@ -345,6 +354,8 @@ export const computeCommunityScoresBatch = internalQuery({
           lastActiveAt: member.lastActiveAt,
           lastAttendedAt,
           addedAt: member.joinedAt,
+          latestNote,
+          latestNoteAt,
         };
       })
     );
@@ -404,6 +415,8 @@ export const upsertCommunityPeopleBatch = internalMutation({
         lastActiveAt: member.lastActiveAt,
         lastAttendedAt: member.lastAttendedAt,
         addedAt: member.addedAt,
+        latestNote: member.latestNote,
+        latestNoteAt: member.latestNoteAt,
         updatedAt: nowTs,
       };
 

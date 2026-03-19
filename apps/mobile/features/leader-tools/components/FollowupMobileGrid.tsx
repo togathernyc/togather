@@ -1027,8 +1027,10 @@ export function FollowupMobileGrid({
     }
   };
 
-  const handleMemberPress = (memberId: string) => {
-    router.push(`/(user)/leader-tools/${groupId}/followup/${memberId}`);
+  const handleMemberPress = (memberId: string, memberGroupId?: string) => {
+    const effectiveGroupId = crossGroupMode && memberGroupId ? memberGroupId : groupId;
+    const crossGroupParam = crossGroupMode ? "?cross_group=1" : "";
+    router.push(`/(user)/leader-tools/${effectiveGroupId}/followup/${memberId}${crossGroupParam}`);
   };
 
   const handleSettingsPress = () => {
@@ -1725,7 +1727,12 @@ export function FollowupMobileGrid({
         <TouchableOpacity
           style={[styles.memberCell, { width: MEMBER_COL_WIDTH }]}
           activeOpacity={0.8}
-          onPress={() => handleMemberPress(item.groupMemberId)}
+          onPress={() =>
+            handleMemberPress(
+              item.groupMemberId,
+              (item as any).groupId?.toString(),
+            )
+          }
         >
           {item.avatarUrl ? (
             <Image
@@ -2019,8 +2026,13 @@ export function FollowupMobileGrid({
               groupName: (member as any).groupName,
             }))}
             loading={isInitialLoading}
-            onOpenMember={(memberId) => {
-              router.push(`/(user)/leader-tools/${groupId}/followup/${memberId}`);
+            onOpenMember={(memberId, memberGroupId) => {
+              const effectiveGroupId =
+                crossGroupMode && memberGroupId ? memberGroupId : groupId;
+              const crossGroupParam = crossGroupMode ? "?cross_group=1" : "";
+              router.push(
+                `/(user)/leader-tools/${effectiveGroupId}/followup/${memberId}${crossGroupParam}`,
+              );
             }}
           />
         ) : (
