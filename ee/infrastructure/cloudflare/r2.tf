@@ -17,15 +17,19 @@
 
 resource "terraform_data" "r2_cors" {
   # Re-run if the CORS config changes
-  input = jsonencode([
-    {
-      AllowedOrigins = ["*"]
-      AllowedMethods = ["GET", "PUT", "POST", "HEAD"]
-      AllowedHeaders = ["*"]
-      ExposeHeaders  = ["ETag"]
-      MaxAgeSeconds  = 3600
-    }
-  ])
+  input = jsonencode({
+    rules = [
+      {
+        allowed = {
+          origins = ["*"]
+          methods = ["GET", "PUT", "POST", "HEAD"]
+          headers = ["*"]
+        }
+        exposed_headers = ["ETag"]
+        maxAgeSeconds   = 3600
+      }
+    ]
+  })
 
   provisioner "local-exec" {
     command = <<-EOT
