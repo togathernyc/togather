@@ -296,7 +296,7 @@ export function isAudioVideoSupported(): boolean {
 
   try {
     const ExpoAV = require('expo-av');
-    _audioVideoSupported = !!ExpoAV?.Audio;
+    _audioVideoSupported = !!ExpoAV?.Audio && !!ExpoAV?.Video;
     return _audioVideoSupported;
   } catch {
     _audioVideoSupported = false;
