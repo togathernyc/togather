@@ -233,21 +233,32 @@ let _linearGradientSupported: boolean | null = null;
  * New architecture (Fabric/TurboModules): modules register via
  * expo-modules-core and are NOT on NativeModules. We use
  * requireNativeModule() which throws if the module isn't linked.
+ *
+ * Accepts multiple names because some modules use different names
+ * on the legacy bridge vs expo-modules-core (e.g. ExpoAV vs ExponentAV).
  */
-function hasNativeModule(moduleName: string): boolean {
+function hasNativeModule(...moduleNames: string[]): boolean {
   // Legacy bridge check
-  if (NativeModules[moduleName]) {
-    return true;
+  for (const name of moduleNames) {
+    if (NativeModules[name]) return true;
   }
 
   // New architecture: try expo-modules-core's requireNativeModule
   try {
     const expoModulesCore = require('expo-modules-core');
-    expoModulesCore.requireNativeModule(moduleName);
-    return true;
+    for (const name of moduleNames) {
+      try {
+        expoModulesCore.requireNativeModule(name);
+        return true;
+      } catch {
+        // Try next name
+      }
+    }
   } catch {
-    return false;
+    // expo-modules-core not available
   }
+
+  return false;
 }
 
 /**
@@ -287,9 +298,9 @@ export function isAudioVideoSupported(): boolean {
     return _audioVideoSupported;
   }
 
-  const nativeModuleName = Platform.OS === 'ios' ? 'ExpoAV' : 'ExponentAV';
-
-  if (!hasNativeModule(nativeModuleName)) {
+  // Legacy bridge uses 'ExpoAV' (iOS) / 'ExponentAV' (Android)
+  // expo-modules-core uses 'ExponentAV' on both platforms
+  if (!hasNativeModule('ExpoAV', 'ExponentAV')) {
     _audioVideoSupported = false;
     return false;
   }

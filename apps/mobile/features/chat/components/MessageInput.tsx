@@ -653,17 +653,8 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
         onPress: () => setIsVoiceRecording(true),
       });
     }
-    if (isFileUploadAvailable) {
-      options.push({
-        id: 'document',
-        label: 'Document',
-        icon: 'document',
-        iconColor: '#007AFF',
-        onPress: pickFile,
-      });
-    }
     return options;
-  }, [takePhoto, pickImage, pickFile, isFileUploadAvailable]);
+  }, [takePhoto, pickImage, pickFile]);
 
   const handleOptionPress = useCallback((option: { onPress: () => void }) => {
     setShowAttachmentMenu(false);
