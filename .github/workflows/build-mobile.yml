@@ -27,6 +27,10 @@ on:
         description: "Submit iOS to App Store after build"
         type: boolean
         default: false
+      force:
+        description: "Force rebuild even if a build already exists"
+        type: boolean
+        default: false
 
   # Automatic trigger on version tags (e.g., v1.0.0, v1.2.3)
   push:
@@ -90,12 +94,22 @@ jobs:
 
       # ── Check for existing EAS builds to avoid redundant builds ──
       # Builds cost ~$2 each and take ~20 minutes, so we reuse recent successful builds
+      # Skip cache check entirely when force=true on manual runs
       - name: Check for existing builds
         id: check-builds
         working-directory: apps/mobile
         run: |
           VERSION=$(node -p "require('./app.config.js').default.expo.runtimeVersion")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+          # Force rebuild skips all cache checks
+          if [ "${{ inputs.force }}" = "true" ]; then
+            echo "⚡ Force rebuild requested — skipping cache checks"
+            echo "has_ios_build=false" >> $GITHUB_OUTPUT
+            echo "has_android_build=false" >> $GITHUB_OUTPUT
+            echo "has_android_apk_build=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
 
           # Determine which profiles to check based on trigger
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
