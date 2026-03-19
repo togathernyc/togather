@@ -1,8 +1,10 @@
 /**
  * AudioPlayer - Inline audio player for chat messages
  *
- * Displays an audio player with play/pause controls and progress.
- * Falls back to a download button if expo-av is not available (OTA update scenario).
+ * Platform-aware audio playback:
+ * - Web: HTML5 Audio API (plays all formats including WebM)
+ * - Native + expo-av: expo-av Sound API (M4A, MP3, AAC, WAV)
+ * - Native without expo-av: Download fallback (OTA update scenario)
  */
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
@@ -12,11 +14,13 @@ import {
   StyleSheet,
   Linking,
   Alert,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { isAudioVideoSupported } from '../utils/fileTypes';
 import { getMediaUrl } from '@/utils/media';
 import { useTheme } from '@hooks/useTheme';
+import { WaveformBars } from './WaveformBars';
 
 // ============================================================================
 // Types
@@ -29,10 +33,14 @@ interface AudioPlayerProps {
   name?: string;
   /** Whether this appears in the sender's own message */
   isOwnMessage?: boolean;
+  /** Stored waveform data (normalized 0-1 bar heights) */
+  waveform?: number[];
+  /** Stored duration in ms */
+  duration?: number;
 }
 
 // ============================================================================
-// Fallback Component (when expo-av not available)
+// Fallback Component (when no audio API available)
 // ============================================================================
 
 function AudioDownloadFallback({ url, name, isOwnMessage }: AudioPlayerProps) {
@@ -80,37 +88,197 @@ function AudioDownloadFallback({ url, name, isOwnMessage }: AudioPlayerProps) {
 // Main Component
 // ============================================================================
 
-export function AudioPlayer({ url, name, isOwnMessage = false }: AudioPlayerProps) {
-  // Check if expo-av is available
+export function AudioPlayer({ url, name, isOwnMessage = false, waveform, duration: storedDuration }: AudioPlayerProps) {
+  if (Platform.OS === 'web') {
+    return <AudioPlayerWeb url={url} name={name} isOwnMessage={isOwnMessage} waveform={waveform} storedDuration={storedDuration} />;
+  }
+
   if (!isAudioVideoSupported()) {
     return <AudioDownloadFallback url={url} name={name} isOwnMessage={isOwnMessage} />;
   }
 
-  // Dynamic import for expo-av (only if available)
-  return <AudioPlayerInner url={url} name={name} isOwnMessage={isOwnMessage} />;
+  return <AudioPlayerInner url={url} name={name} isOwnMessage={isOwnMessage} waveform={waveform} storedDuration={storedDuration} />;
 }
 
 // ============================================================================
-// Inner Component (with expo-av)
+// Web Component (HTML5 Audio API)
 // ============================================================================
 
-function AudioPlayerInner({ url, name, isOwnMessage = false }: AudioPlayerProps) {
+function AudioPlayerWeb({ url, name, isOwnMessage = false, waveform, storedDuration }: AudioPlayerProps & { storedDuration?: number }) {
+  const { colors, isDark } = useTheme();
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [duration, setDuration] = useState(storedDuration || 0);
+  const [position, setPosition] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const waveformRef = useRef<View | null>(null);
+  const resolvedUrl = getMediaUrl(url);
+
+  useEffect(() => {
+    if (!resolvedUrl) {
+      setError('Invalid audio URL');
+      setIsLoading(false);
+      return;
+    }
+
+    const audio = new Audio(resolvedUrl);
+    audioRef.current = audio;
+
+    let seekingForDuration = false;
+
+    const updateDuration = () => {
+      const dur = audio.duration;
+      if (dur && isFinite(dur)) {
+        setDuration(dur * 1000);
+      }
+    };
+
+    audio.onloadedmetadata = () => {
+      setIsLoading(false);
+      if (isFinite(audio.duration)) {
+        updateDuration();
+      } else {
+        seekingForDuration = true;
+        audio.currentTime = 1e10;
+      }
+    };
+
+    audio.onseeked = () => {
+      if (seekingForDuration) {
+        seekingForDuration = false;
+        updateDuration();
+        audio.currentTime = 0;
+      }
+    };
+
+    audio.ondurationchange = () => {
+      updateDuration();
+    };
+
+    audio.ontimeupdate = () => {
+      setPosition(audio.currentTime * 1000);
+      updateDuration();
+    };
+
+    audio.onended = () => {
+      setIsPlaying(false);
+      setPosition(0);
+      audio.currentTime = 0;
+    };
+
+    audio.onerror = () => {
+      console.error('[AudioPlayerWeb] Load error for:', resolvedUrl);
+      setError('Failed to load audio');
+      setIsLoading(false);
+    };
+
+    audio.preload = 'auto';
+
+    return () => {
+      audio.pause();
+      audio.src = '';
+      audioRef.current = null;
+    };
+  }, [resolvedUrl]);
+
+  const togglePlayPause = useCallback(async () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    try {
+      if (isPlaying) {
+        audio.pause();
+        setIsPlaying(false);
+      } else {
+        await audio.play();
+        setIsPlaying(true);
+      }
+    } catch (err) {
+      console.error('[AudioPlayerWeb] Play/pause error:', err);
+    }
+  }, [isPlaying]);
+
+  const handleWaveformPress = useCallback((event: any) => {
+    const audio = audioRef.current;
+    if (!audio || !duration) return;
+
+    const nativeEvent = event.nativeEvent;
+    const locationX = nativeEvent.locationX ?? nativeEvent.offsetX ?? 0;
+    const layoutWidth = nativeEvent.target?.clientWidth || nativeEvent.target?.offsetWidth || 1;
+    const fraction = Math.max(0, Math.min(1, locationX / layoutWidth));
+    const seekTime = (fraction * duration) / 1000;
+    audio.currentTime = seekTime;
+    setPosition(fraction * duration);
+  }, [duration]);
+
+  const formatTime = (millis: number): string => {
+    if (!isFinite(millis) || millis < 0) return '0:00';
+    const seconds = Math.floor(millis / 1000);
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const playedFraction = duration > 0 ? position / duration : 0;
+  const displayDuration = duration || storedDuration || 0;
+  const accentColor = isOwnMessage ? '#fff' : (isDark ? '#aaa' : '#555');
+
+  if (error) {
+    return <AudioDownloadFallback url={url} name={name} isOwnMessage={isOwnMessage} />;
+  }
+
+  return (
+    <View style={styles.container}>
+      <Pressable
+        style={[styles.playButton, { backgroundColor: isOwnMessage ? 'rgba(255,255,255,0.25)' : (isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)') }]}
+        onPress={togglePlayPause}
+        disabled={isLoading}
+      >
+        {isLoading ? (
+          <View style={styles.loadingIndicator} />
+        ) : (
+          <Ionicons
+            name={isPlaying ? 'pause' : 'play'}
+            size={18}
+            color={isOwnMessage ? '#fff' : colors.text}
+          />
+        )}
+      </Pressable>
+
+      <Pressable style={styles.waveformContainer} onPress={handleWaveformPress} ref={waveformRef}>
+        <WaveformBars
+          meteringData={waveform || []}
+          playedFraction={playedFraction}
+          barCount={30}
+          accentColor={accentColor}
+          height={24}
+        />
+      </Pressable>
+
+      <Text style={[styles.time, { color: isOwnMessage ? 'rgba(255,255,255,0.7)' : colors.textSecondary }]}>
+        {formatTime(isPlaying ? position : displayDuration)}
+      </Text>
+    </View>
+  );
+}
+
+// ============================================================================
+// Native Component (expo-av)
+// ============================================================================
+
+function AudioPlayerInner({ url, name, isOwnMessage = false, waveform, storedDuration }: AudioPlayerProps & { storedDuration?: number }) {
   const { colors, isDark } = useTheme();
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [duration, setDuration] = useState(0);
+  const [duration, setDuration] = useState(storedDuration || 0);
   const [position, setPosition] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   const soundRef = useRef<any>(null);
   const resolvedUrl = getMediaUrl(url);
 
-  const fileName = name || url.split('/').pop()?.split('?')[0] || 'Audio';
-  const displayName = fileName.length > 20
-    ? fileName.slice(0, 10) + '...' + fileName.slice(-8)
-    : fileName;
-
-  // Load audio on mount
   useEffect(() => {
     let isMounted = true;
 
@@ -134,7 +302,6 @@ function AudioPlayerInner({ url, name, isOwnMessage = false }: AudioPlayerProps)
               setPosition(playbackStatus.positionMillis || 0);
               setIsPlaying(playbackStatus.isPlaying);
 
-              // Reset when finished
               if (playbackStatus.didJustFinish) {
                 setIsPlaying(false);
                 setPosition(0);
@@ -150,7 +317,6 @@ function AudioPlayerInner({ url, name, isOwnMessage = false }: AudioPlayerProps)
             setDuration(status.durationMillis || 0);
           }
         } else {
-          // Component unmounted during load - clean up the orphaned sound
           await sound.unloadAsync();
         }
       } catch (err) {
@@ -189,7 +355,24 @@ function AudioPlayerInner({ url, name, isOwnMessage = false }: AudioPlayerProps)
     }
   }, [isPlaying]);
 
-  // Format time as mm:ss
+  const handleWaveformPress = useCallback(async (event: any) => {
+    const sound = soundRef.current;
+    if (!sound || !duration) return;
+
+    const nativeEvent = event.nativeEvent;
+    const locationX = nativeEvent.locationX ?? 0;
+    const layoutWidth = nativeEvent.layout?.width || 200;
+    const fraction = Math.max(0, Math.min(1, locationX / layoutWidth));
+    const seekPosition = fraction * duration;
+
+    try {
+      await sound.setPositionAsync(seekPosition);
+      setPosition(seekPosition);
+    } catch (err) {
+      console.error('[AudioPlayer] Seek error:', err);
+    }
+  }, [duration]);
+
   const formatTime = (millis: number): string => {
     const seconds = Math.floor(millis / 1000);
     const mins = Math.floor(seconds / 60);
@@ -197,18 +380,18 @@ function AudioPlayerInner({ url, name, isOwnMessage = false }: AudioPlayerProps)
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Calculate progress percentage
-  const progressPercent = duration > 0 ? (position / duration) * 100 : 0;
+  const playedFraction = duration > 0 ? position / duration : 0;
+  const displayDuration = duration || storedDuration || 0;
+  const accentColor = isOwnMessage ? '#fff' : (isDark ? '#aaa' : '#555');
 
   if (error) {
     return <AudioDownloadFallback url={url} name={name} isOwnMessage={isOwnMessage} />;
   }
 
   return (
-    <View style={[styles.container, { backgroundColor: isDark ? 'rgba(156, 39, 176, 0.2)' : 'rgba(156, 39, 176, 0.1)' }]}>
-      {/* Play/Pause Button */}
+    <View style={styles.container}>
       <Pressable
-        style={styles.playButton}
+        style={[styles.playButton, { backgroundColor: isOwnMessage ? 'rgba(255,255,255,0.25)' : (isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)') }]}
         onPress={togglePlayPause}
         disabled={isLoading}
       >
@@ -217,35 +400,31 @@ function AudioPlayerInner({ url, name, isOwnMessage = false }: AudioPlayerProps)
         ) : (
           <Ionicons
             name={isPlaying ? 'pause' : 'play'}
-            size={24}
-            color="#fff"
+            size={18}
+            color={isOwnMessage ? '#fff' : colors.text}
           />
         )}
       </Pressable>
 
-      {/* Progress and Info */}
-      <View style={styles.progressContainer}>
-        <Text style={[styles.fileName, { color: colors.text }, isOwnMessage && { color: colors.text }]} numberOfLines={1}>
-          {displayName}
-        </Text>
+      <Pressable
+        style={styles.waveformContainer}
+        onPress={handleWaveformPress}
+        onLayout={(e) => {
+          // Store layout width for seek calculations
+        }}
+      >
+        <WaveformBars
+          meteringData={waveform || []}
+          playedFraction={playedFraction}
+          barCount={30}
+          accentColor={accentColor}
+          height={24}
+        />
+      </Pressable>
 
-        {/* Progress Bar */}
-        <View style={[styles.progressBarBackground, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }]}>
-          <View
-            style={[styles.progressBar, { width: `${progressPercent}%` }]}
-          />
-        </View>
-
-        {/* Time */}
-        <View style={styles.timeContainer}>
-          <Text style={[styles.time, { color: colors.textSecondary }]}>
-            {formatTime(position)}
-          </Text>
-          <Text style={[styles.time, { color: colors.textSecondary }]}>
-            {formatTime(duration)}
-          </Text>
-        </View>
-      </View>
+      <Text style={[styles.time, { color: isOwnMessage ? 'rgba(255,255,255,0.7)' : colors.textSecondary }]}>
+        {formatTime(isPlaying ? position : displayDuration)}
+      </Text>
     </View>
   );
 }
@@ -258,53 +437,33 @@ const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: 12,
-    padding: 10,
-    marginTop: 6,
+    paddingVertical: 4,
     minWidth: 200,
+    gap: 8,
   },
   playButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#9C27B0',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 12,
   },
   loadingIndicator: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
     borderWidth: 2,
-    borderColor: '#fff',
+    borderColor: '#999',
     borderTopColor: 'transparent',
   },
-  progressContainer: {
+  waveformContainer: {
     flex: 1,
   },
-  fileName: {
-    fontSize: 12,
-    fontWeight: '600',
-    marginBottom: 6,
-  },
-  progressBarBackground: {
-    height: 4,
-    borderRadius: 2,
-    overflow: 'hidden',
-  },
-  progressBar: {
-    height: '100%',
-    backgroundColor: '#9C27B0',
-    borderRadius: 2,
-  },
-  timeContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 4,
-  },
   time: {
-    fontSize: 10,
+    fontSize: 11,
+    fontWeight: '500',
+    minWidth: 30,
+    textAlign: 'right',
   },
   // Fallback styles
   fallbackContainer: {

@@ -148,10 +148,13 @@ export default {
         NSPhotoLibraryUsageDescription:
           "Togather accesses your photo library to select a profile photo (visible to other community members when you RSVP to events or appear in group member lists), to add cover images for groups and events, and to share photos in group chat conversations with other members.",
         NSPhotoLibraryAddUsageDescription:
-          "Togather saves photos to your library when you choose to download images shared by other members in group chats or event cover photos."
+          "Togather saves photos to your library when you choose to download images shared by other members in group chats or event cover photos.",
+        NSMicrophoneUsageDescription:
+          "Togather uses your microphone to record voice messages to share in group chat conversations."
       }
     },
     android: {
+      permissions: ["android.permission.RECORD_AUDIO"],
       adaptiveIcon: {
         foregroundImage: getAppIcon(),
         backgroundColor: "#ffffff"

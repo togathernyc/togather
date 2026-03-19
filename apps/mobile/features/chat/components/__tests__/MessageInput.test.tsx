@@ -61,6 +61,7 @@ jest.mock('../../utils/eventLinkUtils', () => ({
 
 jest.mock('../../utils/fileTypes', () => ({
   isDocumentPickerSupported: () => false,
+  isVoiceRecordingSupported: () => false,
   SUPPORTED_MIME_TYPES: [],
   MAX_FILE_SIZE_BYTES: 10000000,
   MAX_FILE_SIZE_MB: 10,
@@ -81,6 +82,30 @@ jest.mock('../LinkPreviewCard', () => ({
 
 jest.mock('../FilePreview', () => ({
   FilePreview: () => null,
+}));
+
+jest.mock('../VoiceRecorderBar', () => ({
+  VoiceRecorderBar: () => null,
+}));
+
+jest.mock('../AttachmentPanel', () => ({
+  AttachmentPanel: () => null,
+}));
+
+jest.mock('@hooks/useTheme', () => ({
+  useTheme: () => ({
+    colors: {
+      surface: '#fff',
+      border: '#e0e0e0',
+      link: '#007AFF',
+      text: '#000',
+      textSecondary: '#666',
+      textTertiary: '#999',
+      textDisabled: '#ccc',
+      inputBackground: '#f9f9f9',
+      surfaceSecondary: '#f5f5f5',
+    },
+  }),
 }));
 
 const LINE_HEIGHT = 20;

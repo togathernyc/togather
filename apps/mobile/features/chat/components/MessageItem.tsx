@@ -55,6 +55,8 @@ interface MessageItemProps {
       type: string;
       url: string;
       name?: string;
+      waveform?: number[];
+      duration?: number;
     }>;
     createdAt: number;
     editedAt?: number;
@@ -82,7 +84,7 @@ interface MessageItemProps {
       content: string;
       senderName?: string;
       senderProfilePhoto?: string;
-      attachments?: Array<{ type: string; url: string; name?: string }>;
+      attachments?: Array<{ type: string; url: string; name?: string; waveform?: number[]; duration?: number }>;
     },
     event: { nativeEvent: { pageX: number; pageY: number } }
   ) => void;
@@ -501,7 +503,7 @@ function MessageItemInner({
   };
 
   // Define attachment type
-  type Attachment = { type: string; url: string; name?: string };
+  type Attachment = { type: string; url: string; name?: string; waveform?: number[]; duration?: number };
 
   // Categorize attachments by type
   const { validImageAttachments, imageUrls, documentAttachments, audioAttachments, videoAttachments } = useMemo(() => {
@@ -599,6 +601,8 @@ function MessageItemInner({
             url={attachment.url}
             name={attachment.name}
             isOwnMessage={isOwnMessage}
+            waveform={attachment.waveform}
+            duration={attachment.duration}
           />
         ))}
       </View>

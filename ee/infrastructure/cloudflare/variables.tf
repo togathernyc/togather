@@ -8,5 +8,5 @@ variable "cloudflare_account_id" {
   description = "Cloudflare Account ID"
   type        = string
   # Set via TF_VAR_cloudflare_account_id or terraform.tfvars
-  default     = ""
+  default = ""
 }

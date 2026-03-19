@@ -75,7 +75,7 @@ export function useImageUpload(): UseImageUploadResult {
         folder: 'chat',
       });
 
-      // Step 2: Upload file to R2
+      // Step 2: Upload file to R2 (requires R2 CORS to be configured for web)
       setProgress(20);
 
       if (Platform.OS === 'web') {

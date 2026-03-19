@@ -29,6 +29,10 @@ const ALLOWLISTED_FILES = new Set([
   "features/chat/utils/fileTypes.ts",
   // The safe wrapper components
   "components/ui/SafeLinearGradient.tsx",
+  // Voice recorder (dynamic require of expo-av)
+  "features/chat/hooks/useVoiceRecorder.ts",
+  // VoiceRecorderBar (uses useVoiceRecorder, may trigger expo-av via preview)
+  "features/chat/components/VoiceRecorderBar.tsx",
 ]);
 
 /**

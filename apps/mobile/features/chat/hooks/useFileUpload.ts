@@ -130,7 +130,7 @@ export function useFileUpload(): UseFileUploadResult {
       setProgress(20);
 
       if (Platform.OS === 'web') {
-        // Web: Use fetch/blob
+        // Web: Use fetch/blob (requires R2 CORS to be configured)
         const response = await fetch(file.uri);
         const blob = await response.blob();
 
