@@ -22,6 +22,8 @@ interface Attachment {
   size?: number;
   mimeType?: string;
   thumbnailUrl?: string;
+  waveform?: number[];
+  duration?: number;
 }
 
 interface SendMessageOptions {

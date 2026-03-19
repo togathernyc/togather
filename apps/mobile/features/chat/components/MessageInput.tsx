@@ -414,7 +414,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
    * Handle voice memo send - upload file and send message
    */
   const handleVoiceMemoSend = useCallback(
-    async (file: { uri: string; name: string; size: number; mimeType: string }) => {
+    async (file: { uri: string; name: string; size: number; mimeType: string; waveform: number[]; durationMs: number }) => {
       if (!channelId) return;
       const uploadResult = await uploadFile({
         uri: file.uri,
@@ -431,6 +431,8 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
             type: 'audio',
             url: uploadResult.storagePath,
             name: uploadResult.name,
+            waveform: file.waveform,
+            duration: file.durationMs,
           },
         ],
         parentMessageId: replyToMessage?._id,

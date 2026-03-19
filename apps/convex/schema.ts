@@ -1298,6 +1298,8 @@ export default defineSchema({
           size: v.optional(v.number()),
           mimeType: v.optional(v.string()),
           thumbnailUrl: v.optional(v.string()),
+          waveform: v.optional(v.array(v.number())),
+          duration: v.optional(v.number()),
         }),
       ),
     ),

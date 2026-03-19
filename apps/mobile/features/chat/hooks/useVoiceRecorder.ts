@@ -32,7 +32,7 @@ export interface VoiceRecorderResult {
   resumeRecording: () => Promise<void>;
   stopRecording: () => Promise<void>;
   deleteRecording: () => void;
-  sendRecording: (onSend: (file: { uri: string; name: string; size: number; mimeType: string }) => Promise<void>) => Promise<boolean>;
+  sendRecording: (onSend: (file: { uri: string; name: string; size: number; mimeType: string; waveform: number[]; durationMs: number }) => Promise<void>) => Promise<boolean>;
 }
 
 function useVoiceRecorderWeb(): VoiceRecorderResult {
@@ -52,8 +52,10 @@ function useVoiceRecorderWeb(): VoiceRecorderResult {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isRecordingActiveRef = useRef(false);
 
-  const mimeType = 'audio/webm';
-  const fileName = 'voice-memo.webm';
+  // Prefer MP4 for cross-platform compatibility (plays natively on iOS)
+  const preferMp4 = typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported('audio/mp4');
+  const mimeType = preferMp4 ? 'audio/mp4' : 'audio/webm';
+  const fileName = preferMp4 ? 'voice-memo.m4a' : 'voice-memo.webm';
 
   const cleanup = useCallback(() => {
     isRecordingActiveRef.current = false;
@@ -98,10 +100,12 @@ function useVoiceRecorderWeb(): VoiceRecorderResult {
       source.connect(analyser);
       analyserRef.current = analyser;
 
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : 'audio/webm';
-      const recorder = new MediaRecorder(stream, { mimeType });
+      const recorderMimeType = MediaRecorder.isTypeSupported('audio/mp4')
+        ? 'audio/mp4'
+        : MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+          ? 'audio/webm;codecs=opus'
+          : 'audio/webm';
+      const recorder = new MediaRecorder(stream, { mimeType: recorderMimeType });
       mediaRecorderRef.current = recorder;
       chunksRef.current = [];
 
@@ -111,7 +115,7 @@ function useVoiceRecorderWeb(): VoiceRecorderResult {
 
       recorder.onstop = () => {
         isRecordingActiveRef.current = false;
-        const blob = new Blob(chunksRef.current, { type: mimeType.split(';')[0] });
+        const blob = new Blob(chunksRef.current, { type: recorderMimeType.split(';')[0] });
         const uri = URL.createObjectURL(blob);
         setFileUri(uri);
         setState('preview');
@@ -206,7 +210,7 @@ function useVoiceRecorderWeb(): VoiceRecorderResult {
   }, [state, cleanup]);
 
   const sendRecording = useCallback(
-    async (onSend: (file: { uri: string; name: string; size: number; mimeType: string }) => Promise<void>): Promise<boolean> => {
+    async (onSend: (file: { uri: string; name: string; size: number; mimeType: string; waveform: number[]; durationMs: number }) => Promise<void>): Promise<boolean> => {
       if (!fileUri || state !== 'preview') return false;
       setState('sending');
       try {
@@ -216,7 +220,9 @@ function useVoiceRecorderWeb(): VoiceRecorderResult {
           uri: fileUri,
           name: fileName,
           size: blob.size,
-          mimeType: 'audio/webm',
+          mimeType: mimeType,
+          waveform: meteringData,
+          durationMs: durationMs,
         });
         deleteRecording();
         return true;
@@ -227,7 +233,7 @@ function useVoiceRecorderWeb(): VoiceRecorderResult {
         return false;
       }
     },
-    [fileUri, state, deleteRecording]
+    [fileUri, state, deleteRecording, mimeType, meteringData, durationMs]
   );
 
   useEffect(() => () => cleanup(), [cleanup]);
@@ -499,7 +505,7 @@ function useVoiceRecorderNative(): VoiceRecorderResult {
   }, [state]);
 
   const sendRecording = useCallback(
-    async (onSend: (file: { uri: string; name: string; size: number; mimeType: string }) => Promise<void>): Promise<boolean> => {
+    async (onSend: (file: { uri: string; name: string; size: number; mimeType: string; waveform: number[]; durationMs: number }) => Promise<void>): Promise<boolean> => {
       if (!fileUri || state !== 'preview') return false;
       setState('sending');
       try {
@@ -518,6 +524,8 @@ function useVoiceRecorderNative(): VoiceRecorderResult {
           name: fileName,
           size,
           mimeType: 'audio/mp4',
+          waveform: meteringData,
+          durationMs: durationMs,
         });
         deleteRecording();
         return true;
@@ -528,7 +536,7 @@ function useVoiceRecorderNative(): VoiceRecorderResult {
         return false;
       }
     },
-    [fileUri, state, deleteRecording]
+    [fileUri, state, deleteRecording, meteringData, durationMs]
   );
 
   useEffect(() => () => {

@@ -29,6 +29,8 @@ interface MessageForPreview {
     size?: number;
     mimeType?: string;
     thumbnailUrl?: string;
+    waveform?: number[];
+    duration?: number;
   }>;
 }
 
@@ -306,6 +308,8 @@ export const sendMessage = mutation({
           size: v.optional(v.number()),
           mimeType: v.optional(v.string()),
           thumbnailUrl: v.optional(v.string()),
+          waveform: v.optional(v.array(v.number())),
+          duration: v.optional(v.number()),
         })
       )
     ),

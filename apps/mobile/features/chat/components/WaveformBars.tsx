@@ -21,14 +21,22 @@ interface WaveformBarsProps {
   playedFraction?: number;
   /** Bar count (default 40) */
   barCount?: number;
+  /** Accent color for played bars (defaults to #666) */
+  accentColor?: string;
+  /** Container height (defaults to MAX_HEIGHT) */
+  height?: number;
 }
 
 export function WaveformBars({
   meteringData,
   playedFraction = 1,
   barCount = BAR_COUNT,
+  accentColor = '#666',
+  height = MAX_HEIGHT,
 }: WaveformBarsProps) {
   const bars: number[] = [];
+  const minH = MIN_HEIGHT * (height / MAX_HEIGHT);
+  const maxH = height;
 
   if (meteringData.length > 0) {
     for (let i = 0; i < barCount; i++) {
@@ -42,9 +50,9 @@ export function WaveformBars({
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { height }]}>
       {bars.map((value, index) => {
-        const height = MIN_HEIGHT + value * (MAX_HEIGHT - MIN_HEIGHT);
+        const barHeight = minH + value * (maxH - minH);
         const isPlayed = (index + 1) / barCount <= playedFraction;
         return (
           <View
@@ -52,7 +60,8 @@ export function WaveformBars({
             style={[
               styles.bar,
               {
-                height,
+                height: barHeight,
+                backgroundColor: accentColor,
                 opacity: isPlayed ? 1 : 0.4,
               },
             ]}
@@ -73,7 +82,6 @@ const styles = StyleSheet.create({
   bar: {
     width: BAR_WIDTH,
     marginHorizontal: BAR_MARGIN / 2,
-    backgroundColor: '#666',
     borderRadius: 1,
   },
 });

@@ -33,7 +33,7 @@ function formatDuration(ms: number): string {
 }
 
 interface VoiceRecorderBarProps {
-  onSend: (file: { uri: string; name: string; size: number; mimeType: string }) => Promise<void>;
+  onSend: (file: { uri: string; name: string; size: number; mimeType: string; waveform: number[]; durationMs: number }) => Promise<void>;
   onCancel: () => void;
 }
 
