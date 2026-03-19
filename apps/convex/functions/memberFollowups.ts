@@ -1064,6 +1064,7 @@ export const getCrossGroupConfig = query({
         scoreConfigScores: [],
         leaderGroups: [],
         leaders: [],
+        announcementGroupId: null,
       };
     }
 

@@ -853,7 +853,7 @@ export function FollowupDesktopTable({
     isLoading: crossGroupIsLoading,
   } = useAuthenticatedPaginatedQuery(
     api.functions.communityPeople.listAssignedToMe,
-    crossGroupMode && !hasTextSearch && communityId
+    crossGroupMode && !hasTextSearch && communityId && crossGroupFilter
       ? {
           communityId,
           sortBy:
@@ -914,7 +914,7 @@ export function FollowupDesktopTable({
   // Cross-group search query — uses communityPeople
   const crossGroupSearchResults = useAuthenticatedQuery(
     api.functions.communityPeople.searchAssignedToMe,
-    crossGroupMode && hasTextSearch && communityId
+    crossGroupMode && hasTextSearch && communityId && crossGroupFilter
       ? {
           communityId,
           searchTerm: parsedQuery.searchText,
@@ -955,12 +955,10 @@ export function FollowupDesktopTable({
       ? api.functions.communityPeople.countAssignedToMe
       : api.functions.communityPeople.count,
     crossGroupMode
-      ? communityId
+      ? communityId && crossGroupFilter
         ? {
             communityId,
-            ...(crossGroupFilter
-              ? { groupFilter: crossGroupFilter as Id<"groups"> }
-              : {}),
+            groupFilter: crossGroupFilter as Id<"groups">,
           }
         : "skip"
       : groupId

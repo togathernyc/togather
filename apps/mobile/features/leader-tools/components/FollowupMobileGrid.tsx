@@ -489,7 +489,7 @@ export function FollowupMobileGrid({
     isLoading: crossGroupIsLoading,
   } = useAuthenticatedPaginatedQuery(
     api.functions.communityPeople.listAssignedToMe,
-    crossGroupMode && !hasTextSearch && communityId
+    crossGroupMode && !hasTextSearch && communityId && crossGroupFilter
       ? {
           communityId,
           sortBy: serverSortBy,
@@ -534,7 +534,7 @@ export function FollowupMobileGrid({
 
   const crossGroupSearchResultsRaw = useAuthenticatedQuery(
     api.functions.communityPeople.searchAssignedToMe,
-    crossGroupMode && hasTextSearch && communityId
+    crossGroupMode && hasTextSearch && communityId && crossGroupFilter
       ? {
           communityId,
           searchTerm: parsedQuery.searchText,
@@ -581,12 +581,10 @@ export function FollowupMobileGrid({
       ? api.functions.communityPeople.countAssignedToMe
       : api.functions.communityPeople.count,
     crossGroupMode
-      ? communityId
+      ? communityId && crossGroupFilter
         ? {
             communityId,
-            ...(crossGroupFilter
-              ? { groupFilter: crossGroupFilter as Id<"groups"> }
-              : {}),
+            groupFilter: crossGroupFilter as Id<"groups">,
           }
         : "skip"
       : groupId
