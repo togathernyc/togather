@@ -1194,9 +1194,11 @@ export const history = query({
     }
 
     // Get profile image URL
-    const profileImage = user.profilePhoto
-      ? typeof user.profilePhoto === "string"
-        ? user.profilePhoto
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const u = user as any;
+    const profileImage = u.profilePhoto
+      ? typeof u.profilePhoto === "string"
+        ? u.profilePhoto
         : undefined
       : undefined;
 
@@ -1204,10 +1206,10 @@ export const history = query({
       member: {
         id: cpRecord._id,
         odUserId: cpRecord.userId,
-        firstName: user.firstName || cpRecord.firstName || "",
-        lastName: user.lastName || cpRecord.lastName || "",
-        email: user.email || cpRecord.email,
-        phone: user.phone || cpRecord.phone,
+        firstName: u.firstName || cpRecord.firstName || "",
+        lastName: u.lastName || cpRecord.lastName || "",
+        email: u.email || cpRecord.email,
+        phone: u.phone || cpRecord.phone,
         profileImage,
         joinedAt: cpRecord.addedAt,
       },
