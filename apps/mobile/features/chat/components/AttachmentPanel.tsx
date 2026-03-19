@@ -5,7 +5,7 @@
  * to expand/collapse. Grid of circular icon buttons.
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useContext, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -15,6 +15,7 @@ import {
   Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { ThemeContext } from '@/providers/ThemeProvider';
 
 export interface AttachmentOption {
   id: string;
@@ -33,6 +34,7 @@ interface AttachmentPanelProps {
 const PANEL_HEIGHT = 160;
 
 export function AttachmentPanel({ visible, options, onOptionPress }: AttachmentPanelProps) {
+  const { colors, isDark } = useContext(ThemeContext);
   const heightAnim = useRef(new Animated.Value(0)).current;
   const [pressedId, setPressedId] = useState<string | null>(null);
 
@@ -46,7 +48,7 @@ export function AttachmentPanel({ visible, options, onOptionPress }: AttachmentP
 
   return (
     <Animated.View style={[styles.container, { height: heightAnim }]}>
-      <View style={styles.inner}>
+      <View style={[styles.inner, { backgroundColor: colors.surfaceSecondary, borderTopColor: colors.border }]}>
         <View style={styles.grid}>
           {options.map((option) => (
             <Pressable
@@ -64,18 +66,19 @@ export function AttachmentPanel({ visible, options, onOptionPress }: AttachmentP
                 <View
                   style={[
                     styles.iconCircle,
+                    { backgroundColor: isDark ? colors.surface : '#fff' },
                     option.iconColor
-                      ? { backgroundColor: `${option.iconColor}18` }
+                      ? { backgroundColor: isDark ? `${option.iconColor}20` : `${option.iconColor}18` }
                       : undefined,
                   ]}
                 >
                   <Ionicons
                     name={option.icon}
                     size={26}
-                    color={option.iconColor || '#007AFF'}
+                    color={option.iconColor || colors.link}
                   />
                 </View>
-                <Text style={styles.optionLabel}>{option.label}</Text>
+                <Text style={[styles.optionLabel, { color: colors.text }]}>{option.label}</Text>
               </View>
             </Pressable>
           ))}
@@ -90,12 +93,10 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   inner: {
-    backgroundColor: '#F5F0E8',
     paddingTop: 16,
     paddingBottom: 16,
     paddingHorizontal: 24,
     borderTopWidth: 1,
-    borderTopColor: '#e0e0e0',
   },
   grid: {
     flexDirection: 'row',
@@ -114,7 +115,6 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: '#fff',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 8,
@@ -134,7 +134,6 @@ const styles = StyleSheet.create({
   optionLabel: {
     fontSize: 12,
     fontWeight: '500',
-    color: '#333',
     textAlign: 'center',
   },
 });
