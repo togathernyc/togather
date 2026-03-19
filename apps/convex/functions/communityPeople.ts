@@ -428,71 +428,76 @@ export const listAssignedToMe = query({
     const leaderGroupIdSet = new Set(leaderGroupIds.map((id) => id.toString()));
 
     const assigneeId = args.assigneeFilter ?? userId;
-    const direction = args.sortDirection === "desc" ? "desc" : "asc";
-    const indexName =
-      INDEX_MAP[args.sortBy ?? "lastName"] ?? "by_group_lastName";
-
-    // Query by community + assignee for "assigned to me" filter
-    let q = ctx.db
-      .query("communityPeople")
-      .withIndex("by_community_assignee", (fq: any) =>
-        fq.eq("communityId", args.communityId).eq("assigneeId", assigneeId),
-      );
-
-    // We need to filter by leader groups and apply other filters.
-    // by_community_assignee doesn't support sortBy - we'll need to collect and sort/filter.
     const scoreFilterField = (args.scoreField ?? "score1") as
       | "score1"
       | "score2"
       | "score3";
-    const hasFilters =
-      args.statusFilter ||
-      (args.excludedAssigneeFilters && args.excludedAssigneeFilters.length > 0) ||
-      args.scoreMax !== undefined ||
-      args.scoreMin !== undefined ||
-      args.addedAtMin !== undefined ||
-      args.addedAtMax !== undefined ||
-      args.groupFilter;
 
-    if (hasFilters) {
-      q = q.filter((fq) => {
-        const conds: any[] = [];
-        if (args.statusFilter)
-          conds.push(fq.eq(fq.field("status"), args.statusFilter));
-        if (args.excludedAssigneeFilters?.length) {
-          for (const excludedId of args.excludedAssigneeFilters) {
-            conds.push(fq.neq(fq.field("assigneeId"), excludedId));
-          }
-        }
-        if (args.scoreMax !== undefined)
-          conds.push(fq.lt(fq.field(scoreFilterField), args.scoreMax));
-        if (args.scoreMin !== undefined)
-          conds.push(fq.gt(fq.field(scoreFilterField), args.scoreMin));
-        if (args.addedAtMax !== undefined)
-          conds.push(fq.lte(fq.field("addedAt"), args.addedAtMax));
-        if (args.addedAtMin !== undefined)
-          conds.push(fq.gte(fq.field("addedAt"), args.addedAtMin));
-        if (args.groupFilter)
-          conds.push(fq.eq(fq.field("groupId"), args.groupFilter));
-        return conds.length === 0
-          ? true
-          : conds.length === 1
-            ? conds[0]
-            : fq.and(...(conds as [any, any, ...any[]]));
-      });
-    }
+    // Query by community; filter by assigneeIds (array) so users appear when they're
+    // any assignee, not just the first. Convex doesn't support array-contains in
+    // indexes, so we collect and filter.
+    const allDocs = await ctx.db
+      .query("communityPeople")
+      .withIndex("by_community", (fq: any) =>
+        fq.eq("communityId", args.communityId),
+      )
+      .collect();
 
-    const paginatedResult = await q.paginate(args.paginationOpts);
+    let filtered = allDocs.filter(
+      (doc: any) =>
+        doc.assigneeIds?.includes(assigneeId) &&
+        (args.groupFilter
+          ? doc.groupId.toString() === args.groupFilter.toString()
+          : leaderGroupIdSet.has(doc.groupId.toString())),
+    );
 
-    const filteredPage = args.groupFilter
-      ? paginatedResult.page
-      : paginatedResult.page.filter((doc: any) =>
-          leaderGroupIdSet.has(doc.groupId.toString()),
-        );
+    if (args.statusFilter)
+      filtered = filtered.filter((d: any) => d.status === args.statusFilter);
+    if (args.excludedAssigneeFilters?.length)
+      filtered = filtered.filter(
+        (d: any) =>
+          !d.assigneeIds?.some((id: any) =>
+            args.excludedAssigneeFilters!.includes(id),
+          ),
+      );
+    if (args.scoreMax !== undefined)
+      filtered = filtered.filter(
+        (d: any) => (d[scoreFilterField] ?? 0) < args.scoreMax!,
+      );
+    if (args.scoreMin !== undefined)
+      filtered = filtered.filter(
+        (d: any) => (d[scoreFilterField] ?? 0) > args.scoreMin!,
+      );
+    if (args.addedAtMax !== undefined)
+      filtered = filtered.filter(
+        (d: any) => (d.addedAt ?? 0) <= args.addedAtMax!,
+      );
+    if (args.addedAtMin !== undefined)
+      filtered = filtered.filter(
+        (d: any) => (d.addedAt ?? 0) >= args.addedAtMin!,
+      );
+
+    const direction = args.sortDirection === "desc" ? "desc" : "asc";
+    const sortField = args.sortBy ?? "lastName";
+    filtered.sort((a: any, b: any) => {
+      const va = a[sortField] ?? "";
+      const vb = b[sortField] ?? "";
+      const cmp =
+        typeof va === "number" && typeof vb === "number"
+          ? va - vb
+          : String(va).localeCompare(String(vb));
+      return direction === "desc" ? -cmp : cmp;
+    });
+
+    const { cursor, numItems } = args.paginationOpts;
+    const offset = cursor ? parseInt(cursor, 10) || 0 : 0;
+    const page = filtered.slice(offset, offset + numItems);
+    const isDone = offset + page.length >= filtered.length;
+    const continueCursor = isDone ? "" : String(offset + page.length);
 
     const groupNameCache = new Map<string, string>();
     const enrichedPage = await Promise.all(
-      filteredPage.map(async (doc: any) => {
+      page.map(async (doc: any) => {
         const gidStr = doc.groupId.toString();
         if (!groupNameCache.has(gidStr)) {
           const group = await ctx.db.get(doc.groupId as Id<"groups">);
@@ -503,8 +508,9 @@ export const listAssignedToMe = query({
     );
 
     return {
-      ...paginatedResult,
       page: enrichedPage,
+      isDone,
+      continueCursor,
     };
   },
 });
@@ -542,13 +548,14 @@ export const searchAssignedToMe = query({
 
     const assigneeId = args.assigneeFilter ?? userId;
 
+    // Search by community; filter by assigneeIds (array) so users appear when
+    // they're any assignee. Convex search can't filter by array-contains.
     let results = ctx.db
       .query("communityPeople")
       .withSearchIndex("search_communityPeople", (q: any) => {
         let sq = q
           .search("searchText", args.searchTerm)
-          .eq("communityId", args.communityId)
-          .eq("assigneeId", assigneeId);
+          .eq("communityId", args.communityId);
         if (args.statusFilter) sq = sq.eq("status", args.statusFilter);
         if (args.groupFilter) sq = sq.eq("groupId", args.groupFilter);
         return sq;
@@ -571,41 +578,47 @@ export const searchAssignedToMe = query({
       });
     }
 
-    const hasExcludedAssignees =
-      args.excludedAssigneeFilters && args.excludedAssigneeFilters.length > 0;
-    const hasDateFilters =
-      args.addedAtMin !== undefined || args.addedAtMax !== undefined;
-
-    if (hasExcludedAssignees || hasDateFilters) {
+    if (args.addedAtMax !== undefined || args.addedAtMin !== undefined) {
       results = results.filter((fq: any) => {
         const conds: any[] = [];
-        if (args.excludedAssigneeFilters?.length) {
-          for (const excludedId of args.excludedAssigneeFilters) {
-            conds.push(fq.neq(fq.field("assigneeId"), excludedId));
-          }
-        }
         if (args.addedAtMax !== undefined)
           conds.push(fq.lte(fq.field("addedAt"), args.addedAtMax));
         if (args.addedAtMin !== undefined)
           conds.push(fq.gte(fq.field("addedAt"), args.addedAtMin));
-        return conds.length === 0
-          ? true
-          : conds.length === 1
-            ? conds[0]
-            : fq.and(...(conds as [any, any, ...any[]]));
+        return conds.length === 1
+          ? conds[0]
+          : fq.and(...(conds as [any, any, ...any[]]));
       });
     }
 
-    const allResults = await results.take(200);
-    const filtered = args.groupFilter
-      ? allResults
-      : allResults.filter((doc: any) =>
-          leaderGroupIdSet.has(doc.groupId.toString()),
-        );
+    const allResults = await results.take(500);
+    let filtered = allResults.filter(
+      (doc: any) =>
+        doc.assigneeIds?.includes(assigneeId) &&
+        (args.groupFilter
+          ? doc.groupId.toString() === args.groupFilter.toString()
+          : leaderGroupIdSet.has(doc.groupId.toString())),
+    );
+
+    if (args.addedAtMax !== undefined)
+      filtered = filtered.filter(
+        (d: any) => (d.addedAt ?? 0) <= args.addedAtMax!,
+      );
+    if (args.addedAtMin !== undefined)
+      filtered = filtered.filter(
+        (d: any) => (d.addedAt ?? 0) >= args.addedAtMin!,
+      );
+    if (args.excludedAssigneeFilters?.length)
+      filtered = filtered.filter(
+        (d: any) =>
+          !d.assigneeIds?.some((id: any) =>
+            args.excludedAssigneeFilters!.includes(id),
+          ),
+      );
 
     const groupNameCache = new Map<string, string>();
     return Promise.all(
-      filtered.map(async (doc: any) => {
+      filtered.slice(0, 200).map(async (doc: any) => {
         const gidStr = doc.groupId.toString();
         if (!groupNameCache.has(gidStr)) {
           const group = await ctx.db.get(doc.groupId as Id<"groups">);
@@ -642,21 +655,23 @@ export const countAssignedToMe = query({
 
     const assigneeId = args.assigneeFilter ?? userId;
 
-    let count = 0;
-    for await (const doc of ctx.db
+    const allDocs = await ctx.db
       .query("communityPeople")
-      .withIndex("by_community_assignee", (q: any) =>
-        q.eq("communityId", args.communityId).eq("assigneeId", assigneeId),
-      )) {
-      if (args.groupFilter) {
-        if (doc.groupId.toString() !== args.groupFilter.toString()) continue;
-      } else if (!leaderGroupIdSet.has(doc.groupId.toString())) {
-        continue;
-      }
-      if (args.statusFilter && doc.status !== args.statusFilter) continue;
-      count++;
-    }
-    return count;
+      .withIndex("by_community", (q: any) =>
+        q.eq("communityId", args.communityId),
+      )
+      .collect();
+
+    let filtered = allDocs.filter(
+      (doc: any) =>
+        doc.assigneeIds?.includes(assigneeId) &&
+        (args.groupFilter
+          ? doc.groupId.toString() === args.groupFilter.toString()
+          : leaderGroupIdSet.has(doc.groupId.toString())),
+    );
+    if (args.statusFilter)
+      filtered = filtered.filter((d: any) => d.status === args.statusFilter);
+    return filtered.length;
   },
 });
 
