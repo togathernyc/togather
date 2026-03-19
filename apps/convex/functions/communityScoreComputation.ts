@@ -25,7 +25,7 @@ import {
 } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
-import { now, getMediaUrl } from "../lib/utils";
+import { now, getMediaUrl, safeSliceForJson } from "../lib/utils";
 import {
   extractSystemRawValues,
   calculateAllSystemScores,
@@ -290,6 +290,15 @@ export const computeCommunityScoresBatch = internalQuery({
           }
         }
 
+        // Latest note for display in notes cell
+        const latestNoteEntry = followups.find(
+          (f) => f.type === "note" && f.content,
+        );
+        const latestNote = latestNoteEntry?.content
+          ? safeSliceForJson(latestNoteEntry.content, 200)
+          : undefined;
+        const latestNoteAt = latestNoteEntry?.createdAt ?? undefined;
+
         // Cross-group attendance percentage
         const crossGroupPct =
           (args.crossGroupAttendanceMap?.[member.userId.toString()] as
@@ -345,6 +354,8 @@ export const computeCommunityScoresBatch = internalQuery({
           lastActiveAt: member.lastActiveAt,
           lastAttendedAt,
           addedAt: member.joinedAt,
+          latestNote,
+          latestNoteAt,
         };
       })
     );
@@ -404,12 +415,16 @@ export const upsertCommunityPeopleBatch = internalMutation({
         lastActiveAt: member.lastActiveAt,
         lastAttendedAt: member.lastAttendedAt,
         addedAt: member.addedAt,
+        latestNote: member.latestNote,
+        latestNoteAt: member.latestNoteAt,
         updatedAt: nowTs,
       };
 
       if (existing) {
-        // Patch preserves custom fields, status, assigneeIds, connectionPoint
-        await ctx.db.patch(existing._id, scoreDoc);
+        // Patch preserves custom fields, status, assigneeIds, connectionPoint (not in scoreDoc)
+        // Keep assigneeId in sync with assigneeIds for indexing
+        const assigneeId = (existing as any).assigneeIds?.[0];
+        await ctx.db.patch(existing._id, { ...scoreDoc, assigneeId });
       } else {
         // Check if user has a record in another group — copy leader-set fields
         const siblingRecord = await ctx.db
@@ -419,11 +434,13 @@ export const upsertCommunityPeopleBatch = internalMutation({
           )
           .first();
 
+        const siblingAssigneeId = (siblingRecord as any)?.assigneeIds?.[0];
         await ctx.db.insert("communityPeople", {
           ...scoreDoc,
           // Copy leader-set fields from sibling if exists
           status: siblingRecord?.status,
           assigneeIds: siblingRecord?.assigneeIds,
+          assigneeId: siblingAssigneeId,
           assigneeSortKey: siblingRecord?.assigneeSortKey,
           connectionPoint: siblingRecord?.connectionPoint,
           customText1: siblingRecord?.customText1,

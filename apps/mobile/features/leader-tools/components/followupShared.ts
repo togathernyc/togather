@@ -182,6 +182,8 @@ export function adaptCommunityPerson(cp: any) {
     status: cp.status,
     assigneeId: cp.assigneeIds?.[0],
     assigneeIds: cp.assigneeIds,
+    groupId: cp.groupId,
+    groupName: cp.groupName,
     customText1: cp.customText1,
     customText2: cp.customText2,
     customText3: cp.customText3,
@@ -197,5 +199,7 @@ export function adaptCommunityPerson(cp: any) {
     customBool3: cp.customBool3,
     customBool4: cp.customBool4,
     customBool5: cp.customBool5,
+    latestNote: cp.latestNote,
+    latestNoteAt: cp.latestNoteAt,
   };
 }

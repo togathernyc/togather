@@ -45,12 +45,15 @@ export function FollowupDetailContent({
   onClose,
   scrollToNotes,
   scrollToTasks,
+  crossGroupMode,
 }: {
   groupId: string;
   memberId: string;
   onClose?: () => void;
   scrollToNotes?: boolean;
   scrollToTasks?: boolean;
+  /** When true, memberId is groupMemberId (from cross-group view). When false, memberId is communityPeopleId. */
+  crossGroupMode?: boolean;
 }) {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
@@ -112,7 +115,9 @@ export function FollowupDetailContent({
   const group_id = groupId;
   const member_id = memberId;
 
-  // Fetch member history using Convex
+  // Fetch member history using Convex.
+  // Both per-group and cross-group modes now use communityPeople records via adaptCommunityPerson,
+  // so memberId is always a communityPeople ID.
   const historyData = useAuthenticatedQuery(
     api.functions.communityPeople.history,
     member_id
@@ -1372,15 +1377,20 @@ export function FollowupDetailContent({
  */
 export function FollowupDetailScreen() {
   const { colors } = useTheme();
-  const { group_id, member_id } = useLocalSearchParams<{
+  const { group_id, member_id, cross_group } = useLocalSearchParams<{
     group_id: string;
     member_id: string;
+    cross_group?: string;
   }>();
 
   return (
     <UserRoute>
       <DragHandle />
-      <FollowupDetailContent groupId={group_id || ""} memberId={member_id || ""} />
+      <FollowupDetailContent
+        groupId={group_id || ""}
+        memberId={member_id || ""}
+        crossGroupMode={cross_group === "1"}
+      />
     </UserRoute>
   );
 }

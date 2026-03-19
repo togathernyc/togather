@@ -241,8 +241,9 @@ export function FollowupDesktopTable({
 }) {
   const { colors } = useTheme();
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, community } = useAuth();
   const currentUserId = user?.id as Id<"users"> | undefined;
+  const communityId = community?.id as Id<"communities"> | undefined;
   const { primaryColor } = useCommunityTheme();
 
   // Sort state
@@ -837,16 +838,25 @@ export function FollowupDesktopTable({
     { initialNumItems: 50 },
   );
 
-  // Cross-group paginated query
+  // Cross-group paginated query — uses communityPeople (same data source as follow-up view)
   const {
     results: crossGroupRawMembers,
     status: crossGroupPaginationStatus,
     loadMore: crossGroupLoadMore,
     isLoading: crossGroupIsLoading,
   } = useAuthenticatedPaginatedQuery(
-    api.functions.memberFollowups.listAssignedToMe,
-    crossGroupMode && !hasTextSearch
+    api.functions.communityPeople.listAssignedToMe,
+    crossGroupMode && !hasTextSearch && communityId
       ? {
+          communityId,
+          sortBy:
+            activeViewId === FOLLOWUP_MAP_VIEW_ID ? "zipCode" : serverSortBy,
+          sortDirection:
+            activeViewId === FOLLOWUP_MAP_VIEW_ID
+              ? "desc"
+              : isClientSideSort
+                ? "desc"
+                : sortDirection,
           ...listFilterArgs,
           ...crossGroupFilterArg,
         }
@@ -894,12 +904,13 @@ export function FollowupDesktopTable({
       : "skip",
   );
 
-  // Cross-group search query
+  // Cross-group search query — uses communityPeople
   const crossGroupSearchResults = useAuthenticatedQuery(
-    api.functions.memberFollowups.searchAssignedToMe,
-    crossGroupMode && hasTextSearch
+    api.functions.communityPeople.searchAssignedToMe,
+    crossGroupMode && hasTextSearch && communityId
       ? {
-          searchText: parsedQuery.searchText,
+          communityId,
+          searchTerm: parsedQuery.searchText,
           ...(parsedQuery.statusFilter
             ? { statusFilter: parsedQuery.statusFilter }
             : {}),
@@ -931,10 +942,23 @@ export function FollowupDesktopTable({
     ? crossGroupSearchResults
     : perGroupSearchResults;
 
-  // Total member count (only for per-group mode)
+  // Total member count
   const totalCount = useAuthenticatedQuery(
-    api.functions.communityPeople.count,
-    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip",
+    crossGroupMode
+      ? api.functions.communityPeople.countAssignedToMe
+      : api.functions.communityPeople.count,
+    crossGroupMode
+      ? communityId
+        ? {
+            communityId,
+            ...(crossGroupFilter !== "all"
+              ? { groupFilter: crossGroupFilter as Id<"groups"> }
+              : {}),
+          }
+        : "skip"
+      : groupId
+        ? { groupId: groupId as Id<"groups"> }
+        : "skip",
   );
 
   // Merge: use search results when text search active, otherwise paginated.
@@ -944,10 +968,10 @@ export function FollowupDesktopTable({
     const raw = (hasTextSearch
       ? (searchResults ?? [])
       : (rawMembers ?? [])) as unknown as any[];
-    // Adapt community people records to FollowupMember shape
-    const adapted: FollowupMember[] = crossGroupMode
-      ? (raw as FollowupMember[])
-      : applyDevZipCodeSample(raw.map((r: any) => adaptCommunityPerson(r)));
+    // Adapt community people records to FollowupMember shape (both modes use communityPeople)
+    const adapted: FollowupMember[] = applyDevZipCodeSample(
+      raw.map((r: any) => adaptCommunityPerson(r)),
+    );
     const filtered = applyParsedFollowupFilters(adapted, parsedQuery);
 
     if (!isClientSideSort || filtered.length === 0) return filtered;
@@ -2380,9 +2404,9 @@ export function FollowupDesktopTable({
       )}
 
       {/* People view bar */}
-      {groupData?.communityId && (
+      {(groupData?.communityId || (crossGroupMode && communityId)) && (
         <PeopleViewBar
-          communityId={groupData.communityId}
+          communityId={(groupData?.communityId ?? communityId)!}
           activeViewId={activeViewId}
           onViewSelect={(viewId, view) => {
             if (view?.isSpecial) {
@@ -2743,7 +2767,7 @@ export function FollowupDesktopTable({
               <FollowupSettingsPanel
                 groupId={groupId}
                 crossGroupMode={crossGroupMode}
-                communityId={groupData?.communityId}
+                communityId={groupData?.communityId ?? communityId}
                 isAdmin={user?.is_admin === true}
                 currentColumnOrder={
                   localColumnOrder ?? columnConfig?.columnOrder ?? allColumnKeys
@@ -2802,6 +2826,7 @@ export function FollowupDesktopTable({
                     onClose={() => setSelectedMemberId(null)}
                     scrollToNotes={scrollToNotes}
                     scrollToTasks={scrollToTasks}
+                    crossGroupMode={crossGroupMode}
                   />
                 </View>
               </>
@@ -3244,7 +3269,7 @@ export function FollowupDesktopTable({
       />
 
       {/* Save view modal */}
-      {groupData?.communityId && (
+      {(groupData?.communityId || (crossGroupMode && communityId)) && (
         <SaveViewModal
           visible={showSaveViewModal}
           onClose={() => {
@@ -3254,7 +3279,7 @@ export function FollowupDesktopTable({
             setLocalColumnOrder(null);
             setLocalHiddenColumns(null);
           }}
-          communityId={groupData.communityId}
+          communityId={groupData?.communityId ?? communityId!}
           currentSortBy={sortField}
           currentSortDirection={sortDirection}
           currentColumnOrder={localColumnOrder ?? columnConfig?.columnOrder}
