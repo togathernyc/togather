@@ -47,6 +47,12 @@ function getActiveConfig(
   otaStatus: { status: string },
   themeColors: { error: string; warning: string; success: string; textTertiary: string },
 ): StatusConfig | null {
+  // Cold start grace period: suppress all banners while connecting
+  // NetInfo may briefly report isInternetReachable: false during initialization
+  if (connectionStatus.status === 'connecting') {
+    return null;
+  }
+
   // Priority 1: Disconnected
   if (connectionStatus.status === 'disconnected') {
     return {

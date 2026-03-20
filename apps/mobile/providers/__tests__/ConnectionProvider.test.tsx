@@ -59,15 +59,16 @@ describe('ConnectionProvider', () => {
     jest.useRealTimers();
   });
 
-  it('returns connected when both NetInfo and Convex are connected', () => {
+  it('returns connected when both NetInfo and Convex are connected', async () => {
     const { result } = renderHook(() => useConnectionStatus(), { wrapper });
-    expect(result.current.status).toBe('connected');
+    await waitFor(() => expect(result.current.status).toBe('connected'));
     expect(result.current.isNetworkAvailable).toBe(true);
     expect(result.current.isWebSocketConnected).toBe(true);
   });
 
-  it('returns disconnected after 2s debounce when NetInfo reports offline', () => {
+  it('returns disconnected after 2s debounce when NetInfo reports offline', async () => {
     const { result } = renderHook(() => useConnectionStatus(), { wrapper });
+    await waitFor(() => expect(result.current.status).toBe('connected'));
 
     act(() => {
       simulateNetInfoChange({ isConnected: false, isInternetReachable: false });
@@ -85,8 +86,9 @@ describe('ConnectionProvider', () => {
     expect(result.current.isNetworkAvailable).toBe(false);
   });
 
-  it('does NOT show disconnected if network recovers within 2s (debounce cancellation)', () => {
+  it('does NOT show disconnected if network recovers within 2s (debounce cancellation)', async () => {
     const { result } = renderHook(() => useConnectionStatus(), { wrapper });
+    await waitFor(() => expect(result.current.status).toBe('connected'));
 
     act(() => {
       simulateNetInfoChange({ isConnected: false, isInternetReachable: false });
@@ -109,8 +111,9 @@ describe('ConnectionProvider', () => {
     expect(result.current.status).toBe('connected');
   });
 
-  it('transitions disconnected -> reconnected when connection restores', () => {
+  it('transitions disconnected -> reconnected when connection restores', async () => {
     const { result } = renderHook(() => useConnectionStatus(), { wrapper });
+    await waitFor(() => expect(result.current.status).toBe('connected'));
 
     // Go offline
     act(() => {
@@ -126,11 +129,12 @@ describe('ConnectionProvider', () => {
       simulateNetInfoChange({ isConnected: true, isInternetReachable: true });
     });
 
-    expect(result.current.status).toBe('reconnected');
+    await waitFor(() => expect(result.current.status).toBe('reconnected'));
   });
 
-  it('transitions reconnected -> connected after 3 seconds', () => {
+  it('transitions reconnected -> connected after 3 seconds', async () => {
     const { result } = renderHook(() => useConnectionStatus(), { wrapper });
+    await waitFor(() => expect(result.current.status).toBe('connected'));
 
     // Go offline then online
     act(() => {
@@ -142,14 +146,14 @@ describe('ConnectionProvider', () => {
     act(() => {
       simulateNetInfoChange({ isConnected: true, isInternetReachable: true });
     });
-    expect(result.current.status).toBe('reconnected');
+    await waitFor(() => expect(result.current.status).toBe('reconnected'));
 
-    // After 3 seconds
+    // After 3 seconds, reconnected auto-dismisses to connected
     act(() => {
       jest.advanceTimersByTime(3000);
     });
 
-    expect(result.current.status).toBe('connected');
+    await waitFor(() => expect(result.current.status).toBe('connected'));
   });
 
   it('isWebSocketConnected reflects Convex state', () => {
@@ -158,8 +162,9 @@ describe('ConnectionProvider', () => {
     expect(result.current.isWebSocketConnected).toBe(false);
   });
 
-  it('provides isEffectivelyOffline=true when isInternetReachable is false', () => {
+  it('provides isEffectivelyOffline=true when isInternetReachable is false', async () => {
     const { result } = renderHook(() => useConnectionStatus(), { wrapper });
+    await waitFor(() => expect(result.current.status).toBe('connected'));
 
     act(() => {
       simulateNetInfoChange({
@@ -174,8 +179,9 @@ describe('ConnectionProvider', () => {
     expect(result.current.isEffectivelyOffline).toBe(true);
   });
 
-  it('detects cellular generation', () => {
+  it('detects cellular generation', async () => {
     const { result } = renderHook(() => useConnectionStatus(), { wrapper });
+    await waitFor(() => expect(result.current.status).toBe('connected'));
 
     act(() => {
       simulateNetInfoChange({
@@ -190,8 +196,9 @@ describe('ConnectionProvider', () => {
     expect(result.current.cellularGeneration).toBe('3g');
   });
 
-  it('sets slow status for 2G/3G cellular', () => {
+  it('sets slow status for 2G/3G cellular', async () => {
     const { result } = renderHook(() => useConnectionStatus(), { wrapper });
+    await waitFor(() => expect(result.current.status).toBe('connected'));
 
     act(() => {
       simulateNetInfoChange({
@@ -210,8 +217,9 @@ describe('ConnectionProvider', () => {
     expect(result.current.status).toBe('slow');
   });
 
-  it('provides connected status for 4G/5G cellular', () => {
+  it('provides connected status for 4G/5G cellular', async () => {
     const { result } = renderHook(() => useConnectionStatus(), { wrapper });
+    await waitFor(() => expect(result.current.status).toBe('connected'));
 
     act(() => {
       simulateNetInfoChange({
@@ -225,8 +233,9 @@ describe('ConnectionProvider', () => {
     expect(result.current.status).toBe('connected');
   });
 
-  it('provides disconnected status when network unavailable', () => {
+  it('provides disconnected status when network unavailable', async () => {
     const { result } = renderHook(() => useConnectionStatus(), { wrapper });
+    await waitFor(() => expect(result.current.status).toBe('connected'));
 
     act(() => {
       simulateNetInfoChange({
@@ -243,5 +252,43 @@ describe('ConnectionProvider', () => {
 
     expect(result.current.status).toBe('disconnected');
     expect(result.current.isEffectivelyOffline).toBe(true);
+  });
+
+  it('starts in connecting and shows disconnected after 6s grace if no connection on cold start', async () => {
+    mockIsWebSocketConnected = false;
+    const { result } = renderHook(() => useConnectionStatus(), { wrapper });
+
+    expect(result.current.status).toBe('connecting');
+
+    // 2s debounce does NOT apply during cold start
+    act(() => {
+      jest.advanceTimersByTime(2000);
+    });
+    expect(result.current.status).toBe('connecting');
+
+    // After 6s grace period, show disconnected
+    act(() => {
+      jest.advanceTimersByTime(4000); // total 6s
+    });
+    expect(result.current.status).toBe('disconnected');
+  });
+
+  it('transitions from connecting to connected silently when connection established within grace period', async () => {
+    mockIsWebSocketConnected = false;
+    const { result, rerender } = renderHook(() => useConnectionStatus(), {
+      wrapper,
+    });
+
+    expect(result.current.status).toBe('connecting');
+
+    // Simulate WebSocket connecting within grace period
+    act(() => {
+      mockIsWebSocketConnected = true;
+      rerender({});
+    });
+
+    await waitFor(() => expect(result.current.status).toBe('connected'));
+    // Should be connected, not reconnected (no green banner flash)
+    expect(result.current.status).toBe('connected');
   });
 });
