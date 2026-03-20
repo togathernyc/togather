@@ -250,22 +250,21 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
   // Handle notification tap - navigate to relevant screen
   // Exported via context for testing via DeepLinkTester
   const handleNotificationTap = useCallback(async (data: Record<string, unknown>) => {
-    // WORKAROUND: iOS push notifications sometimes have channelId nested inside data.data
-    // while other fields (type, groupId, communityId) are at the top level.
-    // Root cause unknown - may be Expo or iOS APNs restructuring the payload.
-    // TODO: Investigate why iOS notification data has inconsistent nesting for channelId
+    // WORKAROUND: iOS push notifications sometimes have fields nested inside data.data
+    // while other fields are at the top level. Extract from both for robustness (Issue #48).
     const nestedData = data.data as Record<string, unknown> | undefined;
 
-    const type = data.type as string;
-    const url = data.url as string;
+    const type = (data.type || nestedData?.type) as string;
+    // Prefer url when present - backend sends pre-computed deep link for reliable navigation
+    const url = (data.url || nestedData?.url) as string | undefined;
     const groupId = (data.groupId || nestedData?.groupId) as string;
     const communityId = (data.communityId || nestedData?.communityId) as string | undefined;
-    // channelId may be at top level or nested inside data.data
     const channelId = (data.channelId || nestedData?.channelId) as string | undefined;
 
-    console.log('Handle notification tap:', { type, url, groupId, communityId, channelId, nestedData, data });
-    console.log('Full notification data keys:', Object.keys(data));
-    console.log('channelId value:', channelId, 'typeof:', typeof channelId);
+    const channelType = (data.channelType || nestedData?.channelType) as string | undefined;
+    const channelSlug = (data.channelSlug || nestedData?.channelSlug) as string | undefined;
+
+    console.log('Handle notification tap:', { type, url, groupId, communityId, channelId, channelType, channelSlug });
 
     // Switch community if needed before navigating
     // community.id is now a Convex ID string
@@ -311,12 +310,13 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
         break;
       case 'new_message':
       case 'mention': {
-        // Use URL-based slug routing: /inbox/[groupId]/[channelSlug]
-        // Extract channelType from the notification data and resolve to slug
-        const channelType = (data.channelType || nestedData?.channelType) as string | undefined;
-        console.log(`[${type}] Extracted channelId:`, channelId, 'groupId:', groupId, 'channelType:', channelType);
-
-        if (groupId && channelType) {
+        // Prefer url when present (backend sends pre-computed deep link for Issue #48)
+        // Fallback: build path from groupId + channelSlug or channelType
+        if (groupId && channelSlug) {
+          const targetPath = `/inbox/${groupId}/${channelSlug}`;
+          console.log(`[${type}] Navigating to:`, targetPath);
+          router.push(targetPath as any);
+        } else if (groupId && channelType) {
           // Map channelType to slug: "main" -> "general", "leaders" -> "leaders"
           // For custom channels, the channelType IS the slug
           const channelSlug = channelType === 'main' ? 'general' : (channelType === 'leaders' ? 'leaders' : channelType);
