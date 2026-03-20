@@ -49,7 +49,7 @@ jobs:
         working-directory: apps/mobile
         run: |
           # Get current version
-          VERSION=$(node -p "require('./app.config.js').default.expo.runtimeVersion")
+          VERSION=$(node -p "require('./app.config.js').default.expo.version")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
           # Check if fingerprint file changed (indicates native change with version bump)
@@ -174,7 +174,7 @@ jobs:
           R2_BUCKET_NAME: ${{ env.R2_BUCKET_NAME }}
         run: |
           # Get version from code
-          VERSION=$(node -p "require('./app.config.js').default.expo.runtimeVersion")
+          VERSION=$(node -p "require('./app.config.js').default.expo.version")
           echo "Creating iOS staging manifest for version $VERSION..."
 
           # Install AWS CLI for R2 (S3-compatible)
@@ -219,7 +219,7 @@ jobs:
           R2_BUCKET_NAME: ${{ env.R2_BUCKET_NAME }}
         run: |
           # Get version from code
-          VERSION=$(node -p "require('./app.config.js').default.expo.runtimeVersion")
+          VERSION=$(node -p "require('./app.config.js').default.expo.version")
           echo "Uploading staging Android APK version $VERSION to R2..."
 
           # Download the latest Android APK from EAS
