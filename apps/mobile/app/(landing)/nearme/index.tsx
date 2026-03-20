@@ -87,6 +87,9 @@ function NearMeScreen() {
     router.push(`/group/${groupId}?subdomain=${subdomain}`);
   };
 
+  const handleGoBack = () => router.back();
+  const handleGoToExplore = () => router.replace("/(tabs)/search");
+
   // Community not found
   if (communityError || (!communityLoading && !community && subdomain)) {
     return (
@@ -97,6 +100,15 @@ function NearMeScreen() {
           <Text style={styles.errorMessage}>
             The community "{subdomain}" doesn't exist or is no longer available.
           </Text>
+          <View style={styles.errorActions}>
+            <TouchableOpacity style={styles.errorButton} onPress={handleGoBack}>
+              <Ionicons name="arrow-back" size={20} color="#333" />
+              <Text style={styles.errorButtonText}>Back</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.errorButton, styles.errorButtonPrimary]} onPress={handleGoToExplore}>
+              <Text style={[styles.errorButtonText, styles.errorButtonPrimaryText]}>Go to Explore</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
     );
@@ -112,6 +124,15 @@ function NearMeScreen() {
           <Text style={styles.errorMessage}>
             Please access this page through a community subdomain.
           </Text>
+          <View style={styles.errorActions}>
+            <TouchableOpacity style={styles.errorButton} onPress={handleGoBack}>
+              <Ionicons name="arrow-back" size={20} color="#333" />
+              <Text style={styles.errorButtonText}>Back</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.errorButton, styles.errorButtonPrimary]} onPress={handleGoToExplore}>
+              <Text style={[styles.errorButtonText, styles.errorButtonPrimaryText]}>Go to Explore</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
     );
@@ -348,6 +369,34 @@ const styles = StyleSheet.create({
     marginTop: 8,
     textAlign: "center",
     lineHeight: 24,
+  },
+  errorActions: {
+    flexDirection: "row",
+    gap: 12,
+    marginTop: 24,
+    alignItems: "center",
+  },
+  errorButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#ddd",
+  },
+  errorButtonPrimary: {
+    backgroundColor: DEFAULT_PRIMARY_COLOR,
+    borderColor: DEFAULT_PRIMARY_COLOR,
+  },
+  errorButtonText: {
+    fontSize: 16,
+    fontWeight: "500",
+    color: "#333",
+  },
+  errorButtonPrimaryText: {
+    color: "#fff",
   },
   header: {
     flexDirection: "row",
