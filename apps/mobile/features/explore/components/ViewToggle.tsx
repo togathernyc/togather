@@ -31,10 +31,10 @@ export function ViewToggle({ activeView, onViewChange }: ViewToggleProps) {
         <Ionicons
           name="people-outline"
           size={16}
-          color={activeView === 'groups' ? colors.textInverse : colors.textSecondary}
+          color={activeView === 'groups' ? '#ffffff' : colors.textSecondary}
           style={styles.icon}
         />
-        <Text style={[styles.optionText, { color: colors.textSecondary }, activeView === 'groups' && { color: colors.textInverse }]}>
+        <Text style={[styles.optionText, { color: colors.textSecondary }, activeView === 'groups' && { color: '#ffffff' }]}>
           Groups
         </Text>
       </TouchableOpacity>
@@ -46,10 +46,10 @@ export function ViewToggle({ activeView, onViewChange }: ViewToggleProps) {
         <Ionicons
           name="calendar-outline"
           size={16}
-          color={activeView === 'events' ? colors.textInverse : colors.textSecondary}
+          color={activeView === 'events' ? '#ffffff' : colors.textSecondary}
           style={styles.icon}
         />
-        <Text style={[styles.optionText, { color: colors.textSecondary }, activeView === 'events' && { color: colors.textInverse }]}>
+        <Text style={[styles.optionText, { color: colors.textSecondary }, activeView === 'events' && { color: '#ffffff' }]}>
           Events
         </Text>
       </TouchableOpacity>

@@ -48,7 +48,7 @@ export default function InboxLayout() {
         </View>
 
         {/* Divider */}
-        <View style={[desktopStyles.divider, { backgroundColor: colors.surfaceSecondary }]} />
+        <View style={[desktopStyles.divider, { backgroundColor: colors.border }]} />
 
         {/* Main panel: active chat rendered by Stack */}
         <View style={desktopStyles.mainPanel}>

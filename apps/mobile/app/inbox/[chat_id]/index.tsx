@@ -157,7 +157,7 @@ export default function LegacyChatIdRoute() {
           style={[styles.button, { backgroundColor: primaryColor }]}
           onPress={handleGoToInbox}
         >
-          <Text style={[styles.buttonText, { color: colors.textInverse }]}>Go to Inbox</Text>
+          <Text style={[styles.buttonText, { color: '#ffffff' }]}>Go to Inbox</Text>
         </Pressable>
       </View>
     );

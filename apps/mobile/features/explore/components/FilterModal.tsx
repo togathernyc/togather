@@ -130,7 +130,7 @@ export function FilterModal({
                       style={[
                         styles.optionChipText,
                         { color: colors.text },
-                        isSelected && { color: colors.textInverse },
+                        isSelected && { color: '#ffffff' },
                       ]}
                     >
                       {option.label}
@@ -164,7 +164,7 @@ export function FilterModal({
                     <Ionicons
                       name="people-outline"
                       size={16}
-                      color={isSelected ? colors.textInverse : colors.textSecondary}
+                      color={isSelected ? '#ffffff' : colors.textSecondary}
                       style={styles.optionIcon}
                     />
                   )}
@@ -172,7 +172,7 @@ export function FilterModal({
                     <Ionicons
                       name="videocam-outline"
                       size={16}
-                      color={isSelected ? colors.textInverse : colors.textSecondary}
+                      color={isSelected ? '#ffffff' : colors.textSecondary}
                       style={styles.optionIcon}
                     />
                   )}
@@ -180,7 +180,7 @@ export function FilterModal({
                     style={[
                       styles.optionChipText,
                       { color: colors.text },
-                      isSelected && { color: colors.textInverse },
+                      isSelected && { color: '#ffffff' },
                     ]}
                   >
                     {option.label}
