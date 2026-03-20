@@ -168,8 +168,10 @@ export function VoiceRecorderBar({ onSend, onCancel }: VoiceRecorderBarProps) {
     };
   }, []);
 
+  const alertShownForRef = useRef<string | null>(null);
   useEffect(() => {
-    if (error) {
+    if (error && error !== alertShownForRef.current) {
+      alertShownForRef.current = error;
       Alert.alert(
         'Voice Recording',
         error,
@@ -178,6 +180,9 @@ export function VoiceRecorderBar({ onSend, onCancel }: VoiceRecorderBarProps) {
           ...(Platform.OS !== 'web' ? [{ text: 'Open Settings', onPress: () => Linking.openSettings?.() }] : []),
         ]
       );
+    }
+    if (!error) {
+      alertShownForRef.current = null;
     }
   }, [error, onCancel]);
 

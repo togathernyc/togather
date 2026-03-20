@@ -329,10 +329,12 @@ function useVoiceRecorderNative(): VoiceRecorderResult {
         return;
       }
 
-      // After the permission dialog dismisses, iOS briefly considers the app
-      // "in background" and setAudioModeAsync fails. Retry with backoff.
-      let audioModeSet = false;
-      for (let attempt = 0; attempt < 3; attempt++) {
+      // After the iOS permission dialog dismisses, iOS briefly considers the
+      // app "in background". Both setAudioModeAsync and Recording.createAsync
+      // fail because the audio session can't activate while backgrounded.
+      // Retry the entire setup with backoff to let the app return to foreground.
+      let recording: any = null;
+      for (let attempt = 0; attempt < 5; attempt++) {
         try {
           await Audio.setAudioModeAsync({
             allowsRecordingIOS: true,
@@ -341,50 +343,51 @@ function useVoiceRecorderNative(): VoiceRecorderResult {
             shouldDuckAndroid: true,
             playThroughEarpieceAndroid: false,
           });
-          audioModeSet = true;
+
+          const result = await Audio.Recording.createAsync(
+            {
+              isMeteringEnabled: true,
+              android: {
+                extension: '.m4a',
+                outputFormat: Audio.AndroidOutputFormat.MPEG_4,
+                audioEncoder: Audio.AndroidAudioEncoder.AAC,
+                sampleRate: 22050,
+                numberOfChannels: 1,
+                bitRate: 32000,
+              },
+              ios: {
+                extension: '.m4a',
+                outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
+                audioQuality: Audio.IOSAudioQuality.LOW,
+                sampleRate: 22050,
+                numberOfChannels: 1,
+                bitRate: 32000,
+              },
+              web: {
+                mimeType: 'audio/webm',
+                bitsPerSecond: 32000,
+              },
+            },
+            (status: any) => {
+              if (status.isRecording && status.durationMillis !== undefined) {
+                setDurationMs(status.durationMillis);
+              }
+            },
+            100
+          );
+          recording = result.recording;
           break;
-        } catch (audioModeErr) {
-          if (attempt < 2) {
-            // Wait for the app to return to foreground
-            await new Promise(resolve => setTimeout(resolve, 300 * (attempt + 1)));
+        } catch (setupErr: any) {
+          const isBgError = setupErr?.message?.includes('background') ||
+            setupErr?.message?.includes('audio session could not be activated');
+          if (isBgError && attempt < 4) {
+            await new Promise(resolve => setTimeout(resolve, 400 * (attempt + 1)));
           } else {
-            throw audioModeErr;
+            throw setupErr;
           }
         }
       }
-      if (!audioModeSet) return;
-
-      const { recording } = await Audio.Recording.createAsync(
-        {
-          isMeteringEnabled: true,
-          android: {
-            extension: '.m4a',
-            outputFormat: Audio.AndroidOutputFormat.MPEG_4,
-            audioEncoder: Audio.AndroidAudioEncoder.AAC,
-            sampleRate: 22050,
-            numberOfChannels: 1,
-            bitRate: 32000,
-          },
-          ios: {
-            extension: '.m4a',
-            outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
-            audioQuality: Audio.IOSAudioQuality.LOW,
-            sampleRate: 22050,
-            numberOfChannels: 1,
-            bitRate: 32000,
-          },
-          web: {
-            mimeType: 'audio/webm',
-            bitsPerSecond: 32000,
-          },
-        },
-        (status) => {
-          if (status.isRecording && status.durationMillis !== undefined) {
-            setDurationMs(status.durationMillis);
-          }
-        },
-        100
-      );
+      if (!recording) return;
 
       recordingRef.current = recording;
       startTimeRef.current = Date.now();
