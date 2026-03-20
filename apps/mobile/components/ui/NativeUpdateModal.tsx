@@ -93,8 +93,21 @@ export function NativeUpdateModal() {
   // Constants.expoConfig.version — the latter changes with OTA updates, so all
   // users on the same runtimeVersion would report the latest OTA version and
   // never see the force-update modal.
-  const currentVersion = Application.nativeApplicationVersion || Constants.expoConfig?.version || '1.0.0';
+  const nativeVersion = Application.nativeApplicationVersion;
+  const expoVersion = Constants.expoConfig?.version;
+  const currentVersion = nativeVersion || expoVersion || '1.0.0';
   const isAndroid = Platform.OS === 'android';
+
+  // Debug: log all version sources to diagnose force-update issues
+  useEffect(() => {
+    console.log('[NativeUpdateModal] Version sources:', {
+      nativeApplicationVersion: nativeVersion,
+      expoConfigVersion: expoVersion,
+      resolvedCurrentVersion: currentVersion,
+      runtimeVersion: Constants.expoConfig?.runtimeVersion,
+      __DEV__,
+    });
+  }, []);
   const { colors, isDark } = useTheme();
 
   useEffect(() => {
