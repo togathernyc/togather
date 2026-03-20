@@ -559,23 +559,34 @@ export const approveJoinRequest = mutation({
       reviewedById: userId,
     });
 
-    // Add user to channel
-    const requestUser = await ctx.db.get(request.userId);
-    await ctx.db.insert("chatChannelMembers", {
-      channelId: channel._id,
-      userId: request.userId,
-      role: "member",
-      joinedAt: now,
-      isMuted: false,
-      displayName: requestUser ? getDisplayName(requestUser.firstName, requestUser.lastName) : undefined,
-      profilePhoto: requestUser ? getMediaUrl(requestUser.profilePhoto) : undefined,
-    });
+    // Check if user is already a channel member (may have been added manually while request was pending)
+    const existingMembership = await ctx.db
+      .query("chatChannelMembers")
+      .withIndex("by_channel_user", (q) =>
+        q.eq("channelId", channel._id).eq("userId", request.userId)
+      )
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .first();
 
-    // Update member count
-    await ctx.db.patch(channel._id, {
-      memberCount: channel.memberCount + 1,
-      updatedAt: now,
-    });
+    if (!existingMembership) {
+      // Add user to channel
+      const requestUser = await ctx.db.get(request.userId);
+      await ctx.db.insert("chatChannelMembers", {
+        channelId: channel._id,
+        userId: request.userId,
+        role: "member",
+        joinedAt: now,
+        isMuted: false,
+        displayName: requestUser ? getDisplayName(requestUser.firstName, requestUser.lastName) : undefined,
+        profilePhoto: requestUser ? getMediaUrl(requestUser.profilePhoto) : undefined,
+      });
+
+      // Update member count
+      await ctx.db.patch(channel._id, {
+        memberCount: channel.memberCount + 1,
+        updatedAt: now,
+      });
+    }
 
     // Notify requester
     await ctx.scheduler.runAfter(
@@ -686,19 +697,30 @@ export const bulkApproveRequests = mutation({
         reviewedById: userId,
       });
 
-      // Add user to channel
-      const requestUser = await ctx.db.get(request.userId);
-      await ctx.db.insert("chatChannelMembers", {
-        channelId: channel._id,
-        userId: request.userId,
-        role: "member",
-        joinedAt: now,
-        isMuted: false,
-        displayName: requestUser ? getDisplayName(requestUser.firstName, requestUser.lastName) : undefined,
-        profilePhoto: requestUser ? getMediaUrl(requestUser.profilePhoto) : undefined,
-      });
+      // Check if user is already a channel member (may have been added manually while request was pending)
+      const existingMembership = await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channel._id).eq("userId", request.userId)
+        )
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .first();
 
-      approvedCount++;
+      if (!existingMembership) {
+        // Add user to channel
+        const requestUser = await ctx.db.get(request.userId);
+        await ctx.db.insert("chatChannelMembers", {
+          channelId: channel._id,
+          userId: request.userId,
+          role: "member",
+          joinedAt: now,
+          isMuted: false,
+          displayName: requestUser ? getDisplayName(requestUser.firstName, requestUser.lastName) : undefined,
+          profilePhoto: requestUser ? getMediaUrl(requestUser.profilePhoto) : undefined,
+        });
+
+        approvedCount++;
+      }
 
       // Notify each requester
       await ctx.scheduler.runAfter(
