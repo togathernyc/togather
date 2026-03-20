@@ -294,6 +294,14 @@ function AudioPlayerInner({ url, name, isOwnMessage = false, waveform, storedDur
         setIsLoading(true);
         const { Audio } = require('expo-av');
 
+        // On iOS, the audio session can remain in recording mode (earpiece) after
+        // recording voice messages. Set playback mode before loading so audio
+        // plays through the speaker. Must be called immediately before createAsync.
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: false,
+          playsInSilentModeIOS: true,
+        });
+
         const { sound, status } = await Audio.Sound.createAsync(
           { uri: resolvedUrl },
           { shouldPlay: false },
@@ -350,6 +358,13 @@ function AudioPlayerInner({ url, name, isOwnMessage = false, waveform, storedDur
       if (isPlaying) {
         await soundRef.current.pauseAsync();
       } else {
+        // Ensure iOS audio session is in playback mode (speaker) before playing.
+        // Critical for sent voice messages where session may still be in recording mode.
+        const { Audio } = require('expo-av');
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: false,
+          playsInSilentModeIOS: true,
+        });
         await soundRef.current.playAsync();
       }
     } catch (err) {
