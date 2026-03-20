@@ -9,6 +9,7 @@ import { v } from "convex/values";
 import { internalMutation, internalAction } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
+import { getChannelSlug } from "../../lib/slugs";
 import { notifyBatch } from "../../lib/notifications/send";
 
 // ============================================================================
@@ -119,6 +120,8 @@ export const onMessageSent = internalMutation({
       // Schedule the notification action
       console.log(`[onMessageSent] Scheduling notifications for ${mentionRecipients.length} mentions and ${regularRecipients.length} regular recipients`);
       console.log(`[onMessageSent] Regular recipient IDs: ${regularRecipients.join(', ')}`);
+      const channelSlug = channel ? getChannelSlug(channel) : "general";
+
       await ctx.scheduler.runAfter(0, internal.functions.messaging.events.sendMessageNotifications, {
         channelId: args.channelId,
         messageId: args.messageId,
@@ -130,6 +133,7 @@ export const onMessageSent = internalMutation({
         communityId: community?._id,
         channelName: channel?.name,
         channelType: channel?.channelType || "main",
+        channelSlug,
         mentionRecipients,
         regularRecipients,
       });
@@ -153,11 +157,12 @@ export const sendMessageNotifications = internalAction({
     communityId: v.optional(v.id("communities")),
     channelName: v.optional(v.string()),
     channelType: v.optional(v.string()),
+    channelSlug: v.optional(v.string()),
     mentionRecipients: v.array(v.id("users")),
     regularRecipients: v.array(v.id("users")),
   },
   handler: async (ctx, args) => {
-    console.log(`[sendMessageNotifications] Starting with channelId=${args.channelId}, groupId=${args.groupId}, messageId=${args.messageId}, channelType=${args.channelType}`);
+    console.log(`[sendMessageNotifications] Starting with channelId=${args.channelId}, groupId=${args.groupId}, messageId=${args.messageId}, channelType=${args.channelType}, channelSlug=${args.channelSlug}`);
     // Send mention notifications (push + email)
     if (args.mentionRecipients.length > 0) {
       await notifyBatch(ctx, {
@@ -174,6 +179,7 @@ export const sendMessageNotifications = internalAction({
           communityId: args.communityId,
           // Map channel type to expected format: "main" -> "general", "leaders" -> "leaders"
           channelType: args.channelType === "leaders" ? "leaders" : "general",
+          channelSlug: args.channelSlug || (args.channelType === "leaders" ? "leaders" : "general"),
         },
         groupId: args.groupId,
         communityId: args.communityId,
@@ -197,6 +203,7 @@ export const sendMessageNotifications = internalAction({
           // Map channel type to expected format: "main" -> "general", "leaders" -> "leaders"
           // This ensures the mobile app navigates to the correct channel tab (Issue #302)
           channelType: args.channelType === "leaders" ? "leaders" : "general",
+          channelSlug: args.channelSlug || (args.channelType === "leaders" ? "leaders" : "general"),
         },
         groupId: args.groupId,
         communityId: args.communityId,

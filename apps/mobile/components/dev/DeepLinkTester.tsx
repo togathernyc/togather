@@ -63,10 +63,17 @@ const SAMPLE_NOTIFICATIONS = [
     name: 'New Message',
     type: 'new_message',
     description: 'New chat message received',
-    getData: (groupId: string, communityId: string, channelId: string) => ({
-      type: 'new_message',
-      channelId: channelId || `community${communityId}_group${groupId}_main`,
-    }),
+    getData: (groupId: string, communityId: string, channelId: string) => {
+      const channelSlug = 'general';
+      return {
+        type: 'new_message',
+        groupId,
+        communityId,
+        channelId: channelId || `community${communityId}_group${groupId}_main`,
+        channelSlug,
+        url: groupId ? `/inbox/${groupId}/${channelSlug}` : undefined,
+      };
+    },
   },
   {
     name: 'Event Updated',

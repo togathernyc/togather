@@ -46,6 +46,7 @@ interface MessageData {
   channelId: string;
   channelName?: string;
   channelType?: string; // "general" or "leaders" - enables direct routing without extra DB query
+  channelSlug?: string; // URL slug for deep linking (e.g. "general", "leaders", or custom slug)
   communityId?: string;
 }
 
@@ -334,24 +335,41 @@ function formatChatPushBody(data: MessageData): string {
   return `${data.groupName}: ${getChannelLabel(data)}\n${data.messagePreview}`;
 }
 
+/**
+ * Get the URL slug for deep linking to a channel.
+ * Used in push notifications so the app can navigate directly (Issue #48).
+ */
+function getChannelSlugForUrl(data: MessageData): string {
+  if (data.channelSlug) return data.channelSlug;
+  if (data.channelType === 'main' || data.channelType === 'general') return 'general';
+  if (data.channelType === 'leaders') return 'leaders';
+  return data.channelType || 'general';
+}
+
 export const newMessage: NotificationDefinition<MessageData> = {
   type: 'new_message',
   description: 'Sent when a new message is received in a group chat',
   formatters: {
-    push: (ctx) => ({
-      title: ctx.data.senderName,
-      body: formatChatPushBody(ctx.data),
-      data: {
-        type: 'new_message',
-        groupId: ctx.data.groupId,
-        groupName: ctx.data.groupName,
-        channelId: ctx.data.channelId,
-        channelName: ctx.data.channelName,
-        channelType: ctx.data.channelType, // "general" or "leaders" - enables direct routing (Issue #302)
-        communityId: ctx.data.communityId,
-        senderAvatarUrl: ctx.data.senderAvatarUrl,
-      },
-    }),
+    push: (ctx) => {
+      const channelSlug = getChannelSlugForUrl(ctx.data);
+      const url = ctx.data.groupId ? `/inbox/${ctx.data.groupId}/${channelSlug}` : undefined;
+      return {
+        title: ctx.data.senderName,
+        body: formatChatPushBody(ctx.data),
+        data: {
+          type: 'new_message',
+          groupId: ctx.data.groupId,
+          groupName: ctx.data.groupName,
+          channelId: ctx.data.channelId,
+          channelName: ctx.data.channelName,
+          channelType: ctx.data.channelType, // "general" or "leaders" - enables direct routing (Issue #302)
+          channelSlug,
+          communityId: ctx.data.communityId,
+          senderAvatarUrl: ctx.data.senderAvatarUrl,
+          url, // Pre-computed deep link for notification tap (Issue #48)
+        },
+      };
+    },
   },
   defaultChannels: ['push'],
 };
@@ -360,20 +378,26 @@ export const mention: NotificationDefinition<MessageData> = {
   type: 'mention',
   description: 'Sent when user is mentioned in a message',
   formatters: {
-    push: (ctx) => ({
-      title: ctx.data.senderName,
-      body: formatChatPushBody(ctx.data),
-      data: {
-        type: 'mention',
-        groupId: ctx.data.groupId,
-        groupName: ctx.data.groupName,
-        channelId: ctx.data.channelId,
-        channelName: ctx.data.channelName,
-        channelType: ctx.data.channelType, // "general" or "leaders" - enables direct routing
-        communityId: ctx.data.communityId,
-        senderAvatarUrl: ctx.data.senderAvatarUrl,
-      },
-    }),
+    push: (ctx) => {
+      const channelSlug = getChannelSlugForUrl(ctx.data);
+      const url = ctx.data.groupId ? `/inbox/${ctx.data.groupId}/${channelSlug}` : undefined;
+      return {
+        title: ctx.data.senderName,
+        body: formatChatPushBody(ctx.data),
+        data: {
+          type: 'mention',
+          groupId: ctx.data.groupId,
+          groupName: ctx.data.groupName,
+          channelId: ctx.data.channelId,
+          channelName: ctx.data.channelName,
+          channelType: ctx.data.channelType, // "general" or "leaders" - enables direct routing
+          channelSlug,
+          communityId: ctx.data.communityId,
+          senderAvatarUrl: ctx.data.senderAvatarUrl,
+          url, // Pre-computed deep link for notification tap (Issue #48)
+        },
+      };
+    },
     email: (ctx) => {
       const firstName = ctx.user?.name?.split(' ')?.[0];
       const greeting = firstName ? `Hi ${escapeHtml(firstName)},` : 'Hi,';

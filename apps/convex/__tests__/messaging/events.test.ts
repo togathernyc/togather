@@ -831,6 +831,9 @@ describe("sendMessageNotifications Notification Data", () => {
     expect(requestBody[0].data.senderAvatarUrl).toBe(senderAvatarUrl);
     expect(requestBody[0].data.groupAvatarUrl).toBe(groupAvatarUrl);
     expect(requestBody[0].data.groupName).toBe("Test Group");
+    // Issue #48: Push notification tap should open specific channel, not inbox
+    expect(requestBody[0].data.url).toBe(`/inbox/${groupId}/general`);
+    expect(requestBody[0].data.channelSlug).toBe("general");
 
     const recipientNotifications = await t.run(async (ctx) => {
       return await ctx.db
@@ -845,7 +848,7 @@ describe("sendMessageNotifications Notification Data", () => {
   test("includes groupName in mention notification payload", async () => {
     vi.useFakeTimers();
     const t = convexTest(schema, modules);
-    const { userId, user2Id, channelId } = await seedTestData(t);
+    const { userId, user2Id, groupId, channelId } = await seedTestData(t);
     const now = Date.now();
 
     const fetchMock = vi.fn().mockResolvedValue({
@@ -900,6 +903,9 @@ describe("sendMessageNotifications Notification Data", () => {
     expect(requestBody[0].data.type).toBe("mention");
     expect(requestBody[0].data.groupName).toBe("Test Group");
     expect(requestBody[0].mutableContent).toBe(true);
+    // Issue #48: Deep link url for notification tap
+    expect(requestBody[0].data.url).toBe(`/inbox/${groupId}/general`);
+    expect(requestBody[0].data.channelSlug).toBe("general");
   });
 
   test("strips duplicated group prefix from channel names in push body", async () => {
