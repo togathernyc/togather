@@ -60,6 +60,7 @@ export default function CreateChannelScreen() {
   // Form state
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [joinMode, setJoinMode] = useState<"open" | "approval_required">("open");
   const [isLoading, setIsLoading] = useState(false);
 
   // Toast state
@@ -119,6 +120,7 @@ export default function CreateChannelScreen() {
           groupId: groupId as Id<"groups">,
           name: name.trim(),
           description: description.trim() || undefined,
+          joinMode,
         });
         slug = result.slug;
       } else {
@@ -339,6 +341,82 @@ export default function CreateChannelScreen() {
                 />
               </View>
             </View>
+
+            {/* Join Mode (Custom channels only) */}
+            {channelType === "custom" && (
+              <View style={styles.inputGroup}>
+                <Text style={[styles.label, { color: colors.textSecondary }]}>Join Mode</Text>
+                <View style={styles.segmentedControl}>
+                  <TouchableOpacity
+                    style={[
+                      styles.segmentButton,
+                      { borderColor: colors.inputBorder, backgroundColor: colors.surface },
+                      joinMode === "open" && [
+                        { backgroundColor: colors.selectedBackground },
+                        { borderColor: primaryColor },
+                      ],
+                    ]}
+                    onPress={() => setJoinMode("open")}
+                    disabled={isLoading}
+                  >
+                    <Ionicons
+                      name="enter-outline"
+                      size={18}
+                      color={joinMode === "open" ? primaryColor : colors.textSecondary}
+                      style={styles.segmentIcon}
+                    />
+                    <Text
+                      style={[
+                        styles.segmentText,
+                        { color: colors.textSecondary },
+                        joinMode === "open" && [
+                          styles.segmentTextSelected,
+                          { color: primaryColor },
+                        ],
+                      ]}
+                    >
+                      Open
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.segmentButton,
+                      { borderColor: colors.inputBorder, backgroundColor: colors.surface },
+                      joinMode === "approval_required" && [
+                        { backgroundColor: colors.selectedBackground },
+                        { borderColor: primaryColor },
+                      ],
+                    ]}
+                    onPress={() => setJoinMode("approval_required")}
+                    disabled={isLoading}
+                  >
+                    <Ionicons
+                      name="shield-checkmark-outline"
+                      size={18}
+                      color={joinMode === "approval_required" ? primaryColor : colors.textSecondary}
+                      style={styles.segmentIcon}
+                    />
+                    <Text
+                      style={[
+                        styles.segmentText,
+                        { color: colors.textSecondary },
+                        joinMode === "approval_required" && [
+                          styles.segmentTextSelected,
+                          { color: primaryColor },
+                        ],
+                      ]}
+                    >
+                      Approval
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={[styles.channelTypeHint, { color: colors.textTertiary }]}>
+                  {joinMode === "open"
+                    ? "Anyone in the group can join via invite link"
+                    : "Members must request and be approved by a leader"}
+                </Text>
+              </View>
+            )}
           </View>
 
           {/* Create Button */}

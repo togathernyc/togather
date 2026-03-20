@@ -31,6 +31,8 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  Share,
+  ActionSheetIOS,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -41,8 +43,11 @@ import { useTheme } from "@hooks/useTheme";
 import { useQuery, useMutation, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { MemberSearch } from "@components/ui/MemberSearch";
+import { AppImage } from "@components/ui";
 import type { CommunityMember } from "@/types/community";
 import { AutoChannelSettings } from "@features/channels";
+import { DOMAIN_CONFIG } from "@togather/shared";
+import * as Clipboard from "expo-clipboard";
 
 import { ChannelMember, UnsyncedPerson } from "@/utils/channel-members";
 import {
@@ -50,10 +55,25 @@ import {
   UnsyncedPersonRowContent,
 } from "@/components/ui/ChannelMemberRows";
 
+// Helper to format relative time for pending requests
+function formatRelativeTime(timestamp: number): string {
+  const diff = Date.now() - timestamp;
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "yesterday";
+  return `${days}d ago`;
+}
+
 // Unified list item type
 type ListItem =
   | { type: "synced"; data: ChannelMember }
-  | { type: "unsynced"; data: UnsyncedPerson };
+  | { type: "unsynced"; data: UnsyncedPerson }
+  | { type: "pending-header" }
+  | { type: "pending-request"; data: { _id: string; userId: string; displayName: string; profilePhoto?: string; requestedAt: number } };
 
 // Shared group entry type (matches backend schema)
 interface SharedGroupEntry {
@@ -84,6 +104,8 @@ export default function ChannelMembersScreen() {
   const [removingMemberId, setRemovingMemberId] = useState<Id<"users"> | null>(null);
   const [isArchiving, setIsArchiving] = useState(false);
   const [isAddingMembers, setIsAddingMembers] = useState(false);
+  const [processingRequestId, setProcessingRequestId] = useState<string | null>(null);
+  const [isBulkApproving, setIsBulkApproving] = useState(false);
 
   // Query channel info by slug
   const channelData = useQuery(
@@ -124,12 +146,33 @@ export default function ChannelMembersScreen() {
       : "skip"
   );
 
+  // Query invite link info for custom channels
+  const inviteInfo = useQuery(
+    api.functions.messaging.channelInvites.getInviteInfo,
+    token && channelData?._id && channelData?.channelType === "custom"
+      ? { token, channelId: channelData._id }
+      : "skip"
+  );
+
+  // Query pending join requests (leaders only, custom channels with approval mode)
+  const pendingRequests = useQuery(
+    api.functions.messaging.channelInvites.getPendingRequests,
+    token && channelData?._id && channelData?.channelType === "custom"
+      ? { token, channelId: channelData._id }
+      : "skip"
+  );
+
   // Mutations
   const addMembersMutation = useMutation(api.functions.messaging.channels.addChannelMembers);
   const removeMemberMutation = useMutation(api.functions.messaging.channels.removeChannelMember);
   const archiveCustomChannelMutation = useMutation(api.functions.messaging.channels.archiveCustomChannel);
   const archivePcoChannelMutation = useMutation(api.functions.messaging.channels.archivePcoChannel);
   const removeGroupMutation = useMutation(api.functions.messaging.sharedChannels.removeGroupFromChannel);
+  const enableInviteLinkMutation = useMutation(api.functions.messaging.channelInvites.enableInviteLink);
+  const updateJoinModeMutation = useMutation(api.functions.messaging.channelInvites.updateJoinMode);
+  const approveMutation = useMutation(api.functions.messaging.channelInvites.approveJoinRequest);
+  const declineMutation = useMutation(api.functions.messaging.channelInvites.declineJoinRequest);
+  const bulkApproveMutation = useMutation(api.functions.messaging.channelInvites.bulkApproveRequests);
 
   // Shared channel state
   const isSharedChannel = !!channelData?.isShared;
@@ -183,18 +226,41 @@ export default function ChannelMembersScreen() {
     return autoChannelConfig.lastSyncResults.unmatchedPeople;
   }, [autoChannelConfig]);
 
-  // Create unified list with synced members first, then unsynced at bottom
+  // Create unified list with pending requests first, then synced members, then unsynced at bottom
   const unifiedList = useMemo((): ListItem[] => {
+    const items: ListItem[] = [];
+
+    // Add pending requests section (leaders only, when there are pending requests)
+    if (canManage && pendingRequests && pendingRequests.length > 0) {
+      items.push({ type: "pending-header" as const });
+      for (const req of pendingRequests) {
+        items.push({
+          type: "pending-request" as const,
+          data: {
+            _id: req._id,
+            userId: req.userId,
+            displayName: req.displayName,
+            profilePhoto: req.profilePhoto,
+            requestedAt: req.requestedAt,
+          },
+        });
+      }
+    }
+
+    // Add synced members
     const syncedItems: ListItem[] = (membersData?.members || []).map((m) => ({
       type: "synced" as const,
       data: m,
     }));
+
+    // Add unsynced people
     const unsyncedItems: ListItem[] = unsyncedPeople.map((p) => ({
       type: "unsynced" as const,
       data: p,
     }));
-    return [...syncedItems, ...unsyncedItems];
-  }, [membersData?.members, unsyncedPeople]);
+
+    return [...items, ...syncedItems, ...unsyncedItems];
+  }, [canManage, pendingRequests, membersData?.members, unsyncedPeople]);
 
   // Total member count including unsynced
   const totalMemberCount = useMemo(() => {
@@ -334,6 +400,121 @@ export default function ChannelMembersScreen() {
     );
   }, [token, channelData, archiveCustomChannelMutation, archivePcoChannelMutation, router, groupId]);
 
+  const handleShareInviteLink = useCallback(async () => {
+    if (!token || !channelData?._id) return;
+
+    try {
+      const result = await enableInviteLinkMutation({
+        token,
+        channelId: channelData._id,
+      });
+
+      const url = DOMAIN_CONFIG.channelInviteUrl(result.shortId);
+
+      if (Platform.OS === "ios") {
+        ActionSheetIOS.showActionSheetWithOptions(
+          {
+            options: ["Cancel", "Copy Link", "Share Link"],
+            cancelButtonIndex: 0,
+          },
+          async (buttonIndex) => {
+            if (buttonIndex === 1) {
+              await Clipboard.setStringAsync(url);
+              Alert.alert("Copied!", "Invite link copied to clipboard.");
+            } else if (buttonIndex === 2) {
+              Share.share({ url, message: `Join #${channelData.name}: ${url}` });
+            }
+          }
+        );
+      } else {
+        // Android: use Share directly
+        Share.share({ message: `Join #${channelData.name}: ${url}` });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to generate invite link.";
+      Alert.alert("Error", message);
+    }
+  }, [token, channelData, enableInviteLinkMutation]);
+
+  const handleUpdateJoinMode = useCallback(async (newMode: "open" | "approval_required") => {
+    if (!token || !channelData?._id) return;
+    try {
+      await updateJoinModeMutation({
+        token,
+        channelId: channelData._id,
+        joinMode: newMode,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to update join mode.";
+      Alert.alert("Error", message);
+    }
+  }, [token, channelData, updateJoinModeMutation]);
+
+  const handleApproveRequest = useCallback(async (requestId: string) => {
+    if (!token) return;
+    setProcessingRequestId(requestId);
+    try {
+      await approveMutation({ token, requestId: requestId as Id<"channelJoinRequests"> });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to approve request.";
+      Alert.alert("Error", message);
+    } finally {
+      setProcessingRequestId(null);
+    }
+  }, [token, approveMutation]);
+
+  const handleDeclineRequest = useCallback(async (requestId: string) => {
+    if (!token) return;
+    Alert.alert(
+      "Decline Request",
+      "Are you sure you want to decline this request?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Decline",
+          style: "destructive",
+          onPress: async () => {
+            setProcessingRequestId(requestId);
+            try {
+              await declineMutation({ token, requestId: requestId as Id<"channelJoinRequests"> });
+            } catch (error) {
+              const message = error instanceof Error ? error.message : "Failed to decline request.";
+              Alert.alert("Error", message);
+            } finally {
+              setProcessingRequestId(null);
+            }
+          },
+        },
+      ]
+    );
+  }, [token, declineMutation]);
+
+  const handleBulkApprove = useCallback(async () => {
+    if (!token || !channelData?._id) return;
+    Alert.alert(
+      "Approve All",
+      `Approve all ${pendingRequests?.length || 0} pending requests?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Approve All",
+          onPress: async () => {
+            setIsBulkApproving(true);
+            try {
+              const result = await bulkApproveMutation({ token, channelId: channelData._id });
+              Alert.alert("Done", `Approved ${result.approvedCount} request${result.approvedCount !== 1 ? "s" : ""}.`);
+            } catch (error) {
+              const message = error instanceof Error ? error.message : "Failed to approve requests.";
+              Alert.alert("Error", message);
+            } finally {
+              setIsBulkApproving(false);
+            }
+          },
+        },
+      ]
+    );
+  }, [token, channelData, pendingRequests, bulkApproveMutation]);
+
   // Handle removing a group from the shared channel
   const handleRemoveGroup = useCallback(
     async (targetGroupId: Id<"groups">, targetGroupName?: string) => {
@@ -371,9 +552,86 @@ export default function ChannelMembersScreen() {
     [token, channelData, groupId, removeGroupMutation, router]
   );
 
-  // Render unified list item (synced or unsynced)
+  // Render unified list item (synced, unsynced, or pending request)
   const renderListItem = useCallback(
     ({ item }: { item: ListItem }) => {
+      if (item.type === "pending-header") {
+        return (
+          <View style={[styles.pendingHeader, { backgroundColor: isDark ? 'rgba(255,152,0,0.1)' : '#FFF8E1' }]}>
+            <View style={styles.pendingHeaderContent}>
+              <Ionicons name="time-outline" size={18} color="#F57C00" />
+              <Text style={[styles.pendingHeaderText, { color: isDark ? '#FFB74D' : '#E65100' }]}>
+                Pending Requests ({pendingRequests?.length || 0})
+              </Text>
+            </View>
+            {(pendingRequests?.length || 0) > 1 && (
+              <TouchableOpacity
+                onPress={handleBulkApprove}
+                disabled={isBulkApproving}
+                style={[styles.bulkApproveButton, { backgroundColor: primaryColor }]}
+              >
+                {isBulkApproving ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.bulkApproveText}>Approve All</Text>
+                )}
+              </TouchableOpacity>
+            )}
+          </View>
+        );
+      }
+
+      if (item.type === "pending-request") {
+        const req = item.data;
+        const isProcessing = processingRequestId === req._id;
+        return (
+          <View style={[styles.memberItem, styles.pendingRequestItem, { backgroundColor: isDark ? 'rgba(255,152,0,0.05)' : '#FFFDE7' }]}>
+            <View style={styles.pendingRequestRow}>
+              {req.profilePhoto ? (
+                <View style={styles.memberAvatar}>
+                  <AppImage
+                    source={req.profilePhoto}
+                    style={styles.memberAvatarImage}
+                  />
+                </View>
+              ) : (
+                <View style={[styles.memberAvatar, styles.memberAvatarFallback, { backgroundColor: primaryColor + "20" }]}>
+                  <Text style={[styles.memberAvatarText, { color: primaryColor }]}>
+                    {req.displayName?.charAt(0)?.toUpperCase() || "?"}
+                  </Text>
+                </View>
+              )}
+              <View style={styles.memberInfo}>
+                <Text style={[styles.memberName, { color: colors.text }]}>{req.displayName}</Text>
+                <Text style={[styles.memberRole, { color: colors.textTertiary }]}>
+                  Requested {formatRelativeTime(req.requestedAt)}
+                </Text>
+              </View>
+              <View style={styles.pendingActions}>
+                <TouchableOpacity
+                  style={[styles.pendingActionButton, { backgroundColor: primaryColor }]}
+                  onPress={() => handleApproveRequest(req._id)}
+                  disabled={isProcessing}
+                >
+                  {isProcessing ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Ionicons name="checkmark" size={18} color="#fff" />
+                  )}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.pendingActionButton, styles.pendingDeclineButton, { borderColor: colors.destructive }]}
+                  onPress={() => handleDeclineRequest(req._id)}
+                  disabled={isProcessing}
+                >
+                  <Ionicons name="close" size={18} color={colors.destructive} />
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        );
+      }
+
       if (item.type === "synced") {
         const member = item.data;
         const isOwner = member.role === "owner";
@@ -424,7 +682,7 @@ export default function ChannelMembersScreen() {
         );
       }
     },
-    [canManage, isCustomChannel, isSharedChannel, isPrimaryGroup, user, removingMemberId, primaryColor, handleRemoveMember, colors, isDark]
+    [canManage, isCustomChannel, isSharedChannel, isPrimaryGroup, user, removingMemberId, primaryColor, handleRemoveMember, colors, isDark, pendingRequests, handleBulkApprove, isBulkApproving, processingRequestId, handleApproveRequest, handleDeclineRequest]
   );
 
   // Loading state
@@ -457,12 +715,20 @@ export default function ChannelMembersScreen() {
           {channelData.name}
         </Text>
         {canManage && isCustomChannel && (!isSharedChannel || isPrimaryGroup) ? (
-          <TouchableOpacity
-            style={styles.addButton}
-            onPress={() => setShowAddMemberModal(true)}
-          >
-            <Ionicons name="person-add-outline" size={22} color={primaryColor} />
-          </TouchableOpacity>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <TouchableOpacity
+              style={styles.addButton}
+              onPress={handleShareInviteLink}
+            >
+              <Ionicons name="share-outline" size={22} color={primaryColor} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.addButton}
+              onPress={() => setShowAddMemberModal(true)}
+            >
+              <Ionicons name="person-add-outline" size={22} color={primaryColor} />
+            </TouchableOpacity>
+          </View>
         ) : canManage && isPcoAutoChannel && (!isSharedChannel || isPrimaryGroup) ? (
           <TouchableOpacity
             style={styles.addButton}
@@ -498,6 +764,33 @@ export default function ChannelMembersScreen() {
               <Ionicons name="add-circle-outline" size={24} color="#8B5CF6" />
             </TouchableOpacity>
           )}
+        </View>
+      )}
+
+      {/* Join mode info (custom channels, leaders only) */}
+      {canManage && isCustomChannel && inviteInfo && (
+        <View style={[styles.sharedBanner, {
+          backgroundColor: isDark ? 'rgba(0,188,212,0.1)' : '#E0F7FA',
+          borderBottomColor: isDark ? 'rgba(0,188,212,0.2)' : '#B2EBF2',
+        }]}>
+          <Ionicons name="link" size={16} color="#00BCD4" />
+          <View style={styles.sharedBannerContent}>
+            <Text style={[styles.sharedBannerTitle, { color: isDark ? '#80DEEA' : '#006064' }]}>
+              Invite Link {inviteInfo.inviteEnabled ? "Active" : "Disabled"}
+            </Text>
+            <Text style={[styles.sharedBannerText, { color: colors.textSecondary }]}>
+              Join mode: {(inviteInfo.joinMode || "open") === "open" ? "Open" : "Approval Required"}
+            </Text>
+          </View>
+          <TouchableOpacity
+            onPress={() => {
+              const currentMode = inviteInfo.joinMode || "open";
+              const newMode = currentMode === "open" ? "approval_required" : "open";
+              handleUpdateJoinMode(newMode);
+            }}
+          >
+            <Ionicons name="swap-horizontal" size={20} color="#00BCD4" />
+          </TouchableOpacity>
         </View>
       )}
 
@@ -544,9 +837,12 @@ export default function ChannelMembersScreen() {
         <FlatList
           data={unifiedList}
           renderItem={renderListItem}
-          keyExtractor={(item) =>
-            item.type === "synced" ? item.data.userId : `unsynced-${item.data.pcoPersonId}`
-          }
+          keyExtractor={(item) => {
+            if (item.type === "pending-header") return "pending-header";
+            if (item.type === "pending-request") return `pending-${item.data._id}`;
+            if (item.type === "synced") return item.data.userId;
+            return `unsynced-${item.data.pcoPersonId}`;
+          }}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
         />
@@ -1184,6 +1480,77 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: "#2196F3",
     fontWeight: "500",
+  },
+  memberAvatarImage: {
+    width: "100%",
+    height: "100%",
+  },
+  memberAvatarFallback: {
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  memberAvatarText: {
+    fontSize: 16,
+    fontWeight: "bold",
+  },
+  memberRole: {
+    fontSize: 13,
+    marginTop: 2,
+  },
+  // Pending requests styles
+  pendingHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "rgba(255,152,0,0.2)",
+  },
+  pendingHeaderContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  pendingHeaderText: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  bulkApproveButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  bulkApproveText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#fff",
+  },
+  pendingRequestItem: {
+    borderLeftWidth: 3,
+    borderLeftColor: "#FF9800",
+  },
+  pendingRequestRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  pendingActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  pendingActionButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  pendingDeclineButton: {
+    backgroundColor: "transparent",
+    borderWidth: 1,
   },
   // Unsynced member styles
   unsyncedMemberItem: {

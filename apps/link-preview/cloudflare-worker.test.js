@@ -496,3 +496,179 @@ test("/legal/terms passes through to landing page", async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+// Channel invite link preview tests (/ch/:shortId)
+test("bot /ch/:shortId fetches from Convex and returns OG tags", async () => {
+  const calls = [];
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === "string" ? input : input.url;
+    calls.push({ url, init });
+
+    // Convex backend fetch for channel data
+    if (url.startsWith("https://example.convex.site/link-preview/channel")) {
+      return new Response(
+        JSON.stringify({
+          channelName: "worship-team",
+          channelDescription: "Coordinate worship sets and rehearsals",
+          groupName: "Sunday Service",
+          groupImage: "https://cdn.example.com/group.jpg",
+          communityName: "My Community",
+          communityLogo: "https://cdn.example.com/community.jpg",
+          memberCount: 12,
+          joinMode: "open",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    // Fallback - should not be reached in this test
+    return new Response("unexpected fetch", { status: 500 });
+  };
+
+  try {
+    const req = new Request("https://togather.nyc/ch/xyz789", {
+      headers: { "User-Agent": "Twitterbot" },
+    });
+
+    const res = await worker.fetch(req, {
+      CONVEX_SITE_URL: "https://example.convex.site",
+    });
+
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("Content-Type"), "text/html; charset=utf-8");
+
+    const html = await res.text();
+    assert.match(html, /property="og:title"/);
+    assert.match(html, /Join #worship-team in Sunday Service/);
+    assert.match(html, /property="og:description"/);
+    assert.match(html, /Coordinate worship sets and rehearsals/);
+    assert.match(html, /property="og:image"/);
+    assert.match(html, /https:\/\/cdn\.example\.com\/group\.jpg/);
+    assert.match(html, /12 members/);
+
+    assert.ok(
+      calls.some((c) =>
+        c.url === "https://example.convex.site/link-preview/channel?shortId=xyz789"
+      ),
+      "expected a Convex link-preview fetch"
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("bot /ch/:shortId returns error HTML when channel not found", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input.url;
+
+    // Convex backend returns 404
+    if (url.startsWith("https://example.convex.site/link-preview/channel")) {
+      return new Response(
+        JSON.stringify({ error: "Channel not found" }),
+        { status: 404, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    return new Response("unexpected fetch", { status: 500 });
+  };
+
+  try {
+    const req = new Request("https://togather.nyc/ch/notfound", {
+      headers: { "User-Agent": "Slackbot" },
+    });
+
+    const res = await worker.fetch(req, {
+      CONVEX_SITE_URL: "https://example.convex.site",
+    });
+
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("Content-Type"), "text/html; charset=utf-8");
+
+    const html = await res.text();
+    assert.match(html, /Channel \| Togather/);
+    assert.match(html, /Join this channel on Togather/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("non-bot /ch/:shortId passes through to EAS Hosting (app)", async () => {
+  const calls = [];
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === "string" ? input : input.url;
+    calls.push({ url, init });
+    return new Response("app content", { status: 200, headers: { "Content-Type": "text/html" } });
+  };
+
+  try {
+    const req = new Request("https://togather.nyc/ch/xyz789", {
+      headers: { "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)" },
+    });
+
+    const res = await worker.fetch(req, {
+      CONVEX_SITE_URL: "https://example.convex.site",
+    });
+
+    assert.equal(res.status, 200);
+    assert.equal(await res.text(), "app content");
+
+    // Should pass through to EAS Hosting origin
+    assert.equal(calls.length, 1);
+    assert.ok(
+      calls[0].url.startsWith(APP_ORIGIN_URL),
+      `expected fetch to ${APP_ORIGIN_URL}, got ${calls[0].url}`
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("bot /ch/:shortId without description uses generated description", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input.url;
+
+    if (url.startsWith("https://example.convex.site/link-preview/channel")) {
+      return new Response(
+        JSON.stringify({
+          channelName: "general",
+          channelDescription: null,
+          groupName: "Youth Group",
+          groupImage: null,
+          communityName: "My Church",
+          communityLogo: null,
+          memberCount: 5,
+          joinMode: "open",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    return new Response("unexpected fetch", { status: 500 });
+  };
+
+  try {
+    const req = new Request("https://togather.nyc/ch/abc456", {
+      headers: { "User-Agent": "Discordbot" },
+    });
+
+    const res = await worker.fetch(req, {
+      CONVEX_SITE_URL: "https://example.convex.site",
+    });
+
+    assert.equal(res.status, 200);
+
+    const html = await res.text();
+    assert.match(html, /Join #general in Youth Group/);
+    // Should use generated description when channelDescription is null
+    assert.match(html, /Join the #general channel in Youth Group on My Church/);
+    assert.match(html, /5 members/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

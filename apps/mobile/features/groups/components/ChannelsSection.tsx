@@ -22,6 +22,9 @@ import {
   Alert,
   Switch,
   ActivityIndicator,
+  Share,
+  ActionSheetIOS,
+  Platform,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -34,8 +37,11 @@ import type { Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
+import { DOMAIN_CONFIG } from "@togather/shared";
+import * as Clipboard from "expo-clipboard";
 import { useGroupChannels } from "../hooks/useGroupChannels";
 import { useRespondToChannelInvite } from "../hooks/useRespondToChannelInvite";
+import { ChannelJoinRequestsBanner } from "./ChannelJoinRequestsBanner";
 
 interface ChannelsSectionProps {
   groupId: string;
@@ -90,6 +96,9 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
   );
   const toggleReachOutChannelMutation = useAuthenticatedMutation(
     api.functions.messaging.channels.toggleReachOutChannel
+  );
+  const enableInviteLinkMutation = useAuthenticatedMutation(
+    api.functions.messaging.channelInvites.enableInviteLink
   );
 
   // Filter channels by type
@@ -189,6 +198,37 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
   const handleCreateChannel = useCallback(() => {
     router.push(`/inbox/${groupId}/create`);
   }, [router, groupId]);
+
+  // Share channel invite link
+  const handleShareChannel = useCallback(async (channel: Channel) => {
+    try {
+      const result = await enableInviteLinkMutation({
+        channelId: channel._id,
+      });
+      const url = DOMAIN_CONFIG.channelInviteUrl(result.shortId);
+
+      if (Platform.OS === "ios") {
+        ActionSheetIOS.showActionSheetWithOptions(
+          {
+            options: ["Cancel", "Copy Link", "Share Link"],
+            cancelButtonIndex: 0,
+          },
+          async (buttonIndex) => {
+            if (buttonIndex === 1) {
+              await Clipboard.setStringAsync(url);
+              Alert.alert("Copied!", "Invite link copied to clipboard.");
+            } else if (buttonIndex === 2) {
+              Share.share({ url, message: `Join #${channel.name}: ${url}` });
+            }
+          }
+        );
+      } else {
+        Share.share({ message: `Join #${channel.name}: ${url}` });
+      }
+    } catch (error: any) {
+      Alert.alert("Error", error?.message || "Failed to share channel");
+    }
+  }, [enableInviteLinkMutation]);
 
   // Navigate to pin channels screen (dedicated route)
   const handlePinChannels = useCallback(() => {
@@ -446,6 +486,7 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
       {(customChannels.length > 0 || isLeader) && (
         <>
           <Text style={[styles.header, styles.customHeader, { color: colors.text }]}>CUSTOM CHANNELS</Text>
+          {isLeader && <ChannelJoinRequestsBanner groupId={groupId} />}
           <View style={[styles.channelList, { backgroundColor: colors.surface }]}>
             {customChannels.map((channel: Channel) => (
               <View key={channel._id} style={[styles.channelRow, { borderBottomColor: colors.border }]}>
@@ -491,6 +532,15 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
                       activeOpacity={0.7}
                     >
                       <Ionicons name="people-outline" size={18} color={colors.icon} />
+                    </TouchableOpacity>
+                  )}
+                  {isLeader && (
+                    <TouchableOpacity
+                      style={[styles.actionButton, { backgroundColor: colors.surfaceSecondary }]}
+                      onPress={() => handleShareChannel(channel)}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="share-outline" size={18} color={colors.icon} />
                     </TouchableOpacity>
                   )}
                   {channel.isMember && (

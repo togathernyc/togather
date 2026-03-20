@@ -107,6 +107,10 @@ jest.mock("@services/api/convex", () => ({
           leaveChannel: "leaveChannel",
           toggleLeadersChannel: "toggleLeadersChannel",
         },
+        channelInvites: {
+          enableInviteLink: "enableInviteLink",
+          getPendingRequestCountByGroup: "getPendingRequestCountByGroup",
+        },
         sharedChannels: {
           listPendingInvitesForGroup: "listPendingInvitesForGroup",
           respondToChannelInvite: "respondToChannelInvite",

@@ -113,6 +113,8 @@ jest.mock("@services/api/convex", () => ({
     if (fn === "getChannelMembers") return mockUseQueryReturn?.membersData;
     if (fn === "getById") return mockUseQueryReturn?.groupData;
     if (fn === "getAutoChannelConfigByChannel") return mockUseQueryReturn?.autoChannelConfig ?? undefined;
+    if (fn === "getInviteInfo") return mockUseQueryReturn?.inviteInfo ?? undefined;
+    if (fn === "getPendingRequests") return mockUseQueryReturn?.pendingRequests ?? [];
     return mockUseQueryReturn?.channelData;
   },
   useMutation: (fn: any) => {
@@ -123,6 +125,11 @@ jest.mock("@services/api/convex", () => ({
     if (fn === "inviteGroupToChannel") return jest.fn();
     if (fn === "respondToChannelInvite") return jest.fn();
     if (fn === "removeGroupFromChannel") return jest.fn();
+    if (fn === "enableInviteLink") return jest.fn();
+    if (fn === "updateJoinMode") return jest.fn();
+    if (fn === "approveJoinRequest") return jest.fn();
+    if (fn === "declineJoinRequest") return jest.fn();
+    if (fn === "bulkApproveRequests") return jest.fn();
     return jest.fn();
   },
   api: {
@@ -135,6 +142,15 @@ jest.mock("@services/api/convex", () => ({
           removeChannelMember: "removeChannelMember",
           archiveCustomChannel: "archiveCustomChannel",
           archivePcoChannel: "archivePcoChannel",
+        },
+        channelInvites: {
+          getInviteInfo: "getInviteInfo",
+          getPendingRequests: "getPendingRequests",
+          enableInviteLink: "enableInviteLink",
+          updateJoinMode: "updateJoinMode",
+          approveJoinRequest: "approveJoinRequest",
+          declineJoinRequest: "declineJoinRequest",
+          bulkApproveRequests: "bulkApproveRequests",
         },
         sharedChannels: {
           inviteGroupToChannel: "inviteGroupToChannel",

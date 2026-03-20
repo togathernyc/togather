@@ -269,6 +269,7 @@ describe("CreateChannelScreen", () => {
           groupId: "test-group-id",
           name: "Test Channel",
           description: "Test description",
+          joinMode: "open",
         });
       });
     });
@@ -295,6 +296,7 @@ describe("CreateChannelScreen", () => {
           groupId: "test-group-id",
           name: "Test Channel",
           description: "Test description",
+          joinMode: "open",
         });
       });
     });
@@ -319,6 +321,7 @@ describe("CreateChannelScreen", () => {
           groupId: "test-group-id",
           name: "Test Channel",
           description: undefined,
+          joinMode: "open",
         });
       });
     });

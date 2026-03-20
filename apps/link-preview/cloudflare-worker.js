@@ -405,6 +405,35 @@ async function fetchCommunityData(communitySubdomain, groupTypeSlug, convexSiteU
 }
 
 /**
+ * Fetch channel invite data from Convex HTTP endpoint
+ */
+async function fetchChannelData(shortId, convexSiteUrl) {
+  if (!convexSiteUrl) {
+    console.error("CONVEX_SITE_URL not configured");
+    return null;
+  }
+
+  const url = `${convexSiteUrl}/link-preview/channel?shortId=${encodeURIComponent(shortId)}`;
+
+  try {
+    const response = await fetch(url, {
+      headers: { "Content-Type": "application/json" },
+    });
+
+    if (!response.ok) {
+      console.error(`Convex channel fetch failed: ${response.status}`);
+      return null;
+    }
+
+    const data = await response.json();
+    return data?.error ? null : data;
+  } catch (error) {
+    console.error("Convex channel fetch error:", error);
+    return null;
+  }
+}
+
+/**
  * Escape HTML special characters
  */
 function escapeHtml(str) {
@@ -1034,6 +1063,109 @@ function generateCommunityErrorHtml(slug, config) {
 }
 
 /**
+ * Generate channel invite OG HTML for bots
+ * @param {Object} channel - Channel data from Convex
+ * @param {string} shortId - Channel invite short ID
+ * @param {Object} config - Environment-specific configuration
+ */
+function generateChannelOgHtml(channel, shortId, config) {
+  const channelName = escapeHtml(channel.channelName || "Channel");
+  const groupName = escapeHtml(channel.groupName || "Group");
+  const communityName = escapeHtml(channel.communityName || BRAND_NAME);
+  const title = `Join #${channelName} in ${groupName}`;
+  const description = channel.channelDescription
+    ? escapeHtml(channel.channelDescription)
+    : `Join the #${channelName} channel in ${groupName} on ${communityName}`;
+  const memberCount = channel.memberCount || 0;
+
+  // Fallback chain: group image -> community logo
+  const imageUrl = channel.groupImage || channel.communityLogo || "";
+  const channelUrl = `${config.baseUrl}/ch/${shortId}`;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Primary Meta Tags -->
+  <title>${title} | ${communityName}</title>
+  <meta name="title" content="${title} | ${communityName}">
+  <meta name="description" content="${description.substring(0, 200)}">
+
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="${channelUrl}">
+  <meta property="og:title" content="${title} | ${communityName}">
+  <meta property="og:description" content="${description.substring(0, 200)}">
+  <meta property="og:site_name" content="${communityName}">
+  ${imageUrl ? `<meta property="og:image" content="${imageUrl}">` : ""}
+  ${imageUrl ? `<meta property="og:image:secure_url" content="${imageUrl}">` : ""}
+  ${imageUrl ? `<meta property="og:image:type" content="image/jpeg">` : ""}
+  ${imageUrl ? `<meta property="og:image:width" content="1200">` : ""}
+  ${imageUrl ? `<meta property="og:image:height" content="630">` : ""}
+
+  <!-- Twitter -->
+  <meta name="twitter:card" content="${imageUrl ? "summary_large_image" : "summary"}">
+  <meta name="twitter:url" content="${channelUrl}">
+  <meta name="twitter:title" content="${title} | ${communityName}">
+  <meta name="twitter:description" content="${description.substring(0, 200)}">
+  ${imageUrl ? `<meta name="twitter:image" content="${imageUrl}">` : ""}
+  ${imageUrl ? `<meta name="twitter:image:alt" content="${title}">` : ""}
+
+  <!-- Redirect real users to the app -->
+  <meta http-equiv="refresh" content="0;url=${channelUrl}">
+
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 600px;
+      margin: 40px auto;
+      padding: 20px;
+      text-align: center;
+    }
+    h1 { color: #333; }
+    p { color: #666; }
+    a { color: #8C10FE; }
+    .loading { color: #999; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <h1>${title}</h1>
+  <p>${communityName}</p>
+  ${memberCount > 0 ? `<p>${memberCount} member${memberCount !== 1 ? "s" : ""}</p>` : ""}
+  <p class="loading">Redirecting to the app...</p>
+  <p><a href="${channelUrl}">Click here if not redirected</a></p>
+</body>
+</html>`;
+}
+
+/**
+ * Generate channel invite error HTML (fallback when API fails)
+ * @param {string} shortId - Channel invite short ID
+ * @param {Object} config - Environment-specific configuration
+ */
+function generateChannelErrorHtml(shortId, config) {
+  const channelUrl = `${config.baseUrl}/ch/${shortId}`;
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Channel | ${BRAND_NAME}</title>
+  <meta property="og:title" content="Channel | ${BRAND_NAME}">
+  <meta property="og:description" content="Join this channel on ${BRAND_NAME}">
+  <meta property="og:type" content="website">
+  <meta http-equiv="refresh" content="0;url=${channelUrl}">
+</head>
+<body>
+  <p>Redirecting...</p>
+  <p><a href="${channelUrl}">Click here if not redirected</a></p>
+</body>
+</html>`;
+}
+
+/**
  * Extract subdomain from hostname (e.g., "fount" from "fount.togather.nyc")
  */
 function getSubdomain(hostname) {
@@ -1272,7 +1404,39 @@ export default {
       return passToApp(request, config);
     }
 
-    // 6. Handle /nearme routes
+    // 6. Handle /ch/:shortId (channel invite links)
+    if (pathname.startsWith("/ch/")) {
+      const shortIdMatch = pathname.match(/^\/ch\/([a-zA-Z0-9]+)\/?$/);
+      if (shortIdMatch && isBot(userAgent)) {
+        const shortId = shortIdMatch[1];
+
+        try {
+          const channel = await fetchChannelData(shortId, convexSiteUrl);
+
+          if (!channel) {
+            return new Response(generateChannelErrorHtml(shortId, config), {
+              status: 200,
+              headers: { "Content-Type": "text/html; charset=utf-8" },
+            });
+          }
+
+          return new Response(generateChannelOgHtml(channel, shortId, config), {
+            status: 200,
+            headers: { "Content-Type": "text/html; charset=utf-8" },
+          });
+        } catch (error) {
+          console.error(`Error fetching channel ${shortId}:`, error);
+          return new Response(generateChannelErrorHtml(shortId, config), {
+            status: 200,
+            headers: { "Content-Type": "text/html; charset=utf-8" },
+          });
+        }
+      }
+      // Pass through for humans or invalid format
+      return passToApp(request, config);
+    }
+
+    // 7. Handle /nearme routes
     if (pathname === "/nearme" || pathname === "/nearme/") {
       if (isBot(userAgent)) {
         const subdomain = getSubdomain(url.hostname);
@@ -1314,7 +1478,7 @@ export default {
       return passToApp(request, config);
     }
 
-    // 7. Community landing page: /:slug
+    // 8. Community landing page: /:slug
     // Single-segment paths that aren't known app routes are assumed to be community slugs.
     // For bots: return OG HTML with community logo and name.
     // For humans: redirect to /c/:slug in the Expo app.
@@ -1353,7 +1517,7 @@ export default {
       }
     }
 
-    // 8. All other paths - pass through to origin
+    // 9. All other paths - pass through to origin
     return passToApp(request, config);
   },
 };

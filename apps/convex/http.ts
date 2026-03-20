@@ -298,6 +298,62 @@ http.route({
   handler: httpAction(async () => handleCorsOptions()),
 });
 
+/**
+ * GET /link-preview/channel?shortId=<shortId>
+ *
+ * Returns channel data for invite link preview generation (OG tags).
+ * Used by the Cloudflare Worker when bots request /ch/[shortId] URLs.
+ *
+ * Response shape:
+ * - channelName, groupName, groupImage, memberCount
+ * - communityName, communityLogo
+ * - joinMode
+ */
+http.route({
+  path: "/link-preview/channel",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const url = new URL(request.url);
+    const shortId = url.searchParams.get("shortId");
+
+    if (!shortId) {
+      return jsonResponse({ error: "Missing shortId parameter" }, 400);
+    }
+
+    try {
+      const result = await ctx.runQuery(
+        api.functions.messaging.channelInvites.getByShortId,
+        { shortId }
+      );
+
+      if (!result) {
+        return jsonResponse({ error: "Channel not found" }, 404);
+      }
+
+      return jsonResponse({
+        channelName: result.channelName,
+        channelDescription: result.channelDescription,
+        groupName: result.groupName,
+        groupImage: result.groupImage,
+        communityName: result.communityName,
+        communityLogo: result.communityLogo,
+        memberCount: result.memberCount,
+        joinMode: result.joinMode,
+      });
+    } catch (error) {
+      console.error("Error fetching channel for link preview:", error);
+      return jsonResponse({ error: "Failed to fetch channel" }, 500);
+    }
+  }),
+});
+
+// Handle CORS preflight for /link-preview/channel
+http.route({
+  path: "/link-preview/channel",
+  method: "OPTIONS",
+  handler: httpAction(async () => handleCorsOptions()),
+});
+
 // ============================================================================
 // External Link Preview Endpoint (for chat link previews)
 // ============================================================================

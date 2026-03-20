@@ -28,6 +28,7 @@ import { useReadReceipts } from '@features/chat/hooks/useReadReceipts';
 import { useReactions, type Reaction } from '@features/chat/hooks/useReactions';
 import { EventLinkCard } from './EventLinkCard';
 import { ToolLinkCard } from './ToolLinkCard';
+import { ChannelInviteLinkCard } from './ChannelInviteLinkCard';
 import { LinkPreviewCard } from './LinkPreviewCard';
 import { FileAttachment } from './FileAttachment';
 import { AudioPlayer } from './AudioPlayer';
@@ -37,7 +38,7 @@ import { ThreadReplies } from './ThreadReplies';
 import { ReactionDetailsModal } from './ReactionDetailsModal';
 import { ReachOutRequestCardFromMessage } from './ReachOutRequestCardFromMessage';
 import { TaskCardFromMessage } from './TaskCardFromMessage';
-import { extractEventShortIds, extractToolShortIds, stripEventLinksFromText, stripToolLinksFromText, extractFirstExternalUrl } from '../utils/eventLinkUtils';
+import { extractEventShortIds, extractToolShortIds, extractChannelInviteShortIds, stripEventLinksFromText, stripToolLinksFromText, stripChannelInviteLinksFromText, extractFirstExternalUrl } from '../utils/eventLinkUtils';
 import { useLinkPreview } from '../hooks/useLinkPreview';
 import { getMediaUrl } from '@/utils/media';
 import { colors } from '@utils/styles';
@@ -261,7 +262,13 @@ function MessageItemInner({
     return extractToolShortIds(message.content);
   }, [message.content, message.isDeleted]);
 
-  // Get display text (with event and tool links stripped if we're showing cards)
+  // Detect channel invite links in message content
+  const channelInviteShortIds = useMemo(() => {
+    if (message.isDeleted) return [];
+    return extractChannelInviteShortIds(message.content);
+  }, [message.content, message.isDeleted]);
+
+  // Get display text (with event, tool, and channel invite links stripped if we're showing cards)
   const displayText = useMemo(() => {
     let text = message.content;
     if (eventShortIds.length > 0) {
@@ -270,14 +277,17 @@ function MessageItemInner({
     if (toolShortIds.length > 0) {
       text = stripToolLinksFromText(text);
     }
+    if (channelInviteShortIds.length > 0) {
+      text = stripChannelInviteLinksFromText(text);
+    }
     return text;
-  }, [message.content, eventShortIds, toolShortIds]);
+  }, [message.content, eventShortIds, toolShortIds, channelInviteShortIds]);
 
-  // Detect external URLs for link preview (only if no event/tool cards)
+  // Detect external URLs for link preview (only if no event/tool/channel invite cards)
   const externalUrl = useMemo(() => {
-    if (message.isDeleted || eventShortIds.length > 0 || toolShortIds.length > 0) return null;
+    if (message.isDeleted || eventShortIds.length > 0 || toolShortIds.length > 0 || channelInviteShortIds.length > 0) return null;
     return extractFirstExternalUrl(message.content);
-  }, [message.content, message.isDeleted, eventShortIds, toolShortIds]);
+  }, [message.content, message.isDeleted, eventShortIds, toolShortIds, channelInviteShortIds]);
 
   // Check for prefetched link preview first
   const prefetchedLinkPreview = useMemo(() => {
@@ -461,6 +471,23 @@ function MessageItemInner({
             />
           );
         })}
+      </View>
+    );
+  };
+
+  // Render channel invite cards for detected togather.nyc/ch/ links
+  const renderChannelInviteCards = () => {
+    if (channelInviteShortIds.length === 0) return null;
+
+    return (
+      <View style={styles.eventCardsContainer}>
+        {channelInviteShortIds.map((shortId) => (
+          <ChannelInviteLinkCard
+            key={`ch-${shortId}`}
+            shortId={shortId}
+            groupId={groupId}
+          />
+        ))}
       </View>
     );
   };
@@ -896,6 +923,9 @@ function MessageItemInner({
 
           {/* Tool cards for run sheet/resource links */}
           {renderToolCards()}
+
+          {/* Channel invite link cards */}
+          {renderChannelInviteCards()}
 
           {/* Link preview for external URLs */}
           {renderLinkPreview()}

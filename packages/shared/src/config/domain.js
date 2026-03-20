@@ -62,6 +62,11 @@ const DOMAIN_CONFIG = {
   // Regex helpers for detecting tool links in text
   toolLinkRegex: () => new RegExp(`(?:https?:\\/\\/)?${COMBINED_DOMAIN_PATTERN}\\/t\\/([a-zA-Z0-9]+)`, 'g'),
   toolLinkRegexSingle: () => new RegExp(`(?:https?:\\/\\/)?${COMBINED_DOMAIN_PATTERN}\\/t\\/([a-zA-Z0-9]+)`),
+  // Channel invite share URLs
+  channelInviteUrl: (shortId) => `https://${BASE_DOMAIN}/ch/${shortId}`,
+  // Regex helpers for detecting channel invite links in text
+  channelInviteLinkRegex: () => new RegExp(`(?:https?:\\/\\/)?${COMBINED_DOMAIN_PATTERN}\\/ch\\/([a-zA-Z0-9]+)`, 'g'),
+  channelInviteLinkRegexSingle: () => new RegExp(`(?:https?:\\/\\/)?${COMBINED_DOMAIN_PATTERN}\\/ch\\/([a-zA-Z0-9]+)`),
   // Community landing page URL
   communityLandingUrl: (slug) => `https://${BASE_DOMAIN}/c/${slug}`,
   // Domain suffix for subdomain parsing (with leading dot)

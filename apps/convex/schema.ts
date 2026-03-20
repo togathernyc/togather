@@ -1235,6 +1235,10 @@ export default defineSchema({
         }),
       ),
     ),
+    // Channel invite link fields
+    inviteShortId: v.optional(v.string()), // 9-char alphanumeric from generateShortId()
+    inviteEnabled: v.optional(v.boolean()), // toggle link on/off
+    joinMode: v.optional(v.string()), // "open" | "approval_required"
   })
     .index("by_group", ["groupId"])
     .index("by_group_type", ["groupId", "channelType"])
@@ -1242,7 +1246,8 @@ export default defineSchema({
     .index("by_createdBy", ["createdById"])
     .index("by_lastMessageAt", ["lastMessageAt"])
     .index("by_archived", ["isArchived"])
-    .index("by_isShared", ["isShared"]),
+    .index("by_isShared", ["isShared"])
+    .index("by_inviteShortId", ["inviteShortId"]),
 
   /**
    * Chat Channel Members
@@ -1279,6 +1284,24 @@ export default defineSchema({
     .index("by_channel_user", ["channelId", "userId"])
     .index("by_channel_syncSource", ["channelId", "syncSource"])
     .index("by_role", ["role"]),
+
+  /**
+   * Channel Join Requests
+   * Tracks join request lifecycle for channels with joinMode === "approval_required".
+   */
+  channelJoinRequests: defineTable({
+    channelId: v.id("chatChannels"),
+    groupId: v.id("groups"), // Denormalized for efficient group-level queries
+    userId: v.id("users"),
+    status: v.string(), // "pending" | "approved" | "declined"
+    requestedAt: v.number(), // Unix timestamp ms
+    reviewedAt: v.optional(v.number()), // Unix timestamp ms
+    reviewedById: v.optional(v.id("users")),
+  })
+    .index("by_channel_status", ["channelId", "status"])
+    .index("by_channel_user", ["channelId", "userId"])
+    .index("by_group_status", ["groupId", "status"])
+    .index("by_user", ["userId"]),
 
   /**
    * Chat Messages
