@@ -25,6 +25,7 @@ import { useRouter } from "expo-router";
 import type { Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 import { useMutation, api } from "@services/api/convex";
 import { useParentMessage } from "../hooks/useParentMessage";
 import { useThreadReplies } from "../hooks/useThreadReplies";
@@ -49,6 +50,7 @@ export function ThreadPage({
   const router = useRouter();
   const { user, token } = useAuth();
   const { primaryColor } = useCommunityTheme();
+  const { colors } = useTheme();
   const currentUserId = user?.id as Id<"users"> | undefined;
   const flashListRef = useRef<FlashListRef<any>>(null);
 
@@ -174,11 +176,11 @@ export function ThreadPage({
   // Loading state
   if (parentLoading) {
     return (
-      <View style={[styles.container, { paddingTop: insets.top }]}>
+      <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.surface }]}>
         <ThreadHeader channelName={channelName} onBack={handleBack} />
         <View style={styles.centered}>
           <ActivityIndicator size="large" color={primaryColor} />
-          <Text style={styles.loadingText}>Loading thread...</Text>
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading thread...</Text>
         </View>
       </View>
     );
@@ -187,11 +189,11 @@ export function ThreadPage({
   // Parent message not found
   if (!parentMessage) {
     return (
-      <View style={[styles.container, { paddingTop: insets.top }]}>
+      <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.surface }]}>
         <ThreadHeader channelName={channelName} onBack={handleBack} />
         <View style={styles.centered}>
-          <Text style={styles.errorText}>Message not found</Text>
-          <Text style={styles.errorSubtext}>This message may have been deleted.</Text>
+          <Text style={[styles.errorText, { color: colors.text }]}>Message not found</Text>
+          <Text style={[styles.errorSubtext, { color: colors.textSecondary }]}>This message may have been deleted.</Text>
         </View>
       </View>
     );
@@ -199,10 +201,10 @@ export function ThreadPage({
 
   if (!currentUserId) {
     return (
-      <View style={[styles.container, { paddingTop: insets.top }]}>
+      <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.surface }]}>
         <ThreadHeader channelName={channelName} onBack={handleBack} />
         <View style={styles.centered}>
-          <Text style={styles.errorText}>Not authenticated</Text>
+          <Text style={[styles.errorText, { color: colors.text }]}>Not authenticated</Text>
         </View>
       </View>
     );
@@ -217,13 +219,13 @@ export function ThreadPage({
 
   return (
     <KeyboardAvoidingView
-      style={[styles.container, { paddingTop: insets.top }]}
+      style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.surface }]}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
       keyboardVerticalOffset={0}
     >
       <ThreadHeader channelName={channelName} onBack={handleBack} />
 
-      <View style={styles.content}>
+      <View style={[styles.content, { backgroundColor: colors.surfaceSecondary }]}>
         <FlashList
           ref={flashListRef}
           data={listData}
@@ -235,7 +237,7 @@ export function ThreadPage({
           renderItem={({ item }) => {
             if (item.type === "parent") {
               return (
-                <View style={styles.parentMessageContainer}>
+                <View style={[styles.parentMessageContainer, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
                   <MessageItem
                     message={{
                       _id: item.data._id,
@@ -260,13 +262,13 @@ export function ThreadPage({
             if (item.type === "separator") {
               return (
                 <View style={styles.separatorContainer}>
-                  <View style={styles.separatorLine} />
-                  <Text style={styles.separatorText}>
+                  <View style={[styles.separatorLine, { backgroundColor: colors.border }]} />
+                  <Text style={[styles.separatorText, { color: colors.textTertiary }]}>
                     {item.count === 0
                       ? "No replies yet"
                       : `${item.count} ${item.count === 1 ? "reply" : "replies"}`}
                   </Text>
-                  <View style={styles.separatorLine} />
+                  <View style={[styles.separatorLine, { backgroundColor: colors.border }]} />
                 </View>
               );
             }
@@ -370,11 +372,9 @@ export function ThreadPage({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
   },
   content: {
     flex: 1,
-    backgroundColor: "#f9f9f9",
   },
   centered: {
     flex: 1,
@@ -385,26 +385,21 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 16,
     fontSize: 16,
-    color: "#666",
   },
   errorText: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 8,
   },
   errorSubtext: {
     fontSize: 14,
-    color: "#666",
   },
   listContent: {
     paddingBottom: 16,
   },
   parentMessageContainer: {
-    backgroundColor: "#fff",
     paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#E0E0E0",
   },
   separatorContainer: {
     flexDirection: "row",
@@ -415,12 +410,10 @@ const styles = StyleSheet.create({
   separatorLine: {
     flex: 1,
     height: 1,
-    backgroundColor: "#E0E0E0",
   },
   separatorText: {
     fontSize: 12,
     fontWeight: "600",
-    color: "#999",
     marginHorizontal: 12,
     textTransform: "uppercase",
   },

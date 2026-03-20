@@ -6,6 +6,7 @@
 import React, { memo } from "react";
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useTheme } from "@hooks/useTheme";
 
 interface ThreadHeaderProps {
   channelName?: string;
@@ -16,16 +17,18 @@ export const ThreadHeader = memo(function ThreadHeader({
   channelName,
   onBack,
 }: ThreadHeaderProps) {
+  const { colors } = useTheme();
+
   return (
-    <View style={styles.header}>
+    <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
       <TouchableOpacity onPress={onBack} style={styles.backButton}>
-        <Ionicons name="chevron-back" size={28} color="#000" />
+        <Ionicons name="chevron-back" size={28} color={colors.text} />
       </TouchableOpacity>
 
       <View style={styles.headerInfo}>
-        <Text style={styles.title}>Thread</Text>
+        <Text style={[styles.title, { color: colors.text }]}>Thread</Text>
         {channelName && (
-          <Text style={styles.channelName}>#{channelName}</Text>
+          <Text style={[styles.channelName, { color: colors.textSecondary }]}>#{channelName}</Text>
         )}
       </View>
     </View>
@@ -38,9 +41,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 8,
     paddingVertical: 12,
-    backgroundColor: "#fff",
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#E0E0E0",
   },
   backButton: {
     padding: 4,
@@ -52,11 +53,9 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 17,
     fontWeight: "600",
-    color: "#000",
   },
   channelName: {
     fontSize: 13,
-    color: "#666",
     marginTop: 1,
   },
 });
