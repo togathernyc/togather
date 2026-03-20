@@ -82,7 +82,7 @@ jobs:
           cd ../..
 
           # Get version - must run from apps/mobile for proper package resolution
-          VERSION=$(cd apps/mobile && node -p "require('./app.config.js').default.expo.runtimeVersion")
+          VERSION=$(cd apps/mobile && node -p "require('./app.config.js').default.expo.version")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
           # Create summary
@@ -181,7 +181,7 @@ jobs:
       - name: Validate version
         working-directory: apps/mobile
         run: |
-          VERSION=$(node -p "require('./app.config.js').default.expo.runtimeVersion")
+          VERSION=$(node -p "require('./app.config.js').default.expo.version")
           APP_JSON_VERSION=$(node -p "require('./app.json').expo.version")
 
           if [ "$VERSION" != "$APP_JSON_VERSION" ]; then
@@ -235,7 +235,7 @@ jobs:
           R2_BUCKET_NAME: ${{ env.R2_BUCKET_NAME }}
         run: |
           # Get version from code
-          VERSION=$(node -p "require('./app.config.js').default.expo.runtimeVersion")
+          VERSION=$(node -p "require('./app.config.js').default.expo.version")
           echo "Creating iOS production manifest for version $VERSION..."
 
           # Install AWS CLI for R2 (S3-compatible)
@@ -291,7 +291,7 @@ jobs:
           R2_BUCKET_NAME: ${{ env.R2_BUCKET_NAME }}
         run: |
           # Get version from code
-          VERSION=$(node -p "require('./app.config.js').default.expo.runtimeVersion")
+          VERSION=$(node -p "require('./app.config.js').default.expo.version")
           echo "Uploading production Android APK version $VERSION to R2..."
 
           # Download the latest Android APK from EAS (the production-apk build we just created)

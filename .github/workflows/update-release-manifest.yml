@@ -1,0 +1,188 @@
+name: Update Release Manifest
+
+# Manually update the force-update version in R2 release manifests.
+# Use this to:
+#   - Force users to update after App Store / website APK is live
+#   - Adjust availableAfter timing (e.g., after app is approved early)
+#   - Fix a manifest that has the wrong version
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "New version (semver, e.g., 1.0.22)"
+        required: true
+        type: string
+      platform:
+        description: "Platform to update"
+        required: true
+        type: choice
+        default: "both"
+        options:
+          - ios
+          - android
+          - both
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        default: "production"
+        options:
+          - production
+          - staging
+      available_after_minutes:
+        description: "Delay (minutes) before showing update modal. 0 = immediate."
+        required: false
+        type: string
+        default: "0"
+
+jobs:
+  update-manifest:
+    name: Update ${{ inputs.platform }} ${{ inputs.environment }} manifest
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - name: Validate version format
+        run: |
+          VERSION="${{ inputs.version }}"
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Invalid version format '$VERSION'. Expected semver like 1.0.22"
+            exit 1
+          fi
+          echo "✅ Version '$VERSION' is valid"
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Load secrets
+        uses: ./.github/actions/load-secrets
+        with:
+          secrets-json: ${{ toJSON(secrets) }}
+
+      - name: Install AWS CLI
+        run: pip install awscli --quiet
+
+      - name: Fetch, update, and upload manifests
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ env.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ env.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ env.R2_BUCKET_NAME }}
+        run: |
+          export AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID"
+          export AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
+          export AWS_DEFAULT_REGION="auto"
+          R2_ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"
+
+          VERSION="${{ inputs.version }}"
+          ENVIRONMENT="${{ inputs.environment }}"
+          DELAY_MINUTES="${{ inputs.available_after_minutes }}"
+
+          # Compute availableAfter timestamp
+          if [ -n "$DELAY_MINUTES" ] && [ "$DELAY_MINUTES" != "0" ]; then
+            AVAILABLE_AFTER=$(date -u -d "+${DELAY_MINUTES} minutes" +%Y-%m-%dT%H:%M:%SZ)
+            echo "availableAfter set to: $AVAILABLE_AFTER ($DELAY_MINUTES minutes from now)"
+          else
+            AVAILABLE_AFTER=""
+            echo "availableAfter: none (immediately available)"
+          fi
+
+          # Determine which platforms to update
+          PLATFORMS=""
+          if [ "${{ inputs.platform }}" = "ios" ] || [ "${{ inputs.platform }}" = "both" ]; then
+            PLATFORMS="ios"
+          fi
+          if [ "${{ inputs.platform }}" = "android" ] || [ "${{ inputs.platform }}" = "both" ]; then
+            PLATFORMS="$PLATFORMS android"
+          fi
+
+          for PLATFORM in $PLATFORMS; do
+            MANIFEST_KEY="releases/${PLATFORM}/${ENVIRONMENT}/manifest.json"
+            LOCAL_FILE="/tmp/manifest-${PLATFORM}.json"
+            UPDATED_FILE="/tmp/manifest-${PLATFORM}-updated.json"
+
+            echo ""
+            echo "========================================="
+            echo "Updating ${PLATFORM} ${ENVIRONMENT} manifest"
+            echo "========================================="
+
+            # Fetch current manifest from R2
+            aws s3 cp "s3://${R2_BUCKET_NAME}/${MANIFEST_KEY}" "$LOCAL_FILE" \
+              --endpoint-url "$R2_ENDPOINT" || {
+                echo "::error::Failed to fetch ${PLATFORM} ${ENVIRONMENT} manifest from R2. Does it exist?"
+                exit 1
+              }
+
+            echo ""
+            echo "BEFORE:"
+            jq . "$LOCAL_FILE"
+            echo ""
+
+            # Compute variant prefix for Android filenames (staging uses "togather-staging-X.Y.Z.apk")
+            VARIANT=$( [ "$ENVIRONMENT" = "staging" ] && echo "staging-" || echo "" )
+
+            # For Android, copy togather-latest.apk to the new versioned filename
+            if [ "$PLATFORM" = "android" ]; then
+              LATEST_KEY="releases/android/${ENVIRONMENT}/togather-${VARIANT}latest.apk"
+              NEW_APK_KEY="releases/android/${ENVIRONMENT}/togather-${VARIANT}${VERSION}.apk"
+
+              echo "Copying APK: ${LATEST_KEY} → ${NEW_APK_KEY}"
+              aws s3 cp "s3://${R2_BUCKET_NAME}/${LATEST_KEY}" "s3://${R2_BUCKET_NAME}/${NEW_APK_KEY}" \
+                --endpoint-url "$R2_ENDPOINT" \
+                --content-type "application/vnd.android.package-archive" || {
+                  echo "::warning::Failed to copy APK to versioned filename. Continuing with manifest update."
+                }
+              echo "✅ APK available as togather-${VARIANT}${VERSION}.apk"
+            fi
+
+            # Patch the manifest — update version, releaseDate, availableAfter, and downloadUrl
+            RELEASE_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+            APK_NAME="togather-${VARIANT}${VERSION}.apk"
+
+            if [ -n "$AVAILABLE_AFTER" ]; then
+              jq --arg v "$VERSION" \
+                 --arg rd "$RELEASE_DATE" \
+                 --arg aa "$AVAILABLE_AFTER" \
+                 --arg apk "$APK_NAME" \
+                 '.version = $v | .releaseDate = $rd | .availableAfter = $aa | if .downloadUrl then .downloadUrl = (.downloadUrl | sub("/togather-[^/]+$"; "/" + $apk)) else . end' \
+                 "$LOCAL_FILE" > "$UPDATED_FILE"
+            else
+              jq --arg v "$VERSION" \
+                 --arg rd "$RELEASE_DATE" \
+                 --arg apk "$APK_NAME" \
+                 '.version = $v | .releaseDate = $rd | del(.availableAfter) | if .downloadUrl then .downloadUrl = (.downloadUrl | sub("/togather-[^/]+$"; "/" + $apk)) else . end' \
+                 "$LOCAL_FILE" > "$UPDATED_FILE"
+            fi
+
+            echo "AFTER:"
+            jq . "$UPDATED_FILE"
+            echo ""
+
+            # Upload updated manifest
+            aws s3 cp "$UPDATED_FILE" "s3://${R2_BUCKET_NAME}/${MANIFEST_KEY}" \
+              --endpoint-url "$R2_ENDPOINT" \
+              --content-type "application/json"
+
+            echo "✅ Uploaded updated ${PLATFORM} ${ENVIRONMENT} manifest"
+          done
+
+      - name: Summary
+        run: |
+          VERSION="${{ inputs.version }}"
+          DELAY_MINUTES="${{ inputs.available_after_minutes }}"
+
+          echo "## Release Manifest Updated" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Version | \`$VERSION\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Platform | ${{ inputs.platform }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | ${{ inputs.environment }} |" >> $GITHUB_STEP_SUMMARY
+          if [ -n "$DELAY_MINUTES" ] && [ "$DELAY_MINUTES" != "0" ]; then
+            echo "| Available After | ${DELAY_MINUTES} minutes from now |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Available After | Immediately |" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Users on older versions will now see the force-update modal." >> $GITHUB_STEP_SUMMARY

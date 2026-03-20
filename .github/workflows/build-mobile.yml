@@ -77,7 +77,7 @@ jobs:
         id: version
         working-directory: apps/mobile
         run: |
-          VERSION=$(node -p "require('./app.config.js').default.expo.runtimeVersion")
+          VERSION=$(node -p "require('./app.config.js').default.expo.version")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Building version: $VERSION"
 
