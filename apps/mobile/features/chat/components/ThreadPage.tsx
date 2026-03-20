@@ -176,7 +176,7 @@ export function ThreadPage({
   // Loading state
   if (parentLoading) {
     return (
-      <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.background }]}>
+      <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.surface }]}>
         <ThreadHeader channelName={channelName} onBack={handleBack} />
         <View style={styles.centered}>
           <ActivityIndicator size="large" color={primaryColor} />
@@ -189,7 +189,7 @@ export function ThreadPage({
   // Parent message not found
   if (!parentMessage) {
     return (
-      <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.background }]}>
+      <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.surface }]}>
         <ThreadHeader channelName={channelName} onBack={handleBack} />
         <View style={styles.centered}>
           <Text style={[styles.errorText, { color: colors.text }]}>Message not found</Text>
@@ -201,7 +201,7 @@ export function ThreadPage({
 
   if (!currentUserId) {
     return (
-      <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.background }]}>
+      <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.surface }]}>
         <ThreadHeader channelName={channelName} onBack={handleBack} />
         <View style={styles.centered}>
           <Text style={[styles.errorText, { color: colors.text }]}>Not authenticated</Text>
@@ -219,7 +219,7 @@ export function ThreadPage({
 
   return (
     <KeyboardAvoidingView
-      style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.background }]}
+      style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.surface }]}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
       keyboardVerticalOffset={0}
     >
