@@ -81,6 +81,28 @@ export function stripToolLinksFromText(text: string | undefined): string {
 }
 
 // ============================================================================
+// Channel Invite Link Detection
+// ============================================================================
+
+/**
+ * Extract channel invite short IDs from message text
+ */
+export function extractChannelInviteShortIds(text: string | undefined): string[] {
+  if (!text) return [];
+  const regex = DOMAIN_CONFIG.channelInviteLinkRegex();
+  const matches = [...text.matchAll(regex)];
+  return matches.map(m => m[1]);
+}
+
+/**
+ * Remove channel invite links from message text for display
+ */
+export function stripChannelInviteLinksFromText(text: string | undefined): string {
+  if (!text) return '';
+  return text.replace(DOMAIN_CONFIG.channelInviteLinkRegex(), '').trim();
+}
+
+// ============================================================================
 // External Link Detection
 // ============================================================================
 

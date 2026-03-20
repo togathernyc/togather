@@ -1656,6 +1656,7 @@ export const createCustomChannel = mutation({
     groupId: v.id("groups"),
     name: v.string(),
     description: v.optional(v.string()),
+    joinMode: v.optional(v.union(v.literal("open"), v.literal("approval_required"))),
   },
   returns: v.object({
     channelId: v.id("chatChannels"),
@@ -1728,6 +1729,7 @@ export const createCustomChannel = mutation({
       updatedAt: now,
       isArchived: false,
       memberCount: 1,
+      joinMode: args.joinMode,
     });
 
     // 8. Insert chatChannelMembers record for the creator as owner

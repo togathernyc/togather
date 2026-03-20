@@ -61,6 +61,7 @@ import type * as functions_meetings_migrations from "../functions/meetings/migra
 import type * as functions_meetings_queries from "../functions/meetings/queries.js";
 import type * as functions_memberFollowups from "../functions/memberFollowups.js";
 import type * as functions_messaging_blocking from "../functions/messaging/blocking.js";
+import type * as functions_messaging_channelInvites from "../functions/messaging/channelInvites.js";
 import type * as functions_messaging_channels from "../functions/messaging/channels.js";
 import type * as functions_messaging_events from "../functions/messaging/events.js";
 import type * as functions_messaging_flagging from "../functions/messaging/flagging.js";
@@ -207,6 +208,7 @@ declare const fullApi: ApiFromModules<{
   "functions/meetings/queries": typeof functions_meetings_queries;
   "functions/memberFollowups": typeof functions_memberFollowups;
   "functions/messaging/blocking": typeof functions_messaging_blocking;
+  "functions/messaging/channelInvites": typeof functions_messaging_channelInvites;
   "functions/messaging/channels": typeof functions_messaging_channels;
   "functions/messaging/events": typeof functions_messaging_events;
   "functions/messaging/flagging": typeof functions_messaging_flagging;

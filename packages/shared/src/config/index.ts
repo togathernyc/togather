@@ -28,6 +28,9 @@ export interface DomainConfig {
   toolShareUrl(shortId: string): string;
   toolLinkRegex(): RegExp;
   toolLinkRegexSingle(): RegExp;
+  channelInviteUrl(shortId: string): string;
+  channelInviteLinkRegex(): RegExp;
+  channelInviteLinkRegexSingle(): RegExp;
 }
 
 export const DOMAIN_CONFIG: DomainConfig = domain.DOMAIN_CONFIG;

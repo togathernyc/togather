@@ -663,3 +663,205 @@ export const notifySharedChannelInvite = internalAction({
     }
   },
 });
+
+// ============================================================================
+// Notification Actions for Channel Join Requests
+// ============================================================================
+
+/**
+ * Notify group leaders when someone requests to join a channel via invite link
+ */
+export const notifyChannelJoinRequest = internalAction({
+  args: {
+    channelId: v.id("chatChannels"),
+    groupId: v.id("groups"),
+    requesterId: v.id("users"),
+    channelName: v.string(),
+    channelSlug: v.string(),
+  },
+  handler: async (ctx, args): Promise<{ success: boolean; error?: string; sent?: number }> => {
+    try {
+      const requesterName: string = await ctx.runQuery(
+        internal.functions.notifications.internal.getUserDisplayName,
+        { userId: args.requesterId }
+      );
+
+      const groupInfo: NotificationGroupInfo | null = await ctx.runQuery(
+        internal.functions.notifications.internal.getGroupInfo,
+        { groupId: args.groupId }
+      );
+      if (!groupInfo) {
+        console.log("[NotifyChannelJoinRequest] Group not found");
+        return { success: false, error: "Group not found" };
+      }
+
+      const leaderIds: Id<"users">[] = await ctx.runQuery(
+        internal.functions.notifications.internal.getGroupMembersForNotification,
+        { groupId: args.groupId, filter: "leaders" }
+      );
+
+      if (leaderIds.length === 0) {
+        return { success: true, sent: 0 };
+      }
+
+      const tokenResults: Array<{ userId: string; tokens: string[] }> = await ctx.runQuery(
+        internal.functions.notifications.tokens.getActiveTokensForUsers,
+        { userIds: leaderIds }
+      );
+
+      const title = "Channel Join Request";
+      const body = `${requesterName} wants to join #${args.channelName}`;
+      const notificationImageUrl = getSenderNotificationImage(groupInfo);
+
+      const notifications = tokenResults.flatMap((result: { userId: string; tokens: string[] }) =>
+        result.tokens.map((token: string) => ({
+          token,
+          title,
+          body,
+          data: {
+            type: "channel_join_request_received",
+            groupId: args.groupId,
+            channelSlug: args.channelSlug,
+            communityId: groupInfo.communityId,
+            url: `/inbox/${args.groupId}/${args.channelSlug}/members`,
+            groupAvatarUrl: notificationImageUrl,
+          },
+          imageUrl: notificationImageUrl,
+        }))
+      );
+
+      if (notifications.length === 0) {
+        return { success: true, sent: 0 };
+      }
+
+      const result = await ctx.runAction(
+        internal.functions.notifications.internal.sendBatchPushNotifications,
+        { notifications }
+      );
+
+      console.log(`[NotifyChannelJoinRequest] Sent ${notifications.length} notifications for #${args.channelName}`);
+      return { success: result.success, sent: notifications.length };
+    } catch (error) {
+      console.error("[NotifyChannelJoinRequest] Error:", error);
+      return { success: false, error: String(error) };
+    }
+  },
+});
+
+/**
+ * Notify user when their channel join request is approved
+ */
+export const notifyChannelJoinRequestApproved = internalAction({
+  args: {
+    userId: v.id("users"),
+    channelId: v.id("chatChannels"),
+    groupId: v.id("groups"),
+    channelName: v.string(),
+    channelSlug: v.string(),
+  },
+  handler: async (ctx, args): Promise<{ success: boolean; error?: string; sent?: number }> => {
+    try {
+      const groupInfo: NotificationGroupInfo | null = await ctx.runQuery(
+        internal.functions.notifications.internal.getGroupInfo,
+        { groupId: args.groupId }
+      );
+      if (!groupInfo) {
+        return { success: false, error: "Group not found" };
+      }
+
+      const tokens: Array<{ token: string; platform: string }> = await ctx.runQuery(
+        internal.functions.notifications.tokens.getActiveTokensForUser,
+        { userId: args.userId }
+      );
+
+      if (tokens.length === 0) {
+        return { success: true, sent: 0 };
+      }
+
+      const title = "Request Approved!";
+      const body = `You've been added to #${args.channelName}`;
+      const notificationImageUrl = getSenderNotificationImage(groupInfo);
+
+      const notifications = tokens.map((t: { token: string; platform: string }) => ({
+        token: t.token,
+        title,
+        body,
+        data: {
+          type: "channel_join_request_approved",
+          groupId: args.groupId,
+          channelSlug: args.channelSlug,
+          communityId: groupInfo.communityId,
+          url: `/inbox/${args.groupId}/${args.channelSlug}`,
+          groupAvatarUrl: notificationImageUrl,
+        },
+        imageUrl: notificationImageUrl,
+      }));
+
+      const result = await ctx.runAction(
+        internal.functions.notifications.internal.sendBatchPushNotifications,
+        { notifications }
+      );
+
+      console.log(`[NotifyChannelJoinApproved] Sent notification to user for #${args.channelName}`);
+      return { success: result.success, sent: notifications.length };
+    } catch (error) {
+      console.error("[NotifyChannelJoinApproved] Error:", error);
+      return { success: false, error: String(error) };
+    }
+  },
+});
+
+/**
+ * Notify user when their channel join request is declined
+ */
+export const notifyChannelJoinRequestDeclined = internalAction({
+  args: {
+    userId: v.id("users"),
+    channelId: v.id("chatChannels"),
+    groupId: v.id("groups"),
+    channelName: v.string(),
+  },
+  handler: async (ctx, args): Promise<{ success: boolean; error?: string; sent?: number }> => {
+    try {
+      const tokens: Array<{ token: string; platform: string }> = await ctx.runQuery(
+        internal.functions.notifications.tokens.getActiveTokensForUser,
+        { userId: args.userId }
+      );
+
+      if (tokens.length === 0) {
+        return { success: true, sent: 0 };
+      }
+
+      const groupInfo: NotificationGroupInfo | null = await ctx.runQuery(
+        internal.functions.notifications.internal.getGroupInfo,
+        { groupId: args.groupId }
+      );
+
+      const title = "Request Not Approved";
+      const body = `Your request to join #${args.channelName} was not approved`;
+      const notificationImageUrl = groupInfo ? getSenderNotificationImage(groupInfo) : undefined;
+
+      const notifications = tokens.map((t: { token: string; platform: string }) => ({
+        token: t.token,
+        title,
+        body,
+        data: {
+          type: "channel_join_request_declined",
+          groupAvatarUrl: notificationImageUrl,
+        },
+        imageUrl: notificationImageUrl,
+      }));
+
+      const result = await ctx.runAction(
+        internal.functions.notifications.internal.sendBatchPushNotifications,
+        { notifications }
+      );
+
+      console.log(`[NotifyChannelJoinDeclined] Sent notification to user for #${args.channelName}`);
+      return { success: result.success, sent: notifications.length };
+    } catch (error) {
+      console.error("[NotifyChannelJoinDeclined] Error:", error);
+      return { success: false, error: String(error) };
+    }
+  },
+});
