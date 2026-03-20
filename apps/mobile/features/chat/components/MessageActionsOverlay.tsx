@@ -92,6 +92,8 @@ type MessageActionsOverlayProps = {
   onClose: () => void;
   isOwnMessage?: boolean;
   isUserLeader?: boolean;
+  /** Community admins can delete any message in groups within their community */
+  isCommunityAdmin?: boolean;
   /** Hide the reply action (useful in thread context where nested replies aren't allowed) */
   hideReplyAction?: boolean;
 };
@@ -103,6 +105,7 @@ export function MessageActionsOverlay({
   onClose,
   isOwnMessage = false,
   isUserLeader = false,
+  isCommunityAdmin = false,
   hideReplyAction = false,
 }: MessageActionsOverlayProps) {
   const { colors, isDark } = useTheme();
@@ -111,15 +114,15 @@ export function MessageActionsOverlay({
   const scaleAnim = useRef(new Animated.Value(0.9)).current;
   const [showMoreActions, setShowMoreActions] = useState(false);
 
-  // Filter primary actions based on message ownership, leader status, and context
+  // Filter primary actions based on message ownership, leader status, community admin, and context
   const availablePrimaryActions = useMemo(() => {
     return PRIMARY_ACTIONS.filter((action) => {
       if (action.id === "reply") return !hideReplyAction;
-      if (action.id === "delete") return isOwnMessage || isUserLeader;
+      if (action.id === "delete") return isOwnMessage || isUserLeader || isCommunityAdmin;
       if (action.id === "more") return !isOwnMessage;
       return true;
     });
-  }, [isOwnMessage, isUserLeader, hideReplyAction]);
+  }, [isOwnMessage, isUserLeader, isCommunityAdmin, hideReplyAction]);
 
   const availableMoreActions = MORE_ACTIONS;
 

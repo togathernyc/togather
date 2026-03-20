@@ -750,6 +750,59 @@ describe("Delete Message", () => {
     expect(message?.deletedById).toBe(adminId);
   });
 
+  test("should allow community admin to delete any message in group they do not lead", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { channelId, communityId, groupId, accessToken } = await seedTestData(t);
+
+    // Original user (group leader) sends a message
+    const messageId = await t.mutation(api.functions.messaging.messages.sendMessage, {
+      token: accessToken,
+      channelId,
+      content: "Message from group leader",
+    });
+
+    // Wait for scheduled functions to complete
+    vi.runAllTimers();
+    await t.finishInProgressScheduledFunctions();
+
+    // Create community admin - NOT a group member, NOT a channel member
+    const communityAdminId = await t.run(async (ctx) => {
+      const uId = await ctx.db.insert("users", {
+        firstName: "Community",
+        lastName: "Admin",
+        phone: "+15555550020",
+        phoneVerified: true,
+        activeCommunityId: communityId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      // Community admin role (COMMUNITY_ROLES.ADMIN = 3)
+      await ctx.db.insert("userCommunities", {
+        userId: uId,
+        communityId,
+        roles: 3,
+        status: 1,
+      });
+      return uId;
+    });
+
+    const { accessToken: adminToken } = await generateTokens(communityAdminId);
+
+    // Community admin should be able to delete any message in any group in their community
+    await t.mutation(api.functions.messaging.messages.deleteMessage, {
+      token: adminToken,
+      messageId,
+    });
+
+    const message = await t.run(async (ctx) => {
+      return await ctx.db.get(messageId);
+    });
+
+    expect(message?.isDeleted).toBe(true);
+    expect(message?.deletedById).toBe(communityAdminId);
+  });
+
   test("should allow leader to delete another leader's message", async () => {
     vi.useFakeTimers();
     const t = convexTest(schema, modules);

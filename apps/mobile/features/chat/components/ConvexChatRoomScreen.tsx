@@ -323,6 +323,8 @@ const ConvexChatRoomScreenInner: React.FC = () => {
     // While loading, show leaders tab if navigating to leaders channel (avoids flash)
     (isRoleLoading && channelTypeParam === "leaders") ||
     false;
+  // Community admins can delete any message in groups within their community
+  const isCommunityAdmin = user?.is_admin === true;
   const hasGroup = !!resolvedGroupId;
   // Get user role for toolbar visibility
   const userRole = (groupDetails?.userRole || groupData?.userRole) as "admin" | "leader" | "member" | undefined;
@@ -973,6 +975,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
             onClose={handleOverlayClose}
             isOwnMessage={selectedMessageSenderId === currentUserId}
             isUserLeader={isUserLeader}
+            isCommunityAdmin={isCommunityAdmin}
           />
         )}
 
