@@ -19,6 +19,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import Constants from "expo-constants";
+import * as Application from "expo-application";
 import * as Updates from "expo-updates";
 import { logCollector } from "@utils/logCollector";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
@@ -268,6 +269,18 @@ ${logs || "No logs captured yet. Try reproducing the issue first."}`;
           )}
         </View>
       </TouchableOpacity>
+
+      {/* Native app version (from Info.plist / build.gradle — doesn't change with OTA) */}
+      <View style={[styles.infoRow, { borderBottomColor: colors.surfaceSecondary }]}>
+        <View style={styles.infoLabel}>
+          <Ionicons name="hammer-outline" size={18} color={colors.textSecondary} />
+          <Text style={[styles.labelText, { color: colors.textSecondary }]}>Native Version</Text>
+        </View>
+        <Text style={[styles.infoValue, { color: colors.text }]}>
+          {Application.nativeApplicationVersion || "N/A"}
+          {Application.nativeBuildVersion ? ` (${Application.nativeBuildVersion})` : ""}
+        </Text>
+      </View>
 
       {/* Environment indicator */}
       <View style={[styles.infoRow, { borderBottomColor: colors.surfaceSecondary }]}>
