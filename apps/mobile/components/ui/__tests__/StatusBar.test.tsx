@@ -47,6 +47,17 @@ describe('StatusBar', () => {
     expect(queryByText('Downloading update...')).toBeNull();
   });
 
+  it('does not show error banner during connecting state (cold start - no false alarm)', () => {
+    mockConnectionStatus = {
+      status: 'connecting',
+      isNetworkAvailable: true,
+      isInternetReachable: true,
+    };
+    const { queryByText } = render(<StatusBar />);
+    // Connecting state should not show "No internet connection" - getActiveConfig returns null
+    expect(queryByText('No internet connection')).toBeNull();
+  });
+
   it('shows disconnected state', () => {
     mockConnectionStatus = {
       status: 'disconnected',

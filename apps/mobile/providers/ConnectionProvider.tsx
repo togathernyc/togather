@@ -1,3 +1,8 @@
+/** Grace period before showing red banner on cold start (NetInfo + WebSocket init) */
+const COLD_START_GRACE_MS = 6000;
+/** Debounce before showing disconnected when connection drops mid-session */
+const DISCONNECT_DEBOUNCE_MS = 2000;
+
 /**
  * ConnectionProvider - Network and WebSocket connection state
  *
@@ -5,10 +10,15 @@
  * Convex WebSocket connection state to provide unified connection status.
  *
  * State machine:
+ *   connecting -> connected (when connection established within grace period)
+ *   connecting -> disconnected (after COLD_START_GRACE_MS if still not connected)
  *   connected -> disconnected (after 2s debounce)
  *   connected -> slow (when on 2G/3G cellular)
  *   disconnected -> reconnected (when connection restores)
  *   reconnected -> connected|slow (after 3s auto-dismiss)
+ *
+ * Cold start: Uses longer grace period to avoid false "No internet" during
+ * NetInfo/WebSocket initialization. Mid-session disconnects use 2s debounce.
  *
  * In __DEV__ mode, exposes simulateOffline() for testing.
  */
@@ -24,6 +34,7 @@ import NetInfo from '@react-native-community/netinfo';
 import { useConvexConnectionState } from '@services/api/convex';
 
 type ConnectionStatus =
+  | 'connecting'  // Cold start: invisible, no banner until grace period expires
   | 'connected'
   | 'disconnected'
   | 'slow'
@@ -62,7 +73,7 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({
   const [isInternetReachable, setIsInternetReachable] = useState(true);
   const [connectionType, setConnectionType] = useState<string>('unknown');
   const [cellularGeneration, setCellularGeneration] = useState<string | null>(null);
-  const [status, setStatus] = useState<ConnectionStatus>('connected');
+  const [status, setStatus] = useState<ConnectionStatus>('connecting');
 
   // DEV: simulated override
   const [devSimulatedOffline, setDevSimulatedOffline] = useState(false);
@@ -73,7 +84,11 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({
   const reconnectedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
   );
+  const startupGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
   const wasDisconnectedRef = useRef(false);
+  const hasEverConnectedRef = useRef(false);
 
   const isWebSocketConnected = convexState.isWebSocketConnected;
 
@@ -89,28 +104,52 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({
 
   useEffect(() => {
     if (!isConnected) {
-      // Connection lost - start debounce timer
-      if (disconnectTimerRef.current) {
-        clearTimeout(disconnectTimerRef.current);
-      }
-      disconnectTimerRef.current = setTimeout(() => {
-        setStatus('disconnected');
-        wasDisconnectedRef.current = true;
-      }, 2000);
-
       // Clear reconnected timer if running
       if (reconnectedTimerRef.current) {
         clearTimeout(reconnectedTimerRef.current);
         reconnectedTimerRef.current = null;
       }
+
+      if (status === 'connecting') {
+        // Cold start: use longer grace period before showing red banner
+        if (!startupGraceTimerRef.current) {
+          startupGraceTimerRef.current = setTimeout(() => {
+            setStatus('disconnected');
+            wasDisconnectedRef.current = true;
+            startupGraceTimerRef.current = null;
+          }, COLD_START_GRACE_MS);
+        }
+      } else {
+        // Mid-session disconnect: use 2s debounce
+        if (startupGraceTimerRef.current) {
+          clearTimeout(startupGraceTimerRef.current);
+          startupGraceTimerRef.current = null;
+        }
+        if (disconnectTimerRef.current) {
+          clearTimeout(disconnectTimerRef.current);
+        }
+        disconnectTimerRef.current = setTimeout(() => {
+          setStatus('disconnected');
+          wasDisconnectedRef.current = true;
+          disconnectTimerRef.current = null;
+        }, DISCONNECT_DEBOUNCE_MS);
+      }
     } else {
-      // Connection restored
+      // Connection established
       if (disconnectTimerRef.current) {
         clearTimeout(disconnectTimerRef.current);
         disconnectTimerRef.current = null;
       }
+      if (startupGraceTimerRef.current) {
+        clearTimeout(startupGraceTimerRef.current);
+        startupGraceTimerRef.current = null;
+      }
 
-      if (wasDisconnectedRef.current) {
+      if (status === 'connecting') {
+        // Cold start succeeded within grace period - connect silently, no banner
+        setStatus(isSlowConnection ? 'slow' : 'connected');
+        hasEverConnectedRef.current = true;
+      } else if (wasDisconnectedRef.current) {
         // Was disconnected - show reconnected
         setStatus('reconnected');
         wasDisconnectedRef.current = false;
@@ -120,19 +159,33 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({
           setStatus(isSlowConnection ? 'slow' : 'connected');
           reconnectedTimerRef.current = null;
         }, 3000);
+      } else if (status === 'reconnected') {
+        // Already showing reconnected - effect re-ran due to status in deps; don't overwrite
+        // The reconnected timer will transition to connected/slow
       } else if (isSlowConnection) {
         setStatus('slow');
       } else {
         setStatus('connected');
       }
+      hasEverConnectedRef.current = true;
     }
 
     return () => {
       if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
+      if (startupGraceTimerRef.current)
+        clearTimeout(startupGraceTimerRef.current);
+      // Don't clear reconnectedTimerRef here - effect re-runs when status changes to
+      // 'reconnected', and we need that timer to fire. It's cleared when going offline.
+    };
+  }, [isConnected, isSlowConnection, status]);
+
+  // Clear reconnected timer on unmount
+  useEffect(() => {
+    return () => {
       if (reconnectedTimerRef.current)
         clearTimeout(reconnectedTimerRef.current);
     };
-  }, [isConnected, isSlowConnection]);
+  }, []);
 
   // Subscribe to NetInfo
   useEffect(() => {
