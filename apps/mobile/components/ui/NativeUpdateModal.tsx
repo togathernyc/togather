@@ -12,6 +12,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import * as Updates from 'expo-updates';
 import Constants from 'expo-constants';
+import * as Application from 'expo-application';
 import { DEFAULT_PRIMARY_COLOR } from '@utils/styles';
 import { DOMAIN_CONFIG } from '@togather/shared';
 import { useTheme } from '@hooks/useTheme';
@@ -88,7 +89,11 @@ export function NativeUpdateModal() {
   const [isChecking, setIsChecking] = useState(true);
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
 
-  const currentVersion = Constants.expoConfig?.version || '1.0.0';
+  // Use nativeApplicationVersion (from Info.plist / build.gradle) instead of
+  // Constants.expoConfig.version — the latter changes with OTA updates, so all
+  // users on the same runtimeVersion would report the latest OTA version and
+  // never see the force-update modal.
+  const currentVersion = Application.nativeApplicationVersion || Constants.expoConfig?.version || '1.0.0';
   const isAndroid = Platform.OS === 'android';
   const { colors, isDark } = useTheme();
 
