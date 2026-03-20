@@ -22,6 +22,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useQuery, api } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 import { parseStreamChannelId } from "@togather/shared";
 import type { Id } from "@services/api/convex";
 
@@ -33,6 +34,7 @@ export default function LegacyChatIdRoute() {
   const router = useRouter();
   const { token } = useAuth();
   const { primaryColor } = useCommunityTheme();
+  const { colors } = useTheme();
   const [showError, setShowError] = useState(false);
 
   // Determine if chat_id is a Convex channel ID vs Stream channel ID or group ID
@@ -146,16 +148,16 @@ export default function LegacyChatIdRoute() {
   // Show error state when chat is not found
   if (showError) {
     return (
-      <View style={styles.container}>
-        <Text style={styles.errorTitle}>Chat Not Found</Text>
-        <Text style={styles.errorText}>
+      <View style={[styles.container, { backgroundColor: colors.surface }]}>
+        <Text style={[styles.errorTitle, { color: colors.text }]}>Chat Not Found</Text>
+        <Text style={[styles.errorText, { color: colors.textSecondary }]}>
           This chat may have been deleted or you no longer have access to it.
         </Text>
         <Pressable
           style={[styles.button, { backgroundColor: primaryColor }]}
           onPress={handleGoToInbox}
         >
-          <Text style={styles.buttonText}>Go to Inbox</Text>
+          <Text style={[styles.buttonText, { color: '#ffffff' }]}>Go to Inbox</Text>
         </Pressable>
       </View>
     );
@@ -163,9 +165,9 @@ export default function LegacyChatIdRoute() {
 
   // Show loading state while resolving
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.surface }]}>
       <ActivityIndicator size="large" color={primaryColor} />
-      <Text style={styles.loadingText}>Loading chat...</Text>
+      <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading chat...</Text>
     </View>
   );
 }
@@ -175,23 +177,19 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#fff",
     paddingHorizontal: 24,
   },
   loadingText: {
     marginTop: 16,
     fontSize: 16,
-    color: "#666",
   },
   errorTitle: {
     fontSize: 20,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 8,
   },
   errorText: {
     fontSize: 16,
-    color: "#666",
     textAlign: "center",
     marginBottom: 24,
   },
@@ -201,7 +199,6 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   buttonText: {
-    color: "#fff",
     fontSize: 16,
     fontWeight: "600",
   },

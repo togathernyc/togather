@@ -17,6 +17,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Avatar } from '@components/ui';
+import { useTheme } from '@hooks/useTheme';
 import { useReactionDetails, type ReactorUser } from '@features/chat/hooks/useReactionDetails';
 import type { Id } from '@services/api/convex';
 
@@ -33,6 +34,7 @@ export function ReactionDetailsModal({
   messageId,
   onClose,
 }: ReactionDetailsModalProps) {
+  const { colors } = useTheme();
   const { users, isLoading } = useReactionDetails(messageId, emoji);
 
   const renderUserItem = ({ item }: { item: ReactorUser }) => (
@@ -42,7 +44,7 @@ export function ReactionDetailsModal({
         imageUrl={item.profilePhoto}
         size={40}
       />
-      <Text style={styles.userName} numberOfLines={1}>
+      <Text style={[styles.userName, { color: colors.text }]} numberOfLines={1}>
         {item.displayName}
       </Text>
     </View>
@@ -52,7 +54,7 @@ export function ReactionDetailsModal({
     if (isLoading) {
       return (
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#1976D2" />
+          <ActivityIndicator size="large" color={colors.link} />
         </View>
       );
     }
@@ -60,7 +62,7 @@ export function ReactionDetailsModal({
     if (users.length === 0) {
       return (
         <View style={styles.emptyContainer}>
-          <Text style={styles.emptyText}>No reactions found</Text>
+          <Text style={[styles.emptyText, { color: colors.textTertiary }]}>No reactions found</Text>
         </View>
       );
     }
@@ -83,21 +85,21 @@ export function ReactionDetailsModal({
       animationType="fade"
       onRequestClose={onClose}
     >
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable style={styles.modalContainer} onPress={(e) => e.stopPropagation()}>
+      <Pressable style={[styles.backdrop, { backgroundColor: colors.overlay }]} onPress={onClose}>
+        <Pressable style={[styles.modalContainer, { backgroundColor: colors.modalBackground }]} onPress={(e) => e.stopPropagation()}>
           {/* Header with emoji */}
           <View style={styles.header}>
             <Text style={styles.headerEmoji}>{emoji}</Text>
             {/* Only show count when loaded to avoid "0 reactions" flash during loading */}
             {!isLoading && (
-              <Text style={styles.headerText}>
+              <Text style={[styles.headerText, { color: colors.text }]}>
                 {users.length} {users.length === 1 ? 'reaction' : 'reactions'}
               </Text>
             )}
           </View>
 
           {/* Divider */}
-          <View style={styles.divider} />
+          <View style={[styles.divider, { backgroundColor: colors.border }]} />
 
           {/* User list or loading state */}
           {renderContent()}
@@ -110,12 +112,10 @@ export function ReactionDetailsModal({
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
   },
   modalContainer: {
-    backgroundColor: '#FFFFFF',
     borderRadius: 16,
     width: '80%',
     maxWidth: 320,
@@ -136,11 +136,9 @@ const styles = StyleSheet.create({
   headerText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#333',
   },
   divider: {
     height: 1,
-    backgroundColor: '#E0E0E0',
   },
   loadingContainer: {
     paddingVertical: 40,
@@ -154,7 +152,6 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 14,
-    color: '#999',
   },
   listContent: {
     paddingVertical: 8,
@@ -169,7 +166,6 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 15,
     fontWeight: '500',
-    color: '#333',
     marginLeft: 12,
   },
 });

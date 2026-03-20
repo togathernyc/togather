@@ -7,8 +7,9 @@ import {
   Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { COLORS, DEFAULT_GROUP_COLOR, getGroupTypeColor } from '../constants';
+import { getGroupTypeColor } from '../constants';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
+import { useTheme } from '@hooks/useTheme';
 
 // Meeting type options (groups schema: 1=In-Person, 2=Online)
 const MEETING_TYPE_OPTIONS = [
@@ -52,6 +53,7 @@ export function FilterModal({
   isLoadingGroupTypes = false,
 }: FilterModalProps) {
   const { primaryColor } = useCommunityTheme();
+  const { colors } = useTheme();
 
   // Build group type options from API data
   const groupTypeOptions = useMemo(() => {
@@ -89,21 +91,24 @@ export function FilterModal({
 
   return (
     <View style={styles.overlay}>
-      <TouchableOpacity style={styles.backdrop} onPress={onClose} activeOpacity={1} />
-      <View style={styles.card}>
+      <TouchableOpacity style={[styles.backdrop, { backgroundColor: colors.overlay }]} onPress={onClose} activeOpacity={1} />
+      <View style={[styles.card, { backgroundColor: colors.surface }, Platform.select({
+        web: {},
+        default: { shadowColor: colors.shadow },
+      })]}>
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.title}>Filters</Text>
-          <TouchableOpacity onPress={onClose} style={styles.closeButton} activeOpacity={0.8}>
-            <Ionicons name="close" size={20} color="#333" />
+          <Text style={[styles.title, { color: colors.text }]}>Filters</Text>
+          <TouchableOpacity onPress={onClose} style={[styles.closeButton, { backgroundColor: colors.surfaceSecondary }]} activeOpacity={0.8}>
+            <Ionicons name="close" size={20} color={colors.text} />
           </TouchableOpacity>
         </View>
 
         {/* Group Type Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Group Type</Text>
+          <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Group Type</Text>
           {isLoadingGroupTypes ? (
-            <Text style={styles.loadingText}>Loading group types...</Text>
+            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading group types...</Text>
           ) : (
             <View style={styles.optionsGrid}>
               {groupTypeOptions.map((option) => {
@@ -115,6 +120,7 @@ export function FilterModal({
                     key={option.label}
                     style={[
                       styles.optionChip,
+                      { backgroundColor: colors.surface, borderColor: colors.border },
                       isSelected && { backgroundColor: typeColor, borderColor: typeColor },
                     ]}
                     onPress={() => handleGroupTypeSelect(option.value)}
@@ -123,7 +129,8 @@ export function FilterModal({
                     <Text
                       style={[
                         styles.optionChipText,
-                        isSelected && styles.optionChipTextSelected,
+                        { color: colors.text },
+                        isSelected && { color: '#ffffff' },
                       ]}
                     >
                       {option.label}
@@ -137,7 +144,7 @@ export function FilterModal({
 
         {/* Meeting Type Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Meeting Type</Text>
+          <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Meeting Type</Text>
           <View style={styles.optionsGrid}>
             {MEETING_TYPE_OPTIONS.map((option) => {
               const isSelected = filters.meetingType === option.value;
@@ -147,6 +154,7 @@ export function FilterModal({
                   key={option.label}
                   style={[
                     styles.optionChip,
+                    { backgroundColor: colors.surface, borderColor: colors.border },
                     isSelected && { backgroundColor: primaryColor, borderColor: primaryColor },
                   ]}
                   onPress={() => handleMeetingTypeSelect(option.value)}
@@ -156,7 +164,7 @@ export function FilterModal({
                     <Ionicons
                       name="people-outline"
                       size={16}
-                      color={isSelected ? '#fff' : COLORS.textMuted}
+                      color={isSelected ? '#ffffff' : colors.textSecondary}
                       style={styles.optionIcon}
                     />
                   )}
@@ -164,14 +172,15 @@ export function FilterModal({
                     <Ionicons
                       name="videocam-outline"
                       size={16}
-                      color={isSelected ? '#fff' : COLORS.textMuted}
+                      color={isSelected ? '#ffffff' : colors.textSecondary}
                       style={styles.optionIcon}
                     />
                   )}
                   <Text
                     style={[
                       styles.optionChipText,
-                      isSelected && styles.optionChipTextSelected,
+                      { color: colors.text },
+                      isSelected && { color: '#ffffff' },
                     ]}
                   >
                     {option.label}
@@ -208,10 +217,8 @@ const styles = StyleSheet.create({
   },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0.3)',
   },
   card: {
-    backgroundColor: '#fff',
     borderRadius: 16,
     padding: 16,
     ...Platform.select({
@@ -219,7 +226,6 @@ const styles = StyleSheet.create({
         boxShadow: '0px 4px 20px rgba(0, 0, 0, 0.15)',
       },
       default: {
-        shadowColor: '#000',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.15,
         shadowRadius: 10,
@@ -236,13 +242,11 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 18,
     fontWeight: '600',
-    color: COLORS.text,
   },
   closeButton: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#f0f0f0',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -252,14 +256,12 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 14,
     fontWeight: '600',
-    color: COLORS.textMuted,
     marginBottom: 10,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
   loadingText: {
     fontSize: 14,
-    color: COLORS.textMuted,
     fontStyle: 'italic',
   },
   optionsGrid: {
@@ -274,16 +276,10 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 20,
     borderWidth: 1.5,
-    borderColor: COLORS.border,
-    backgroundColor: '#fff',
   },
   optionChipText: {
     fontSize: 14,
     fontWeight: '500',
-    color: COLORS.text,
-  },
-  optionChipTextSelected: {
-    color: '#fff',
   },
   optionIcon: {
     marginRight: 6,

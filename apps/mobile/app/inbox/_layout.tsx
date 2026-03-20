@@ -4,6 +4,7 @@ import { Stack, usePathname } from "expo-router";
 import { useIsDesktopWeb } from "../../hooks/useIsDesktopWeb";
 import { ChatInboxScreen } from "@features/chat/components/ChatInboxScreen";
 import { DesktopSideNav } from "@components/DesktopSideNav";
+import { useTheme } from "@hooks/useTheme";
 
 /**
  * Layout for inbox routes
@@ -20,6 +21,7 @@ import { DesktopSideNav } from "@components/DesktopSideNav";
 export default function InboxLayout() {
   const isDesktopWeb = useIsDesktopWeb();
   const pathname = usePathname();
+  const { colors } = useTheme();
 
   // Extract activeGroupId and activeChannelSlug from the current path
   // Pattern: /inbox/[groupId]/[channelSlug]
@@ -46,7 +48,7 @@ export default function InboxLayout() {
         </View>
 
         {/* Divider */}
-        <View style={desktopStyles.divider} />
+        <View style={[desktopStyles.divider, { backgroundColor: colors.border }]} />
 
         {/* Main panel: active chat rendered by Stack */}
         <View style={desktopStyles.mainPanel}>
@@ -93,7 +95,6 @@ const desktopStyles = StyleSheet.create({
   },
   divider: {
     width: 1,
-    backgroundColor: "#E5E5E5",
   },
   mainPanel: {
     flex: 1,
