@@ -547,10 +547,41 @@ export const joinViaInviteLink = mutation({
               "Your previous request was declined. Please wait 24 hours before requesting again.",
             );
           }
+
+          // Cooldown passed - update the existing declined request to pending
+          await ctx.db.patch(existingRequest._id, {
+            status: "pending",
+            requestedAt: Date.now(),
+            reviewedAt: undefined,
+            reviewedById: undefined,
+          });
+
+          // Schedule notification to group leaders
+          await ctx.scheduler.runAfter(
+            0,
+            internal.functions.notifications.senders.notifyChannelJoinRequest,
+            {
+              channelId: channel._id,
+              groupId: channel.groupId,
+              requesterId: userId,
+              channelName: channel.name,
+              channelSlug: channel.slug || "",
+            },
+          );
+
+          return {
+            requested: true,
+            channelId: channel._id,
+            groupId: channel.groupId,
+            channelSlug: channel.slug,
+          };
         }
+
+        // existingRequest has status "approved" - user was previously approved
+        // but left or was removed. Allow them to create a new request.
       }
 
-      // Create join request
+      // Create join request (only for users without an existing pending/declined request)
       await ctx.db.insert("channelJoinRequests", {
         channelId: channel._id,
         groupId: channel.groupId,
