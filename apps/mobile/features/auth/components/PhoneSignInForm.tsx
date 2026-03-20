@@ -142,7 +142,7 @@ export function PhoneSignInForm({
               <Ionicons
                 name={termsAccepted ? "checkbox" : "square-outline"}
                 size={22}
-                color={termsAccepted ? colors.text : colors.border}
+                color={termsAccepted ? colors.text : colors.textTertiary}
               />
               <Text style={[styles.termsText, { color: colors.textSecondary }]}>
                 I agree to the{" "}
@@ -287,7 +287,7 @@ export function PhoneSignInForm({
             <Ionicons
               name={termsAccepted ? "checkbox" : "square-outline"}
               size={22}
-              color={termsAccepted ? colors.text : colors.border}
+              color={termsAccepted ? colors.text : colors.textTertiary}
             />
             <Text style={[styles.termsText, { color: colors.textSecondary }]}>
               I agree to the{" "}

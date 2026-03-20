@@ -28,5 +28,5 @@ export function getInitialRouteTarget({
     return "/(tabs)/profile";
   }
 
-  return "/(auth)/landing";
+  return "/(auth)/select-community";
 }
