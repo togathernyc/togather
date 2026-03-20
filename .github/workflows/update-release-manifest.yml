@@ -119,7 +119,7 @@ jobs:
             jq . "$LOCAL_FILE"
             echo ""
 
-            # Set variant prefix for staging environment (used in APK filenames)
+            # Compute variant prefix for Android filenames (staging uses "togather-staging-X.Y.Z.apk")
             VARIANT=$( [ "$ENVIRONMENT" = "staging" ] && echo "staging-" || echo "" )
 
             # For Android, copy togather-latest.apk to the new versioned filename
@@ -138,19 +138,20 @@ jobs:
 
             # Patch the manifest — update version, releaseDate, availableAfter, and downloadUrl
             RELEASE_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+            APK_NAME="togather-${VARIANT}${VERSION}.apk"
 
             if [ -n "$AVAILABLE_AFTER" ]; then
               jq --arg v "$VERSION" \
                  --arg rd "$RELEASE_DATE" \
                  --arg aa "$AVAILABLE_AFTER" \
-                 --arg variant "$VARIANT" \
-                 '.version = $v | .releaseDate = $rd | .availableAfter = $aa | if .downloadUrl then .downloadUrl = (.downloadUrl | sub("/togather-[^/]+$"; "/togather-" + $variant + $v + ".apk")) else . end' \
+                 --arg apk "$APK_NAME" \
+                 '.version = $v | .releaseDate = $rd | .availableAfter = $aa | if .downloadUrl then .downloadUrl = (.downloadUrl | sub("/togather-[^/]+$"; "/" + $apk)) else . end' \
                  "$LOCAL_FILE" > "$UPDATED_FILE"
             else
               jq --arg v "$VERSION" \
                  --arg rd "$RELEASE_DATE" \
-                 --arg variant "$VARIANT" \
-                 '.version = $v | .releaseDate = $rd | del(.availableAfter) | if .downloadUrl then .downloadUrl = (.downloadUrl | sub("/togather-[^/]+$"; "/togather-" + $variant + $v + ".apk")) else . end' \
+                 --arg apk "$APK_NAME" \
+                 '.version = $v | .releaseDate = $rd | del(.availableAfter) | if .downloadUrl then .downloadUrl = (.downloadUrl | sub("/togather-[^/]+$"; "/" + $apk)) else . end' \
                  "$LOCAL_FILE" > "$UPDATED_FILE"
             fi
 
