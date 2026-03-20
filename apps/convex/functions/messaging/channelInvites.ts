@@ -42,10 +42,17 @@ export const getByShortId = query({
     if (!group) return null;
 
     // Get community info
-    const community = group.communityId ? await ctx.db.get(group.communityId) : null;
+    const community = group.communityId
+      ? await ctx.db.get(group.communityId)
+      : null;
 
     // Check user status if authenticated
-    let userStatus: "not_authenticated" | "not_group_member" | "already_member" | "pending_request" | "eligible" = "not_authenticated";
+    let userStatus:
+      | "not_authenticated"
+      | "not_group_member"
+      | "already_member"
+      | "pending_request"
+      | "eligible" = "not_authenticated";
     let userId: Id<"users"> | null = null;
 
     if (args.token) {
@@ -56,7 +63,7 @@ export const getByShortId = query({
         const groupMembership = await ctx.db
           .query("groupMembers")
           .withIndex("by_group_user", (q) =>
-            q.eq("groupId", channel.groupId).eq("userId", userId!)
+            q.eq("groupId", channel.groupId).eq("userId", userId!),
           )
           .filter((q) => q.eq(q.field("leftAt"), undefined))
           .first();
@@ -68,7 +75,7 @@ export const getByShortId = query({
           const channelMembership = await ctx.db
             .query("chatChannelMembers")
             .withIndex("by_channel_user", (q) =>
-              q.eq("channelId", channel._id).eq("userId", userId!)
+              q.eq("channelId", channel._id).eq("userId", userId!),
             )
             .filter((q) => q.eq(q.field("leftAt"), undefined))
             .first();
@@ -80,7 +87,7 @@ export const getByShortId = query({
             const pendingRequest = await ctx.db
               .query("channelJoinRequests")
               .withIndex("by_channel_user", (q) =>
-                q.eq("channelId", channel._id).eq("userId", userId!)
+                q.eq("channelId", channel._id).eq("userId", userId!),
               )
               .filter((q) => q.eq(q.field("status"), "pending"))
               .first();
@@ -128,7 +135,7 @@ export const getInviteInfo = query({
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId)
+        q.eq("groupId", channel.groupId).eq("userId", userId),
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -162,7 +169,7 @@ export const getPendingRequests = query({
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId)
+        q.eq("groupId", channel.groupId).eq("userId", userId),
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -174,7 +181,7 @@ export const getPendingRequests = query({
     const requests = await ctx.db
       .query("channelJoinRequests")
       .withIndex("by_channel_status", (q) =>
-        q.eq("channelId", args.channelId).eq("status", "pending")
+        q.eq("channelId", args.channelId).eq("status", "pending"),
       )
       .collect();
 
@@ -185,11 +192,13 @@ export const getPendingRequests = query({
         return {
           _id: req._id,
           userId: req.userId,
-          displayName: user ? getDisplayName(user.firstName, user.lastName) : "Unknown",
+          displayName: user
+            ? getDisplayName(user.firstName, user.lastName)
+            : "Unknown",
           profilePhoto: user ? getMediaUrl(user.profilePhoto) : undefined,
           requestedAt: req.requestedAt,
         };
-      })
+      }),
     );
 
     return enriched;
@@ -211,7 +220,7 @@ export const getPendingRequestCountByGroup = query({
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", args.groupId).eq("userId", userId)
+        q.eq("groupId", args.groupId).eq("userId", userId),
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -223,7 +232,7 @@ export const getPendingRequestCountByGroup = query({
     const requests = await ctx.db
       .query("channelJoinRequests")
       .withIndex("by_group_status", (q) =>
-        q.eq("groupId", args.groupId).eq("status", "pending")
+        q.eq("groupId", args.groupId).eq("status", "pending"),
       )
       .collect();
 
@@ -258,14 +267,16 @@ export const enableInviteLink = mutation({
 
     // Only custom channels
     if (channel.channelType !== "custom") {
-      throw new ConvexError("Invite links are only available for custom channels.");
+      throw new ConvexError(
+        "Invite links are only available for custom channels.",
+      );
     }
 
     // Verify user is a group leader
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId)
+        q.eq("groupId", channel.groupId).eq("userId", userId),
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -301,7 +312,7 @@ export const disableInviteLink = mutation({
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId)
+        q.eq("groupId", channel.groupId).eq("userId", userId),
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -334,7 +345,7 @@ export const regenerateInviteLink = mutation({
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId)
+        q.eq("groupId", channel.groupId).eq("userId", userId),
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -375,7 +386,7 @@ export const updateJoinMode = mutation({
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId)
+        q.eq("groupId", channel.groupId).eq("userId", userId),
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -423,25 +434,27 @@ export const joinViaInviteLink = mutation({
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId)
+        q.eq("groupId", channel.groupId).eq("userId", userId),
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
 
     if (!groupMembership) {
-      throw new ConvexError("You must be a member of the group to join this channel.");
+      throw new ConvexError(
+        "You must be a member of the group to join this channel.",
+      );
     }
 
-    // Check if already a channel member
+    // Check if user already has a channel membership record (active or former)
     const existingMembership = await ctx.db
       .query("chatChannelMembers")
       .withIndex("by_channel_user", (q) =>
-        q.eq("channelId", channel._id).eq("userId", userId)
+        q.eq("channelId", channel._id).eq("userId", userId),
       )
-      .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
 
-    if (existingMembership) {
+    if (existingMembership && !existingMembership.leftAt) {
+      // Already an active member
       return {
         joined: true,
         channelId: channel._id,
@@ -453,19 +466,33 @@ export const joinViaInviteLink = mutation({
     const joinMode = channel.joinMode || "open";
 
     if (joinMode === "open") {
-      // Directly add user to channel
       const user = await ctx.db.get(userId);
       const now = Date.now();
 
-      await ctx.db.insert("chatChannelMembers", {
-        channelId: channel._id,
-        userId,
-        role: "member",
-        joinedAt: now,
-        isMuted: false,
-        displayName: user ? getDisplayName(user.firstName, user.lastName) : undefined,
-        profilePhoto: user ? getMediaUrl(user.profilePhoto) : undefined,
-      });
+      if (existingMembership && existingMembership.leftAt) {
+        // Reactivate former member
+        await ctx.db.patch(existingMembership._id, {
+          leftAt: undefined,
+          joinedAt: now,
+          displayName: user
+            ? getDisplayName(user.firstName, user.lastName)
+            : undefined,
+          profilePhoto: user ? getMediaUrl(user.profilePhoto) : undefined,
+        });
+      } else {
+        // Add new user to channel
+        await ctx.db.insert("chatChannelMembers", {
+          channelId: channel._id,
+          userId,
+          role: "member",
+          joinedAt: now,
+          isMuted: false,
+          displayName: user
+            ? getDisplayName(user.firstName, user.lastName)
+            : undefined,
+          profilePhoto: user ? getMediaUrl(user.profilePhoto) : undefined,
+        });
+      }
 
       // Update member count
       await ctx.db.patch(channel._id, {
@@ -484,13 +511,18 @@ export const joinViaInviteLink = mutation({
       const existingRequest = await ctx.db
         .query("channelJoinRequests")
         .withIndex("by_channel_user", (q) =>
-          q.eq("channelId", channel._id).eq("userId", userId)
+          q.eq("channelId", channel._id).eq("userId", userId),
         )
         .filter((q) => q.eq(q.field("status"), "pending"))
         .first();
 
       if (existingRequest) {
-        return { requested: true, channelId: channel._id, groupId: channel.groupId, channelSlug: channel.slug };
+        return {
+          requested: true,
+          channelId: channel._id,
+          groupId: channel.groupId,
+          channelSlug: channel.slug,
+        };
       }
 
       // Create join request
@@ -512,10 +544,15 @@ export const joinViaInviteLink = mutation({
           requesterId: userId,
           channelName: channel.name,
           channelSlug: channel.slug || "",
-        }
+        },
       );
 
-      return { requested: true, channelId: channel._id, groupId: channel.groupId, channelSlug: channel.slug };
+      return {
+        requested: true,
+        channelId: channel._id,
+        groupId: channel.groupId,
+        channelSlug: channel.slug,
+      };
     }
   },
 });
@@ -542,7 +579,7 @@ export const approveJoinRequest = mutation({
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId)
+        q.eq("groupId", channel.groupId).eq("userId", userId),
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -563,7 +600,7 @@ export const approveJoinRequest = mutation({
     const existingMembership = await ctx.db
       .query("chatChannelMembers")
       .withIndex("by_channel_user", (q) =>
-        q.eq("channelId", channel._id).eq("userId", request.userId)
+        q.eq("channelId", channel._id).eq("userId", request.userId),
       )
       .first();
 
@@ -574,8 +611,12 @@ export const approveJoinRequest = mutation({
         await ctx.db.patch(existingMembership._id, {
           leftAt: undefined,
           joinedAt: now,
-          displayName: requestUser ? getDisplayName(requestUser.firstName, requestUser.lastName) : undefined,
-          profilePhoto: requestUser ? getMediaUrl(requestUser.profilePhoto) : undefined,
+          displayName: requestUser
+            ? getDisplayName(requestUser.firstName, requestUser.lastName)
+            : undefined,
+          profilePhoto: requestUser
+            ? getMediaUrl(requestUser.profilePhoto)
+            : undefined,
         });
 
         // Update member count
@@ -594,8 +635,12 @@ export const approveJoinRequest = mutation({
         role: "member",
         joinedAt: now,
         isMuted: false,
-        displayName: requestUser ? getDisplayName(requestUser.firstName, requestUser.lastName) : undefined,
-        profilePhoto: requestUser ? getMediaUrl(requestUser.profilePhoto) : undefined,
+        displayName: requestUser
+          ? getDisplayName(requestUser.firstName, requestUser.lastName)
+          : undefined,
+        profilePhoto: requestUser
+          ? getMediaUrl(requestUser.profilePhoto)
+          : undefined,
       });
 
       // Update member count
@@ -615,7 +660,7 @@ export const approveJoinRequest = mutation({
         groupId: channel.groupId,
         channelName: channel.name,
         channelSlug: channel.slug || "",
-      }
+      },
     );
   },
 });
@@ -641,7 +686,7 @@ export const declineJoinRequest = mutation({
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId)
+        q.eq("groupId", channel.groupId).eq("userId", userId),
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -665,7 +710,7 @@ export const declineJoinRequest = mutation({
         channelId: channel._id,
         groupId: channel.groupId,
         channelName: channel.name,
-      }
+      },
     );
   },
 });
@@ -687,7 +732,7 @@ export const bulkApproveRequests = mutation({
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId)
+        q.eq("groupId", channel.groupId).eq("userId", userId),
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -699,7 +744,7 @@ export const bulkApproveRequests = mutation({
     const requests = await ctx.db
       .query("channelJoinRequests")
       .withIndex("by_channel_status", (q) =>
-        q.eq("channelId", args.channelId).eq("status", "pending")
+        q.eq("channelId", args.channelId).eq("status", "pending"),
       )
       .collect();
 
@@ -718,7 +763,7 @@ export const bulkApproveRequests = mutation({
       const existingMembership = await ctx.db
         .query("chatChannelMembers")
         .withIndex("by_channel_user", (q) =>
-          q.eq("channelId", channel._id).eq("userId", request.userId)
+          q.eq("channelId", channel._id).eq("userId", request.userId),
         )
         .first();
 
@@ -729,8 +774,12 @@ export const bulkApproveRequests = mutation({
           await ctx.db.patch(existingMembership._id, {
             leftAt: undefined,
             joinedAt: now,
-            displayName: requestUser ? getDisplayName(requestUser.firstName, requestUser.lastName) : undefined,
-            profilePhoto: requestUser ? getMediaUrl(requestUser.profilePhoto) : undefined,
+            displayName: requestUser
+              ? getDisplayName(requestUser.firstName, requestUser.lastName)
+              : undefined,
+            profilePhoto: requestUser
+              ? getMediaUrl(requestUser.profilePhoto)
+              : undefined,
           });
           addedCount++;
         }
@@ -744,8 +793,12 @@ export const bulkApproveRequests = mutation({
           role: "member",
           joinedAt: now,
           isMuted: false,
-          displayName: requestUser ? getDisplayName(requestUser.firstName, requestUser.lastName) : undefined,
-          profilePhoto: requestUser ? getMediaUrl(requestUser.profilePhoto) : undefined,
+          displayName: requestUser
+            ? getDisplayName(requestUser.firstName, requestUser.lastName)
+            : undefined,
+          profilePhoto: requestUser
+            ? getMediaUrl(requestUser.profilePhoto)
+            : undefined,
         });
         addedCount++;
       }
@@ -753,14 +806,15 @@ export const bulkApproveRequests = mutation({
       // Notify each requester
       await ctx.scheduler.runAfter(
         0,
-        internal.functions.notifications.senders.notifyChannelJoinRequestApproved,
+        internal.functions.notifications.senders
+          .notifyChannelJoinRequestApproved,
         {
           userId: request.userId,
           channelId: channel._id,
           groupId: channel.groupId,
           channelName: channel.name,
           channelSlug: channel.slug || "",
-        }
+        },
       );
     }
 
@@ -790,7 +844,7 @@ export const cancelJoinRequest = mutation({
     const request = await ctx.db
       .query("channelJoinRequests")
       .withIndex("by_channel_user", (q) =>
-        q.eq("channelId", args.channelId).eq("userId", userId)
+        q.eq("channelId", args.channelId).eq("userId", userId),
       )
       .filter((q) => q.eq(q.field("status"), "pending"))
       .first();
