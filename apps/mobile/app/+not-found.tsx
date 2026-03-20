@@ -8,9 +8,8 @@ import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 export default function NotFoundScreen() {
   const router = useRouter();
 
-  const handleGoHome = () => {
-    router.replace("/(tabs)/search");
-  };
+  const handleGoBack = () => router.back();
+  const handleGoToExplore = () => router.replace("/(tabs)/search");
 
   return (
     <SafeAreaView style={styles.container}>
@@ -20,9 +19,15 @@ export default function NotFoundScreen() {
         <Text style={styles.description}>
           The page you're looking for doesn't exist or may have been moved.
         </Text>
-        <TouchableOpacity style={styles.button} onPress={handleGoHome}>
-          <Text style={styles.buttonText}>Go to Explore</Text>
-        </TouchableOpacity>
+        <View style={styles.buttonRow}>
+          <TouchableOpacity style={styles.backButton} onPress={handleGoBack}>
+            <Ionicons name="arrow-back" size={20} color="#333" />
+            <Text style={styles.backButtonText}>Back</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.button} onPress={handleGoToExplore}>
+            <Text style={styles.buttonText}>Go to Explore</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     </SafeAreaView>
   );
@@ -52,8 +57,28 @@ const styles = StyleSheet.create({
     marginTop: 8,
     lineHeight: 22,
   },
-  button: {
+  buttonRow: {
+    flexDirection: "row",
+    gap: 12,
     marginTop: 24,
+    alignItems: "center",
+  },
+  backButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#ddd",
+  },
+  backButtonText: {
+    fontSize: 16,
+    fontWeight: "500",
+    color: "#333",
+  },
+  button: {
     paddingHorizontal: 24,
     paddingVertical: 12,
     backgroundColor: DEFAULT_PRIMARY_COLOR,

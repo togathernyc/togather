@@ -13,7 +13,7 @@ import {
   KeyboardAvoidingView,
   Linking,
 } from "react-native";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useQuery, useAction, api } from "@services/api/convex";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -51,6 +51,7 @@ const openExternalUrl = async (url: string) => {
 };
 
 export default function CommunityLandingPageClient() {
+  const router = useRouter();
   const { colors, isDark } = useTheme();
   const { slug } = useLocalSearchParams<{ slug: string }>();
   const insets = useSafeAreaInsets();
@@ -297,6 +298,13 @@ export default function CommunityLandingPageClient() {
         <Text style={[styles.errorText, { color: colors.textTertiary }]}>
           This community page doesn't exist or is no longer available.
         </Text>
+        <TouchableOpacity
+          style={[styles.backButton, { borderColor: colors.border }]}
+          onPress={() => router.back()}
+        >
+          <Ionicons name="arrow-back" size={20} color={colors.text} />
+          <Text style={[styles.backButtonText, { color: colors.text }]}>Back</Text>
+        </TouchableOpacity>
       </SafeAreaView>
     );
   }
@@ -771,6 +779,20 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 8,
     maxWidth: 300,
+  },
+  backButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginTop: 24,
+  },
+  backButtonText: {
+    fontSize: 16,
+    fontWeight: "500",
   },
 
   // Hero
