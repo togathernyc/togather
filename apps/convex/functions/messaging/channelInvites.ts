@@ -559,16 +559,33 @@ export const approveJoinRequest = mutation({
       reviewedById: userId,
     });
 
-    // Check if user is already a channel member (may have been added manually while request was pending)
+    // Check if user already has a channel membership record (active or former)
     const existingMembership = await ctx.db
       .query("chatChannelMembers")
       .withIndex("by_channel_user", (q) =>
         q.eq("channelId", channel._id).eq("userId", request.userId)
       )
-      .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
 
-    if (!existingMembership) {
+    if (existingMembership) {
+      if (existingMembership.leftAt) {
+        // Reactivate former member
+        const requestUser = await ctx.db.get(request.userId);
+        await ctx.db.patch(existingMembership._id, {
+          leftAt: undefined,
+          joinedAt: now,
+          displayName: requestUser ? getDisplayName(requestUser.firstName, requestUser.lastName) : undefined,
+          profilePhoto: requestUser ? getMediaUrl(requestUser.profilePhoto) : undefined,
+        });
+
+        // Update member count
+        await ctx.db.patch(channel._id, {
+          memberCount: channel.memberCount + 1,
+          updatedAt: now,
+        });
+      }
+      // If already an active member, skip (request is still marked approved)
+    } else {
       // Add user to channel
       const requestUser = await ctx.db.get(request.userId);
       await ctx.db.insert("chatChannelMembers", {
@@ -687,7 +704,7 @@ export const bulkApproveRequests = mutation({
       .collect();
 
     const now = Date.now();
-    let approvedCount = 0;
+    let addedCount = 0;
 
     for (const request of requests) {
       // Update request
@@ -697,16 +714,28 @@ export const bulkApproveRequests = mutation({
         reviewedById: userId,
       });
 
-      // Check if user is already a channel member (may have been added manually while request was pending)
+      // Check if user already has a channel membership record (active or former)
       const existingMembership = await ctx.db
         .query("chatChannelMembers")
         .withIndex("by_channel_user", (q) =>
           q.eq("channelId", channel._id).eq("userId", request.userId)
         )
-        .filter((q) => q.eq(q.field("leftAt"), undefined))
         .first();
 
-      if (!existingMembership) {
+      if (existingMembership) {
+        if (existingMembership.leftAt) {
+          // Reactivate former member
+          const requestUser = await ctx.db.get(request.userId);
+          await ctx.db.patch(existingMembership._id, {
+            leftAt: undefined,
+            joinedAt: now,
+            displayName: requestUser ? getDisplayName(requestUser.firstName, requestUser.lastName) : undefined,
+            profilePhoto: requestUser ? getMediaUrl(requestUser.profilePhoto) : undefined,
+          });
+          addedCount++;
+        }
+        // If already an active member, skip (request is still marked approved)
+      } else {
         // Add user to channel
         const requestUser = await ctx.db.get(request.userId);
         await ctx.db.insert("chatChannelMembers", {
@@ -718,8 +747,7 @@ export const bulkApproveRequests = mutation({
           displayName: requestUser ? getDisplayName(requestUser.firstName, requestUser.lastName) : undefined,
           profilePhoto: requestUser ? getMediaUrl(requestUser.profilePhoto) : undefined,
         });
-
-        approvedCount++;
+        addedCount++;
       }
 
       // Notify each requester
@@ -737,14 +765,14 @@ export const bulkApproveRequests = mutation({
     }
 
     // Update member count
-    if (approvedCount > 0) {
+    if (addedCount > 0) {
       await ctx.db.patch(channel._id, {
-        memberCount: channel.memberCount + approvedCount,
+        memberCount: channel.memberCount + addedCount,
         updatedAt: now,
       });
     }
 
-    return { approvedCount };
+    return { approvedCount: requests.length };
   },
 });
 
