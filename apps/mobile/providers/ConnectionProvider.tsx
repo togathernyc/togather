@@ -88,7 +88,6 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({
     null
   );
   const wasDisconnectedRef = useRef(false);
-  const hasEverConnectedRef = useRef(false);
 
   const isWebSocketConnected = convexState.isWebSocketConnected;
 
@@ -148,7 +147,6 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({
       if (status === 'connecting') {
         // Cold start succeeded within grace period - connect silently, no banner
         setStatus(isSlowConnection ? 'slow' : 'connected');
-        hasEverConnectedRef.current = true;
       } else if (wasDisconnectedRef.current) {
         // Was disconnected - show reconnected
         setStatus('reconnected');
@@ -167,7 +165,6 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({
       } else {
         setStatus('connected');
       }
-      hasEverConnectedRef.current = true;
     }
 
     return () => {
