@@ -52,7 +52,7 @@ export function WelcomeScreen() {
               style={[styles.button, { backgroundColor: colors.link }]}
               onPress={() => router.push("/inbox")}
             >
-              <Text style={[styles.buttonText, { color: colors.textInverse }]}>Get Started</Text>
+              <Text style={[styles.buttonText, { color: '#fff' }]}>Get Started</Text>
             </TouchableOpacity>
           </View>
         </ScrollView>
