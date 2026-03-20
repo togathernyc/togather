@@ -47,6 +47,31 @@ describe('StatusBar', () => {
     expect(queryByText('Downloading update...')).toBeNull();
   });
 
+  it('does not show error banner during connecting state (cold start - no false alarm)', () => {
+    mockConnectionStatus = {
+      status: 'connecting',
+      isNetworkAvailable: true,
+      isInternetReachable: true,
+    };
+    const { queryByText } = render(<StatusBar />);
+    // Connecting state should not show "No internet connection" - getActiveConfig returns null
+    expect(queryByText('No internet connection')).toBeNull();
+  });
+
+  it('does not show "No internet" banner during connecting state when isInternetReachable is false (cold start race condition)', () => {
+    // This tests the cold start race condition where NetInfo reports
+    // isInternetReachable: false before the reachability check completes
+    mockConnectionStatus = {
+      status: 'connecting',
+      isNetworkAvailable: true,
+      isInternetReachable: false,
+    };
+    const { queryByText } = render(<StatusBar />);
+    // During connecting state, no banner should show regardless of isInternetReachable
+    expect(queryByText('No internet connection')).toBeNull();
+    expect(queryByText('No internet')).toBeNull();
+  });
+
   it('shows disconnected state', () => {
     mockConnectionStatus = {
       status: 'disconnected',
