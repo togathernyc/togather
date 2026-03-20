@@ -269,7 +269,8 @@ jobs:
 
           aws s3 cp ./build-output/ios-manifest.json "s3://${R2_BUCKET_NAME}/releases/ios/production/manifest.json" \
             --endpoint-url "$R2_ENDPOINT" \
-            --content-type "application/json"
+            --content-type "application/json" \
+            --cache-control "no-cache, no-store, must-revalidate"
           echo "✓ Uploaded iOS production manifest.json"
 
       - name: Submit to Play Store
@@ -346,7 +347,8 @@ jobs:
           EOF
           aws s3 cp ./build-output/manifest.json "s3://${R2_BUCKET_NAME}/releases/android/production/manifest.json" \
             --endpoint-url "$R2_ENDPOINT" \
-            --content-type "application/json"
+            --content-type "application/json" \
+            --cache-control "no-cache, no-store, must-revalidate"
           echo "✓ Uploaded manifest.json"
 
           echo "Production Android APK available at: ${IMAGE_CDN_URL}/releases/android/production/togather-latest.apk"

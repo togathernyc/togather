@@ -62,6 +62,8 @@ function formatDate(date: Date): string {
  * Collect device and app info for debugging
  */
 function getDeviceInfo(): string {
+  const nativeVersion = Application.nativeApplicationVersion || "unknown";
+  const nativeBuild = Application.nativeBuildVersion || "unknown";
   const appVersion = Constants.expoConfig?.version || "unknown";
   const runtimeVersion =
     typeof Constants.expoConfig?.runtimeVersion === "string"
@@ -77,7 +79,8 @@ function getDeviceInfo(): string {
   return `
 === DEVICE INFO ===
 Platform: ${Platform.OS} ${Platform.Version}
-App Version: ${appVersion}
+Native Version: ${nativeVersion} (${nativeBuild})
+App Config Version: ${appVersion}
 OTA Version: ${otaVersion}
 Runtime Version: ${runtimeVersion}
 Update ID: ${updateId}
