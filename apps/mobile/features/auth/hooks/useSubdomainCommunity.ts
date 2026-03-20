@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { Platform } from "react-native";
+import * as Linking from "expo-linking";
 import { useLocalSearchParams } from "expo-router";
 import { useQuery, api } from "@services/api/convex";
 import { DOMAIN_CONFIG } from "@togather/shared";
@@ -55,7 +56,8 @@ function parseSubdomainFromHostname(hostname: string): string | null {
  * - Falls back to ?subdomain= query param for local development
  *
  * On native:
- * - Uses ?subdomain= query param from deep links
+ * - Parses subdomain from initial URL hostname (e.g., fount.togather.nyc/nearme)
+ * - Falls back to ?subdomain= query param from deep links
  *
  * Returns:
  * - community: The community data if found
@@ -69,6 +71,9 @@ export function useSubdomainCommunity() {
     null
   );
   const [isHydrated, setIsHydrated] = useState(false);
+  const [isCheckingInitialUrl, setIsCheckingInitialUrl] = useState(
+    Platform.OS !== "web"
+  );
 
   // Parse hostname on web after hydration
   useEffect(() => {
@@ -79,14 +84,50 @@ export function useSubdomainCommunity() {
     setIsHydrated(true);
   }, []);
 
-  // Determine subdomain source: hostname (production) or query param (dev/native)
+  // On native: parse subdomain from deep link URLs
+  // - Cold start: getInitialURL() returns the launch URL
+  // - Warm start: addEventListener catches new URLs when app is in background
+  useEffect(() => {
+    if (Platform.OS !== "web") {
+      // Helper to parse and set subdomain from URL
+      const handleUrl = (url: string | null) => {
+        if (url) {
+          try {
+            const parsed = new URL(url);
+            const sub = parseSubdomainFromHostname(parsed.hostname);
+            if (sub) {
+              setHostnameSubdomain(sub);
+            }
+          } catch {
+            // Ignore parse errors
+          }
+        }
+      };
+
+      // Handle cold start - get the URL that launched the app
+      Linking.getInitialURL()
+        .then(handleUrl)
+        .finally(() => setIsCheckingInitialUrl(false));
+
+      // Handle warm start - listen for new URLs when app is already running
+      const subscription = Linking.addEventListener("url", (event) => {
+        handleUrl(event.url);
+      });
+
+      return () => {
+        subscription.remove();
+      };
+    }
+  }, []);
+
+  // Determine subdomain source: hostname (web or native from URL) or query param
   const subdomain = useMemo(() => {
-    // Prefer hostname on web production
+    // Prefer hostname (web production or native from initial URL)
     if (hostnameSubdomain) {
       return hostnameSubdomain;
     }
 
-    // Fall back to query param (for local dev or native deep links)
+    // Fall back to query param (for local dev or explicit ?subdomain= in link)
     const paramSubdomain = params.subdomain;
     if (typeof paramSubdomain === "string" && paramSubdomain.length > 0) {
       return paramSubdomain.toLowerCase();
@@ -107,11 +148,13 @@ export function useSubdomainCommunity() {
 
   // On web, wait for hydration to complete before reporting isLoading as false
   const isWaitingForHydration = Platform.OS === "web" && !isHydrated;
+  // On native, wait for initial URL check (may contain subdomain from hostname)
+  const isWaitingForInitialUrl = Platform.OS !== "web" && isCheckingInitialUrl && !params.subdomain;
 
   return {
     community: community ?? null,
     subdomain,
-    isLoading: isWaitingForHydration || isLoading,
+    isLoading: isWaitingForHydration || isWaitingForInitialUrl || isLoading,
     error: null, // Convex throws on error, caught by error boundary
   };
 }
