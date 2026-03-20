@@ -31,6 +31,8 @@ interface GroupOptionsModalProps {
   onArchiveGroup?: () => void;
   isLeaving?: boolean;
   isArchiving?: boolean;
+  /** When false, hides Leave Group (e.g. for non-members viewing the group) */
+  isMember?: boolean;
 }
 
 export function GroupOptionsModal({
@@ -41,6 +43,7 @@ export function GroupOptionsModal({
   onArchiveGroup,
   isLeaving = false,
   isArchiving = false,
+  isMember = true,
 }: GroupOptionsModalProps) {
   const router = useRouter();
   const { user } = useAuth();
@@ -229,7 +232,7 @@ export function GroupOptionsModal({
                   This is your community's announcement channel. To leave, go to Settings and leave the community.
                 </Text>
               </View>
-            ) : (
+            ) : isMember ? (
               <TouchableOpacity
                 style={[styles.optionButton, styles.leaveButton]}
                 onPress={handleLeaveGroup}
@@ -237,7 +240,7 @@ export function GroupOptionsModal({
               >
                 <Text style={styles.leaveButtonText}>Leave Group</Text>
               </TouchableOpacity>
-            )}
+            ) : null}
 
             <TouchableOpacity
               style={[styles.optionButton, styles.cancelButton, { backgroundColor: colors.border }]}
