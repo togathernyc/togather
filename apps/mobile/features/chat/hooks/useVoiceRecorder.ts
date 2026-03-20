@@ -291,6 +291,17 @@ function useVoiceRecorderNative(): VoiceRecorderResult {
         // ignore
       }
       recordingRef.current = null;
+
+      // Reset to playback mode so audio plays through the speaker
+      try {
+        const { Audio } = require('expo-av');
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: false,
+          playsInSilentModeIOS: true,
+        });
+      } catch {
+        // best-effort
+      }
     }
   }, []);
 
@@ -318,13 +329,30 @@ function useVoiceRecorderNative(): VoiceRecorderResult {
         return;
       }
 
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: false,
-        shouldDuckAndroid: true,
-        playThroughEarpieceAndroid: false,
-      });
+      // After the permission dialog dismisses, iOS briefly considers the app
+      // "in background" and setAudioModeAsync fails. Retry with backoff.
+      let audioModeSet = false;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          await Audio.setAudioModeAsync({
+            allowsRecordingIOS: true,
+            playsInSilentModeIOS: true,
+            staysActiveInBackground: false,
+            shouldDuckAndroid: true,
+            playThroughEarpieceAndroid: false,
+          });
+          audioModeSet = true;
+          break;
+        } catch (audioModeErr) {
+          if (attempt < 2) {
+            // Wait for the app to return to foreground
+            await new Promise(resolve => setTimeout(resolve, 300 * (attempt + 1)));
+          } else {
+            throw audioModeErr;
+          }
+        }
+      }
+      if (!audioModeSet) return;
 
       const { recording } = await Audio.Recording.createAsync(
         {
@@ -392,6 +420,11 @@ function useVoiceRecorderNative(): VoiceRecorderResult {
               const uri = rec.getURI();
               setFileUri(uri);
               setState('preview');
+              // Reset to playback mode
+              try {
+                const { Audio: A } = require('expo-av');
+                await A.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
+              } catch { /* best-effort */ }
               if (meteringIntervalRef.current) {
                 clearInterval(meteringIntervalRef.current);
                 meteringIntervalRef.current = null;
@@ -462,6 +495,11 @@ function useVoiceRecorderNative(): VoiceRecorderResult {
               const uri = r.getURI();
               setFileUri(uri);
               setState('preview');
+              // Reset to playback mode
+              try {
+                const { Audio: A } = require('expo-av');
+                await A.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
+              } catch { /* best-effort */ }
               if (meteringIntervalRef.current) {
                 clearInterval(meteringIntervalRef.current);
                 meteringIntervalRef.current = null;
@@ -488,6 +526,19 @@ function useVoiceRecorderNative(): VoiceRecorderResult {
         const uri = rec.getURI();
         setFileUri(uri);
         setState('preview');
+
+        // Switch back to playback mode so audio plays through the speaker
+        // instead of the earpiece. Without this, all playback after recording
+        // is routed to the earpiece and sounds inaudible.
+        try {
+          const { Audio } = require('expo-av');
+          await Audio.setAudioModeAsync({
+            allowsRecordingIOS: false,
+            playsInSilentModeIOS: true,
+          });
+        } catch {
+          // Best-effort — don't block the flow
+        }
       } catch (err) {
         console.error('[useVoiceRecorder] Stop error:', err);
         setError(err instanceof Error ? err.message : 'Failed to stop');
