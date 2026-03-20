@@ -161,27 +161,6 @@ interface TestNotificationData {
   chatType?: 'main' | 'leaders';
 }
 
-// Channel Join Request Types
-interface ChannelJoinRequestReceivedData {
-  requesterName: string;
-  channelName: string;
-  groupName: string;
-  groupId: string;
-  channelSlug: string;
-  communityId?: string;
-}
-
-interface ChannelJoinRequestApprovedData {
-  channelName: string;
-  groupId: string;
-  channelSlug: string;
-  communityId?: string;
-}
-
-interface ChannelJoinRequestDeclinedData {
-  channelName: string;
-}
-
 // ============================================================================
 // Email HTML Templates
 // ============================================================================
@@ -696,61 +675,6 @@ export const followupAssigned: NotificationDefinition<FollowupAssignedData> = {
         groupMemberId: ctx.data.groupMemberId,
         communityId: ctx.data.communityId,
       },
-    }),
-  },
-  defaultChannels: ['push'],
-};
-
-// ============================================================================
-// Channel Join Request Definitions
-// ============================================================================
-
-export const channelJoinRequestReceived: NotificationDefinition<ChannelJoinRequestReceivedData> = {
-  type: 'channel_join_request_received',
-  description: 'Sent to group leaders when someone requests to join a channel via invite link',
-  formatters: {
-    push: (ctx) => ({
-      title: 'Channel Join Request',
-      body: `${ctx.data.requesterName} wants to join #${ctx.data.channelName}`,
-      data: {
-        type: 'channel_join_request_received',
-        groupId: ctx.data.groupId,
-        channelSlug: ctx.data.channelSlug,
-        communityId: ctx.data.communityId,
-        url: `/inbox/${ctx.data.groupId}/${ctx.data.channelSlug}/members`,
-      },
-    }),
-  },
-  defaultChannels: ['push'],
-};
-
-export const channelJoinRequestApproved: NotificationDefinition<ChannelJoinRequestApprovedData> = {
-  type: 'channel_join_request_approved',
-  description: 'Sent when a channel join request is approved',
-  formatters: {
-    push: (ctx) => ({
-      title: 'Request Approved!',
-      body: `You've been added to #${ctx.data.channelName}`,
-      data: {
-        type: 'channel_join_request_approved',
-        groupId: ctx.data.groupId,
-        channelSlug: ctx.data.channelSlug,
-        communityId: ctx.data.communityId,
-        url: `/inbox/${ctx.data.groupId}/${ctx.data.channelSlug}`,
-      },
-    }),
-  },
-  defaultChannels: ['push'],
-};
-
-export const channelJoinRequestDeclined: NotificationDefinition<ChannelJoinRequestDeclinedData> = {
-  type: 'channel_join_request_declined',
-  description: 'Sent when a channel join request is declined',
-  formatters: {
-    push: (ctx) => ({
-      title: 'Request Not Approved',
-      body: `Your request to join #${ctx.data.channelName} was not approved`,
-      data: { type: 'channel_join_request_declined' },
     }),
   },
   defaultChannels: ['push'],

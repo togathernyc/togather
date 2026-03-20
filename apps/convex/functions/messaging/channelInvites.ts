@@ -519,32 +519,35 @@ export const joinViaInviteLink = mutation({
         channelSlug: channel.slug,
       };
     } else {
-      // approval_required mode — check for existing pending or declined request
+      // approval_required mode — check for existing requests
       const existingRequest = await ctx.db
         .query("channelJoinRequests")
         .withIndex("by_channel_user", (q) =>
           q.eq("channelId", channel._id).eq("userId", userId),
         )
-        .filter((q) =>
-          q.or(
-            q.eq(q.field("status"), "pending"),
-            q.eq(q.field("status"), "declined"),
-          )
-        )
         .first();
 
       if (existingRequest) {
-        if (existingRequest.status === "declined") {
-          throw new ConvexError(
-            "Your previous request to join this channel was declined. Please contact a group leader."
-          );
+        if (existingRequest.status === "pending") {
+          return {
+            requested: true,
+            channelId: channel._id,
+            groupId: channel.groupId,
+            channelSlug: channel.slug,
+          };
         }
-        return {
-          requested: true,
-          channelId: channel._id,
-          groupId: channel.groupId,
-          channelSlug: channel.slug,
-        };
+
+        if (existingRequest.status === "declined") {
+          const COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
+          const declinedAt = existingRequest.reviewedAt || existingRequest.requestedAt;
+          const timeSinceDecline = Date.now() - declinedAt;
+
+          if (timeSinceDecline < COOLDOWN_MS) {
+            throw new ConvexError(
+              "Your previous request was declined. Please wait 24 hours before requesting again.",
+            );
+          }
+        }
       }
 
       // Create join request
