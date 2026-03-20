@@ -84,25 +84,39 @@ export function useSubdomainCommunity() {
     setIsHydrated(true);
   }, []);
 
-  // On native: parse subdomain from initial URL (e.g., fount.togather.nyc/nearme)
-  // When app opens via Universal Link, the hostname contains the subdomain
+  // On native: parse subdomain from deep link URLs
+  // - Cold start: getInitialURL() returns the launch URL
+  // - Warm start: addEventListener catches new URLs when app is in background
   useEffect(() => {
     if (Platform.OS !== "web") {
-      Linking.getInitialURL()
-        .then((url) => {
-          if (url) {
-            try {
-              const parsed = new URL(url);
-              const sub = parseSubdomainFromHostname(parsed.hostname);
-              if (sub) {
-                setHostnameSubdomain(sub);
-              }
-            } catch {
-              // Ignore parse errors
+      // Helper to parse and set subdomain from URL
+      const handleUrl = (url: string | null) => {
+        if (url) {
+          try {
+            const parsed = new URL(url);
+            const sub = parseSubdomainFromHostname(parsed.hostname);
+            if (sub) {
+              setHostnameSubdomain(sub);
             }
+          } catch {
+            // Ignore parse errors
           }
-        })
+        }
+      };
+
+      // Handle cold start - get the URL that launched the app
+      Linking.getInitialURL()
+        .then(handleUrl)
         .finally(() => setIsCheckingInitialUrl(false));
+
+      // Handle warm start - listen for new URLs when app is already running
+      const subscription = Linking.addEventListener("url", (event) => {
+        handleUrl(event.url);
+      });
+
+      return () => {
+        subscription.remove();
+      };
     }
   }, []);
 
