@@ -59,6 +59,8 @@ export function ThreadPage({
   const isUserLeader =
     groupDetails?.user_role === "leader" ||
     groupDetails?.user_role === "admin";
+  // Community admins can delete any message in groups within their community
+  const isCommunityAdmin = user?.is_admin === true;
 
   // Mutations for message actions
   const toggleReactionMutation = useMutation(api.functions.messaging.reactions.toggleReaction);
@@ -362,6 +364,7 @@ export function ThreadPage({
           onClose={handleOverlayClose}
           isOwnMessage={selectedMessageSenderId === currentUserId}
           isUserLeader={isUserLeader}
+          isCommunityAdmin={isCommunityAdmin}
           hideReplyAction
         />
       )}

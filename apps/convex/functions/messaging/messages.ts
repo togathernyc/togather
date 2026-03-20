@@ -10,6 +10,7 @@ import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { getDisplayName, getMediaUrl } from "../../lib/utils";
+import { isCommunityAdmin } from "../../lib/permissions";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
 
 // ============================================================================
@@ -482,6 +483,7 @@ export const deleteMessage = mutation({
     // Get the channel to find the groupId
     const channel = await ctx.db.get(message.channelId);
     let isGroupLeader = false;
+    let isCommunityAdminUser = false;
 
     if (channel?.groupId) {
       const groupMembership = await ctx.db
@@ -494,9 +496,15 @@ export const deleteMessage = mutation({
 
       isGroupLeader =
         groupMembership?.role === "leader" || groupMembership?.role === "admin";
+
+      // Community admins (ADMIN or PRIMARY_ADMIN) can delete any message in groups within their community
+      const group = await ctx.db.get(channel.groupId);
+      if (group?.communityId) {
+        isCommunityAdminUser = await isCommunityAdmin(ctx, group.communityId, userId);
+      }
     }
 
-    if (!isOwner && !isChannelModerator && !isGroupLeader) {
+    if (!isOwner && !isChannelModerator && !isGroupLeader && !isCommunityAdminUser) {
       throw new Error("You can only delete your own messages");
     }
 

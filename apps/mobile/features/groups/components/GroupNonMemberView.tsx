@@ -79,11 +79,11 @@ export function GroupNonMemberView({
         contentContainerStyle={styles.scrollContent}
       >
         {/* Header with image, name, and cadence */}
-        {/* Show menu for admins even if not a member */}
+        {/* Show 3-dots menu for everyone (Share Group) and admins (Edit, Archive, etc.) */}
         <GroupHeader
           group={group}
-          showMenu={isAdmin}
-          onMenuPress={isAdmin ? () => setShowOptionsModal(true) : undefined}
+          showMenu={true}
+          onMenuPress={() => setShowOptionsModal(true)}
         />
 
         {/* Description */}
@@ -212,18 +212,17 @@ export function GroupNonMemberView({
         }
       />
 
-      {/* Options Modal for admins */}
-      {isAdmin && (
-        <GroupOptionsModal
-          visible={showOptionsModal}
-          group={group}
-          onClose={() => setShowOptionsModal(false)}
-          onLeaveGroup={() => {}} // No-op since admin is not a member
-          onArchiveGroup={handleArchiveGroup}
-          isLeaving={false}
-          isArchiving={archiveGroupMutation.isPending}
-        />
-      )}
+      {/* Options Modal - Share Group for everyone, Edit/Archive for admins */}
+      <GroupOptionsModal
+        visible={showOptionsModal}
+        group={group}
+        onClose={() => setShowOptionsModal(false)}
+        onLeaveGroup={() => {}} // No-op since user is not a member
+        onArchiveGroup={handleArchiveGroup}
+        isLeaving={false}
+        isArchiving={archiveGroupMutation.isPending}
+        isMember={false}
+      />
     </View>
   );
 }

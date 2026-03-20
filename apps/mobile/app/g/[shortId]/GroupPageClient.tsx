@@ -269,7 +269,7 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
           { paddingBottom: 100 + insets.bottom },
         ]}
       >
-        {/* Header with back button and share */}
+        {/* Header with back button and 3-dots menu (Share Group, Copy Link) */}
         <View style={[styles.header, { paddingTop: insets.top }]}>
           {showBackButton ? (
             <TouchableOpacity style={styles.headerButton} onPress={handleBack}>
@@ -279,7 +279,7 @@ export default function GroupPageClient({ initialGroupData }: GroupPageClientPro
             <View style={{ width: 40 }} />
           )}
           <TouchableOpacity style={styles.headerButton} onPress={handleShare}>
-            <Ionicons name="share-outline" size={24} color={colors.text} />
+            <Ionicons name="ellipsis-vertical" size={24} color={colors.text} />
           </TouchableOpacity>
         </View>
 
