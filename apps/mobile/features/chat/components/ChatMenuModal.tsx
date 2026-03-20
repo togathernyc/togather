@@ -25,6 +25,7 @@ type ChatMenuModalProps = {
   onFollowupPress: () => void;
   onBotsPress: () => void;
   onGroupPagePress: () => void;
+  onShareGroupPress?: () => void;
   onLeaveGroupPress: () => void;
 };
 
@@ -39,6 +40,7 @@ export const ChatMenuModal = memo(function ChatMenuModal({
   onFollowupPress,
   onBotsPress,
   onGroupPagePress,
+  onShareGroupPress,
   onLeaveGroupPress,
 }: ChatMenuModalProps) {
   const { colors: themeColors } = useTheme();
@@ -72,6 +74,14 @@ export const ChatMenuModal = memo(function ChatMenuModal({
             <TouchableOpacity style={[styles.menuItem, { borderBottomColor: themeColors.borderLight }]} onPress={onGroupPagePress}>
               <Ionicons name="globe-outline" size={20} color={themeColors.text} />
               <Text style={[styles.menuItemText, { color: themeColors.text }]}>Group Page</Text>
+            </TouchableOpacity>
+          )}
+
+          {/* Share Group - available to all when group has shareable link */}
+          {hasGroup && onShareGroupPress && (
+            <TouchableOpacity style={[styles.menuItem, { borderBottomColor: themeColors.borderLight }]} onPress={onShareGroupPress}>
+              <Ionicons name="share-outline" size={20} color={themeColors.text} />
+              <Text style={[styles.menuItemText, { color: themeColors.text }]}>Share Group</Text>
             </TouchableOpacity>
           )}
 

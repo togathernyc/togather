@@ -17,6 +17,8 @@ import {
   Platform,
   Keyboard,
   Pressable,
+  Share,
+  ActionSheetIOS,
 } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -28,6 +30,7 @@ import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
 import { parseStreamChannelId } from "@togather/shared";
+import { DOMAIN_CONFIG } from "@togather/shared";
 import type { Id } from "@services/api/convex";
 import { useQuery, api } from "@services/api/convex";
 
@@ -647,6 +650,42 @@ const ConvexChatRoomScreenInner: React.FC = () => {
     }
   }, [router, getGroupIdForNavigation]);
 
+  const handleShareGroup = useCallback(async () => {
+    setMenuVisible(false);
+    const shortId = (groupDetails as { shortId?: string } | undefined)?.shortId
+      ?? (groupData as { shortId?: string } | undefined)?.shortId;
+    if (!shortId) {
+      Alert.alert("Cannot Share", "This group doesn't have a shareable link yet.");
+      return;
+    }
+    const groupUrl = DOMAIN_CONFIG.groupShareUrl(shortId);
+    const groupName = displayName || "Group";
+
+    if (Platform.OS === "ios") {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: ["Cancel", "Copy Link", "Share"],
+          cancelButtonIndex: 0,
+        },
+        async (buttonIndex) => {
+          if (buttonIndex === 1) {
+            await Clipboard.setStringAsync(groupUrl);
+            Alert.alert("Link Copied", "Group link has been copied to clipboard.");
+          } else if (buttonIndex === 2) {
+            await Share.share({
+              message: `${groupName}\n${groupUrl}`,
+              url: groupUrl,
+            });
+          }
+        }
+      );
+    } else {
+      await Share.share({
+        message: `${groupName}\n${groupUrl}`,
+      });
+    }
+  }, [groupDetails, groupData, displayName]);
+
   // Message action handlers
   const handleMessageReply = useCallback((messageId: Id<"chatMessages">) => {
     setReplyToMessageId(messageId);
@@ -879,6 +918,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
           onFollowupPress={handleGoToFollowup}
           onBotsPress={handleGoToBots}
           onGroupPagePress={handleGoToGroupPage}
+          onShareGroupPress={handleShareGroup}
           onLeaveGroupPress={handleLeaveGroup}
         />
         <ExternalChatModal
