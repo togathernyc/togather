@@ -9,10 +9,12 @@ import { useSignUp } from "../hooks/useSignUp";
 import { SignUpForm } from "./SignUpForm";
 import { useQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
+import { useTheme } from "@hooks/useTheme";
 
 export function SignUpScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
   const params = useLocalSearchParams<{
     phone?: string;
     countryCode?: string;
@@ -49,7 +51,7 @@ export function SignUpScreen() {
 
   return (
     <AuthGuard>
-      <ScrollView contentContainerStyle={[styles.container, { paddingTop: insets.top }]}>
+      <ScrollView contentContainerStyle={[styles.container, { paddingTop: insets.top, backgroundColor: colors.surface }]}>
         <View style={styles.content}>
           <SignUpForm
             formData={signUp.formData}
@@ -73,7 +75,6 @@ export function SignUpScreen() {
 const styles = StyleSheet.create({
   container: {
     flexGrow: 1,
-    backgroundColor: "#fff",
   },
   content: {
     flex: 1,

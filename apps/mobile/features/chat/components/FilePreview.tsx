@@ -13,6 +13,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useTheme } from '@hooks/useTheme';
 import { getFileIcon, formatFileSize, type FileCategory } from '../utils/fileTypes';
 
 // ============================================================================
@@ -61,6 +62,7 @@ export function FilePreview({
   onRemove,
   disabled = false,
 }: FilePreviewProps) {
+  const { colors } = useTheme();
   const iconName = getFileIcon(name) as any;
   const color = CATEGORY_COLORS[category] || CATEGORY_COLORS.unknown;
 
@@ -70,7 +72,7 @@ export function FilePreview({
     : name;
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
       {/* File Icon */}
       <View style={[styles.iconContainer, { backgroundColor: color + '20' }]}>
         <Ionicons name={iconName} size={24} color={color} />
@@ -78,10 +80,10 @@ export function FilePreview({
 
       {/* File Info */}
       <View style={styles.infoContainer}>
-        <Text style={styles.fileName} numberOfLines={1}>
+        <Text style={[styles.fileName, { color: colors.text }]} numberOfLines={1}>
           {displayName}
         </Text>
-        <Text style={styles.fileSize}>
+        <Text style={[styles.fileSize, { color: colors.textSecondary }]}>
           {uploading ? `Uploading... ${Math.round(progress)}%` : formatFileSize(size)}
         </Text>
       </View>
@@ -104,7 +106,7 @@ export function FilePreview({
           <Ionicons
             name="close-circle"
             size={24}
-            color={disabled ? '#ccc' : '#666'}
+            color={disabled ? colors.buttonDisabled : colors.textSecondary}
           />
         </Pressable>
       )}
@@ -120,13 +122,11 @@ const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f5f5f5',
     borderRadius: 12,
     padding: 12,
     marginHorizontal: 12,
     marginVertical: 8,
     borderWidth: 1,
-    borderColor: '#e0e0e0',
   },
   iconContainer: {
     width: 44,
@@ -143,12 +143,10 @@ const styles = StyleSheet.create({
   fileName: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#333',
     marginBottom: 2,
   },
   fileSize: {
     fontSize: 12,
-    color: '#666',
   },
   progressContainer: {
     marginRight: 8,

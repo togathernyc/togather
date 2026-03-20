@@ -1,8 +1,9 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
 import { GroupType } from '@features/groups/types';
-import { COLORS, MEETING_TYPE_OPTIONS } from '../constants';
+import { MEETING_TYPE_OPTIONS } from '../constants';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
+import { useTheme } from '@hooks/useTheme';
 
 interface FilterState {
   distance: number | null;
@@ -33,16 +34,19 @@ interface FilterChipProps {
 }
 
 function FilterChip({ label, isActive, onPress, primaryColor }: FilterChipProps) {
+  const { colors } = useTheme();
+
   return (
     <TouchableOpacity
       style={[
         styles.chip,
+        { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
         isActive && { backgroundColor: `${primaryColor}15`, borderColor: primaryColor },
       ]}
       onPress={onPress}
       activeOpacity={0.7}
     >
-      <Text style={[styles.chipText, isActive && { color: primaryColor }]}>
+      <Text style={[styles.chipText, { color: colors.textSecondary }, isActive && { color: primaryColor }]}>
         {label}
       </Text>
     </TouchableOpacity>
@@ -97,13 +101,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
-    backgroundColor: '#F5F5F5',
     borderWidth: 1,
-    borderColor: COLORS.border,
   },
   chipText: {
     fontSize: 14,
-    color: COLORS.textMuted,
     fontWeight: '500',
   },
 });

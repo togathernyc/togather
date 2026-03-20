@@ -11,6 +11,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useTheme } from '@hooks/useTheme';
 import type { Id } from '@services/api/convex';
 import { AppImage } from '@components/ui';
 import { useThreadReplies } from '../hooks/useThreadReplies';
@@ -70,6 +71,7 @@ function getUniqueRepliers(replies: Array<{ senderId?: Id<"users">; senderName?:
 }
 
 export function ThreadReplies({ parentMessageId, channelId, replyCount, onPress }: ThreadRepliesProps) {
+  const { colors } = useTheme();
   // Fetch just a few replies to get avatar data and last reply time
   // Pass channelId for prefetch lookup
   const { replies, isLoading } = useThreadReplies(parentMessageId, 10, channelId);
@@ -97,7 +99,7 @@ export function ThreadReplies({ parentMessageId, channelId, replyCount, onPress 
     <Pressable
       style={({ pressed }) => [
         styles.container,
-        pressed && styles.containerPressed,
+        { backgroundColor: pressed ? colors.border : colors.surfaceSecondary },
       ]}
       onPress={onPress}
     >
@@ -108,7 +110,7 @@ export function ThreadReplies({ parentMessageId, channelId, replyCount, onPress 
             key={index}
             style={[
               styles.avatarWrapper,
-              { marginLeft: index > 0 ? -8 : 0, zIndex: uniqueRepliers.length - index },
+              { marginLeft: index > 0 ? -8 : 0, zIndex: uniqueRepliers.length - index, borderColor: colors.surfaceSecondary },
             ]}
           >
             <AppImage
@@ -118,7 +120,7 @@ export function ThreadReplies({ parentMessageId, channelId, replyCount, onPress 
               placeholder={{
                 type: 'initials',
                 name: replier.senderName || 'User',
-                backgroundColor: '#E5E5E5',
+                backgroundColor: colors.surfaceSecondary,
               }}
             />
           </View>
@@ -126,20 +128,20 @@ export function ThreadReplies({ parentMessageId, channelId, replyCount, onPress 
       </View>
 
       {/* Reply count */}
-      <Text style={styles.replyText}>
+      <Text style={[styles.replyText, { color: colors.link }]}>
         {replyCount} {replyCount === 1 ? 'reply' : 'replies'}
       </Text>
 
       {/* Separator dot */}
       {lastReplyTime && (
         <>
-          <Text style={styles.separator}>·</Text>
-          <Text style={styles.timeText}>{lastReplyTime}</Text>
+          <Text style={[styles.separator, { color: colors.textTertiary }]}>·</Text>
+          <Text style={[styles.timeText, { color: colors.textSecondary }]}>{lastReplyTime}</Text>
         </>
       )}
 
       {/* Chevron indicator */}
-      <Ionicons name="chevron-forward" size={14} color="#999" style={styles.chevron} />
+      <Ionicons name="chevron-forward" size={14} color={colors.textTertiary} style={styles.chevron} />
     </Pressable>
   );
 }
@@ -151,16 +153,11 @@ const styles = StyleSheet.create({
     marginTop: 8,
     paddingVertical: 6,
     paddingHorizontal: 8,
-    backgroundColor: '#F5F5F5',
     borderRadius: 8,
     alignSelf: 'flex-start',
   },
-  containerPressed: {
-    backgroundColor: '#EBEBEB',
-  },
   loadingText: {
     fontSize: 12,
-    color: '#666',
   },
   avatarsContainer: {
     flexDirection: 'row',
@@ -168,7 +165,6 @@ const styles = StyleSheet.create({
   },
   avatarWrapper: {
     borderWidth: 2,
-    borderColor: '#F5F5F5',
     borderRadius: 12,
   },
   avatar: {
@@ -179,16 +175,13 @@ const styles = StyleSheet.create({
   replyText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#1976D2',
   },
   separator: {
     fontSize: 12,
-    color: '#999',
     marginHorizontal: 6,
   },
   timeText: {
     fontSize: 12,
-    color: '#666',
   },
   chevron: {
     marginLeft: 4,

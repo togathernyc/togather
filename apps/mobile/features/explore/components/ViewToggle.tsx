@@ -8,8 +8,8 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { COLORS } from '../constants';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
+import { useTheme } from '@hooks/useTheme';
 import type { ExploreView } from '../hooks/useExploreFilters';
 
 interface ViewToggleProps {
@@ -19,9 +19,10 @@ interface ViewToggleProps {
 
 export function ViewToggle({ activeView, onViewChange }: ViewToggleProps) {
   const { primaryColor } = useCommunityTheme();
+  const { colors } = useTheme();
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
       <TouchableOpacity
         style={[styles.option, activeView === 'groups' && { backgroundColor: primaryColor }]}
         onPress={() => onViewChange('groups')}
@@ -30,10 +31,10 @@ export function ViewToggle({ activeView, onViewChange }: ViewToggleProps) {
         <Ionicons
           name="people-outline"
           size={16}
-          color={activeView === 'groups' ? '#fff' : COLORS.textMuted}
+          color={activeView === 'groups' ? colors.textInverse : colors.textSecondary}
           style={styles.icon}
         />
-        <Text style={[styles.optionText, activeView === 'groups' && styles.optionTextActive]}>
+        <Text style={[styles.optionText, { color: colors.textSecondary }, activeView === 'groups' && { color: colors.textInverse }]}>
           Groups
         </Text>
       </TouchableOpacity>
@@ -45,10 +46,10 @@ export function ViewToggle({ activeView, onViewChange }: ViewToggleProps) {
         <Ionicons
           name="calendar-outline"
           size={16}
-          color={activeView === 'events' ? '#fff' : COLORS.textMuted}
+          color={activeView === 'events' ? colors.textInverse : colors.textSecondary}
           style={styles.icon}
         />
-        <Text style={[styles.optionText, activeView === 'events' && styles.optionTextActive]}>
+        <Text style={[styles.optionText, { color: colors.textSecondary }, activeView === 'events' && { color: colors.textInverse }]}>
           Events
         </Text>
       </TouchableOpacity>
@@ -59,7 +60,6 @@ export function ViewToggle({ activeView, onViewChange }: ViewToggleProps) {
 const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
-    backgroundColor: '#f0f0f0',
     borderRadius: 10,
     padding: 4,
     marginBottom: 12,
@@ -76,10 +76,6 @@ const styles = StyleSheet.create({
   optionText: {
     fontSize: 14,
     fontWeight: '600',
-    color: COLORS.textMuted,
-  },
-  optionTextActive: {
-    color: '#fff',
   },
   icon: {
     marginRight: 6,
