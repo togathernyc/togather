@@ -159,10 +159,11 @@ jobs:
             jq . "$UPDATED_FILE"
             echo ""
 
-            # Upload updated manifest
+            # Upload updated manifest (no-cache so CDN always fetches fresh)
             aws s3 cp "$UPDATED_FILE" "s3://${R2_BUCKET_NAME}/${MANIFEST_KEY}" \
               --endpoint-url "$R2_ENDPOINT" \
-              --content-type "application/json"
+              --content-type "application/json" \
+              --cache-control "no-cache, no-store, must-revalidate"
 
             echo "✅ Uploaded updated ${PLATFORM} ${ENVIRONMENT} manifest"
           done

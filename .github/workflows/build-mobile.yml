@@ -164,7 +164,8 @@ jobs:
 
           aws s3 cp ./build-output/manifest.json "s3://${R2_BUCKET_NAME}/releases/android/production/manifest.json" \
             --endpoint-url "$R2_ENDPOINT" \
-            --content-type "application/json"
+            --content-type "application/json" \
+            --cache-control "no-cache, no-store, must-revalidate"
           echo "✓ Uploaded manifest.json"
 
           echo "## Android APK Published to R2" >> $GITHUB_STEP_SUMMARY

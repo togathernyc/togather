@@ -155,9 +155,9 @@ export function NativeUpdateModal() {
 
   const checkManifest = async () => {
     try {
-      // Use platform-specific manifest URL
+      // Use platform-specific manifest URL with cache-busting to bypass CDN caching
       const manifestUrl = isAndroid ? urls.androidManifest : urls.iosManifest;
-      const response = await fetch(manifestUrl);
+      const response = await fetch(`${manifestUrl}?t=${Date.now()}`);
       if (!response.ok) {
         console.log('[NativeUpdateModal] Failed to fetch manifest:', response.status);
         return;
