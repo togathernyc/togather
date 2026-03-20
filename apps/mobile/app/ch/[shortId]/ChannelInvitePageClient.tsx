@@ -227,6 +227,16 @@ export default function ChannelInvitePageClient() {
           </View>
         );
 
+      case "declined":
+        return (
+          <View style={styles.pendingContainer}>
+            <Ionicons name="close-circle-outline" size={20} color="#FF3B30" />
+            <Text style={[styles.pendingText, { color: "#FF3B30" }]}>
+              Request Declined
+            </Text>
+          </View>
+        );
+
       case "eligible":
         if (joinMode === "open") {
           return (

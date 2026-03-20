@@ -52,6 +52,7 @@ export const getByShortId = query({
       | "not_group_member"
       | "already_member"
       | "pending_request"
+      | "declined"
       | "eligible" = "not_authenticated";
     let userId: Id<"users"> | null = null;
 
@@ -83,16 +84,27 @@ export const getByShortId = query({
           if (channelMembership) {
             userStatus = "already_member";
           } else {
-            // Check for pending join request
-            const pendingRequest = await ctx.db
+            // Check for pending or declined join request
+            const existingRequest = await ctx.db
               .query("channelJoinRequests")
               .withIndex("by_channel_user", (q) =>
                 q.eq("channelId", channel._id).eq("userId", userId!),
               )
-              .filter((q) => q.eq(q.field("status"), "pending"))
+              .filter((q) =>
+                q.or(
+                  q.eq(q.field("status"), "pending"),
+                  q.eq(q.field("status"), "declined"),
+                )
+              )
               .first();
 
-            userStatus = pendingRequest ? "pending_request" : "eligible";
+            if (existingRequest?.status === "pending") {
+              userStatus = "pending_request";
+            } else if (existingRequest?.status === "declined") {
+              userStatus = "declined";
+            } else {
+              userStatus = "eligible";
+            }
           }
         }
       } catch {
@@ -507,16 +519,26 @@ export const joinViaInviteLink = mutation({
         channelSlug: channel.slug,
       };
     } else {
-      // approval_required mode — check for existing pending request
+      // approval_required mode — check for existing pending or declined request
       const existingRequest = await ctx.db
         .query("channelJoinRequests")
         .withIndex("by_channel_user", (q) =>
           q.eq("channelId", channel._id).eq("userId", userId),
         )
-        .filter((q) => q.eq(q.field("status"), "pending"))
+        .filter((q) =>
+          q.or(
+            q.eq(q.field("status"), "pending"),
+            q.eq(q.field("status"), "declined"),
+          )
+        )
         .first();
 
       if (existingRequest) {
+        if (existingRequest.status === "declined") {
+          throw new ConvexError(
+            "Your previous request to join this channel was declined. Please contact a group leader."
+          );
+        }
         return {
           requested: true,
           channelId: channel._id,
