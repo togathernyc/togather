@@ -45,7 +45,7 @@ describe("getInitialRouteTarget", () => {
     expect(route).toBe("/(tabs)/profile");
   });
 
-  it("routes authenticated users without community but with profile to landing", () => {
+  it("routes authenticated users without community but with profile to community picker", () => {
     const route = getInitialRouteTarget({
       isAuthenticated: true,
       hasCommunity: false,
@@ -53,6 +53,6 @@ describe("getInitialRouteTarget", () => {
       hasUserProfile: true,
     });
 
-    expect(route).toBe("/(auth)/landing");
+    expect(route).toBe("/(auth)/select-community");
   });
 });
