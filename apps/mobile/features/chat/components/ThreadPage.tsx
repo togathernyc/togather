@@ -225,7 +225,7 @@ export function ThreadPage({
     >
       <ThreadHeader channelName={channelName} onBack={handleBack} />
 
-      <View style={[styles.content, { backgroundColor: colors.backgroundSecondary }]}>
+      <View style={[styles.content, { backgroundColor: colors.surfaceSecondary }]}>
         <FlashList
           ref={flashListRef}
           data={listData}
