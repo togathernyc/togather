@@ -2845,7 +2845,19 @@ describe("togglePcoChannel", () => {
     });
 
     const channel = await t.run(async (ctx) => ctx.db.get(channelId));
-    expect(channel?.isArchived).toBe(true);
+    expect(channel?.isArchived).toBe(false);
+    expect(channel?.isEnabled).toBe(false);
+
+    const stillMember = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", leaderId)
+        )
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .first();
+    });
+    expect(stillMember).not.toBeNull();
 
     const cfg = await t.run(async (ctx) => {
       return await ctx.db
@@ -2854,6 +2866,53 @@ describe("togglePcoChannel", () => {
         .unique();
     });
     expect(cfg?.isActive).toBe(false);
+  });
+});
+
+describe("setCustomChannelLeaderEnabled", () => {
+  test("disabling keeps channel memberships", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, userId } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    const result = await t.mutation(api.functions.messaging.channels.createCustomChannel, {
+      token: leaderToken,
+      groupId,
+      name: "Directors",
+    });
+
+    await t.mutation(api.functions.messaging.channels.addChannelMembers, {
+      token: leaderToken,
+      channelId: result.channelId,
+      userIds: [userId],
+    });
+
+    await t.mutation(api.functions.messaging.channels.setCustomChannelLeaderEnabled, {
+      token: leaderToken,
+      channelId: result.channelId,
+      enabled: false,
+    });
+
+    const channel = await t.run(async (ctx) => ctx.db.get(result.channelId));
+    expect(channel?.isEnabled).toBe(false);
+    expect(channel?.isArchived).toBe(false);
+
+    const memberRows = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel", (q) => q.eq("channelId", result.channelId))
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .collect();
+    });
+    expect(memberRows.length).toBeGreaterThanOrEqual(1);
+
+    await t.mutation(api.functions.messaging.channels.setCustomChannelLeaderEnabled, {
+      token: leaderToken,
+      channelId: result.channelId,
+      enabled: true,
+    });
+    const after = await t.run(async (ctx) => ctx.db.get(result.channelId));
+    expect(after?.isEnabled).not.toBe(false);
   });
 });
 

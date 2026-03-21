@@ -10,7 +10,12 @@ import type { MutationCtx, QueryCtx } from "../../_generated/server";
 import type { Id, Doc } from "../../_generated/dataModel";
 import { requireAuth, requireAuthFromToken } from "../../lib/auth";
 import { getDisplayName, getMediaUrl } from "../../lib/utils";
-import { isAutoChannel, isCustomChannel, isLeaderRole } from "../../lib/helpers";
+import {
+  isAutoChannel,
+  isCustomChannel,
+  isLeaderRole,
+  channelIsLeaderEnabled,
+} from "../../lib/helpers";
 import { isCommunityAdmin } from "../../lib/permissions";
 import { generateChannelSlug, getChannelSlug } from "../../lib/slugs";
 import { internal } from "../../_generated/api";
@@ -126,10 +131,20 @@ export const getChannel = query({
       return null;
     }
 
+    const isLeaderOrAdmin =
+      groupMembership.role === "leader" || groupMembership.role === "admin";
+
+    // Leader-disabled custom/PCO: members cannot open the channel
+    if (
+      (isCustomChannel(channel.channelType) || channel.channelType === "pco_services") &&
+      !channelIsLeaderEnabled(channel) &&
+      !isLeaderOrAdmin
+    ) {
+      return null;
+    }
+
     // For leaders channel, also require leader/admin role
     if (channel.channelType === "leaders") {
-      const isLeaderOrAdmin =
-        groupMembership.role === "leader" || groupMembership.role === "admin";
       if (!isLeaderOrAdmin && !membership) {
         return null;
       }
@@ -198,6 +213,15 @@ export const getChannelBySlug = query({
     // check user's channel memberships for a shared channel matching the slug
     // where args.groupId is in sharedGroups with status "accepted"
     if (!resolvedChannel) {
+      const groupMembershipForUrlGroup = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q) =>
+          q.eq("groupId", args.groupId).eq("userId", userId)
+        )
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .first();
+      const isLeaderForUrlGroup = isLeaderRole(groupMembershipForUrlGroup?.role);
+
       const userMemberships = await ctx.db
         .query("chatChannelMembers")
         .withIndex("by_user", (q) => q.eq("userId", userId))
@@ -208,6 +232,16 @@ export const getChannelBySlug = query({
         const candidateChannel = await ctx.db.get(membership.channelId);
         if (!candidateChannel || candidateChannel.isArchived) continue;
         if (!candidateChannel.isShared) continue;
+        const sharedCustomOrPco =
+          isCustomChannel(candidateChannel.channelType) ||
+          candidateChannel.channelType === "pco_services";
+        if (
+          sharedCustomOrPco &&
+          !channelIsLeaderEnabled(candidateChannel) &&
+          !isLeaderForUrlGroup
+        ) {
+          continue;
+        }
 
         // Match by slug
         const candidateSlug = getChannelSlug(candidateChannel);
@@ -265,6 +299,14 @@ export const getChannelBySlug = query({
     // For shared channels accessed from secondary group, channel membership is required
     if ((isCustomChannel(resolvedChannel.channelType) || resolvedChannel.channelType === "pco_services") &&
         !isMember && !isLeaderOrAdmin) {
+      return null;
+    }
+
+    if (
+      (isCustomChannel(resolvedChannel.channelType) || resolvedChannel.channelType === "pco_services") &&
+      !channelIsLeaderEnabled(resolvedChannel) &&
+      !isLeaderOrAdmin
+    ) {
       return null;
     }
 
@@ -342,6 +384,9 @@ export const getChannelsByGroup = query({
       }
       // Custom and pco_services channels require membership (or leader/admin access)
       if (isCustomChannel(channel.channelType) || channel.channelType === "pco_services") {
+        if (!channelIsLeaderEnabled(channel) && !isLeader) {
+          return false;
+        }
         return userChannelMemberships.has(channel._id) || isLeader;
       }
       // Main channel is accessible to all group members
@@ -373,12 +418,33 @@ export const getUserChannels = query({
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .collect();
 
+    const groupMemberships = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .collect();
+    const roleByGroupId = new Map(
+      groupMemberships.map((m) => [m.groupId, m.role])
+    );
+
     const channelIds = memberships.map((m) => m.channelId);
     const channels = await Promise.all(channelIds.map((id) => ctx.db.get(id)));
 
     // Filter out null and archived channels, and add slug fallback
     return channels
-      .filter((c): c is NonNullable<typeof c> => c !== null && !c.isArchived)
+      .filter((c): c is NonNullable<typeof c> => {
+        if (c === null || c.isArchived) return false;
+        const role = roleByGroupId.get(c.groupId);
+        const isLeader = isLeaderRole(role);
+        if (
+          (isCustomChannel(c.channelType) || c.channelType === "pco_services") &&
+          !channelIsLeaderEnabled(c) &&
+          !isLeader
+        ) {
+          return false;
+        }
+        return true;
+      })
       .map((channel) => ({
         ...channel,
         slug: getChannelSlug(channel),
@@ -609,6 +675,7 @@ export const listGroupChannels = query({
     isPinned: v.boolean(),
     lastMessageAt: v.optional(v.number()),
     isShared: v.optional(v.boolean()),
+    isEnabled: v.boolean(),
   })),
   handler: async (ctx, args) => {
     // 1. Authenticate user
@@ -671,6 +738,16 @@ export const listGroupChannels = query({
         (sg) => sg.groupId === args.groupId && sg.status === "accepted"
       );
       if (sharedEntry) {
+        const sharedCustomOrPco =
+          isCustomChannel(candidateChannel.channelType) ||
+          candidateChannel.channelType === "pco_services";
+        if (
+          sharedCustomOrPco &&
+          !channelIsLeaderEnabled(candidateChannel) &&
+          !userIsLeaderOrAdmin
+        ) {
+          continue;
+        }
         channels.push(candidateChannel);
       }
     }
@@ -708,6 +785,13 @@ export const listGroupChannels = query({
       // Regular members can only see custom/PCO channels they're members of
       const requiresMembership = isCustomChannel(ch.channelType) || ch.channelType === "pco_services";
       if (requiresMembership && !userChannelMemberships.has(ch._id)) {
+        return false;
+      }
+      if (
+        requiresMembership &&
+        !channelIsLeaderEnabled(ch) &&
+        !userIsLeaderOrAdmin
+      ) {
         return false;
       }
       return true;
@@ -778,6 +862,7 @@ export const listGroupChannels = query({
           isPinned,
           lastMessageAt: channel.lastMessageAt,
           isShared: channel.isShared || undefined,
+          isEnabled: channelIsLeaderEnabled(channel),
         };
       })
     );
@@ -927,6 +1012,21 @@ export const getInboxChannels = query({
         (sg) => validGroupIds.has(sg.groupId) && sg.status === "accepted"
       );
       if (hasAcceptedGroup) {
+        const acceptedEntry = candidateChannel.sharedGroups.find(
+          (sg) => validGroupIds.has(sg.groupId) && sg.status === "accepted"
+        );
+        const roleInLinkedGroup = acceptedEntry
+          ? groupRoleMap.get(acceptedEntry.groupId)
+          : undefined;
+        const leaderInLinkedGroup = isLeaderRole(roleInLinkedGroup);
+        if (
+          (isCustomChannel(candidateChannel.channelType) ||
+            candidateChannel.channelType === "pco_services") &&
+          !channelIsLeaderEnabled(candidateChannel) &&
+          !leaderInLinkedGroup
+        ) {
+          continue;
+        }
         allChannels.push(candidateChannel);
         allChannelIds.add(candidateChannel._id);
         // Also add to userChannelIds since we know user is a member
@@ -974,6 +1074,13 @@ export const getInboxChannels = query({
           if (ch.channelType === "leaders" && !isLeaderOrAdmin) return false;
           // User must be a member of the channel
           if (!userChannelIds.has(ch._id)) return false;
+          if (
+            (isCustomChannel(ch.channelType) || ch.channelType === "pco_services") &&
+            !channelIsLeaderEnabled(ch) &&
+            !isLeaderOrAdmin
+          ) {
+            return false;
+          }
           return true;
         }
         // Shared channel from another group: check if this group is in sharedGroups
@@ -1446,6 +1553,85 @@ export const unarchiveCustomChannel = mutation({
 });
 
 /**
+ * Leader enable/disable for custom channels without changing memberships.
+ * Distinct from archiveCustomChannel (soft delete + clear members).
+ */
+export const setCustomChannelLeaderEnabled = mutation({
+  args: {
+    token: v.string(),
+    channelId: v.id("chatChannels"),
+    enabled: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const channel = await ctx.db.get(args.channelId);
+    if (!channel) {
+      throw new ConvexError({ code: "NOT_FOUND", message: "Channel not found" });
+    }
+
+    if (!isCustomChannel(channel.channelType)) {
+      throw new ConvexError({
+        code: "INVALID_OPERATION",
+        message: "Only custom channels support this toggle.",
+      });
+    }
+
+    if (channel.isShared) {
+      throw new ConvexError({
+        code: "INVALID_OPERATION",
+        message: "Shared channels must be managed from the owning group.",
+      });
+    }
+
+    if (channel.isArchived) {
+      throw new ConvexError({
+        code: "INVALID_OPERATION",
+        message: "This channel is archived. Unarchive it first to change visibility.",
+      });
+    }
+
+    const groupMembership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", channel.groupId).eq("userId", userId)
+      )
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .first();
+
+    if (!isLeaderRole(groupMembership?.role)) {
+      throw new ConvexError({
+        code: "FORBIDDEN",
+        message: "Only group leaders can enable or disable custom channels",
+      });
+    }
+
+    const now = Date.now();
+
+    if (!args.enabled) {
+      if (channel.isEnabled === false) {
+        return { channelId: args.channelId, status: "already_disabled" as const };
+      }
+      await ctx.db.patch(args.channelId, {
+        isEnabled: false,
+        updatedAt: now,
+      });
+      return { channelId: args.channelId, status: "disabled" as const };
+    }
+
+    if (channel.isEnabled !== false) {
+      return { channelId: args.channelId, status: "already_enabled" as const };
+    }
+
+    await ctx.db.patch(args.channelId, {
+      isEnabled: true,
+      updatedAt: now,
+    });
+    return { channelId: args.channelId, status: "enabled" as const };
+  },
+});
+
+/**
  * Archive a PCO auto channel and turn off sync (shared implementation).
  */
 async function archivePcoChannelInTxn(
@@ -1545,9 +1731,11 @@ export const archivePcoChannel = mutation({
 });
 
 /**
- * Enable or disable a PCO auto channel (archive + sync off, or unarchive + sync on).
+ * Enable or disable a PCO auto channel for members (keeps memberships; turns sync off/on).
+ * Re-enabling always schedules a resync so PCO remains source of truth.
  *
- * Shared channels cannot be toggled from a linked group.
+ * Use archivePcoChannel for a full soft-delete (clears members). Shared channels
+ * cannot be toggled from a linked group.
  */
 export const togglePcoChannel = mutation({
   args: {
@@ -1593,28 +1781,44 @@ export const togglePcoChannel = mutation({
       });
     }
 
-    if (!args.enabled) {
-      if (channel.isArchived) {
-        return { channelId: args.channelId, status: "already_disabled" as const };
-      }
-      await archivePcoChannelInTxn(ctx, args.channelId, now);
-      return { channelId: args.channelId, status: "disabled" as const };
-    }
-
-    if (!channel.isArchived) {
-      return { channelId: args.channelId, status: "already_enabled" as const };
-    }
-
-    await ctx.db.patch(args.channelId, {
-      isArchived: false,
-      archivedAt: undefined,
-      updatedAt: now,
-    });
-
     const autoConfig = await ctx.db
       .query("autoChannelConfigs")
       .withIndex("by_channel", (q) => q.eq("channelId", args.channelId))
       .unique();
+
+    if (!args.enabled) {
+      if (channel.isArchived || channel.isEnabled === false) {
+        return { channelId: args.channelId, status: "already_disabled" as const };
+      }
+      await ctx.db.patch(args.channelId, {
+        isEnabled: false,
+        updatedAt: now,
+      });
+      if (autoConfig) {
+        await ctx.db.patch(autoConfig._id, {
+          isActive: false,
+          updatedAt: now,
+        });
+      }
+      return { channelId: args.channelId, status: "disabled" as const };
+    }
+
+    // Enable: recover from archived (legacy full archive) or leader-disabled (isEnabled: false).
+    if (channel.isArchived) {
+      await ctx.db.patch(args.channelId, {
+        isArchived: false,
+        archivedAt: undefined,
+        isEnabled: true,
+        updatedAt: now,
+      });
+    } else if (channel.isEnabled !== false) {
+      return { channelId: args.channelId, status: "already_enabled" as const };
+    } else {
+      await ctx.db.patch(args.channelId, {
+        isEnabled: true,
+        updatedAt: now,
+      });
+    }
 
     if (autoConfig) {
       await ctx.db.patch(autoConfig._id, {

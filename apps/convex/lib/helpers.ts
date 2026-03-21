@@ -152,6 +152,14 @@ export function getChannelCategory(channelType: string): "auto" | "custom" {
   return isAutoChannel(channelType) ? "auto" : "custom";
 }
 
+/**
+ * Whether a channel is leader-visible / member-active (not leader-disabled).
+ * `isEnabled: false` hides the channel from members and blocks chat, but keeps memberships.
+ */
+export function channelIsLeaderEnabled(channel: { isEnabled?: boolean }): boolean {
+  return channel.isEnabled !== false;
+}
+
 // ============================================================================
 // Re-exports from membership.ts for convenience
 // ============================================================================

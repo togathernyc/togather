@@ -62,6 +62,8 @@ interface Channel {
   isPinned: boolean;
   lastMessageAt?: number;
   isShared?: boolean;
+  /** false when leader hid channel; memberships stay (see Convex isEnabled). */
+  isEnabled: boolean;
 }
 
 export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
@@ -105,11 +107,8 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
   const togglePcoChannelMutation = useAuthenticatedMutation(
     api.functions.messaging.channels.togglePcoChannel
   );
-  const archiveCustomChannelMutation = useAuthenticatedMutation(
-    api.functions.messaging.channels.archiveCustomChannel
-  );
-  const unarchiveCustomChannelMutation = useAuthenticatedMutation(
-    api.functions.messaging.channels.unarchiveCustomChannel
+  const setCustomChannelLeaderEnabledMutation = useAuthenticatedMutation(
+    api.functions.messaging.channels.setCustomChannelLeaderEnabled
   );
   const enableInviteLinkMutation = useAuthenticatedMutation(
     api.functions.messaging.channelInvites.enableInviteLink
@@ -275,19 +274,22 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
     async (channel: Channel, enabled: boolean) => {
       if (!enabled) {
         Alert.alert(
-          "Disable channel?",
-          `Everyone will be removed from "${channel.name}". You can enable the channel again later, but you will need to add members back.`,
+          "Hide channel from members?",
+          `Members will not see "${channel.name}" until you turn it back on. No one is removed from the channel.`,
           [
             { text: "Cancel", style: "cancel" },
             {
-              text: "Disable",
+              text: "Hide",
               style: "destructive",
               onPress: async () => {
                 setTogglingChannelId(channel._id);
                 try {
-                  await archiveCustomChannelMutation({ channelId: channel._id });
+                  await setCustomChannelLeaderEnabledMutation({
+                    channelId: channel._id,
+                    enabled: false,
+                  });
                 } catch (error: any) {
-                  Alert.alert("Error", error?.message || "Failed to disable channel");
+                  Alert.alert("Error", error?.message || "Failed to update channel");
                 } finally {
                   setTogglingChannelId(null);
                 }
@@ -299,14 +301,17 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
       }
       setTogglingChannelId(channel._id);
       try {
-        await unarchiveCustomChannelMutation({ channelId: channel._id });
+        await setCustomChannelLeaderEnabledMutation({
+          channelId: channel._id,
+          enabled: true,
+        });
       } catch (error: any) {
         Alert.alert("Error", error?.message || "Failed to enable channel");
       } finally {
         setTogglingChannelId(null);
       }
     },
-    [archiveCustomChannelMutation, unarchiveCustomChannelMutation]
+    [setCustomChannelLeaderEnabledMutation]
   );
 
   // Navigate to create channel screen
@@ -530,7 +535,7 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
 
         {/* PCO Synced Channels */}
         {pcoSyncedChannels.map((channel: Channel) => {
-          const pcoEnabled = !channel.isArchived;
+          const pcoEnabled = channel.isEnabled && !channel.isArchived;
           const canTogglePco = isLeader && !channel.isShared;
           return (
             <View key={channel._id} style={[styles.channelRow, { borderBottomColor: colors.border }]}>
@@ -673,7 +678,7 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
           {isLeader && <ChannelJoinRequestsBanner groupId={groupId} />}
           <View style={[styles.channelList, { backgroundColor: colors.surface }]}>
             {customChannels.map((channel: Channel) => {
-              const customEnabled = !channel.isArchived;
+              const customEnabled = channel.isEnabled && !channel.isArchived;
               const canToggleCustom = isLeader && !channel.isShared;
               return (
                 <View key={channel._id} style={[styles.channelRow, { borderBottomColor: colors.border }]}>
@@ -710,7 +715,7 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
                       <Text style={[styles.channelSubtitle, { color: colors.textSecondary }]}>
                         {customEnabled
                           ? `${channel.memberCount} member${channel.memberCount !== 1 ? "s" : ""}`
-                          : "Disabled · add members after enabling"}
+                          : "Hidden from members"}
                       </Text>
                       {!channel.isMember && isLeader && customEnabled && (
                         <Text style={[styles.channelNote, { color: colors.textTertiary }]}>

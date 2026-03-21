@@ -1214,6 +1214,8 @@ export default defineSchema({
     updatedAt: v.number(), // Unix timestamp ms
     isArchived: v.boolean(),
     archivedAt: v.optional(v.number()), // Unix timestamp ms
+    /** false = leader hid channel from members; memberships stay (unlike archive). undefined/true = active. */
+    isEnabled: v.optional(v.boolean()),
     // Denormalized for performance
     lastMessageAt: v.optional(v.number()), // Unix timestamp ms
     lastMessagePreview: v.optional(v.string()), // First 100 chars

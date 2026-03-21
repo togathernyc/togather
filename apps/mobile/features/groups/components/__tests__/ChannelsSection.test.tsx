@@ -46,6 +46,7 @@ const mockMainChannel = {
   isMember: true,
   unreadCount: 0,
   isPinned: false,
+  isEnabled: true,
 };
 
 const mockLeadersChannel = {
@@ -58,6 +59,7 @@ const mockLeadersChannel = {
   isMember: true,
   unreadCount: 2,
   isPinned: false,
+  isEnabled: true,
 };
 
 const mockCustomChannels = [
@@ -71,6 +73,7 @@ const mockCustomChannels = [
     isMember: true,
     unreadCount: 0,
     isPinned: false,
+    isEnabled: true,
   },
   {
     _id: "channel-custom-2",
@@ -82,6 +85,7 @@ const mockCustomChannels = [
     isMember: true,
     unreadCount: 5,
     isPinned: false,
+    isEnabled: true,
   },
 ];
 
@@ -112,8 +116,7 @@ jest.mock("@services/api/convex", () => ({
           toggleLeadersChannel: "toggleLeadersChannel",
           toggleMainChannel: "toggleMainChannel",
           togglePcoChannel: "togglePcoChannel",
-          archiveCustomChannel: "archiveCustomChannel",
-          unarchiveCustomChannel: "unarchiveCustomChannel",
+          setCustomChannelLeaderEnabled: "setCustomChannelLeaderEnabled",
         },
         channelInvites: {
           enableInviteLink: "enableInviteLink",

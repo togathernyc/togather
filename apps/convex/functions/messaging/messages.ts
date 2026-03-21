@@ -9,6 +9,11 @@ import { query, mutation, internalMutation } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
+import {
+  isCustomChannel,
+  channelIsLeaderEnabled,
+  isLeaderRole,
+} from "../../lib/helpers";
 import { getDisplayName, getMediaUrl } from "../../lib/utils";
 import { isCommunityAdmin } from "../../lib/permissions";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
@@ -160,27 +165,26 @@ export const getMessages = query({
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
 
-    // If not a channel member, check if user is a group leader/admin
-    if (!channelMembership) {
-      const groupMembership = await ctx.db
-        .query("groupMembers")
-        .withIndex("by_group_user", (q) =>
-          q.eq("groupId", channel.groupId).eq("userId", userId)
-        )
-        .filter((q) =>
-          q.and(
-            q.eq(q.field("leftAt"), undefined),
-            q.or(
-              q.eq(q.field("role"), "leader"),
-              q.eq(q.field("role"), "admin")
-            )
-          )
-        )
-        .first();
+    const groupMembership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", channel.groupId).eq("userId", userId)
+      )
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .first();
 
-      if (!groupMembership) {
-        throw new Error("Not a member of this channel");
-      }
+    // If not a channel member, only group leaders/admins may load messages
+    if (!channelMembership && !isLeaderRole(groupMembership?.role)) {
+      throw new Error("Not a member of this channel");
+    }
+
+    const isLeaderOrAdmin = isLeaderRole(groupMembership?.role);
+    if (
+      (isCustomChannel(channel.channelType) || channel.channelType === "pco_services") &&
+      !channelIsLeaderEnabled(channel) &&
+      !isLeaderOrAdmin
+    ) {
+      throw new Error("Channel is not available");
     }
 
     // Get blocked users to filter out their messages
@@ -332,6 +336,17 @@ export const sendMessage = mutation({
 
     if (!membership) {
       throw new Error("Not a member of this channel");
+    }
+
+    const channel = await ctx.db.get(args.channelId);
+    if (!channel) {
+      throw new Error("Channel not found");
+    }
+    if (
+      (isCustomChannel(channel.channelType) || channel.channelType === "pco_services") &&
+      !channelIsLeaderEnabled(channel)
+    ) {
+      throw new Error("This channel is disabled");
     }
 
     // Get user info for denormalized fields
