@@ -10,7 +10,7 @@ import { query, mutation } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
-import { isLeaderRole } from "../../lib/helpers";
+import { isLeaderRole, channelIsLeaderEnabled } from "../../lib/helpers";
 import { generateShortId, getDisplayName, getMediaUrl } from "../../lib/utils";
 
 /**
@@ -49,7 +49,7 @@ export const getByShortId = query({
       .withIndex("by_inviteShortId", (q) => q.eq("inviteShortId", args.shortId))
       .first();
 
-    if (!channel || !channel.inviteEnabled || channel.isArchived) {
+    if (!channel || !channel.inviteEnabled || channel.isArchived || !channelIsLeaderEnabled(channel)) {
       return null;
     }
 
@@ -456,7 +456,7 @@ export const joinViaInviteLink = mutation({
       .withIndex("by_inviteShortId", (q) => q.eq("inviteShortId", args.shortId))
       .first();
 
-    if (!channel || !channel.inviteEnabled || channel.isArchived) {
+    if (!channel || !channel.inviteEnabled || channel.isArchived || !channelIsLeaderEnabled(channel)) {
       throw new ConvexError("This invite link is no longer valid.");
     }
 
