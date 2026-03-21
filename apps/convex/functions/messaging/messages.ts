@@ -182,14 +182,25 @@ export const getMessages = query({
       throw new Error("Not a member of this channel");
     }
 
-    const isLeaderOrAdmin = isLeaderRole(groupMembership?.role);
+    // For bypassing global disabled check, must be leader in the OWNING group (not linked group)
+    const owningGroupMembership = args.viewingGroupId
+      ? await ctx.db
+          .query("groupMembers")
+          .withIndex("by_group_user", (q) =>
+            q.eq("groupId", channel.groupId).eq("userId", userId)
+          )
+          .filter((q) => q.eq(q.field("leftAt"), undefined))
+          .first()
+      : groupMembership;
+    const isOwningGroupLeader = isLeaderRole(owningGroupMembership?.role);
+
     const effectiveEnabled = args.viewingGroupId
       ? channelEffectiveEnabledForGroup(channel, args.viewingGroupId)
       : channelIsLeaderEnabled(channel);
     if (
       (isCustomChannel(channel.channelType) || channel.channelType === "pco_services") &&
       !effectiveEnabled &&
-      !isLeaderOrAdmin
+      !isOwningGroupLeader
     ) {
       throw new Error("Channel is not available");
     }
@@ -351,18 +362,9 @@ export const sendMessage = mutation({
       throw new Error("Channel not found");
     }
     if (args.viewingGroupId) {
-      const gm = await ctx.db
-        .query("groupMembers")
-        .withIndex("by_group_user", (q) =>
-          q.eq("groupId", args.viewingGroupId!).eq("userId", userId)
-        )
-        .filter((q) => q.eq(q.field("leftAt"), undefined))
-        .first();
-      const isLeaderOrAdmin = isLeaderRole(gm?.role);
       if (
         (isCustomChannel(channel.channelType) || channel.channelType === "pco_services") &&
-        !channelEffectiveEnabledForGroup(channel, args.viewingGroupId) &&
-        !isLeaderOrAdmin
+        !channelEffectiveEnabledForGroup(channel, args.viewingGroupId)
       ) {
         throw new Error("This channel is disabled");
       }

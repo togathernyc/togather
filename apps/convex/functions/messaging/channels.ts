@@ -89,6 +89,97 @@ function sortChannelsByPinOrder<T extends {
   });
 }
 
+type LinkedGroupToggleResult =
+  | { handled: false }
+  | { handled: true; result: { channelId: Id<"chatChannels">; status: "already_disabled" | "already_enabled" | "disabled" | "enabled" | "linked_unhidden_but_globally_disabled" } };
+
+/**
+ * Helper for linked group leaders to toggle `hiddenFromNavigation` on a shared channel.
+ * Returns `{ handled: false }` if the managing group is the owning group (caller should
+ * fall through to global enable/disable logic). Otherwise returns the toggle result.
+ *
+ * Bug fix: Returns "linked_unhidden_but_globally_disabled" when re-enabling a linked
+ * group's visibility but the channel is still globally disabled by the owning group.
+ */
+async function handleLinkedGroupToggle(
+  ctx: MutationCtx,
+  channel: Doc<"chatChannels">,
+  managingGroupId: Id<"groups">,
+  userId: Id<"users">,
+  enabled: boolean,
+  channelTypeLabel: string,
+): Promise<LinkedGroupToggleResult> {
+  if (!channel.isShared || managingGroupId === channel.groupId) {
+    return { handled: false };
+  }
+
+  const sharedGroups = channel.sharedGroups ?? [];
+  const entryIndex = sharedGroups.findIndex(
+    (sg) => sg.groupId === managingGroupId && sg.status === "accepted",
+  );
+  if (entryIndex < 0) {
+    throw new ConvexError({
+      code: "FORBIDDEN",
+      message: "This channel is not linked to that group.",
+    });
+  }
+
+  const linkMembership = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_group_user", (q) =>
+      q.eq("groupId", managingGroupId).eq("userId", userId),
+    )
+    .filter((q) => q.eq(q.field("leftAt"), undefined))
+    .first();
+
+  if (!isLeaderRole(linkMembership?.role)) {
+    throw new ConvexError({
+      code: "FORBIDDEN",
+      message: `Only group leaders can enable or disable ${channelTypeLabel}`,
+    });
+  }
+
+  const now = Date.now();
+  const existing = sharedGroups[entryIndex]!;
+  const currentlyHidden = existing.hiddenFromNavigation === true;
+
+  if (!enabled) {
+    if (currentlyHidden || !channelIsLeaderEnabled(channel)) {
+      return { handled: true, result: { channelId: channel._id, status: "already_disabled" as const } };
+    }
+    const updatedSharedGroups = [...sharedGroups];
+    updatedSharedGroups[entryIndex] = {
+      ...existing,
+      hiddenFromNavigation: true,
+    };
+    await ctx.db.patch(channel._id, {
+      sharedGroups: updatedSharedGroups,
+      updatedAt: now,
+    });
+    return { handled: true, result: { channelId: channel._id, status: "disabled" as const } };
+  }
+
+  if (!currentlyHidden) {
+    return { handled: true, result: { channelId: channel._id, status: "already_enabled" as const } };
+  }
+
+  const updatedSharedGroups = [...sharedGroups];
+  updatedSharedGroups[entryIndex] = {
+    ...existing,
+    hiddenFromNavigation: undefined,
+  };
+  await ctx.db.patch(channel._id, {
+    sharedGroups: updatedSharedGroups,
+    updatedAt: now,
+  });
+
+  // Return accurate status: if the channel is globally disabled, reflect that
+  if (!channelIsLeaderEnabled(channel)) {
+    return { handled: true, result: { channelId: channel._id, status: "linked_unhidden_but_globally_disabled" as const } };
+  }
+  return { handled: true, result: { channelId: channel._id, status: "enabled" as const } };
+}
+
 // ============================================================================
 // Queries
 // ============================================================================
@@ -1592,66 +1683,16 @@ export const setCustomChannelLeaderEnabled = mutation({
 
     const managingGroupId = args.managingGroupId ?? channel.groupId;
 
-    if (channel.isShared && managingGroupId !== channel.groupId) {
-      const sharedGroups = channel.sharedGroups ?? [];
-      const entryIndex = sharedGroups.findIndex(
-        (sg) => sg.groupId === managingGroupId && sg.status === "accepted",
-      );
-      if (entryIndex < 0) {
-        throw new ConvexError({
-          code: "FORBIDDEN",
-          message: "This channel is not linked to that group.",
-        });
-      }
-
-      const linkMembership = await ctx.db
-        .query("groupMembers")
-        .withIndex("by_group_user", (q) =>
-          q.eq("groupId", managingGroupId).eq("userId", userId),
-        )
-        .filter((q) => q.eq(q.field("leftAt"), undefined))
-        .first();
-
-      if (!isLeaderRole(linkMembership?.role)) {
-        throw new ConvexError({
-          code: "FORBIDDEN",
-          message: "Only group leaders can enable or disable custom channels",
-        });
-      }
-
-      const now = Date.now();
-      const existing = sharedGroups[entryIndex]!;
-      const currentlyHidden = existing.hiddenFromNavigation === true;
-
-      if (!args.enabled) {
-        if (currentlyHidden || !channelIsLeaderEnabled(channel)) {
-          return { channelId: args.channelId, status: "already_disabled" as const };
-        }
-        const updatedSharedGroups = [...sharedGroups];
-        updatedSharedGroups[entryIndex] = {
-          ...existing,
-          hiddenFromNavigation: true,
-        };
-        await ctx.db.patch(args.channelId, {
-          sharedGroups: updatedSharedGroups,
-          updatedAt: now,
-        });
-        return { channelId: args.channelId, status: "disabled" as const };
-      }
-
-      if (!currentlyHidden) {
-        return { channelId: args.channelId, status: "already_enabled" as const };
-      }
-      const updatedSharedGroups = [...sharedGroups];
-      updatedSharedGroups[entryIndex] = {
-        ...existing,
-        hiddenFromNavigation: undefined,
-      };
-      await ctx.db.patch(args.channelId, {
-        sharedGroups: updatedSharedGroups,
-        updatedAt: now,
-      });
-      return { channelId: args.channelId, status: "enabled" as const };
+    const linkedResult = await handleLinkedGroupToggle(
+      ctx,
+      channel,
+      managingGroupId,
+      userId,
+      args.enabled,
+      "custom channels",
+    );
+    if (linkedResult.handled) {
+      return linkedResult.result;
     }
 
     const groupMembership = await ctx.db
@@ -1835,65 +1876,16 @@ export const togglePcoChannel = mutation({
 
     const managingGroupId = args.managingGroupId ?? channel.groupId;
 
-    if (channel.isShared && managingGroupId !== channel.groupId) {
-      const sharedGroups = channel.sharedGroups ?? [];
-      const entryIndex = sharedGroups.findIndex(
-        (sg) => sg.groupId === managingGroupId && sg.status === "accepted",
-      );
-      if (entryIndex < 0) {
-        throw new ConvexError({
-          code: "FORBIDDEN",
-          message: "This channel is not linked to that group.",
-        });
-      }
-
-      const linkMembership = await ctx.db
-        .query("groupMembers")
-        .withIndex("by_group_user", (q) =>
-          q.eq("groupId", managingGroupId).eq("userId", userId),
-        )
-        .filter((q) => q.eq(q.field("leftAt"), undefined))
-        .first();
-
-      if (!isLeaderRole(linkMembership?.role)) {
-        throw new ConvexError({
-          code: "FORBIDDEN",
-          message: "Only group leaders can enable or disable PCO channels",
-        });
-      }
-
-      const existing = sharedGroups[entryIndex]!;
-      const currentlyHidden = existing.hiddenFromNavigation === true;
-
-      if (!args.enabled) {
-        if (currentlyHidden || !channelIsLeaderEnabled(channel)) {
-          return { channelId: args.channelId, status: "already_disabled" as const };
-        }
-        const updatedSharedGroups = [...sharedGroups];
-        updatedSharedGroups[entryIndex] = {
-          ...existing,
-          hiddenFromNavigation: true,
-        };
-        await ctx.db.patch(args.channelId, {
-          sharedGroups: updatedSharedGroups,
-          updatedAt: now,
-        });
-        return { channelId: args.channelId, status: "disabled" as const };
-      }
-
-      if (!currentlyHidden) {
-        return { channelId: args.channelId, status: "already_enabled" as const };
-      }
-      const updatedSharedGroups = [...sharedGroups];
-      updatedSharedGroups[entryIndex] = {
-        ...existing,
-        hiddenFromNavigation: undefined,
-      };
-      await ctx.db.patch(args.channelId, {
-        sharedGroups: updatedSharedGroups,
-        updatedAt: now,
-      });
-      return { channelId: args.channelId, status: "enabled" as const };
+    const linkedResult = await handleLinkedGroupToggle(
+      ctx,
+      channel,
+      managingGroupId,
+      userId,
+      args.enabled,
+      "PCO channels",
+    );
+    if (linkedResult.handled) {
+      return linkedResult.result;
     }
 
     const groupMembership = await ctx.db
