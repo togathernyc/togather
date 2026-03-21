@@ -12,6 +12,7 @@ import { requireAuth } from "../../lib/auth";
 import {
   isCustomChannel,
   channelIsLeaderEnabled,
+  channelEffectiveEnabledForGroup,
   isLeaderRole,
 } from "../../lib/helpers";
 import { getDisplayName, getMediaUrl } from "../../lib/utils";
@@ -145,6 +146,8 @@ export const getMessages = query({
     channelId: v.id("chatChannels"),
     limit: v.optional(v.number()),
     cursor: v.optional(v.string()),
+    /** Group context from the chat route (required for shared-channel visibility rules). */
+    viewingGroupId: v.optional(v.id("groups")),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -165,10 +168,22 @@ export const getMessages = query({
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
 
+    // Validate viewingGroupId is actually related to this channel
+    let contextGroupId = channel.groupId;
+    if (args.viewingGroupId) {
+      const isOwningGroup = args.viewingGroupId === channel.groupId;
+      const isAcceptedSharedGroup = channel.sharedGroups?.some(
+        (sg) => sg.groupId === args.viewingGroupId && sg.status === "accepted"
+      );
+      if (isOwningGroup || isAcceptedSharedGroup) {
+        contextGroupId = args.viewingGroupId;
+      }
+      // If viewingGroupId is not valid, fall back to channel.groupId for auth check
+    }
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId)
+        q.eq("groupId", contextGroupId).eq("userId", userId)
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -178,11 +193,31 @@ export const getMessages = query({
       throw new Error("Not a member of this channel");
     }
 
-    const isLeaderOrAdmin = isLeaderRole(groupMembership?.role);
+    // For bypassing global disabled check, consider leadership in owning group OR linked group
+    const owningGroupMembership = args.viewingGroupId
+      ? await ctx.db
+          .query("groupMembers")
+          .withIndex("by_group_user", (q) =>
+            q.eq("groupId", channel.groupId).eq("userId", userId)
+          )
+          .filter((q) => q.eq(q.field("leftAt"), undefined))
+          .first()
+      : groupMembership;
+    const isOwningGroupLeader = isLeaderRole(owningGroupMembership?.role);
+    // Also check linked group leadership when viewing from a linked group
+    const isLinkedGroupLeader =
+      args.viewingGroupId && args.viewingGroupId !== channel.groupId
+        ? isLeaderRole(groupMembership?.role)
+        : false;
+
+    const effectiveEnabled = args.viewingGroupId
+      ? channelEffectiveEnabledForGroup(channel, args.viewingGroupId)
+      : channelIsLeaderEnabled(channel);
     if (
       (isCustomChannel(channel.channelType) || channel.channelType === "pco_services") &&
-      !channelIsLeaderEnabled(channel) &&
-      !isLeaderOrAdmin
+      !effectiveEnabled &&
+      !isOwningGroupLeader &&
+      !isLinkedGroupLeader
     ) {
       throw new Error("Channel is not available");
     }
@@ -321,6 +356,7 @@ export const sendMessage = mutation({
     parentMessageId: v.optional(v.id("chatMessages")),
     mentionedUserIds: v.optional(v.array(v.id("users"))),
     hideLinkPreview: v.optional(v.boolean()),
+    viewingGroupId: v.optional(v.id("groups")),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -342,11 +378,20 @@ export const sendMessage = mutation({
     if (!channel) {
       throw new Error("Channel not found");
     }
-    if (
-      (isCustomChannel(channel.channelType) || channel.channelType === "pco_services") &&
-      !channelIsLeaderEnabled(channel)
-    ) {
-      throw new Error("This channel is disabled");
+    if (args.viewingGroupId) {
+      if (
+        (isCustomChannel(channel.channelType) || channel.channelType === "pco_services") &&
+        !channelEffectiveEnabledForGroup(channel, args.viewingGroupId)
+      ) {
+        throw new Error("This channel is disabled");
+      }
+    } else {
+      if (
+        (isCustomChannel(channel.channelType) || channel.channelType === "pco_services") &&
+        !channelIsLeaderEnabled(channel)
+      ) {
+        throw new Error("This channel is disabled");
+      }
     }
 
     // Get user info for denormalized fields

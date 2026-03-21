@@ -219,14 +219,15 @@ const ConvexChatRoomScreenInner: React.FC = () => {
     : null;
   const effectiveGroupChannels = groupChannels ?? cachedGroupChannels;
 
-  // Build channel tabs from the query result (or cache) - only show channels user is a member of
-  // This filters out archived channels and channels user doesn't have access to
+  // Build channel tabs from the query result (or cache) — member + leader-enabled (tab bar)
   const channelTabs: ChannelTab[] = useMemo(() => {
     if (!effectiveGroupChannels) return [];
 
-    // Filter to only channels user is a member of (already handles archived filtering on backend)
     return effectiveGroupChannels
-      .filter((channel: any) => channel.isMember)
+      .filter(
+        (channel: any) =>
+          channel.isMember && channel.isEnabled !== false
+      )
       .map((channel: any) => ({
         slug: channel.slug,
         channelType: channel.channelType,
@@ -401,7 +402,10 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   const { markAsRead } = useReadState(channelIdForHooks);
   const { typingUsers } = useTypingIndicators(channelIdForHooks);
   // Message sending with optimistic updates and offline queue
-  const { sendMessage, optimisticMessages, isSending, retryMessage, dismissMessage } = useSendMessage(channelIdForHooks);
+  const { sendMessage, optimisticMessages, isSending, retryMessage, dismissMessage } = useSendMessage(
+    channelIdForHooks,
+    resolvedGroupId
+  );
   const currentUserId = user?.id as Id<"users"> | undefined;
 
   // Mark messages as read when viewing (only if we have a valid channel ID)

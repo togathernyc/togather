@@ -991,3 +991,58 @@ describe("searchCommunityMembers includeGroupIds", () => {
     expect(returnedIds).not.toContain(outsiderUserId);
   });
 });
+
+describe("linked-group leader channel visibility", () => {
+  test("secondary leader hides shared custom channel only for linked group (global isEnabled unchanged)", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedSharedChannelTestData(t);
+
+    await t.mutation(api.functions.messaging.sharedChannels.inviteGroupToChannel, {
+      token: data.primaryLeaderToken,
+      channelId: data.channelId,
+      groupId: data.secondaryGroupId,
+    });
+
+    await t.mutation(api.functions.messaging.sharedChannels.respondToChannelInvite, {
+      token: data.secondaryLeaderToken,
+      channelId: data.channelId,
+      groupId: data.secondaryGroupId,
+      response: "accepted",
+    });
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("chatChannelMembers", {
+        channelId: data.channelId,
+        userId: data.secondaryMemberUserId,
+        role: "member",
+        joinedAt: Date.now(),
+        isMuted: false,
+      });
+    });
+
+    await t.mutation(api.functions.messaging.channels.setCustomChannelLeaderEnabled, {
+      token: data.secondaryLeaderToken,
+      channelId: data.channelId,
+      enabled: false,
+      managingGroupId: data.secondaryGroupId,
+    });
+
+    const channel = await t.run(async (ctx) => ctx.db.get(data.channelId));
+    expect(channel?.isEnabled).not.toBe(false);
+    expect(channel?.sharedGroups?.[0]?.hiddenFromNavigation).toBe(true);
+
+    const secondaryMemberList = await t.query(api.functions.messaging.channels.listGroupChannels, {
+      token: data.secondaryMemberToken,
+      groupId: data.secondaryGroupId,
+    });
+    expect(secondaryMemberList.some((c) => c._id === data.channelId)).toBe(false);
+
+    const primaryMemberList = await t.query(api.functions.messaging.channels.listGroupChannels, {
+      token: data.primaryMemberToken,
+      groupId: data.primaryGroupId,
+    });
+    const primaryRow = primaryMemberList.find((c) => c._id === data.channelId);
+    expect(primaryRow).toBeDefined();
+    expect(primaryRow?.isEnabled).toBe(true);
+  });
+});

@@ -1234,6 +1234,8 @@ export default defineSchema({
           respondedById: v.optional(v.id("users")), // Secondary group leader who responded
           respondedAt: v.optional(v.number()), // Unix timestamp ms
           sortOrder: v.optional(v.number()), // How this group orders the channel
+          /** Linked group's leaders hid the channel from tab bar / chat; owning group unchanged. */
+          hiddenFromNavigation: v.optional(v.boolean()),
         }),
       ),
     ),

@@ -267,14 +267,18 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
     async (channel: Channel, enabled: boolean) => {
       setTogglingChannelId(channel._id);
       try {
-        await togglePcoChannelMutation({ channelId: channel._id, enabled });
+        await togglePcoChannelMutation({
+          channelId: channel._id,
+          enabled,
+          managingGroupId: groupId as Id<"groups">,
+        });
       } catch (error: any) {
         Alert.alert("Error", error?.message || "Failed to update channel");
       } finally {
         setTogglingChannelId(null);
       }
     },
-    [togglePcoChannelMutation]
+    [togglePcoChannelMutation, groupId]
   );
 
   const handleToggleCustomChannel = useCallback(
@@ -294,6 +298,7 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
                   await setCustomChannelLeaderEnabledMutation({
                     channelId: channel._id,
                     enabled: false,
+                    managingGroupId: groupId as Id<"groups">,
                   });
                 } catch (error: any) {
                   Alert.alert("Error", error?.message || "Failed to update channel");
@@ -311,6 +316,7 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
         await setCustomChannelLeaderEnabledMutation({
           channelId: channel._id,
           enabled: true,
+          managingGroupId: groupId as Id<"groups">,
         });
       } catch (error: any) {
         Alert.alert("Error", error?.message || "Failed to enable channel");
@@ -318,7 +324,7 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
         setTogglingChannelId(null);
       }
     },
-    [setCustomChannelLeaderEnabledMutation]
+    [setCustomChannelLeaderEnabledMutation, groupId]
   );
 
   // Navigate to create channel screen
@@ -543,7 +549,7 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
         {/* PCO Synced Channels */}
         {pcoSyncedChannels.map((channel: Channel) => {
           const pcoEnabled = channel.isEnabled && !channel.isArchived;
-          const canTogglePco = isLeader && !channel.isShared;
+          const canTogglePco = isLeader;
           return (
             <View key={channel._id} style={[styles.channelRow, { borderBottomColor: colors.border }]}>
               <TouchableOpacity
@@ -686,7 +692,7 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
           <View style={[styles.channelList, { backgroundColor: colors.surface }]}>
             {customChannels.map((channel: Channel) => {
               const customEnabled = channel.isEnabled && !channel.isArchived;
-              const canToggleCustom = isLeader && !channel.isShared;
+              const canToggleCustom = isLeader;
               return (
                 <View key={channel._id} style={[styles.channelRow, { borderBottomColor: colors.border }]}>
                   <TouchableOpacity

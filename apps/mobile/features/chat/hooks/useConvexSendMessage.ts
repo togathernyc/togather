@@ -82,7 +82,8 @@ interface UseSendMessageResult {
  * ```
  */
 export function useSendMessage(
-  channelId: Id<"chatChannels"> | null
+  channelId: Id<"chatChannels"> | null,
+  viewingGroupId?: Id<"groups"> | null
 ): UseSendMessageResult {
   const { token, user } = useAuth();
   const sendMessageMutation = useMutation(api.functions.messaging.messages.sendMessage);
@@ -124,6 +125,7 @@ export function useSendMessage(
           parentMessageId: options?.parentMessageId,
           mentionedUserIds: options?.mentionedUserIds,
           hideLinkPreview: options?.hideLinkPreview,
+          ...(viewingGroupId ? { viewingGroupId } : {}),
         });
 
         // Update optimistic message status to "sent"
@@ -162,7 +164,7 @@ export function useSendMessage(
         throw error;
       }
     },
-    [channelId, token, sendMessageMutation]
+    [channelId, token, sendMessageMutation, viewingGroupId]
   );
 
   /**

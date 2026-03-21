@@ -15,6 +15,7 @@ import {
   isCustomChannel,
   isLeaderRole,
   channelIsLeaderEnabled,
+  channelEffectiveEnabledForGroup,
 } from "../../lib/helpers";
 import { isCommunityAdmin } from "../../lib/permissions";
 import { generateChannelSlug, getChannelSlug } from "../../lib/slugs";
@@ -86,6 +87,99 @@ function sortChannelsByPinOrder<T extends {
     // Fallback: alphabetical by name
     return a.name.localeCompare(b.name);
   });
+}
+
+type LinkedGroupToggleResult =
+  | { handled: false }
+  | { handled: true; result: { channelId: Id<"chatChannels">; status: "already_disabled" | "already_enabled" | "disabled" | "enabled" | "linked_unhidden_but_globally_disabled" } };
+
+/**
+ * Helper for linked group leaders to toggle `hiddenFromNavigation` on a shared channel.
+ * Returns `{ handled: false }` if the managing group is the owning group (caller should
+ * fall through to global enable/disable logic). Otherwise returns the toggle result.
+ *
+ * Bug fix: Returns "linked_unhidden_but_globally_disabled" when re-enabling a linked
+ * group's visibility but the channel is still globally disabled by the owning group.
+ */
+async function handleLinkedGroupToggle(
+  ctx: MutationCtx,
+  channel: Doc<"chatChannels">,
+  managingGroupId: Id<"groups">,
+  userId: Id<"users">,
+  enabled: boolean,
+  channelTypeLabel: string,
+): Promise<LinkedGroupToggleResult> {
+  if (!channel.isShared || managingGroupId === channel.groupId) {
+    return { handled: false };
+  }
+
+  const sharedGroups = channel.sharedGroups ?? [];
+  const entryIndex = sharedGroups.findIndex(
+    (sg) => sg.groupId === managingGroupId && sg.status === "accepted",
+  );
+  if (entryIndex < 0) {
+    throw new ConvexError({
+      code: "FORBIDDEN",
+      message: "This channel is not linked to that group.",
+    });
+  }
+
+  const linkMembership = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_group_user", (q) =>
+      q.eq("groupId", managingGroupId).eq("userId", userId),
+    )
+    .filter((q) => q.eq(q.field("leftAt"), undefined))
+    .first();
+
+  if (!isLeaderRole(linkMembership?.role)) {
+    throw new ConvexError({
+      code: "FORBIDDEN",
+      message: `Only group leaders can enable or disable ${channelTypeLabel}`,
+    });
+  }
+
+  const now = Date.now();
+  const existing = sharedGroups[entryIndex]!;
+  const currentlyHidden = existing.hiddenFromNavigation === true;
+
+  if (!enabled) {
+    if (currentlyHidden) {
+      return { handled: true, result: { channelId: channel._id, status: "already_disabled" as const } };
+    }
+    // Always persist hiddenFromNavigation, even if globally disabled, so the
+    // linked group's intent to hide is retained when the owning group re-enables.
+    const updatedSharedGroups = [...sharedGroups];
+    updatedSharedGroups[entryIndex] = {
+      ...existing,
+      hiddenFromNavigation: true,
+    };
+    await ctx.db.patch(channel._id, {
+      sharedGroups: updatedSharedGroups,
+      updatedAt: now,
+    });
+    return { handled: true, result: { channelId: channel._id, status: "disabled" as const } };
+  }
+
+  if (!currentlyHidden) {
+    return { handled: true, result: { channelId: channel._id, status: "already_enabled" as const } };
+  }
+
+  const updatedSharedGroups = [...sharedGroups];
+  updatedSharedGroups[entryIndex] = {
+    ...existing,
+    hiddenFromNavigation: undefined,
+  };
+  await ctx.db.patch(channel._id, {
+    sharedGroups: updatedSharedGroups,
+    updatedAt: now,
+  });
+
+  // Return accurate status: if the channel is globally disabled, reflect that
+  if (!channelIsLeaderEnabled(channel)) {
+    return { handled: true, result: { channelId: channel._id, status: "linked_unhidden_but_globally_disabled" as const } };
+  }
+  return { handled: true, result: { channelId: channel._id, status: "enabled" as const } };
 }
 
 // ============================================================================
@@ -237,7 +331,7 @@ export const getChannelBySlug = query({
           candidateChannel.channelType === "pco_services";
         if (
           sharedCustomOrPco &&
-          !channelIsLeaderEnabled(candidateChannel) &&
+          !channelEffectiveEnabledForGroup(candidateChannel, args.groupId) &&
           !isLeaderForUrlGroup
         ) {
           continue;
@@ -304,7 +398,7 @@ export const getChannelBySlug = query({
 
     if (
       (isCustomChannel(resolvedChannel.channelType) || resolvedChannel.channelType === "pco_services") &&
-      !channelIsLeaderEnabled(resolvedChannel) &&
+      !channelEffectiveEnabledForGroup(resolvedChannel, args.groupId) &&
       !isLeaderOrAdmin
     ) {
       return null;
@@ -743,7 +837,7 @@ export const listGroupChannels = query({
           candidateChannel.channelType === "pco_services";
         if (
           sharedCustomOrPco &&
-          !channelIsLeaderEnabled(candidateChannel) &&
+          !channelEffectiveEnabledForGroup(candidateChannel, args.groupId) &&
           !userIsLeaderOrAdmin
         ) {
           continue;
@@ -778,8 +872,8 @@ export const listGroupChannels = query({
       if (userIsLeaderOrAdmin) {
         return true;
       }
-      // Members: never show leader-disabled channels on the group page (any type)
-      if (!channelIsLeaderEnabled(ch)) {
+      // Members: never show leader-disabled / linked-hidden channels on the group page
+      if (!channelEffectiveEnabledForGroup(ch, args.groupId)) {
         return false;
       }
       // Reach out is visible to all group members when enabled
@@ -859,7 +953,7 @@ export const listGroupChannels = query({
           isPinned,
           lastMessageAt: channel.lastMessageAt,
           isShared: channel.isShared || undefined,
-          isEnabled: channelIsLeaderEnabled(channel),
+          isEnabled: channelEffectiveEnabledForGroup(channel, args.groupId),
         };
       })
     );
@@ -1016,10 +1110,13 @@ export const getInboxChannels = query({
           ? groupRoleMap.get(acceptedEntry.groupId)
           : undefined;
         const leaderInLinkedGroup = isLeaderRole(roleInLinkedGroup);
+        const visibleInLinkedGroup = acceptedEntry
+          ? channelEffectiveEnabledForGroup(candidateChannel, acceptedEntry.groupId)
+          : channelIsLeaderEnabled(candidateChannel);
         if (
           (isCustomChannel(candidateChannel.channelType) ||
             candidateChannel.channelType === "pco_services") &&
-          !channelIsLeaderEnabled(candidateChannel) &&
+          !visibleInLinkedGroup &&
           !leaderInLinkedGroup
         ) {
           continue;
@@ -1085,7 +1182,16 @@ export const getInboxChannels = query({
           const sharedEntry = ch.sharedGroups.find(
             (sg) => sg.groupId === group._id && sg.status === "accepted"
           );
-          if (sharedEntry && userChannelIds.has(ch._id)) return true;
+          if (sharedEntry && userChannelIds.has(ch._id)) {
+            if (
+              (isCustomChannel(ch.channelType) || ch.channelType === "pco_services") &&
+              !channelEffectiveEnabledForGroup(ch, group._id) &&
+              !isLeaderOrAdmin
+            ) {
+              return false;
+            }
+            return true;
+          }
         }
         return false;
       });
@@ -1552,12 +1658,15 @@ export const unarchiveCustomChannel = mutation({
 /**
  * Leader enable/disable for custom channels without changing memberships.
  * Distinct from archiveCustomChannel (soft delete + clear members).
+ *
+ * Linked group leaders toggle `hiddenFromNavigation` only; owning group toggles global `isEnabled`.
  */
 export const setCustomChannelLeaderEnabled = mutation({
   args: {
     token: v.string(),
     channelId: v.id("chatChannels"),
     enabled: v.boolean(),
+    managingGroupId: v.optional(v.id("groups")),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -1574,11 +1683,18 @@ export const setCustomChannelLeaderEnabled = mutation({
       });
     }
 
-    if (channel.isShared) {
-      throw new ConvexError({
-        code: "INVALID_OPERATION",
-        message: "Shared channels must be managed from the owning group.",
-      });
+    const managingGroupId = args.managingGroupId ?? channel.groupId;
+
+    const linkedResult = await handleLinkedGroupToggle(
+      ctx,
+      channel,
+      managingGroupId,
+      userId,
+      args.enabled,
+      "custom channels",
+    );
+    if (linkedResult.handled) {
+      return linkedResult.result;
     }
 
     const groupMembership = await ctx.db
@@ -1734,14 +1850,15 @@ export const archivePcoChannel = mutation({
  * Enable or disable a PCO auto channel for members (keeps memberships; turns sync off/on).
  * Re-enabling always schedules a resync so PCO remains source of truth.
  *
- * Use archivePcoChannel for a full soft-delete (clears members). Shared channels
- * cannot be toggled from a linked group.
+ * Owning group: updates global `isEnabled` and PCO sync. Linked group: only updates
+ * `sharedGroups[].hiddenFromNavigation` for that group (owning group + sync unchanged).
  */
 export const togglePcoChannel = mutation({
   args: {
     token: v.string(),
     channelId: v.id("chatChannels"),
     enabled: v.boolean(),
+    managingGroupId: v.optional(v.id("groups")),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -1759,11 +1876,18 @@ export const togglePcoChannel = mutation({
       });
     }
 
-    if (channel.isShared) {
-      throw new ConvexError({
-        code: "INVALID_OPERATION",
-        message: "Shared PCO channels must be managed from the owning group.",
-      });
+    const managingGroupId = args.managingGroupId ?? channel.groupId;
+
+    const linkedResult = await handleLinkedGroupToggle(
+      ctx,
+      channel,
+      managingGroupId,
+      userId,
+      args.enabled,
+      "PCO channels",
+    );
+    if (linkedResult.handled) {
+      return linkedResult.result;
     }
 
     const groupMembership = await ctx.db
