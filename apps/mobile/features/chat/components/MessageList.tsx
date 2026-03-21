@@ -174,7 +174,8 @@ export function MessageList({
   const shouldStartQuery = hasPrefetchedMessages || isAnimationComplete;
   const { messages: liveMessages, loadMore, hasMore, isLoading: liveIsLoading, isStale } = useMessages(
     shouldStartQuery ? channelId : null,
-    20
+    20,
+    groupId ?? null
   );
 
   // Use prefetched messages while live query is loading

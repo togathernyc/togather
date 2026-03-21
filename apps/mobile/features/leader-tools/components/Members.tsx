@@ -42,6 +42,7 @@ interface Channel {
   name: string;
   memberCount: number;
   isShared?: boolean;
+  isEnabled?: boolean;
 }
 
 const PAGE_SIZE = 50;
@@ -71,7 +72,10 @@ export function Members({ groupId, onMemberAction, canManageMembers = false }: M
   const visibleChannels = useMemo((): Channel[] => {
     if (!channels) return [];
     return channels.filter(
-      (ch: Channel) => ch.channelType !== "dm" && ch.channelType !== "reach_out"
+      (ch: Channel) =>
+        ch.channelType !== "dm" &&
+        ch.channelType !== "reach_out" &&
+        ch.isEnabled !== false
     );
   }, [channels]);
 

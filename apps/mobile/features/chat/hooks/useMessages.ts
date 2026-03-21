@@ -29,7 +29,8 @@ interface UseMessagesResult {
  */
 export function useMessages(
   channelId: Id<"chatChannels"> | null,
-  limit: number = 20
+  limit: number = 20,
+  viewingGroupId?: Id<"groups"> | null
 ): UseMessagesResult {
   const { token } = useAuth();
   const { getChannelMessages, setChannelMessages } = useMessageCache();
@@ -61,12 +62,15 @@ export function useMessages(
   // Fetch messages from Convex
   const result = useQuery(
     api.functions.messaging.messages.getMessages,
-    shouldSkip ? "skip" : {
-      token: token as string,
-      channelId,
-      limit,
-      cursor,
-    }
+    shouldSkip
+      ? "skip"
+      : {
+          token: token as string,
+          channelId,
+          limit,
+          cursor,
+          ...(viewingGroupId ? { viewingGroupId } : {}),
+        }
   );
 
   // Update state when query result changes
