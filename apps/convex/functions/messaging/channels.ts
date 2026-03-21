@@ -1383,6 +1383,113 @@ export const archiveCustomChannel = mutation({
 });
 
 /**
+ * Unarchive a custom channel so leaders can reopen it (e.g. after disabling).
+ *
+ * Memberships are not restored; leaders can add members again from channel settings.
+ * Only group leaders/admins may unarchive (owners may have no active membership after archive).
+ */
+export const unarchiveCustomChannel = mutation({
+  args: {
+    token: v.string(),
+    channelId: v.id("chatChannels"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const channel = await ctx.db.get(args.channelId);
+    if (!channel) {
+      throw new ConvexError({ code: "NOT_FOUND", message: "Channel not found" });
+    }
+
+    if (!isCustomChannel(channel.channelType)) {
+      throw new ConvexError({
+        code: "INVALID_OPERATION",
+        message: "Only custom channels can be unarchived here.",
+      });
+    }
+
+    if (channel.isShared) {
+      throw new ConvexError({
+        code: "INVALID_OPERATION",
+        message: "Shared channels must be managed from the owning group.",
+      });
+    }
+
+    const groupMembership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", channel.groupId).eq("userId", userId)
+      )
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .first();
+
+    if (!isLeaderRole(groupMembership?.role)) {
+      throw new ConvexError({
+        code: "FORBIDDEN",
+        message: "Only group leaders can enable custom channels",
+      });
+    }
+
+    if (!channel.isArchived) {
+      return { channelId: args.channelId, status: "already_enabled" as const };
+    }
+
+    const now = Date.now();
+    await ctx.db.patch(args.channelId, {
+      isArchived: false,
+      archivedAt: undefined,
+      updatedAt: now,
+    });
+
+    return { channelId: args.channelId, status: "enabled" as const };
+  },
+});
+
+/**
+ * Archive a PCO auto channel and turn off sync (shared implementation).
+ */
+async function archivePcoChannelInTxn(
+  ctx: MutationCtx,
+  channelId: Id<"chatChannels">,
+  now: number
+): Promise<void> {
+  const autoChannelConfig = await ctx.db
+    .query("autoChannelConfigs")
+    .withIndex("by_channel", (q) => q.eq("channelId", channelId))
+    .unique();
+
+  if (autoChannelConfig) {
+    await ctx.db.patch(autoChannelConfig._id, {
+      isActive: false,
+      updatedAt: now,
+    });
+  }
+
+  await ctx.db.patch(channelId, {
+    isArchived: true,
+    archivedAt: now,
+    updatedAt: now,
+  });
+
+  const activeMembers = await ctx.db
+    .query("chatChannelMembers")
+    .withIndex("by_channel", (q) => q.eq("channelId", channelId))
+    .filter((q) => q.eq(q.field("leftAt"), undefined))
+    .collect();
+
+  for (const member of activeMembers) {
+    await ctx.db.patch(member._id, {
+      leftAt: now,
+    });
+  }
+
+  await ctx.db.patch(channelId, {
+    memberCount: 0,
+    updatedAt: now,
+  });
+}
+
+/**
  * Archive a PCO auto channel.
  *
  * This archives the channel AND disables the auto-sync configuration.
@@ -1431,47 +1538,97 @@ export const archivePcoChannel = mutation({
     }
 
     const now = Date.now();
+    await archivePcoChannelInTxn(ctx, args.channelId, now);
 
-    // 5. Disable the auto-channel config
-    const autoChannelConfig = await ctx.db
+    return { success: true };
+  },
+});
+
+/**
+ * Enable or disable a PCO auto channel (archive + sync off, or unarchive + sync on).
+ *
+ * Shared channels cannot be toggled from a linked group.
+ */
+export const togglePcoChannel = mutation({
+  args: {
+    token: v.string(),
+    channelId: v.id("chatChannels"),
+    enabled: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const now = Date.now();
+
+    const channel = await ctx.db.get(args.channelId);
+    if (!channel) {
+      throw new ConvexError({ code: "NOT_FOUND", message: "Channel not found" });
+    }
+
+    if (channel.channelType !== "pco_services") {
+      throw new ConvexError({
+        code: "INVALID_OPERATION",
+        message: "This operation is only for PCO auto channels.",
+      });
+    }
+
+    if (channel.isShared) {
+      throw new ConvexError({
+        code: "INVALID_OPERATION",
+        message: "Shared PCO channels must be managed from the owning group.",
+      });
+    }
+
+    const groupMembership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", channel.groupId).eq("userId", userId)
+      )
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .first();
+
+    if (!isLeaderRole(groupMembership?.role)) {
+      throw new ConvexError({
+        code: "FORBIDDEN",
+        message: "Only group leaders can enable or disable PCO channels",
+      });
+    }
+
+    if (!args.enabled) {
+      if (channel.isArchived) {
+        return { channelId: args.channelId, status: "already_disabled" as const };
+      }
+      await archivePcoChannelInTxn(ctx, args.channelId, now);
+      return { channelId: args.channelId, status: "disabled" as const };
+    }
+
+    if (!channel.isArchived) {
+      return { channelId: args.channelId, status: "already_enabled" as const };
+    }
+
+    await ctx.db.patch(args.channelId, {
+      isArchived: false,
+      archivedAt: undefined,
+      updatedAt: now,
+    });
+
+    const autoConfig = await ctx.db
       .query("autoChannelConfigs")
       .withIndex("by_channel", (q) => q.eq("channelId", args.channelId))
       .unique();
 
-    if (autoChannelConfig) {
-      await ctx.db.patch(autoChannelConfig._id, {
-        isActive: false,
+    if (autoConfig) {
+      await ctx.db.patch(autoConfig._id, {
+        isActive: true,
         updatedAt: now,
       });
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.pcoServices.rotation.syncAutoChannel,
+        { configId: autoConfig._id }
+      );
     }
 
-    // 6. Archive the channel
-    await ctx.db.patch(args.channelId, {
-      isArchived: true,
-      archivedAt: now,
-      updatedAt: now,
-    });
-
-    // 7. Remove all members (soft delete with leftAt)
-    const activeMembers = await ctx.db
-      .query("chatChannelMembers")
-      .withIndex("by_channel", (q) => q.eq("channelId", args.channelId))
-      .filter((q) => q.eq(q.field("leftAt"), undefined))
-      .collect();
-
-    for (const member of activeMembers) {
-      await ctx.db.patch(member._id, {
-        leftAt: now,
-      });
-    }
-
-    // 8. Set member count to 0
-    await ctx.db.patch(args.channelId, {
-      memberCount: 0,
-    });
-
-    // 9. Return success
-    return { success: true };
+    return { channelId: args.channelId, status: "enabled" as const };
   },
 });
 
@@ -2957,6 +3114,133 @@ export const toggleReachOutChannel = mutation({
 
       return { channelId: existingChannel._id, status: "disabled" };
     }
+  },
+});
+
+/**
+ * Toggle the General (main) channel for a group.
+ *
+ * When enabled: unarchives and adds all active group members.
+ * When disabled: archives, clears memberships (same pattern as leaders channel).
+ */
+export const toggleMainChannel = mutation({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+    enabled: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const now = Date.now();
+
+    const groupMembership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", args.groupId).eq("userId", userId)
+      )
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .first();
+
+    if (!groupMembership) {
+      throw new Error("Not a member of this group");
+    }
+
+    if (groupMembership.role !== "leader" && groupMembership.role !== "admin") {
+      throw new Error("Only group leaders can toggle the General channel");
+    }
+
+    const mainChannel = await ctx.db
+      .query("chatChannels")
+      .withIndex("by_group_type", (q) =>
+        q.eq("groupId", args.groupId).eq("channelType", "main")
+      )
+      .first();
+
+    if (!mainChannel) {
+      throw new Error("General channel not found for this group");
+    }
+
+    const isCurrentlyArchived = mainChannel.isArchived === true;
+
+    if (args.enabled && !isCurrentlyArchived) {
+      return { channelId: mainChannel._id, status: "already_enabled" as const };
+    }
+
+    if (!args.enabled && isCurrentlyArchived) {
+      return { channelId: mainChannel._id, status: "already_disabled" as const };
+    }
+
+    if (args.enabled) {
+      await ctx.db.patch(mainChannel._id, {
+        isArchived: false,
+        archivedAt: undefined,
+        updatedAt: now,
+      });
+
+      const allMembers = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .collect();
+
+      for (const member of allMembers) {
+        const user = await ctx.db.get(member.userId);
+        const displayName = user ? getDisplayName(user.firstName, user.lastName) : undefined;
+        const profilePhoto = user ? getMediaUrl(user.profilePhoto) : undefined;
+
+        const existingMembership = await ctx.db
+          .query("chatChannelMembers")
+          .withIndex("by_channel_user", (q) =>
+            q.eq("channelId", mainChannel._id).eq("userId", member.userId)
+          )
+          .first();
+
+        if (existingMembership) {
+          if (existingMembership.leftAt) {
+            await ctx.db.patch(existingMembership._id, {
+              leftAt: undefined,
+              joinedAt: now,
+              role: "member",
+              displayName,
+              profilePhoto,
+            });
+          }
+        } else {
+          await ctx.db.insert("chatChannelMembers", {
+            channelId: mainChannel._id,
+            userId: member.userId,
+            role: "member",
+            joinedAt: now,
+            isMuted: false,
+            displayName,
+            profilePhoto,
+          });
+        }
+      }
+
+      await updateChannelMemberCount(ctx, mainChannel._id);
+      return { channelId: mainChannel._id, status: "enabled" as const };
+    }
+
+    await ctx.db.patch(mainChannel._id, {
+      isArchived: true,
+      archivedAt: now,
+      updatedAt: now,
+    });
+
+    const activeMembers = await ctx.db
+      .query("chatChannelMembers")
+      .withIndex("by_channel", (q) => q.eq("channelId", mainChannel._id))
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .collect();
+
+    for (const member of activeMembers) {
+      await ctx.db.patch(member._id, { leftAt: now });
+    }
+
+    await ctx.db.patch(mainChannel._id, { memberCount: 0, updatedAt: now });
+
+    return { channelId: mainChannel._id, status: "disabled" as const };
   },
 });
 

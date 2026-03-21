@@ -45,6 +45,7 @@ const mockMainChannel = {
   isArchived: false,
   isMember: true,
   unreadCount: 0,
+  isPinned: false,
 };
 
 const mockLeadersChannel = {
@@ -56,6 +57,7 @@ const mockLeadersChannel = {
   isArchived: false,
   isMember: true,
   unreadCount: 2,
+  isPinned: false,
 };
 
 const mockCustomChannels = [
@@ -68,6 +70,7 @@ const mockCustomChannels = [
     isArchived: false,
     isMember: true,
     unreadCount: 0,
+    isPinned: false,
   },
   {
     _id: "channel-custom-2",
@@ -78,6 +81,7 @@ const mockCustomChannels = [
     isArchived: false,
     isMember: true,
     unreadCount: 5,
+    isPinned: false,
   },
 ];
 
@@ -106,6 +110,10 @@ jest.mock("@services/api/convex", () => ({
           listGroupChannels: "listGroupChannels",
           leaveChannel: "leaveChannel",
           toggleLeadersChannel: "toggleLeadersChannel",
+          toggleMainChannel: "toggleMainChannel",
+          togglePcoChannel: "togglePcoChannel",
+          archiveCustomChannel: "archiveCustomChannel",
+          unarchiveCustomChannel: "unarchiveCustomChannel",
         },
         channelInvites: {
           enableInviteLink: "enableInviteLink",
@@ -301,53 +309,49 @@ describe("ChannelsSection", () => {
   });
 
   describe("Leaders Channel Toggle", () => {
-    it("shows toggle switch for leaders", () => {
-      const { UNSAFE_getAllByType } = render(
+    it("shows toggle switches for leaders (General + Leaders)", () => {
+      const { getByTestId } = render(
         <ChannelsSection groupId="test-group" userRole="leader" />
       );
 
-      const { Switch } = require("react-native");
-      const toggle = UNSAFE_getAllByType(Switch)[0];
-      expect(toggle).toBeTruthy();
+      expect(getByTestId("channel-toggle-general")).toBeTruthy();
+      expect(getByTestId("channel-toggle-leaders")).toBeTruthy();
     });
 
-    it("toggle is on when leaders channel is enabled", () => {
-      const { UNSAFE_getAllByType } = render(
+    it("leaders channel toggle is on when channel is enabled", () => {
+      const { getByTestId } = render(
         <ChannelsSection groupId="test-group" userRole="leader" />
       );
 
-      const { Switch } = require("react-native");
-      const toggle = UNSAFE_getAllByType(Switch)[0];
-      expect(toggle.props.value).toBe(true);
+      const leadersSwitch = getByTestId("channel-toggle-leaders");
+      expect(leadersSwitch.props.value).toBe(true);
     });
 
-    it("toggle is off when leaders channel is archived", () => {
+    it("leaders channel toggle is off when channel is archived", () => {
       mockChannelsData = [
         mockMainChannel,
         { ...mockLeadersChannel, isArchived: true },
       ];
 
-      const { UNSAFE_getAllByType } = render(
+      const { getByTestId } = render(
         <ChannelsSection groupId="test-group" userRole="leader" />
       );
 
-      const { Switch } = require("react-native");
-      const toggle = UNSAFE_getAllByType(Switch)[0];
-      expect(toggle.props.value).toBe(false);
+      const leadersSwitch = getByTestId("channel-toggle-leaders");
+      expect(leadersSwitch.props.value).toBe(false);
     });
 
-    it("calls toggleLeadersChannel mutation when toggled", async () => {
+    it("calls toggleLeadersChannel mutation when leaders toggle is used", async () => {
       mockToggleLeadersChannelMutation.mockResolvedValueOnce(undefined);
 
-      const { UNSAFE_getAllByType } = render(
+      const { getByTestId } = render(
         <ChannelsSection groupId="test-group" userRole="leader" />
       );
 
-      const { Switch } = require("react-native");
-      const toggle = UNSAFE_getAllByType(Switch)[0];
+      const toggle = getByTestId("channel-toggle-leaders");
 
       await act(async () => {
-        toggle.props.onValueChange(false);
+        fireEvent(toggle, "valueChange", false);
       });
 
       await waitFor(() => {
@@ -358,20 +362,19 @@ describe("ChannelsSection", () => {
       });
     });
 
-    it("shows error alert on toggle failure", async () => {
+    it("shows error alert on leaders toggle failure", async () => {
       mockToggleLeadersChannelMutation.mockRejectedValueOnce(
         new Error("Toggle failed")
       );
 
-      const { UNSAFE_getAllByType } = render(
+      const { getByTestId } = render(
         <ChannelsSection groupId="test-group" userRole="leader" />
       );
 
-      const { Switch } = require("react-native");
-      const toggle = UNSAFE_getAllByType(Switch)[0];
+      const toggle = getByTestId("channel-toggle-leaders");
 
       await act(async () => {
-        toggle.props.onValueChange(false);
+        fireEvent(toggle, "valueChange", false);
       });
 
       await waitFor(() => {
@@ -379,15 +382,13 @@ describe("ChannelsSection", () => {
       });
     });
 
-    it("hides toggle for non-leaders", () => {
-      const { UNSAFE_queryByType } = render(
+    it("hides channel toggles for non-leaders", () => {
+      const { queryByTestId } = render(
         <ChannelsSection groupId="test-group" userRole="member" />
       );
 
-      const { Switch } = require("react-native");
-      // For non-leaders viewing the leaders channel row
-      // The toggle should not be present
-      expect(UNSAFE_queryByType(Switch)).toBeNull();
+      expect(queryByTestId("channel-toggle-general")).toBeNull();
+      expect(queryByTestId("channel-toggle-leaders")).toBeNull();
     });
 
     it("shows disabled state for leaders channel name when archived", () => {
