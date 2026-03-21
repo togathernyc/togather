@@ -13,7 +13,7 @@
  * - Users can leave custom channels
  * - Pin indicators for pinned channels
  */
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 import {
   View,
   Text,
@@ -89,7 +89,14 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
     useRespondToChannelInvite({ token, groupId });
 
   // Fetch channels for this group (with offline cache support)
-  const { channels } = useGroupChannels(groupId, { includeArchived: isLeader });
+  const { channels: rawChannels } = useGroupChannels(groupId, { includeArchived: isLeader });
+
+  // Defense in depth: never show leader-disabled channels to non-leaders (group page)
+  const channels = useMemo(() => {
+    if (rawChannels === undefined) return undefined;
+    if (isLeader) return rawChannels;
+    return rawChannels.filter((c: Channel) => c.isEnabled !== false);
+  }, [rawChannels, isLeader]);
 
   // Mutations
   const leaveChannelMutation = useAuthenticatedMutation(

@@ -1934,6 +1934,43 @@ describe("listGroupChannels", () => {
     expect(customChannel?.isMember).toBe(true);
   });
 
+  test("hides leader-disabled custom channels from members (group page list)", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, communityId, groupId, accessToken } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    const customResult = await t.mutation(api.functions.messaging.channels.createCustomChannel, {
+      token: leaderToken,
+      groupId,
+      name: "Hidden Board",
+    });
+
+    await t.mutation(api.functions.messaging.channels.addChannelMembers, {
+      token: leaderToken,
+      channelId: customResult.channelId,
+      userIds: [userId],
+    });
+
+    await t.mutation(api.functions.messaging.channels.setCustomChannelLeaderEnabled, {
+      token: leaderToken,
+      channelId: customResult.channelId,
+      enabled: false,
+    });
+
+    const channels = await t.query(api.functions.messaging.channels.listGroupChannels, {
+      token: accessToken,
+      groupId,
+    });
+
+    expect(channels.find((c) => c._id === customResult.channelId)).toBeUndefined();
+
+    const leaderChannels = await t.query(api.functions.messaging.channels.listGroupChannels, {
+      token: leaderToken,
+      groupId,
+    });
+    expect(leaderChannels.find((c) => c._id === customResult.channelId)).toBeDefined();
+  });
+
   test("sorts: main first, leaders second, custom alphabetically", async () => {
     const t = convexTest(schema, modules);
     const { communityId, groupId } = await seedTestData(t);

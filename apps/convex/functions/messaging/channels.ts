@@ -774,24 +774,21 @@ export const listGroupChannels = query({
       if (ch.channelType === "leaders" && !userIsLeaderOrAdmin) {
         return false;
       }
-      // Reach out channel is visible to all group members
-      if (ch.channelType === "reach_out") {
+      // Leaders/community admins see every channel on this list (including disabled, for toggles)
+      if (userIsLeaderOrAdmin) {
         return true;
       }
-      // Leaders/admins can see ALL channels (custom and PCO-synced) for management
-      if (userIsLeaderOrAdmin) {
+      // Members: never show leader-disabled channels on the group page (any type)
+      if (!channelIsLeaderEnabled(ch)) {
+        return false;
+      }
+      // Reach out is visible to all group members when enabled
+      if (ch.channelType === "reach_out") {
         return true;
       }
       // Regular members can only see custom/PCO channels they're members of
       const requiresMembership = isCustomChannel(ch.channelType) || ch.channelType === "pco_services";
       if (requiresMembership && !userChannelMemberships.has(ch._id)) {
-        return false;
-      }
-      if (
-        requiresMembership &&
-        !channelIsLeaderEnabled(ch) &&
-        !userIsLeaderOrAdmin
-      ) {
         return false;
       }
       return true;
