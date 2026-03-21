@@ -168,7 +168,18 @@ export const getMessages = query({
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
 
-    const contextGroupId = args.viewingGroupId ?? channel.groupId;
+    // Validate viewingGroupId is actually related to this channel
+    let contextGroupId = channel.groupId;
+    if (args.viewingGroupId) {
+      const isOwningGroup = args.viewingGroupId === channel.groupId;
+      const isAcceptedSharedGroup = channel.sharedGroups?.some(
+        (sg) => sg.groupId === args.viewingGroupId && sg.status === "accepted"
+      );
+      if (isOwningGroup || isAcceptedSharedGroup) {
+        contextGroupId = args.viewingGroupId;
+      }
+      // If viewingGroupId is not valid, fall back to channel.groupId for auth check
+    }
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>

@@ -144,9 +144,11 @@ async function handleLinkedGroupToggle(
   const currentlyHidden = existing.hiddenFromNavigation === true;
 
   if (!enabled) {
-    if (currentlyHidden || !channelIsLeaderEnabled(channel)) {
+    if (currentlyHidden) {
       return { handled: true, result: { channelId: channel._id, status: "already_disabled" as const } };
     }
+    // Always persist hiddenFromNavigation, even if globally disabled, so the
+    // linked group's intent to hide is retained when the owning group re-enables.
     const updatedSharedGroups = [...sharedGroups];
     updatedSharedGroups[entryIndex] = {
       ...existing,
