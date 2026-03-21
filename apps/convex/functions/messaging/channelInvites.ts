@@ -13,6 +13,22 @@ import { requireAuth } from "../../lib/auth";
 import { isLeaderRole } from "../../lib/helpers";
 import { generateShortId, getDisplayName, getMediaUrl } from "../../lib/utils";
 
+/**
+ * Build the set of group IDs whose members are eligible to use a channel's invite link.
+ * Includes the primary group and all accepted secondary groups for shared channels.
+ */
+function getEligibleGroupIds(channel: { groupId: Id<"groups">; isShared?: boolean; sharedGroups?: Array<{ groupId: Id<"groups">; status: string }> }): Set<Id<"groups">> {
+  const ids = new Set<Id<"groups">>([channel.groupId]);
+  if (channel.isShared) {
+    for (const sg of channel.sharedGroups ?? []) {
+      if (sg.status === "accepted") {
+        ids.add(sg.groupId);
+      }
+    }
+  }
+  return ids;
+}
+
 // ============================================================================
 // Queries
 // ============================================================================
@@ -60,16 +76,18 @@ export const getByShortId = query({
       try {
         userId = await requireAuth(ctx, args.token);
 
-        // Check if user is a group member
-        const groupMembership = await ctx.db
+        // Check if user is a member of any eligible group (primary + accepted shared groups)
+        const eligibleGroupIds = getEligibleGroupIds(channel);
+        const userGroupMemberships = await ctx.db
           .query("groupMembers")
-          .withIndex("by_group_user", (q) =>
-            q.eq("groupId", channel.groupId).eq("userId", userId!),
-          )
+          .withIndex("by_user", (q) => q.eq("userId", userId!))
           .filter((q) => q.eq(q.field("leftAt"), undefined))
-          .first();
+          .collect();
+        const isEligibleGroupMember = userGroupMemberships.some((m) =>
+          eligibleGroupIds.has(m.groupId)
+        );
 
-        if (!groupMembership) {
+        if (!isEligibleGroupMember) {
           userStatus = "not_group_member";
         } else {
           // Check if already a channel member
@@ -442,16 +460,18 @@ export const joinViaInviteLink = mutation({
       throw new ConvexError("This invite link is no longer valid.");
     }
 
-    // Verify user is a group member
-    const groupMembership = await ctx.db
+    // Verify user is a member of any eligible group (primary + accepted shared groups)
+    const eligibleGroupIds = getEligibleGroupIds(channel);
+    const userGroupMemberships = await ctx.db
       .query("groupMembers")
-      .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId),
-      )
+      .withIndex("by_user", (q) => q.eq("userId", userId))
       .filter((q) => q.eq(q.field("leftAt"), undefined))
-      .first();
+      .collect();
+    const isEligibleGroupMember = userGroupMemberships.some((m) =>
+      eligibleGroupIds.has(m.groupId)
+    );
 
-    if (!groupMembership) {
+    if (!isEligibleGroupMember) {
       throw new ConvexError(
         "You must be a member of the group to join this channel.",
       );
