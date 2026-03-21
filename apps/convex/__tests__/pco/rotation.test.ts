@@ -739,6 +739,103 @@ describe("PCO Services Rotation", () => {
     });
   });
 
+  describe("removeStalePcoSyncedMembers mutation", () => {
+    it("removes PCO-synced members not in the expected user set", async () => {
+      const futureTime = mockTimestamp(1);
+
+      await t.mutation(
+        internal.functions.pcoServices.rotation.addChannelMember,
+        {
+          channelId,
+          userId,
+          syncEventId: "plan-123",
+          scheduledRemovalAt: futureTime,
+        }
+      );
+
+      const result = await t.mutation(
+        internal.functions.pcoServices.rotation.removeStalePcoSyncedMembers,
+        { channelId, expectedUserIds: [] }
+      );
+
+      expect(result.removedCount).toBe(1);
+
+      const member = await t.run(async (ctx) => {
+        return await ctx.db
+          .query("chatChannelMembers")
+          .withIndex("by_channel_user", (q) =>
+            q.eq("channelId", channelId).eq("userId", userId)
+          )
+          .unique();
+      });
+
+      expect(member?.leftAt).toBeDefined();
+      expect(member?.scheduledRemovalAt).toBeUndefined();
+    });
+
+    it("keeps PCO-synced members who are in the expected user set", async () => {
+      const futureTime = mockTimestamp(1);
+
+      await t.mutation(
+        internal.functions.pcoServices.rotation.addChannelMember,
+        {
+          channelId,
+          userId,
+          syncEventId: "plan-123",
+          scheduledRemovalAt: futureTime,
+        }
+      );
+
+      const result = await t.mutation(
+        internal.functions.pcoServices.rotation.removeStalePcoSyncedMembers,
+        { channelId, expectedUserIds: [userId] }
+      );
+
+      expect(result.removedCount).toBe(0);
+
+      const member = await t.run(async (ctx) => {
+        return await ctx.db
+          .query("chatChannelMembers")
+          .withIndex("by_channel_user", (q) =>
+            q.eq("channelId", channelId).eq("userId", userId)
+          )
+          .unique();
+      });
+
+      expect(member?.leftAt).toBeUndefined();
+    });
+
+    it("does not remove manually added members without syncSource", async () => {
+      await t.run(async (ctx) => {
+        await ctx.db.insert("chatChannelMembers", {
+          channelId,
+          userId,
+          role: "member",
+          joinedAt: mockTimestamp(),
+          isMuted: false,
+        });
+      });
+
+      const result = await t.mutation(
+        internal.functions.pcoServices.rotation.removeStalePcoSyncedMembers,
+        { channelId, expectedUserIds: [] }
+      );
+
+      expect(result.removedCount).toBe(0);
+
+      const member = await t.run(async (ctx) => {
+        return await ctx.db
+          .query("chatChannelMembers")
+          .withIndex("by_channel_user", (q) =>
+            q.eq("channelId", channelId).eq("userId", userId)
+          )
+          .unique();
+      });
+
+      expect(member?.leftAt).toBeUndefined();
+    });
+  });
+
   describe("updateSyncStatus mutation", () => {
     it("updates sync status and timestamp", async () => {
       const beforeTime = Date.now();

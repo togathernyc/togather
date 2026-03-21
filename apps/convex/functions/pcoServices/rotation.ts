@@ -345,6 +345,54 @@ export const addChannelMember = internalMutation({
 });
 
 /**
+ * Remove PCO-synced channel members who are not in the roster returned by the
+ * current sync. PCO is the source of truth: if someone is unscheduled or moved
+ * off the team before scheduledRemovalAt, they should still leave the channel.
+ *
+ * Only affects members with syncSource === "pco_services"; manual members are untouched.
+ */
+export const removeStalePcoSyncedMembers = internalMutation({
+  args: {
+    channelId: v.id("chatChannels"),
+    /** Users who appear on the current PCO roster for this channel (and were added successfully). */
+    expectedUserIds: v.array(v.id("users")),
+  },
+  handler: async (ctx, args): Promise<{ removedCount: number }> => {
+    const now = Date.now();
+    const expected = new Set(args.expectedUserIds);
+
+    const pcoMembers = await ctx.db
+      .query("chatChannelMembers")
+      .withIndex("by_channel", (q) => q.eq("channelId", args.channelId))
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("syncSource"), "pco_services"),
+          q.eq(q.field("leftAt"), undefined)
+        )
+      )
+      .collect();
+
+    let removedCount = 0;
+
+    for (const member of pcoMembers) {
+      if (!expected.has(member.userId)) {
+        await ctx.db.patch(member._id, {
+          leftAt: now,
+          scheduledRemovalAt: undefined,
+        });
+        removedCount++;
+      }
+    }
+
+    if (removedCount > 0) {
+      await updateChannelMemberCount(ctx, args.channelId);
+    }
+
+    return { removedCount };
+  },
+});
+
+/**
  * Remove members whose scheduled removal time has passed.
  */
 export const removeExpiredMembers = internalMutation({
@@ -751,6 +799,20 @@ export const syncAutoChannel = internalAction({
       }
 
       if (allMembers.length === 0) {
+        // We are inside the add window for at least one plan (syncedServices) but
+        // nobody is scheduled — drop anyone still in the channel from a prior sync.
+        let staleRemoved = 0;
+        if (syncedServices.length > 0) {
+          const staleResult = await ctx.runMutation(
+            internal.functions.pcoServices.rotation.removeStalePcoSyncedMembers,
+            {
+              channelId: config.channelId,
+              expectedUserIds: [],
+            }
+          );
+          staleRemoved = staleResult.removedCount;
+        }
+
         await ctx.runMutation(
           internal.functions.pcoServices.rotation.updateSyncStatus,
           {
@@ -762,7 +824,7 @@ export const syncAutoChannel = internalAction({
         return {
           status: "success",
           addedCount: 0,
-          removedCount: totalRemoved,
+          removedCount: totalRemoved + staleRemoved,
         };
       }
 
@@ -778,6 +840,7 @@ export const syncAutoChannel = internalAction({
 
       // Step 5: Add members to channel and track unmatched
       let addedCount = 0;
+      const expectedUserIds = new Set<Id<"users">>();
       const unmatchedPeople: Array<{
         pcoPersonId: string;
         pcoName: string;
@@ -863,6 +926,7 @@ export const syncAutoChannel = internalAction({
 
           if (addResult.success) {
             addedCount++;
+            expectedUserIds.add(matchResult.userId);
           } else {
             // User was matched but couldn't be added to channel (e.g., not in group)
             unmatchedPeople.push({
@@ -898,6 +962,22 @@ export const syncAutoChannel = internalAction({
         }
       }
 
+      // Step 6: Remove PCO-synced members who are no longer on the roster returned
+      // above (handles role changes, unscheduling, and filter narrowing).
+      let staleRemoved = 0;
+      if (syncedServices.length > 0) {
+        const staleResult = await ctx.runMutation(
+          internal.functions.pcoServices.rotation.removeStalePcoSyncedMembers,
+          {
+            channelId: config.channelId,
+            expectedUserIds: Array.from(expectedUserIds),
+          }
+        );
+        staleRemoved = staleResult.removedCount;
+      }
+
+      const totalRemovedWithStale = totalRemoved + staleRemoved;
+
       // Update sync status with results
       // For multi-service sync, use the first synced service for currentEventId/currentEventDate
       const firstSyncedService = syncedServices[0];
@@ -923,14 +1003,14 @@ export const syncAutoChannel = internalAction({
         return {
           status: "success",
           addedCount,
-          removedCount: totalRemoved,
+          removedCount: totalRemovedWithStale,
           syncedServices,
         };
       } else if (syncedServices.length === 1) {
         return {
           status: "success",
           addedCount,
-          removedCount: totalRemoved,
+          removedCount: totalRemovedWithStale,
           planId: syncedServices[0].planId,
           planDate: syncedServices[0].planDate,
         };
@@ -939,7 +1019,7 @@ export const syncAutoChannel = internalAction({
       return {
         status: "success",
         addedCount,
-        removedCount: totalRemoved,
+        removedCount: totalRemovedWithStale,
       };
     } catch (error) {
       const errorMessage =
