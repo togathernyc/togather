@@ -1009,18 +1009,17 @@ export const getInboxChannels = query({
         (sg) => validGroupIds.has(sg.groupId) && sg.status === "accepted"
       );
       if (hasAcceptedGroup) {
-        const acceptedEntry = candidateChannel.sharedGroups.find(
+        const acceptedGroups = candidateChannel.sharedGroups.filter(
           (sg) => validGroupIds.has(sg.groupId) && sg.status === "accepted"
         );
-        const roleInLinkedGroup = acceptedEntry
-          ? groupRoleMap.get(acceptedEntry.groupId)
-          : undefined;
-        const leaderInLinkedGroup = isLeaderRole(roleInLinkedGroup);
+        const leaderInAnyLinkedGroup = acceptedGroups.some((sg) =>
+          isLeaderRole(groupRoleMap.get(sg.groupId))
+        );
         if (
           (isCustomChannel(candidateChannel.channelType) ||
             candidateChannel.channelType === "pco_services") &&
           !channelIsLeaderEnabled(candidateChannel) &&
-          !leaderInLinkedGroup
+          !leaderInAnyLinkedGroup
         ) {
           continue;
         }
@@ -1085,7 +1084,16 @@ export const getInboxChannels = query({
           const sharedEntry = ch.sharedGroups.find(
             (sg) => sg.groupId === group._id && sg.status === "accepted"
           );
-          if (sharedEntry && userChannelIds.has(ch._id)) return true;
+          if (sharedEntry && userChannelIds.has(ch._id)) {
+            if (
+              (isCustomChannel(ch.channelType) || ch.channelType === "pco_services") &&
+              !channelIsLeaderEnabled(ch) &&
+              !isLeaderOrAdmin
+            ) {
+              return false;
+            }
+            return true;
+          }
         }
         return false;
       });
