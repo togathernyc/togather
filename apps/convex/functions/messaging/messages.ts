@@ -193,7 +193,7 @@ export const getMessages = query({
       throw new Error("Not a member of this channel");
     }
 
-    // For bypassing global disabled check, must be leader in the OWNING group (not linked group)
+    // For bypassing global disabled check, consider leadership in owning group OR linked group
     const owningGroupMembership = args.viewingGroupId
       ? await ctx.db
           .query("groupMembers")
@@ -204,6 +204,11 @@ export const getMessages = query({
           .first()
       : groupMembership;
     const isOwningGroupLeader = isLeaderRole(owningGroupMembership?.role);
+    // Also check linked group leadership when viewing from a linked group
+    const isLinkedGroupLeader =
+      args.viewingGroupId && args.viewingGroupId !== channel.groupId
+        ? isLeaderRole(groupMembership?.role)
+        : false;
 
     const effectiveEnabled = args.viewingGroupId
       ? channelEffectiveEnabledForGroup(channel, args.viewingGroupId)
@@ -211,7 +216,8 @@ export const getMessages = query({
     if (
       (isCustomChannel(channel.channelType) || channel.channelType === "pco_services") &&
       !effectiveEnabled &&
-      !isOwningGroupLeader
+      !isOwningGroupLeader &&
+      !isLinkedGroupLeader
     ) {
       throw new Error("Channel is not available");
     }
