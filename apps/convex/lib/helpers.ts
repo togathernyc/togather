@@ -7,6 +7,8 @@
  * For group-specific membership logic, see ./membership.ts
  */
 
+import type { Id } from "../_generated/dataModel";
+
 // ============================================================================
 // Soft Delete Helpers
 // ============================================================================
@@ -158,6 +160,41 @@ export function getChannelCategory(channelType: string): "auto" | "custom" {
  */
 export function channelIsLeaderEnabled(channel: { isEnabled?: boolean }): boolean {
   return channel.isEnabled !== false;
+}
+
+/**
+ * Whether a channel is usable / listed for a given group's navigation (tab bar, inbox row).
+ * Combines global leader disable (`isEnabled`) with per-linked-group hide for shared channels.
+ */
+export function channelEffectiveEnabledForGroup(
+  channel: {
+    groupId: Id<"groups">;
+    isEnabled?: boolean;
+    isShared?: boolean;
+    sharedGroups?: Array<{
+      groupId: Id<"groups">;
+      status: string;
+      hiddenFromNavigation?: boolean;
+    }>;
+  },
+  forGroupId: Id<"groups">,
+): boolean {
+  if (!channelIsLeaderEnabled(channel)) {
+    return false;
+  }
+  if (!channel.isShared || !channel.sharedGroups?.length) {
+    return true;
+  }
+  if (channel.groupId === forGroupId) {
+    return true;
+  }
+  const entry = channel.sharedGroups.find(
+    (sg) => sg.groupId === forGroupId && sg.status === "accepted",
+  );
+  if (!entry) {
+    return true;
+  }
+  return entry.hiddenFromNavigation !== true;
 }
 
 // ============================================================================

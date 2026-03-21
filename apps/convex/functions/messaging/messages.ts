@@ -12,6 +12,7 @@ import { requireAuth } from "../../lib/auth";
 import {
   isCustomChannel,
   channelIsLeaderEnabled,
+  channelEffectiveEnabledForGroup,
   isLeaderRole,
 } from "../../lib/helpers";
 import { getDisplayName, getMediaUrl } from "../../lib/utils";
@@ -145,6 +146,8 @@ export const getMessages = query({
     channelId: v.id("chatChannels"),
     limit: v.optional(v.number()),
     cursor: v.optional(v.string()),
+    /** Group context from the chat route (required for shared-channel visibility rules). */
+    viewingGroupId: v.optional(v.id("groups")),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -165,10 +168,11 @@ export const getMessages = query({
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
 
+    const contextGroupId = args.viewingGroupId ?? channel.groupId;
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId)
+        q.eq("groupId", contextGroupId).eq("userId", userId)
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -179,9 +183,12 @@ export const getMessages = query({
     }
 
     const isLeaderOrAdmin = isLeaderRole(groupMembership?.role);
+    const effectiveEnabled = args.viewingGroupId
+      ? channelEffectiveEnabledForGroup(channel, args.viewingGroupId)
+      : channelIsLeaderEnabled(channel);
     if (
       (isCustomChannel(channel.channelType) || channel.channelType === "pco_services") &&
-      !channelIsLeaderEnabled(channel) &&
+      !effectiveEnabled &&
       !isLeaderOrAdmin
     ) {
       throw new Error("Channel is not available");
@@ -321,6 +328,7 @@ export const sendMessage = mutation({
     parentMessageId: v.optional(v.id("chatMessages")),
     mentionedUserIds: v.optional(v.array(v.id("users"))),
     hideLinkPreview: v.optional(v.boolean()),
+    viewingGroupId: v.optional(v.id("groups")),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -342,11 +350,29 @@ export const sendMessage = mutation({
     if (!channel) {
       throw new Error("Channel not found");
     }
-    if (
-      (isCustomChannel(channel.channelType) || channel.channelType === "pco_services") &&
-      !channelIsLeaderEnabled(channel)
-    ) {
-      throw new Error("This channel is disabled");
+    if (args.viewingGroupId) {
+      const gm = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q) =>
+          q.eq("groupId", args.viewingGroupId!).eq("userId", userId)
+        )
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .first();
+      const isLeaderOrAdmin = isLeaderRole(gm?.role);
+      if (
+        (isCustomChannel(channel.channelType) || channel.channelType === "pco_services") &&
+        !channelEffectiveEnabledForGroup(channel, args.viewingGroupId) &&
+        !isLeaderOrAdmin
+      ) {
+        throw new Error("This channel is disabled");
+      }
+    } else {
+      if (
+        (isCustomChannel(channel.channelType) || channel.channelType === "pco_services") &&
+        !channelIsLeaderEnabled(channel)
+      ) {
+        throw new Error("This channel is disabled");
+      }
     }
 
     // Get user info for denormalized fields
