@@ -740,7 +740,7 @@ describe("PCO Services Rotation", () => {
   });
 
   describe("removeStalePcoSyncedMembers mutation", () => {
-    it("removes PCO-synced members not in the expected user set", async () => {
+    it("removes PCO-synced members not in the expected user set when their plan is being synced", async () => {
       const futureTime = mockTimestamp(1);
 
       await t.mutation(
@@ -755,7 +755,7 @@ describe("PCO Services Rotation", () => {
 
       const result = await t.mutation(
         internal.functions.pcoServices.rotation.removeStalePcoSyncedMembers,
-        { channelId, expectedUserIds: [] }
+        { channelId, expectedUserIds: [], syncedPlanIds: ["plan-123"] }
       );
 
       expect(result.removedCount).toBe(1);
@@ -788,7 +788,7 @@ describe("PCO Services Rotation", () => {
 
       const result = await t.mutation(
         internal.functions.pcoServices.rotation.removeStalePcoSyncedMembers,
-        { channelId, expectedUserIds: [userId] }
+        { channelId, expectedUserIds: [userId], syncedPlanIds: ["plan-123"] }
       );
 
       expect(result.removedCount).toBe(0);
@@ -818,7 +818,7 @@ describe("PCO Services Rotation", () => {
 
       const result = await t.mutation(
         internal.functions.pcoServices.rotation.removeStalePcoSyncedMembers,
-        { channelId, expectedUserIds: [] }
+        { channelId, expectedUserIds: [], syncedPlanIds: ["plan-123"] }
       );
 
       expect(result.removedCount).toBe(0);
@@ -833,6 +833,43 @@ describe("PCO Services Rotation", () => {
       });
 
       expect(member?.leftAt).toBeUndefined();
+    });
+
+    it("does not remove members from a previous plan that is not being synced", async () => {
+      const futureTime = mockTimestamp(1);
+
+      // Add a member for plan-old (simulating someone added for last week's service)
+      await t.mutation(
+        internal.functions.pcoServices.rotation.addChannelMember,
+        {
+          channelId,
+          userId,
+          syncEventId: "plan-old",
+          scheduledRemovalAt: futureTime, // Still has time before removal
+        }
+      );
+
+      // Sync only includes plan-new (this week's service), not plan-old
+      const result = await t.mutation(
+        internal.functions.pcoServices.rotation.removeStalePcoSyncedMembers,
+        { channelId, expectedUserIds: [], syncedPlanIds: ["plan-new"] }
+      );
+
+      // Should NOT remove the member because they were added for plan-old
+      // which is not being synced - they should remain until scheduledRemovalAt
+      expect(result.removedCount).toBe(0);
+
+      const member = await t.run(async (ctx) => {
+        return await ctx.db
+          .query("chatChannelMembers")
+          .withIndex("by_channel_user", (q) =>
+            q.eq("channelId", channelId).eq("userId", userId)
+          )
+          .unique();
+      });
+
+      expect(member?.leftAt).toBeUndefined();
+      expect(member?.scheduledRemovalAt).toBe(futureTime);
     });
   });
 

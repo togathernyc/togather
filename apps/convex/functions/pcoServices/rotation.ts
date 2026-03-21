@@ -350,16 +350,23 @@ export const addChannelMember = internalMutation({
  * off the team before scheduledRemovalAt, they should still leave the channel.
  *
  * Only affects members with syncSource === "pco_services"; manual members are untouched.
+ *
+ * IMPORTANT: Only removes members whose syncEventId matches one of the currently
+ * synced plans. Members added for a previous plan (different syncEventId) are left
+ * alone and will be removed by removeExpiredMembers when their scheduledRemovalAt passes.
  */
 export const removeStalePcoSyncedMembers = internalMutation({
   args: {
     channelId: v.id("chatChannels"),
     /** Users who appear on the current PCO roster for this channel (and were added successfully). */
     expectedUserIds: v.array(v.id("users")),
+    /** Plan IDs being synced in the current run. Only members from these plans are candidates for removal. */
+    syncedPlanIds: v.array(v.string()),
   },
   handler: async (ctx, args): Promise<{ removedCount: number }> => {
     const now = Date.now();
     const expected = new Set(args.expectedUserIds);
+    const syncedPlans = new Set(args.syncedPlanIds);
 
     const pcoMembers = await ctx.db
       .query("chatChannelMembers")
@@ -375,7 +382,12 @@ export const removeStalePcoSyncedMembers = internalMutation({
     let removedCount = 0;
 
     for (const member of pcoMembers) {
-      if (!expected.has(member.userId)) {
+      // Only remove members who:
+      // 1. Were added for one of the currently synced plans (syncEventId in syncedPlanIds)
+      // 2. Are not in the expected user list for this sync
+      // Members from previous plans (different syncEventId) should be left alone
+      // and will be removed by removeExpiredMembers when their scheduledRemovalAt passes.
+      if (member.syncEventId && syncedPlans.has(member.syncEventId) && !expected.has(member.userId)) {
         await ctx.db.patch(member._id, {
           leftAt: now,
           scheduledRemovalAt: undefined,
@@ -808,6 +820,7 @@ export const syncAutoChannel = internalAction({
             {
               channelId: config.channelId,
               expectedUserIds: [],
+              syncedPlanIds: syncedServices.map(s => s.planId),
             }
           );
           staleRemoved = staleResult.removedCount;
@@ -971,6 +984,7 @@ export const syncAutoChannel = internalAction({
           {
             channelId: config.channelId,
             expectedUserIds: Array.from(expectedUserIds),
+            syncedPlanIds: syncedServices.map(s => s.planId),
           }
         );
         staleRemoved = staleResult.removedCount;
