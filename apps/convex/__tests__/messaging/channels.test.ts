@@ -2951,6 +2951,66 @@ describe("setCustomChannelLeaderEnabled", () => {
     const after = await t.run(async (ctx) => ctx.db.get(result.channelId));
     expect(after?.isEnabled).not.toBe(false);
   });
+
+  test("enabling an archived channel unarchives it", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    const result = await t.mutation(api.functions.messaging.channels.createCustomChannel, {
+      token: leaderToken,
+      groupId,
+      name: "Archive Test",
+    });
+
+    // Archive the channel
+    await t.mutation(api.functions.messaging.channels.archiveCustomChannel, {
+      token: leaderToken,
+      channelId: result.channelId,
+    });
+
+    const archivedChannel = await t.run(async (ctx) => ctx.db.get(result.channelId));
+    expect(archivedChannel?.isArchived).toBe(true);
+
+    // Enable the channel (should unarchive it)
+    await t.mutation(api.functions.messaging.channels.setCustomChannelLeaderEnabled, {
+      token: leaderToken,
+      channelId: result.channelId,
+      enabled: true,
+    });
+
+    const after = await t.run(async (ctx) => ctx.db.get(result.channelId));
+    expect(after?.isArchived).toBe(false);
+    expect(after?.archivedAt).toBeUndefined();
+    expect(after?.isEnabled).toBe(true);
+  });
+
+  test("disabling an archived channel returns already_disabled", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    const result = await t.mutation(api.functions.messaging.channels.createCustomChannel, {
+      token: leaderToken,
+      groupId,
+      name: "Archive Disable Test",
+    });
+
+    // Archive the channel
+    await t.mutation(api.functions.messaging.channels.archiveCustomChannel, {
+      token: leaderToken,
+      channelId: result.channelId,
+    });
+
+    // Disabling an archived channel should return already_disabled
+    const disableResult = await t.mutation(api.functions.messaging.channels.setCustomChannelLeaderEnabled, {
+      token: leaderToken,
+      channelId: result.channelId,
+      enabled: false,
+    });
+
+    expect(disableResult.status).toBe("already_disabled");
+  });
 });
 
 // ============================================================================

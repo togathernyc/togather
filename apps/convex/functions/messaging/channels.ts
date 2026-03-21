@@ -1581,13 +1581,6 @@ export const setCustomChannelLeaderEnabled = mutation({
       });
     }
 
-    if (channel.isArchived) {
-      throw new ConvexError({
-        code: "INVALID_OPERATION",
-        message: "This channel is archived. Unarchive it first to change visibility.",
-      });
-    }
-
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
@@ -1606,7 +1599,7 @@ export const setCustomChannelLeaderEnabled = mutation({
     const now = Date.now();
 
     if (!args.enabled) {
-      if (channel.isEnabled === false) {
+      if (channel.isArchived || channel.isEnabled === false) {
         return { channelId: args.channelId, status: "already_disabled" as const };
       }
       await ctx.db.patch(args.channelId, {
@@ -1614,6 +1607,16 @@ export const setCustomChannelLeaderEnabled = mutation({
         updatedAt: now,
       });
       return { channelId: args.channelId, status: "disabled" as const };
+    }
+
+    if (channel.isArchived) {
+      await ctx.db.patch(args.channelId, {
+        isArchived: false,
+        archivedAt: undefined,
+        isEnabled: true,
+        updatedAt: now,
+      });
+      return { channelId: args.channelId, status: "enabled" as const };
     }
 
     if (channel.isEnabled !== false) {
