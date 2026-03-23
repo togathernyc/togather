@@ -227,15 +227,36 @@ function formatUserName(user: any) {
   return name || "Member";
 }
 
+type SubtaskInfo = {
+  _id: Id<"tasks">;
+  title: string;
+  status: string;
+  assignedToName?: string;
+};
+
+type SubtaskProgressEntry = {
+  total: number;
+  completed: number;
+  subtasks: SubtaskInfo[];
+};
+
 /**
- * Build subtask counts from an already-loaded group task list (e.g. listGroup)
- * so we do not re-query the whole group.
+ * Build subtask counts + lightweight subtask arrays from an already-loaded
+ * group task list (e.g. listGroup) so we do not re-query the whole group.
  */
 function buildSubtaskProgressMapFromGroupTasks(
   candidates: Array<{ _id: Id<"tasks"> }>,
-  allTasksInGroup: Array<{ parentTaskId?: Id<"tasks">; status: string }>,
-): Map<string, { total: number; completed: number }> {
-  const progressMap = new Map<string, { total: number; completed: number }>();
+  allTasksInGroup: Array<{
+    _id: Id<"tasks">;
+    parentTaskId?: Id<"tasks">;
+    status: string;
+    title: string;
+    orderKey?: number;
+    assignedToId?: Id<"users">;
+  }>,
+  userMap: Map<string, string>,
+): Map<string, SubtaskProgressEntry> {
+  const progressMap = new Map<string, SubtaskProgressEntry>();
   if (candidates.length === 0) return progressMap;
 
   const candidateIds = new Set(candidates.map((t) => t._id.toString()));
@@ -243,10 +264,29 @@ function buildSubtaskProgressMapFromGroupTasks(
     if (!t.parentTaskId) continue;
     const pid = t.parentTaskId.toString();
     if (!candidateIds.has(pid)) continue;
-    const cur = progressMap.get(pid) ?? { total: 0, completed: 0 };
+    const cur = progressMap.get(pid) ?? { total: 0, completed: 0, subtasks: [] };
     cur.total += 1;
     if (t.status === "done") cur.completed += 1;
+    cur.subtasks.push({
+      _id: t._id,
+      title: t.title,
+      status: t.status,
+      assignedToName: t.assignedToId
+        ? userMap.get(t.assignedToId.toString())
+        : undefined,
+    });
     progressMap.set(pid, cur);
+  }
+  // Pre-build orderKey lookup for O(1) access during sort
+  const orderKeyMap = new Map<string, number>();
+  for (const t of allTasksInGroup) {
+    orderKeyMap.set(t._id.toString(), t.orderKey ?? 0);
+  }
+  // Sort subtasks by orderKey
+  for (const entry of progressMap.values()) {
+    entry.subtasks.sort((a, b) => {
+      return (orderKeyMap.get(a._id.toString()) ?? 0) - (orderKeyMap.get(b._id.toString()) ?? 0);
+    });
   }
   return progressMap;
 }
@@ -254,38 +294,95 @@ function buildSubtaskProgressMapFromGroupTasks(
 /**
  * One small by_parent query per listed task — avoids loading every task in each group
  * (unlike scanning by_group for each distinct group).
+ * Returns progress counts + lightweight subtask arrays with assignee names.
  */
 async function buildSubtaskProgressMapByParentIndex(
   ctx: { db: any },
   candidates: Array<{ _id: Id<"tasks"> }>,
-): Promise<Map<string, { total: number; completed: number }>> {
-  const progressMap = new Map<string, { total: number; completed: number }>();
+): Promise<Map<string, SubtaskProgressEntry>> {
+  const progressMap = new Map<string, SubtaskProgressEntry>();
   if (candidates.length === 0) return progressMap;
 
+  // Gather all children
+  const allChildren: Array<{ parentId: string; child: any }> = [];
   await Promise.all(
     candidates.map(async (task) => {
       const children = await ctx.db
         .query("tasks")
         .withIndex("by_parent", (q: any) => q.eq("parentTaskId", task._id))
         .collect();
-      if (children.length === 0) return;
-      const completed = children.filter((c: any) => c.status === "done").length;
-      progressMap.set(task._id.toString(), {
-        total: children.length,
-        completed,
-      });
+      for (const child of children) {
+        allChildren.push({ parentId: task._id.toString(), child });
+      }
     }),
   );
+
+  if (allChildren.length === 0) return progressMap;
+
+  // Batch-fetch assignee names
+  const assigneeIds = [
+    ...new Set(
+      allChildren
+        .map((c) => c.child.assignedToId?.toString())
+        .filter(Boolean) as string[],
+    ),
+  ];
+  const assigneeUsers = await Promise.all(
+    assigneeIds.map((id) => ctx.db.get(id as Id<"users">)),
+  );
+  const assigneeNameById = new Map<string, string>();
+  assigneeIds.forEach((id, i) => {
+    const u = assigneeUsers[i];
+    assigneeNameById.set(id, u ? formatUserName(u) : "Member");
+  });
+
+  // Build entries
+  for (const { parentId, child } of allChildren) {
+    const cur = progressMap.get(parentId) ?? { total: 0, completed: 0, subtasks: [] };
+    cur.total += 1;
+    if (child.status === "done") cur.completed += 1;
+    cur.subtasks.push({
+      _id: child._id,
+      title: child.title,
+      status: child.status,
+      assignedToName: child.assignedToId
+        ? assigneeNameById.get(child.assignedToId.toString())
+        : undefined,
+    });
+    progressMap.set(parentId, cur);
+  }
+
+  // Pre-build orderKey lookup for O(1) access during sort
+  const orderKeyMap = new Map<string, number>();
+  for (const { child } of allChildren) {
+    orderKeyMap.set(child._id.toString(), child.orderKey ?? 0);
+  }
+  // Sort subtasks by orderKey
+  for (const entry of progressMap.values()) {
+    entry.subtasks.sort((a, b) => {
+      return (orderKeyMap.get(a._id.toString()) ?? 0) - (orderKeyMap.get(b._id.toString()) ?? 0);
+    });
+  }
+
   return progressMap;
 }
 
 function subtaskProgressOrNull(
   taskId: string,
-  progressMap: Map<string, { total: number; completed: number }>,
+  progressMap: Map<string, SubtaskProgressEntry>,
 ): { total: number; completed: number } | null {
   const p = progressMap.get(taskId);
   if (!p || p.total === 0) return null;
-  return p;
+  return { total: p.total, completed: p.completed };
+}
+
+function subtasksOrNull(
+  taskId: string,
+  progressMap: Map<string, SubtaskProgressEntry>,
+): SubtaskInfo[] | undefined {
+  const p = progressMap.get(taskId);
+  if (!p || p.subtasks.length === 0) return undefined;
+  return p.subtasks;
 }
 
 async function enrichTasks<
@@ -465,6 +562,7 @@ export const listMine = query({
     return filtered.map((t) => ({
       ...t,
       subtaskProgress: subtaskProgressOrNull(t._id.toString(), progressMap),
+      subtasks: subtasksOrNull(t._id.toString(), progressMap),
     }));
   },
 });
@@ -568,6 +666,7 @@ export const listAll = query({
     return filtered.map((t) => ({
       ...t,
       subtaskProgress: subtaskProgressOrNull(t._id.toString(), progressMap),
+      subtasks: subtasksOrNull(t._id.toString(), progressMap),
     }));
   },
 });
@@ -607,6 +706,7 @@ export const listClaimable = query({
     return filtered.map((t) => ({
       ...t,
       subtaskProgress: subtaskProgressOrNull(t._id.toString(), progressMap),
+      subtasks: subtasksOrNull(t._id.toString(), progressMap),
     }));
   },
 });
@@ -637,10 +737,36 @@ export const listGroup = query({
       if (orderA !== orderB) return orderA - orderB;
       return b.createdAt - a.createdAt;
     });
-    const progressMap = buildSubtaskProgressMapFromGroupTasks(filtered, tasks);
+    // Build a user name map from enriched tasks for subtask assignee names
+    const userNameMap = new Map<string, string>();
+    for (const t of enrichedTasks) {
+      if (t.assignedToId && t.assignedToName) {
+        userNameMap.set(t.assignedToId.toString(), t.assignedToName);
+      }
+    }
+    // Also fetch assignee names for subtasks whose assignees aren't in the parent list
+    const subtaskAssigneeIds = new Set<string>();
+    for (const t of tasks) {
+      if (t.parentTaskId && t.assignedToId) {
+        const aid = t.assignedToId.toString();
+        if (!userNameMap.has(aid)) subtaskAssigneeIds.add(aid);
+      }
+    }
+    if (subtaskAssigneeIds.size > 0) {
+      const extraUsers = await Promise.all(
+        [...subtaskAssigneeIds].map((id) => ctx.db.get(id as Id<"users">)),
+      );
+      [...subtaskAssigneeIds].forEach((id, i) => {
+        const u = extraUsers[i];
+        userNameMap.set(id, u ? formatUserName(u) : "Member");
+      });
+    }
+
+    const progressMap = buildSubtaskProgressMapFromGroupTasks(filtered, tasks, userNameMap);
     return filtered.map((t) => ({
       ...t,
       subtaskProgress: subtaskProgressOrNull(t._id.toString(), progressMap),
+      subtasks: subtasksOrNull(t._id.toString(), progressMap),
     }));
   },
 });
@@ -1354,6 +1480,8 @@ export const createFromTemplate = mutation({
     const responsibilityType = args.assignedToId ? "person" : "group";
     const timestamp = now();
     const sourceRef = args.templateId.toString();
+    const templateTags = normalizeTags(template.tags);
+    const tagsValue = templateTags.length > 0 ? templateTags : undefined;
 
     const parentTaskId = await ctx.db.insert("tasks", {
       groupId: template.groupId,
@@ -1369,7 +1497,7 @@ export const createFromTemplate = mutation({
       targetType: "member",
       targetMemberId: args.targetMemberId,
       targetGroupId: undefined,
-      tags: undefined,
+      tags: tagsValue,
       parentTaskId: undefined,
       orderKey: undefined,
       dueAt: undefined,
@@ -1407,7 +1535,7 @@ export const createFromTemplate = mutation({
         targetType: "member",
         targetMemberId: args.targetMemberId,
         targetGroupId: undefined,
-        tags: undefined,
+        tags: tagsValue,
         parentTaskId,
         orderKey: step.orderIndex,
         dueAt: undefined,

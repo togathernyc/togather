@@ -11,6 +11,13 @@ const stepValidator = v.object({
   orderIndex: v.number(),
 });
 
+function normalizeTags(tags: string[] | undefined): string[] {
+  return (tags ?? [])
+    .map((tag) => tag.trim().toLowerCase().replace(/\s+/g, "_"))
+    .filter(Boolean)
+    .slice(0, 20);
+}
+
 async function getLeaderMembership(
   ctx: { db: any },
   groupId: Id<"groups">,
@@ -129,6 +136,7 @@ export const create = mutation({
     title: v.string(),
     description: v.optional(v.string()),
     steps: v.array(stepValidator),
+    tags: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -142,6 +150,7 @@ export const create = mutation({
       throw new ConvexError("At least one step is required");
     }
 
+    const normalizedTags = normalizeTags(args.tags);
     const timestamp = now();
     const templateId = await ctx.db.insert("taskTemplates", {
       groupId: args.groupId,
@@ -153,6 +162,7 @@ export const create = mutation({
         description: s.description?.trim(),
         orderIndex: s.orderIndex ?? i,
       })),
+      tags: normalizedTags.length > 0 ? normalizedTags : undefined,
       isActive: true,
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -169,6 +179,7 @@ export const update = mutation({
     title: v.optional(v.string()),
     description: v.optional(v.union(v.string(), v.null())),
     steps: v.optional(v.array(stepValidator)),
+    tags: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -203,6 +214,11 @@ export const update = mutation({
         description: s.description?.trim(),
         orderIndex: s.orderIndex ?? i,
       }));
+    }
+
+    if (args.tags !== undefined) {
+      const normalizedTags = normalizeTags(args.tags);
+      patch.tags = normalizedTags.length > 0 ? normalizedTags : undefined;
     }
 
     await ctx.db.patch(args.templateId, patch);
