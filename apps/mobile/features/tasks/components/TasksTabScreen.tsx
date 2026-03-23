@@ -35,6 +35,7 @@ import { useTheme } from "@hooks/useTheme";
 import type { ThemeColors } from "@/theme/colors";
 
 type Segment = "my" | "all" | "claimable";
+type TaskListScope = "active" | "completed";
 type MainTab = "tasks" | "workflows";
 type TaskId = Id<"tasks">;
 type SourceFilter = "all" | TaskSourceType;
@@ -100,6 +101,7 @@ export function TasksTabScreen() {
 
   const [mainTab, setMainTab] = useState<MainTab>("tasks");
   const [segment, setSegment] = useState<Segment>("my");
+  const [taskListScope, setTaskListScope] = useState<TaskListScope>("active");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [tagFilter, setTagFilter] = useState<string>("all");
   const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilter>("all");
@@ -166,7 +168,7 @@ export function TasksTabScreen() {
   const [applyBusy, setApplyBusy] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
 
-  const taskFilterArgs = useMemo(
+  const taskFilterArgsBase = useMemo(
     () => ({
       sourceType: sourceFilter === "all" ? undefined : sourceFilter,
       tag: tagFilter === "all" ? undefined : tagFilter,
@@ -175,11 +177,28 @@ export function TasksTabScreen() {
     [sourceFilter, tagFilter, searchText],
   );
 
-  const myTasks = useAuthenticatedQuery(api.functions.tasks.index.listMine, taskFilterArgs);
-  const allTasks = useAuthenticatedQuery(api.functions.tasks.index.listAll, taskFilterArgs);
+  const taskFilterArgsWithScope = useMemo(
+    () => ({
+      ...taskFilterArgsBase,
+      listScope:
+        taskListScope === "completed" ? ("completed" as const) : ("active" as const),
+    }),
+    [taskFilterArgsBase, taskListScope],
+  );
+
+  const myTasks = useAuthenticatedQuery(
+    api.functions.tasks.index.listMine,
+    mainTab === "tasks" && segment === "my" ? taskFilterArgsWithScope : "skip",
+  );
+  const allTasks = useAuthenticatedQuery(
+    api.functions.tasks.index.listAll,
+    mainTab === "tasks" && segment === "all" ? taskFilterArgsWithScope : "skip",
+  );
   const claimableTasks = useAuthenticatedQuery(
     api.functions.tasks.index.listClaimable,
-    taskFilterArgs,
+    mainTab === "tasks" && segment === "claimable" && taskListScope === "active"
+      ? taskFilterArgsBase
+      : "skip",
   );
 
   const groups = useAuthenticatedQuery(
@@ -205,10 +224,21 @@ export function TasksTabScreen() {
       : "skip",
   );
 
-  const allTemplates = useAuthenticatedQuery(
-    api.functions.taskTemplates.index.listAll,
-    mainTab === "workflows" && hasLeaderAccess === true ? {} : "skip",
+  const groupWorkflowTemplates = useAuthenticatedQuery(
+    api.functions.taskTemplates.index.list,
+    mainTab === "workflows" && hasLeaderAccess === true && contextGroupId
+      ? { groupId: contextGroupId as Id<"groups"> }
+      : "skip",
   );
+
+  const allWorkflowTemplates = useAuthenticatedQuery(
+    api.functions.taskTemplates.index.listAll,
+    mainTab === "workflows" && hasLeaderAccess === true && !contextGroupId
+      ? {}
+      : "skip",
+  );
+
+  const workflowTemplates = contextGroupId ? groupWorkflowTemplates : allWorkflowTemplates;
 
   useEffect(() => {
     if (!contextGroupId) return;
@@ -361,9 +391,18 @@ export function TasksTabScreen() {
 
   const activeTasks = useMemo(() => {
     if (segment === "my") return groupScopedMyTasks;
-    if (segment === "claimable") return groupScopedClaimableTasks;
+    if (segment === "claimable") {
+      if (taskListScope === "completed") return [];
+      return groupScopedClaimableTasks;
+    }
     return filteredAllTasks;
-  }, [filteredAllTasks, groupScopedClaimableTasks, groupScopedMyTasks, segment]);
+  }, [
+    filteredAllTasks,
+    groupScopedClaimableTasks,
+    groupScopedMyTasks,
+    segment,
+    taskListScope,
+  ]);
 
   const assigningTask = useMemo(
     () =>
@@ -398,6 +437,7 @@ export function TasksTabScreen() {
 
   const claimTask = useAuthenticatedMutation(api.functions.tasks.index.claim);
   const markDone = useAuthenticatedMutation(api.functions.tasks.index.markDone);
+  const reopenTask = useAuthenticatedMutation(api.functions.tasks.index.reopen);
   const snoozeTask = useAuthenticatedMutation(api.functions.tasks.index.snooze);
   const cancelTask = useAuthenticatedMutation(api.functions.tasks.index.cancel);
   const assignTask = useAuthenticatedMutation(api.functions.tasks.index.assign);
@@ -438,18 +478,24 @@ export function TasksTabScreen() {
   ) as LeaderSearchResult[] | undefined;
 
   const templatesByGroup = useMemo(() => {
-    if (!allTemplates?.length) {
-      return [] as Array<[string, NonNullable<typeof allTemplates>]>;
+    const list = workflowTemplates;
+    if (!list?.length) {
+      return [] as Array<[string, NonNullable<typeof list>]>;
     }
-    const map = new Map<string, NonNullable<typeof allTemplates>>();
-    for (const t of allTemplates) {
+    if (contextGroupId) {
+      const name =
+        leaderGroups.find((g) => g._id === contextGroupId)?.name ?? "Group";
+      return [[name, list]] as Array<[string, NonNullable<typeof list>]>;
+    }
+    const map = new Map<string, NonNullable<typeof list>>();
+    for (const t of list) {
       const g = (t as { groupName?: string }).groupName ?? "Group";
       const cur = map.get(g) ?? [];
       cur.push(t);
       map.set(g, cur);
     }
     return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  }, [allTemplates]);
+  }, [workflowTemplates, contextGroupId, leaderGroups]);
 
   function openTemplateModalCreate() {
     setTplEditingId(null);
@@ -599,7 +645,7 @@ export function TasksTabScreen() {
 
   async function runTaskAction(
     taskId: TaskId,
-    action: "claim" | "done" | "snooze" | "cancel" | "assign",
+    action: "claim" | "done" | "snooze" | "cancel" | "assign" | "reopen",
     assigneeId?: Id<"users">,
   ) {
     setBusyTaskId(taskId.toString());
@@ -612,6 +658,9 @@ export function TasksTabScreen() {
       } else if (action === "done") {
         await markDone({ taskId });
         setActionSuccess("Task marked done");
+      } else if (action === "reopen") {
+        await reopenTask({ taskId });
+        setActionSuccess("Task reopened");
       } else if (action === "snooze") {
         await snoozeTask({ taskId, preset: "1_week" });
         setActionSuccess("Task snoozed for 1 week");
@@ -703,12 +752,47 @@ export function TasksTabScreen() {
     const sourceType = (task.sourceType ?? "manual") as TaskSourceType;
     const isBusy = busyTaskId === taskIdKey;
     const showAssignPanel = assigningTaskId === taskIdKey;
+    const isCompletedView = taskListScope === "completed";
+    const goToDetail = () =>
+      router.push(`/(user)/leader-tools/${task.groupId}/tasks/${taskIdKey}`);
+
+    const progressBlock =
+      task.subtaskProgress && task.subtaskProgress.total > 0 ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={
+            item.hasChildren
+              ? expandedParents.has(taskIdKey)
+                ? "Collapse subtasks"
+                : "Expand subtasks"
+              : undefined
+          }
+          onPress={
+            item.hasChildren ? () => toggleParentExpanded(taskIdKey) : goToDetail
+          }
+          style={styles.subtaskProgressBlock}
+        >
+          <Text style={[styles.subtaskProgressLabel, { color: colors.textSecondary }]}>
+            {task.subtaskProgress.completed}/{task.subtaskProgress.total}
+          </Text>
+          <View style={[styles.subtaskProgressTrack, { backgroundColor: colors.borderLight }]}>
+            <View
+              style={[
+                styles.subtaskProgressFill,
+                {
+                  backgroundColor: colors.link,
+                  width: `${Math.round(
+                    (task.subtaskProgress.completed / task.subtaskProgress.total) * 100,
+                  )}%`,
+                },
+              ]}
+            />
+          </View>
+        </Pressable>
+      ) : null;
 
     return (
-      <Pressable
-        onPress={() =>
-          router.push(`/(user)/leader-tools/${task.groupId}/tasks/${taskIdKey}`)
-        }
+      <View
         style={[
           styles.card,
           { backgroundColor: colors.surface, borderColor: colors.borderLight },
@@ -720,21 +804,26 @@ export function TasksTabScreen() {
           <View style={styles.titleContainer}>
             {item.hasChildren ? (
               <Pressable
-                onPress={(event) => {
-                  event.stopPropagation();
-                  toggleParentExpanded(taskIdKey);
-                }}
-                hitSlop={8}
-                style={styles.chevronButton}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  expandedParents.has(taskIdKey) ? "Collapse subtasks" : "Expand subtasks"
+                }
+                onPress={() => toggleParentExpanded(taskIdKey)}
+                hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+                style={styles.expandHit}
               >
                 <Ionicons
                   name={expandedParents.has(taskIdKey) ? "chevron-down" : "chevron-forward"}
-                  size={14}
+                  size={22}
                   color={colors.textSecondary}
                 />
               </Pressable>
-            ) : null}
-            <Text style={[styles.cardTitle, { color: colors.text }]}>{task.title}</Text>
+            ) : (
+              <View style={styles.expandHitPlaceholder} />
+            )}
+            <Pressable onPress={goToDetail} style={styles.cardTitlePressable}>
+              <Text style={[styles.cardTitle, { color: colors.text }]}>{task.title}</Text>
+            </Pressable>
           </View>
           <View
             style={[
@@ -746,66 +835,56 @@ export function TasksTabScreen() {
           </View>
         </View>
 
-        {task.subtaskProgress && task.subtaskProgress.total > 0 ? (
-          <View style={styles.subtaskProgressBlock}>
-            <Text style={[styles.subtaskProgressLabel, { color: colors.textSecondary }]}>
-              {task.subtaskProgress.completed}/{task.subtaskProgress.total}
+        {progressBlock}
+
+        <Pressable onPress={goToDetail}>
+          <View style={styles.metaRow}>
+            <Ionicons name="people-outline" size={14} color={colors.textSecondary} />
+            <Text style={[styles.metaText, { color: colors.textSecondary }]}>{task.groupName ?? "Group"}</Text>
+            {task.assignedToName ? (
+              <Text style={[styles.metaText, { color: colors.textSecondary }]}>• {task.assignedToName}</Text>
+            ) : null}
+            <Text style={[styles.statusText, { color: statusColor(task.status, colors) }]}>
+              {formatStatus(task.status)}
             </Text>
-            <View style={[styles.subtaskProgressTrack, { backgroundColor: colors.borderLight }]}>
-              <View
-                style={[
-                  styles.subtaskProgressFill,
-                  {
-                    backgroundColor: colors.link,
-                    width: `${Math.round(
-                      (task.subtaskProgress.completed / task.subtaskProgress.total) * 100,
-                    )}%`,
-                  },
-                ]}
-              />
+          </View>
+
+          {task.targetType !== "none" ? (
+            <View style={[styles.targetPill, { backgroundColor: isDark ? 'rgba(0,122,255,0.15)' : '#E0F2FE' }]}>
+              <Text style={[styles.targetPillText, { color: colors.link }]}>
+                {task.targetType === "member"
+                  ? `Member: ${task.targetMemberName ?? "Unknown"}`
+                  : `Group: ${task.targetGroupName ?? "Group"}`}
+              </Text>
             </View>
-          </View>
-        ) : null}
-
-        <View style={styles.metaRow}>
-          <Ionicons name="people-outline" size={14} color={colors.textSecondary} />
-          <Text style={[styles.metaText, { color: colors.textSecondary }]}>{task.groupName ?? "Group"}</Text>
-          {task.assignedToName ? (
-            <Text style={[styles.metaText, { color: colors.textSecondary }]}>• {task.assignedToName}</Text>
           ) : null}
-          <Text style={[styles.statusText, { color: statusColor(task.status, colors) }]}>
-            {formatStatus(task.status)}
-          </Text>
-        </View>
 
-        {task.targetType !== "none" ? (
-          <View style={[styles.targetPill, { backgroundColor: isDark ? 'rgba(0,122,255,0.15)' : '#E0F2FE' }]}>
-            <Text style={[styles.targetPillText, { color: colors.link }]}>
-              {task.targetType === "member"
-                ? `Member: ${task.targetMemberName ?? "Unknown"}`
-                : `Group: ${task.targetGroupName ?? "Group"}`}
-            </Text>
-          </View>
-        ) : null}
-
-        {task.tags && task.tags.length > 0 ? (
-          <View style={styles.tagsRow}>
-            {task.tags.map((tag) => (
-              <View key={`${taskIdKey}-${tag}`} style={[styles.tagChip, { backgroundColor: isDark ? 'rgba(0,122,255,0.15)' : '#EEF2FF' }]}>
-                <Text style={[styles.tagChipText, { color: colors.link }]}>#{tag}</Text>
-              </View>
-            ))}
-          </View>
-        ) : null}
+          {task.tags && task.tags.length > 0 ? (
+            <View style={styles.tagsRow}>
+              {task.tags.map((tag) => (
+                <View key={`${taskIdKey}-${tag}`} style={[styles.tagChip, { backgroundColor: isDark ? 'rgba(0,122,255,0.15)' : '#EEF2FF' }]}>
+                  <Text style={[styles.tagChipText, { color: colors.link }]}>#{tag}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+        </Pressable>
 
         <View style={styles.actionsRow}>
-          {(segment === "claimable" || segment === "all") && !task.assignedToId ? (
+          {isCompletedView && task.status === "done" ? (
             <Pressable
               disabled={isBusy}
-              onPress={(event) => {
-                event.stopPropagation();
-                runTaskAction(taskId, "claim");
-              }}
+              onPress={() => runTaskAction(taskId, "reopen")}
+              style={[styles.primaryAction, { backgroundColor: colors.link }, isBusy && styles.disabledAction]}
+            >
+              <Text style={[styles.primaryActionText, { color: colors.textInverse }]}>
+                {isBusy ? "..." : "Reopen"}
+              </Text>
+            </Pressable>
+          ) : (segment === "claimable" || segment === "all") && !task.assignedToId ? (
+            <Pressable
+              disabled={isBusy}
+              onPress={() => runTaskAction(taskId, "claim")}
               style={[styles.primaryAction, { backgroundColor: colors.link }, isBusy && styles.disabledAction]}
             >
               <Text style={[styles.primaryActionText, { color: colors.textInverse }]}>{isBusy ? "..." : "Claim"}</Text>
@@ -814,30 +893,21 @@ export function TasksTabScreen() {
             <>
               <Pressable
                 disabled={isBusy}
-                onPress={(event) => {
-                  event.stopPropagation();
-                  runTaskAction(taskId, "done");
-                }}
+                onPress={() => runTaskAction(taskId, "done")}
                 style={[styles.inlineAction, { borderColor: colors.border, backgroundColor: colors.surface }, isBusy && styles.disabledAction]}
               >
                 <Text style={[styles.inlineActionText, { color: colors.text }]}>Done</Text>
               </Pressable>
               <Pressable
                 disabled={isBusy}
-                onPress={(event) => {
-                  event.stopPropagation();
-                  runTaskAction(taskId, "snooze");
-                }}
+                onPress={() => runTaskAction(taskId, "snooze")}
                 style={[styles.inlineAction, { borderColor: colors.border, backgroundColor: colors.surface }, isBusy && styles.disabledAction]}
               >
                 <Text style={[styles.inlineActionText, { color: colors.text }]}>Snooze 1w</Text>
               </Pressable>
               <Pressable
                 disabled={isBusy}
-                onPress={(event) => {
-                  event.stopPropagation();
-                  runTaskAction(taskId, "cancel");
-                }}
+                onPress={() => runTaskAction(taskId, "cancel")}
                 style={[styles.inlineAction, { borderColor: colors.border, backgroundColor: colors.surface }, isBusy && styles.disabledAction]}
               >
                 <Text style={[styles.inlineActionText, { color: colors.destructive }]}>
@@ -846,12 +916,11 @@ export function TasksTabScreen() {
               </Pressable>
               <Pressable
                 disabled={isBusy}
-                onPress={(event) => {
-                  event.stopPropagation();
+                onPress={() =>
                   setAssigningTaskId((current) =>
                     current === taskIdKey ? null : taskIdKey,
-                  );
-                }}
+                  )
+                }
                 style={[styles.inlineAction, { borderColor: colors.border, backgroundColor: colors.surface }, isBusy && styles.disabledAction]}
               >
                 <Text style={[styles.inlineActionText, { color: colors.text }]}>
@@ -870,10 +939,7 @@ export function TasksTabScreen() {
                 <Pressable
                   key={`${taskIdKey}-${leader.userId}`}
                   disabled={isBusy}
-                  onPress={(event) => {
-                    event.stopPropagation();
-                    runTaskAction(taskId, "assign", leader.userId as Id<"users">);
-                  }}
+                  onPress={() => runTaskAction(taskId, "assign", leader.userId as Id<"users">)}
                   style={[styles.assignButton, { borderColor: isDark ? 'rgba(0,122,255,0.3)' : '#BFDBFE', backgroundColor: colors.selectedBackground }, isBusy && styles.disabledAction]}
                 >
                   <Text style={[styles.assignButtonText, { color: colors.link }]}>{leader.name}</Text>
@@ -881,10 +947,7 @@ export function TasksTabScreen() {
               ))}
               <Pressable
                 disabled={isBusy}
-                onPress={(event) => {
-                  event.stopPropagation();
-                  runTaskAction(taskId, "assign");
-                }}
+                onPress={() => runTaskAction(taskId, "assign")}
                 style={[styles.assignButton, { borderColor: isDark ? 'rgba(0,122,255,0.3)' : '#BFDBFE', backgroundColor: colors.selectedBackground }, isBusy && styles.disabledAction]}
               >
                 <Text style={[styles.assignButtonText, { color: colors.link }]}>Unassign</Text>
@@ -892,7 +955,7 @@ export function TasksTabScreen() {
             </View>
           </View>
         ) : null}
-      </Pressable>
+      </View>
     );
   };
 
@@ -1046,7 +1109,10 @@ export function TasksTabScreen() {
               </Text>
             </Pressable>
             <Pressable
-              onPress={() => setSegment("claimable")}
+              onPress={() => {
+                setTaskListScope("active");
+                setSegment("claimable");
+              }}
               style={[
                 styles.segmentButton,
                 { backgroundColor: colors.surfaceSecondary },
@@ -1061,6 +1127,47 @@ export function TasksTabScreen() {
                 ]}
               >
                 Claimable
+              </Text>
+            </Pressable>
+          </View>
+
+          <View style={[styles.segmentRow, { paddingTop: 0 }]}>
+            <Pressable
+              testID="tasks-scope-active"
+              onPress={() => setTaskListScope("active")}
+              style={[
+                styles.segmentButton,
+                { backgroundColor: colors.surfaceSecondary },
+                taskListScope === "active" && { backgroundColor: primaryColor },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.segmentText,
+                  { color: colors.text },
+                  taskListScope === "active" && { color: colors.textInverse },
+                ]}
+              >
+                Open
+              </Text>
+            </Pressable>
+            <Pressable
+              testID="tasks-scope-completed"
+              onPress={() => setTaskListScope("completed")}
+              style={[
+                styles.segmentButton,
+                { backgroundColor: colors.surfaceSecondary },
+                taskListScope === "completed" && { backgroundColor: primaryColor },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.segmentText,
+                  { color: colors.text },
+                  taskListScope === "completed" && { color: colors.textInverse },
+                ]}
+              >
+                Completed
               </Text>
             </Pressable>
           </View>
@@ -1085,11 +1192,15 @@ export function TasksTabScreen() {
               <Ionicons name="checkmark-done-outline" size={48} color={colors.iconSecondary} />
               <Text style={[styles.emptyTitle, { color: colors.text }]}>No tasks here yet</Text>
               <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
-                {segment === "my"
-                  ? "Assigned tasks will appear here."
-                  : segment === "all"
-                    ? "Open and snoozed tasks from your groups will appear here."
-                    : "Unassigned group tasks will appear here."}
+                {segment === "claimable" && taskListScope === "completed"
+                  ? "Claimable tasks are always open. Switch to Open to claim work, or pick My/All Tasks to see completed items."
+                  : taskListScope === "completed"
+                    ? "No completed tasks match your filters."
+                    : segment === "my"
+                      ? "Assigned tasks will appear here."
+                      : segment === "all"
+                        ? "Open and snoozed tasks from your groups will appear here."
+                        : "Unassigned group tasks will appear here."}
               </Text>
             </View>
           ) : isDesktopWeb ? (
@@ -1120,7 +1231,7 @@ export function TasksTabScreen() {
             />
           )}
         </>
-      ) : allTemplates === undefined ? (
+      ) : workflowTemplates === undefined ? (
         <View style={styles.centered}>
           <ActivityIndicator size="large" color={primaryColor} />
           <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading workflows...</Text>
@@ -1174,25 +1285,38 @@ export function TasksTabScreen() {
                       </Text>
                     </View>
                   </View>
-                  <Pressable
-                    style={[
-                      styles.primaryAction,
-                      {
-                        marginTop: 12,
-                        backgroundColor: colors.link,
-                        alignSelf: "flex-start",
-                      },
-                      !t.isActive && styles.disabledAction,
-                    ]}
-                    disabled={!t.isActive}
-                    onPress={() => {
-                      setApplyTarget({
-                        templateId: t._id.toString(),
-                        groupId: t.groupId.toString(),
-                      });
-                      setApplyMemberSearch("");
-                      setDebouncedApplyMemberSearch("");
-                      setApplyMemberId(null);
+                  <View style={styles.workflowCardActions}>
+                    <Pressable
+                      style={[
+                        styles.inlineAction,
+                        {
+                          borderColor: colors.border,
+                          backgroundColor: colors.surface,
+                          alignSelf: "flex-start",
+                        },
+                      ]}
+                      onPress={() => openTemplateModalEdit(t)}
+                    >
+                      <Text style={[styles.inlineActionText, { color: colors.text }]}>Edit</Text>
+                    </Pressable>
+                    <Pressable
+                      style={[
+                        styles.primaryAction,
+                        {
+                          backgroundColor: colors.link,
+                          alignSelf: "flex-start",
+                        },
+                        !t.isActive && styles.disabledAction,
+                      ]}
+                      disabled={!t.isActive}
+                      onPress={() => {
+                        setApplyTarget({
+                          templateId: t._id.toString(),
+                          groupId: t.groupId.toString(),
+                        });
+                        setApplyMemberSearch("");
+                        setDebouncedApplyMemberSearch("");
+                        setApplyMemberId(null);
                       setApplyMemberName(null);
                       setApplyAssignSearch("");
                       setDebouncedApplyAssignSearch("");
@@ -1200,11 +1324,12 @@ export function TasksTabScreen() {
                       setApplyAssigneeName(null);
                       setApplyError(null);
                     }}
-                  >
-                    <Text style={[styles.primaryActionText, { color: colors.textInverse }]}>
-                      Apply to Person
-                    </Text>
-                  </Pressable>
+                    >
+                      <Text style={[styles.primaryActionText, { color: colors.textInverse }]}>
+                        Apply to Person
+                      </Text>
+                    </Pressable>
+                  </View>
                 </Pressable>
               ))}
             </View>
@@ -2073,16 +2198,37 @@ const styles = StyleSheet.create({
   titleContainer: {
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: 2,
+    gap: 4,
     flex: 1,
   },
-  chevronButton: {
-    marginTop: 2,
+  expandHit: {
+    minWidth: 44,
+    minHeight: 44,
+    marginTop: -6,
+    marginLeft: -4,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  expandHitPlaceholder: {
+    width: 40,
+    minHeight: 44,
+    marginTop: -6,
+    marginLeft: -4,
+  },
+  cardTitlePressable: {
+    flex: 1,
+    paddingVertical: 4,
   },
   cardTitle: {
-    flex: 1,
     fontSize: 15,
     fontWeight: "600",
+  },
+  workflowCardActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    alignItems: "center",
+    marginTop: 4,
   },
   badge: {
     borderRadius: 6,

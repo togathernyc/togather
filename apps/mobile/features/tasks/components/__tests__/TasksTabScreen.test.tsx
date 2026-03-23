@@ -55,6 +55,7 @@ jest.mock("@services/api/convex", () => ({
           listGroup: "api.functions.tasks.index.listGroup",
           claim: "api.functions.tasks.index.claim",
           markDone: "api.functions.tasks.index.markDone",
+          reopen: "api.functions.tasks.index.reopen",
           snooze: "api.functions.tasks.index.snooze",
           cancel: "api.functions.tasks.index.cancel",
           assign: "api.functions.tasks.index.assign",
@@ -65,6 +66,7 @@ jest.mock("@services/api/convex", () => ({
       },
       taskTemplates: {
         index: {
+          list: "api.functions.taskTemplates.index.list",
           listAll: "api.functions.taskTemplates.index.listAll",
           create: "api.functions.taskTemplates.index.create",
           update: "api.functions.taskTemplates.index.update",
@@ -91,8 +93,30 @@ describe("TasksTabScreen", () => {
 
     (useAuthenticatedMutation as jest.Mock).mockReturnValue(jest.fn());
 
-    (useAuthenticatedQuery as jest.Mock).mockImplementation((queryFn: string) => {
+    (useAuthenticatedQuery as jest.Mock).mockImplementation((queryFn: string, args?: unknown) => {
+      if (args === "skip") return undefined;
+
       if (queryFn === "api.functions.tasks.index.listMine") {
+        const scope =
+          args && typeof args === "object" && args !== null && "listScope" in args
+            ? (args as { listScope?: string }).listScope
+            : "active";
+        if (scope === "completed") {
+          return [
+            {
+              _id: "task-done-1",
+              title: "Finished follow-up",
+              status: "done",
+              sourceType: "manual",
+              groupId: "group-1",
+              groupName: "Group A",
+              assignedToId: "leader-me",
+              assignedToName: "Me Leader",
+              targetType: "none",
+              tags: ["care"],
+            },
+          ];
+        }
         return [
           {
             _id: "task-mine-1",
@@ -175,6 +199,10 @@ describe("TasksTabScreen", () => {
         return [];
       }
 
+      if (queryFn === "api.functions.taskTemplates.index.list") {
+        return [];
+      }
+
       if (
         queryFn === "api.functions.tasks.index.listGroup" ||
         queryFn === "api.functions.tasks.index.listAssignableLeaders" ||
@@ -250,8 +278,84 @@ describe("TasksTabScreen", () => {
     expect(mockReplace).not.toHaveBeenCalled();
   });
 
+  it("shows Reopen on completed tasks when Completed scope is selected", () => {
+    const { getByText, getByTestId } = render(<TasksTabScreen />);
+    fireEvent.press(getByTestId("tasks-scope-completed"));
+    expect(getByText("Finished follow-up")).toBeTruthy();
+    expect(getByText("Reopen")).toBeTruthy();
+  });
+
+  it("scopes workflows to the current group using list when group_id is set", () => {
+    mockSearchParams = { group_id: "group-1" };
+    const groupWorkflowRows = [
+      {
+        _id: "tpl-group",
+        title: "Onboarding",
+        groupId: "group-1",
+        isActive: true,
+        steps: [{ title: "Step 1", orderIndex: 0 }],
+      },
+    ];
+    const listSpy = jest.fn();
+    (useAuthenticatedQuery as jest.Mock).mockImplementation((queryFn: string, args?: unknown) => {
+      if (args === "skip") return undefined;
+      if (queryFn === "api.functions.tasks.index.hasLeaderAccess") return true;
+      if (queryFn === "api.functions.taskTemplates.index.list") {
+        listSpy(args);
+        return groupWorkflowRows;
+      }
+      if (queryFn === "api.functions.taskTemplates.index.listAll") {
+        throw new Error("listAll should not run when group_id is set");
+      }
+      if (queryFn === "api.functions.groups.queries.listForUser") {
+        return [{ _id: "group-1", name: "Group A", userRole: "leader" }];
+      }
+      if (queryFn === "api.functions.tasks.index.listMine") {
+        const scope =
+          args && typeof args === "object" && args !== null && "listScope" in args
+            ? (args as { listScope?: string }).listScope
+            : "active";
+        if (scope === "completed") return [];
+        return [
+          {
+            _id: "task-mine-1",
+            title: "My Follow-up",
+            status: "open",
+            sourceType: "manual",
+            groupId: "group-1",
+            groupName: "Group A",
+            assignedToId: "leader-me",
+            assignedToName: "Me Leader",
+            targetType: "none",
+            tags: ["care"],
+          },
+        ];
+      }
+      if (queryFn === "api.functions.tasks.index.listAll") return [];
+      if (queryFn === "api.functions.tasks.index.listClaimable") return [];
+      if (
+        queryFn === "api.functions.tasks.index.listGroup" ||
+        queryFn === "api.functions.tasks.index.listAssignableLeaders" ||
+        queryFn === "api.functions.tasks.index.searchAssignableLeaders" ||
+        queryFn === "api.functions.tasks.index.searchRelevantMembers"
+      ) {
+        return [];
+      }
+      return undefined;
+    });
+
+    const { getByText } = render(<TasksTabScreen />);
+    fireEvent.press(getByText("Workflows"));
+    expect(listSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ groupId: "group-1" }),
+    );
+    expect(getByText("Onboarding")).toBeTruthy();
+    expect(getByText("Edit")).toBeTruthy();
+  });
+
   it("shows Workflows tab for leaders and switches to workflow list", () => {
-    (useAuthenticatedQuery as jest.Mock).mockImplementation((queryFn: string) => {
+    (useAuthenticatedQuery as jest.Mock).mockImplementation((queryFn: string, args?: unknown) => {
+      if (args === "skip") return undefined;
       if (queryFn === "api.functions.tasks.index.hasLeaderAccess") return true;
       if (queryFn === "api.functions.taskTemplates.index.listAll") {
         return [
@@ -268,6 +372,7 @@ describe("TasksTabScreen", () => {
       if (queryFn === "api.functions.groups.queries.listForUser") {
         return [{ _id: "group-1", name: "Group A", userRole: "leader" }];
       }
+      if (queryFn === "api.functions.taskTemplates.index.list") return [];
       if (queryFn === "api.functions.tasks.index.listMine") return [];
       if (queryFn === "api.functions.tasks.index.listAll") return [];
       if (queryFn === "api.functions.tasks.index.listClaimable") return [];
