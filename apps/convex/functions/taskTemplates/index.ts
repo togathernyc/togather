@@ -73,7 +73,6 @@ export const listAll = query({
     const leaderGroupIds = await getActiveLeaderGroupIds(ctx, userId);
     if (leaderGroupIds.length === 0) return [];
 
-    const groupIdSet = new Set(leaderGroupIds.map((id) => id.toString()));
     const results: any[] = [];
 
     for (const groupId of leaderGroupIds) {
@@ -81,11 +80,7 @@ export const listAll = query({
         .query("taskTemplates")
         .withIndex("by_group", (q: any) => q.eq("groupId", groupId))
         .collect();
-      for (const t of templates) {
-        if (groupIdSet.has(t.groupId.toString())) {
-          results.push(t);
-        }
-      }
+      results.push(...templates);
     }
 
     const groupIds = [...new Set(results.map((t) => t.groupId.toString()))];
