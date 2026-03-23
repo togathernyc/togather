@@ -230,7 +230,7 @@ export function FollowupMobileGrid({
   const { colors } = useTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { community } = useAuth();
+  const { community, user } = useAuth();
   const communityId = community?.id as Id<"communities"> | undefined;
   const { primaryColor } = useCommunityTheme();
 
@@ -406,6 +406,19 @@ export function FollowupMobileGrid({
     () => parseFollowupQuerySyntax(debouncedSearch, leaderMap, scoreConfig, true),
     [debouncedSearch, leaderMap, scoreConfig],
   );
+  const saveViewFilters = useMemo(() => {
+    const base = {
+      statusFilter: parsedQuery.statusFilter,
+      assigneeFilter: parsedQuery.assigneeFilter,
+      scoreField: parsedQuery.scoreField,
+      scoreMin: parsedQuery.scoreMin,
+      scoreMax: parsedQuery.scoreMax,
+    };
+    if (crossGroupMode || !groupId) {
+      return base;
+    }
+    return { ...base, groupId: groupId as Id<"groups"> };
+  }, [crossGroupMode, groupId, parsedQuery]);
   const hasTextSearch = parsedQuery.searchText.length > 0;
   const hasStructuredFilters =
     !!parsedQuery.statusFilter ||
@@ -1996,9 +2009,9 @@ export function FollowupMobileGrid({
         </Text>
       </View>
 
-      {groupData?.communityId && (
+      {(groupData?.communityId || (crossGroupMode && communityId)) && (
         <PeopleViewBar
-          communityId={groupData.communityId}
+          communityId={(groupData?.communityId ?? communityId)!}
           activeViewId={activeViewId}
           onViewSelect={(viewId, view) => {
             if (view?.isSpecial) {
@@ -2037,7 +2050,11 @@ export function FollowupMobileGrid({
             setViewToDelete({ id: viewId, name: viewName, isShared });
           }}
           onCreateView={() => setShowSaveViewModal(true)}
-          isAdmin={groupData?.userRole === "admin"}
+          isAdmin={
+            crossGroupMode
+              ? user?.is_admin === true
+              : groupData?.userRole === "admin"
+          }
           specialViews={[{ id: FOLLOWUP_MAP_VIEW_ID, name: "Map", icon: "map-outline" }]}
         />
       )}
@@ -2467,22 +2484,19 @@ export function FollowupMobileGrid({
       />
 
       {/* Save view modal */}
-      {groupData?.communityId && (
+      {(groupData?.communityId || (crossGroupMode && communityId)) && (
         <SaveViewModal
           visible={showSaveViewModal}
           onClose={() => setShowSaveViewModal(false)}
-          communityId={groupData.communityId}
+          communityId={(groupData?.communityId ?? communityId)!}
           currentSortBy={sortField}
           currentSortDirection={sortDirection}
-          currentFilters={{
-            groupId: groupId as any,
-            statusFilter: parsedQuery.statusFilter,
-            assigneeFilter: parsedQuery.assigneeFilter,
-            scoreField: parsedQuery.scoreField,
-            scoreMin: parsedQuery.scoreMin,
-            scoreMax: parsedQuery.scoreMax,
-          }}
-          isAdmin={groupData?.userRole === "admin"}
+          currentFilters={saveViewFilters}
+          isAdmin={
+            crossGroupMode
+              ? user?.is_admin === true
+              : groupData?.userRole === "admin"
+          }
         />
       )}
 
