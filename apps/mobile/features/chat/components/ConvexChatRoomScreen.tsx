@@ -19,6 +19,7 @@ import {
   Pressable,
   Share,
   ActionSheetIOS,
+  InteractionManager,
 } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -56,6 +57,16 @@ import { BlockedUsersProvider, useBlockedUsersContext } from "../context/Blocked
 import { useMutation, useAction } from "@services/api/convex";
 import { useGroupCache } from "@/stores/groupCache";
 import { useChannelsCache } from "@/stores/channelsCache";
+
+/**
+ * iOS freezes if ActionSheet / Share is presented in the same tick as closing an RN Modal.
+ * Defer until interactions + modal teardown complete (see SO #63062133, RN modal stack issues).
+ */
+function runAfterChatMenuDismiss(action: () => void) {
+  InteractionManager.runAfterInteractions(() => {
+    setTimeout(action, 320);
+  });
+}
 
 type ChatRoomParams = {
   chat_id?: string;
@@ -654,40 +665,42 @@ const ConvexChatRoomScreenInner: React.FC = () => {
     }
   }, [router, getGroupIdForNavigation]);
 
-  const handleShareGroup = useCallback(async () => {
+  const handleShareGroup = useCallback(() => {
     setMenuVisible(false);
-    const shortId = (groupDetails as { shortId?: string } | undefined)?.shortId
-      ?? (groupData as { shortId?: string } | undefined)?.shortId;
-    if (!shortId) {
-      Alert.alert("Cannot Share", "This group doesn't have a shareable link yet.");
-      return;
-    }
-    const groupUrl = DOMAIN_CONFIG.groupShareUrl(shortId);
-    const groupName = displayName || "Group";
+    runAfterChatMenuDismiss(() => {
+      const shortId = (groupDetails as { shortId?: string } | undefined)?.shortId
+        ?? (groupData as { shortId?: string } | undefined)?.shortId;
+      if (!shortId) {
+        Alert.alert("Cannot Share", "This group doesn't have a shareable link yet.");
+        return;
+      }
+      const groupUrl = DOMAIN_CONFIG.groupShareUrl(shortId);
+      const groupName = displayName || "Group";
 
-    if (Platform.OS === "ios") {
-      ActionSheetIOS.showActionSheetWithOptions(
-        {
-          options: ["Cancel", "Copy Link", "Share"],
-          cancelButtonIndex: 0,
-        },
-        async (buttonIndex) => {
-          if (buttonIndex === 1) {
-            await Clipboard.setStringAsync(groupUrl);
-            Alert.alert("Link Copied", "Group link has been copied to clipboard.");
-          } else if (buttonIndex === 2) {
-            await Share.share({
-              message: `${groupName}\n${groupUrl}`,
-              url: groupUrl,
-            });
+      if (Platform.OS === "ios") {
+        ActionSheetIOS.showActionSheetWithOptions(
+          {
+            options: ["Cancel", "Copy Link", "Share"],
+            cancelButtonIndex: 0,
+          },
+          async (buttonIndex) => {
+            if (buttonIndex === 1) {
+              await Clipboard.setStringAsync(groupUrl);
+              Alert.alert("Link Copied", "Group link has been copied to clipboard.");
+            } else if (buttonIndex === 2) {
+              await Share.share({
+                message: `${groupName}\n${groupUrl}`,
+                url: groupUrl,
+              });
+            }
           }
-        }
-      );
-    } else {
-      await Share.share({
-        message: `${groupName}\n${groupUrl}`,
-      });
-    }
+        );
+      } else {
+        void Share.share({
+          message: `${groupName}\n${groupUrl}`,
+        });
+      }
+    });
   }, [groupDetails, groupData, displayName]);
 
   // Message action handlers

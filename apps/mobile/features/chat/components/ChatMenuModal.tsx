@@ -52,7 +52,10 @@ export const ChatMenuModal = memo(function ChatMenuModal({
       onRequestClose={onClose}
     >
       <Pressable style={[styles.modalOverlay, { backgroundColor: themeColors.overlay }]} onPress={onClose}>
-        <View style={[styles.menuContainer, { backgroundColor: themeColors.modalBackground }]}>
+        <View
+          style={[styles.menuContainer, { backgroundColor: themeColors.modalBackground }]}
+          onStartShouldSetResponder={() => true}
+        >
           {/* Members - available to all */}
           {hasGroup && (
             <TouchableOpacity style={[styles.menuItem, { borderBottomColor: themeColors.borderLight }]} onPress={onMembersPress}>
