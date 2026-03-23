@@ -513,6 +513,19 @@ export function FollowupDesktopTable({
     () => parseFollowupQuerySyntax(debouncedSearch, leaderMap, scoreConfig),
     [debouncedSearch, leaderMap, scoreConfig],
   );
+  const saveViewFilters = useMemo(() => {
+    const base = {
+      statusFilter: parsedQuery.statusFilter,
+      assigneeFilter: parsedQuery.assigneeFilter,
+      scoreField: parsedQuery.scoreField,
+      scoreMin: parsedQuery.scoreMin,
+      scoreMax: parsedQuery.scoreMax,
+    };
+    if (crossGroupMode || !groupId) {
+      return base;
+    }
+    return { ...base, groupId: groupId as Id<"groups"> };
+  }, [crossGroupMode, groupId, parsedQuery]);
   const hasTextSearch = !!parsedQuery.searchText;
   const hasAnyFilter =
     !!parsedQuery.statusFilter ||
@@ -3290,14 +3303,7 @@ export function FollowupDesktopTable({
           currentHiddenColumns={
             localHiddenColumns ?? columnConfig?.hiddenColumns
           }
-          currentFilters={{
-            groupId: groupId as any,
-            statusFilter: parsedQuery.statusFilter,
-            assigneeFilter: parsedQuery.assigneeFilter,
-            scoreField: parsedQuery.scoreField,
-            scoreMin: parsedQuery.scoreMin,
-            scoreMax: parsedQuery.scoreMax,
-          }}
+          currentFilters={saveViewFilters}
           isAdmin={user?.is_admin === true}
         />
       )}

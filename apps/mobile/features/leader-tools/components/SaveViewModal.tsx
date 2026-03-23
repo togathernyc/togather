@@ -7,6 +7,7 @@ import {
   StyleSheet,
   ActivityIndicator,
   Alert,
+  Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuthenticatedMutation, api } from "@services/api/convex";
@@ -53,6 +54,14 @@ interface SaveViewModalProps {
 
 const MAX_VIEW_NAME_LENGTH = 30;
 
+function alertCompat(title: string, message?: string) {
+  if (Platform.OS === "web" && typeof window !== "undefined") {
+    window.alert(message ? `${title}\n\n${message}` : title);
+    return;
+  }
+  Alert.alert(title, message);
+}
+
 // ============================================================================
 // Component
 // ============================================================================
@@ -77,6 +86,7 @@ export function SaveViewModal({
     "personal",
   );
   const [isSaving, setIsSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   const createView = useAuthenticatedMutation(
     api.functions.peopleSavedViews.create,
@@ -98,23 +108,26 @@ export function SaveViewModal({
         setVisibility("personal");
       }
       setIsSaving(false);
+      setFormError(null);
     }
   }, [visible, editingView]);
 
   const handleSave = async () => {
     const trimmedName = name.trim();
     if (trimmedName.length === 0) {
-      Alert.alert("Error", "View name cannot be empty.");
+      const msg = "View name cannot be empty.";
+      setFormError(msg);
+      alertCompat("Error", msg);
       return;
     }
     if (trimmedName.length > MAX_VIEW_NAME_LENGTH) {
-      Alert.alert(
-        "Error",
-        `View name must be ${MAX_VIEW_NAME_LENGTH} characters or fewer.`,
-      );
+      const msg = `View name must be ${MAX_VIEW_NAME_LENGTH} characters or fewer.`;
+      setFormError(msg);
+      alertCompat("Error", msg);
       return;
     }
 
+    setFormError(null);
     setIsSaving(true);
 
     try {
@@ -141,7 +154,8 @@ export function SaveViewModal({
     } catch (error: any) {
       const message =
         error?.data?.message ?? error?.message ?? "Failed to save view.";
-      Alert.alert("Error", message);
+      setFormError(message);
+      alertCompat("Error", message);
     } finally {
       setIsSaving(false);
     }
@@ -164,9 +178,10 @@ export function SaveViewModal({
           <TextInput
             style={styles.input}
             value={name}
-            onChangeText={(text) =>
-              setName(text.slice(0, MAX_VIEW_NAME_LENGTH))
-            }
+            onChangeText={(text) => {
+              if (formError) setFormError(null);
+              setName(text.slice(0, MAX_VIEW_NAME_LENGTH));
+            }}
             placeholder="e.g. New Members, Active Leaders..."
             placeholderTextColor={colors.iconSecondary}
             autoFocus
@@ -182,6 +197,12 @@ export function SaveViewModal({
           </Text>
         </View>
 
+        {formError ? (
+          <Text style={[styles.formError, { color: colors.destructive }]}>
+            {formError}
+          </Text>
+        ) : null}
+
         {/* Visibility toggle */}
         <View style={styles.field}>
           <Text style={styles.label}>Who can see this view?</Text>
@@ -194,7 +215,10 @@ export function SaveViewModal({
                   backgroundColor: primaryColor + "10",
                 },
               ]}
-              onPress={() => setVisibility("personal")}
+              onPress={() => {
+                setFormError(null);
+                setVisibility("personal");
+              }}
             >
               <Ionicons
                 name="person-outline"
@@ -222,7 +246,10 @@ export function SaveViewModal({
                     backgroundColor: primaryColor + "10",
                   },
                 ]}
-                onPress={() => setVisibility("shared")}
+                onPress={() => {
+                  setFormError(null);
+                  setVisibility("shared");
+                }}
               >
                 <Ionicons
                   name="people-outline"
@@ -310,6 +337,10 @@ const styles = StyleSheet.create({
   },
   charCountLimit: {
     color: "#EF4444",
+  },
+  formError: {
+    fontSize: 13,
+    fontWeight: "500" as const,
   },
   visibilityRow: {
     flexDirection: "row" as const,
