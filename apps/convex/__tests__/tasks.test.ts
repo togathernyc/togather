@@ -59,6 +59,7 @@ async function seedData(t: ReturnType<typeof convexTest>): Promise<SeedData> {
       firstName: "Leader",
       lastName: "One",
       phone: "+12025550101",
+      searchText: "leader one +12025550101",
       activeCommunityId: communityId,
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -68,6 +69,7 @@ async function seedData(t: ReturnType<typeof convexTest>): Promise<SeedData> {
       firstName: "Member",
       lastName: "One",
       phone: "+12025550102",
+      searchText: "member one +12025550102",
       activeCommunityId: communityId,
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -77,10 +79,23 @@ async function seedData(t: ReturnType<typeof convexTest>): Promise<SeedData> {
       firstName: "Leader",
       lastName: "Two",
       phone: "+12025550103",
+      searchText: "leader two +12025550103",
       activeCommunityId: communityId,
       createdAt: timestamp,
       updatedAt: timestamp,
     });
+
+    for (const uid of [leaderId, memberId, secondLeaderId]) {
+      await ctx.db.insert("userCommunities", {
+        userId: uid,
+        communityId,
+        roles: 0,
+        status: 1,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        lastLogin: timestamp,
+      });
+    }
 
     await ctx.db.insert("groupMembers", {
       groupId,
@@ -227,6 +242,12 @@ describe("tasks functions", () => {
       token: leaderToken,
     });
     expect(mineAfterDone.some((task) => task._id === taskId)).toBe(false);
+
+    const mineCompleted = await t.query(api.functions.tasks.index.listMine, {
+      token: leaderToken,
+      listScope: "completed",
+    });
+    expect(mineCompleted.some((task) => task._id === taskId)).toBe(true);
   });
 
   test("hasLeaderAccess differentiates leader and member", async () => {
@@ -1159,6 +1180,93 @@ describe("tasks functions", () => {
         taskId: isolatedTaskId,
       }),
     ).rejects.toThrow("Leader access required");
+  });
+
+  test("createFromTemplate allows target in community but not yet in group", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, leaderToken } = await seedData(t);
+
+    const newcomerId = await t.run(async (ctx) => {
+      const ts = Date.now();
+      const uid = await ctx.db.insert("users", {
+        firstName: "Soon",
+        lastName: "Joiner",
+        phone: "+12025550999",
+        searchText: "soon joiner +12025550999",
+        activeCommunityId: communityId,
+        createdAt: ts,
+        updatedAt: ts,
+      });
+      await ctx.db.insert("userCommunities", {
+        userId: uid,
+        communityId,
+        roles: 0,
+        status: 1,
+        createdAt: ts,
+        updatedAt: ts,
+        lastLogin: ts,
+      });
+      return uid;
+    });
+
+    const templateId = await t.mutation(
+      api.functions.taskTemplates.index.create,
+      {
+        token: leaderToken,
+        groupId,
+        title: "Pre-join onboarding",
+        steps: [{ title: "Welcome", orderIndex: 0 }],
+      },
+    );
+
+    const parentId = await t.mutation(
+      api.functions.tasks.index.createFromTemplate,
+      {
+        token: leaderToken,
+        templateId,
+        targetMemberId: newcomerId,
+      },
+    );
+
+    const parent = await t.run(async (ctx) => ctx.db.get(parentId));
+    expect(parent?.targetMemberId).toEqual(newcomerId);
+    expect(parent?.title).toContain("Soon");
+  });
+
+  test("searchRelevantMembers finds community members not in the group", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, leaderToken } = await seedData(t);
+
+    const outsiderId = await t.run(async (ctx) => {
+      const ts = Date.now();
+      const uid = await ctx.db.insert("users", {
+        firstName: "Outsider",
+        lastName: "Community",
+        phone: "+12025550888",
+        searchText: "outsider community +12025550888",
+        activeCommunityId: communityId,
+        createdAt: ts,
+        updatedAt: ts,
+      });
+      await ctx.db.insert("userCommunities", {
+        userId: uid,
+        communityId,
+        roles: 0,
+        status: 1,
+        createdAt: ts,
+        updatedAt: ts,
+        lastLogin: ts,
+      });
+      return uid;
+    });
+
+    const hits = await t.query(api.functions.tasks.index.searchRelevantMembers, {
+      token: leaderToken,
+      groupId,
+      searchText: "outsider",
+    });
+
+    expect(hits.some((h) => h.userId === outsiderId)).toBe(true);
   });
 
   test("createFromTemplate creates parent and subtasks with workflow_template source", async () => {

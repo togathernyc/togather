@@ -447,14 +447,14 @@ export function TaskDetailScreen() {
           />
 
           <Text style={[styles.helperText, { color: colors.textSecondary }]}>
-            Target defaults to group. Add an associated member only when needed.
+            Target defaults to group. Pick anyone in the community, including people not in this group yet.
           </Text>
           <Text style={[styles.inputLabel, { color: colors.text }]}>Associated member</Text>
           <TextInput
             value={relevantSearch}
             onChangeText={setRelevantSearch}
             style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
-            placeholder="Search members (server search)"
+            placeholder="Search community members"
             placeholderTextColor={colors.inputPlaceholder}
           />
           {relevantMemberId && relevantMemberName ? (
