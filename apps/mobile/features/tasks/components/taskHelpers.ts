@@ -4,7 +4,8 @@ export type TaskSourceType =
   | "manual"
   | "bot_task_reminder"
   | "reach_out"
-  | "followup";
+  | "followup"
+  | "workflow_template";
 export type TargetType = "none" | "member" | "group";
 
 export type TaskListItem = {
@@ -24,6 +25,7 @@ export type TaskListItem = {
   targetGroupName?: string;
   tags?: string[];
   parentTaskId?: Id<"tasks">;
+  subtaskProgress?: { total: number; completed: number } | null;
 };
 
 export type TaskRow = {

@@ -1,11 +1,14 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  LayoutAnimation,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
+  UIManager,
   View,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -20,8 +23,19 @@ import {
 } from "@services/api/convex";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { parseTagsInput } from "./taskHelpers";
+import { TaskTextWithLinks } from "./TaskTextWithLinks";
 import { useTheme } from "@hooks/useTheme";
 import type { ThemeColors } from "@/theme/colors";
+
+type SubtaskRow = {
+  _id: Id<"tasks">;
+  title: string;
+  status: string;
+  description?: string;
+  assignedToId?: Id<"users">;
+  assignedToName?: string;
+  orderKey?: number;
+};
 
 type TaskDetail = {
   _id: Id<"tasks">;
@@ -41,6 +55,8 @@ type TaskDetail = {
   createdByName?: string;
   createdAt: number;
   updatedAt: number;
+  subtaskProgress?: { total: number; completed: number } | null;
+  subtasks?: SubtaskRow[];
 };
 
 type HistoryEvent = {
@@ -120,6 +136,14 @@ export function TaskDetailScreen() {
   const [statusBusy, setStatusBusy] = useState<null | "done" | "snooze" | "cancel">(
     null,
   );
+  const [expandedSubtaskIds, setExpandedSubtaskIds] = useState<Set<string>>(new Set());
+  const [subtaskBusyId, setSubtaskBusyId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
+      UIManager.setLayoutAnimationEnabledExperimental(true);
+    }
+  }, []);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -190,10 +214,50 @@ export function TaskDetailScreen() {
   const updateTask = useAuthenticatedMutation(api.functions.tasks.index.update);
   const assignTask = useAuthenticatedMutation(api.functions.tasks.index.assign);
   const markDone = useAuthenticatedMutation(api.functions.tasks.index.markDone);
+  const reopenTask = useAuthenticatedMutation(api.functions.tasks.index.reopen);
   const snoozeTask = useAuthenticatedMutation(api.functions.tasks.index.snooze);
   const cancelTask = useAuthenticatedMutation(api.functions.tasks.index.cancel);
 
   const originalAssigneeId = task?.assignedToId?.toString() ?? null;
+
+  const subtasksSorted = useMemo(() => {
+    const list = task?.subtasks ?? [];
+    return [...list].sort((a, b) => (a.orderKey ?? 0) - (b.orderKey ?? 0));
+  }, [task?.subtasks]);
+
+  const subtasksDoneCount = useMemo(
+    () => subtasksSorted.filter((s) => s.status === "done").length,
+    [subtasksSorted],
+  );
+
+  function toggleSubtaskExpanded(id: string) {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setExpandedSubtaskIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function runSubtaskToggle(sub: SubtaskRow) {
+    setSubtaskBusyId(sub._id.toString());
+    setSaveError(null);
+    setSaveSuccess(null);
+    try {
+      if (sub.status === "done") {
+        await reopenTask({ taskId: sub._id });
+        setSaveSuccess("Step reopened");
+      } else {
+        await markDone({ taskId: sub._id });
+        setSaveSuccess("Step completed");
+      }
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Step update failed");
+    } finally {
+      setSubtaskBusyId(null);
+    }
+  }
 
   async function handleSave() {
     if (!taskId) return;
@@ -333,6 +397,27 @@ export function TaskDetailScreen() {
             placeholderTextColor={colors.inputPlaceholder}
           />
 
+          {task.subtaskProgress && task.subtaskProgress.total > 0 ? (
+            <View style={styles.progressBlock}>
+              <Text style={[styles.progressLabel, { color: colors.textSecondary }]}>
+                {task.subtaskProgress.completed} of {task.subtaskProgress.total} steps complete
+              </Text>
+              <View style={[styles.progressTrack, { backgroundColor: colors.borderLight }]}>
+                <View
+                  style={[
+                    styles.progressFill,
+                    {
+                      backgroundColor: colors.link,
+                      width: `${Math.round(
+                        (task.subtaskProgress.completed / task.subtaskProgress.total) * 100,
+                      )}%`,
+                    },
+                  ]}
+                />
+              </View>
+            </View>
+          ) : null}
+
           <Text style={[styles.inputLabel, { color: colors.text }]}>Description</Text>
           <TextInput
             value={description}
@@ -342,6 +427,15 @@ export function TaskDetailScreen() {
             placeholder="Optional details"
             placeholderTextColor={colors.inputPlaceholder}
           />
+          {description.trim().length > 0 ? (
+            <View style={styles.descriptionPreview}>
+              <TaskTextWithLinks
+                text={description}
+                baseStyle={{ color: colors.text, fontSize: 14, lineHeight: 20 }}
+                linkStyle={{ color: colors.link, textDecorationLine: "underline" }}
+              />
+            </View>
+          ) : null}
 
           <Text style={[styles.inputLabel, { color: colors.text }]}>Tags (comma separated)</Text>
           <TextInput
@@ -353,9 +447,9 @@ export function TaskDetailScreen() {
           />
 
           <Text style={[styles.helperText, { color: colors.textSecondary }]}>
-            Target defaults to group. Add a relevant member only when needed.
+            Target defaults to group. Add an associated member only when needed.
           </Text>
-          <Text style={[styles.inputLabel, { color: colors.text }]}>Relevant member</Text>
+          <Text style={[styles.inputLabel, { color: colors.text }]}>Associated member</Text>
           <TextInput
             value={relevantSearch}
             onChangeText={setRelevantSearch}
@@ -468,6 +562,87 @@ export function TaskDetailScreen() {
               </Pressable>
             ))}
           </ScrollView>
+
+          {subtasksSorted.length > 0 ? (
+            <View style={styles.stepsSection}>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>
+                Steps ({subtasksDoneCount}/{subtasksSorted.length} done)
+              </Text>
+              {subtasksSorted.map((sub) => {
+                const sid = sub._id.toString();
+                const expanded = expandedSubtaskIds.has(sid);
+                const isDone = sub.status === "done";
+                const busy = subtaskBusyId === sid;
+                return (
+                  <View
+                    key={sid}
+                    style={[styles.stepRowOuter, { borderColor: colors.borderLight }]}
+                  >
+                    <View style={styles.stepRowMain}>
+                      <Pressable
+                        hitSlop={8}
+                        disabled={busy}
+                        onPress={() => void runSubtaskToggle(sub)}
+                        style={styles.stepCheckboxHit}
+                      >
+                        <Ionicons
+                          name={isDone ? "checkbox" : "square-outline"}
+                          size={22}
+                          color={isDone ? colors.success : colors.textSecondary}
+                        />
+                      </Pressable>
+                      <Pressable
+                        style={styles.stepTitlePressable}
+                        onPress={() => toggleSubtaskExpanded(sid)}
+                      >
+                        <Text
+                          style={[
+                            styles.stepTitleText,
+                            { color: isDone ? colors.textSecondary : colors.text },
+                            isDone && styles.stepTitleDone,
+                          ]}
+                          numberOfLines={expanded ? undefined : 2}
+                        >
+                          {sub.title}
+                        </Text>
+                      </Pressable>
+                      <Pressable onPress={() => toggleSubtaskExpanded(sid)} hitSlop={8}>
+                        <Ionicons
+                          name={expanded ? "chevron-up" : "chevron-down"}
+                          size={18}
+                          color={colors.textSecondary}
+                        />
+                      </Pressable>
+                    </View>
+                    {expanded ? (
+                      <View style={styles.stepExpanded}>
+                        {sub.description?.trim() ? (
+                          <TaskTextWithLinks
+                            text={sub.description}
+                            baseStyle={{
+                              color: colors.textSecondary,
+                              fontSize: 13,
+                              lineHeight: 18,
+                            }}
+                            linkStyle={{ color: colors.link, textDecorationLine: "underline" }}
+                          />
+                        ) : (
+                          <Text style={[styles.stepMeta, { color: colors.textTertiary }]}>
+                            No description
+                          </Text>
+                        )}
+                        {sub.assignedToName ? (
+                          <Text style={[styles.stepMeta, { color: colors.textSecondary }]}>
+                            Assignee: {sub.assignedToName}
+                          </Text>
+                        ) : null}
+                      </View>
+                    ) : null}
+                  </View>
+                );
+              })}
+            </View>
+          ) : null}
 
           {saveError ? <Text style={[styles.errorText, { color: colors.error }]}>{saveError}</Text> : null}
           {saveSuccess ? <Text style={[styles.successText, { color: colors.success }]}>{saveSuccess}</Text> : null}
@@ -585,6 +760,65 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   metaRow: {
+    fontSize: 12,
+  },
+  progressBlock: {
+    marginTop: 12,
+    gap: 6,
+  },
+  progressLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  progressTrack: {
+    height: 4,
+    borderRadius: 999,
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: "100%",
+    borderRadius: 999,
+  },
+  descriptionPreview: {
+    marginTop: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+  },
+  stepsSection: {
+    marginTop: 16,
+    gap: 8,
+  },
+  stepRowOuter: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+  },
+  stepRowMain: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  stepCheckboxHit: {
+    paddingVertical: 2,
+  },
+  stepTitlePressable: {
+    flex: 1,
+  },
+  stepTitleText: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  stepTitleDone: {
+    textDecorationLine: "line-through",
+  },
+  stepExpanded: {
+    marginTop: 8,
+    paddingLeft: 32,
+    gap: 6,
+  },
+  stepMeta: {
     fontSize: 12,
   },
   inputLabel: {

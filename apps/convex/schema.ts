@@ -811,7 +811,7 @@ export default defineSchema({
     responsibilityType: v.string(), // "group" | "person"
     assignedToId: v.optional(v.id("users")),
     createdById: v.optional(v.id("users")), // optional for system-created tasks
-    sourceType: v.string(), // "manual" | "bot_task_reminder" | "reach_out" | "followup"
+    sourceType: v.string(), // "manual" | "bot_task_reminder" | "reach_out" | "followup" | "workflow_template"
     sourceRef: v.optional(v.string()),
     sourceKey: v.optional(v.string()), // idempotency key for generated tasks
     targetType: v.string(), // "none" | "member" | "group"
@@ -853,6 +853,29 @@ export default defineSchema({
     .index("by_task", ["taskId"])
     .index("by_task_createdAt", ["taskId", "createdAt"])
     .index("by_group_createdAt", ["groupId", "createdAt"]),
+
+  // =============================================================================
+  // TASK TEMPLATES (leader workflow checklists applied to members)
+  // =============================================================================
+
+  taskTemplates: defineTable({
+    groupId: v.id("groups"),
+    title: v.string(),
+    description: v.optional(v.string()),
+    createdById: v.id("users"),
+    steps: v.array(
+      v.object({
+        title: v.string(),
+        description: v.optional(v.string()),
+        orderIndex: v.number(),
+      }),
+    ),
+    isActive: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_group", ["groupId"])
+    .index("by_group_active", ["groupId", "isActive"]),
 
   // =============================================================================
   // MEMBER FOLLOWUP SCORES (pre-computed for paginated list reads)

@@ -138,7 +138,10 @@ export function FollowupDetailContent({
     if (!groupTasks || !historyData?.member?.odUserId) return undefined;
     const targetId = historyData.member.odUserId;
     return (groupTasks as any[]).filter(
-      (t) => t.targetMemberId === targetId && (t.status === "open" || t.status === "snoozed")
+      (t) =>
+        t.targetMemberId === targetId &&
+        (t.status === "open" || t.status === "snoozed") &&
+        !t.parentTaskId,
     );
   }, [groupTasks, historyData?.member?.odUserId]);
 
@@ -951,9 +954,40 @@ export function FollowupDetailContent({
                   activeOpacity={0.7}
                 >
                   <View style={styles.taskCardHeader}>
-                    <Text style={[styles.taskCardTitle, { color: colors.text }]} numberOfLines={1}>
-                      {task.title}
-                    </Text>
+                    <View style={{ flex: 1, marginRight: 8 }}>
+                      <Text style={[styles.taskCardTitle, { color: colors.text }]} numberOfLines={1}>
+                        {task.title}
+                      </Text>
+                      {task.subtaskProgress && task.subtaskProgress.total > 0 ? (
+                        <View style={{ marginTop: 6 }}>
+                          <Text
+                            style={{ fontSize: 11, fontWeight: "600", color: colors.textSecondary }}
+                          >
+                            {task.subtaskProgress.completed}/{task.subtaskProgress.total}
+                          </Text>
+                          <View
+                            style={{
+                              marginTop: 4,
+                              height: 3,
+                              borderRadius: 999,
+                              backgroundColor: colors.borderLight,
+                              overflow: "hidden",
+                            }}
+                          >
+                            <View
+                              style={{
+                                height: "100%",
+                                width: `${Math.round(
+                                  (task.subtaskProgress.completed / task.subtaskProgress.total) * 100,
+                                )}%`,
+                                backgroundColor: colors.link,
+                                borderRadius: 999,
+                              }}
+                            />
+                          </View>
+                        </View>
+                      ) : null}
+                    </View>
                     <View
                       style={[
                         styles.taskStatusBadge,

@@ -12,6 +12,7 @@ const sourceTypeValidator = v.union(
   v.literal("bot_task_reminder"),
   v.literal("reach_out"),
   v.literal("followup"),
+  v.literal("workflow_template"),
 );
 
 const responsibilityTypeValidator = v.union(
@@ -37,7 +38,12 @@ const snoozePresetMs: Record<"1_day" | "3_days" | "1_week", number> = {
   "1_week": 7 * 24 * 60 * 60 * 1000,
 };
 
-type TaskSourceType = "manual" | "bot_task_reminder" | "reach_out" | "followup";
+type TaskSourceType =
+  | "manual"
+  | "bot_task_reminder"
+  | "reach_out"
+  | "followup"
+  | "workflow_template";
 
 function normalizeTags(tags: string[] | undefined): string[] {
   return (tags ?? [])
@@ -190,6 +196,67 @@ function formatUserName(user: any) {
   return name || "Member";
 }
 
+/**
+ * Build subtask counts from an already-loaded group task list (e.g. listGroup)
+ * so we do not re-query the whole group.
+ */
+function buildSubtaskProgressMapFromGroupTasks(
+  candidates: Array<{ _id: Id<"tasks"> }>,
+  allTasksInGroup: Array<{ parentTaskId?: Id<"tasks">; status: string }>,
+): Map<string, { total: number; completed: number }> {
+  const progressMap = new Map<string, { total: number; completed: number }>();
+  if (candidates.length === 0) return progressMap;
+
+  const candidateIds = new Set(candidates.map((t) => t._id.toString()));
+  for (const t of allTasksInGroup) {
+    if (!t.parentTaskId) continue;
+    const pid = t.parentTaskId.toString();
+    if (!candidateIds.has(pid)) continue;
+    const cur = progressMap.get(pid) ?? { total: 0, completed: 0 };
+    cur.total += 1;
+    if (t.status === "done") cur.completed += 1;
+    progressMap.set(pid, cur);
+  }
+  return progressMap;
+}
+
+/**
+ * One small by_parent query per listed task — avoids loading every task in each group
+ * (unlike scanning by_group for each distinct group).
+ */
+async function buildSubtaskProgressMapByParentIndex(
+  ctx: { db: any },
+  candidates: Array<{ _id: Id<"tasks"> }>,
+): Promise<Map<string, { total: number; completed: number }>> {
+  const progressMap = new Map<string, { total: number; completed: number }>();
+  if (candidates.length === 0) return progressMap;
+
+  await Promise.all(
+    candidates.map(async (task) => {
+      const children = await ctx.db
+        .query("tasks")
+        .withIndex("by_parent", (q: any) => q.eq("parentTaskId", task._id))
+        .collect();
+      if (children.length === 0) return;
+      const completed = children.filter((c: any) => c.status === "done").length;
+      progressMap.set(task._id.toString(), {
+        total: children.length,
+        completed,
+      });
+    }),
+  );
+  return progressMap;
+}
+
+function subtaskProgressOrNull(
+  taskId: string,
+  progressMap: Map<string, { total: number; completed: number }>,
+): { total: number; completed: number } | null {
+  const p = progressMap.get(taskId);
+  if (!p || p.total === 0) return null;
+  return p;
+}
+
 async function enrichTasks<
   T extends {
     groupId: Id<"groups">;
@@ -330,7 +397,7 @@ export const listMine = query({
     );
 
     const enrichedTasks = await enrichTasks(ctx, tasks);
-    return applyTaskFilters(enrichedTasks, args).sort((a, b) => {
+    const filtered = applyTaskFilters(enrichedTasks, args).sort((a, b) => {
       if (a.status !== b.status) {
         return a.status === "open" ? -1 : 1;
       }
@@ -339,6 +406,14 @@ export const listMine = query({
       if (orderA !== orderB) return orderA - orderB;
       return b.createdAt - a.createdAt;
     });
+    const progressMap = await buildSubtaskProgressMapByParentIndex(
+      ctx,
+      filtered,
+    );
+    return filtered.map((t) => ({
+      ...t,
+      subtaskProgress: subtaskProgressOrNull(t._id.toString(), progressMap),
+    }));
   },
 });
 
@@ -395,7 +470,7 @@ export const listAll = query({
     ].filter((task) => leaderGroupIdSet.has(task.groupId.toString()));
 
     const enrichedTasks = await enrichTasks(ctx, tasks);
-    return applyTaskFilters(enrichedTasks, args).sort((a, b) => {
+    const filtered = applyTaskFilters(enrichedTasks, args).sort((a, b) => {
       if (a.status !== b.status) {
         return a.status === "open" ? -1 : 1;
       }
@@ -404,6 +479,14 @@ export const listAll = query({
       if (orderA !== orderB) return orderA - orderB;
       return b.createdAt - a.createdAt;
     });
+    const progressMap = await buildSubtaskProgressMapByParentIndex(
+      ctx,
+      filtered,
+    );
+    return filtered.map((t) => ({
+      ...t,
+      subtaskProgress: subtaskProgressOrNull(t._id.toString(), progressMap),
+    }));
   },
 });
 
@@ -432,9 +515,17 @@ export const listClaimable = query({
         !task.assignedToId && leaderGroupIdSet.has(task.groupId.toString()),
     );
     const enrichedTasks = await enrichTasks(ctx, tasks);
-    return applyTaskFilters(enrichedTasks, args).sort(
+    const filtered = applyTaskFilters(enrichedTasks, args).sort(
       (a, b) => b.createdAt - a.createdAt,
     );
+    const progressMap = await buildSubtaskProgressMapByParentIndex(
+      ctx,
+      filtered,
+    );
+    return filtered.map((t) => ({
+      ...t,
+      subtaskProgress: subtaskProgressOrNull(t._id.toString(), progressMap),
+    }));
   },
 });
 
@@ -455,7 +546,7 @@ export const listGroup = query({
       .withIndex("by_group", (q: any) => q.eq("groupId", args.groupId))
       .collect();
     const enrichedTasks = await enrichTasks(ctx, tasks);
-    return applyTaskFilters(enrichedTasks, args).sort((a, b) => {
+    const filtered = applyTaskFilters(enrichedTasks, args).sort((a, b) => {
       const aRank = a.status === "open" ? 0 : a.status === "snoozed" ? 1 : 2;
       const bRank = b.status === "open" ? 0 : b.status === "snoozed" ? 1 : 2;
       if (aRank !== bRank) return aRank - bRank;
@@ -464,6 +555,11 @@ export const listGroup = query({
       if (orderA !== orderB) return orderA - orderB;
       return b.createdAt - a.createdAt;
     });
+    const progressMap = buildSubtaskProgressMapFromGroupTasks(filtered, tasks);
+    return filtered.map((t) => ({
+      ...t,
+      subtaskProgress: subtaskProgressOrNull(t._id.toString(), progressMap),
+    }));
   },
 });
 
@@ -673,6 +769,7 @@ export const getDetail = query({
       targetMember,
       targetGroup,
       parentTask,
+      subtasksRaw,
     ] = await Promise.all([
       ctx.db.get(task.groupId),
       task.createdById ? ctx.db.get(task.createdById) : Promise.resolve(null),
@@ -684,7 +781,49 @@ export const getDetail = query({
         ? ctx.db.get(task.targetGroupId)
         : Promise.resolve(null),
       task.parentTaskId ? ctx.db.get(task.parentTaskId) : Promise.resolve(null),
+      ctx.db
+        .query("tasks")
+        .withIndex("by_parent", (q: any) => q.eq("parentTaskId", args.taskId))
+        .collect(),
     ]);
+
+    const sortedSubtasks = [...subtasksRaw].sort(
+      (a, b) => (a.orderKey ?? 0) - (b.orderKey ?? 0),
+    );
+    const assigneeIds = [
+      ...new Set(
+        sortedSubtasks
+          .map((s) => s.assignedToId?.toString())
+          .filter(Boolean) as string[],
+      ),
+    ];
+    const assigneeUsers = await Promise.all(
+      assigneeIds.map((id) => ctx.db.get(id as Id<"users">)),
+    );
+    const assigneeNameById = new Map<string, string>();
+    assigneeIds.forEach((id, i) => {
+      const u = assigneeUsers[i];
+      assigneeNameById.set(id, u ? formatUserName(u) : "Member");
+    });
+
+    const subtasks = sortedSubtasks.map((s) => ({
+      _id: s._id,
+      title: s.title,
+      status: s.status,
+      description: s.description,
+      assignedToId: s.assignedToId,
+      assignedToName: s.assignedToId
+        ? (assigneeNameById.get(s.assignedToId.toString()) ?? undefined)
+        : undefined,
+      orderKey: s.orderKey,
+    }));
+
+    const subTotal = subtasksRaw.length;
+    const subCompleted = subtasksRaw.filter((s) => s.status === "done").length;
+    const subtaskProgress =
+      subTotal > 0
+        ? { total: subTotal, completed: subCompleted }
+        : null;
 
     return {
       ...task,
@@ -696,6 +835,8 @@ export const getDetail = query({
         targetGroup && "name" in targetGroup ? targetGroup.name : undefined,
       parentTaskTitle:
         parentTask && "title" in parentTask ? parentTask.title : undefined,
+      subtaskProgress,
+      subtasks,
     };
   },
 });
@@ -1053,6 +1194,159 @@ export const markDone = mutation({
     });
 
     return { success: true };
+  },
+});
+
+export const reopen = mutation({
+  args: {
+    token: v.string(),
+    taskId: v.id("tasks"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const task = await getTaskOrThrow(ctx, args.taskId);
+    const membership = await getLeaderMembership(ctx, task.groupId, userId);
+
+    if (task.status !== "done") {
+      throw new ConvexError("Only completed tasks can be reopened");
+    }
+    if (!canResolvePersonTask(task, userId, membership.role)) {
+      throw new ConvexError(
+        "Only the assignee or an admin can reopen this task",
+      );
+    }
+
+    const timestamp = now();
+    await ctx.db.patch(args.taskId, {
+      status: "open",
+      completedAt: undefined,
+      updatedAt: timestamp,
+    });
+
+    await appendTaskEvent(ctx, {
+      taskId: args.taskId,
+      groupId: task.groupId,
+      type: "updated",
+      performedById: userId,
+      payload: { reopened: true },
+    });
+
+    return { success: true };
+  },
+});
+
+export const createFromTemplate = mutation({
+  args: {
+    token: v.string(),
+    templateId: v.id("taskTemplates"),
+    targetMemberId: v.id("users"),
+    assignedToId: v.optional(v.id("users")),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const template = await ctx.db.get(args.templateId);
+    if (!template || !template.isActive) {
+      throw new ConvexError("Template not found or inactive");
+    }
+    await getLeaderMembership(ctx, template.groupId, userId);
+
+    const targetMembership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q: any) =>
+        q
+          .eq("groupId", template.groupId)
+          .eq("userId", args.targetMemberId),
+      )
+      .first();
+    if (!isActiveMembership(targetMembership)) {
+      throw new ConvexError("target member must be active in this group");
+    }
+
+    if (args.assignedToId) {
+      await getLeaderMembership(ctx, template.groupId, args.assignedToId);
+    }
+
+    const targetUser = await ctx.db.get(args.targetMemberId);
+    const memberName = targetUser ? formatUserName(targetUser) : "Member";
+    const parentTitle = `${template.title}: ${memberName}`;
+
+    const responsibilityType = args.assignedToId ? "person" : "group";
+    const timestamp = now();
+    const sourceRef = args.templateId.toString();
+
+    const parentTaskId = await ctx.db.insert("tasks", {
+      groupId: template.groupId,
+      title: parentTitle,
+      description: template.description,
+      status: "open",
+      responsibilityType,
+      assignedToId: args.assignedToId,
+      createdById: userId,
+      sourceType: "workflow_template",
+      sourceRef,
+      sourceKey: undefined,
+      targetType: "member",
+      targetMemberId: args.targetMemberId,
+      targetGroupId: undefined,
+      tags: undefined,
+      parentTaskId: undefined,
+      orderKey: undefined,
+      dueAt: undefined,
+      snoozedUntil: undefined,
+      completedAt: undefined,
+      canceledAt: undefined,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+
+    await appendTaskEvent(ctx, {
+      taskId: parentTaskId,
+      groupId: template.groupId,
+      type: "created",
+      performedById: userId,
+      payload: { sourceType: "workflow_template", templateId: sourceRef },
+    });
+
+    const sortedSteps = [...template.steps].sort(
+      (a, b) => a.orderIndex - b.orderIndex,
+    );
+
+    for (const step of sortedSteps) {
+      const subId = await ctx.db.insert("tasks", {
+        groupId: template.groupId,
+        title: step.title,
+        description: step.description,
+        status: "open",
+        responsibilityType,
+        assignedToId: args.assignedToId,
+        createdById: userId,
+        sourceType: "workflow_template",
+        sourceRef,
+        sourceKey: undefined,
+        targetType: "member",
+        targetMemberId: args.targetMemberId,
+        targetGroupId: undefined,
+        tags: undefined,
+        parentTaskId,
+        orderKey: step.orderIndex,
+        dueAt: undefined,
+        snoozedUntil: undefined,
+        completedAt: undefined,
+        canceledAt: undefined,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+
+      await appendTaskEvent(ctx, {
+        taskId: subId,
+        groupId: template.groupId,
+        type: "created",
+        performedById: userId,
+        payload: { sourceType: "workflow_template", parentTaskId },
+      });
+    }
+
+    return parentTaskId;
   },
 });
 
