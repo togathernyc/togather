@@ -126,6 +126,8 @@ export default defineSchema({
     pushNotificationsEnabled: v.optional(v.boolean()),
     emailNotificationsEnabled: v.optional(v.boolean()),
     smsNotificationsEnabled: v.optional(v.boolean()),
+    notifyNewMessages: v.optional(v.boolean()),
+    notifyDailyBookings: v.optional(v.boolean()),
     // Denormalized field for full-text search (combines firstName, lastName, email, phone)
     searchText: v.optional(v.string()),
   })
@@ -870,6 +872,7 @@ export default defineSchema({
         orderIndex: v.number(),
       }),
     ),
+    tags: v.optional(v.array(v.string())),
     isActive: v.boolean(),
     createdAt: v.number(),
     updatedAt: v.number(),
