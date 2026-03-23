@@ -1160,4 +1160,146 @@ describe("tasks functions", () => {
       }),
     ).rejects.toThrow("Leader access required");
   });
+
+  test("createFromTemplate creates parent and subtasks with workflow_template source", async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, leaderToken, memberId } = await seedData(t);
+
+    const templateId = await t.mutation(
+      api.functions.taskTemplates.index.create,
+      {
+        token: leaderToken,
+        groupId,
+        title: "Onboarding",
+        description: "Welcome path",
+        steps: [
+          { title: "Say hi", orderIndex: 0 },
+          {
+            title: "Schedule coffee",
+            description: "See https://example.com",
+            orderIndex: 1,
+          },
+        ],
+      },
+    );
+
+    const parentId = await t.mutation(
+      api.functions.tasks.index.createFromTemplate,
+      {
+        token: leaderToken,
+        templateId,
+        targetMemberId: memberId,
+      },
+    );
+
+    const parent = await t.run(async (ctx) => ctx.db.get(parentId));
+    expect(parent?.sourceType).toBe("workflow_template");
+    expect(parent?.title).toContain("Onboarding");
+    expect(parent?.title).toContain("Member");
+    expect(parent?.targetMemberId).toEqual(memberId);
+
+    const children = await t.run(async (ctx) =>
+      ctx.db
+        .query("tasks")
+        .withIndex("by_parent", (q) => q.eq("parentTaskId", parentId))
+        .collect(),
+    );
+    expect(children.length).toBe(2);
+    const titles = children.map((c) => c.title).sort();
+    expect(titles).toEqual(["Say hi", "Schedule coffee"].sort());
+  });
+
+  test("listMine includes subtaskProgress for parent tasks", async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, leaderToken, leaderId } = await seedData(t);
+
+    const parentId = await t.mutation(api.functions.tasks.index.create, {
+      token: leaderToken,
+      groupId,
+      title: "Parent",
+      responsibilityType: "person",
+      assignedToId: leaderId,
+    });
+
+    const childA = await t.mutation(api.functions.tasks.index.create, {
+      token: leaderToken,
+      groupId,
+      title: "Child A",
+      parentTaskId: parentId,
+      responsibilityType: "person",
+      assignedToId: leaderId,
+    });
+
+    await t.mutation(api.functions.tasks.index.create, {
+      token: leaderToken,
+      groupId,
+      title: "Child B",
+      parentTaskId: parentId,
+      responsibilityType: "person",
+      assignedToId: leaderId,
+    });
+
+    await t.mutation(api.functions.tasks.index.markDone, {
+      token: leaderToken,
+      taskId: childA,
+    });
+
+    const mine = await t.query(api.functions.tasks.index.listMine, {
+      token: leaderToken,
+    });
+    const parentRow = mine.find((r: { _id: Id<"tasks"> }) => r._id === parentId);
+    expect(parentRow?.subtaskProgress).toEqual({ total: 2, completed: 1 });
+  });
+
+  test("reopen flips done task back to open", async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, leaderToken, leaderId } = await seedData(t);
+    const taskId = await t.mutation(api.functions.tasks.index.create, {
+      token: leaderToken,
+      groupId,
+      title: "Reopen me",
+      responsibilityType: "person",
+      assignedToId: leaderId,
+    });
+    await t.mutation(api.functions.tasks.index.markDone, {
+      token: leaderToken,
+      taskId,
+    });
+    await t.mutation(api.functions.tasks.index.reopen, {
+      token: leaderToken,
+      taskId,
+    });
+    const task = await t.run(async (ctx) => ctx.db.get(taskId));
+    expect(task?.status).toBe("open");
+    expect(task?.completedAt).toBeUndefined();
+  });
+
+  test("taskTemplates remove soft-deletes template", async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, leaderToken } = await seedData(t);
+
+    const templateId = await t.mutation(
+      api.functions.taskTemplates.index.create,
+      {
+        token: leaderToken,
+        groupId,
+        title: "T",
+        steps: [{ title: "One", orderIndex: 0 }],
+      },
+    );
+
+    await t.mutation(api.functions.taskTemplates.index.remove, {
+      token: leaderToken,
+      templateId,
+    });
+
+    const doc = await t.run(async (ctx) => ctx.db.get(templateId));
+    expect(doc?.isActive).toBe(false);
+
+    const listed = await t.query(api.functions.taskTemplates.index.list, {
+      token: leaderToken,
+      groupId,
+    });
+    expect(listed.length).toBe(0);
+  });
 });
