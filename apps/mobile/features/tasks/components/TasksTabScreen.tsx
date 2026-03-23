@@ -4,6 +4,7 @@ import {
   Alert,
   FlatList,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -27,11 +28,13 @@ import { useIsDesktopWeb } from "../../../hooks/useIsDesktopWeb";
 import {
   buildTaskRows,
   parseTagsInput,
+  type SubtaskItem,
   type TaskListItem,
   type TaskRow,
   type TaskSourceType,
 } from "./taskHelpers";
 import { useTheme } from "@hooks/useTheme";
+import { TaskDetailScreen } from "./TaskDetailScreen";
 import type { ThemeColors } from "@/theme/colors";
 
 type Segment = "my" | "all" | "claimable";
@@ -58,13 +61,20 @@ const sourceLabels: Record<TaskSourceType, string> = {
   workflow_template: "WORKFLOW",
 };
 
-function getSourceColors(colors: ThemeColors): Record<TaskSourceType, string> {
+function getSourceBadgeStyle(
+  sourceType: TaskSourceType,
+  colors: ThemeColors,
+  isDark: boolean,
+): { bg: string; fg: string } {
+  if (sourceType === "workflow_template") {
+    return {
+      bg: isDark ? "rgba(0,122,255,0.15)" : "#EEF2FF",
+      fg: colors.link,
+    };
+  }
   return {
-    manual: colors.textSecondary,
-    bot_task_reminder: colors.link,
-    reach_out: colors.link,
-    followup: colors.link,
-    workflow_template: colors.link,
+    bg: colors.surfaceSecondary,
+    fg: colors.textSecondary,
   };
 }
 
@@ -115,6 +125,11 @@ export function TasksTabScreen() {
   const [assigningTaskId, setAssigningTaskId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+  const [overflowMenuTaskId, setOverflowMenuTaskId] = useState<string | null>(null);
+  const [overflowMenuPos, setOverflowMenuPos] = useState<{ top: number; left: number } | null>(null);
+  const [overflowMenuMeta, setOverflowMenuMeta] = useState<{ taskId: Id<"tasks">; hasAssignee: boolean } | null>(null);
+  const [detailTaskId, setDetailTaskId] = useState<string | null>(null);
+  const [detailGroupId, setDetailGroupId] = useState<string | null>(null);
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [createGroupId, setCreateGroupId] = useState<string | null>(contextGroupId);
@@ -147,6 +162,7 @@ export function TasksTabScreen() {
   const [tplTitle, setTplTitle] = useState("");
   const [tplDescription, setTplDescription] = useState("");
   const [tplGroupId, setTplGroupId] = useState<string | null>(null);
+  const [tplTags, setTplTags] = useState("");
   const [tplSteps, setTplSteps] = useState<{ title: string; description: string }[]>([
     { title: "", description: "" },
   ]);
@@ -431,9 +447,9 @@ export function TasksTabScreen() {
 
   const taskRows = useMemo(() => {
     return activeTasks
-      ? buildTaskRows(activeTasks as TaskListItem[], expandedParents)
+      ? buildTaskRows(activeTasks as TaskListItem[])
       : [];
-  }, [activeTasks, expandedParents]);
+  }, [activeTasks]);
 
   const claimTask = useAuthenticatedMutation(api.functions.tasks.index.claim);
   const markDone = useAuthenticatedMutation(api.functions.tasks.index.markDone);
@@ -501,6 +517,7 @@ export function TasksTabScreen() {
     setTplEditingId(null);
     setTplTitle("");
     setTplDescription("");
+    setTplTags("");
     setTplGroupId(contextGroupId ?? leaderGroups[0]?._id ?? null);
     setTplSteps([{ title: "", description: "" }]);
     setTplError(null);
@@ -513,10 +530,12 @@ export function TasksTabScreen() {
     description?: string;
     groupId: Id<"groups">;
     steps: Array<{ title: string; description?: string; orderIndex: number }>;
+    tags?: string[];
   }) {
     setTplEditingId(template._id);
     setTplTitle(template.title);
     setTplDescription(template.description ?? "");
+    setTplTags(template.tags?.join(", ") ?? "");
     setTplGroupId(template.groupId.toString());
     setTplSteps(
       [...template.steps]
@@ -548,6 +567,7 @@ export function TasksTabScreen() {
       return;
     }
 
+    const parsedTags = parseTagsInput(tplTags);
     setTplBusy(true);
     setTplError(null);
     try {
@@ -557,6 +577,7 @@ export function TasksTabScreen() {
           title: tplTitle.trim(),
           description: tplDescription.trim() || null,
           steps,
+          tags: parsedTags,
         });
         setActionSuccess("Workflow updated");
       } else {
@@ -565,6 +586,7 @@ export function TasksTabScreen() {
           title: tplTitle.trim(),
           description: tplDescription.trim() || undefined,
           steps,
+          tags: parsedTags,
         });
         setActionSuccess("Workflow created");
       }
@@ -745,6 +767,22 @@ export function TasksTabScreen() {
     });
   };
 
+  const renderCompletedFooter = () => {
+    if (segment === "claimable") return null;
+    return (
+      <Pressable
+        onPress={() =>
+          setTaskListScope((prev) => (prev === "active" ? "completed" : "active"))
+        }
+        style={styles.showCompletedFooter}
+      >
+        <Text style={[styles.showCompletedText, { color: colors.link }]}>
+          {taskListScope === "completed" ? "Hide completed tasks" : "Show completed tasks"}
+        </Text>
+      </Pressable>
+    );
+  };
+
   const renderTaskCard = ({ item }: { item: TaskRow }) => {
     const task = item.task;
     const taskId = task._id;
@@ -753,28 +791,89 @@ export function TasksTabScreen() {
     const isBusy = busyTaskId === taskIdKey;
     const showAssignPanel = assigningTaskId === taskIdKey;
     const isCompletedView = taskListScope === "completed";
-    const goToDetail = () =>
+    const isExpanded = expandedParents.has(taskIdKey);
+    const hasSubtasks = task.subtasks && task.subtasks.length > 0;
+    const goToDetail = () => {
+      if (isDesktopWeb) {
+        setDetailTaskId(taskIdKey);
+        setDetailGroupId(task.groupId);
+        return;
+      }
       router.push(`/(user)/leader-tools/${task.groupId}/tasks/${taskIdKey}`);
+    };
+
+    const badgeStyle = getSourceBadgeStyle(sourceType, colors, isDark);
+
+    const showOverflowMenu = (e?: any) => {
+      if (Platform.OS === "web") {
+        if (overflowMenuTaskId === taskIdKey) {
+          setOverflowMenuTaskId(null);
+          setOverflowMenuPos(null);
+          setOverflowMenuMeta(null);
+        } else {
+          const nativeEvent = e?.nativeEvent;
+          setOverflowMenuTaskId(taskIdKey);
+          setOverflowMenuPos({
+            top: nativeEvent?.pageY ?? 0,
+            left: nativeEvent?.pageX ?? 0,
+          });
+          setOverflowMenuMeta({ taskId, hasAssignee: !!task.assignedToId });
+        }
+        return;
+      }
+      const options: Array<{ text: string; style?: "destructive" | "cancel"; onPress?: () => void }> = [];
+      if (!isCompletedView) {
+        options.push({
+          text: "Snooze 1 week",
+          onPress: () => runTaskAction(taskId, "snooze"),
+        });
+        options.push({
+          text: "Cancel Task",
+          style: "destructive",
+          onPress: () => runTaskAction(taskId, "cancel"),
+        });
+        if (task.assignedToId) {
+          options.push({
+            text: "Reassign",
+            onPress: () =>
+              setAssigningTaskId((current) =>
+                current === taskIdKey ? null : taskIdKey,
+              ),
+          });
+        } else {
+          options.push({
+            text: "Assign",
+            onPress: () =>
+              setAssigningTaskId((current) =>
+                current === taskIdKey ? null : taskIdKey,
+              ),
+          });
+        }
+      }
+      options.push({ text: "Cancel", style: "cancel" });
+      Alert.alert(task.title, undefined, options);
+    };
 
     const progressBlock =
       task.subtaskProgress && task.subtaskProgress.total > 0 ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={
-            item.hasChildren
-              ? expandedParents.has(taskIdKey)
-                ? "Collapse subtasks"
-                : "Expand subtasks"
-              : undefined
-          }
-          onPress={
-            item.hasChildren ? () => toggleParentExpanded(taskIdKey) : goToDetail
-          }
-          style={styles.subtaskProgressBlock}
+          accessibilityLabel={isExpanded ? "Collapse subtasks" : "Expand subtasks"}
+          onPress={() => {
+            toggleParentExpanded(taskIdKey);
+          }}
+          style={[styles.subtaskProgressBlock, Platform.OS === "web" && { cursor: "pointer" as any }]}
         >
-          <Text style={[styles.subtaskProgressLabel, { color: colors.textSecondary }]}>
-            {task.subtaskProgress.completed}/{task.subtaskProgress.total}
-          </Text>
+          <View style={styles.progressLabelRow}>
+            <Text style={[styles.subtaskProgressLabel, { color: colors.textSecondary }]}>
+              {task.subtaskProgress.completed} of {task.subtaskProgress.total} steps
+            </Text>
+            <Ionicons
+              name={isExpanded ? "chevron-up" : "chevron-down"}
+              size={14}
+              color={colors.textSecondary}
+            />
+          </View>
           <View style={[styles.subtaskProgressTrack, { backgroundColor: colors.borderLight }]}>
             <View
               style={[
@@ -791,66 +890,117 @@ export function TasksTabScreen() {
         </Pressable>
       ) : null;
 
+    const inlineSubtasks =
+      hasSubtasks && isExpanded ? (
+        <View style={[styles.inlineSubtaskList, { borderTopColor: colors.borderLight }]}>
+          {task.subtasks!.map((sub: SubtaskItem) => {
+            const isDone = sub.status === "done";
+            const openSubDetail = () => {
+              const subIdStr = sub._id.toString();
+              if (isDesktopWeb) {
+                setDetailTaskId(subIdStr);
+                setDetailGroupId(task.groupId);
+              } else {
+                router.push(`/(user)/leader-tools/${task.groupId}/tasks/${subIdStr}`);
+              }
+            };
+            return (
+              <View key={sub._id} style={styles.inlineSubtaskRow}>
+                <Pressable
+                  onPress={() => {
+                    const subId = sub._id as unknown as Id<"tasks">;
+                    if (isDone) {
+                      void runTaskAction(subId, "reopen");
+                    } else {
+                      void runTaskAction(subId, "done");
+                    }
+                  }}
+                  style={styles.inlineSubtaskCheckbox}
+                >
+                  <Ionicons
+                    name={isDone ? "checkbox" : "square-outline"}
+                    size={20}
+                    color={isDone ? colors.success : colors.textSecondary}
+                  />
+                </Pressable>
+                <Pressable
+                  onPress={openSubDetail}
+                  style={styles.inlineSubtaskContent}
+                >
+                  <Text
+                    style={[
+                      styles.inlineSubtaskTitle,
+                      { color: isDone ? colors.textSecondary : colors.text },
+                      isDone && styles.inlineSubtaskDone,
+                    ]}
+                  >
+                    {sub.title}
+                  </Text>
+                  {sub.assignedToName ? (
+                    <Text style={[styles.inlineSubtaskAssignee, { color: colors.textSecondary }]}>
+                      {sub.assignedToName}
+                    </Text>
+                  ) : null}
+                </Pressable>
+                <Pressable onPress={openSubDetail} style={styles.inlineSubtaskOpen}>
+                  <Ionicons name="open-outline" size={14} color={colors.textSecondary} />
+                </Pressable>
+              </View>
+            );
+          })}
+        </View>
+      ) : null;
+
     return (
       <View
         style={[
           styles.card,
           { backgroundColor: colors.surface, borderColor: colors.borderLight },
-          item.depth > 0 && styles.childCard,
-          { marginLeft: item.depth * 14 },
         ]}
       >
         <View style={styles.cardHeader}>
-          <View style={styles.titleContainer}>
-            {item.hasChildren ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={
-                  expandedParents.has(taskIdKey) ? "Collapse subtasks" : "Expand subtasks"
-                }
-                onPress={() => toggleParentExpanded(taskIdKey)}
-                hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
-                style={styles.expandHit}
-              >
-                <Ionicons
-                  name={expandedParents.has(taskIdKey) ? "chevron-down" : "chevron-forward"}
-                  size={22}
-                  color={colors.textSecondary}
-                />
-              </Pressable>
-            ) : (
-              <View style={styles.expandHitPlaceholder} />
-            )}
-            <Pressable onPress={goToDetail} style={styles.cardTitlePressable}>
-              <Text style={[styles.cardTitle, { color: colors.text }]}>{task.title}</Text>
-            </Pressable>
-          </View>
-          <View
-            style={[
-              styles.badge,
-              { backgroundColor: getSourceColors(colors)[sourceType] ?? colors.textSecondary },
-            ]}
-          >
-            <Text style={[styles.badgeText, { color: colors.textInverse }]}>{sourceLabels[sourceType] ?? "TASK"}</Text>
+          <Pressable onPress={goToDetail} style={styles.cardTitlePressable}>
+            <Text style={[styles.cardTitle, { color: colors.text }]}>{task.title}</Text>
+          </Pressable>
+          <View style={[styles.badge, { backgroundColor: badgeStyle.bg }]}>
+            <Text style={[styles.badgeText, { color: badgeStyle.fg }]}>
+              {sourceLabels[sourceType] ?? "TASK"}
+            </Text>
           </View>
         </View>
 
         {progressBlock}
+        {inlineSubtasks}
 
         <Pressable onPress={goToDetail}>
           <View style={styles.metaRow}>
             <Ionicons name="people-outline" size={14} color={colors.textSecondary} />
-            <Text style={[styles.metaText, { color: colors.textSecondary }]}>{task.groupName ?? "Group"}</Text>
+            <Text style={[styles.metaText, { color: colors.textSecondary }]}>
+              {task.groupName ?? "Group"}
+            </Text>
             {task.assignedToName ? (
-              <Text style={[styles.metaText, { color: colors.textSecondary }]}>• {task.assignedToName}</Text>
+              <Text style={[styles.metaText, { color: colors.textSecondary }]}>
+                • {task.assignedToName}
+              </Text>
             ) : null}
-            <Text style={[styles.statusText, { color: statusColor(task.status, colors) }]}>
+            <Text
+              style={[styles.statusText, { color: statusColor(task.status, colors) }]}
+            >
               {formatStatus(task.status)}
             </Text>
           </View>
 
-          {task.targetType !== "none" ? (
-            <View style={[styles.targetPill, { backgroundColor: isDark ? 'rgba(0,122,255,0.15)' : '#E0F2FE' }]}>
+          {!hasSubtasks && task.targetType !== "none" ? (
+            <View
+              style={[
+                styles.targetPill,
+                {
+                  backgroundColor: isDark
+                    ? "rgba(0,122,255,0.15)"
+                    : "#E0F2FE",
+                },
+              ]}
+            >
               <Text style={[styles.targetPillText, { color: colors.link }]}>
                 {task.targetType === "member"
                   ? `Member: ${task.targetMemberName ?? "Unknown"}`
@@ -862,8 +1012,20 @@ export function TasksTabScreen() {
           {task.tags && task.tags.length > 0 ? (
             <View style={styles.tagsRow}>
               {task.tags.map((tag) => (
-                <View key={`${taskIdKey}-${tag}`} style={[styles.tagChip, { backgroundColor: isDark ? 'rgba(0,122,255,0.15)' : '#EEF2FF' }]}>
-                  <Text style={[styles.tagChipText, { color: colors.link }]}>#{tag}</Text>
+                <View
+                  key={`${taskIdKey}-${tag}`}
+                  style={[
+                    styles.tagChip,
+                    {
+                      backgroundColor: isDark
+                        ? "rgba(0,122,255,0.15)"
+                        : "#EEF2FF",
+                    },
+                  ]}
+                >
+                  <Text style={[styles.tagChipText, { color: colors.link }]}>
+                    #{tag}
+                  </Text>
                 </View>
               ))}
             </View>
@@ -875,82 +1037,112 @@ export function TasksTabScreen() {
             <Pressable
               disabled={isBusy}
               onPress={() => runTaskAction(taskId, "reopen")}
-              style={[styles.primaryAction, { backgroundColor: colors.link }, isBusy && styles.disabledAction]}
+              style={[
+                styles.primaryAction,
+                { backgroundColor: colors.link },
+                isBusy && styles.disabledAction,
+              ]}
             >
               <Text style={[styles.primaryActionText, { color: colors.textInverse }]}>
                 {isBusy ? "..." : "Reopen"}
               </Text>
             </Pressable>
-          ) : (segment === "claimable" || segment === "all") && !task.assignedToId ? (
+          ) : (segment === "claimable" || segment === "all") &&
+            !task.assignedToId ? (
             <Pressable
               disabled={isBusy}
               onPress={() => runTaskAction(taskId, "claim")}
-              style={[styles.primaryAction, { backgroundColor: colors.link }, isBusy && styles.disabledAction]}
+              style={[
+                styles.primaryAction,
+                { backgroundColor: colors.link },
+                isBusy && styles.disabledAction,
+              ]}
             >
-              <Text style={[styles.primaryActionText, { color: colors.textInverse }]}>{isBusy ? "..." : "Claim"}</Text>
+              <Text style={[styles.primaryActionText, { color: colors.textInverse }]}>
+                {isBusy ? "..." : "Claim"}
+              </Text>
             </Pressable>
           ) : (
-            <>
-              <Pressable
-                disabled={isBusy}
-                onPress={() => runTaskAction(taskId, "done")}
-                style={[styles.inlineAction, { borderColor: colors.border, backgroundColor: colors.surface }, isBusy && styles.disabledAction]}
-              >
-                <Text style={[styles.inlineActionText, { color: colors.text }]}>Done</Text>
-              </Pressable>
-              <Pressable
-                disabled={isBusy}
-                onPress={() => runTaskAction(taskId, "snooze")}
-                style={[styles.inlineAction, { borderColor: colors.border, backgroundColor: colors.surface }, isBusy && styles.disabledAction]}
-              >
-                <Text style={[styles.inlineActionText, { color: colors.text }]}>Snooze 1w</Text>
-              </Pressable>
-              <Pressable
-                disabled={isBusy}
-                onPress={() => runTaskAction(taskId, "cancel")}
-                style={[styles.inlineAction, { borderColor: colors.border, backgroundColor: colors.surface }, isBusy && styles.disabledAction]}
-              >
-                <Text style={[styles.inlineActionText, { color: colors.destructive }]}>
-                  Cancel
-                </Text>
-              </Pressable>
-              <Pressable
-                disabled={isBusy}
-                onPress={() =>
-                  setAssigningTaskId((current) =>
-                    current === taskIdKey ? null : taskIdKey,
-                  )
-                }
-                style={[styles.inlineAction, { borderColor: colors.border, backgroundColor: colors.surface }, isBusy && styles.disabledAction]}
-              >
-                <Text style={[styles.inlineActionText, { color: colors.text }]}>
-                  {task.assignedToId ? "Reassign" : "Assign"}
-                </Text>
-              </Pressable>
-            </>
+            <Pressable
+              disabled={isBusy}
+              onPress={() => runTaskAction(taskId, "done")}
+              style={[
+                styles.doneButton,
+                { backgroundColor: colors.success },
+                isBusy && styles.disabledAction,
+              ]}
+            >
+              <Ionicons name="checkmark" size={14} color={colors.textInverse} />
+              <Text style={[styles.doneButtonText, { color: colors.textInverse }]}>
+                {isBusy ? "..." : "Done"}
+              </Text>
+            </Pressable>
           )}
+          {!isCompletedView ? (
+            <Pressable
+              disabled={isBusy}
+              onPress={(e) => showOverflowMenu(e)}
+              style={[
+                styles.overflowButton,
+                { borderColor: colors.border, backgroundColor: colors.surface },
+                isBusy && styles.disabledAction,
+              ]}
+            >
+              <Ionicons name="ellipsis-horizontal" size={18} color={colors.textSecondary} />
+            </Pressable>
+          ) : null}
         </View>
 
         {showAssignPanel ? (
           <View style={[styles.assignPanel, { borderTopColor: colors.borderLight }]}>
-            <Text style={[styles.assignPanelTitle, { color: colors.textSecondary }]}>Assigned to</Text>
+            <Text style={[styles.assignPanelTitle, { color: colors.textSecondary }]}>
+              Assigned to
+            </Text>
             <View style={styles.assignButtonsRow}>
               {(assignableLeaders ?? []).map((leader) => (
                 <Pressable
                   key={`${taskIdKey}-${leader.userId}`}
                   disabled={isBusy}
-                  onPress={() => runTaskAction(taskId, "assign", leader.userId as Id<"users">)}
-                  style={[styles.assignButton, { borderColor: isDark ? 'rgba(0,122,255,0.3)' : '#BFDBFE', backgroundColor: colors.selectedBackground }, isBusy && styles.disabledAction]}
+                  onPress={() =>
+                    runTaskAction(
+                      taskId,
+                      "assign",
+                      leader.userId as Id<"users">,
+                    )
+                  }
+                  style={[
+                    styles.assignButton,
+                    {
+                      borderColor: isDark
+                        ? "rgba(0,122,255,0.3)"
+                        : "#BFDBFE",
+                      backgroundColor: colors.selectedBackground,
+                    },
+                    isBusy && styles.disabledAction,
+                  ]}
                 >
-                  <Text style={[styles.assignButtonText, { color: colors.link }]}>{leader.name}</Text>
+                  <Text style={[styles.assignButtonText, { color: colors.link }]}>
+                    {leader.name}
+                  </Text>
                 </Pressable>
               ))}
               <Pressable
                 disabled={isBusy}
                 onPress={() => runTaskAction(taskId, "assign")}
-                style={[styles.assignButton, { borderColor: isDark ? 'rgba(0,122,255,0.3)' : '#BFDBFE', backgroundColor: colors.selectedBackground }, isBusy && styles.disabledAction]}
+                style={[
+                  styles.assignButton,
+                  {
+                    borderColor: isDark
+                      ? "rgba(0,122,255,0.3)"
+                      : "#BFDBFE",
+                    backgroundColor: colors.selectedBackground,
+                  },
+                  isBusy && styles.disabledAction,
+                ]}
               >
-                <Text style={[styles.assignButtonText, { color: colors.link }]}>Unassign</Text>
+                <Text style={[styles.assignButtonText, { color: colors.link }]}>
+                  Unassign
+                </Text>
               </Pressable>
             </View>
           </View>
@@ -1034,42 +1226,34 @@ export function TasksTabScreen() {
       </View>
 
       {hasLeaderAccess === true ? (
-        <View style={[styles.segmentRow, { paddingBottom: 4 }]}>
-          <Pressable
-            onPress={() => setMainTab("tasks")}
-            style={[
-              styles.segmentButton,
-              { backgroundColor: colors.surfaceSecondary },
-              mainTab === "tasks" && { backgroundColor: primaryColor },
-            ]}
-          >
+        <View style={styles.underlineTabRow}>
+          <Pressable onPress={() => setMainTab("tasks")} style={styles.underlineTab}>
             <Text
               style={[
-                styles.segmentText,
-                { color: colors.text },
-                mainTab === "tasks" && { color: colors.textInverse },
+                styles.underlineTabText,
+                { color: mainTab === "tasks" ? colors.text : colors.textSecondary },
+                mainTab === "tasks" && { fontWeight: "700" },
               ]}
             >
               Tasks
             </Text>
+            {mainTab === "tasks" ? (
+              <View style={[styles.underlineTabIndicator, { backgroundColor: primaryColor }]} />
+            ) : null}
           </Pressable>
-          <Pressable
-            onPress={() => setMainTab("workflows")}
-            style={[
-              styles.segmentButton,
-              { backgroundColor: colors.surfaceSecondary },
-              mainTab === "workflows" && { backgroundColor: primaryColor },
-            ]}
-          >
+          <Pressable onPress={() => setMainTab("workflows")} style={styles.underlineTab}>
             <Text
               style={[
-                styles.segmentText,
-                { color: colors.text },
-                mainTab === "workflows" && { color: colors.textInverse },
+                styles.underlineTabText,
+                { color: mainTab === "workflows" ? colors.text : colors.textSecondary },
+                mainTab === "workflows" && { fontWeight: "700" },
               ]}
             >
               Workflows
             </Text>
+            {mainTab === "workflows" ? (
+              <View style={[styles.underlineTabIndicator, { backgroundColor: primaryColor }]} />
+            ) : null}
           </Pressable>
         </View>
       ) : null}
@@ -1079,7 +1263,7 @@ export function TasksTabScreen() {
 
       {mainTab === "tasks" ? (
         <>
-          <View style={styles.segmentRow}>
+          <View style={[styles.segmentRow, { gap: 6, paddingBottom: 6 }]}>
             <Pressable
               onPress={() => setSegment("my")}
               style={[
@@ -1131,46 +1315,6 @@ export function TasksTabScreen() {
             </Pressable>
           </View>
 
-          <View style={[styles.segmentRow, { paddingTop: 0 }]}>
-            <Pressable
-              testID="tasks-scope-active"
-              onPress={() => setTaskListScope("active")}
-              style={[
-                styles.segmentButton,
-                { backgroundColor: colors.surfaceSecondary },
-                taskListScope === "active" && { backgroundColor: primaryColor },
-              ]}
-            >
-              <Text
-                style={[
-                  styles.segmentText,
-                  { color: colors.text },
-                  taskListScope === "active" && { color: colors.textInverse },
-                ]}
-              >
-                Open
-              </Text>
-            </Pressable>
-            <Pressable
-              testID="tasks-scope-completed"
-              onPress={() => setTaskListScope("completed")}
-              style={[
-                styles.segmentButton,
-                { backgroundColor: colors.surfaceSecondary },
-                taskListScope === "completed" && { backgroundColor: primaryColor },
-              ]}
-            >
-              <Text
-                style={[
-                  styles.segmentText,
-                  { color: colors.text },
-                  taskListScope === "completed" && { color: colors.textInverse },
-                ]}
-              >
-                Completed
-              </Text>
-            </Pressable>
-          </View>
 
           <View style={styles.filtersContainer}>
             <TextInput
@@ -1211,15 +1355,25 @@ export function TasksTabScreen() {
                   renderItem={renderTaskCard}
                   keyExtractor={(row) => row.task._id.toString()}
                   contentContainerStyle={styles.listContent}
+                  ListFooterComponent={renderCompletedFooter}
                 />
               </View>
               <View style={[styles.desktopDetail, { backgroundColor: colors.surfaceSecondary }]}>
-                <ScrollView contentContainerStyle={styles.detailContent}>
-                  <Text style={[styles.detailTitle, { color: colors.text }]}>Task details</Text>
-                  <Text style={[styles.detailBody, { color: colors.text }]}>
-                    Click a task to open its detail page, edit it, and review history.
-                  </Text>
-                </ScrollView>
+                {detailTaskId && detailGroupId ? (
+                  <TaskDetailScreen
+                    key={detailTaskId}
+                    groupIdProp={detailGroupId}
+                    taskIdProp={detailTaskId}
+                    embedded
+                  />
+                ) : (
+                  <ScrollView contentContainerStyle={styles.detailContent}>
+                    <Text style={[styles.detailTitle, { color: colors.text }]}>Task details</Text>
+                    <Text style={[styles.detailBody, { color: colors.text }]}>
+                      Click a task to open its detail page, edit it, and review history.
+                    </Text>
+                  </ScrollView>
+                )}
               </View>
             </View>
           ) : (
@@ -1228,6 +1382,7 @@ export function TasksTabScreen() {
               renderItem={renderTaskCard}
               keyExtractor={(row) => row.task._id.toString()}
               contentContainerStyle={styles.listContent}
+              ListFooterComponent={renderCompletedFooter}
             />
           )}
         </>
@@ -1801,6 +1956,15 @@ export function TasksTabScreen() {
             style={[styles.textInput, styles.multilineInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
           />
 
+          <Text style={[styles.inputLabel, { color: colors.text }]}>Tags (comma separated)</Text>
+          <TextInput
+            value={tplTags}
+            onChangeText={setTplTags}
+            placeholder="care, prayer_request"
+            placeholderTextColor={colors.inputPlaceholder}
+            style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
+          />
+
           <Text style={[styles.inputLabel, { color: colors.text }]}>Group *</Text>
           {tplEditingId ? (
             <View style={[styles.lockedField, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary }]}>
@@ -2069,6 +2233,76 @@ export function TasksTabScreen() {
           </View>
         </ScrollView>
       </Modal>
+
+      {/* Fixed-position overflow menu for web (rendered outside FlatList to avoid scroll clipping) */}
+      {Platform.OS === "web" && overflowMenuTaskId && overflowMenuPos && overflowMenuMeta ? (
+        <>
+          <Pressable
+            style={styles.webOverflowBackdrop}
+            onPress={() => {
+              setOverflowMenuTaskId(null);
+              setOverflowMenuPos(null);
+              setOverflowMenuMeta(null);
+            }}
+          />
+          <View
+            style={[
+              styles.webOverflowMenu,
+              {
+                backgroundColor: colors.surface,
+                borderColor: colors.borderLight,
+                position: "fixed" as any,
+                top: overflowMenuPos.top,
+                left: overflowMenuPos.left - 180,
+              },
+            ]}
+          >
+            <Pressable
+              style={styles.webOverflowItem}
+              onPress={() => {
+                const tid = overflowMenuMeta.taskId;
+                setOverflowMenuTaskId(null);
+                setOverflowMenuPos(null);
+                setOverflowMenuMeta(null);
+                void runTaskAction(tid, "snooze");
+              }}
+            >
+              <Ionicons name="time-outline" size={16} color={colors.text} />
+              <Text style={[styles.webOverflowText, { color: colors.text }]}>Snooze 1 week</Text>
+            </Pressable>
+            <Pressable
+              style={styles.webOverflowItem}
+              onPress={() => {
+                const tid = overflowMenuMeta.taskId;
+                setOverflowMenuTaskId(null);
+                setOverflowMenuPos(null);
+                setOverflowMenuMeta(null);
+                void runTaskAction(tid, "cancel");
+              }}
+            >
+              <Ionicons name="close-circle-outline" size={16} color={colors.destructive} />
+              <Text style={[styles.webOverflowText, { color: colors.destructive }]}>Cancel Task</Text>
+            </Pressable>
+            <Pressable
+              style={styles.webOverflowItem}
+              onPress={() => {
+                const taskIdKey = overflowMenuMeta.taskId.toString();
+                setOverflowMenuTaskId(null);
+                setOverflowMenuPos(null);
+                setOverflowMenuMeta(null);
+                setAssigningTaskId((current) =>
+                  current === taskIdKey ? null : taskIdKey,
+                );
+              }}
+            >
+              <Ionicons name="person-outline" size={16} color={colors.text} />
+              <Text style={[styles.webOverflowText, { color: colors.text }]}>
+                {overflowMenuMeta.hasAssignee ? "Reassign" : "Assign"}
+              </Text>
+            </Pressable>
+          </View>
+        </>
+      ) : null}
     </View>
   );
 
@@ -2143,7 +2377,7 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
   segmentButton: {
-    paddingVertical: 8,
+    paddingVertical: 6,
     paddingHorizontal: 12,
     borderRadius: 999,
   },
@@ -2189,34 +2423,11 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 10,
   },
-  childCard: {
-    borderStyle: "dashed",
-  },
   cardHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-start",
     gap: 8,
-  },
-  titleContainer: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 4,
-    flex: 1,
-  },
-  expandHit: {
-    minWidth: 44,
-    minHeight: 44,
-    marginTop: -6,
-    marginLeft: -4,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  expandHitPlaceholder: {
-    width: 40,
-    minHeight: 44,
-    marginTop: -6,
-    marginLeft: -4,
   },
   cardTitlePressable: {
     flex: 1,
@@ -2235,11 +2446,11 @@ const styles = StyleSheet.create({
   },
   badge: {
     borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
   },
   badgeText: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: "700",
   },
   metaRow: {
@@ -2554,6 +2765,7 @@ const styles = StyleSheet.create({
   },
   subtaskProgressBlock: {
     marginTop: 8,
+    paddingVertical: 4,
   },
   subtaskProgressLabel: {
     fontSize: 11,
@@ -2561,8 +2773,8 @@ const styles = StyleSheet.create({
   },
   subtaskProgressTrack: {
     marginTop: 4,
-    height: 3,
-    borderRadius: 999,
+    height: 5,
+    borderRadius: 3,
     overflow: "hidden",
   },
   subtaskProgressFill: {
@@ -2601,5 +2813,123 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 8,
+  },
+  underlineTabRow: {
+    flexDirection: "row",
+    paddingHorizontal: 16,
+    gap: 24,
+    marginBottom: 8,
+  },
+  underlineTab: {
+    paddingBottom: 8,
+    alignItems: "center",
+  },
+  underlineTabText: {
+    fontSize: 15,
+    fontWeight: "500",
+  },
+  underlineTabIndicator: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 2,
+    borderRadius: 1,
+  },
+  showCompletedFooter: {
+    paddingVertical: 16,
+    alignItems: "center",
+  },
+  showCompletedText: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  doneButton: {
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  doneButtonText: {
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  overflowButton: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  progressLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  inlineSubtaskList: {
+    marginTop: 8,
+    borderTopWidth: 1,
+    paddingTop: 8,
+    gap: 6,
+  },
+  inlineSubtaskRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 6,
+  },
+  inlineSubtaskCheckbox: {
+    padding: 2,
+  },
+  inlineSubtaskContent: {
+    flex: 1,
+  },
+  inlineSubtaskOpen: {
+    padding: 4,
+    opacity: 0.5,
+  },
+  inlineSubtaskTitle: {
+    fontSize: 13,
+    fontWeight: "500",
+  },
+  inlineSubtaskDone: {
+    textDecorationLine: "line-through",
+    opacity: 0.6,
+  },
+  inlineSubtaskAssignee: {
+    fontSize: 11,
+    marginTop: 2,
+  },
+  webOverflowBackdrop: {
+    ...(Platform.OS === "web"
+      ? ({ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 999 } as any)
+      : {}),
+  },
+  webOverflowMenu: {
+    minWidth: 180,
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingVertical: 4,
+    zIndex: 1000,
+    ...Platform.select({
+      web: {
+        boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+      },
+      default: {
+        elevation: 8,
+      },
+    }),
+  },
+  webOverflowItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  webOverflowText: {
+    fontSize: 14,
+    fontWeight: "500",
   },
 });

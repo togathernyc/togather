@@ -278,9 +278,9 @@ describe("TasksTabScreen", () => {
     expect(mockReplace).not.toHaveBeenCalled();
   });
 
-  it("shows Reopen on completed tasks when Completed scope is selected", () => {
-    const { getByText, getByTestId } = render(<TasksTabScreen />);
-    fireEvent.press(getByTestId("tasks-scope-completed"));
+  it("shows Reopen on completed tasks when Show completed is pressed", () => {
+    const { getByText } = render(<TasksTabScreen />);
+    fireEvent.press(getByText("Show completed tasks"));
     expect(getByText("Finished follow-up")).toBeTruthy();
     expect(getByText("Reopen")).toBeTruthy();
   });
