@@ -196,44 +196,55 @@ function formatUserName(user: any) {
   return name || "Member";
 }
 
-async function getSubtaskProgress(
-  ctx: { db: any },
-  parentTaskId: Id<"tasks">,
-): Promise<{ total: number; completed: number }> {
-  const children = await ctx.db
-    .query("tasks")
-    .withIndex("by_parent", (q: any) => q.eq("parentTaskId", parentTaskId))
-    .collect();
-  const total = children.length;
-  const completed = children.filter((c: any) => c.status === "done").length;
-  return { total, completed };
+/**
+ * Build subtask counts from an already-loaded group task list (e.g. listGroup)
+ * so we do not re-query the whole group.
+ */
+function buildSubtaskProgressMapFromGroupTasks(
+  candidates: Array<{ _id: Id<"tasks"> }>,
+  allTasksInGroup: Array<{ parentTaskId?: Id<"tasks">; status: string }>,
+): Map<string, { total: number; completed: number }> {
+  const progressMap = new Map<string, { total: number; completed: number }>();
+  if (candidates.length === 0) return progressMap;
+
+  const candidateIds = new Set(candidates.map((t) => t._id.toString()));
+  for (const t of allTasksInGroup) {
+    if (!t.parentTaskId) continue;
+    const pid = t.parentTaskId.toString();
+    if (!candidateIds.has(pid)) continue;
+    const cur = progressMap.get(pid) ?? { total: 0, completed: 0 };
+    cur.total += 1;
+    if (t.status === "done") cur.completed += 1;
+    progressMap.set(pid, cur);
+  }
+  return progressMap;
 }
 
-async function buildSubtaskProgressMap(
+/**
+ * One small by_parent query per listed task — avoids loading every task in each group
+ * (unlike scanning by_group for each distinct group).
+ */
+async function buildSubtaskProgressMapByParentIndex(
   ctx: { db: any },
-  tasks: Array<{ _id: Id<"tasks">; groupId: Id<"groups"> }>,
+  candidates: Array<{ _id: Id<"tasks"> }>,
 ): Promise<Map<string, { total: number; completed: number }>> {
   const progressMap = new Map<string, { total: number; completed: number }>();
-  if (tasks.length === 0) return progressMap;
+  if (candidates.length === 0) return progressMap;
 
-  const candidateIds = new Set(tasks.map((t) => t._id.toString()));
-  const groupIds = [...new Set(tasks.map((t) => t.groupId.toString()))];
-
-  for (const gid of groupIds) {
-    const groupTasks = await ctx.db
-      .query("tasks")
-      .withIndex("by_group", (q: any) => q.eq("groupId", gid as Id<"groups">))
-      .collect();
-    for (const t of groupTasks) {
-      if (!t.parentTaskId) continue;
-      const pid = t.parentTaskId.toString();
-      if (!candidateIds.has(pid)) continue;
-      const cur = progressMap.get(pid) ?? { total: 0, completed: 0 };
-      cur.total += 1;
-      if (t.status === "done") cur.completed += 1;
-      progressMap.set(pid, cur);
-    }
-  }
+  await Promise.all(
+    candidates.map(async (task) => {
+      const children = await ctx.db
+        .query("tasks")
+        .withIndex("by_parent", (q: any) => q.eq("parentTaskId", task._id))
+        .collect();
+      if (children.length === 0) return;
+      const completed = children.filter((c: any) => c.status === "done").length;
+      progressMap.set(task._id.toString(), {
+        total: children.length,
+        completed,
+      });
+    }),
+  );
   return progressMap;
 }
 
@@ -395,7 +406,10 @@ export const listMine = query({
       if (orderA !== orderB) return orderA - orderB;
       return b.createdAt - a.createdAt;
     });
-    const progressMap = await buildSubtaskProgressMap(ctx, filtered);
+    const progressMap = await buildSubtaskProgressMapByParentIndex(
+      ctx,
+      filtered,
+    );
     return filtered.map((t) => ({
       ...t,
       subtaskProgress: subtaskProgressOrNull(t._id.toString(), progressMap),
@@ -465,7 +479,10 @@ export const listAll = query({
       if (orderA !== orderB) return orderA - orderB;
       return b.createdAt - a.createdAt;
     });
-    const progressMap = await buildSubtaskProgressMap(ctx, filtered);
+    const progressMap = await buildSubtaskProgressMapByParentIndex(
+      ctx,
+      filtered,
+    );
     return filtered.map((t) => ({
       ...t,
       subtaskProgress: subtaskProgressOrNull(t._id.toString(), progressMap),
@@ -501,7 +518,10 @@ export const listClaimable = query({
     const filtered = applyTaskFilters(enrichedTasks, args).sort(
       (a, b) => b.createdAt - a.createdAt,
     );
-    const progressMap = await buildSubtaskProgressMap(ctx, filtered);
+    const progressMap = await buildSubtaskProgressMapByParentIndex(
+      ctx,
+      filtered,
+    );
     return filtered.map((t) => ({
       ...t,
       subtaskProgress: subtaskProgressOrNull(t._id.toString(), progressMap),
@@ -535,7 +555,7 @@ export const listGroup = query({
       if (orderA !== orderB) return orderA - orderB;
       return b.createdAt - a.createdAt;
     });
-    const progressMap = await buildSubtaskProgressMap(ctx, filtered);
+    const progressMap = buildSubtaskProgressMapFromGroupTasks(filtered, tasks);
     return filtered.map((t) => ({
       ...t,
       subtaskProgress: subtaskProgressOrNull(t._id.toString(), progressMap),
@@ -750,7 +770,6 @@ export const getDetail = query({
       targetGroup,
       parentTask,
       subtasksRaw,
-      subProgress,
     ] = await Promise.all([
       ctx.db.get(task.groupId),
       task.createdById ? ctx.db.get(task.createdById) : Promise.resolve(null),
@@ -766,7 +785,6 @@ export const getDetail = query({
         .query("tasks")
         .withIndex("by_parent", (q: any) => q.eq("parentTaskId", args.taskId))
         .collect(),
-      getSubtaskProgress(ctx, args.taskId),
     ]);
 
     const sortedSubtasks = [...subtasksRaw].sort(
@@ -800,9 +818,11 @@ export const getDetail = query({
       orderKey: s.orderKey,
     }));
 
+    const subTotal = subtasksRaw.length;
+    const subCompleted = subtasksRaw.filter((s) => s.status === "done").length;
     const subtaskProgress =
-      subProgress.total > 0
-        ? { total: subProgress.total, completed: subProgress.completed }
+      subTotal > 0
+        ? { total: subTotal, completed: subCompleted }
         : null;
 
     return {
