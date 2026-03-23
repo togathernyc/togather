@@ -227,6 +227,12 @@ describe("tasks functions", () => {
       token: leaderToken,
     });
     expect(mineAfterDone.some((task) => task._id === taskId)).toBe(false);
+
+    const mineCompleted = await t.query(api.functions.tasks.index.listMine, {
+      token: leaderToken,
+      listScope: "completed",
+    });
+    expect(mineCompleted.some((task) => task._id === taskId)).toBe(true);
   });
 
   test("hasLeaderAccess differentiates leader and member", async () => {

@@ -147,6 +147,10 @@ type TaskFilterArgs = {
   searchText?: string;
 };
 
+const listScopeValidator = v.optional(
+  v.union(v.literal("active"), v.literal("completed")),
+);
+
 type FilterableTask = {
   sourceType: string;
   tags?: string[];
@@ -370,6 +374,7 @@ export const listMine = query({
     sourceType: v.optional(sourceTypeValidator),
     tag: v.optional(v.string()),
     searchText: v.optional(v.string()),
+    listScope: listScopeValidator,
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -377,27 +382,47 @@ export const listMine = query({
     if (leaderGroupIds.length === 0) return [];
 
     const leaderGroupIdSet = new Set(leaderGroupIds.map((id) => id.toString()));
-    const [openTasks, snoozedTasks] = await Promise.all([
-      ctx.db
-        .query("tasks")
-        .withIndex("by_assignee_status", (q: any) =>
-          q.eq("assignedToId", userId).eq("status", "open"),
-        )
-        .collect(),
-      ctx.db
-        .query("tasks")
-        .withIndex("by_assignee_status", (q: any) =>
-          q.eq("assignedToId", userId).eq("status", "snoozed"),
-        )
-        .collect(),
-    ]);
+    const scope = args.listScope ?? "active";
 
-    const tasks = [...openTasks, ...snoozedTasks].filter((task) =>
-      leaderGroupIdSet.has(task.groupId.toString()),
-    );
+    let tasks: any[];
+    if (scope === "completed") {
+      const doneTasks = await ctx.db
+        .query("tasks")
+        .withIndex("by_assignee_status", (q: any) =>
+          q.eq("assignedToId", userId).eq("status", "done"),
+        )
+        .collect();
+      tasks = doneTasks.filter((task) =>
+        leaderGroupIdSet.has(task.groupId.toString()),
+      );
+    } else {
+      const [openTasks, snoozedTasks] = await Promise.all([
+        ctx.db
+          .query("tasks")
+          .withIndex("by_assignee_status", (q: any) =>
+            q.eq("assignedToId", userId).eq("status", "open"),
+          )
+          .collect(),
+        ctx.db
+          .query("tasks")
+          .withIndex("by_assignee_status", (q: any) =>
+            q.eq("assignedToId", userId).eq("status", "snoozed"),
+          )
+          .collect(),
+      ]);
+      tasks = [...openTasks, ...snoozedTasks].filter((task) =>
+        leaderGroupIdSet.has(task.groupId.toString()),
+      );
+    }
 
     const enrichedTasks = await enrichTasks(ctx, tasks);
     const filtered = applyTaskFilters(enrichedTasks, args).sort((a, b) => {
+      if (scope === "completed") {
+        const ca = a.completedAt ?? 0;
+        const cb = b.completedAt ?? 0;
+        if (ca !== cb) return cb - ca;
+        return b.createdAt - a.createdAt;
+      }
       if (a.status !== b.status) {
         return a.status === "open" ? -1 : 1;
       }
@@ -423,6 +448,7 @@ export const listAll = query({
     sourceType: v.optional(sourceTypeValidator),
     tag: v.optional(v.string()),
     searchText: v.optional(v.string()),
+    listScope: listScopeValidator,
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -430,47 +456,76 @@ export const listAll = query({
     if (leaderGroupIds.length === 0) return [];
 
     const leaderGroupIdSet = new Set(leaderGroupIds.map((id) => id.toString()));
-    const [
-      groupOpenTasks,
-      groupSnoozedTasks,
-      personOpenTasks,
-      personSnoozedTasks,
-    ] = await Promise.all([
-      ctx.db
-        .query("tasks")
-        .withIndex("by_responsibility_status", (q: any) =>
-          q.eq("responsibilityType", "group").eq("status", "open"),
-        )
-        .collect(),
-      ctx.db
-        .query("tasks")
-        .withIndex("by_responsibility_status", (q: any) =>
-          q.eq("responsibilityType", "group").eq("status", "snoozed"),
-        )
-        .collect(),
-      ctx.db
-        .query("tasks")
-        .withIndex("by_responsibility_status", (q: any) =>
-          q.eq("responsibilityType", "person").eq("status", "open"),
-        )
-        .collect(),
-      ctx.db
-        .query("tasks")
-        .withIndex("by_responsibility_status", (q: any) =>
-          q.eq("responsibilityType", "person").eq("status", "snoozed"),
-        )
-        .collect(),
-    ]);
+    const scope = args.listScope ?? "active";
 
-    const tasks = [
-      ...groupOpenTasks,
-      ...groupSnoozedTasks,
-      ...personOpenTasks,
-      ...personSnoozedTasks,
-    ].filter((task) => leaderGroupIdSet.has(task.groupId.toString()));
+    let tasks: any[];
+    if (scope === "completed") {
+      const [groupDoneTasks, personDoneTasks] = await Promise.all([
+        ctx.db
+          .query("tasks")
+          .withIndex("by_responsibility_status", (q: any) =>
+            q.eq("responsibilityType", "group").eq("status", "done"),
+          )
+          .collect(),
+        ctx.db
+          .query("tasks")
+          .withIndex("by_responsibility_status", (q: any) =>
+            q.eq("responsibilityType", "person").eq("status", "done"),
+          )
+          .collect(),
+      ]);
+      tasks = [...groupDoneTasks, ...personDoneTasks].filter((task) =>
+        leaderGroupIdSet.has(task.groupId.toString()),
+      );
+    } else {
+      const [
+        groupOpenTasks,
+        groupSnoozedTasks,
+        personOpenTasks,
+        personSnoozedTasks,
+      ] = await Promise.all([
+        ctx.db
+          .query("tasks")
+          .withIndex("by_responsibility_status", (q: any) =>
+            q.eq("responsibilityType", "group").eq("status", "open"),
+          )
+          .collect(),
+        ctx.db
+          .query("tasks")
+          .withIndex("by_responsibility_status", (q: any) =>
+            q.eq("responsibilityType", "group").eq("status", "snoozed"),
+          )
+          .collect(),
+        ctx.db
+          .query("tasks")
+          .withIndex("by_responsibility_status", (q: any) =>
+            q.eq("responsibilityType", "person").eq("status", "open"),
+          )
+          .collect(),
+        ctx.db
+          .query("tasks")
+          .withIndex("by_responsibility_status", (q: any) =>
+            q.eq("responsibilityType", "person").eq("status", "snoozed"),
+          )
+          .collect(),
+      ]);
+
+      tasks = [
+        ...groupOpenTasks,
+        ...groupSnoozedTasks,
+        ...personOpenTasks,
+        ...personSnoozedTasks,
+      ].filter((task) => leaderGroupIdSet.has(task.groupId.toString()));
+    }
 
     const enrichedTasks = await enrichTasks(ctx, tasks);
     const filtered = applyTaskFilters(enrichedTasks, args).sort((a, b) => {
+      if (scope === "completed") {
+        const ca = a.completedAt ?? 0;
+        const cb = b.completedAt ?? 0;
+        if (ca !== cb) return cb - ca;
+        return b.createdAt - a.createdAt;
+      }
       if (a.status !== b.status) {
         return a.status === "open" ? -1 : 1;
       }
