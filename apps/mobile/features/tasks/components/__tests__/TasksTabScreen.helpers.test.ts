@@ -1,4 +1,4 @@
-import { buildTaskRows, parseTagsInput, type TaskListItem } from "../taskHelpers";
+import { buildTaskRows, parseTagsInput } from "../taskHelpers";
 
 describe("TasksTabScreen helpers", () => {
   test("parseTagsInput trims, drops empty tags, and keeps order", () => {
@@ -9,38 +9,53 @@ describe("TasksTabScreen helpers", () => {
     ]);
   });
 
-  test("buildTaskRows only expands children for expanded parents", () => {
+  test("buildTaskRows filters out subtasks whose parent is in the list", () => {
     const parentId = "task_parent";
     const childId = "task_child";
 
-    const tasks: TaskListItem[] = [
+    const tasks = [
       {
-        _id: parentId as TaskListItem["_id"],
+        _id: parentId,
         title: "Parent",
         status: "open",
         sourceType: "manual",
-        groupId: "group_1" as TaskListItem["groupId"],
+        groupId: "group_1",
         targetType: "none",
       },
       {
-        _id: childId as TaskListItem["_id"],
+        _id: childId,
         title: "Child",
         status: "open",
         sourceType: "manual",
-        groupId: "group_1" as TaskListItem["groupId"],
+        groupId: "group_1",
         targetType: "none",
-        parentTaskId: parentId as TaskListItem["parentTaskId"],
+        parentTaskId: parentId,
       },
     ];
 
-    const collapsedRows = buildTaskRows(tasks, new Set());
-    expect(collapsedRows).toHaveLength(1);
-    expect(collapsedRows[0].task._id).toBe(parentId);
-    expect(collapsedRows[0].hasChildren).toBe(true);
+    const rows = buildTaskRows(tasks);
+    // Only root-level tasks are emitted; subtasks render inside parent card
+    expect(rows).toHaveLength(1);
+    expect(rows[0].task._id).toBe(parentId);
+  });
 
-    const expandedRows = buildTaskRows(tasks, new Set([parentId]));
-    expect(expandedRows).toHaveLength(2);
-    expect(expandedRows[1].task._id).toBe(childId);
-    expect(expandedRows[1].depth).toBe(1);
+  test("buildTaskRows keeps orphaned subtasks whose parent is not in the list", () => {
+    const childId = "task_child";
+
+    const tasks = [
+      {
+        _id: childId,
+        title: "Orphan Child",
+        status: "open",
+        sourceType: "manual",
+        groupId: "group_1",
+        targetType: "none",
+        parentTaskId: "missing_parent",
+      },
+    ];
+
+    const rows = buildTaskRows(tasks);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].task._id).toBe(childId);
   });
 });

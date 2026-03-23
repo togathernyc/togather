@@ -95,13 +95,23 @@ function eventLabel(type: string): string {
   return type;
 }
 
-export function TaskDetailScreen() {
+type TaskDetailScreenProps = {
+  /** When set, use these IDs instead of URL search params */
+  groupIdProp?: string;
+  taskIdProp?: string;
+  /** When true, hide header/back button for split-view embedding */
+  embedded?: boolean;
+};
+
+export function TaskDetailScreen({ groupIdProp, taskIdProp, embedded }: TaskDetailScreenProps = {}) {
   const { colors } = useTheme();
   const params = useLocalSearchParams<{ group_id?: string; task_id?: string }>();
   const groupId =
-    typeof params.group_id === "string" ? (params.group_id as Id<"groups">) : null;
+    (groupIdProp as Id<"groups">) ??
+    (typeof params.group_id === "string" ? (params.group_id as Id<"groups">) : null);
   const taskId =
-    typeof params.task_id === "string" ? (params.task_id as Id<"tasks">) : null;
+    (taskIdProp as Id<"tasks">) ??
+    (typeof params.task_id === "string" ? (params.task_id as Id<"tasks">) : null);
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { primaryColor } = useCommunityTheme();
@@ -324,29 +334,27 @@ export function TaskDetailScreen() {
   }
 
   if (!taskId || !groupId) {
-    return (
-      <UserRoute>
-        <View style={[styles.centered, { backgroundColor: colors.surface }]}>
-          <Text style={[styles.errorText, { color: colors.error }]}>Missing task route params.</Text>
-        </View>
-      </UserRoute>
+    const missingView = (
+      <View style={[styles.centered, { backgroundColor: colors.surface }]}>
+        <Text style={[styles.errorText, { color: colors.error }]}>Missing task route params.</Text>
+      </View>
     );
+    return embedded ? missingView : <UserRoute>{missingView}</UserRoute>;
   }
 
   if (!task) {
-    return (
-      <UserRoute>
-        <View style={[styles.centered, { backgroundColor: colors.surface }]}>
-          <ActivityIndicator size="large" color={primaryColor} />
-          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading task details...</Text>
-        </View>
-      </UserRoute>
+    const loadingView = (
+      <View style={[styles.centered, { backgroundColor: colors.surface }]}>
+        <ActivityIndicator size="large" color={primaryColor} />
+        <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading task details...</Text>
+      </View>
     );
+    return embedded ? loadingView : <UserRoute>{loadingView}</UserRoute>;
   }
 
-  return (
-    <UserRoute>
-      <View style={[styles.container, { backgroundColor: colors.surface }]}>
+  const content = (
+    <View style={[styles.container, { backgroundColor: colors.surface }]}>
+      {!embedded && (
         <View style={[styles.header, { paddingTop: insets.top + 12, borderBottomColor: colors.borderLight }]}>
           <Pressable
             style={styles.backButton}
@@ -372,6 +380,7 @@ export function TaskDetailScreen() {
             </Text>
           </View>
         </View>
+      )}
 
         <ScrollView
           contentContainerStyle={{
@@ -703,8 +712,10 @@ export function TaskDetailScreen() {
           </View>
         </ScrollView>
       </View>
-    </UserRoute>
   );
+
+  if (embedded) return content;
+  return <UserRoute>{content}</UserRoute>;
 }
 
 const styles = StyleSheet.create({
