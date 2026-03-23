@@ -14,7 +14,8 @@ import { DOMAIN_CONFIG } from '@togather/shared';
  * Regex to detect URLs in text
  * Matches http:// and https:// URLs
  */
-const URL_REGEX = /https?:\/\/[^\s<>"{}|\\^`[\]]+/gi;
+/** Shared with task descriptions and other non-chat surfaces that need the same URL matching rules. */
+export const URL_REGEX = /https?:\/\/[^\s<>"{}|\\^`[\]]+/gi;
 
 /**
  * Extract event short IDs from message text

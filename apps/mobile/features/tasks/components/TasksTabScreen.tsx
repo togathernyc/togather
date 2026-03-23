@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Modal,
   Pressable,
@@ -34,6 +35,7 @@ import { useTheme } from "@hooks/useTheme";
 import type { ThemeColors } from "@/theme/colors";
 
 type Segment = "my" | "all" | "claimable";
+type MainTab = "tasks" | "workflows";
 type TaskId = Id<"tasks">;
 type SourceFilter = "all" | TaskSourceType;
 type AssigneeFilter = "all" | "unassigned" | string;
@@ -52,6 +54,7 @@ const sourceLabels: Record<TaskSourceType, string> = {
   bot_task_reminder: "BOT",
   reach_out: "REACH OUT",
   followup: "PEOPLE",
+  workflow_template: "WORKFLOW",
 };
 
 function getSourceColors(colors: ThemeColors): Record<TaskSourceType, string> {
@@ -60,6 +63,7 @@ function getSourceColors(colors: ThemeColors): Record<TaskSourceType, string> {
     bot_task_reminder: colors.link,
     reach_out: colors.link,
     followup: colors.link,
+    workflow_template: colors.link,
   };
 }
 
@@ -94,6 +98,7 @@ export function TasksTabScreen() {
       : null;
   const returnTo = returnToParam && returnToParam !== pathname ? returnToParam : null;
 
+  const [mainTab, setMainTab] = useState<MainTab>("tasks");
   const [segment, setSegment] = useState<Segment>("my");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [tagFilter, setTagFilter] = useState<string>("all");
@@ -135,6 +140,32 @@ export function TasksTabScreen() {
   const [createBusy, setCreateBusy] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
+  const [tplModalOpen, setTplModalOpen] = useState(false);
+  const [tplEditingId, setTplEditingId] = useState<string | null>(null);
+  const [tplTitle, setTplTitle] = useState("");
+  const [tplDescription, setTplDescription] = useState("");
+  const [tplGroupId, setTplGroupId] = useState<string | null>(null);
+  const [tplSteps, setTplSteps] = useState<{ title: string; description: string }[]>([
+    { title: "", description: "" },
+  ]);
+  const [tplBusy, setTplBusy] = useState(false);
+  const [tplError, setTplError] = useState<string | null>(null);
+
+  const [applyTarget, setApplyTarget] = useState<{
+    templateId: string;
+    groupId: string;
+  } | null>(null);
+  const [applyMemberSearch, setApplyMemberSearch] = useState("");
+  const [debouncedApplyMemberSearch, setDebouncedApplyMemberSearch] = useState("");
+  const [applyMemberId, setApplyMemberId] = useState<string | null>(null);
+  const [applyMemberName, setApplyMemberName] = useState<string | null>(null);
+  const [applyAssignSearch, setApplyAssignSearch] = useState("");
+  const [debouncedApplyAssignSearch, setDebouncedApplyAssignSearch] = useState("");
+  const [applyAssigneeId, setApplyAssigneeId] = useState<string | null>(null);
+  const [applyAssigneeName, setApplyAssigneeName] = useState<string | null>(null);
+  const [applyBusy, setApplyBusy] = useState(false);
+  const [applyError, setApplyError] = useState<string | null>(null);
+
   const taskFilterArgs = useMemo(
     () => ({
       sourceType: sourceFilter === "all" ? undefined : sourceFilter,
@@ -167,6 +198,18 @@ export function TasksTabScreen() {
     );
   }, [groups]);
 
+  const hasLeaderAccess = useAuthenticatedQuery(
+    api.functions.tasks.index.hasLeaderAccess,
+    community?.id
+      ? { communityId: community.id as Id<"communities"> }
+      : "skip",
+  );
+
+  const allTemplates = useAuthenticatedQuery(
+    api.functions.taskTemplates.index.listAll,
+    mainTab === "workflows" && hasLeaderAccess === true ? {} : "skip",
+  );
+
   useEffect(() => {
     if (!contextGroupId) return;
     setCreateGroupId(contextGroupId);
@@ -198,8 +241,23 @@ export function TasksTabScreen() {
     return () => clearTimeout(timer);
   }, [createParentTaskSearch]);
 
-  const selectedCreateGroup =
-    createGroupId && leaderGroups.find((group) => group._id === createGroupId);
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedApplyMemberSearch(applyMemberSearch.trim());
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [applyMemberSearch]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedApplyAssignSearch(applyAssignSearch.trim());
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [applyAssignSearch]);
+
+  const selectedCreateGroup = createGroupId
+    ? leaderGroups.find((group) => group._id === createGroupId)
+    : undefined;
 
   const createRelevantMemberResults = useAuthenticatedQuery(
     api.functions.tasks.index.searchRelevantMembers,
@@ -333,7 +391,9 @@ export function TasksTabScreen() {
   }, [tagFilter, availableTags]);
 
   const taskRows = useMemo(() => {
-    return activeTasks ? buildTaskRows(activeTasks, expandedParents) : [];
+    return activeTasks
+      ? buildTaskRows(activeTasks as TaskListItem[], expandedParents)
+      : [];
   }, [activeTasks, expandedParents]);
 
   const claimTask = useAuthenticatedMutation(api.functions.tasks.index.claim);
@@ -342,6 +402,200 @@ export function TasksTabScreen() {
   const cancelTask = useAuthenticatedMutation(api.functions.tasks.index.cancel);
   const assignTask = useAuthenticatedMutation(api.functions.tasks.index.assign);
   const createTask = useAuthenticatedMutation(api.functions.tasks.index.create);
+  const createTemplateMutation = useAuthenticatedMutation(
+    api.functions.taskTemplates.index.create,
+  );
+  const updateTemplateMutation = useAuthenticatedMutation(
+    api.functions.taskTemplates.index.update,
+  );
+  const removeTemplateMutation = useAuthenticatedMutation(
+    api.functions.taskTemplates.index.remove,
+  );
+  const createFromTemplateMutation = useAuthenticatedMutation(
+    api.functions.tasks.index.createFromTemplate,
+  );
+
+  const applyMemberResults = useAuthenticatedQuery(
+    api.functions.tasks.index.searchRelevantMembers,
+    applyTarget && debouncedApplyMemberSearch.length >= 2
+      ? {
+          groupId: applyTarget.groupId as Id<"groups">,
+          searchText: debouncedApplyMemberSearch,
+          limit: 30,
+        }
+      : "skip",
+  ) as GroupMemberSearchResult[] | undefined;
+
+  const applyLeaderResults = useAuthenticatedQuery(
+    api.functions.tasks.index.searchAssignableLeaders,
+    applyTarget && debouncedApplyAssignSearch.length >= 2
+      ? {
+          groupId: applyTarget.groupId as Id<"groups">,
+          searchText: debouncedApplyAssignSearch,
+          limit: 30,
+        }
+      : "skip",
+  ) as LeaderSearchResult[] | undefined;
+
+  const templatesByGroup = useMemo(() => {
+    if (!allTemplates?.length) {
+      return [] as Array<[string, NonNullable<typeof allTemplates>]>;
+    }
+    const map = new Map<string, NonNullable<typeof allTemplates>>();
+    for (const t of allTemplates) {
+      const g = (t as { groupName?: string }).groupName ?? "Group";
+      const cur = map.get(g) ?? [];
+      cur.push(t);
+      map.set(g, cur);
+    }
+    return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [allTemplates]);
+
+  function openTemplateModalCreate() {
+    setTplEditingId(null);
+    setTplTitle("");
+    setTplDescription("");
+    setTplGroupId(contextGroupId ?? leaderGroups[0]?._id ?? null);
+    setTplSteps([{ title: "", description: "" }]);
+    setTplError(null);
+    setTplModalOpen(true);
+  }
+
+  function openTemplateModalEdit(template: {
+    _id: string;
+    title: string;
+    description?: string;
+    groupId: Id<"groups">;
+    steps: Array<{ title: string; description?: string; orderIndex: number }>;
+  }) {
+    setTplEditingId(template._id);
+    setTplTitle(template.title);
+    setTplDescription(template.description ?? "");
+    setTplGroupId(template.groupId.toString());
+    setTplSteps(
+      [...template.steps]
+        .sort((a, b) => a.orderIndex - b.orderIndex)
+        .map((s) => ({ title: s.title, description: s.description ?? "" })),
+    );
+    setTplError(null);
+    setTplModalOpen(true);
+  }
+
+  async function handleSaveTemplate() {
+    if (!tplGroupId) {
+      setTplError("Select a group");
+      return;
+    }
+    if (!tplTitle.trim()) {
+      setTplError("Title is required");
+      return;
+    }
+    const steps = tplSteps
+      .map((s, i) => ({
+        title: s.title.trim(),
+        description: s.description.trim() || undefined,
+        orderIndex: i,
+      }))
+      .filter((s) => s.title.length > 0);
+    if (steps.length === 0) {
+      setTplError("Add at least one step with a title");
+      return;
+    }
+
+    setTplBusy(true);
+    setTplError(null);
+    try {
+      if (tplEditingId) {
+        await updateTemplateMutation({
+          templateId: tplEditingId as Id<"taskTemplates">,
+          title: tplTitle.trim(),
+          description: tplDescription.trim() || null,
+          steps,
+        });
+        setActionSuccess("Workflow updated");
+      } else {
+        await createTemplateMutation({
+          groupId: tplGroupId as Id<"groups">,
+          title: tplTitle.trim(),
+          description: tplDescription.trim() || undefined,
+          steps,
+        });
+        setActionSuccess("Workflow created");
+      }
+      setTplModalOpen(false);
+    } catch (error) {
+      setTplError(
+        error instanceof Error ? error.message : "Could not save workflow",
+      );
+    } finally {
+      setTplBusy(false);
+    }
+  }
+
+  function showTemplateActions(template: {
+    _id: string;
+    title: string;
+    description?: string;
+    groupId: Id<"groups">;
+    steps: Array<{ title: string; description?: string; orderIndex: number }>;
+    isActive: boolean;
+  }) {
+    Alert.alert(template.title, undefined, [
+      {
+        text: "Edit",
+        onPress: () => openTemplateModalEdit(template),
+      },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: () => {
+          void (async () => {
+            try {
+              await removeTemplateMutation({
+                templateId: template._id as Id<"taskTemplates">,
+              });
+              setActionSuccess("Workflow removed");
+            } catch (error) {
+              setActionError(
+                error instanceof Error ? error.message : "Delete failed",
+              );
+            }
+          })();
+        },
+      },
+      { text: "Cancel", style: "cancel" },
+    ]);
+  }
+
+  async function handleApplyTemplate() {
+    if (!applyTarget || !applyMemberId) {
+      setApplyError("Select an associated member");
+      return;
+    }
+    const groupId = applyTarget.groupId;
+    setApplyBusy(true);
+    setApplyError(null);
+    try {
+      const parentId = await createFromTemplateMutation({
+        templateId: applyTarget.templateId as Id<"taskTemplates">,
+        targetMemberId: applyMemberId as Id<"users">,
+        assignedToId: applyAssigneeId
+          ? (applyAssigneeId as Id<"users">)
+          : undefined,
+      });
+      setApplyTarget(null);
+      setActionSuccess("Workflow applied");
+      router.push(
+        `/(user)/leader-tools/${groupId}/tasks/${parentId.toString()}` as any,
+      );
+    } catch (error) {
+      setApplyError(
+        error instanceof Error ? error.message : "Could not apply workflow",
+      );
+    } finally {
+      setApplyBusy(false);
+    }
+  }
 
   async function runTaskAction(
     taskId: TaskId,
@@ -491,6 +745,27 @@ export function TasksTabScreen() {
             <Text style={[styles.badgeText, { color: colors.textInverse }]}>{sourceLabels[sourceType] ?? "TASK"}</Text>
           </View>
         </View>
+
+        {task.subtaskProgress && task.subtaskProgress.total > 0 ? (
+          <View style={styles.subtaskProgressBlock}>
+            <Text style={[styles.subtaskProgressLabel, { color: colors.textSecondary }]}>
+              {task.subtaskProgress.completed}/{task.subtaskProgress.total}
+            </Text>
+            <View style={[styles.subtaskProgressTrack, { backgroundColor: colors.borderLight }]}>
+              <View
+                style={[
+                  styles.subtaskProgressFill,
+                  {
+                    backgroundColor: colors.link,
+                    width: `${Math.round(
+                      (task.subtaskProgress.completed / task.subtaskProgress.total) * 100,
+                    )}%`,
+                  },
+                ]}
+              />
+            </View>
+          </View>
+        ) : null}
 
         <View style={styles.metaRow}>
           <Ionicons name="people-outline" size={14} color={colors.textSecondary} />
@@ -659,132 +934,282 @@ export function TasksTabScreen() {
               <Ionicons name="arrow-back" size={22} color={colors.text} />
             </Pressable>
             <View>
-              <Text style={[styles.headerTitle, { color: colors.text }]}>Tasks</Text>
-              <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>All task-related workflows</Text>
+              <Text style={[styles.headerTitle, { color: colors.text }]}>
+                {mainTab === "workflows" ? "Workflows" : "Tasks"}
+              </Text>
+              <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>
+                {mainTab === "workflows"
+                  ? "Reusable checklists for your groups"
+                  : "All task-related workflows"}
+              </Text>
             </View>
           </View>
           <View style={styles.headerActions}>
-            <Pressable style={[styles.createButton, { backgroundColor: colors.link }]} onPress={() => setIsCreateOpen(true)}>
-              <Ionicons name="add" size={16} color={colors.textInverse} />
-              <Text style={[styles.createButtonText, { color: colors.textInverse }]}>Create</Text>
-            </Pressable>
             <Pressable
-              testID="tasks-filter-button"
-              style={[styles.headerFilterButton, { borderColor: colors.border, backgroundColor: colors.surface }]}
-              onPress={() => setIsFilterModalOpen(true)}
+              style={[styles.createButton, { backgroundColor: colors.link }]}
+              onPress={() =>
+                mainTab === "workflows" ? openTemplateModalCreate() : setIsCreateOpen(true)
+              }
             >
-              <Ionicons name="options-outline" size={18} color={colors.textSecondary} />
-              {hasActiveFilters ? <View style={[styles.headerFilterDot, { backgroundColor: colors.link }]} /> : null}
+              <Ionicons name="add" size={16} color={colors.textInverse} />
+              <Text style={[styles.createButtonText, { color: colors.textInverse }]}>
+                {mainTab === "workflows" ? "New" : "Create"}
+              </Text>
             </Pressable>
+            {mainTab === "tasks" ? (
+              <Pressable
+                testID="tasks-filter-button"
+                style={[styles.headerFilterButton, { borderColor: colors.border, backgroundColor: colors.surface }]}
+                onPress={() => setIsFilterModalOpen(true)}
+              >
+                <Ionicons name="options-outline" size={18} color={colors.textSecondary} />
+                {hasActiveFilters ? <View style={[styles.headerFilterDot, { backgroundColor: colors.link }]} /> : null}
+              </Pressable>
+            ) : null}
           </View>
         </View>
       </View>
 
-      <View style={styles.segmentRow}>
-        <Pressable
-          onPress={() => setSegment("my")}
-          style={[
-            styles.segmentButton,
-            { backgroundColor: colors.surfaceSecondary },
-            segment === "my" && { backgroundColor: primaryColor },
-          ]}
-        >
-          <Text
-            style={[styles.segmentText, { color: colors.text }, segment === "my" && { color: colors.textInverse }]}
-          >
-            My Tasks
-          </Text>
-        </Pressable>
-        <Pressable
-          onPress={() => setSegment("all")}
-          style={[
-            styles.segmentButton,
-            { backgroundColor: colors.surfaceSecondary },
-            segment === "all" && { backgroundColor: primaryColor },
-          ]}
-        >
-          <Text
-            style={[styles.segmentText, { color: colors.text }, segment === "all" && { color: colors.textInverse }]}
-          >
-            All Tasks
-          </Text>
-        </Pressable>
-        <Pressable
-          onPress={() => setSegment("claimable")}
-          style={[
-            styles.segmentButton,
-            { backgroundColor: colors.surfaceSecondary },
-            segment === "claimable" && { backgroundColor: primaryColor },
-          ]}
-        >
-          <Text
+      {hasLeaderAccess === true ? (
+        <View style={[styles.segmentRow, { paddingBottom: 4 }]}>
+          <Pressable
+            onPress={() => setMainTab("tasks")}
             style={[
-              styles.segmentText,
-              { color: colors.text },
-              segment === "claimable" && { color: colors.textInverse },
+              styles.segmentButton,
+              { backgroundColor: colors.surfaceSecondary },
+              mainTab === "tasks" && { backgroundColor: primaryColor },
             ]}
           >
-            Claimable
-          </Text>
-        </Pressable>
-      </View>
-
-      <View style={styles.filtersContainer}>
-        <TextInput
-          value={searchText}
-          onChangeText={setSearchText}
-          placeholder="Search title, tag, member, or group"
-          placeholderTextColor={colors.inputPlaceholder}
-          style={[styles.searchInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
-        />
-      </View>
+            <Text
+              style={[
+                styles.segmentText,
+                { color: colors.text },
+                mainTab === "tasks" && { color: colors.textInverse },
+              ]}
+            >
+              Tasks
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setMainTab("workflows")}
+            style={[
+              styles.segmentButton,
+              { backgroundColor: colors.surfaceSecondary },
+              mainTab === "workflows" && { backgroundColor: primaryColor },
+            ]}
+          >
+            <Text
+              style={[
+                styles.segmentText,
+                { color: colors.text },
+                mainTab === "workflows" && { color: colors.textInverse },
+              ]}
+            >
+              Workflows
+            </Text>
+          </Pressable>
+        </View>
+      ) : null}
 
       {actionError ? <Text style={[styles.errorText, { color: colors.destructive }]}>{actionError}</Text> : null}
       {actionSuccess ? <Text style={[styles.successText, { color: colors.success }]}>{actionSuccess}</Text> : null}
 
-      {isLoading ? (
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" color={primaryColor} />
-          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading tasks...</Text>
-        </View>
-      ) : !activeTasks || activeTasks.length === 0 ? (
-        <View style={styles.centered}>
-          <Ionicons name="checkmark-done-outline" size={48} color={colors.iconSecondary} />
-          <Text style={[styles.emptyTitle, { color: colors.text }]}>No tasks here yet</Text>
-          <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
-            {segment === "my"
-              ? "Assigned tasks will appear here."
-              : segment === "all"
-                ? "Open and snoozed tasks from your groups will appear here."
-                : "Unassigned group tasks will appear here."}
-          </Text>
-        </View>
-      ) : isDesktopWeb ? (
-        <View style={styles.desktopContainer}>
-          <View style={[styles.desktopList, { borderRightColor: colors.borderLight }]}>
+      {mainTab === "tasks" ? (
+        <>
+          <View style={styles.segmentRow}>
+            <Pressable
+              onPress={() => setSegment("my")}
+              style={[
+                styles.segmentButton,
+                { backgroundColor: colors.surfaceSecondary },
+                segment === "my" && { backgroundColor: primaryColor },
+              ]}
+            >
+              <Text
+                style={[styles.segmentText, { color: colors.text }, segment === "my" && { color: colors.textInverse }]}
+              >
+                My Tasks
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => setSegment("all")}
+              style={[
+                styles.segmentButton,
+                { backgroundColor: colors.surfaceSecondary },
+                segment === "all" && { backgroundColor: primaryColor },
+              ]}
+            >
+              <Text
+                style={[styles.segmentText, { color: colors.text }, segment === "all" && { color: colors.textInverse }]}
+              >
+                All Tasks
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => setSegment("claimable")}
+              style={[
+                styles.segmentButton,
+                { backgroundColor: colors.surfaceSecondary },
+                segment === "claimable" && { backgroundColor: primaryColor },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.segmentText,
+                  { color: colors.text },
+                  segment === "claimable" && { color: colors.textInverse },
+                ]}
+              >
+                Claimable
+              </Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.filtersContainer}>
+            <TextInput
+              value={searchText}
+              onChangeText={setSearchText}
+              placeholder="Search title, tag, member, or group"
+              placeholderTextColor={colors.inputPlaceholder}
+              style={[styles.searchInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
+            />
+          </View>
+
+          {isLoading ? (
+            <View style={styles.centered}>
+              <ActivityIndicator size="large" color={primaryColor} />
+              <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading tasks...</Text>
+            </View>
+          ) : !activeTasks || activeTasks.length === 0 ? (
+            <View style={styles.centered}>
+              <Ionicons name="checkmark-done-outline" size={48} color={colors.iconSecondary} />
+              <Text style={[styles.emptyTitle, { color: colors.text }]}>No tasks here yet</Text>
+              <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
+                {segment === "my"
+                  ? "Assigned tasks will appear here."
+                  : segment === "all"
+                    ? "Open and snoozed tasks from your groups will appear here."
+                    : "Unassigned group tasks will appear here."}
+              </Text>
+            </View>
+          ) : isDesktopWeb ? (
+            <View style={styles.desktopContainer}>
+              <View style={[styles.desktopList, { borderRightColor: colors.borderLight }]}>
+                <FlatList
+                  data={taskRows}
+                  renderItem={renderTaskCard}
+                  keyExtractor={(row) => row.task._id.toString()}
+                  contentContainerStyle={styles.listContent}
+                />
+              </View>
+              <View style={[styles.desktopDetail, { backgroundColor: colors.surfaceSecondary }]}>
+                <ScrollView contentContainerStyle={styles.detailContent}>
+                  <Text style={[styles.detailTitle, { color: colors.text }]}>Task details</Text>
+                  <Text style={[styles.detailBody, { color: colors.text }]}>
+                    Click a task to open its detail page, edit it, and review history.
+                  </Text>
+                </ScrollView>
+              </View>
+            </View>
+          ) : (
             <FlatList
               data={taskRows}
               renderItem={renderTaskCard}
               keyExtractor={(row) => row.task._id.toString()}
               contentContainerStyle={styles.listContent}
             />
-          </View>
-          <View style={[styles.desktopDetail, { backgroundColor: colors.surfaceSecondary }]}>
-            <ScrollView contentContainerStyle={styles.detailContent}>
-              <Text style={[styles.detailTitle, { color: colors.text }]}>Task details</Text>
-              <Text style={[styles.detailBody, { color: colors.text }]}>
-                Click a task to open its detail page, edit it, and review history.
-              </Text>
-            </ScrollView>
-          </View>
+          )}
+        </>
+      ) : allTemplates === undefined ? (
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={primaryColor} />
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading workflows...</Text>
+        </View>
+      ) : templatesByGroup.length === 0 ? (
+        <View style={styles.centered}>
+          <Ionicons name="git-branch-outline" size={48} color={colors.iconSecondary} />
+          <Text style={[styles.emptyTitle, { color: colors.text }]}>No workflow templates</Text>
+          <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
+            Tap New to create a reusable checklist for your groups.
+          </Text>
         </View>
       ) : (
-        <FlatList
-          data={taskRows}
-          renderItem={renderTaskCard}
-          keyExtractor={(row) => row.task._id.toString()}
-          contentContainerStyle={styles.listContent}
-        />
+        <ScrollView contentContainerStyle={styles.listContent}>
+          {templatesByGroup.map(([groupName, tmplList]) => (
+            <View key={groupName} style={{ marginBottom: 18 }}>
+              <Text
+                style={[
+                  styles.workflowGroupHeading,
+                  { color: colors.textSecondary },
+                ]}
+              >
+                {groupName}
+              </Text>
+              {tmplList.map((t) => (
+                <Pressable
+                  key={t._id.toString()}
+                  onLongPress={() => showTemplateActions(t)}
+                  delayLongPress={450}
+                  style={[
+                    styles.card,
+                    {
+                      backgroundColor: colors.surface,
+                      borderColor: colors.borderLight,
+                      opacity: t.isActive ? 1 : 0.65,
+                    },
+                  ]}
+                >
+                  <View style={styles.workflowRowTop}>
+                    <View style={{ flex: 1, paddingRight: 8 }}>
+                      <Text style={[styles.cardTitle, { color: colors.text }]}>{t.title}</Text>
+                      {!t.isActive ? (
+                        <Text style={[styles.workflowInactiveLabel, { color: colors.warning }]}>
+                          Inactive
+                        </Text>
+                      ) : null}
+                    </View>
+                    <View style={[styles.workflowStepBadge, { backgroundColor: colors.textSecondary }]}>
+                      <Text style={[styles.badgeText, { color: colors.textInverse }]}>
+                        {t.steps?.length ?? 0} steps
+                      </Text>
+                    </View>
+                  </View>
+                  <Pressable
+                    style={[
+                      styles.primaryAction,
+                      {
+                        marginTop: 12,
+                        backgroundColor: colors.link,
+                        alignSelf: "flex-start",
+                      },
+                      !t.isActive && styles.disabledAction,
+                    ]}
+                    disabled={!t.isActive}
+                    onPress={() => {
+                      setApplyTarget({
+                        templateId: t._id.toString(),
+                        groupId: t.groupId.toString(),
+                      });
+                      setApplyMemberSearch("");
+                      setDebouncedApplyMemberSearch("");
+                      setApplyMemberId(null);
+                      setApplyMemberName(null);
+                      setApplyAssignSearch("");
+                      setDebouncedApplyAssignSearch("");
+                      setApplyAssigneeId(null);
+                      setApplyAssigneeName(null);
+                      setApplyError(null);
+                    }}
+                  >
+                    <Text style={[styles.primaryActionText, { color: colors.textInverse }]}>
+                      Apply to Person
+                    </Text>
+                  </Pressable>
+                </Pressable>
+              ))}
+            </View>
+          ))}
+        </ScrollView>
       )}
 
       <Modal
@@ -832,7 +1257,14 @@ export function TasksTabScreen() {
               <Text style={[styles.filterSectionTitle, { color: colors.textSecondary }]}>Source</Text>
               <View style={styles.chipsWrap}>
                 {(
-                  ["all", "manual", "reach_out", "bot_task_reminder", "followup"] as SourceFilter[]
+                  [
+                    "all",
+                    "manual",
+                    "reach_out",
+                    "bot_task_reminder",
+                    "followup",
+                    "workflow_template",
+                  ] as SourceFilter[]
                 ).map((source) => (
                   <Pressable
                     key={source}
@@ -1032,10 +1464,10 @@ export function TasksTabScreen() {
           />
 
           <Text style={[styles.helperText, { color: colors.textSecondary }]}>
-            Target defaults to this group. Add a relevant member only if needed.
+            Target defaults to this group. Add an associated member only if needed.
           </Text>
 
-          <Text style={[styles.inputLabel, { color: colors.text }]}>Relevant member</Text>
+          <Text style={[styles.inputLabel, { color: colors.text }]}>Associated member</Text>
           <TextInput
             value={createRelevantMemberSearch}
             onChangeText={setCreateRelevantMemberSearch}
@@ -1201,6 +1633,309 @@ export function TasksTabScreen() {
             >
               <Text style={[styles.saveButtonText, { color: colors.textInverse }]}>
                 {createBusy ? "Creating..." : "Create"}
+              </Text>
+            </Pressable>
+          </View>
+        </ScrollView>
+      </Modal>
+
+      <Modal
+        visible={tplModalOpen}
+        animationType="slide"
+        onRequestClose={() => setTplModalOpen(false)}
+      >
+        <ScrollView
+          style={[styles.modalContainer, { backgroundColor: colors.modalBackground }]}
+          contentContainerStyle={{ paddingTop: insets.top + 16, paddingBottom: insets.bottom + 24 }}
+        >
+          <View style={styles.modalHeader}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>
+              {tplEditingId ? "Edit workflow" : "New workflow"}
+            </Text>
+            <Pressable onPress={() => setTplModalOpen(false)}>
+              <Ionicons name="close" size={24} color={colors.text} />
+            </Pressable>
+          </View>
+
+          <Text style={[styles.inputLabel, { color: colors.text }]}>Template name *</Text>
+          <TextInput
+            value={tplTitle}
+            onChangeText={setTplTitle}
+            placeholder="Onboarding checklist"
+            placeholderTextColor={colors.inputPlaceholder}
+            style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
+          />
+
+          <Text style={[styles.inputLabel, { color: colors.text }]}>Description (optional)</Text>
+          <TextInput
+            value={tplDescription}
+            onChangeText={setTplDescription}
+            placeholder="Shown on the parent task"
+            multiline
+            placeholderTextColor={colors.inputPlaceholder}
+            style={[styles.textInput, styles.multilineInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
+          />
+
+          <Text style={[styles.inputLabel, { color: colors.text }]}>Group *</Text>
+          {tplEditingId ? (
+            <View style={[styles.lockedField, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary }]}>
+              <Text style={[styles.lockedFieldText, { color: colors.text }]}>
+                {leaderGroups.find((g) => g._id === tplGroupId)?.name ?? "Group"}
+              </Text>
+            </View>
+          ) : contextGroupId ? (
+            <View style={[styles.lockedField, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary }]}>
+              <Text style={[styles.lockedFieldText, { color: colors.text }]}>
+                {leaderGroups.find((g) => g._id === contextGroupId)?.name ?? "Current group"}
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.chipsWrap}>
+              {leaderGroups.map((group) => (
+                <Pressable
+                  key={group._id}
+                  onPress={() => setTplGroupId(group._id)}
+                  style={[
+                    styles.groupChip,
+                    { borderColor: colors.border, backgroundColor: colors.surface },
+                    tplGroupId === group._id && {
+                      backgroundColor: colors.selectedBackground,
+                      borderColor: colors.link,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.groupChipText,
+                      { color: colors.text },
+                      tplGroupId === group._id && { color: colors.link },
+                    ]}
+                  >
+                    {group.name}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
+
+          <Text style={[styles.inputLabel, { color: colors.text }]}>Steps *</Text>
+          {tplSteps.map((step, index) => (
+            <View
+              key={`step-${index}`}
+              style={[styles.templateStepCard, { borderColor: colors.borderLight }]}
+            >
+              <View style={styles.templateStepHeader}>
+                <Text style={{ color: colors.textSecondary, fontWeight: "700" }}>Step {index + 1}</Text>
+                <View style={{ flexDirection: "row", gap: 6 }}>
+                  <Pressable
+                    onPress={() =>
+                      setTplSteps((prev) => {
+                        if (index <= 0) return prev;
+                        const next = [...prev];
+                        [next[index - 1], next[index]] = [next[index], next[index - 1]];
+                        return next;
+                      })
+                    }
+                  >
+                    <Ionicons name="arrow-up" size={18} color={colors.link} />
+                  </Pressable>
+                  <Pressable
+                    onPress={() =>
+                      setTplSteps((prev) => {
+                        if (index >= prev.length - 1) return prev;
+                        const next = [...prev];
+                        [next[index + 1], next[index]] = [next[index], next[index + 1]];
+                        return next;
+                      })
+                    }
+                  >
+                    <Ionicons name="arrow-down" size={18} color={colors.link} />
+                  </Pressable>
+                  <Pressable
+                    onPress={() =>
+                      setTplSteps((prev) => prev.filter((_, i) => i !== index))
+                    }
+                  >
+                    <Ionicons name="trash-outline" size={18} color={colors.destructive} />
+                  </Pressable>
+                </View>
+              </View>
+              <TextInput
+                value={step.title}
+                onChangeText={(v) =>
+                  setTplSteps((prev) =>
+                    prev.map((s, i) => (i === index ? { ...s, title: v } : s)),
+                  )
+                }
+                placeholder="Step title"
+                placeholderTextColor={colors.inputPlaceholder}
+                style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
+              />
+              <TextInput
+                value={step.description}
+                onChangeText={(v) =>
+                  setTplSteps((prev) =>
+                    prev.map((s, i) => (i === index ? { ...s, description: v } : s)),
+                  )
+                }
+                placeholder="Optional description"
+                multiline
+                placeholderTextColor={colors.inputPlaceholder}
+                style={[styles.textInput, styles.multilineInput, { marginTop: 8, borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
+              />
+            </View>
+          ))}
+          <Pressable
+            onPress={() => setTplSteps((prev) => [...prev, { title: "", description: "" }])}
+            style={[styles.inlineAction, { marginTop: 8, borderColor: colors.border, alignSelf: "flex-start" }]}
+          >
+            <Text style={[styles.inlineActionText, { color: colors.link }]}>+ Add step</Text>
+          </Pressable>
+
+          {tplError ? <Text style={[styles.errorText, { color: colors.destructive }]}>{tplError}</Text> : null}
+
+          <View style={styles.modalActions}>
+            <Pressable
+              onPress={() => setTplModalOpen(false)}
+              style={[styles.modalActionButton, styles.cancelButton, { borderColor: colors.border, backgroundColor: colors.surface }]}
+            >
+              <Text style={[styles.cancelButtonText, { color: colors.text }]}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              disabled={tplBusy}
+              onPress={() => void handleSaveTemplate()}
+              style={[styles.modalActionButton, styles.saveButton, { backgroundColor: colors.link }]}
+            >
+              <Text style={[styles.saveButtonText, { color: colors.textInverse }]}>
+                {tplBusy ? "Saving..." : "Save"}
+              </Text>
+            </Pressable>
+          </View>
+        </ScrollView>
+      </Modal>
+
+      <Modal
+        visible={applyTarget !== null}
+        animationType="slide"
+        onRequestClose={() => setApplyTarget(null)}
+      >
+        <ScrollView
+          style={[styles.modalContainer, { backgroundColor: colors.modalBackground }]}
+          contentContainerStyle={{ paddingTop: insets.top + 16, paddingBottom: insets.bottom + 24 }}
+        >
+          <View style={styles.modalHeader}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Apply workflow</Text>
+            <Pressable onPress={() => setApplyTarget(null)}>
+              <Ionicons name="close" size={24} color={colors.text} />
+            </Pressable>
+          </View>
+
+          <Text style={[styles.inputLabel, { color: colors.text }]}>Associated member *</Text>
+          <TextInput
+            value={applyMemberSearch}
+            onChangeText={setApplyMemberSearch}
+            placeholder="Search members (server search)"
+            placeholderTextColor={colors.inputPlaceholder}
+            style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
+          />
+          {applyMemberId && applyMemberName ? (
+            <Pressable
+              onPress={() => {
+                setApplyMemberId(null);
+                setApplyMemberName(null);
+              }}
+              style={[styles.selectionPill, { borderColor: colors.link, backgroundColor: colors.selectedBackground }]}
+            >
+              <Text style={[styles.selectionPillText, { color: colors.link }]}>
+                {applyMemberName} • Tap to clear
+              </Text>
+            </Pressable>
+          ) : null}
+          {applyMemberSearch.trim().length >= 2 ? (
+            <ScrollView
+              style={[styles.searchResultsList, { borderColor: colors.borderLight, backgroundColor: colors.surface }]}
+              nestedScrollEnabled
+              keyboardShouldPersistTaps="handled"
+            >
+              {(applyMemberResults ?? []).map((member) => (
+                <Pressable
+                  key={member.userId}
+                  onPress={() => {
+                    setApplyMemberId(member.userId);
+                    setApplyMemberName(member.name);
+                    setApplyMemberSearch("");
+                  }}
+                  style={[styles.searchResultRow, { borderBottomColor: colors.borderLight }]}
+                >
+                  <Text style={[styles.searchResultText, { color: colors.text }]}>{member.name}</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          ) : (
+            <Text style={[styles.searchHelperText, { color: colors.textSecondary }]}>
+              Type at least 2 characters.
+            </Text>
+          )}
+
+          <Text style={[styles.inputLabel, { color: colors.text }]}>Assigned to (optional)</Text>
+          <TextInput
+            value={applyAssignSearch}
+            onChangeText={setApplyAssignSearch}
+            placeholder="Search group leaders"
+            placeholderTextColor={colors.inputPlaceholder}
+            style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
+          />
+          {applyAssigneeId && applyAssigneeName ? (
+            <Pressable
+              onPress={() => {
+                setApplyAssigneeId(null);
+                setApplyAssigneeName(null);
+              }}
+              style={[styles.selectionPill, { borderColor: colors.link, backgroundColor: colors.selectedBackground }]}
+            >
+              <Text style={[styles.selectionPillText, { color: colors.link }]}>
+                {applyAssigneeName} • Tap to clear
+              </Text>
+            </Pressable>
+          ) : null}
+          {applyAssignSearch.trim().length >= 2 ? (
+            <ScrollView
+              style={[styles.searchResultsList, { borderColor: colors.borderLight, backgroundColor: colors.surface }]}
+              nestedScrollEnabled
+              keyboardShouldPersistTaps="handled"
+            >
+              {(applyLeaderResults ?? []).map((leader) => (
+                <Pressable
+                  key={leader.userId}
+                  onPress={() => {
+                    setApplyAssigneeId(leader.userId);
+                    setApplyAssigneeName(leader.name);
+                    setApplyAssignSearch("");
+                  }}
+                  style={[styles.searchResultRow, { borderBottomColor: colors.borderLight }]}
+                >
+                  <Text style={[styles.searchResultText, { color: colors.text }]}>{leader.name}</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          ) : null}
+
+          {applyError ? <Text style={[styles.errorText, { color: colors.destructive }]}>{applyError}</Text> : null}
+
+          <View style={styles.modalActions}>
+            <Pressable
+              onPress={() => setApplyTarget(null)}
+              style={[styles.modalActionButton, styles.cancelButton, { borderColor: colors.border, backgroundColor: colors.surface }]}
+            >
+              <Text style={[styles.cancelButtonText, { color: colors.text }]}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              disabled={applyBusy}
+              onPress={() => void handleApplyTemplate()}
+              style={[styles.modalActionButton, styles.saveButton, { backgroundColor: colors.link }]}
+            >
+              <Text style={[styles.saveButtonText, { color: colors.textInverse }]}>
+                {applyBusy ? "Applying..." : "Apply"}
               </Text>
             </Pressable>
           </View>
@@ -1667,5 +2402,55 @@ const styles = StyleSheet.create({
   saveButton: {},
   saveButtonText: {
     fontWeight: "700",
+  },
+  subtaskProgressBlock: {
+    marginTop: 8,
+  },
+  subtaskProgressLabel: {
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  subtaskProgressTrack: {
+    marginTop: 4,
+    height: 3,
+    borderRadius: 999,
+    overflow: "hidden",
+  },
+  subtaskProgressFill: {
+    height: "100%",
+    borderRadius: 999,
+  },
+  workflowGroupHeading: {
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.3,
+    marginBottom: 8,
+  },
+  workflowRowTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+  },
+  workflowInactiveLabel: {
+    marginTop: 4,
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  workflowStepBadge: {
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  templateStepCard: {
+    marginTop: 10,
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 10,
+  },
+  templateStepHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
   },
 });

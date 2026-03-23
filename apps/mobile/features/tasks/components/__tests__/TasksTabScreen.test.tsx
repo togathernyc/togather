@@ -59,6 +59,16 @@ jest.mock("@services/api/convex", () => ({
           cancel: "api.functions.tasks.index.cancel",
           assign: "api.functions.tasks.index.assign",
           create: "api.functions.tasks.index.create",
+          hasLeaderAccess: "api.functions.tasks.index.hasLeaderAccess",
+          createFromTemplate: "api.functions.tasks.index.createFromTemplate",
+        },
+      },
+      taskTemplates: {
+        index: {
+          listAll: "api.functions.taskTemplates.index.listAll",
+          create: "api.functions.taskTemplates.index.create",
+          update: "api.functions.taskTemplates.index.update",
+          remove: "api.functions.taskTemplates.index.remove",
         },
       },
       groups: {
@@ -157,6 +167,14 @@ describe("TasksTabScreen", () => {
         return [{ _id: "group-1", name: "Group A", userRole: "leader" }];
       }
 
+      if (queryFn === "api.functions.tasks.index.hasLeaderAccess") {
+        return true;
+      }
+
+      if (queryFn === "api.functions.taskTemplates.index.listAll") {
+        return [];
+      }
+
       if (
         queryFn === "api.functions.tasks.index.listGroup" ||
         queryFn === "api.functions.tasks.index.listAssignableLeaders" ||
@@ -230,5 +248,43 @@ describe("TasksTabScreen", () => {
 
     expect(mockBack).toHaveBeenCalledTimes(1);
     expect(mockReplace).not.toHaveBeenCalled();
+  });
+
+  it("shows Workflows tab for leaders and switches to workflow list", () => {
+    (useAuthenticatedQuery as jest.Mock).mockImplementation((queryFn: string) => {
+      if (queryFn === "api.functions.tasks.index.hasLeaderAccess") return true;
+      if (queryFn === "api.functions.taskTemplates.index.listAll") {
+        return [
+          {
+            _id: "tpl-1",
+            title: "Demo workflow",
+            groupId: "group-1",
+            groupName: "Group A",
+            isActive: true,
+            steps: [{ title: "Step 1", orderIndex: 0 }],
+          },
+        ];
+      }
+      if (queryFn === "api.functions.groups.queries.listForUser") {
+        return [{ _id: "group-1", name: "Group A", userRole: "leader" }];
+      }
+      if (queryFn === "api.functions.tasks.index.listMine") return [];
+      if (queryFn === "api.functions.tasks.index.listAll") return [];
+      if (queryFn === "api.functions.tasks.index.listClaimable") return [];
+      if (
+        queryFn === "api.functions.tasks.index.listGroup" ||
+        queryFn === "api.functions.tasks.index.listAssignableLeaders" ||
+        queryFn === "api.functions.tasks.index.searchAssignableLeaders" ||
+        queryFn === "api.functions.tasks.index.searchRelevantMembers"
+      ) {
+        return [];
+      }
+      return undefined;
+    });
+
+    const { getByText } = render(<TasksTabScreen />);
+    fireEvent.press(getByText("Workflows"));
+    expect(getByText("Demo workflow")).toBeTruthy();
+    expect(getByText("Apply to Person")).toBeTruthy();
   });
 });
