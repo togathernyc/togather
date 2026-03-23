@@ -277,12 +277,15 @@ function buildSubtaskProgressMapFromGroupTasks(
     });
     progressMap.set(pid, cur);
   }
+  // Pre-build orderKey lookup for O(1) access during sort
+  const orderKeyMap = new Map<string, number>();
+  for (const t of allTasksInGroup) {
+    orderKeyMap.set(t._id.toString(), t.orderKey ?? 0);
+  }
   // Sort subtasks by orderKey
   for (const entry of progressMap.values()) {
     entry.subtasks.sort((a, b) => {
-      const taskA = allTasksInGroup.find((t) => t._id === a._id);
-      const taskB = allTasksInGroup.find((t) => t._id === b._id);
-      return (taskA?.orderKey ?? 0) - (taskB?.orderKey ?? 0);
+      return (orderKeyMap.get(a._id.toString()) ?? 0) - (orderKeyMap.get(b._id.toString()) ?? 0);
     });
   }
   return progressMap;
@@ -349,12 +352,15 @@ async function buildSubtaskProgressMapByParentIndex(
     progressMap.set(parentId, cur);
   }
 
+  // Pre-build orderKey lookup for O(1) access during sort
+  const orderKeyMap = new Map<string, number>();
+  for (const { child } of allChildren) {
+    orderKeyMap.set(child._id.toString(), child.orderKey ?? 0);
+  }
   // Sort subtasks by orderKey
   for (const entry of progressMap.values()) {
     entry.subtasks.sort((a, b) => {
-      const childA = allChildren.find((c) => c.child._id === a._id)?.child;
-      const childB = allChildren.find((c) => c.child._id === b._id)?.child;
-      return (childA?.orderKey ?? 0) - (childB?.orderKey ?? 0);
+      return (orderKeyMap.get(a._id.toString()) ?? 0) - (orderKeyMap.get(b._id.toString()) ?? 0);
     });
   }
 
@@ -752,7 +758,7 @@ export const listGroup = query({
       );
       [...subtaskAssigneeIds].forEach((id, i) => {
         const u = extraUsers[i];
-        if (u) userNameMap.set(id, formatUserName(u));
+        userNameMap.set(id, u ? formatUserName(u) : "Member");
       });
     }
 
