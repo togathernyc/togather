@@ -1589,14 +1589,14 @@ export function TasksTabScreen() {
           />
 
           <Text style={[styles.helperText, { color: colors.textSecondary }]}>
-            Target defaults to this group. Add an associated member only if needed.
+            Target defaults to this group. Add someone from the community (they do not need to be in this group yet—useful for pre-join onboarding).
           </Text>
 
           <Text style={[styles.inputLabel, { color: colors.text }]}>Associated member</Text>
           <TextInput
             value={createRelevantMemberSearch}
             onChangeText={setCreateRelevantMemberSearch}
-            placeholder="Search members (server search)"
+            placeholder="Search community members"
             placeholderTextColor={colors.inputPlaceholder}
             style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
           />
@@ -1956,10 +1956,13 @@ export function TasksTabScreen() {
           </View>
 
           <Text style={[styles.inputLabel, { color: colors.text }]}>Associated member *</Text>
+          <Text style={[styles.searchHelperText, { color: colors.textSecondary, marginBottom: 6 }]}>
+            Anyone in this community counts, even if they are not in this group yet.
+          </Text>
           <TextInput
             value={applyMemberSearch}
             onChangeText={setApplyMemberSearch}
-            placeholder="Search members (server search)"
+            placeholder="Search community members"
             placeholderTextColor={colors.inputPlaceholder}
             style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
           />

@@ -3,6 +3,7 @@ import { internalMutation, mutation, query } from "../../_generated/server";
 import type { Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { isActiveMembership, isLeaderRole } from "../../lib/helpers";
+import { searchCommunityMembersInternal } from "../../lib/memberSearch";
 import { now } from "../../lib/utils";
 
 const openStatuses = new Set(["open", "snoozed"]);
@@ -111,6 +112,32 @@ async function getTaskOrThrow(ctx: { db: any }, taskId: Id<"tasks">) {
     throw new ConvexError("Task not found");
   }
   return task;
+}
+
+/**
+ * Target person for a group task must belong to the group's community (not necessarily the group).
+ * Used for onboarding workflows before someone joins the group.
+ */
+async function requireTargetUserInGroupCommunity(
+  ctx: { db: any },
+  groupId: Id<"groups">,
+  targetUserId: Id<"users">,
+) {
+  const group = await ctx.db.get(groupId);
+  if (!group) {
+    throw new ConvexError("Group not found");
+  }
+  const uc = await ctx.db
+    .query("userCommunities")
+    .withIndex("by_user_community", (q: any) =>
+      q.eq("userId", targetUserId).eq("communityId", group.communityId),
+    )
+    .first();
+  if (!uc || uc.status !== 1) {
+    throw new ConvexError(
+      "Target person must be an active member of this community",
+    );
+  }
 }
 
 function assertTargetArgs(
@@ -743,11 +770,26 @@ export const searchRelevantMembers = query({
     const userId = await requireAuth(ctx, args.token);
     await getLeaderMembership(ctx, args.groupId, userId);
 
-    return searchGroupMembers(ctx, args.groupId, args.searchText, {
-      limit: Math.min(args.limit ?? 30, 100),
-      requireLeaderRole: false,
-      fallbackName: "Member",
+    const group = await ctx.db.get(args.groupId);
+    if (!group) {
+      throw new ConvexError("Group not found");
+    }
+
+    const limit = Math.min(args.limit ?? 30, 100);
+    const matches = await searchCommunityMembersInternal(ctx, {
+      communityId: group.communityId,
+      search: args.searchText,
+      limit,
+      includeAdminFields: false,
     });
+
+    return matches
+      .map((m) => ({
+        userId: m.id,
+        name:
+          [m.firstName, m.lastName].filter(Boolean).join(" ").trim() || "Member",
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
   },
 });
 
@@ -972,15 +1014,11 @@ export const create = mutation({
     const targetType = args.targetType ?? "none";
     assertTargetArgs(targetType, args.targetMemberId, args.targetGroupId);
     if (targetType === "member" && args.targetMemberId) {
-      const targetMembership = await ctx.db
-        .query("groupMembers")
-        .withIndex("by_group_user", (q: any) =>
-          q.eq("groupId", args.groupId).eq("userId", args.targetMemberId),
-        )
-        .first();
-      if (!isActiveMembership(targetMembership)) {
-        throw new ConvexError("target member must be active in this group");
-      }
+      await requireTargetUserInGroupCommunity(
+        ctx,
+        args.groupId,
+        args.targetMemberId,
+      );
     }
     if (targetType === "group" && args.targetGroupId) {
       const targetGroup = await ctx.db.get(args.targetGroupId);
@@ -1078,17 +1116,11 @@ export const update = mutation({
 
     if (args.relevantMemberId !== undefined) {
       if (args.relevantMemberId) {
-        const membership = await ctx.db
-          .query("groupMembers")
-          .withIndex("by_group_user", (q: any) =>
-            q
-              .eq("groupId", task.groupId)
-              .eq("userId", args.relevantMemberId as Id<"users">),
-          )
-          .first();
-        if (!isActiveMembership(membership)) {
-          throw new ConvexError("relevant member must be active in this group");
-        }
+        await requireTargetUserInGroupCommunity(
+          ctx,
+          task.groupId,
+          args.relevantMemberId as Id<"users">,
+        );
         patch.targetType = "member";
         patch.targetMemberId = args.relevantMemberId;
         patch.targetGroupId = undefined;
@@ -1305,17 +1337,11 @@ export const createFromTemplate = mutation({
     }
     await getLeaderMembership(ctx, template.groupId, userId);
 
-    const targetMembership = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group_user", (q: any) =>
-        q
-          .eq("groupId", template.groupId)
-          .eq("userId", args.targetMemberId),
-      )
-      .first();
-    if (!isActiveMembership(targetMembership)) {
-      throw new ConvexError("target member must be active in this group");
-    }
+    await requireTargetUserInGroupCommunity(
+      ctx,
+      template.groupId,
+      args.targetMemberId,
+    );
 
     if (args.assignedToId) {
       await getLeaderMembership(ctx, template.groupId, args.assignedToId);
