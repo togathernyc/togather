@@ -106,6 +106,23 @@ function ThemedStack() {
           gestureEnabled: true,
         }}
       />
+      {/* Public universal-link landings: modal at root so swipe-to-dismiss works (nested stack options are not enough) */}
+      <Stack.Screen
+        name="(landing)"
+        options={{
+          presentation: "modal",
+          animation: "slide_from_bottom",
+          gestureEnabled: true,
+        }}
+      />
+      <Stack.Screen
+        name="c"
+        options={{
+          presentation: "modal",
+          animation: "slide_from_bottom",
+          gestureEnabled: true,
+        }}
+      />
       {/* Inbox routes - slide from right like iMessage/WhatsApp */}
       <Stack.Screen
         name="inbox"
