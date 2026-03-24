@@ -262,8 +262,10 @@ export const list = query({
         return true;
       });
 
-      // Sort to match the requested order
-      const sortKey = args.sortBy ?? "lastName";
+      // Sort to match the requested order.
+      // Derive the actual document field from the index name (by_group_<field> → <field>)
+      // to handle cases like sortBy="assignee" → field="assigneeSortKey".
+      const sortKey = indexName.replace("by_group_", "");
       const dir = direction === "desc" ? -1 : 1;
       filtered.sort((a: any, b: any) => {
         const av = a[sortKey] ?? "";
