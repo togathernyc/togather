@@ -26,6 +26,7 @@ import {
 } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { requireAuth, requireAuthFromToken } from "../lib/auth";
+import { requirePrimaryAdmin } from "../lib/permissions";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
 
 import type { Id } from "../_generated/dataModel";
@@ -92,6 +93,22 @@ export const getCommunityBilling = internalQuery({
       subscriptionPriceMonthly: community.subscriptionPriceMonthly,
       billingEmail: community.billingEmail,
     };
+  },
+});
+
+/**
+ * Verify that the user identified by a token is a PRIMARY_ADMIN of the given community.
+ * Used internally by actions that need community-admin authorization.
+ */
+export const verifyBillingAccess = internalQuery({
+  args: {
+    token: v.string(),
+    communityId: v.id("communities"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await requirePrimaryAdmin(ctx, args.communityId, userId);
+    return { userId: userId as string };
   },
 });
 
@@ -247,7 +264,11 @@ export const createPortalSession = action({
     communityId: v.string(),
   },
   handler: async (ctx, args): Promise<{ url: string }> => {
-    await requireAuthFromToken(args.token);
+    // Verify the user is a PRIMARY_ADMIN of this community
+    await ctx.runQuery(internal.functions.billing.verifyBillingAccess, {
+      token: args.token,
+      communityId: args.communityId as Id<"communities">,
+    });
 
     // Look up the community's Stripe customer ID
     const billing = await ctx.runQuery(
@@ -439,7 +460,10 @@ export const getSubscriptionStatus = query({
     communityId: v.id("communities"),
   },
   handler: async (ctx, args) => {
-    await requireAuth(ctx, args.token);
+    const userId = await requireAuth(ctx, args.token);
+
+    // Only community PRIMARY_ADMINs can view billing details
+    await requirePrimaryAdmin(ctx, args.communityId, userId);
 
     const community = await ctx.db.get(args.communityId);
     if (!community) {

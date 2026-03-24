@@ -1,21 +1,33 @@
 import { useState, useEffect, type FormEvent } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { useMutation } from "convex/react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { useMutation, useAction } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { useWebAuth } from "../hooks/useWebAuth";
 
 export default function ProposeCommunity() {
   const navigate = useNavigate();
-  const { token, isAuthenticated } = useWebAuth();
+  const [searchParams] = useSearchParams();
+  const { token, isAuthenticated, signIn } = useWebAuth();
 
-  // Redirect to sign-in if not authenticated
+  // New users arrive with phoneVerificationToken + phone from the sign-in page
+  const phoneVerificationToken = searchParams.get("phoneVerificationToken");
+  const phone = searchParams.get("phone");
+  const hasVerificationToken = !!(phoneVerificationToken && phone);
+
+  // Redirect to sign-in only when there is no auth AND no verification token
   useEffect(() => {
-    if (!isAuthenticated) {
+    if (!isAuthenticated && !hasVerificationToken) {
       navigate("/signin?redirect=/propose", { replace: true });
     }
-  }, [isAuthenticated, navigate]);
+  }, [isAuthenticated, hasVerificationToken, navigate]);
 
   const submitProposal = useMutation(api.functions.proposals.submit);
+  const registerNewUser = useAction(api.functions.auth.registration.registerNewUser);
+
+  // New-user registration fields (shown when using phoneVerificationToken)
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [email, setEmail] = useState("");
 
   const [communityName, setCommunityName] = useState("");
   const [estimatedSize, setEstimatedSize] = useState("");
@@ -27,18 +39,13 @@ export default function ProposeCommunity() {
   const [error, setError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
 
-  if (!isAuthenticated) {
+  if (!isAuthenticated && !hasVerificationToken) {
     return null;
   }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
-
-    if (!token) {
-      setError("You must be signed in to submit a proposal.");
-      return;
-    }
 
     if (!communityName.trim()) {
       setError("Community name is required.");
@@ -57,10 +64,44 @@ export default function ProposeCommunity() {
       return;
     }
 
+    // If the user is a new user with a verification token, register first
+    let authToken = token;
+    if (!authToken && hasVerificationToken) {
+      if (!firstName.trim() || !lastName.trim()) {
+        setError("First name and last name are required.");
+        return;
+      }
+
+      setIsSubmitting(true);
+      try {
+        const result = await registerNewUser({
+          phone: phone!,
+          firstName: firstName.trim(),
+          lastName: lastName.trim(),
+          email: email.trim() || undefined,
+          otp: "000000", // Already verified via phoneVerificationToken
+          phoneVerificationToken: phoneVerificationToken!,
+        });
+        signIn(result.access_token, result.refresh_token);
+        authToken = result.access_token;
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Registration failed. Please try again."
+        );
+        setIsSubmitting(false);
+        return;
+      }
+    }
+
+    if (!authToken) {
+      setError("You must be signed in to submit a proposal.");
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       await submitProposal({
-        token,
+        token: authToken,
         communityName: communityName.trim(),
         estimatedSize: size,
         needsMigration,
@@ -159,6 +200,72 @@ export default function ProposeCommunity() {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">
+          {/* New user: collect name + email */}
+          {hasVerificationToken && !isAuthenticated && (
+            <>
+              <div className="bg-blue-50 border border-blue-200 rounded-2xl p-6 mb-2">
+                <p className="text-blue-900 leading-relaxed text-sm">
+                  Welcome! Tell us a bit about yourself to create your account.
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label
+                    htmlFor="firstName"
+                    className="block text-sm font-medium text-neutral-900 mb-1.5"
+                  >
+                    First name <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    id="firstName"
+                    type="text"
+                    required
+                    value={firstName}
+                    onChange={(e) => setFirstName(e.target.value)}
+                    placeholder="Jane"
+                    className="w-full px-4 py-3 rounded-xl border border-neutral-300 bg-white text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-900 focus:border-transparent"
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="lastName"
+                    className="block text-sm font-medium text-neutral-900 mb-1.5"
+                  >
+                    Last name <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    id="lastName"
+                    type="text"
+                    required
+                    value={lastName}
+                    onChange={(e) => setLastName(e.target.value)}
+                    placeholder="Doe"
+                    className="w-full px-4 py-3 rounded-xl border border-neutral-300 bg-white text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-900 focus:border-transparent"
+                  />
+                </div>
+              </div>
+              <div>
+                <label
+                  htmlFor="email"
+                  className="block text-sm font-medium text-neutral-900 mb-1.5"
+                >
+                  Email{" "}
+                  <span className="text-neutral-400 font-normal">(optional)</span>
+                </label>
+                <input
+                  id="email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="jane@example.com"
+                  className="w-full px-4 py-3 rounded-xl border border-neutral-300 bg-white text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-900 focus:border-transparent"
+                />
+              </div>
+
+              <hr className="border-neutral-200" />
+            </>
+          )}
+
           {/* Community name */}
           <div>
             <label

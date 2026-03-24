@@ -31,6 +31,7 @@ import type * as functions_auth_login from "../functions/auth/login.js";
 import type * as functions_auth_phoneOtp from "../functions/auth/phoneOtp.js";
 import type * as functions_auth_registration from "../functions/auth/registration.js";
 import type * as functions_auth_tokens from "../functions/auth/tokens.js";
+import type * as functions_billing from "../functions/billing.js";
 import type * as functions_authInternal from "../functions/authInternal.js";
 import type * as functions_communities from "../functions/communities.js";
 import type * as functions_communityLandingPage from "../functions/communityLandingPage.js";
@@ -76,6 +77,7 @@ import type * as functions_messaging_typing from "../functions/messaging/typing.
 import type * as functions_migrations from "../functions/migrations.js";
 import type * as functions_migrations_migrateToCommunityPeople from "../functions/migrations/migrateToCommunityPeople.js";
 import type * as functions_notifications_actions from "../functions/notifications/actions.js";
+import type * as functions_notifications_proposalNotifications from "../functions/notifications/proposalNotifications.js";
 import type * as functions_notifications_debug from "../functions/notifications/debug.js";
 import type * as functions_notifications_index from "../functions/notifications/index.js";
 import type * as functions_notifications_internal from "../functions/notifications/internal.js";
@@ -95,6 +97,7 @@ import type * as functions_pcoServices_queries from "../functions/pcoServices/qu
 import type * as functions_pcoServices_rotation from "../functions/pcoServices/rotation.js";
 import type * as functions_pcoServices_runSheet from "../functions/pcoServices/runSheet.js";
 import type * as functions_pcoServices_servingHistory from "../functions/pcoServices/servingHistory.js";
+import type * as functions_proposals from "../functions/proposals.js";
 import type * as functions_peopleSavedViews from "../functions/peopleSavedViews.js";
 import type * as functions_resources from "../functions/resources.js";
 import type * as functions_scheduledJobs from "../functions/scheduledJobs.js";
@@ -179,6 +182,7 @@ declare const fullApi: ApiFromModules<{
   "functions/auth/phoneOtp": typeof functions_auth_phoneOtp;
   "functions/auth/registration": typeof functions_auth_registration;
   "functions/auth/tokens": typeof functions_auth_tokens;
+  "functions/billing": typeof functions_billing;
   "functions/authInternal": typeof functions_authInternal;
   "functions/communities": typeof functions_communities;
   "functions/communityLandingPage": typeof functions_communityLandingPage;
@@ -224,6 +228,7 @@ declare const fullApi: ApiFromModules<{
   "functions/migrations": typeof functions_migrations;
   "functions/migrations/migrateToCommunityPeople": typeof functions_migrations_migrateToCommunityPeople;
   "functions/notifications/actions": typeof functions_notifications_actions;
+  "functions/notifications/proposalNotifications": typeof functions_notifications_proposalNotifications;
   "functions/notifications/debug": typeof functions_notifications_debug;
   "functions/notifications/index": typeof functions_notifications_index;
   "functions/notifications/internal": typeof functions_notifications_internal;
@@ -243,6 +248,7 @@ declare const fullApi: ApiFromModules<{
   "functions/pcoServices/rotation": typeof functions_pcoServices_rotation;
   "functions/pcoServices/runSheet": typeof functions_pcoServices_runSheet;
   "functions/pcoServices/servingHistory": typeof functions_pcoServices_servingHistory;
+  "functions/proposals": typeof functions_proposals;
   "functions/peopleSavedViews": typeof functions_peopleSavedViews;
   "functions/resources": typeof functions_resources;
   "functions/scheduledJobs": typeof functions_scheduledJobs;
