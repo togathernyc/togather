@@ -1,13 +1,8 @@
 import { useState, useEffect, useMemo } from "react";
 import { Platform } from "react-native";
-import { useLinkingURL } from "expo-linking";
 import { useLocalSearchParams } from "expo-router";
 import { useQuery, api } from "@services/api/convex";
-import {
-  parseSubdomainFromHostname,
-  parseSubdomainFromLinkUrl,
-  getCapturedLinkSubdomain,
-} from "@/features/auth/utils/communitySubdomain";
+import { parseSubdomainFromHostname } from "@/features/auth/utils/communitySubdomain";
 
 /**
  * Hook to get community from subdomain
@@ -17,10 +12,9 @@ import {
  * - Falls back to ?subdomain= query param for local development
  *
  * On native:
- * - Uses the module-level captured subdomain (set in RootLayout via getLinkingURL()
- *   before Expo Router consumes the URL). This is reliable on real devices where
- *   useLinkingURL() never returns the URL in child screens.
- * - Falls back to useLinkingURL() for hot-reloading / development
+ * - The +native-intent.ts hook intercepts universal link URLs before Expo Router
+ *   strips the hostname. It extracts the subdomain from the hostname and appends
+ *   it as ?subdomain= to the URL, so it arrives as a route parameter.
  * - Falls back to ?subdomain= query param from deep links
  *
  * Returns:
@@ -31,7 +25,6 @@ import {
  */
 export function useSubdomainCommunity() {
   const params = useLocalSearchParams();
-  const linkingUrl = useLinkingURL();
   const [webHostnameSubdomain, setWebHostnameSubdomain] = useState<string | null>(
     null
   );
@@ -46,28 +39,10 @@ export function useSubdomainCommunity() {
     setIsHydrated(true);
   }, []);
 
-  const nativeSubdomainFromLink = useMemo(
-    () =>
-      Platform.OS !== "web" ? parseSubdomainFromLinkUrl(linkingUrl) : null,
-    [linkingUrl]
-  );
-
-  // Determine subdomain source: hostname (web), captured link (native), or query param
+  // Determine subdomain source: hostname (web) or query param (native via +native-intent)
   const subdomain = useMemo(() => {
-    if (Platform.OS === "web") {
-      if (webHostnameSubdomain) {
-        return webHostnameSubdomain;
-      }
-    } else {
-      // On native, prefer useLinkingURL() if available (works in dev/hot-reload),
-      // then fall back to the module-level captured subdomain from RootLayout
-      if (nativeSubdomainFromLink) {
-        return nativeSubdomainFromLink;
-      }
-      const captured = getCapturedLinkSubdomain();
-      if (captured) {
-        return captured;
-      }
+    if (Platform.OS === "web" && webHostnameSubdomain) {
+      return webHostnameSubdomain;
     }
 
     const paramSubdomain = params.subdomain;
@@ -76,7 +51,7 @@ export function useSubdomainCommunity() {
     }
 
     return null;
-  }, [webHostnameSubdomain, nativeSubdomainFromLink, params.subdomain]);
+  }, [webHostnameSubdomain, params.subdomain]);
 
   // Fetch community by subdomain using Convex
   // Pass "skip" when no subdomain to skip the query
