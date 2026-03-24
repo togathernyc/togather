@@ -283,6 +283,9 @@ function MessageItemInner({
     return text;
   }, [message.content, eventShortIds, toolShortIds, channelInviteShortIds]);
 
+  // Whether this message has visible text content (used to avoid empty padding wrapper)
+  const hasTextContent = message.isDeleted || displayText.trim().length > 0;
+
   // Detect external URLs for link preview (only if no event/tool/channel invite cards)
   const externalUrl = useMemo(() => {
     if (message.isDeleted || eventShortIds.length > 0 || toolShortIds.length > 0 || channelInviteShortIds.length > 0) return null;
@@ -873,9 +876,11 @@ function MessageItemInner({
                     : [styles.otherMessageBubble, { backgroundColor: themeColors.chatBubbleOther }],
                 ]}
               >
-                <View style={styles.bubbleTextContent}>
-                  {renderMessageContent()}
-                </View>
+                {hasTextContent && (
+                  <View style={styles.bubbleTextContent}>
+                    {renderMessageContent()}
+                  </View>
+                )}
                 {renderImageAttachments()}
                 {renderDocumentAttachments()}
                 {renderAudioAttachments()}
