@@ -844,11 +844,11 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
               <View style={styles.imagePreview}>
                 <Image source={{ uri }} style={styles.previewImage} />
 
-                {/* Upload Progress (show on last item while uploading) */}
-                {uploading && index === selectedImages.length - 1 && (
+                {/* Upload Progress (show on last item while images are uploading) */}
+                {imageUploading && index === selectedImages.length - 1 && (
                   <View style={styles.uploadOverlay}>
                     <ActivityIndicator size="small" color="#fff" />
-                    <Text style={styles.uploadProgress}>{Math.round(progress)}%</Text>
+                    <Text style={styles.uploadProgress}>{Math.round(imageProgress)}%</Text>
                   </View>
                 )}
 
@@ -856,7 +856,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
                 <Pressable
                   style={styles.removeImageButton}
                   onPress={() => removeImage(index)}
-                  disabled={uploading}
+                  disabled={imageUploading}
                 >
                   <Ionicons name="close-circle" size={24} color="#fff" />
                 </Pressable>
