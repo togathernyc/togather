@@ -107,6 +107,7 @@ function WebVideoPlayer({ url, name, isOwnMessage = false, onLongPress }: VideoP
         <video
           src={resolvedUrl || ''}
           controls
+          playsInline
           preload="metadata"
           style={{
             width: '100%',
