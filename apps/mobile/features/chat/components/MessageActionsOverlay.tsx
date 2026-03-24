@@ -22,6 +22,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "@hooks/useTheme";
+import { getMediaUrl } from "@/utils/media";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
@@ -213,18 +214,6 @@ export function MessageActionsOverlay({
     setShowMoreActions(false);
   }, []);
 
-  // Get initials for avatar placeholder
-  const getInitials = (name?: string) => {
-    if (!name) return "?";
-    const trimmed = name.trim();
-    if (!trimmed) return "?";
-    const parts = trimmed.split(" ").filter(part => part.length > 0);
-    if (parts.length >= 2) {
-      return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
-    }
-    return trimmed.substring(0, Math.min(2, trimmed.length)).toUpperCase();
-  };
-
   if (!visible || !message) return null;
 
   // Truncate long messages for display
@@ -270,64 +259,77 @@ export function MessageActionsOverlay({
             ))}
           </View>
 
-          {/* Message Bubble Snapshot */}
+          {/* Mini Message Preview */}
           <View
             style={[
               styles.messageBubbleContainer,
               isOwnMessage ? styles.ownMessageAlign : styles.otherMessageAlign,
             ]}
           >
-            {/* Avatar for others' messages */}
-            {!isOwnMessage && (
-              <View style={styles.avatarContainer}>
-                {message.senderProfilePhoto ? (
-                  <Image
-                    source={{ uri: message.senderProfilePhoto }}
-                    style={styles.avatar}
-                  />
-                ) : (
-                  <View style={[styles.avatar, styles.avatarPlaceholder, { backgroundColor: colors.surfaceSecondary }]}>
-                    <Text style={[styles.avatarText, { color: colors.textSecondary }]}>
-                      {getInitials(message.senderName)}
-                    </Text>
+            <View
+              style={[
+                styles.messageBubble,
+                isOwnMessage
+                  ? [styles.ownMessageBubble, { backgroundColor: colors.chatBubbleOwn }]
+                  : [styles.otherMessageBubble, { backgroundColor: colors.chatBubbleOther }],
+              ]}
+            >
+              {/* Image thumbnails */}
+              {message.attachments?.some((a) => a.type === "image") && (() => {
+                const images = message.attachments!.filter((a) => a.type === "image");
+                const count = images.length;
+                return (
+                  <View style={[styles.miniImageGrid, count > 1 && styles.miniImageGridMulti]}>
+                    {images.slice(0, 4).map((attachment, index) => (
+                      <View
+                        key={index}
+                        style={[
+                          styles.miniImageThumb,
+                          count === 1 && styles.miniImageSingle,
+                          count === 2 && styles.miniImageHalf,
+                          count >= 3 && styles.miniImageQuarter,
+                        ]}
+                      >
+                        <Image
+                          source={{ uri: getMediaUrl(attachment.url) ?? undefined }}
+                          style={StyleSheet.absoluteFill}
+                          resizeMode="cover"
+                        />
+                        {index === 3 && count > 4 && (
+                          <View style={styles.miniImageMoreOverlay}>
+                            <Text style={styles.miniImageMoreText}>+{count - 4}</Text>
+                          </View>
+                        )}
+                      </View>
+                    ))}
                   </View>
-                )}
-              </View>
-            )}
+                );
+              })()}
 
-            <View style={styles.bubbleContent}>
-              {/* Sender name for others' messages */}
-              {!isOwnMessage && message.senderName && (
-                <Text style={styles.senderName}>{message.senderName}</Text>
+              {/* Video thumbnail */}
+              {message.attachments?.some((a) => a.type === "video") && (
+                <View style={styles.miniVideoThumb}>
+                  <View style={styles.miniVideoPlayIcon}>
+                    <Ionicons name="play" size={20} color="#fff" />
+                  </View>
+                </View>
               )}
 
-              {/* Message bubble */}
-              <View
-                style={[
-                  styles.messageBubble,
-                  isOwnMessage
-                    ? [styles.ownMessageBubble, { backgroundColor: colors.chatBubbleOwn }]
-                    : [styles.otherMessageBubble, { backgroundColor: colors.chatBubbleOther }],
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.messageText,
-                    { color: colors.chatBubbleOtherText },
-                    isOwnMessage && { color: colors.chatBubbleOwnText },
-                  ]}
-                >
-                  {displayContent}
-                </Text>
-
-                {/* Show image attachment preview if exists */}
-                {message.attachments?.some((a) => a.type === "image") && (
-                  <View style={styles.attachmentIndicator}>
-                    <Ionicons name="image" size={14} color={colors.textSecondary} />
-                    <Text style={[styles.attachmentText, { color: colors.textSecondary }]}>Image</Text>
-                  </View>
-                )}
-              </View>
+              {/* Text content */}
+              {displayContent.length > 0 && (
+                <View style={styles.miniTextContent}>
+                  <Text
+                    style={[
+                      styles.miniText,
+                      { color: colors.chatBubbleOtherText },
+                      isOwnMessage && { color: colors.chatBubbleOwnText },
+                    ]}
+                    numberOfLines={2}
+                  >
+                    {displayContent}
+                  </Text>
+                </View>
+              )}
             </View>
           </View>
 
@@ -446,10 +448,10 @@ const styles = StyleSheet.create({
   reactionEmoji: {
     fontSize: 24,
   },
-  // Message Bubble
+  // Mini Message Preview
   messageBubbleContainer: {
-    flexDirection: "row",
     width: "100%",
+    flexDirection: "row",
     marginBottom: 12,
   },
   ownMessageAlign: {
@@ -458,39 +460,10 @@ const styles = StyleSheet.create({
   otherMessageAlign: {
     justifyContent: "flex-start",
   },
-  avatarContainer: {
-    marginRight: 8,
-    marginTop: 4,
-  },
-  avatar: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-  },
-  avatarPlaceholder: {
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  avatarText: {
-    fontSize: 11,
-    fontWeight: "600",
-  },
-  bubbleContent: {
-    maxWidth: "85%",
-    flexShrink: 1,
-  },
-  senderName: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#fff",
-    marginBottom: 4,
-    marginLeft: 12,
-    opacity: 0.9,
-  },
   messageBubble: {
-    borderRadius: 18,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    borderRadius: 14,
+    overflow: "hidden",
+    maxWidth: 200,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
@@ -503,18 +476,65 @@ const styles = StyleSheet.create({
   otherMessageBubble: {
     borderBottomLeftRadius: 4,
   },
-  messageText: {
-    fontSize: 16,
-    lineHeight: 22,
-  },
-  attachmentIndicator: {
+  // Mini image grid
+  miniImageGrid: {
     flexDirection: "row",
-    alignItems: "center",
-    marginTop: 6,
-    gap: 4,
+    flexWrap: "wrap",
   },
-  attachmentText: {
-    fontSize: 12,
+  miniImageGridMulti: {
+    gap: 2,
+  },
+  miniImageThumb: {
+    overflow: "hidden",
+    backgroundColor: "#1a1a1a",
+  },
+  miniImageSingle: {
+    width: 200,
+    height: 150,
+  },
+  miniImageHalf: {
+    width: 99,
+    height: 99,
+  },
+  miniImageQuarter: {
+    width: 99,
+    height: 99,
+  },
+  miniImageMoreOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  miniImageMoreText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  // Mini video thumbnail
+  miniVideoThumb: {
+    width: 200,
+    height: 112,
+    backgroundColor: "#1a1a1a",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  miniVideoPlayIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "rgba(244, 67, 54, 0.9)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  // Mini text content
+  miniTextContent: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  miniText: {
+    fontSize: 14,
+    lineHeight: 18,
   },
   // Actions
   actionsContainer: {
