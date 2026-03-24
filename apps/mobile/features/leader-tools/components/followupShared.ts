@@ -14,7 +14,7 @@ export type FollowupMemberForScore = {
 export const SYSTEM_SCORE_COLUMNS = [
   { id: "sys_service", name: "Service", slot: "score1" as const },
   { id: "sys_attendance", name: "Attendance", slot: "score2" as const },
-  { id: "sys_togather", name: "Togather", slot: "score3" as const },
+  { id: "sys_togather", name: "Connection", slot: "score3" as const },
 ] as const;
 
 export type SubtitleVariable = {

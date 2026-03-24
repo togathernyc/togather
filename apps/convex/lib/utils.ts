@@ -252,3 +252,13 @@ export function isTokenExpired(createdAt: number, expiresIn: number): boolean {
   const expiresAt = createdAt + expiresIn;
   return nowSeconds >= expiresAt - 300;
 }
+
+/** Return the Monday 00:00 UTC timestamp for the ISO week containing `ts`. */
+export function getWeekStart(ts: number): number {
+  const d = new Date(ts);
+  const day = d.getUTCDay(); // 0=Sun, 1=Mon, ...
+  const diff = day === 0 ? -6 : 1 - day; // shift to Monday
+  d.setUTCDate(d.getUTCDate() + diff);
+  d.setUTCHours(0, 0, 0, 0);
+  return d.getTime();
+}

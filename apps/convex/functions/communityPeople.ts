@@ -1357,9 +1357,7 @@ export const history = query({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const u = user as any;
     const profileImage = u.profilePhoto
-      ? typeof u.profilePhoto === "string"
-        ? u.profilePhoto
-        : undefined
+      ? getMediaUrl(u.profilePhoto)
       : undefined;
 
     return {

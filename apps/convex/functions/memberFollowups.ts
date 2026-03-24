@@ -27,7 +27,7 @@ import { query, mutation, internalQuery, internalMutation } from "../_generated/
 import { paginationOptsValidator } from "convex/server";
 import { Doc, Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
-import { now, getMediaUrl, normalizePhone, isValidPhone, buildSearchText, safeSliceForJson } from "../lib/utils";
+import { now, getMediaUrl, normalizePhone, isValidPhone, buildSearchText, safeSliceForJson, getWeekStart } from "../lib/utils";
 import { addUserToAnnouncementGroup } from "./communities";
 import { requireAuth } from "../lib/auth";
 import { parseDateOptional } from "../lib/validation";
@@ -568,9 +568,12 @@ export const internalScoreBatch = internalQuery({
 });
 
 /**
- * Compute cross-group attendance percentages for a batch of users.
+ * Compute cross-group attendance data for a batch of users.
  * Processes ~20 users at a time to stay within Convex read limits.
- * Returns a map of userId (string) -> attendance percentage (0-100).
+ *
+ * Returns a map of userId (string) -> { pct, attendedWeekStarts }:
+ *   - pct: attendance percentage (0-100)
+ *   - attendedWeekStarts: array of Monday timestamps (ms) for weeks with ≥1 attendance
  */
 export const internalCrossGroupAttendance = internalQuery({
   args: {
@@ -580,7 +583,10 @@ export const internalCrossGroupAttendance = internalQuery({
   handler: async (ctx, args) => {
     const currentTime = now();
     const sixtyDaysAgo = currentTime - 60 * 24 * 60 * 60 * 1000;
-    const results: Record<string, number> = {};
+    const results: Record<
+      string,
+      { pct: number; attendedWeekStarts: number[] }
+    > = {};
 
     for (const userId of args.userIds) {
       const allMemberships = await ctx.db
@@ -591,9 +597,11 @@ export const internalCrossGroupAttendance = internalQuery({
 
       let allGroupsTotal = 0;
       let allGroupsAttended = 0;
+      const attendedWeekSet = new Set<number>();
 
       for (const membership of allMemberships) {
         // Past non-cancelled meetings in window (see "Meeting Status Quirks" at top of file)
+        // Use .take(20) to cover groups meeting up to 2x/week over 60 days (~17 meetings)
         const meetings = await ctx.db
           .query("meetings")
           .withIndex("by_group_scheduledAt", (q) =>
@@ -603,7 +611,7 @@ export const internalCrossGroupAttendance = internalQuery({
           )
           .filter((q) => q.neq(q.field("status"), "cancelled"))
           .order("desc")
-          .take(10);
+          .take(20);
 
         const attendances = await Promise.all(
           meetings.map((m) =>
@@ -617,11 +625,22 @@ export const internalCrossGroupAttendance = internalQuery({
         );
 
         allGroupsTotal += meetings.length;
-        allGroupsAttended += attendances.filter((a) => a?.status === 1).length;
+        for (let i = 0; i < meetings.length; i++) {
+          if (attendances[i]?.status === 1) {
+            allGroupsAttended++;
+            // Track the ISO week start (Monday) for this attended meeting
+            attendedWeekSet.add(getWeekStart(meetings[i].scheduledAt));
+          }
+        }
       }
 
-      results[userId.toString()] =
-        allGroupsTotal > 0 ? Math.round((allGroupsAttended / allGroupsTotal) * 100) : 0;
+      results[userId.toString()] = {
+        pct:
+          allGroupsTotal > 0
+            ? Math.round((allGroupsAttended / allGroupsTotal) * 100)
+            : 0,
+        attendedWeekStarts: Array.from(attendedWeekSet),
+      };
     }
 
     return results;
