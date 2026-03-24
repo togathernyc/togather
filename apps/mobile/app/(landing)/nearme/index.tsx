@@ -13,9 +13,11 @@ import {
 import { AppImage } from "@components/ui/AppImage";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery, api } from "@services/api/convex";
 import { useSubdomainCommunity } from "@/features/auth/hooks/useSubdomainCommunity";
 import { useUserLocation } from "@/features/location/hooks/useUserLocation";
+import { useTheme } from "@hooks/useTheme";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { DistanceSlider } from "@/features/nearme/components/DistanceSlider";
 import { NearbyGroupCard } from "@/features/nearme/components/NearbyGroupCard";
@@ -23,6 +25,8 @@ import { NearbyGroupCard } from "@/features/nearme/components/NearbyGroupCard";
 function NearMeScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
+  const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
   const typeParam = typeof params.type === "string" ? params.type : undefined;
 
   // Community from subdomain
@@ -87,28 +91,32 @@ function NearMeScreen() {
     router.push(`/group/${groupId}?subdomain=${subdomain}`);
   };
 
-  const handleGoBack = () => router.back();
-  const handleGoToExplore = () => router.replace("/(tabs)/search");
+  const handleClose = () => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace("/(tabs)/search");
+    }
+  };
 
   // Community not found
   if (communityError || (!communityLoading && !community && subdomain)) {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
+        <View style={[styles.closeButtonRow, { paddingTop: insets.top + 8 }]}>
+          <TouchableOpacity style={styles.closeButton} onPress={handleClose}>
+            <Ionicons name="close" size={22} color={colors.text} />
+          </TouchableOpacity>
+        </View>
         <View style={styles.errorContainer}>
-          <Ionicons name="alert-circle-outline" size={64} color="#999" />
-          <Text style={styles.errorTitle}>Community Not Found</Text>
-          <Text style={styles.errorMessage}>
+          <Ionicons name="alert-circle-outline" size={64} color={colors.textTertiary} />
+          <Text style={[styles.errorTitle, { color: colors.text }]}>Community Not Found</Text>
+          <Text style={[styles.errorMessage, { color: colors.textSecondary }]}>
             The community "{subdomain}" doesn't exist or is no longer available.
           </Text>
-          <View style={styles.errorActions}>
-            <TouchableOpacity style={styles.errorButton} onPress={handleGoBack}>
-              <Ionicons name="arrow-back" size={20} color="#333" />
-              <Text style={styles.errorButtonText}>Back</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.errorButton, styles.errorButtonPrimary]} onPress={handleGoToExplore}>
-              <Text style={[styles.errorButtonText, styles.errorButtonPrimaryText]}>Go to Explore</Text>
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity style={[styles.errorButton, styles.errorButtonPrimary]} onPress={handleClose}>
+            <Text style={[styles.errorButtonText, styles.errorButtonPrimaryText]}>Go to Explore</Text>
+          </TouchableOpacity>
         </View>
       </View>
     );
@@ -117,22 +125,21 @@ function NearMeScreen() {
   // No subdomain provided
   if (!subdomain && !communityLoading) {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
+        <View style={[styles.closeButtonRow, { paddingTop: insets.top + 8 }]}>
+          <TouchableOpacity style={styles.closeButton} onPress={handleClose}>
+            <Ionicons name="close" size={22} color={colors.text} />
+          </TouchableOpacity>
+        </View>
         <View style={styles.errorContainer}>
-          <Ionicons name="location-outline" size={64} color="#999" />
-          <Text style={styles.errorTitle}>Community Required</Text>
-          <Text style={styles.errorMessage}>
+          <Ionicons name="location-outline" size={64} color={colors.textTertiary} />
+          <Text style={[styles.errorTitle, { color: colors.text }]}>Community Required</Text>
+          <Text style={[styles.errorMessage, { color: colors.textSecondary }]}>
             Please access this page through a community subdomain.
           </Text>
-          <View style={styles.errorActions}>
-            <TouchableOpacity style={styles.errorButton} onPress={handleGoBack}>
-              <Ionicons name="arrow-back" size={20} color="#333" />
-              <Text style={styles.errorButtonText}>Back</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.errorButton, styles.errorButtonPrimary]} onPress={handleGoToExplore}>
-              <Text style={[styles.errorButtonText, styles.errorButtonPrimaryText]}>Go to Explore</Text>
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity style={[styles.errorButton, styles.errorButtonPrimary]} onPress={handleClose}>
+            <Text style={[styles.errorButtonText, styles.errorButtonPrimaryText]}>Go to Explore</Text>
+          </TouchableOpacity>
         </View>
       </View>
     );
@@ -141,17 +148,27 @@ function NearMeScreen() {
   // Loading community
   if (communityLoading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={DEFAULT_PRIMARY_COLOR} />
-        <Text style={styles.loadingText}>Loading community...</Text>
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
+        <View style={[styles.closeButtonRow, { paddingTop: insets.top + 8 }]}>
+          <TouchableOpacity style={styles.closeButton} onPress={handleClose}>
+            <Ionicons name="close" size={22} color={colors.text} />
+          </TouchableOpacity>
+        </View>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={DEFAULT_PRIMARY_COLOR} />
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading community...</Text>
+        </View>
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { borderBottomColor: colors.border, paddingTop: insets.top + 8 }]}>
+        <TouchableOpacity style={styles.closeButton} onPress={handleClose}>
+          <Ionicons name="close" size={22} color={colors.text} />
+        </TouchableOpacity>
         {community?.logo && (
           <AppImage
             source={community.logo}
@@ -164,8 +181,8 @@ function NearMeScreen() {
           />
         )}
         <View style={styles.headerText}>
-          <Text style={styles.communityName}>{community?.name}</Text>
-          <Text style={styles.pageTitle}>
+          <Text style={[styles.communityName, { color: colors.textSecondary }]}>{community?.name}</Text>
+          <Text style={[styles.pageTitle, { color: colors.text }]}>
             {selectedGroupTypeInfo
               ? `Find a ${selectedGroupTypeInfo.name} Near You`
               : "Find a group near you"}
@@ -175,17 +192,17 @@ function NearMeScreen() {
 
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
         {/* Location Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Your Location</Text>
+        <View style={[styles.section, { borderBottomColor: colors.border }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Your Location</Text>
 
           {coordinates ? (
-            <View style={styles.locationActive}>
+            <View style={[styles.locationActive, { backgroundColor: colors.surfaceSecondary }]}>
               <Ionicons
                 name={locationSource === "device" ? "location" : "pin"}
                 size={20}
                 color={DEFAULT_PRIMARY_COLOR}
               />
-              <Text style={styles.locationText}>
+              <Text style={[styles.locationText, { color: colors.text }]}>
                 {locationSource === "device" ? "Using your current location" : "Using entered location"}
               </Text>
               <TouchableOpacity onPress={clearLocation} style={styles.changeButton}>
@@ -209,13 +226,13 @@ function NearMeScreen() {
                 )}
               </TouchableOpacity>
 
-              <Text style={styles.orText}>or</Text>
+              <Text style={[styles.orText, { color: colors.textTertiary }]}>or</Text>
 
               <View style={styles.addressInputContainer}>
                 <TextInput
-                  style={styles.addressInput}
+                  style={[styles.addressInput, { borderColor: colors.border, color: colors.text, backgroundColor: colors.inputBackground }]}
                   placeholder="Enter address or zip code"
-                  placeholderTextColor="#999"
+                  placeholderTextColor={colors.inputPlaceholder}
                   value={addressInput}
                   onChangeText={setAddressInput}
                   autoCapitalize="words"
@@ -237,28 +254,28 @@ function NearMeScreen() {
             </View>
           )}
 
-          {locationError && <Text style={styles.errorText}>{locationError}</Text>}
+          {locationError && <Text style={styles.locationErrorText}>{locationError}</Text>}
         </View>
 
         {/* Distance Slider */}
         {coordinates && (
-          <View style={styles.section}>
+          <View style={[styles.section, { borderBottomColor: colors.border }]}>
             <DistanceSlider value={maxDistance} onChange={setMaxDistance} />
           </View>
         )}
 
         {/* Group Type Filter - hidden when pre-filtered by URL param */}
         {groupTypes && groupTypes.length > 1 && !isFilteredByType && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Group Type</Text>
+          <View style={[styles.section, { borderBottomColor: colors.border }]}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Group Type</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
               <View style={styles.filterRow}>
                 <TouchableOpacity
-                  style={[styles.filterChip, !selectedGroupType && styles.filterChipActive]}
+                  style={[styles.filterChip, { backgroundColor: colors.surfaceSecondary }, !selectedGroupType && styles.filterChipActive]}
                   onPress={() => setSelectedGroupType(undefined)}
                 >
                   <Text
-                    style={[styles.filterChipText, !selectedGroupType && styles.filterChipTextActive]}
+                    style={[styles.filterChipText, { color: colors.text }, !selectedGroupType && styles.filterChipTextActive]}
                   >
                     All
                   </Text>
@@ -266,12 +283,13 @@ function NearMeScreen() {
                 {groupTypes.map((type) => (
                   <TouchableOpacity
                     key={type.id}
-                    style={[styles.filterChip, selectedGroupType === type.slug && styles.filterChipActive]}
+                    style={[styles.filterChip, { backgroundColor: colors.surfaceSecondary }, selectedGroupType === type.slug && styles.filterChipActive]}
                     onPress={() => setSelectedGroupType(type.slug)}
                   >
                     <Text
                       style={[
                         styles.filterChipText,
+                        { color: colors.text },
                         selectedGroupType === type.slug && styles.filterChipTextActive,
                       ]}
                     >
@@ -286,8 +304,8 @@ function NearMeScreen() {
 
         {/* Results */}
         {coordinates && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>
+          <View style={[styles.section, { borderBottomColor: colors.border }]}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>
               {searchLoading
                 ? "Searching..."
                 : searchResult?.groups.length
@@ -309,9 +327,9 @@ function NearMeScreen() {
               </View>
             ) : (
               <View style={styles.emptyState}>
-                <Ionicons name="search-outline" size={48} color="#ccc" />
-                <Text style={styles.emptyTitle}>No groups nearby</Text>
-                <Text style={styles.emptyMessage}>
+                <Ionicons name="search-outline" size={48} color={colors.textTertiary} />
+                <Text style={[styles.emptyTitle, { color: colors.text }]}>No groups nearby</Text>
+                <Text style={[styles.emptyMessage, { color: colors.textSecondary }]}>
                   Try increasing the distance or changing your location.
                 </Text>
               </View>
@@ -322,9 +340,9 @@ function NearMeScreen() {
         {/* Prompt to set location */}
         {!coordinates && !locationLoading && (
           <View style={styles.promptContainer}>
-            <Ionicons name="compass-outline" size={64} color="#ccc" />
-            <Text style={styles.promptTitle}>Set your location</Text>
-            <Text style={styles.promptMessage}>
+            <Ionicons name="compass-outline" size={64} color={colors.textTertiary} />
+            <Text style={[styles.promptTitle, { color: colors.text }]}>Set your location</Text>
+            <Text style={[styles.promptMessage, { color: colors.textSecondary }]}>
               We need your location to find groups near you.
             </Text>
           </View>
@@ -337,18 +355,29 @@ function NearMeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
   },
   loadingContainer: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#fff",
   },
   loadingText: {
     marginTop: 16,
     fontSize: 16,
-    color: "#666",
+  },
+  closeButtonRow: {
+    flexDirection: "row",
+    justifyContent: "flex-start",
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+  },
+  closeButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "rgba(150, 150, 150, 0.15)",
+    justifyContent: "center",
+    alignItems: "center",
   },
   errorContainer: {
     flex: 1,
@@ -359,22 +388,14 @@ const styles = StyleSheet.create({
   errorTitle: {
     fontSize: 24,
     fontWeight: "600",
-    color: "#333",
     marginTop: 16,
     textAlign: "center",
   },
   errorMessage: {
     fontSize: 16,
-    color: "#666",
     marginTop: 8,
     textAlign: "center",
     lineHeight: 24,
-  },
-  errorActions: {
-    flexDirection: "row",
-    gap: 12,
-    marginTop: 24,
-    alignItems: "center",
   },
   errorButton: {
     flexDirection: "row",
@@ -383,17 +404,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#ddd",
+    marginTop: 24,
   },
   errorButtonPrimary: {
     backgroundColor: DEFAULT_PRIMARY_COLOR,
-    borderColor: DEFAULT_PRIMARY_COLOR,
   },
   errorButtonText: {
     fontSize: 16,
     fontWeight: "500",
-    color: "#333",
   },
   errorButtonPrimaryText: {
     color: "#fff",
@@ -402,9 +420,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     padding: 16,
-    paddingTop: Platform.OS === "ios" ? 60 : 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#eee",
   },
   communityLogo: {
     width: 48,
@@ -417,12 +433,10 @@ const styles = StyleSheet.create({
   },
   communityName: {
     fontSize: 14,
-    color: "#666",
   },
   pageTitle: {
     fontSize: 20,
     fontWeight: "600",
-    color: "#333",
   },
   scrollView: {
     flex: 1,
@@ -433,18 +447,15 @@ const styles = StyleSheet.create({
   section: {
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
   },
   sectionTitle: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 12,
   },
   locationActive: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f8f4ff",
     padding: 12,
     borderRadius: 8,
   },
@@ -452,7 +463,6 @@ const styles = StyleSheet.create({
     flex: 1,
     marginLeft: 8,
     fontSize: 14,
-    color: "#333",
   },
   changeButton: {
     paddingHorizontal: 12,
@@ -481,7 +491,6 @@ const styles = StyleSheet.create({
   },
   orText: {
     textAlign: "center",
-    color: "#999",
     fontSize: 14,
   },
   addressInputContainer: {
@@ -491,7 +500,6 @@ const styles = StyleSheet.create({
   addressInput: {
     flex: 1,
     borderWidth: 1,
-    borderColor: "#ddd",
     borderRadius: 8,
     padding: 14,
     fontSize: 16,
@@ -504,9 +512,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   addressButtonDisabled: {
-    backgroundColor: "#ccc",
+    opacity: 0.5,
   },
-  errorText: {
+  locationErrorText: {
     color: "#e74c3c",
     fontSize: 14,
     marginTop: 8,
@@ -519,14 +527,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
-    backgroundColor: "#f0f0f0",
   },
   filterChipActive: {
     backgroundColor: DEFAULT_PRIMARY_COLOR,
   },
   filterChipText: {
     fontSize: 14,
-    color: "#333",
   },
   filterChipTextActive: {
     color: "#fff",
@@ -545,12 +551,10 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 18,
     fontWeight: "600",
-    color: "#333",
     marginTop: 16,
   },
   emptyMessage: {
     fontSize: 14,
-    color: "#666",
     marginTop: 8,
     textAlign: "center",
   },
@@ -562,12 +566,10 @@ const styles = StyleSheet.create({
   promptTitle: {
     fontSize: 20,
     fontWeight: "600",
-    color: "#333",
     marginTop: 16,
   },
   promptMessage: {
     fontSize: 16,
-    color: "#666",
     marginTop: 8,
     textAlign: "center",
     lineHeight: 24,

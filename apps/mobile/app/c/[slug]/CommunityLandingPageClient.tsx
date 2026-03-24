@@ -83,6 +83,14 @@ export default function CommunityLandingPageClient() {
   const isLoading = data === undefined;
   const notFound = data === null;
 
+  const handleClose = () => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace("/(tabs)/search");
+    }
+  };
+
   const primaryColor = data?.community?.primaryColor || DEFAULT_PRIMARY_COLOR;
   const visibleFormFields = [...(data?.formFields || [])]
     .filter((field) => isFieldVisibleOnLanding(field))
@@ -285,7 +293,14 @@ export default function CommunityLandingPageClient() {
   if (isLoading) {
     return (
       <SafeAreaView style={[styles.centerContainer, { backgroundColor: colors.background }]}>
-        <ActivityIndicator size="large" color={DEFAULT_PRIMARY_COLOR} />
+        <View style={styles.closeButtonRow}>
+          <TouchableOpacity style={styles.closeButton} onPress={handleClose}>
+            <Ionicons name="close" size={22} color={colors.text} />
+          </TouchableOpacity>
+        </View>
+        <View style={styles.centerContent}>
+          <ActivityIndicator size="large" color={DEFAULT_PRIMARY_COLOR} />
+        </View>
       </SafeAreaView>
     );
   }
@@ -293,18 +308,24 @@ export default function CommunityLandingPageClient() {
   if (notFound) {
     return (
       <SafeAreaView style={[styles.centerContainer, { backgroundColor: colors.background }]}>
-        <Ionicons name="alert-circle-outline" size={64} color={colors.textTertiary} />
-        <Text style={[styles.errorTitle, { color: colors.text }]}>Page Not Found</Text>
-        <Text style={[styles.errorText, { color: colors.textTertiary }]}>
-          This community page doesn't exist or is no longer available.
-        </Text>
-        <TouchableOpacity
-          style={[styles.backButton, { borderColor: colors.border }]}
-          onPress={() => router.back()}
-        >
-          <Ionicons name="arrow-back" size={20} color={colors.text} />
-          <Text style={[styles.backButtonText, { color: colors.text }]}>Back</Text>
-        </TouchableOpacity>
+        <View style={styles.closeButtonRow}>
+          <TouchableOpacity style={styles.closeButton} onPress={handleClose}>
+            <Ionicons name="close" size={22} color={colors.text} />
+          </TouchableOpacity>
+        </View>
+        <View style={styles.centerContent}>
+          <Ionicons name="alert-circle-outline" size={64} color={colors.textTertiary} />
+          <Text style={[styles.errorTitle, { color: colors.text }]}>Page Not Found</Text>
+          <Text style={[styles.errorText, { color: colors.textTertiary }]}>
+            This community page doesn't exist or is no longer available.
+          </Text>
+          <TouchableOpacity
+            style={[styles.backButton, { borderColor: colors.border }]}
+            onPress={handleClose}
+          >
+            <Text style={[styles.backButtonText, { color: colors.text }]}>Go to Explore</Text>
+          </TouchableOpacity>
+        </View>
       </SafeAreaView>
     );
   }
@@ -312,16 +333,22 @@ export default function CommunityLandingPageClient() {
   if (submitSuccess) {
     return (
       <SafeAreaView style={[styles.centerContainer, { backgroundColor: colors.background }]}>
-        <View style={styles.successContainer}>
-          <View style={[styles.successIcon, { backgroundColor: primaryColor + "15" }]}>
-            <Ionicons name="checkmark-circle" size={64} color={primaryColor} />
-          </View>
-          <Text style={[styles.successTitle, { color: colors.text }]}>
-            {data.successMessage || `Welcome to ${data.community?.name || "the community"}!`}
-          </Text>
-          <Text style={[styles.successSubtitle, { color: colors.textSecondary }]}>
-            Download the Togather app to stay connected.
-          </Text>
+        <View style={styles.closeButtonRow}>
+          <TouchableOpacity style={styles.closeButton} onPress={handleClose}>
+            <Ionicons name="close" size={22} color={colors.text} />
+          </TouchableOpacity>
+        </View>
+        <View style={styles.centerContent}>
+          <View style={styles.successContainer}>
+            <View style={[styles.successIcon, { backgroundColor: primaryColor + "15" }]}>
+              <Ionicons name="checkmark-circle" size={64} color={primaryColor} />
+            </View>
+            <Text style={[styles.successTitle, { color: colors.text }]}>
+              {data.successMessage || `Welcome to ${data.community?.name || "the community"}!`}
+            </Text>
+            <Text style={[styles.successSubtitle, { color: colors.textSecondary }]}>
+              Download the Togather app to stay connected.
+            </Text>
           <View style={styles.appLinksContainer}>
             <TouchableOpacity
               style={[styles.appStoreButton, { backgroundColor: primaryColor }]}
@@ -352,6 +379,7 @@ export default function CommunityLandingPageClient() {
               <Text style={styles.appStoreButtonText}>Android APK</Text>
             </TouchableOpacity>
           </View>
+          </View>
         </View>
       </SafeAreaView>
     );
@@ -377,7 +405,11 @@ export default function CommunityLandingPageClient() {
         >
           {/* Hero Section */}
           <View style={[styles.heroSection, { backgroundColor: primaryColor }]}>
-            <View style={{ paddingTop: insets.top + 16 }} />
+            <View style={[styles.heroCloseRow, { paddingTop: insets.top + 8 }]}>
+              <TouchableOpacity style={styles.heroCloseButton} onPress={handleClose}>
+                <Ionicons name="close" size={22} color="#fff" />
+              </TouchableOpacity>
+            </View>
             {data.community?.logo ? (
               <AppImage
                 source={data.community.logo}
@@ -765,6 +797,24 @@ const styles = StyleSheet.create({
   },
   centerContainer: {
     flex: 1,
+  },
+  closeButtonRow: {
+    flexDirection: "row",
+    justifyContent: "flex-start",
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 8,
+  },
+  closeButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "rgba(150, 150, 150, 0.15)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  centerContent: {
+    flex: 1,
     justifyContent: "center",
     alignItems: "center",
     padding: 24,
@@ -800,6 +850,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 24,
     paddingBottom: 40,
+  },
+  heroCloseRow: {
+    alignSelf: "stretch",
+    flexDirection: "row",
+    justifyContent: "flex-start",
+    paddingBottom: 8,
+  },
+  heroCloseButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "rgba(255, 255, 255, 0.25)",
+    justifyContent: "center",
+    alignItems: "center",
   },
   communityLogo: {
     width: 80,

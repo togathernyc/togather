@@ -35,6 +35,29 @@ export function useSubdomainCommunity() {
   );
   const [isHydrated, setIsHydrated] = useState(false);
 
+  // On native, useLinkingURL() returns null on the first render before the
+  // universal-link URL resolves. We wait briefly for it to arrive so screens
+  // don't flash "Community Required" before the subdomain can be parsed.
+  const [isNativeLinkResolved, setIsNativeLinkResolved] = useState(
+    Platform.OS === "web"
+  );
+
+  // Mark resolved once a linking URL arrives on native
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+    if (linkingUrl) {
+      setIsNativeLinkResolved(true);
+    }
+  }, [linkingUrl]);
+
+  // Timeout fallback: if no linking URL arrives within 1 s (normal app launch,
+  // not via deep link), stop waiting so the screen can render normally.
+  useEffect(() => {
+    if (Platform.OS === "web" || isNativeLinkResolved) return;
+    const timer = setTimeout(() => setIsNativeLinkResolved(true), 1000);
+    return () => clearTimeout(timer);
+  }, [isNativeLinkResolved]);
+
   // Parse hostname on web after hydration
   useEffect(() => {
     if (Platform.OS === "web" && typeof window !== "undefined") {
@@ -80,11 +103,13 @@ export function useSubdomainCommunity() {
 
   // On web, wait for hydration to complete before reporting isLoading as false
   const isWaitingForHydration = Platform.OS === "web" && !isHydrated;
+  // On native, wait for the linking URL to resolve (or timeout)
+  const isWaitingForNativeLink = Platform.OS !== "web" && !isNativeLinkResolved;
 
   return {
     community: community ?? null,
     subdomain,
-    isLoading: isWaitingForHydration || isLoading,
+    isLoading: isWaitingForHydration || isWaitingForNativeLink || isLoading,
     error: null, // Convex throws on error, caught by error boundary
   };
 }
