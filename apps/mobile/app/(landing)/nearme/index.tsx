@@ -148,9 +148,16 @@ function NearMeScreen() {
   // Loading community
   if (communityLoading) {
     return (
-      <View style={[styles.loadingContainer, { backgroundColor: colors.background }]}>
-        <ActivityIndicator size="large" color={DEFAULT_PRIMARY_COLOR} />
-        <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading community...</Text>
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
+        <View style={[styles.closeButtonRow, { paddingTop: insets.top + 8 }]}>
+          <TouchableOpacity style={styles.closeButton} onPress={handleClose}>
+            <Ionicons name="close" size={22} color={colors.text} />
+          </TouchableOpacity>
+        </View>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={DEFAULT_PRIMARY_COLOR} />
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading community...</Text>
+        </View>
       </View>
     );
   }

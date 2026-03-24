@@ -338,16 +338,17 @@ export default function CommunityLandingPageClient() {
             <Ionicons name="close" size={22} color={colors.text} />
           </TouchableOpacity>
         </View>
-        <View style={styles.successContainer}>
-          <View style={[styles.successIcon, { backgroundColor: primaryColor + "15" }]}>
-            <Ionicons name="checkmark-circle" size={64} color={primaryColor} />
-          </View>
-          <Text style={[styles.successTitle, { color: colors.text }]}>
-            {data.successMessage || `Welcome to ${data.community?.name || "the community"}!`}
-          </Text>
-          <Text style={[styles.successSubtitle, { color: colors.textSecondary }]}>
-            Download the Togather app to stay connected.
-          </Text>
+        <View style={styles.centerContent}>
+          <View style={styles.successContainer}>
+            <View style={[styles.successIcon, { backgroundColor: primaryColor + "15" }]}>
+              <Ionicons name="checkmark-circle" size={64} color={primaryColor} />
+            </View>
+            <Text style={[styles.successTitle, { color: colors.text }]}>
+              {data.successMessage || `Welcome to ${data.community?.name || "the community"}!`}
+            </Text>
+            <Text style={[styles.successSubtitle, { color: colors.textSecondary }]}>
+              Download the Togather app to stay connected.
+            </Text>
           <View style={styles.appLinksContainer}>
             <TouchableOpacity
               style={[styles.appStoreButton, { backgroundColor: primaryColor }]}
@@ -377,6 +378,7 @@ export default function CommunityLandingPageClient() {
               <Ionicons name="logo-android" size={20} color="#fff" />
               <Text style={styles.appStoreButtonText}>Android APK</Text>
             </TouchableOpacity>
+          </View>
           </View>
         </View>
       </SafeAreaView>
