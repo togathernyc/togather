@@ -232,29 +232,38 @@ export const list = query({
 
     // When filtering by assignee, we can't use Convex's .filter() for array-contains,
     // so we manually paginate and filter. This uses the junction table lookup above.
+    // We keep fetching batches until we fill the page or exhaust the index.
     if (assigneeIdSet) {
-      // Manual pagination: collect from the sorted index, skip non-matching, fill page
       const { cursor, numItems } = args.paginationOpts;
       const page: any[] = [];
-      let skipped = 0;
-      const cursorValue = cursor ?? null;
+      let currentCursor = cursor ?? null;
+      let exhausted = false;
 
-      // We need to iterate through the query and manually filter
-      // Use a larger batch to compensate for filtered-out rows
-      const batchSize = numItems * 4;
-      const result = await q.paginate({ numItems: batchSize, cursor: cursorValue });
+      while (page.length < numItems && !exhausted) {
+        const batchSize = Math.max(numItems * 4, 200);
+        const result = await q.paginate({
+          numItems: batchSize,
+          cursor: currentCursor,
+        });
 
-      for (const doc of result.page) {
-        if (assigneeIdSet.has(doc._id.toString())) {
-          page.push(doc);
-          if (page.length >= numItems) break;
+        for (const doc of result.page) {
+          if (assigneeIdSet.has(doc._id.toString())) {
+            page.push(doc);
+            if (page.length >= numItems) break;
+          }
+        }
+
+        if (result.isDone) {
+          exhausted = true;
+        } else {
+          currentCursor = result.continueCursor;
         }
       }
 
       return {
         page,
-        isDone: result.isDone && page.length < numItems,
-        continueCursor: result.isDone ? "" : result.continueCursor,
+        isDone: exhausted && page.length < numItems,
+        continueCursor: exhausted ? "" : currentCursor,
       };
     }
 
