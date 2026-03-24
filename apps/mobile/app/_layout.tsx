@@ -46,6 +46,12 @@ import { usePrefetchExecutor } from "@features/chat/hooks/usePrefetchChannel";
 // Initialize log collector to capture console output for debugging
 logCollector.initialize();
 
+// Ensure (tabs) is always the base route so deep-linked modals present
+// over the tab bar instead of filling the entire screen on cold start.
+export const unstable_settings = {
+  initialRouteName: "(tabs)",
+};
+
 /**
  * Component that registers the prefetch executor.
  * Must be inside ChatPrefetchProvider and AuthProvider.
@@ -71,6 +77,7 @@ function ThemedStack() {
 
   return (
     <Stack
+      initialRouteName="(tabs)"
       screenOptions={{
         headerShown: false,
         animation: "fade",
