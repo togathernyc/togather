@@ -220,11 +220,11 @@ function compareSortValues(
 
 export function FollowupMobileGrid({
   groupId,
-  defaultAssigneeFilter,
+  enforcedAssigneeUserId,
   returnTo,
 }: {
   groupId: string;
-  defaultAssigneeFilter?: "me";
+  enforcedAssigneeUserId?: string;
   returnTo?: string | null;
 }) {
   const { colors } = useTheme();
@@ -285,12 +285,6 @@ export function FollowupMobileGrid({
   );
 
   const debouncedSearch = useDebounce(searchQuery, 450);
-
-  useEffect(() => {
-    if (defaultAssigneeFilter === "me" && !searchQuery && currentUserId) {
-      setSearchQuery("assignee:me");
-    }
-  }, [defaultAssigneeFilter, currentUserId]);
 
   const perGroupConfig = useAuthenticatedQuery(
     api.functions.memberFollowups.getFollowupConfig,
@@ -401,8 +395,8 @@ export function FollowupMobileGrid({
   }, [isConfigLoaded, scoreConfig, sortField]);
 
   const parsedQuery = useMemo(
-    () => parseFollowupQuerySyntax(debouncedSearch, leaderMap, scoreConfig, true),
-    [debouncedSearch, leaderMap, scoreConfig],
+    () => parseFollowupQuerySyntax(debouncedSearch, leaderMap, scoreConfig, true, currentUserId ?? undefined),
+    [debouncedSearch, leaderMap, scoreConfig, currentUserId],
   );
   const saveViewFilters = useMemo(() => {
     const base = {
@@ -438,13 +432,22 @@ export function FollowupMobileGrid({
     searchQuery.trim().length > 0 &&
     searchSuggestions.length > 0;
 
+  // Effective assignee filter: enforced prop takes priority over search syntax
+  const effectiveAssigneeFilter = enforcedAssigneeUserId
+    ? (enforcedAssigneeUserId as Id<"users">)
+    : parsedQuery.assigneeFilter
+      ? (parsedQuery.assigneeFilter as Id<"users">)
+      : undefined;
+
   const listFilterArgs = useMemo(() => {
     const filters: Record<string, unknown> = {};
     const dateRangeArgs = getDateAddedRangeArgs(parsedQuery.dateAddedFilter);
     if (parsedQuery.statusFilter)
       filters.statusFilter = parsedQuery.statusFilter;
-    if (parsedQuery.assigneeFilter)
-      filters.assigneeFilter = parsedQuery.assigneeFilter as Id<"users">;
+    if (effectiveAssigneeFilter)
+      filters.assigneeFilter = effectiveAssigneeFilter;
+    if (enforcedAssigneeUserId)
+      filters.requireSelfAssignee = true;
     if (parsedQuery.excludedAssigneeFilters.length > 0) {
       filters.excludedAssigneeFilters =
         parsedQuery.excludedAssigneeFilters as Id<"users">[];
@@ -459,7 +462,7 @@ export function FollowupMobileGrid({
     if (dateRangeArgs.addedAtMax !== undefined)
       filters.addedAtMax = dateRangeArgs.addedAtMax;
     return filters;
-  }, [parsedQuery]);
+  }, [parsedQuery, effectiveAssigneeFilter, enforcedAssigneeUserId]);
 
   const isClientSideSort = !SERVER_SORTABLE_FIELDS.has(sortField);
   const serverSortBy = SERVER_SORTABLE_FIELDS.has(sortField)
@@ -495,6 +498,12 @@ export function FollowupMobileGrid({
       ? {
           groupId: groupId as Id<"groups">,
           searchTerm: parsedQuery.searchText,
+          ...(effectiveAssigneeFilter
+            ? { assigneeFilter: effectiveAssigneeFilter }
+            : {}),
+          ...(enforcedAssigneeUserId
+            ? { requireSelfAssignee: true as const }
+            : {}),
         }
       : "skip",
   );

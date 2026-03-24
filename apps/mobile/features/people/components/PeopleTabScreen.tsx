@@ -4,11 +4,14 @@ import { useLocalSearchParams, usePathname } from "expo-router";
 import { UserRoute } from "@components/guards/UserRoute";
 import { useIsDesktopWeb } from "@hooks/useIsDesktopWeb";
 import { useAuthenticatedQuery, api } from "@services/api/convex";
+import { useAuth } from "@providers/AuthProvider";
 import { FollowupDesktopTable } from "@features/leader-tools/components/FollowupDesktopTable";
 import { FollowupMobileGrid } from "@features/leader-tools/components/FollowupMobileGrid";
 
 export function PeopleTabScreen() {
   const isDesktop = useIsDesktopWeb();
+  const { user } = useAuth();
+  const currentUserId = user?.id;
   const params = useLocalSearchParams<{ returnTo?: string }>();
   const pathname = usePathname();
   const returnToParam =
@@ -23,7 +26,7 @@ export function PeopleTabScreen() {
   );
   const announcementGroupId = crossGroupConfig?.announcementGroupId ?? "";
 
-  if (!announcementGroupId) {
+  if (!announcementGroupId || !currentUserId) {
     return (
       <UserRoute>
         <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
@@ -36,9 +39,9 @@ export function PeopleTabScreen() {
   return (
     <UserRoute>
       {isDesktop ? (
-        <FollowupDesktopTable groupId={announcementGroupId} defaultAssigneeFilter="me" returnTo={returnTo} />
+        <FollowupDesktopTable groupId={announcementGroupId} enforcedAssigneeUserId={currentUserId} returnTo={returnTo} />
       ) : (
-        <FollowupMobileGrid groupId={announcementGroupId} defaultAssigneeFilter="me" returnTo={returnTo} />
+        <FollowupMobileGrid groupId={announcementGroupId} enforcedAssigneeUserId={currentUserId} returnTo={returnTo} />
       )}
     </UserRoute>
   );

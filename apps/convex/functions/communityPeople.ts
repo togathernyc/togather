@@ -158,6 +158,8 @@ export const list = query({
     scoreMin: v.optional(v.number()),
     scoreMax: v.optional(v.number()),
     assigneeFilter: v.optional(v.string()),
+    // When true, forces assigneeFilter to the requesting user's ID (server-enforced)
+    requireSelfAssignee: v.optional(v.boolean()),
     paginationOpts: paginationOptsValidator,
   },
   handler: async (ctx, args) => {
@@ -170,13 +172,18 @@ export const list = query({
     }
     await requireCommunityMember(ctx, group.communityId, userId);
 
+    // Server-enforced self-assignee: override any client-provided assigneeFilter
+    const assigneeFilter = args.requireSelfAssignee
+      ? userId.toString()
+      : args.assigneeFilter;
+
     // Build set of matching communityPerson IDs when filtering by assignee
     let assigneeIdSet: Set<string> | null = null;
-    if (args.assigneeFilter) {
+    if (assigneeFilter) {
       const junctionRows = await ctx.db
         .query("communityPeopleAssignees")
         .withIndex("by_group_assignee", (q: any) =>
-          q.eq("groupId", args.groupId).eq("assigneeUserId", args.assigneeFilter),
+          q.eq("groupId", args.groupId).eq("assigneeUserId", assigneeFilter),
         )
         .collect();
       assigneeIdSet = new Set(
@@ -200,7 +207,7 @@ export const list = query({
       | "score3";
     const hasFilters =
       args.statusFilter ||
-      args.assigneeFilter ||
+      assigneeFilter ||
       args.scoreMax !== undefined ||
       args.scoreMin !== undefined;
 
@@ -273,6 +280,8 @@ export const search = query({
     scoreMax: v.optional(v.number()),
     addedAtMin: v.optional(v.number()),
     addedAtMax: v.optional(v.number()),
+    // When true, forces assigneeFilter to the requesting user's ID (server-enforced)
+    requireSelfAssignee: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token ?? "");
@@ -284,13 +293,18 @@ export const search = query({
     }
     await requireCommunityMember(ctx, group.communityId, userId);
 
+    // Server-enforced self-assignee: override any client-provided assigneeFilter
+    const assigneeFilter = args.requireSelfAssignee
+      ? userId
+      : args.assigneeFilter;
+
     // Build assignee filter set from junction table
     let assigneeIdSet: Set<string> | null = null;
-    if (args.assigneeFilter) {
+    if (assigneeFilter) {
       const junctionRows = await ctx.db
         .query("communityPeopleAssignees")
         .withIndex("by_group_assignee", (q: any) =>
-          q.eq("groupId", args.groupId).eq("assigneeUserId", args.assigneeFilter),
+          q.eq("groupId", args.groupId).eq("assigneeUserId", assigneeFilter),
         )
         .collect();
       assigneeIdSet = new Set(

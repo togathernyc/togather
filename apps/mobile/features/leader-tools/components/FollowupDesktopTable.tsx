@@ -232,11 +232,11 @@ function useDebounce<T>(value: T, delay: number): T {
 
 export function FollowupDesktopTable({
   groupId,
-  defaultAssigneeFilter,
+  enforcedAssigneeUserId,
   returnTo,
 }: {
   groupId: string;
-  defaultAssigneeFilter?: "me";
+  enforcedAssigneeUserId?: string;
   returnTo?: string | null;
 }) {
   const { colors } = useTheme();
@@ -254,13 +254,6 @@ export function FollowupDesktopTable({
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const debouncedSearch = useDebounce(searchQuery, 300);
-
-  // Initialize assignee filter from defaultAssigneeFilter prop
-  useEffect(() => {
-    if (defaultAssigneeFilter === "me" && !searchQuery && currentUserId) {
-      setSearchQuery("assignee:me");
-    }
-  }, [defaultAssigneeFilter, currentUserId]);
 
   // Side sheet
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
@@ -474,8 +467,8 @@ export function FollowupDesktopTable({
 
   // Parse search query
   const parsedQuery = useMemo(
-    () => parseFollowupQuerySyntax(debouncedSearch, leaderMap, scoreConfig),
-    [debouncedSearch, leaderMap, scoreConfig],
+    () => parseFollowupQuerySyntax(debouncedSearch, leaderMap, scoreConfig, false, currentUserId ?? undefined),
+    [debouncedSearch, leaderMap, scoreConfig, currentUserId],
   );
   const saveViewFilters = useMemo(() => {
     const base = {
@@ -762,18 +755,27 @@ export function FollowupDesktopTable({
   // Build filter args for list query (structured filters only, no text search)
   // Note: communityPeople.list only supports statusFilter, scoreField, scoreMin, scoreMax, assigneeFilter.
   // excludedAssigneeFilters and date range filters are applied client-side via applyParsedFollowupFilters.
+  // Effective assignee filter: enforced prop takes priority over search syntax
+  const effectiveAssigneeFilter = enforcedAssigneeUserId
+    ? (enforcedAssigneeUserId as Id<"users">)
+    : parsedQuery.assigneeFilter
+      ? (parsedQuery.assigneeFilter as Id<"users">)
+      : undefined;
+
   const listFilterArgs = useMemo(() => {
     const args: any = {};
     if (parsedQuery.statusFilter) args.statusFilter = parsedQuery.statusFilter;
-    if (parsedQuery.assigneeFilter)
-      args.assigneeFilter = parsedQuery.assigneeFilter as Id<"users">;
+    if (effectiveAssigneeFilter)
+      args.assigneeFilter = effectiveAssigneeFilter;
+    if (enforcedAssigneeUserId)
+      args.requireSelfAssignee = true;
     if (parsedQuery.scoreField) args.scoreField = parsedQuery.scoreField;
     if (parsedQuery.scoreMax !== undefined)
       args.scoreMax = parsedQuery.scoreMax;
     if (parsedQuery.scoreMin !== undefined)
       args.scoreMin = parsedQuery.scoreMin;
     return args;
-  }, [parsedQuery]);
+  }, [parsedQuery, effectiveAssigneeFilter, enforcedAssigneeUserId]);
 
   // Paginated query — used when there's NO text search
   const {
@@ -810,8 +812,11 @@ export function FollowupDesktopTable({
           ...(parsedQuery.statusFilter
             ? { statusFilter: parsedQuery.statusFilter }
             : {}),
-          ...(parsedQuery.assigneeFilter
-            ? { assigneeFilter: parsedQuery.assigneeFilter as Id<"users"> }
+          ...(effectiveAssigneeFilter
+            ? { assigneeFilter: effectiveAssigneeFilter }
+            : {}),
+          ...(enforcedAssigneeUserId
+            ? { requireSelfAssignee: true as const }
             : {}),
           ...(parsedQuery.excludedAssigneeFilters.length > 0
             ? {
