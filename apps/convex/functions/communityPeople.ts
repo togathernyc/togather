@@ -270,10 +270,11 @@ export const list = query({
       filtered.sort((a: any, b: any) => {
         const av = a[sortKey];
         const bv = b[sortKey];
-        // Handle undefined/null: push them to the end regardless of direction
+        // Match Convex index ordering: undefined sorts before all values.
+        // Ascending: undefined first. Descending: undefined last.
         if (av == null && bv == null) return 0;
-        if (av == null) return 1;
-        if (bv == null) return -1;
+        if (av == null) return -1 * dir;
+        if (bv == null) return 1 * dir;
         // Numeric comparison for numbers, string comparison otherwise
         if (typeof av === "number" && typeof bv === "number") {
           return (av - bv) * dir;
