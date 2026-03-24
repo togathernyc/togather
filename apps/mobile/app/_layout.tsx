@@ -42,10 +42,6 @@ import { ConvexProvider, useTokenSync } from "@services/api/convex";
 import { logCollector } from "@utils/logCollector";
 import { ChatPrefetchProvider } from "@features/chat/context/ChatPrefetchContext";
 import { usePrefetchExecutor } from "@features/chat/hooks/usePrefetchChannel";
-// Import to trigger module-level subdomain capture from universal link URL
-// before Expo Router consumes it. Must happen before child screens render.
-import "@features/auth/utils/communitySubdomain";
-
 // Initialize log collector to capture console output for debugging
 logCollector.initialize();
 
