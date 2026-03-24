@@ -1,16 +1,6 @@
+import { Platform } from "react-native";
+import { getLinkingURL } from "expo-linking";
 import { DOMAIN_CONFIG } from "@togather/shared";
-
-// Module-level store for the subdomain captured from the initial universal link URL.
-// Populated once in RootLayout via getLinkingURL() before Expo Router consumes the URL.
-let _capturedLinkSubdomain: string | null = null;
-
-export function setCapturedLinkSubdomain(subdomain: string | null) {
-  _capturedLinkSubdomain = subdomain;
-}
-
-export function getCapturedLinkSubdomain(): string | null {
-  return _capturedLinkSubdomain;
-}
 
 /**
  * Reserved subdomains that should not be treated as community subdomains
@@ -63,4 +53,14 @@ export function parseSubdomainFromLinkUrl(url: string | null): string | null {
   } catch {
     return null;
   }
+}
+
+// Capture subdomain from the initial universal link URL at module load time,
+// before Expo Router consumes the URL for routing. getLinkingURL() is synchronous
+// and available immediately. On web, subdomain comes from window.location instead.
+const _capturedLinkSubdomain: string | null =
+  Platform.OS !== "web" ? parseSubdomainFromLinkUrl(getLinkingURL()) : null;
+
+export function getCapturedLinkSubdomain(): string | null {
+  return _capturedLinkSubdomain;
 }
