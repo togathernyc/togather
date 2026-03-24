@@ -467,8 +467,8 @@ export function FollowupDesktopTable({
 
   // Parse search query
   const parsedQuery = useMemo(
-    () => parseFollowupQuerySyntax(debouncedSearch, leaderMap, scoreConfig),
-    [debouncedSearch, leaderMap, scoreConfig],
+    () => parseFollowupQuerySyntax(debouncedSearch, leaderMap, scoreConfig, false, currentUserId ?? undefined),
+    [debouncedSearch, leaderMap, scoreConfig, currentUserId],
   );
   const saveViewFilters = useMemo(() => {
     const base = {

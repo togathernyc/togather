@@ -74,8 +74,9 @@ function parseShortDate(rawDate: string): { start: number; end: number } | null 
   return { start, end };
 }
 
-function resolveLeaderId(nameQuery: string, leaderMap: Map<string, LeaderInfo>): string | null {
+function resolveLeaderId(nameQuery: string, leaderMap: Map<string, LeaderInfo>, currentUserId?: string): string | null {
   const normalized = nameQuery.toLowerCase();
+  if (normalized === "me" && currentUserId) return currentUserId;
   for (const [id, leader] of leaderMap.entries()) {
     const first = leader.firstName.toLowerCase();
     const last = leader.lastName.toLowerCase();
@@ -104,6 +105,7 @@ export function parseFollowupQuerySyntax(
   leaderMap: Map<string, LeaderInfo>,
   scoreConfig: ScoreConfigEntry[],
   useSystemScores?: boolean,
+  currentUserId?: string,
 ): ParsedFollowupFilters {
   const filters: Omit<ParsedFollowupFilters, "searchText"> = {
     excludedAssigneeFilters: [],
@@ -169,7 +171,7 @@ export function parseFollowupQuerySyntax(
   });
 
   freeText = freeText.replace(/(-?)assignee:([^\s]+)/gi, (match, negation, assigneeName) => {
-    const matchedId = resolveLeaderId(assigneeName, leaderMap);
+    const matchedId = resolveLeaderId(assigneeName, leaderMap, currentUserId);
     if (!matchedId) return match;
     if (negation === "-") {
       filters.excludedAssigneeFilters.push(matchedId);

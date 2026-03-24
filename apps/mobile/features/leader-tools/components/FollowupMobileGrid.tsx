@@ -395,8 +395,8 @@ export function FollowupMobileGrid({
   }, [isConfigLoaded, scoreConfig, sortField]);
 
   const parsedQuery = useMemo(
-    () => parseFollowupQuerySyntax(debouncedSearch, leaderMap, scoreConfig, true),
-    [debouncedSearch, leaderMap, scoreConfig],
+    () => parseFollowupQuerySyntax(debouncedSearch, leaderMap, scoreConfig, true, currentUserId ?? undefined),
+    [debouncedSearch, leaderMap, scoreConfig, currentUserId],
   );
   const saveViewFilters = useMemo(() => {
     const base = {
