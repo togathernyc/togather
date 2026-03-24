@@ -15,6 +15,7 @@ import {
   Alert,
   Dimensions,
   Modal,
+  Platform,
   GestureResponderEvent,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -94,11 +95,51 @@ function VideoDownloadFallback({ url, name, isOwnMessage }: VideoPlayerProps) {
 }
 
 // ============================================================================
+// Web Video Player (uses HTML5 <video>)
+// ============================================================================
+
+function WebVideoPlayer({ url, name, isOwnMessage = false, onLongPress }: VideoPlayerProps) {
+  const resolvedUrl = getMediaUrl(url);
+  const fileName = name || url.split('/').pop()?.split('?')[0] || 'Video';
+  const displayName = fileName.length > 20
+    ? fileName.slice(0, 10) + '...' + fileName.slice(-8)
+    : fileName;
+
+  return (
+    <View style={styles.container}>
+      <Pressable onLongPress={onLongPress} delayLongPress={300}>
+        <video
+          src={resolvedUrl || ''}
+          controls
+          playsInline
+          preload="metadata"
+          style={{
+            width: '100%',
+            maxWidth: VIDEO_MAX_WIDTH,
+            borderRadius: 8,
+            backgroundColor: '#000',
+            display: 'block',
+          }}
+        />
+      </Pressable>
+      <Text style={[styles.fileName, isOwnMessage && styles.ownMessageText]} numberOfLines={1}>
+        {displayName}
+      </Text>
+    </View>
+  );
+}
+
+// ============================================================================
 // Main Component
 // ============================================================================
 
 export function VideoPlayer({ url, name, isOwnMessage = false, onLongPress }: VideoPlayerProps) {
-  // Check if expo-av is available
+  // Web: use native HTML5 video element
+  if (Platform.OS === 'web') {
+    return <WebVideoPlayer url={url} name={name} isOwnMessage={isOwnMessage} onLongPress={onLongPress} />;
+  }
+
+  // Native: use expo-av if available, otherwise download fallback
   if (!isAudioVideoSupported()) {
     return <VideoDownloadFallback url={url} name={name} isOwnMessage={isOwnMessage} />;
   }
