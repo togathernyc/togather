@@ -13,7 +13,8 @@
     "@react-email/render": "^1.0.0",
     "@togather/shared": "workspace:*",
     "posthog-node": "^5.24.2",
-    "resend": "^4.0.0"
+    "resend": "^4.0.0",
+    "stripe": "^20.4.1"
   },
   "devDependencies": {
     "@edge-runtime/vm": "^5.0.0",

@@ -83,11 +83,19 @@ export default defineSchema({
 
     // Denormalized field for full-text search (combines name and subdomain)
     searchText: v.optional(v.string()),
+
+    // Stripe billing fields
+    stripeCustomerId: v.optional(v.string()),
+    stripeSubscriptionId: v.optional(v.string()),
+    subscriptionStatus: v.optional(v.string()), // "active" | "past_due" | "canceled" etc.
+    subscriptionPriceMonthly: v.optional(v.number()),
+    billingEmail: v.optional(v.string()),
   })
     .index("by_legacyId", ["legacyId"])
     .index("by_subdomain", ["subdomain"])
     .index("by_slug", ["slug"])
     .index("by_public", ["isPublic"])
+    .index("by_stripeCustomerId", ["stripeCustomerId"])
     .searchIndex("search_communities", {
       searchField: "searchText",
       filterFields: ["isPublic"],
@@ -1900,6 +1908,38 @@ export default defineSchema({
   })
     .index("by_community", ["communityId"])
     .index("by_user_community", ["createdById", "communityId"]),
+
+  // =============================================================================
+  // COMMUNITY PROPOSALS (onboarding & billing)
+  // =============================================================================
+  // Tracks proposals from community leaders to create a new community on
+  // the platform. Includes Stripe billing fields for subscription setup.
+
+  communityProposals: defineTable({
+    proposerId: v.id("users"),
+    communityName: v.string(),
+    estimatedSize: v.number(),
+    needsMigration: v.boolean(),
+    proposedMonthlyPrice: v.number(),
+    notes: v.optional(v.string()),
+    status: v.string(), // "pending" | "accepted" | "rejected"
+    reviewedById: v.optional(v.id("users")),
+    reviewedAt: v.optional(v.number()),
+    rejectionReason: v.optional(v.string()),
+    communityId: v.optional(v.id("communities")),
+    setupToken: v.optional(v.string()),
+    setupCompletedAt: v.optional(v.number()),
+    setupDescription: v.optional(v.string()),
+    stripeCustomerId: v.optional(v.string()),
+    stripeSubscriptionId: v.optional(v.string()),
+    stripePriceId: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_proposer", ["proposerId"])
+    .index("by_status", ["status"])
+    .index("by_setupToken", ["setupToken"])
+    .index("by_createdAt", ["createdAt"]),
 
   // =============================================================================
   // COMMUNITY PEOPLE ASSIGNEES (junction table for multi-assignee indexing)

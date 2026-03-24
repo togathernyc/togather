@@ -483,3 +483,71 @@ export function genericEmail(data: { title: string; body: string }): string {
   `;
   return wrapInLayout(content);
 }
+
+/**
+ * Community proposal received confirmation email
+ */
+export function proposalReceivedEmail(data: {
+  communityName: string;
+}): string {
+  const content = `
+    <h1 style="${baseStyles.heading}">We've received your proposal!</h1>
+    <p style="${baseStyles.text}">
+      Thanks for submitting a proposal to create <strong>${escapeHtml(data.communityName)}</strong> on Togather.
+    </p>
+    <p style="${baseStyles.text}">
+      Our team will review your proposal and get back to you soon. You'll receive an email once a decision has been made.
+    </p>
+  `;
+  return wrapInLayout(content);
+}
+
+/**
+ * Community proposal accepted email
+ */
+export function proposalAcceptedEmail(data: {
+  communityName: string;
+  proposerFirstName: string;
+  setupUrl: string;
+}): string {
+  const content = `
+    <h1 style="${baseStyles.heading}">Your community has been approved!</h1>
+    <p style="${baseStyles.text}">
+      Great news, ${escapeHtml(data.proposerFirstName)}! Your proposal to create <strong>${escapeHtml(data.communityName)}</strong> has been accepted.
+    </p>
+    <p style="${baseStyles.text}">
+      Click the button below to set up your community and start your subscription.
+    </p>
+    <div style="${baseStyles.buttonContainer}">
+      <a href="${escapeHtml(data.setupUrl)}" style="${baseStyles.button}">Set Up Your Community</a>
+    </div>
+    <p style="${baseStyles.text}" style="color: #666; font-size: 14px;">
+      This link is unique to your community. Please don't share it.
+    </p>
+  `;
+  return wrapInLayout(content);
+}
+
+/**
+ * Community proposal rejected email
+ */
+export function proposalRejectedEmail(data: {
+  communityName: string;
+  proposerFirstName: string;
+  reason?: string;
+}): string {
+  const reasonText = data.reason
+    ? `<p style="${baseStyles.text}">Reason: ${escapeHtml(data.reason)}</p>`
+    : "";
+  const content = `
+    <h1 style="${baseStyles.heading}">Proposal Update</h1>
+    <p style="${baseStyles.text}">
+      Hi ${escapeHtml(data.proposerFirstName)}, unfortunately we're unable to approve your proposal to create <strong>${escapeHtml(data.communityName)}</strong> at this time.
+    </p>
+    ${reasonText}
+    <p style="${baseStyles.text}">
+      If you have questions, feel free to reach out to us by replying to this email.
+    </p>
+  `;
+  return wrapInLayout(content);
+}

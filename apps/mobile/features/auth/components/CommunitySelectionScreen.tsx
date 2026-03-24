@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   TextInput,
   Alert,
+  Linking,
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -20,6 +21,7 @@ import { LeaveCommunityModal } from './LeaveCommunityModal';
 import { useConvex, useAuthenticatedMutation, api, Id, useStoredAuthToken } from '@services/api/convex';
 import { Avatar } from '@components/ui/Avatar';
 import { useTheme } from '@hooks/useTheme';
+import { DOMAIN_CONFIG } from '@togather/shared';
 
 // Check if there's a pending join intent and return the redirect path
 async function getPostAuthRedirect(): Promise<string> {
@@ -639,6 +641,19 @@ export function CommunitySelectionScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* Create community CTA */}
+        <View style={styles.createCommunitySection}>
+          <View style={[styles.createCommunityDivider, { backgroundColor: colors.borderLight }]} />
+          <Text style={[styles.createCommunityTitle, { color: colors.text }]}>Want to create a community?</Text>
+          <Text style={[styles.createCommunitySubtitle, { color: colors.textSecondary }]}>Start your own community on Togather</Text>
+          <TouchableOpacity
+            style={[styles.createCommunityButton, { borderColor: colors.link }]}
+            onPress={() => Linking.openURL(`${DOMAIN_CONFIG.landingUrl}/propose`)}
+          >
+            <Text style={[styles.createCommunityButtonText, { color: colors.link }]}>Create a Community</Text>
+          </TouchableOpacity>
+        </View>
+
         {/* Hidden option to continue without community */}
         <TouchableOpacity
           style={styles.continueWithoutContainer}
@@ -789,6 +804,35 @@ const styles = StyleSheet.create({
   helpLink: {
     fontSize: 14,
     fontWeight: "500",
+  },
+  createCommunitySection: {
+    alignItems: "center",
+    marginTop: 24,
+  },
+  createCommunityDivider: {
+    height: 1,
+    width: "100%",
+    marginBottom: 24,
+  },
+  createCommunityTitle: {
+    fontSize: 18,
+    fontWeight: "600",
+    marginBottom: 8,
+  },
+  createCommunitySubtitle: {
+    fontSize: 14,
+    marginBottom: 16,
+  },
+  createCommunityButton: {
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 32,
+    alignItems: "center",
+  },
+  createCommunityButtonText: {
+    fontSize: 16,
+    fontWeight: "600",
   },
   continueWithoutContainer: {
     marginTop: 32,
