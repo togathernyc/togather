@@ -348,8 +348,10 @@ export const completeSetup = mutation({
     if (proposal.status !== "accepted") {
       throw new Error("Proposal is not accepted");
     }
-    if (proposal.setupCompletedAt !== undefined) {
-      throw new Error("Setup has already been completed");
+    // Allow re-running setup if checkout hasn't been completed yet.
+    // This prevents a dead-end when checkout creation fails after setup.
+    if (proposal.setupCompletedAt !== undefined && proposal.stripeSubscriptionId) {
+      throw new Error("Setup has already been completed and subscription is active");
     }
     if (!proposal.communityId) {
       throw new Error("Proposal has no associated community");
