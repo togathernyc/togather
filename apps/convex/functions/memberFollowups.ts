@@ -568,9 +568,12 @@ export const internalScoreBatch = internalQuery({
 });
 
 /**
- * Compute cross-group attendance percentages for a batch of users.
+ * Compute cross-group attendance data for a batch of users.
  * Processes ~20 users at a time to stay within Convex read limits.
- * Returns a map of userId (string) -> attendance percentage (0-100).
+ *
+ * Returns a map of userId (string) -> { pct, attendedWeekStarts }:
+ *   - pct: attendance percentage (0-100)
+ *   - attendedWeekStarts: array of Monday timestamps (ms) for weeks with ≥1 attendance
  */
 export const internalCrossGroupAttendance = internalQuery({
   args: {
@@ -580,7 +583,10 @@ export const internalCrossGroupAttendance = internalQuery({
   handler: async (ctx, args) => {
     const currentTime = now();
     const sixtyDaysAgo = currentTime - 60 * 24 * 60 * 60 * 1000;
-    const results: Record<string, number> = {};
+    const results: Record<
+      string,
+      { pct: number; attendedWeekStarts: number[] }
+    > = {};
 
     for (const userId of args.userIds) {
       const allMemberships = await ctx.db
@@ -591,6 +597,7 @@ export const internalCrossGroupAttendance = internalQuery({
 
       let allGroupsTotal = 0;
       let allGroupsAttended = 0;
+      const attendedWeekSet = new Set<number>();
 
       for (const membership of allMemberships) {
         // Past non-cancelled meetings in window (see "Meeting Status Quirks" at top of file)
@@ -617,16 +624,37 @@ export const internalCrossGroupAttendance = internalQuery({
         );
 
         allGroupsTotal += meetings.length;
-        allGroupsAttended += attendances.filter((a) => a?.status === 1).length;
+        for (let i = 0; i < meetings.length; i++) {
+          if (attendances[i]?.status === 1) {
+            allGroupsAttended++;
+            // Track the ISO week start (Monday) for this attended meeting
+            attendedWeekSet.add(getWeekStart(meetings[i].scheduledAt));
+          }
+        }
       }
 
-      results[userId.toString()] =
-        allGroupsTotal > 0 ? Math.round((allGroupsAttended / allGroupsTotal) * 100) : 0;
+      results[userId.toString()] = {
+        pct:
+          allGroupsTotal > 0
+            ? Math.round((allGroupsAttended / allGroupsTotal) * 100)
+            : 0,
+        attendedWeekStarts: Array.from(attendedWeekSet),
+      };
     }
 
     return results;
   },
 });
+
+/** Return the Monday 00:00 UTC timestamp for the ISO week containing `ts`. */
+function getWeekStart(ts: number): number {
+  const d = new Date(ts);
+  const day = d.getUTCDay(); // 0=Sun, 1=Mon, ...
+  const diff = day === 0 ? -6 : 1 - day; // shift to Monday
+  d.setUTCDate(d.getUTCDate() + diff);
+  d.setUTCHours(0, 0, 0, 0);
+  return d.getTime();
+}
 
 // ============================================================================
 // Queries & Actions
