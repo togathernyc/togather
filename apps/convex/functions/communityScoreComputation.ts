@@ -2,7 +2,7 @@
  * Community-Level Score Computation Pipeline
  *
  * Maintains the `communityPeople` table — the community-wide view of all members
- * with system scores (Service, Attendance, Togather). Scores are recomputed:
+ * with system scores (Service, Attendance, Connection). Scores are recomputed:
  *   1. Daily via cron (time-decay scores shift each day)
  *   2. On-demand for a single member after followup actions
  *   3. Via backfill CLI command
@@ -25,7 +25,7 @@ import {
 } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
-import { now, getMediaUrl, safeSliceForJson } from "../lib/utils";
+import { now, getMediaUrl, safeSliceForJson, getWeekStart } from "../lib/utils";
 import {
   extractSystemRawValues,
   calculateAllSystemScores,
@@ -218,8 +218,7 @@ export const computeCommunityScoresBatch = internalQuery({
           (f) =>
             f.type === "followed_up" ||
             f.type === "call" ||
-            f.type === "text" ||
-            f.type === "note"
+            f.type === "text"
         );
         const lastInPerson = followups.find((f) => f.type === "followed_up");
         const lastCall = followups.find((f) => f.type === "call");
@@ -299,11 +298,49 @@ export const computeCommunityScoresBatch = internalQuery({
           : undefined;
         const latestNoteAt = latestNoteEntry?.createdAt ?? undefined;
 
-        // Cross-group attendance percentage
-        const crossGroupPct =
-          (args.crossGroupAttendanceMap?.[member.userId.toString()] as
-            | number
-            | undefined) ?? 0;
+        // Cross-group attendance data
+        const crossGroupData = args.crossGroupAttendanceMap?.[
+          member.userId.toString()
+        ] as
+          | { pct: number; attendedWeekStarts: number[] }
+          | number // backwards-compat with legacy callers
+          | undefined;
+
+        let crossGroupPct: number;
+        let attendedWeeksInWindow: number;
+        let totalWeeksInWindow: number;
+
+        // Count distinct ISO weeks in the join-date-adjusted window
+        const WEEK_MS = 7 * DAY_MS;
+        const windowStart = Math.max(
+          member.joinedAt,
+          currentTime - 60 * DAY_MS,
+        );
+        const firstWeek = getWeekStart(windowStart);
+        const lastWeek = getWeekStart(currentTime);
+
+        if (crossGroupData && typeof crossGroupData === "object") {
+          crossGroupPct = crossGroupData.pct;
+          // Count ISO weeks spanned by the window (inclusive of both ends)
+          totalWeeksInWindow = Math.max(
+            1,
+            Math.round((lastWeek - firstWeek) / WEEK_MS) + 1,
+          );
+          // Filter attended weeks to only those within the member's window
+          attendedWeeksInWindow = crossGroupData.attendedWeekStarts.filter(
+            (ws) => ws >= firstWeek,
+          ).length;
+        } else {
+          // Legacy fallback: plain number percentage
+          crossGroupPct = (crossGroupData as number) ?? 0;
+          totalWeeksInWindow = Math.max(
+            1,
+            Math.round((lastWeek - firstWeek) / WEEK_MS) + 1,
+          );
+          attendedWeeksInWindow = Math.round(
+            (crossGroupPct / 100) * totalWeeksInWindow,
+          );
+        }
 
         // PCO serving count
         const pcoCount = pcoServingMap.get(member.userId.toString()) ?? 0;
@@ -312,6 +349,8 @@ export const computeCommunityScoresBatch = internalQuery({
         const rawValues = extractSystemRawValues({
           crossGroupAttendancePct: crossGroupPct,
           consecutiveMissed,
+          attendedWeeksInWindow,
+          totalWeeksInWindow,
           daysSinceLastFollowup: daysSince(lastFollowup),
           daysSinceLastInPerson: daysSince(lastInPerson),
           daysSinceLastCall: daysSince(lastCall),
@@ -634,11 +673,17 @@ export const computeCommunityScores = internalAction({
       }
 
       // Step 4: Compute cross-group attendance for this batch
-      const crossGroupAttendanceMap: Record<string, number> = {};
+      const crossGroupAttendanceMap: Record<
+        string,
+        { pct: number; attendedWeekStarts: number[] }
+      > = {};
       const userIds = page.members.map((m) => m.userId);
       for (let i = 0; i < userIds.length; i += CROSS_GROUP_BATCH_SIZE) {
         const batch = userIds.slice(i, i + CROSS_GROUP_BATCH_SIZE);
-        const batchResults: Record<string, number> = await ctx.runQuery(
+        const batchResults: Record<
+          string,
+          { pct: number; attendedWeekStarts: number[] }
+        > = await ctx.runQuery(
           internal.functions.memberFollowups.internalCrossGroupAttendance,
           { groupId: announcementGroupId, userIds: batch }
         );
@@ -759,7 +804,10 @@ export const computeSingleCommunityMember = internalAction({
     const customAlerts = communityAlerts ?? undefined;
 
     // Compute cross-group attendance for this single user
-    const crossGroupAttendanceMap: Record<string, number> = await ctx.runQuery(
+    const crossGroupAttendanceMap: Record<
+      string,
+      { pct: number; attendedWeekStarts: number[] }
+    > = await ctx.runQuery(
       internal.functions.memberFollowups.internalCrossGroupAttendance,
       { groupId: announcementGroup._id, userIds: [args.userId] }
     );

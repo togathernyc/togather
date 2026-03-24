@@ -7,7 +7,7 @@
  * Score slots:
  *   score1 = Service (PCO serving frequency)
  *   score2 = Attendance (cross-group attendance %)
- *   score3 = Togather (composite engagement score)
+ *   score3 = Connection (composite engagement score)
  */
 
 // ============================================================================
@@ -25,6 +25,8 @@ export interface SystemRawValues {
   // Attendance
   attendance_all_groups_pct: number;
   consecutive_missed: number;
+  attended_weeks_in_window: number;
+  total_weeks_in_window: number;
 
   // Followup recency
   days_since_last_followup: number;
@@ -52,12 +54,13 @@ export const SYSTEM_SCORES: SystemScoreDefinition[] = [
     id: "sys_attendance",
     slot: "score2",
     name: "Attendance",
-    description: "Attendance percentage across all groups in the community",
+    description:
+      "Percentage of weeks with at least one attendance in the last 60 days (adjusted for join date)",
   },
   {
     id: "sys_togather",
     slot: "score3",
-    name: "Togather",
+    name: "Connection",
     description:
       "Composite engagement score combining attendance consistency and followup recency",
   },
@@ -78,6 +81,8 @@ export const SYSTEM_SCORE_BY_SLOT = Object.fromEntries(
 export const SYSTEM_VARIABLE_IDS: ReadonlySet<string> = new Set([
   "attendance_all_groups_pct",
   "consecutive_missed",
+  "attended_weeks_in_window",
+  "total_weeks_in_window",
   "days_since_last_followup",
   "days_since_last_in_person",
   "days_since_last_call",
@@ -93,7 +98,7 @@ export const SYSTEM_VARIABLE_IDS: ReadonlySet<string> = new Set([
  * Calculate the 0-100 score for a single system score by ID.
  *
  * - `sys_service`: 20 points per PCO service in the past 2 months, max 100 at 5+.
- * - `sys_attendance`: Direct attendance percentage across all groups, clamped 0-100.
+ * - `sys_attendance`: Percentage of weeks (in a join-date-adjusted 60-day window) with ≥1 attendance.
  * - `sys_togather`: Composite of attendance consistency (consecutive misses penalty)
  *   and best followup recency (face-to-face > call > text), averaged equally.
  *
@@ -109,10 +114,19 @@ export function calculateSystemScore(
     case "sys_service":
       return Math.min(100, rawValues.pco_services_past_2mo * 20);
 
-    case "sys_attendance":
+    case "sys_attendance": {
+      const totalWeeks = rawValues.total_weeks_in_window;
+      if (totalWeeks <= 0) return 0;
       return Math.round(
-        Math.max(0, Math.min(100, rawValues.attendance_all_groups_pct)),
+        Math.max(
+          0,
+          Math.min(
+            100,
+            (rawValues.attended_weeks_in_window / totalWeeks) * 100,
+          ),
+        ),
       );
+    }
 
     case "sys_togather": {
       // Attendance component: penalize consecutive misses at -15 per miss
@@ -185,6 +199,8 @@ export function calculateAllSystemScores(rawValues: SystemRawValues): {
 export function extractSystemRawValues(params: {
   crossGroupAttendancePct: number;
   consecutiveMissed: number;
+  attendedWeeksInWindow: number;
+  totalWeeksInWindow: number;
   daysSinceLastFollowup: number;
   daysSinceLastInPerson: number;
   daysSinceLastCall: number;
@@ -196,6 +212,8 @@ export function extractSystemRawValues(params: {
   return {
     attendance_all_groups_pct: params.crossGroupAttendancePct,
     consecutive_missed: params.consecutiveMissed,
+    attended_weeks_in_window: params.attendedWeeksInWindow,
+    total_weeks_in_window: params.totalWeeksInWindow,
     days_since_last_followup: cap(params.daysSinceLastFollowup),
     days_since_last_in_person: cap(params.daysSinceLastInPerson),
     days_since_last_call: cap(params.daysSinceLastCall),

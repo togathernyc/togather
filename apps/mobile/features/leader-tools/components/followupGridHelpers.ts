@@ -120,7 +120,8 @@ export function parseFollowupQuerySyntax(
   const systemScoreNames: Record<string, string> = {
     service: "score1",
     attendance: "score2",
-    togather: "score3",
+    connection: "score3",
+    togather: "score3", // legacy alias
   };
 
   const reservedKeywords = new Set(["status", "assignee"]);
@@ -314,15 +315,15 @@ export function getFollowupSearchSuggestions(
       },
       {
         id: "score-min-sys_togather",
-        label: "togather:>60",
-        insertText: "togather:>",
-        helperText: "Togather greater than value",
+        label: "connection:>60",
+        insertText: "connection:>",
+        helperText: "Connection greater than value",
       },
       {
         id: "score-max-sys_togather",
-        label: "togather:<30",
-        insertText: "togather:<",
-        helperText: "Togather less than value",
+        label: "connection:<30",
+        insertText: "connection:<",
+        helperText: "Connection less than value",
       },
     ];
   } else {
@@ -399,7 +400,7 @@ export function getFollowupQueryHelperText(
   }
 
   const scoreNames = useSystemScores
-    ? ["service", "attendance", "togather"]
+    ? ["service", "attendance", "connection"]
     : scoreConfig.map((score) => score.name.toLowerCase());
 
   if (

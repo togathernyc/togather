@@ -437,11 +437,16 @@ export const computeGroupScores = internalAction({
           const userIds = page.members.map((m) => m.userId);
           for (let i = 0; i < userIds.length; i += CROSS_BATCH) {
             const batch = userIds.slice(i, i + CROSS_BATCH);
-            const batchResults: Record<string, number> = await ctx.runQuery(
+            const batchResults: Record<
+              string,
+              { pct: number; attendedWeekStarts: number[] }
+            > = await ctx.runQuery(
               internal.functions.memberFollowups.internalCrossGroupAttendance,
               { groupId: args.groupId, userIds: batch }
             );
-            Object.assign(crossGroupAttendanceMap, batchResults);
+            for (const [uid, data] of Object.entries(batchResults)) {
+              crossGroupAttendanceMap[uid] = data.pct;
+            }
           }
         }
 
@@ -544,10 +549,17 @@ export const computeSingleMemberScore = internalAction({
       s.variables.some((v) => v.variableId === "attendance_all_groups_pct")
     ) || scoreConfig.alerts?.some((a) => a.variableId === "attendance_all_groups_pct");
     if (usesCrossGroup) {
-      crossGroupAttendanceMap = await ctx.runQuery(
+      const rawMap: Record<
+        string,
+        { pct: number; attendedWeekStarts: number[] }
+      > = await ctx.runQuery(
         internal.functions.memberFollowups.internalCrossGroupAttendance,
         { groupId: args.groupId, userIds: [memberData.userId] }
       );
+      crossGroupAttendanceMap = {};
+      for (const [uid, data] of Object.entries(rawMap)) {
+        crossGroupAttendanceMap[uid] = data.pct;
+      }
     }
 
     // Score the single member
