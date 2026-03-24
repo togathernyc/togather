@@ -335,6 +335,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
             console.error('[MessageInput] Video upload failed:', uploadResult.error);
             Alert.alert('Upload Failed', uploadResult.error);
             setSelectedVideo(null);
+            setUploadedVideo(null);
             resetVideoUpload();
           } else {
             setUploadedVideo({
@@ -467,6 +468,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
             console.error('[MessageInput] Video upload failed:', uploadResult.error);
             Alert.alert('Upload Failed', uploadResult.error);
             setSelectedVideo(null);
+            setUploadedVideo(null);
             resetVideoUpload();
           } else {
             setUploadedVideo({
