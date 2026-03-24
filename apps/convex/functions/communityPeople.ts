@@ -231,39 +231,61 @@ export const list = query({
     }
 
     // When filtering by assignee, we can't use Convex's .filter() for array-contains,
-    // so we manually paginate and filter. This uses the junction table lookup above.
-    // We keep fetching batches until we fill the page or exhaust the index.
+    // so we fetch all matching docs by ID from the junction table lookup above.
+    //
+    // A leader's assigned people set is small (typically 10-100), so we fetch all
+    // docs in parallel, apply filters/sort in memory, and return a single page.
+    // This avoids cursor-skipping bugs from partial batch consumption in a loop,
+    // and avoids unbounded sequential DB reads.
     if (assigneeIdSet) {
-      const { cursor, numItems } = args.paginationOpts;
-      const page: any[] = [];
-      let currentCursor = cursor ?? null;
-      let exhausted = false;
+      const docs = await Promise.all(
+        [...assigneeIdSet].map((id) => ctx.db.get(id as Id<"communityPeople">)),
+      );
+      const validDocs = docs.filter(
+        (d): d is NonNullable<typeof d> =>
+          d !== null && d.groupId?.toString() === args.groupId.toString(),
+      );
 
-      while (page.length < numItems && !exhausted) {
-        const batchSize = Math.max(numItems * 4, 200);
-        const result = await q.paginate({
-          numItems: batchSize,
-          cursor: currentCursor,
-        });
+      // Apply status/score filters (same logic as the .filter() branch above)
+      const filtered = validDocs.filter((d) => {
+        if (args.statusFilter && d.status !== args.statusFilter) return false;
+        if (
+          args.scoreMax !== undefined &&
+          (d[scoreFilterField] ?? 0) >= args.scoreMax
+        )
+          return false;
+        if (
+          args.scoreMin !== undefined &&
+          (d[scoreFilterField] ?? 0) <= args.scoreMin
+        )
+          return false;
+        return true;
+      });
 
-        for (const doc of result.page) {
-          if (assigneeIdSet.has(doc._id.toString())) {
-            page.push(doc);
-            if (page.length >= numItems) break;
-          }
+      // Sort to match the requested order.
+      // Derive the actual document field from the index name (by_group_<field> → <field>)
+      // to handle cases like sortBy="assignee" → field="assigneeSortKey".
+      const sortKey = indexName.replace("by_group_", "");
+      const dir = direction === "desc" ? -1 : 1;
+      filtered.sort((a: any, b: any) => {
+        const av = a[sortKey];
+        const bv = b[sortKey];
+        // Match Convex index ordering: undefined sorts before all values.
+        // Ascending: undefined first. Descending: undefined last.
+        if (av == null && bv == null) return 0;
+        if (av == null) return -1 * dir;
+        if (bv == null) return 1 * dir;
+        // Numeric comparison for numbers, string comparison otherwise
+        if (typeof av === "number" && typeof bv === "number") {
+          return (av - bv) * dir;
         }
-
-        if (result.isDone) {
-          exhausted = true;
-        } else {
-          currentCursor = result.continueCursor;
-        }
-      }
+        return String(av).localeCompare(String(bv)) * dir;
+      });
 
       return {
-        page,
-        isDone: exhausted && page.length < numItems,
-        continueCursor: exhausted ? "" : currentCursor,
+        page: filtered,
+        isDone: true,
+        continueCursor: "",
       };
     }
 
