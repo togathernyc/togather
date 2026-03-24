@@ -220,11 +220,11 @@ function compareSortValues(
 
 export function FollowupMobileGrid({
   groupId,
-  crossGroupMode,
+  defaultAssigneeFilter,
   returnTo,
 }: {
   groupId: string;
-  crossGroupMode?: boolean;
+  defaultAssigneeFilter?: "me";
   returnTo?: string | null;
 }) {
   const { colors } = useTheme();
@@ -232,6 +232,7 @@ export function FollowupMobileGrid({
   const insets = useSafeAreaInsets();
   const { community, user } = useAuth();
   const communityId = community?.id as Id<"communities"> | undefined;
+  const currentUserId = user?.id as Id<"users"> | undefined;
   const { primaryColor } = useCommunityTheme();
 
   const [sortField, setSortField] = useState("score1");
@@ -277,51 +278,47 @@ export function FollowupMobileGrid({
     >
   >({});
 
-  // Cross-group config
+  // Cross-group config — fetched so we have community-wide leaders for assignee picker
   const crossGroupConfig = useAuthenticatedQuery(
     api.functions.memberFollowups.getCrossGroupConfig,
-    crossGroupMode ? {} : "skip"
+    {},
   );
-  const [crossGroupFilter, setCrossGroupFilter] = useState<string>("");
-
-  useEffect(() => {
-    if (!crossGroupMode || crossGroupFilter) return;
-    const defaultId = crossGroupConfig?.announcementGroupId
-      ?? crossGroupConfig?.leaderGroups?.[0]?._id;
-    if (defaultId) setCrossGroupFilter(defaultId);
-  }, [crossGroupMode, crossGroupFilter, crossGroupConfig]);
 
   const debouncedSearch = useDebounce(searchQuery, 450);
 
+  useEffect(() => {
+    if (defaultAssigneeFilter === "me" && !searchQuery && currentUserId) {
+      setSearchQuery("assignee:me");
+    }
+  }, [defaultAssigneeFilter, currentUserId]);
+
   const perGroupConfig = useAuthenticatedQuery(
     api.functions.memberFollowups.getFollowupConfig,
-    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip",
+    groupId ? { groupId: groupId as Id<"groups"> } : "skip",
   );
-  const config = crossGroupMode ? crossGroupConfig : perGroupConfig;
+  const config = perGroupConfig;
 
   const groupData = useQuery(
     api.functions.groups.index.getById,
-    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip",
+    groupId ? { groupId: groupId as Id<"groups"> } : "skip",
   );
 
   const communityPeopleConfig = useAuthenticatedQuery(
-    !crossGroupMode && groupData?.communityId
+    groupData?.communityId
       ? api.functions.communityPeople.getConfig
       : ("skip" as any),
-    !crossGroupMode && groupData?.communityId
+    groupData?.communityId
       ? { communityId: groupData.communityId }
       : "skip",
   );
 
   const scoreConfig = useMemo<ScoreConfigEntry[]>(
-    () => crossGroupMode
-      ? (crossGroupConfig?.scoreConfigScores ?? [])
-      : (communityPeopleConfig?.scores?.map((s: any) => ({ id: s.id, name: s.name })) ?? []),
-    [crossGroupMode, crossGroupConfig?.scoreConfigScores, communityPeopleConfig?.scores],
+    () => communityPeopleConfig?.scores?.map((s: any) => ({ id: s.id, name: s.name })) ?? [],
+    [communityPeopleConfig?.scores],
   );
   const isConfigLoaded = config !== undefined;
-  const toolDisplayName = crossGroupMode ? "People" : (typeof perGroupConfig?.toolDisplayName === "string" ? perGroupConfig.toolDisplayName : "People");
-  const memberSubtitleRaw = crossGroupMode ? "" : ((config as any)?.memberSubtitle ?? "");
+  const toolDisplayName = typeof perGroupConfig?.toolDisplayName === "string" ? perGroupConfig.toolDisplayName : "People";
+  const memberSubtitleRaw = (config as any)?.memberSubtitle ?? "";
   const memberSubtitleIds = useMemo(
     () =>
       normalizeSubtitleVariableIds(
@@ -329,21 +326,22 @@ export function FollowupMobileGrid({
       ),
     [memberSubtitleRaw],
   );
-  const columnConfig = crossGroupMode ? null : (perGroupConfig?.followupColumnConfig ?? null);
+  const columnConfig = perGroupConfig?.followupColumnConfig ?? null;
   const customFields = useMemo<CustomFieldDef[]>(
-    () => crossGroupMode ? [] : ((communityPeopleConfig?.customFields ?? []) as CustomFieldDef[]),
-    [crossGroupMode, communityPeopleConfig?.customFields],
+    () => (communityPeopleConfig?.customFields ?? []) as CustomFieldDef[],
+    [communityPeopleConfig?.customFields],
   );
 
   const perGroupLeaders = useAuthenticatedQuery(
     api.functions.groups.members.getLeaders,
-    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip",
+    groupId ? { groupId: groupId as Id<"groups"> } : "skip",
   );
-  const leaders = crossGroupMode ? crossGroupConfig?.leaders : perGroupLeaders;
+  // Use all community leaders so any leader can be assigned across groups
+  const leaders = crossGroupConfig?.leaders ?? perGroupLeaders;
 
   const groupTasks = useAuthenticatedQuery(
     api.functions.tasks.index.listGroup,
-    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip",
+    groupId ? { groupId: groupId as Id<"groups"> } : "skip",
   );
 
   const tasksByMember = useMemo(() => {
@@ -414,11 +412,11 @@ export function FollowupMobileGrid({
       scoreMin: parsedQuery.scoreMin,
       scoreMax: parsedQuery.scoreMax,
     };
-    if (crossGroupMode || !groupId) {
+    if (!groupId) {
       return base;
     }
     return { ...base, groupId: groupId as Id<"groups"> };
-  }, [crossGroupMode, groupId, parsedQuery]);
+  }, [groupId, parsedQuery]);
   const hasTextSearch = parsedQuery.searchText.length > 0;
   const hasStructuredFilters =
     !!parsedQuery.statusFilter ||
@@ -469,18 +467,14 @@ export function FollowupMobileGrid({
     : "score1";
   const serverSortDirection = isClientSideSort ? "desc" : sortDirection;
 
-  const crossGroupFilterArg = crossGroupMode && crossGroupFilter
-    ? { groupFilter: crossGroupFilter as Id<"groups"> }
-    : {};
-
   const {
     results: perGroupRawMembersRaw,
-    status: perGroupPaginationStatus,
-    loadMore: perGroupLoadMore,
-    isLoading: perGroupIsLoading,
+    status: paginationStatus,
+    loadMore,
+    isLoading,
   } = useAuthenticatedPaginatedQuery(
     api.functions.communityPeople.list,
-    !crossGroupMode && !hasTextSearch && groupId
+    !hasTextSearch && groupId
       ? {
           groupId: groupId as Id<"groups">,
           sortBy: serverSortBy,
@@ -490,54 +484,21 @@ export function FollowupMobileGrid({
       : "skip",
     { initialNumItems: 50 },
   );
-  const perGroupRawMembers = useMemo(
+  const rawMembers = useMemo(
     () => applyDevZipCodeSample(perGroupRawMembersRaw.map(adaptCommunityPerson)),
     [perGroupRawMembersRaw],
   );
 
-  const {
-    results: crossGroupRawMembersRaw,
-    status: crossGroupPaginationStatus,
-    loadMore: crossGroupLoadMore,
-    isLoading: crossGroupIsLoading,
-  } = useAuthenticatedPaginatedQuery(
-    api.functions.communityPeople.listAssignedToMe,
-    crossGroupMode && !hasTextSearch && communityId && crossGroupFilter
-      ? {
-          communityId,
-          sortBy: serverSortBy,
-          sortDirection: serverSortDirection,
-          ...listFilterArgs,
-          ...crossGroupFilterArg,
-        }
-      : "skip",
-    { initialNumItems: 50 },
-  );
-  const crossGroupRawMembers = useMemo(
-    () =>
-      crossGroupRawMembersRaw
-        ? applyDevZipCodeSample(
-            crossGroupRawMembersRaw.map((r: any) => adaptCommunityPerson(r)),
-          )
-        : [],
-    [crossGroupRawMembersRaw],
-  );
-
-  const rawMembers = crossGroupMode ? crossGroupRawMembers : perGroupRawMembers;
-  const paginationStatus = crossGroupMode ? crossGroupPaginationStatus : perGroupPaginationStatus;
-  const loadMore = crossGroupMode ? crossGroupLoadMore : perGroupLoadMore;
-  const isLoading = crossGroupMode ? crossGroupIsLoading : perGroupIsLoading;
-
   const perGroupSearchResultsRaw = useAuthenticatedQuery(
     api.functions.communityPeople.search,
-    !crossGroupMode && hasTextSearch && groupId
+    hasTextSearch && groupId
       ? {
           groupId: groupId as Id<"groups">,
           searchTerm: parsedQuery.searchText,
         }
       : "skip",
   );
-  const perGroupSearchResults = useMemo(
+  const searchResults = useMemo(
     () =>
       perGroupSearchResultsRaw
         ? applyDevZipCodeSample(perGroupSearchResultsRaw.map(adaptCommunityPerson))
@@ -545,64 +506,11 @@ export function FollowupMobileGrid({
     [perGroupSearchResultsRaw],
   );
 
-  const crossGroupSearchResultsRaw = useAuthenticatedQuery(
-    api.functions.communityPeople.searchAssignedToMe,
-    crossGroupMode && hasTextSearch && communityId && crossGroupFilter
-      ? {
-          communityId,
-          searchTerm: parsedQuery.searchText,
-          ...(parsedQuery.statusFilter
-            ? { statusFilter: parsedQuery.statusFilter }
-            : {}),
-          ...(parsedQuery.assigneeFilter
-            ? { assigneeFilter: parsedQuery.assigneeFilter as Id<"users"> }
-            : {}),
-          ...(parsedQuery.excludedAssigneeFilters.length > 0
-            ? {
-                excludedAssigneeFilters:
-                  parsedQuery.excludedAssigneeFilters as Id<"users">[],
-              }
-            : {}),
-          ...(parsedQuery.scoreField
-            ? { scoreField: parsedQuery.scoreField }
-            : {}),
-          ...(parsedQuery.scoreMax !== undefined
-            ? { scoreMax: parsedQuery.scoreMax }
-            : {}),
-          ...(parsedQuery.scoreMin !== undefined
-            ? { scoreMin: parsedQuery.scoreMin }
-            : {}),
-          ...getDateAddedRangeArgs(parsedQuery.dateAddedFilter),
-          ...crossGroupFilterArg,
-        }
-      : "skip",
-  );
-  const crossGroupSearchResults = useMemo(
-    () =>
-      crossGroupSearchResultsRaw
-        ? applyDevZipCodeSample(
-            crossGroupSearchResultsRaw.map((r: any) => adaptCommunityPerson(r)),
-          )
-        : undefined,
-    [crossGroupSearchResultsRaw],
-  );
-
-  const searchResults = crossGroupMode ? crossGroupSearchResults : perGroupSearchResults;
-
   const totalCount = useAuthenticatedQuery(
-    crossGroupMode
-      ? api.functions.communityPeople.countAssignedToMe
-      : api.functions.communityPeople.count,
-    crossGroupMode
-      ? communityId && crossGroupFilter
-        ? {
-            communityId,
-            groupFilter: crossGroupFilter as Id<"groups">,
-          }
-        : "skip"
-      : groupId
-        ? { groupId: groupId as Id<"groups"> }
-        : "skip",
+    api.functions.communityPeople.count,
+    groupId
+      ? { groupId: groupId as Id<"groups"> }
+      : "skip",
   );
   const setAssigneeMut = useAuthenticatedMutation(
     api.functions.communityPeople.setAssignees,
@@ -624,12 +532,10 @@ export function FollowupMobileGrid({
   );
 
   const getMemberGroupId = useCallback(
-    (memberId: string): Id<"groups"> => {
-      if (!crossGroupMode) return groupId as Id<"groups">;
-      const member = (rawMembers ?? []).find((m: any) => m.groupMemberId === memberId || m._id === memberId);
-      return ((member as any)?.groupId ?? groupId) as Id<"groups">;
+    (_memberId: string): Id<"groups"> => {
+      return groupId as Id<"groups">;
     },
-    [crossGroupMode, groupId, rawMembers]
+    [groupId]
   );
 
   const getSortFieldValue = useCallback(
@@ -1085,10 +991,8 @@ export function FollowupMobileGrid({
     }
   };
 
-  const handleMemberPress = (memberId: string, memberGroupId?: string) => {
-    const effectiveGroupId = crossGroupMode && memberGroupId ? memberGroupId : groupId;
-    const crossGroupParam = crossGroupMode ? "?cross_group=1" : "";
-    router.push(`/(user)/leader-tools/${effectiveGroupId}/followup/${memberId}${crossGroupParam}`);
+  const handleMemberPress = (memberId: string, _memberGroupId?: string) => {
+    router.push(`/(user)/leader-tools/${groupId}/followup/${memberId}`);
   };
 
   const handleSettingsPress = () => {
@@ -1809,9 +1713,6 @@ export function FollowupMobileGrid({
           )}
 
           <View style={styles.memberTextWrap}>
-            {crossGroupMode && (item as any).groupName ? (
-              <Text style={[styles.groupNameBadge, { color: colors.link }]}>{(item as any).groupName}</Text>
-            ) : null}
             <Text style={[styles.memberName, { color: colors.text }]} numberOfLines={1}>
               {item.firstName} {item.lastName}
             </Text>
@@ -1910,25 +1811,21 @@ export function FollowupMobileGrid({
           <View style={styles.headerContent}>
             <Text style={[styles.headerTitle, { color: colors.text }]}>{toolDisplayName}</Text>
             <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>
-              {crossGroupMode ? "All assigned people across groups" : (groupData?.name || "Group")}
+              {groupData?.name || "Group"}
             </Text>
           </View>
-          {!crossGroupMode && (
-            <TouchableOpacity
-              style={styles.headerAddButton}
-              onPress={() => setShowQuickAddModal(true)}
-            >
-              <Ionicons name="person-add-outline" size={20} color={colors.success} />
-            </TouchableOpacity>
-          )}
-          {!crossGroupMode && (
-            <TouchableOpacity
-              style={styles.settingsButton}
-              onPress={handleSettingsPress}
-            >
-              <Ionicons name="settings-outline" size={22} color={colors.textSecondary} />
-            </TouchableOpacity>
-          )}
+          <TouchableOpacity
+            style={styles.headerAddButton}
+            onPress={() => setShowQuickAddModal(true)}
+          >
+            <Ionicons name="person-add-outline" size={20} color={colors.success} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.settingsButton}
+            onPress={handleSettingsPress}
+          >
+            <Ionicons name="settings-outline" size={22} color={colors.textSecondary} />
+          </TouchableOpacity>
         </View>
 
         <View style={[styles.searchRow, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary }]}>
@@ -2009,9 +1906,9 @@ export function FollowupMobileGrid({
         </Text>
       </View>
 
-      {(groupData?.communityId || (crossGroupMode && communityId)) && (
+      {groupData?.communityId && (
         <PeopleViewBar
-          communityId={(groupData?.communityId ?? communityId)!}
+          communityId={groupData.communityId}
           activeViewId={activeViewId}
           onViewSelect={(viewId, view) => {
             if (view?.isSpecial) {
@@ -2050,11 +1947,7 @@ export function FollowupMobileGrid({
             setViewToDelete({ id: viewId, name: viewName, isShared });
           }}
           onCreateView={() => setShowSaveViewModal(true)}
-          isAdmin={
-            crossGroupMode
-              ? user?.is_admin === true
-              : groupData?.userRole === "admin"
-          }
+          isAdmin={groupData?.userRole === "admin"}
           specialViews={[{ id: FOLLOWUP_MAP_VIEW_ID, name: "Map", icon: "map-outline" }]}
         />
       )}
@@ -2092,12 +1985,9 @@ export function FollowupMobileGrid({
               groupName: (member as any).groupName,
             }))}
             loading={isInitialLoading}
-            onOpenMember={(memberId, memberGroupId) => {
-              const effectiveGroupId =
-                crossGroupMode && memberGroupId ? memberGroupId : groupId;
-              const crossGroupParam = crossGroupMode ? "?cross_group=1" : "";
+            onOpenMember={(memberId) => {
               router.push(
-                `/(user)/leader-tools/${effectiveGroupId}/followup/${memberId}${crossGroupParam}`,
+                `/(user)/leader-tools/${groupId}/followup/${memberId}`,
               );
             }}
           />
@@ -2484,19 +2374,15 @@ export function FollowupMobileGrid({
       />
 
       {/* Save view modal */}
-      {(groupData?.communityId || (crossGroupMode && communityId)) && (
+      {groupData?.communityId && (
         <SaveViewModal
           visible={showSaveViewModal}
           onClose={() => setShowSaveViewModal(false)}
-          communityId={(groupData?.communityId ?? communityId)!}
+          communityId={groupData.communityId}
           currentSortBy={sortField}
           currentSortDirection={sortDirection}
           currentFilters={saveViewFilters}
-          isAdmin={
-            crossGroupMode
-              ? user?.is_admin === true
-              : groupData?.userRole === "admin"
-          }
+          isAdmin={groupData?.userRole === "admin"}
         />
       )}
 

@@ -232,11 +232,11 @@ function useDebounce<T>(value: T, delay: number): T {
 
 export function FollowupDesktopTable({
   groupId,
-  crossGroupMode,
+  defaultAssigneeFilter,
   returnTo,
 }: {
   groupId: string;
-  crossGroupMode?: boolean;
+  defaultAssigneeFilter?: "me";
   returnTo?: string | null;
 }) {
   const { colors } = useTheme();
@@ -254,6 +254,13 @@ export function FollowupDesktopTable({
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const debouncedSearch = useDebounce(searchQuery, 300);
+
+  // Initialize assignee filter from defaultAssigneeFilter prop
+  useEffect(() => {
+    if (defaultAssigneeFilter === "me" && !searchQuery && currentUserId) {
+      setSearchQuery("assignee:me");
+    }
+  }, [defaultAssigneeFilter, currentUserId]);
 
   // Side sheet
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
@@ -354,104 +361,61 @@ export function FollowupDesktopTable({
     {},
   );
 
-  // Cross-group local column config (localStorage)
-  const CROSS_GROUP_COL_CONFIG_KEY = "people-cross-group-col-config";
-  const [crossGroupColConfig, setCrossGroupColConfig] = useState<{
-    columnOrder: string[];
-    hiddenColumns: string[];
-  } | null>(null);
-
-  useEffect(() => {
-    if (!crossGroupMode || Platform.OS !== "web") return;
-    try {
-      const stored = localStorage.getItem(CROSS_GROUP_COL_CONFIG_KEY);
-      if (stored) setCrossGroupColConfig(JSON.parse(stored));
-    } catch {
-      /* localStorage unavailable */
-    }
-  }, [crossGroupMode]);
-
-  // Group filter for cross-group mode — default to announcement group
-  const [crossGroupFilter, setCrossGroupFilter] = useState<string>("");
-
-  useEffect(() => {
-    if (!crossGroupMode || crossGroupFilter) return;
-    const defaultId = crossGroupConfig?.announcementGroupId
-      ?? crossGroupConfig?.leaderGroups?.[0]?._id;
-    if (defaultId) setCrossGroupFilter(defaultId);
-  }, [crossGroupMode, crossGroupFilter, crossGroupConfig]);
 
   // Config query (per-group)
   const perGroupConfig = useAuthenticatedQuery(
     api.functions.memberFollowups.getFollowupConfig,
-    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip",
+    groupId ? { groupId: groupId as Id<"groups"> } : "skip",
   );
-  const config = crossGroupMode ? crossGroupConfig : perGroupConfig;
+  const config = perGroupConfig;
 
-  // Group data for header (per-group mode only)
+  // Group data for header
   const groupData = useQuery(
     api.functions.groups.index.getById,
-    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip",
+    groupId ? { groupId: groupId as Id<"groups"> } : "skip",
   );
 
   // Community-level data source config
   const communityPeopleConfig = useAuthenticatedQuery(
     api.functions.communityPeople.getConfig,
-    !crossGroupMode && groupData?.communityId
+    groupData?.communityId
       ? { communityId: groupData.communityId }
       : "skip",
   );
 
-  const scoreConfig: ScoreConfigEntry[] = crossGroupMode
-    ? (crossGroupConfig?.scoreConfigScores ?? [])
-    : (communityPeopleConfig?.scores?.map((s: any) => ({
-        id: s.id,
-        name: s.name,
-      })) ?? []);
-  const toolDisplayName = crossGroupMode
-    ? "People"
-    : (perGroupConfig?.toolDisplayName ?? "People");
+  const scoreConfig: ScoreConfigEntry[] =
+    communityPeopleConfig?.scores?.map((s: any) => ({
+      id: s.id,
+      name: s.name,
+    })) ?? [];
+  const toolDisplayName = perGroupConfig?.toolDisplayName ?? "People";
   // Views are now the only way to persist column preferences.
-  // Per-group followupColumnConfig is ignored — no view selected = all columns visible.
-  const baseColumnConfig = crossGroupMode
-    ? crossGroupColConfig
-      ? {
-          columnOrder: crossGroupColConfig.columnOrder,
-          hiddenColumns: crossGroupColConfig.hiddenColumns,
-          customFields: [],
-        }
-      : null
-    : null;
-  // Local overrides take priority (from view selection or drag-reorder)
+  // Views are the only way to persist column preferences.
+  // No view selected = all columns visible. Local overrides come from view selection or drag-reorder.
   const columnConfig = useMemo(() => {
-    if (!localColumnOrder && !localHiddenColumns) return baseColumnConfig;
+    if (!localColumnOrder && !localHiddenColumns) return null;
     return {
-      ...(baseColumnConfig ?? {}),
-      columnOrder: localColumnOrder ?? baseColumnConfig?.columnOrder ?? [],
-      hiddenColumns:
-        localHiddenColumns ?? baseColumnConfig?.hiddenColumns ?? [],
+      columnOrder: localColumnOrder ?? [],
+      hiddenColumns: localHiddenColumns ?? [],
     };
-  }, [baseColumnConfig, localColumnOrder, localHiddenColumns]);
-  const customFields: CustomFieldDef[] = crossGroupMode
-    ? []
-    : ((communityPeopleConfig?.customFields ?? []) as CustomFieldDef[]);
+  }, [localColumnOrder, localHiddenColumns]);
+  const customFields: CustomFieldDef[] =
+    (communityPeopleConfig?.customFields ?? []) as CustomFieldDef[];
 
   // Leaders query (for assignee picker — current group only)
   const perGroupLeaders = useAuthenticatedQuery(
     api.functions.groups.members.getLeaders,
-    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip",
+    groupId ? { groupId: groupId as Id<"groups"> } : "skip",
   );
-  // Picker options: current-group leaders only (cross-group mode uses crossGroupConfig leaders)
-  const pickerLeaders = crossGroupMode
-    ? crossGroupConfig?.leaders
-    : perGroupLeaders;
+  // Picker options: all community leaders so any leader can be assigned across groups
+  const pickerLeaders = crossGroupConfig?.leaders ?? perGroupLeaders;
   // Display: cross-group leaders so assignees from other groups render correctly
   const allLeaders = crossGroupConfig?.leaders ?? perGroupLeaders;
 
   // Group tasks — used to build per-member task counts for the table
   const groupTasks = useAuthenticatedQuery(
     api.functions.tasks.index.listGroup,
-    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip",
+    groupId ? { groupId: groupId as Id<"groups"> } : "skip",
   );
 
   const tasksByMember = useMemo(() => {
@@ -521,11 +485,11 @@ export function FollowupDesktopTable({
       scoreMin: parsedQuery.scoreMin,
       scoreMax: parsedQuery.scoreMax,
     };
-    if (crossGroupMode || !groupId) {
+    if (!groupId) {
       return base;
     }
     return { ...base, groupId: groupId as Id<"groups"> };
-  }, [crossGroupMode, groupId, parsedQuery]);
+  }, [groupId, parsedQuery]);
   const hasTextSearch = !!parsedQuery.searchText;
   const hasAnyFilter =
     !!parsedQuery.statusFilter ||
@@ -558,37 +522,27 @@ export function FollowupDesktopTable({
     // All available non-system columns (built-in + score + custom)
     const allAvailable: ColumnDef[] = [];
 
-    // In cross-group mode, add a Group column at the start
-    if (crossGroupMode) {
-      allAvailable.push({
-        key: "groupName",
-        label: "Group",
-        defaultWidth: 160,
-        sortable: false,
-      });
-    }
-
     allAvailable.push(
       {
         key: "addedAt",
         label: "Date Added",
         defaultWidth: 100,
         sortable: true,
-        serverSortKey: crossGroupMode ? undefined : "addedAt",
+        serverSortKey: "addedAt",
       },
       {
         key: "firstName",
         label: "First Name",
         defaultWidth: 150,
         sortable: true,
-        serverSortKey: crossGroupMode ? undefined : "firstName",
+        serverSortKey: "firstName",
       },
       {
         key: "lastName",
         label: "Last Name",
         defaultWidth: 120,
         sortable: true,
-        serverSortKey: crossGroupMode ? undefined : "lastName",
+        serverSortKey: "lastName",
       },
       { key: "email", label: "Email", defaultWidth: 180, sortable: false },
       { key: "phone", label: "Phone", defaultWidth: 140, sortable: false },
@@ -597,7 +551,7 @@ export function FollowupDesktopTable({
         label: "ZIP Code",
         defaultWidth: 100,
         sortable: true,
-        serverSortKey: crossGroupMode ? undefined : "zipCode",
+        serverSortKey: "zipCode",
       },
       {
         key: "dateOfBirth",
@@ -615,11 +569,9 @@ export function FollowupDesktopTable({
         label: sc.name,
         defaultWidth: 100,
         sortable: true,
-        serverSortKey: crossGroupMode
-          ? undefined
-          : sc.slot in SERVER_SORT_KEYS
-            ? sc.slot
-            : undefined,
+        serverSortKey: sc.slot in SERVER_SORT_KEYS
+          ? sc.slot
+          : undefined,
       });
     });
 
@@ -629,7 +581,7 @@ export function FollowupDesktopTable({
         label: "Assignees",
         defaultWidth: 140,
         sortable: true,
-        serverSortKey: crossGroupMode ? undefined : "assignee",
+        serverSortKey: "assignee",
       },
       { key: "notes", label: "Notes", defaultWidth: 200, sortable: false },
       { key: "tasks", label: "Tasks", defaultWidth: 220, sortable: false },
@@ -638,28 +590,28 @@ export function FollowupDesktopTable({
         label: "Status",
         defaultWidth: 100,
         sortable: true,
-        serverSortKey: crossGroupMode ? undefined : "status",
+        serverSortKey: "status",
       },
       {
         key: "lastAttendedAt",
         label: "Last Attended",
         defaultWidth: 120,
         sortable: true,
-        serverSortKey: crossGroupMode ? undefined : "lastAttendedAt",
+        serverSortKey: "lastAttendedAt",
       },
       {
         key: "lastFollowupAt",
         label: "Last Contact",
         defaultWidth: 120,
         sortable: true,
-        serverSortKey: crossGroupMode ? undefined : "lastFollowupAt",
+        serverSortKey: "lastFollowupAt",
       },
       {
         key: "lastActiveAt",
         label: "Date Active",
         defaultWidth: 120,
         sortable: true,
-        serverSortKey: crossGroupMode ? undefined : "lastActiveAt",
+        serverSortKey: "lastActiveAt",
       },
       { key: "alerts", label: "Alerts", defaultWidth: 120, sortable: false },
     );
@@ -702,13 +654,12 @@ export function FollowupDesktopTable({
     const visible = ordered.filter((c) => !hiddenSet.has(c.key));
 
     return [...systemCols, ...visible];
-  }, [scoreConfig, customFields, columnConfig, crossGroupMode]);
+  }, [scoreConfig, customFields, columnConfig]);
 
   // Column label map — maps column keys to display labels (same labels as table header)
   // Used by FollowupSettingsPanel for consistent naming
   const columnLabelMap = useMemo(() => {
     const map: Record<string, string> = {};
-    if (crossGroupMode) map["groupName"] = "Group";
     map["addedAt"] = "Date Added";
     map["firstName"] = "First Name";
     map["lastName"] = "Last Name";
@@ -731,12 +682,11 @@ export function FollowupDesktopTable({
       map[cf.slot] = cf.name;
     }
     return map;
-  }, [customFields, crossGroupMode]);
+  }, [customFields]);
 
   // All non-system column keys (for passing to settings when no saved config exists)
   const allColumnKeys = useMemo(() => {
     const keys: string[] = [];
-    if (crossGroupMode) keys.push("groupName");
     keys.push(
       "addedAt",
       "firstName",
@@ -759,7 +709,7 @@ export function FollowupDesktopTable({
     );
     for (const cf of customFields) keys.push(cf.slot);
     return keys;
-  }, [customFields, crossGroupMode]);
+  }, [customFields]);
 
   // Editable columns (built-in + all custom field slots)
   const editableColumns = useMemo(() => {
@@ -774,9 +724,7 @@ export function FollowupDesktopTable({
   const [colWidths, setColWidths] = useState<Record<string, number>>({});
 
   // Load from localStorage
-  const colWidthsKey = crossGroupMode
-    ? STORAGE_PREFIX + "cross-group"
-    : STORAGE_PREFIX + groupId;
+  const colWidthsKey = STORAGE_PREFIX + groupId;
   useEffect(() => {
     if (Platform.OS !== "web") return;
     try {
@@ -827,21 +775,15 @@ export function FollowupDesktopTable({
     return args;
   }, [parsedQuery]);
 
-  // Cross-group group filter arg
-  const crossGroupFilterArg =
-    crossGroupMode && crossGroupFilter
-      ? { groupFilter: crossGroupFilter as Id<"groups"> }
-      : {};
-
   // Paginated query — used when there's NO text search
   const {
-    results: perGroupRawMembers,
-    status: perGroupPaginationStatus,
-    loadMore: perGroupLoadMore,
-    isLoading: perGroupIsLoading,
+    results: rawMembers,
+    status: paginationStatus,
+    loadMore,
+    isLoading,
   } = useAuthenticatedPaginatedQuery(
     api.functions.communityPeople.list,
-    !crossGroupMode && !hasTextSearch && groupId
+    !hasTextSearch && groupId
       ? {
           groupId: groupId as Id<"groups">,
           sortBy:
@@ -857,44 +799,11 @@ export function FollowupDesktopTable({
       : "skip",
     { initialNumItems: 50 },
   );
-
-  // Cross-group paginated query — uses communityPeople (same data source as follow-up view)
-  const {
-    results: crossGroupRawMembers,
-    status: crossGroupPaginationStatus,
-    loadMore: crossGroupLoadMore,
-    isLoading: crossGroupIsLoading,
-  } = useAuthenticatedPaginatedQuery(
-    api.functions.communityPeople.listAssignedToMe,
-    crossGroupMode && !hasTextSearch && communityId && crossGroupFilter
-      ? {
-          communityId,
-          sortBy:
-            activeViewId === FOLLOWUP_MAP_VIEW_ID ? "zipCode" : serverSortBy,
-          sortDirection:
-            activeViewId === FOLLOWUP_MAP_VIEW_ID
-              ? "desc"
-              : isClientSideSort
-                ? "desc"
-                : sortDirection,
-          ...listFilterArgs,
-          ...crossGroupFilterArg,
-        }
-      : "skip",
-    { initialNumItems: 50 },
-  );
-
-  const rawMembers = crossGroupMode ? crossGroupRawMembers : perGroupRawMembers;
-  const paginationStatus = crossGroupMode
-    ? crossGroupPaginationStatus
-    : perGroupPaginationStatus;
-  const loadMore = crossGroupMode ? crossGroupLoadMore : perGroupLoadMore;
-  const isLoading = crossGroupMode ? crossGroupIsLoading : perGroupIsLoading;
 
   // Text search query — used when there IS text search
-  const perGroupSearchResults = useAuthenticatedQuery(
+  const searchResults = useAuthenticatedQuery(
     api.functions.communityPeople.search,
-    !crossGroupMode && hasTextSearch && groupId
+    hasTextSearch && groupId
       ? {
           groupId: groupId as Id<"groups">,
           searchTerm: parsedQuery.searchText,
@@ -923,60 +832,13 @@ export function FollowupDesktopTable({
         }
       : "skip",
   );
-
-  // Cross-group search query — uses communityPeople
-  const crossGroupSearchResults = useAuthenticatedQuery(
-    api.functions.communityPeople.searchAssignedToMe,
-    crossGroupMode && hasTextSearch && communityId && crossGroupFilter
-      ? {
-          communityId,
-          searchTerm: parsedQuery.searchText,
-          ...(parsedQuery.statusFilter
-            ? { statusFilter: parsedQuery.statusFilter }
-            : {}),
-          ...(parsedQuery.assigneeFilter
-            ? { assigneeFilter: parsedQuery.assigneeFilter as Id<"users"> }
-            : {}),
-          ...(parsedQuery.excludedAssigneeFilters.length > 0
-            ? {
-                excludedAssigneeFilters:
-                  parsedQuery.excludedAssigneeFilters as Id<"users">[],
-              }
-            : {}),
-          ...(parsedQuery.scoreField
-            ? { scoreField: parsedQuery.scoreField }
-            : {}),
-          ...(parsedQuery.scoreMax !== undefined
-            ? { scoreMax: parsedQuery.scoreMax }
-            : {}),
-          ...(parsedQuery.scoreMin !== undefined
-            ? { scoreMin: parsedQuery.scoreMin }
-            : {}),
-          ...getDateAddedRangeArgs(parsedQuery.dateAddedFilter),
-          ...crossGroupFilterArg,
-        }
-      : "skip",
-  );
-
-  const searchResults = crossGroupMode
-    ? crossGroupSearchResults
-    : perGroupSearchResults;
 
   // Total member count
   const totalCount = useAuthenticatedQuery(
-    crossGroupMode
-      ? api.functions.communityPeople.countAssignedToMe
-      : api.functions.communityPeople.count,
-    crossGroupMode
-      ? communityId && crossGroupFilter
-        ? {
-            communityId,
-            groupFilter: crossGroupFilter as Id<"groups">,
-          }
-        : "skip"
-      : groupId
-        ? { groupId: groupId as Id<"groups"> }
-        : "skip",
+    api.functions.communityPeople.count,
+    groupId
+      ? { groupId: groupId as Id<"groups"> }
+      : "skip",
   );
 
   // Merge: use search results when text search active, otherwise paginated.
@@ -1021,7 +883,6 @@ export function FollowupDesktopTable({
     hasTextSearch,
     searchResults,
     rawMembers,
-    crossGroupMode,
     isClientSideSort,
     sortField,
     sortDirection,
@@ -1253,16 +1114,10 @@ export function FollowupDesktopTable({
     setSelectedMemberId(null);
   };
 
-  // Helper to resolve groupId for a member (in cross-group mode, read from member data)
+  // Helper to resolve groupId for a member
   const getMemberGroupId = useCallback(
-    (memberId: string): Id<"groups"> => {
-      if (!crossGroupMode) return groupId as Id<"groups">;
-      const member = (rawMembers ?? []).find(
-        (m: any) => m.groupMemberId === memberId || m._id === memberId,
-      );
-      return ((member as any)?.groupId ?? groupId) as Id<"groups">;
-    },
-    [crossGroupMode, groupId, rawMembers],
+    (_memberId: string): Id<"groups"> => groupId as Id<"groups">,
+    [groupId],
   );
 
   const enqueueAssigneeUpdate = useCallback(
@@ -1604,7 +1459,7 @@ export function FollowupDesktopTable({
 
   // Cross-group assigned leaders — assigned to this member but not in the current group's picker
   const crossGroupAssignees = useMemo(() => {
-    if (!activeDropdownMember || crossGroupMode) return [];
+    if (!activeDropdownMember) return [];
     const assigneeIds = getAssigneeIds(activeDropdownMember);
     if (assigneeIds.length === 0) return [];
     const pickerIds = new Set(leaderOptions.map((l) => l.id));
@@ -1658,7 +1513,6 @@ export function FollowupDesktopTable({
     }));
   }, [
     activeDropdownMember,
-    crossGroupMode,
     leaderOptions,
     crossGroupConfig,
     groupId,
@@ -2264,76 +2118,32 @@ export function FollowupDesktopTable({
         <View style={s.headerContent}>
           <Text style={[s.headerTitle, { color: colors.text }]}>{toolDisplayName}</Text>
           <Text style={[s.headerSubtitle, { color: colors.textSecondary }]}>
-            {crossGroupMode
-              ? "All assigned people across groups"
-              : groupData?.name || "Group"}
+            {groupData?.name || "Group"}
           </Text>
         </View>
-        {crossGroupMode &&
-        crossGroupConfig?.leaderGroups &&
-        crossGroupConfig.leaderGroups.length > 1 ? (
-          <View style={s.crossGroupFilterDropdown}>
-            {React.createElement(
-              "select",
-              {
-                value: crossGroupFilter,
-                onChange: (e: any) => setCrossGroupFilter(e.target.value),
-                style: {
-                  fontSize: 13,
-                  fontWeight: "600",
-                  color: colors.textSecondary,
-                  backgroundColor: colors.textInverse,
-                  border: `1px solid ${colors.border}`,
-                  borderRadius: 8,
-                  padding: "6px 28px 6px 10px",
-                  appearance: "none",
-                  WebkitAppearance: "none",
-                  backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%23334155' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E")`,
-                  backgroundRepeat: "no-repeat",
-                  backgroundPosition: "right 8px center",
-                  cursor: "pointer",
-                  outline: "none",
-                  minWidth: 140,
-                },
-              },
-              ...crossGroupConfig.leaderGroups.map(
-                (g: { _id: string; name: string }) =>
-                  React.createElement(
-                    "option",
-                    { key: g._id, value: g._id },
-                    g.name,
-                  ),
-              ),
-            )}
-          </View>
-        ) : null}
-        {!crossGroupMode && (
-          <>
-            <TouchableOpacity
-              style={[s.addButton, { borderColor: colors.success, backgroundColor: colors.surfaceSecondary }]}
-              onPress={() => {
-                setSelectedMemberId(null);
-                setShowSettingsPanel(false);
-                setShowQuickAddPanel(true);
-              }}
-            >
-              <Ionicons name="person-add-outline" size={16} color={colors.success} />
-              <Text style={[s.addButtonText, { color: colors.success }]}>Add Person</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[s.importButton, { borderColor: colors.link, backgroundColor: colors.surfaceSecondary }]}
-              onPress={() => {
-                setSelectedMemberId(null);
-                setShowSettingsPanel(false);
-                setShowQuickAddPanel(false);
-                setShowCsvImportModal(true);
-              }}
-            >
-              <Ionicons name="cloud-upload-outline" size={16} color={colors.link} />
-              <Text style={[s.importButtonText, { color: colors.link }]}>Import CSV</Text>
-            </TouchableOpacity>
-          </>
-        )}
+        <TouchableOpacity
+          style={[s.addButton, { borderColor: colors.success, backgroundColor: colors.surfaceSecondary }]}
+          onPress={() => {
+            setSelectedMemberId(null);
+            setShowSettingsPanel(false);
+            setShowQuickAddPanel(true);
+          }}
+        >
+          <Ionicons name="person-add-outline" size={16} color={colors.success} />
+          <Text style={[s.addButtonText, { color: colors.success }]}>Add Person</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[s.importButton, { borderColor: colors.link, backgroundColor: colors.surfaceSecondary }]}
+          onPress={() => {
+            setSelectedMemberId(null);
+            setShowSettingsPanel(false);
+            setShowQuickAddPanel(false);
+            setShowCsvImportModal(true);
+          }}
+        >
+          <Ionicons name="cloud-upload-outline" size={16} color={colors.link} />
+          <Text style={[s.importButtonText, { color: colors.link }]}>Import CSV</Text>
+        </TouchableOpacity>
         <TouchableOpacity
           style={s.settingsButton}
           onPress={handleSettingsPress}
@@ -2395,9 +2205,7 @@ export function FollowupDesktopTable({
         <Text style={[s.memberCount, { color: colors.textSecondary }]}>
           {hasTextSearch
             ? `${members.length} result${members.length !== 1 ? "s" : ""}`
-            : crossGroupMode
-              ? `${members.length} people${hasAnyFilter ? " (filtered)" : ""}`
-              : `${totalCount ?? "\u2014"} members${hasAnyFilter ? " (filtered)" : ""}`}
+            : `${totalCount ?? "\u2014"} members${hasAnyFilter ? " (filtered)" : ""}`}
         </Text>
       </View>
 
@@ -2421,7 +2229,7 @@ export function FollowupDesktopTable({
       )}
 
       {/* People view bar */}
-      {(groupData?.communityId || (crossGroupMode && communityId)) && (
+      {groupData?.communityId && (
         <PeopleViewBar
           communityId={(groupData?.communityId ?? communityId)!}
           activeViewId={activeViewId}
@@ -2783,7 +2591,6 @@ export function FollowupDesktopTable({
             <View style={[s.sideSheet, { backgroundColor: colors.background }]}>
               <FollowupSettingsPanel
                 groupId={groupId}
-                crossGroupMode={crossGroupMode}
                 communityId={groupData?.communityId ?? communityId}
                 isAdmin={user?.is_admin === true}
                 currentColumnOrder={
@@ -2805,7 +2612,7 @@ export function FollowupDesktopTable({
               />
             </View>
           </>
-        ) : !crossGroupMode && showQuickAddPanel ? (
+        ) : showQuickAddPanel ? (
           <>
             <View style={[s.divider, { backgroundColor: colors.border }]} />
             <View style={[s.sideSheet, { backgroundColor: colors.background }]}>
@@ -2825,30 +2632,18 @@ export function FollowupDesktopTable({
             </View>
           </>
         ) : selectedMemberId ? (
-          (() => {
-            // In cross-group mode, find the groupId from the selected member's data
-            const selectedMember = displayMembers.find(
-              (m) => m.groupMemberId === selectedMemberId,
-            );
-            const detailGroupId = crossGroupMode
-              ? ((selectedMember as any)?.groupId?.toString() ?? "")
-              : groupId;
-            return (
-              <>
-                <View style={[s.divider, { backgroundColor: colors.border }]} />
-                <View style={[s.sideSheet, { backgroundColor: colors.background }]}>
-                  <FollowupDetailContent
-                    groupId={detailGroupId}
-                    memberId={selectedMemberId}
-                    onClose={() => setSelectedMemberId(null)}
-                    scrollToNotes={scrollToNotes}
-                    scrollToTasks={scrollToTasks}
-                    crossGroupMode={crossGroupMode}
-                  />
-                </View>
-              </>
-            );
-          })()
+          <>
+            <View style={[s.divider, { backgroundColor: colors.border }]} />
+            <View style={[s.sideSheet, { backgroundColor: colors.background }]}>
+              <FollowupDetailContent
+                groupId={groupId}
+                memberId={selectedMemberId}
+                onClose={() => setSelectedMemberId(null)}
+                scrollToNotes={scrollToNotes}
+                scrollToTasks={scrollToTasks}
+              />
+            </View>
+          </>
         ) : null}
       </View>
 
@@ -3286,7 +3081,7 @@ export function FollowupDesktopTable({
       />
 
       {/* Save view modal */}
-      {(groupData?.communityId || (crossGroupMode && communityId)) && (
+      {groupData?.communityId && (
         <SaveViewModal
           visible={showSaveViewModal}
           onClose={() => {
@@ -3404,10 +3199,6 @@ const s = StyleSheet.create({
   },
   settingsButton: {
     padding: 6,
-  },
-  crossGroupFilterDropdown: {
-    marginRight: 12,
-    justifyContent: "center" as const,
   },
   importButton: {
     flexDirection: "row" as const,

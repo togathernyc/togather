@@ -435,7 +435,7 @@ export const upsertCommunityPeopleBatch = internalMutation({
           .first();
 
         const siblingAssigneeId = (siblingRecord as any)?.assigneeIds?.[0];
-        await ctx.db.insert("communityPeople", {
+        const cpId = await ctx.db.insert("communityPeople", {
           ...scoreDoc,
           // Copy leader-set fields from sibling if exists
           status: siblingRecord?.status,
@@ -460,6 +460,18 @@ export const upsertCommunityPeopleBatch = internalMutation({
           customBool5: siblingRecord?.customBool5,
           createdAt: nowTs,
         });
+
+        // Sync junction table for assignee filtering
+        if (siblingRecord?.assigneeIds?.length) {
+          for (const assigneeUserId of siblingRecord.assigneeIds) {
+            await ctx.db.insert("communityPeopleAssignees", {
+              communityPersonId: cpId,
+              assigneeUserId,
+              groupId: args.groupId,
+              communityId: args.communityId,
+            });
+          }
+        }
       }
     }
   },
@@ -487,6 +499,16 @@ export const pruneStaleRows = internalMutation({
     for (const doc of docs) {
       // Each record has a groupId — check if user is still an active member of that group
       if (!doc.groupId) {
+        // Clean up junction rows before deleting the communityPeople record
+        const legacyJunctionRows = await ctx.db
+          .query("communityPeopleAssignees")
+          .withIndex("by_communityPerson", (q: any) =>
+            q.eq("communityPersonId", doc._id),
+          )
+          .collect();
+        for (const row of legacyJunctionRows) {
+          await ctx.db.delete(row._id);
+        }
         // Legacy record without groupId — prune it
         await ctx.db.delete(doc._id);
         deleted++;
@@ -505,6 +527,16 @@ export const pruneStaleRows = internalMutation({
         !membership || membership.leftAt !== undefined;
 
       if (isStale) {
+        // Clean up junction rows before deleting the communityPeople record
+        const junctionRows = await ctx.db
+          .query("communityPeopleAssignees")
+          .withIndex("by_communityPerson", (q: any) =>
+            q.eq("communityPersonId", doc._id),
+          )
+          .collect();
+        for (const row of junctionRows) {
+          await ctx.db.delete(row._id);
+        }
         await ctx.db.delete(doc._id);
         deleted++;
       }
