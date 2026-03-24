@@ -73,19 +73,23 @@ async function verifyStripeSignature(
   secret: string
 ): Promise<boolean> {
   try {
-    const parts = signature.split(",").reduce(
-      (acc, part) => {
-        const [key, value] = part.split("=");
-        acc[key.trim()] = value;
-        return acc;
-      },
-      {} as Record<string, string>
-    );
+    // Parse signature header into timestamp and all v1 signatures.
+    // Stripe may send multiple v1 signatures during secret rotation,
+    // so we collect them all and match against any one.
+    let timestamp = "";
+    const v1Signatures: string[] = [];
 
-    const timestamp = parts["t"];
-    const expectedSig = parts["v1"];
+    for (const part of signature.split(",")) {
+      const [key, value] = part.split("=");
+      const trimmedKey = key.trim();
+      if (trimmedKey === "t") {
+        timestamp = value;
+      } else if (trimmedKey === "v1") {
+        v1Signatures.push(value);
+      }
+    }
 
-    if (!timestamp || !expectedSig) return false;
+    if (!timestamp || v1Signatures.length === 0) return false;
 
     // Check timestamp is within 5 minutes
     const currentTime = Math.floor(Date.now() / 1000);
@@ -112,7 +116,8 @@ async function verifyStripeSignature(
       .map((b) => b.toString(16).padStart(2, "0"))
       .join("");
 
-    return computedSig === expectedSig;
+    // Accept if any v1 signature matches
+    return v1Signatures.some((sig) => sig === computedSig);
   } catch {
     return false;
   }

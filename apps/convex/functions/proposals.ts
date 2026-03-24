@@ -368,7 +368,6 @@ export const completeSetup = mutation({
     const now = Date.now();
 
     // Update the community with setup details
-    // NOTE: communities table does not have a description field
     await ctx.db.patch(proposal.communityId, {
       name: args.name,
       slug: args.slug,
@@ -378,9 +377,10 @@ export const completeSetup = mutation({
       updatedAt: now,
     });
 
-    // Mark setup as completed (prevents reuse of the setup token)
+    // Mark setup as completed and persist the description on the proposal
     await ctx.db.patch(proposal._id, {
       setupCompletedAt: now,
+      setupDescription: args.description,
       updatedAt: now,
     });
 

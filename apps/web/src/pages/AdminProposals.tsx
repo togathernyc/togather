@@ -141,6 +141,12 @@ export default function AdminProposals() {
     token ? { token, status: queryStatus } : "skip"
   ) as Proposal[] | undefined;
 
+  // Fetch all proposals (unfiltered) for accurate tab badge counts
+  const allProposals = useQuery(
+    api.functions.proposals.list,
+    token ? { token } : "skip"
+  ) as Proposal[] | undefined;
+
   const acceptMutation = useMutation(api.functions.proposals.accept);
   const rejectMutation = useMutation(api.functions.proposals.reject);
 
@@ -234,14 +240,14 @@ export default function AdminProposals() {
                 }`}
               >
                 {tab.label}
-                {proposals && tab.key !== "all" && (
+                {allProposals && tab.key !== "all" && (
                   <span className="ml-1.5 text-xs opacity-70">
-                    ({proposals.filter((p) => p.status === tab.key).length})
+                    ({allProposals.filter((p) => p.status === tab.key).length})
                   </span>
                 )}
-                {proposals && tab.key === "all" && (
+                {allProposals && tab.key === "all" && (
                   <span className="ml-1.5 text-xs opacity-70">
-                    ({proposals.length})
+                    ({allProposals.length})
                   </span>
                 )}
               </button>

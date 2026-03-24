@@ -159,6 +159,16 @@ export const createCheckoutSession = action({
       throw new Error("A subscription already exists for this proposal");
     }
 
+    // Prevent duplicate Stripe customers from concurrent checkout attempts.
+    // stripeCustomerId is set by saveStripeIds before the webhook fires,
+    // so a second call while checkout is in-progress will be blocked here.
+    if (proposal.stripeCustomerId) {
+      throw new Error(
+        "A checkout session has already been created for this proposal. " +
+        "Please complete the existing checkout or wait for it to expire."
+      );
+    }
+
     if (!proposal.communityId) {
       throw new Error(
         "No community associated with this proposal. Setup may be incomplete."

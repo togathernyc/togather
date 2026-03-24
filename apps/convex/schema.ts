@@ -1929,6 +1929,7 @@ export default defineSchema({
     communityId: v.optional(v.id("communities")),
     setupToken: v.optional(v.string()),
     setupCompletedAt: v.optional(v.number()),
+    setupDescription: v.optional(v.string()),
     stripeCustomerId: v.optional(v.string()),
     stripeSubscriptionId: v.optional(v.string()),
     stripePriceId: v.optional(v.string()),
