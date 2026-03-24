@@ -25,7 +25,7 @@ import {
 } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
-import { now, getMediaUrl, safeSliceForJson } from "../lib/utils";
+import { now, getMediaUrl, safeSliceForJson, getWeekStart } from "../lib/utils";
 import {
   extractSystemRawValues,
   calculateAllSystemScores,
@@ -46,16 +46,6 @@ const CROSS_GROUP_BATCH_SIZE = 10;
 const STAGGER_INTERVAL_MS = 3000;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-
-/** Return the Monday 00:00 UTC timestamp for the ISO week containing `ts`. */
-function getWeekStart(ts: number): number {
-  const d = new Date(ts);
-  const day = d.getUTCDay(); // 0=Sun, 1=Mon, ...
-  const diff = day === 0 ? -6 : 1 - day;
-  d.setUTCDate(d.getUTCDate() + diff);
-  d.setUTCHours(0, 0, 0, 0);
-  return d.getTime();
-}
 
 // ============================================================================
 // Internal Queries
@@ -320,28 +310,32 @@ export const computeCommunityScoresBatch = internalQuery({
         let attendedWeeksInWindow: number;
         let totalWeeksInWindow: number;
 
+        // Count distinct ISO weeks in the join-date-adjusted window
+        const WEEK_MS = 7 * DAY_MS;
+        const windowStart = Math.max(
+          member.joinedAt,
+          currentTime - 60 * DAY_MS,
+        );
+        const firstWeek = getWeekStart(windowStart);
+        const lastWeek = getWeekStart(currentTime);
+
         if (crossGroupData && typeof crossGroupData === "object") {
           crossGroupPct = crossGroupData.pct;
-          // Adjust window for member join date
-          const windowMs = Math.min(
-            60 * DAY_MS,
-            Math.max(0, currentTime - member.joinedAt),
+          // Count ISO weeks spanned by the window (inclusive of both ends)
+          totalWeeksInWindow = Math.max(
+            1,
+            Math.round((lastWeek - firstWeek) / WEEK_MS) + 1,
           );
-          totalWeeksInWindow = Math.max(1, Math.ceil(windowMs / (7 * DAY_MS)));
-          // Filter attended weeks to only those after the member joined
-          const joinWeekStart = getWeekStart(member.joinedAt);
+          // Filter attended weeks to only those within the member's window
           attendedWeeksInWindow = crossGroupData.attendedWeekStarts.filter(
-            (ws) => ws >= joinWeekStart,
+            (ws) => ws >= firstWeek,
           ).length;
         } else {
           // Legacy fallback: plain number percentage
           crossGroupPct = (crossGroupData as number) ?? 0;
           totalWeeksInWindow = Math.max(
             1,
-            Math.ceil(
-              Math.min(60 * DAY_MS, Math.max(0, currentTime - member.joinedAt)) /
-                (7 * DAY_MS),
-            ),
+            Math.round((lastWeek - firstWeek) / WEEK_MS) + 1,
           );
           attendedWeeksInWindow = Math.round(
             (crossGroupPct / 100) * totalWeeksInWindow,

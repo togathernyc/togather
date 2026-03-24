@@ -27,7 +27,7 @@ import { query, mutation, internalQuery, internalMutation } from "../_generated/
 import { paginationOptsValidator } from "convex/server";
 import { Doc, Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
-import { now, getMediaUrl, normalizePhone, isValidPhone, buildSearchText, safeSliceForJson } from "../lib/utils";
+import { now, getMediaUrl, normalizePhone, isValidPhone, buildSearchText, safeSliceForJson, getWeekStart } from "../lib/utils";
 import { addUserToAnnouncementGroup } from "./communities";
 import { requireAuth } from "../lib/auth";
 import { parseDateOptional } from "../lib/validation";
@@ -645,16 +645,6 @@ export const internalCrossGroupAttendance = internalQuery({
     return results;
   },
 });
-
-/** Return the Monday 00:00 UTC timestamp for the ISO week containing `ts`. */
-function getWeekStart(ts: number): number {
-  const d = new Date(ts);
-  const day = d.getUTCDay(); // 0=Sun, 1=Mon, ...
-  const diff = day === 0 ? -6 : 1 - day; // shift to Monday
-  d.setUTCDate(d.getUTCDate() + diff);
-  d.setUTCHours(0, 0, 0, 0);
-  return d.getTime();
-}
 
 // ============================================================================
 // Queries & Actions
