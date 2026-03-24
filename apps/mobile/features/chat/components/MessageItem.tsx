@@ -1098,6 +1098,7 @@ const styles = StyleSheet.create({
   },
   attachmentsContainer: {
     marginTop: 4,
+    paddingHorizontal: 10,
   },
   bubbleTextContent: {
     paddingHorizontal: 10,
