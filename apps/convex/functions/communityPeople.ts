@@ -170,6 +170,20 @@ export const list = query({
     }
     await requireCommunityMember(ctx, group.communityId, userId);
 
+    // Build set of matching communityPerson IDs when filtering by assignee
+    let assigneeIdSet: Set<string> | null = null;
+    if (args.assigneeFilter) {
+      const junctionRows = await ctx.db
+        .query("communityPeopleAssignees")
+        .withIndex("by_group_assignee", (q: any) =>
+          q.eq("groupId", args.groupId).eq("assigneeUserId", args.assigneeFilter),
+        )
+        .collect();
+      assigneeIdSet = new Set(
+        junctionRows.map((r: any) => r.communityPersonId.toString()),
+      );
+    }
+
     const direction = args.sortDirection === "desc" ? "desc" : "asc";
     const indexName =
       INDEX_MAP[args.sortBy ?? "lastName"] ?? "by_group_lastName";
@@ -196,13 +210,6 @@ export const list = query({
         if (args.statusFilter) {
           conds.push(fq.eq(fq.field("status"), args.statusFilter));
         }
-        if (args.assigneeFilter) {
-          // assigneeFilter is a userId string — check if it's in the assigneeIds array
-          // Since Convex filter doesn't support array contains, we use a workaround:
-          // For single-assignee filtering, we check assigneeIds field existence
-          // This is a limitation — full array-contains filtering should be done client-side
-          // For now, we pass through and let the client handle complex array filtering
-        }
         if (args.scoreMax !== undefined) {
           conds.push(fq.lt(fq.field(scoreFilterField), args.scoreMax));
         }
@@ -214,6 +221,34 @@ export const list = query({
           ? conds[0]
           : fq.and(...(conds as [any, any, ...any[]]));
       });
+    }
+
+    // When filtering by assignee, we can't use Convex's .filter() for array-contains,
+    // so we manually paginate and filter. This uses the junction table lookup above.
+    if (assigneeIdSet) {
+      // Manual pagination: collect from the sorted index, skip non-matching, fill page
+      const { cursor, numItems } = args.paginationOpts;
+      const page: any[] = [];
+      let skipped = 0;
+      const cursorValue = cursor ?? null;
+
+      // We need to iterate through the query and manually filter
+      // Use a larger batch to compensate for filtered-out rows
+      const batchSize = numItems * 4;
+      const result = await q.paginate({ numItems: batchSize, cursor: cursorValue });
+
+      for (const doc of result.page) {
+        if (assigneeIdSet.has(doc._id.toString())) {
+          page.push(doc);
+          if (page.length >= numItems) break;
+        }
+      }
+
+      return {
+        page,
+        isDone: result.isDone && page.length < numItems,
+        continueCursor: result.isDone ? "" : result.continueCursor,
+      };
     }
 
     return await q.paginate(args.paginationOpts);
@@ -249,6 +284,36 @@ export const search = query({
     }
     await requireCommunityMember(ctx, group.communityId, userId);
 
+    // Build assignee filter set from junction table
+    let assigneeIdSet: Set<string> | null = null;
+    if (args.assigneeFilter) {
+      const junctionRows = await ctx.db
+        .query("communityPeopleAssignees")
+        .withIndex("by_group_assignee", (q: any) =>
+          q.eq("groupId", args.groupId).eq("assigneeUserId", args.assigneeFilter),
+        )
+        .collect();
+      assigneeIdSet = new Set(
+        junctionRows.map((r: any) => r.communityPersonId.toString()),
+      );
+    }
+
+    // Build excluded assignee sets from junction table
+    let excludedIdSets: Set<string>[] = [];
+    if (args.excludedAssigneeFilters?.length) {
+      excludedIdSets = await Promise.all(
+        args.excludedAssigneeFilters.map(async (excludedId) => {
+          const rows = await ctx.db
+            .query("communityPeopleAssignees")
+            .withIndex("by_group_assignee", (q: any) =>
+              q.eq("groupId", args.groupId).eq("assigneeUserId", excludedId),
+            )
+            .collect();
+          return new Set(rows.map((r: any) => r.communityPersonId.toString()));
+        }),
+      );
+    }
+
     let results = ctx.db
       .query("communityPeople")
       .withSearchIndex("search_communityPeople", (q: any) => {
@@ -259,7 +324,7 @@ export const search = query({
         return sq;
       });
 
-    // Range filters via .filter() - score, assignee, and date filters
+    // Range filters via .filter() - score and date filters
     const scoreFilterField = (args.scoreField ?? "score1") as
       | "score1"
       | "score2"
@@ -277,40 +342,36 @@ export const search = query({
       });
     }
 
-    // Assignee and date range filters
-    const hasExcludedAssignees =
-      args.excludedAssigneeFilters && args.excludedAssigneeFilters.length > 0;
-    const hasAssigneeFilter = args.assigneeFilter !== undefined;
-    const hasDateFilters =
-      args.addedAtMin !== undefined || args.addedAtMax !== undefined;
-
-    if (hasExcludedAssignees || hasAssigneeFilter || hasDateFilters) {
+    if (args.addedAtMax !== undefined || args.addedAtMin !== undefined) {
       results = results.filter((fq: any) => {
         const conds: any[] = [];
-        // assigneeFilter checks if assignee is in assigneeIds array
-        // Since Convex filter doesn't support array contains directly,
-        // we'll skip assigneeFilter here and apply it client-side
-        if (args.excludedAssigneeFilters?.length) {
-          for (const excludedAssigneeId of args.excludedAssigneeFilters) {
-            // Check that excluded assignee is not in the array
-            // This is an approximation - client-side filtering handles it more precisely
-            conds.push(
-              fq.neq(fq.field("assigneeIds"), [excludedAssigneeId] as any),
-            );
-          }
-        }
         if (args.addedAtMax !== undefined)
           conds.push(fq.lte(fq.field("addedAt"), args.addedAtMax));
         if (args.addedAtMin !== undefined)
           conds.push(fq.gte(fq.field("addedAt"), args.addedAtMin));
-        if (conds.length === 0) return true;
         return conds.length === 1
           ? conds[0]
           : fq.and(...(conds as [any, any, ...any[]]));
       });
     }
 
-    return await results.take(200);
+    const allResults = await results.take(500);
+
+    // Post-filter by assignee/excluded assignees using junction table sets
+    let filtered = allResults;
+    if (assigneeIdSet) {
+      filtered = filtered.filter((doc: any) =>
+        assigneeIdSet!.has(doc._id.toString()),
+      );
+    }
+    if (excludedIdSets.length > 0) {
+      filtered = filtered.filter(
+        (doc: any) =>
+          !excludedIdSets.some((set) => set.has(doc._id.toString())),
+      );
+    }
+
+    return filtered.slice(0, 200);
   },
 });
 
@@ -701,6 +762,56 @@ async function buildAssigneeSortKey(
 }
 
 // ============================================================================
+// Assignee Junction Sync
+// ============================================================================
+
+/**
+ * Keep `communityPeopleAssignees` rows in sync with a communityPeople record's
+ * assigneeIds array. Deletes removed rows and inserts added rows.
+ */
+async function syncAssigneeJunction(
+  ctx: any,
+  communityPersonId: Id<"communityPeople">,
+  groupId: Id<"groups">,
+  communityId: Id<"communities">,
+  newAssigneeIds: Id<"users">[] | undefined,
+) {
+  // Get existing junction rows
+  const existing = await ctx.db
+    .query("communityPeopleAssignees")
+    .withIndex("by_communityPerson", (q: any) =>
+      q.eq("communityPersonId", communityPersonId),
+    )
+    .collect();
+
+  const existingSet = new Set(
+    existing.map((r: any) => r.assigneeUserId.toString()),
+  );
+  const newSet = new Set(
+    (newAssigneeIds ?? []).map((id: Id<"users">) => id.toString()),
+  );
+
+  // Delete rows for removed assignees
+  for (const row of existing) {
+    if (!newSet.has(row.assigneeUserId.toString())) {
+      await ctx.db.delete(row._id);
+    }
+  }
+
+  // Insert rows for added assignees
+  for (const assigneeId of newAssigneeIds ?? []) {
+    if (!existingSet.has(assigneeId.toString())) {
+      await ctx.db.insert("communityPeopleAssignees", {
+        communityPersonId,
+        assigneeUserId: assigneeId,
+        groupId,
+        communityId,
+      });
+    }
+  }
+}
+
+// ============================================================================
 // Sibling Sync Helper
 // ============================================================================
 
@@ -896,8 +1007,34 @@ export const setAssignees = mutation({
       updatedAt: Date.now(),
     });
 
-    // Sync to sibling records in the same community
-    await syncToSiblingRecords(ctx, cpRecord, patchFields);
+    // Sync junction table
+    await syncAssigneeJunction(
+      ctx,
+      args.communityPeopleId,
+      cpRecord.groupId,
+      cpRecord.communityId,
+      normalizedIds,
+    );
+
+    // Sync to sibling records in the same community (including their junction rows)
+    const siblings = await ctx.db
+      .query("communityPeople")
+      .withIndex("by_community_user", (q: any) =>
+        q.eq("communityId", cpRecord.communityId).eq("userId", cpRecord.userId),
+      )
+      .collect();
+
+    for (const sibling of siblings) {
+      if (sibling._id === args.communityPeopleId) continue;
+      await ctx.db.patch(sibling._id, { ...patchFields, updatedAt: Date.now() });
+      await syncAssigneeJunction(
+        ctx,
+        sibling._id,
+        sibling.groupId,
+        sibling.communityId,
+        normalizedIds,
+      );
+    }
 
     return { success: true };
   },
@@ -1602,7 +1739,7 @@ export const upsertFromSubmission = internalMutation({
       }
     }
 
-    // 7. Upsert communityPeople record for each group
+    // 7. Upsert communityPeople record for each group + sync junction
     for (const groupId of communityGroupIds) {
       const existing = await ctx.db
         .query("communityPeople")
@@ -1611,15 +1748,26 @@ export const upsertFromSubmission = internalMutation({
         )
         .first();
 
+      let cpId: Id<"communityPeople">;
       if (existing) {
         await ctx.db.patch(existing._id, { ...canonicalFields, groupId });
+        cpId = existing._id;
       } else {
-        await ctx.db.insert("communityPeople", {
+        cpId = await ctx.db.insert("communityPeople", {
           ...canonicalFields,
           groupId,
           createdAt: nowTs,
         });
       }
+
+      // Keep junction table in sync
+      await syncAssigneeJunction(
+        ctx,
+        cpId,
+        groupId,
+        args.communityId,
+        assigneeIds,
+      );
     }
   },
 });
@@ -1738,6 +1886,70 @@ export const backfillAssigneeSortKey = internalMutation({
 
     return {
       updated,
+      isDone: results.isDone,
+      continueCursor: results.isDone ? null : results.continueCursor,
+    };
+  },
+});
+
+// ============================================================================
+// Backfill: assignee junction table
+// ============================================================================
+
+/**
+ * Backfill communityPeopleAssignees junction rows from existing communityPeople
+ * records. Processes in batches and auto-schedules continuation. Run via:
+ *   npx convex run functions/communityPeople:backfillAssigneeJunction
+ */
+export const backfillAssigneeJunction = internalMutation({
+  args: {
+    cursor: v.optional(v.string()),
+    batchSize: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const batchSize = args.batchSize ?? 100;
+    const results = await ctx.db
+      .query("communityPeople")
+      .paginate({ numItems: batchSize, cursor: args.cursor ?? null });
+
+    let created = 0;
+    for (const row of results.page) {
+      if (!row.assigneeIds || row.assigneeIds.length === 0) continue;
+
+      // Check if junction rows already exist (idempotent)
+      const existing = await ctx.db
+        .query("communityPeopleAssignees")
+        .withIndex("by_communityPerson", (q: any) =>
+          q.eq("communityPersonId", row._id),
+        )
+        .collect();
+      const existingSet = new Set(
+        existing.map((r: any) => r.assigneeUserId.toString()),
+      );
+
+      for (const assigneeId of row.assigneeIds) {
+        if (!existingSet.has(assigneeId.toString())) {
+          await ctx.db.insert("communityPeopleAssignees", {
+            communityPersonId: row._id,
+            assigneeUserId: assigneeId,
+            groupId: row.groupId,
+            communityId: row.communityId,
+          });
+          created++;
+        }
+      }
+    }
+
+    if (!results.isDone) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.communityPeople.backfillAssigneeJunction,
+        { cursor: results.continueCursor, batchSize },
+      );
+    }
+
+    return {
+      created,
       isDone: results.isDone,
       continueCursor: results.isDone ? null : results.continueCursor,
     };

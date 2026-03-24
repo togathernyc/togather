@@ -33,7 +33,6 @@ import { useTheme } from "@hooks/useTheme";
 
 interface FollowupSettingsPanelProps {
   groupId: string;
-  crossGroupMode?: boolean;
   communityId?: string;
   isAdmin?: boolean;
   // Current effective column state from parent
@@ -116,7 +115,6 @@ const ALERT_VARIABLES: VariableOption[] = [
 
 export function FollowupSettingsPanel({
   groupId,
-  crossGroupMode,
   communityId,
   isAdmin,
   currentColumnOrder,
@@ -141,12 +139,12 @@ export function FollowupSettingsPanel({
 
   const config = useAuthenticatedQuery(
     api.functions.memberFollowups.getFollowupConfig,
-    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip"
+    groupId ? { groupId: groupId as Id<"groups"> } : "skip"
   );
 
   const groupData = useAuthenticatedQuery(
     api.functions.groups.queries.getById,
-    !crossGroupMode && groupId ? { groupId: groupId as Id<"groups"> } : "skip"
+    groupId ? { groupId: groupId as Id<"groups"> } : "skip"
   ) as any;
 
   // ── Mutations ──
@@ -349,7 +347,6 @@ export function FollowupSettingsPanel({
 
   // Save custom fields only (structural change, group-level)
   const handleSaveCustomFields = useCallback(async () => {
-    if (crossGroupMode) return;
     if (showAddField) {
       Alert.alert("Finish adding field", "Click Add Field or Cancel before saving.");
       return;
@@ -375,7 +372,6 @@ export function FollowupSettingsPanel({
       setIsSavingColumns(false);
     }
   }, [
-    crossGroupMode,
     groupId,
     currentColumnOrder,
     currentHiddenColumns,
@@ -495,7 +491,7 @@ export function FollowupSettingsPanel({
 
   // ── Loading ──
 
-  if (!crossGroupMode && (!config || !groupData)) {
+  if (!config || !groupData) {
     return (
       <View style={[styles.container, { backgroundColor: colors.surface }]}>
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
@@ -541,9 +537,9 @@ export function FollowupSettingsPanel({
       </View>
 
       <ScrollView style={styles.scrollArea} contentContainerStyle={styles.scrollContent}>
-        {/* ── Section 1: Display Name (hidden in cross-group mode) ── */}
-        {!crossGroupMode && renderSectionHeader("Display Name", displayNameOpen, () => setDisplayNameOpen((p) => !p))}
-        {!crossGroupMode && displayNameOpen && (
+        {/* ── Section 1: Display Name ── */}
+        {renderSectionHeader("Display Name", displayNameOpen, () => setDisplayNameOpen((p) => !p))}
+        {displayNameOpen && (
           <View style={[styles.sectionBody, { borderBottomColor: colors.borderLight }]}>
             <TextInput
               style={[
@@ -564,9 +560,9 @@ export function FollowupSettingsPanel({
           </View>
         )}
 
-        {/* ── Section 2: Data (hidden in cross-group mode) ── */}
-        {!crossGroupMode && renderSectionHeader("Data", dataOpen, () => setDataOpen((p) => !p))}
-        {!crossGroupMode && dataOpen && (
+        {/* ── Section 2: Data ── */}
+        {renderSectionHeader("Data", dataOpen, () => setDataOpen((p) => !p))}
+        {dataOpen && (
           <View style={[styles.sectionBody, { borderBottomColor: colors.borderLight }]}>
             <TouchableOpacity
               onPress={handleRefreshFollowupScores}
@@ -643,167 +639,163 @@ export function FollowupSettingsPanel({
               })}
             </View>
 
-            {/* Custom Fields subsection (hidden in cross-group mode) */}
-            {!crossGroupMode && (
-              <>
-                <View style={[styles.subsectionDivider, { backgroundColor: colors.border }]} />
-                <Text style={[styles.subsectionTitle, { color: colors.textTertiary }]}>Custom Fields</Text>
-                <Text style={[styles.noteText, { color: colors.textTertiary }]}>
-                  Custom fields are shared across all groups in your community.
-                </Text>
+            {/* Custom Fields subsection */}
+            <View style={[styles.subsectionDivider, { backgroundColor: colors.border }]} />
+            <Text style={[styles.subsectionTitle, { color: colors.textTertiary }]}>Custom Fields</Text>
+            <Text style={[styles.noteText, { color: colors.textTertiary }]}>
+              Custom fields are shared across all groups in your community.
+            </Text>
 
-                {/* Capacity indicators */}
-                <View style={styles.capacityRow}>
-                  {Object.entries(SLOT_CAPACITIES).map(([key, info]) => (
-                    <View key={key} style={[styles.capacityBadge, { backgroundColor: colors.surfaceSecondary }]}>
-                      <Text style={[styles.capacityText, { color: colors.textTertiary }]}>
-                        {info.label}: {capacityInfo[key] ?? 0}/{info.total}
-                      </Text>
-                    </View>
-                  ))}
+            {/* Capacity indicators */}
+            <View style={styles.capacityRow}>
+              {Object.entries(SLOT_CAPACITIES).map(([key, info]) => (
+                <View key={key} style={[styles.capacityBadge, { backgroundColor: colors.surfaceSecondary }]}>
+                  <Text style={[styles.capacityText, { color: colors.textTertiary }]}>
+                    {info.label}: {capacityInfo[key] ?? 0}/{info.total}
+                  </Text>
+                </View>
+              ))}
+            </View>
+
+            {/* Existing custom fields */}
+            {customFields.map((field, idx) => (
+              <View key={field.slot} style={[styles.fieldRow, { backgroundColor: colors.surfaceSecondary }]}>
+                <View style={styles.fieldInfo}>
+                  <Text style={[styles.fieldName, { color: colors.textSecondary }]}>{field.name}</Text>
+                  <View style={[styles.typeBadge, { backgroundColor: colors.border }]}>
+                    <Text style={[styles.typeBadgeText, { color: colors.textTertiary }]}>{field.type}</Text>
+                  </View>
+                  {(field.type === "dropdown" || field.type === "multiselect") && field.options && (
+                    <Text style={[styles.fieldOptions, { color: colors.textTertiary }]} numberOfLines={1}>
+                      ({field.options.join(", ")})
+                    </Text>
+                  )}
+                </View>
+                <TouchableOpacity onPress={() => handleDeleteField(idx)} style={styles.deleteBtn}>
+                  <Ionicons name="trash-outline" size={14} color={colors.destructive} />
+                </TouchableOpacity>
+              </View>
+            ))}
+
+            {/* Add custom field form */}
+            {showAddField ? (
+              <View style={[styles.addFieldForm, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+                <TextInput
+                  style={[
+                    styles.fieldInput,
+                    { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground },
+                    Platform.OS === "web" ? ({ outlineStyle: "none" } as any) : {},
+                  ]}
+                  value={newFieldName}
+                  onChangeText={setNewFieldName}
+                  placeholder="Field name..."
+                  placeholderTextColor={colors.inputPlaceholder}
+                  autoFocus
+                />
+                <View style={styles.typePickerRow}>
+                  {FIELD_TYPES.map((ft) => {
+                    const enabled = canAddType(ft.value);
+                    const isActive = newFieldType === ft.value;
+                    return (
+                      <TouchableOpacity
+                        key={ft.value}
+                        style={[
+                          styles.typeOption,
+                          { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground },
+                          isActive && { borderColor: themeColor, backgroundColor: `${themeColor}10` },
+                          !enabled && styles.typeOptionDisabled,
+                        ]}
+                        onPress={() => enabled && setNewFieldType(ft.value)}
+                        disabled={!enabled}
+                      >
+                        <Text
+                          style={[
+                            styles.typeOptionText,
+                            { color: colors.textSecondary },
+                            isActive && { color: themeColor, fontWeight: "600" as const },
+                            !enabled && { color: colors.textTertiary },
+                          ]}
+                        >
+                          {ft.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
 
-                {/* Existing custom fields */}
-                {customFields.map((field, idx) => (
-                  <View key={field.slot} style={[styles.fieldRow, { backgroundColor: colors.surfaceSecondary }]}>
-                    <View style={styles.fieldInfo}>
-                      <Text style={[styles.fieldName, { color: colors.textSecondary }]}>{field.name}</Text>
-                      <View style={[styles.typeBadge, { backgroundColor: colors.border }]}>
-                        <Text style={[styles.typeBadgeText, { color: colors.textTertiary }]}>{field.type}</Text>
-                      </View>
-                      {(field.type === "dropdown" || field.type === "multiselect") && field.options && (
-                        <Text style={[styles.fieldOptions, { color: colors.textTertiary }]} numberOfLines={1}>
-                          ({field.options.join(", ")})
-                        </Text>
-                      )}
-                    </View>
-                    <TouchableOpacity onPress={() => handleDeleteField(idx)} style={styles.deleteBtn}>
-                      <Ionicons name="trash-outline" size={14} color={colors.destructive} />
-                    </TouchableOpacity>
-                  </View>
-                ))}
-
-                {/* Add custom field form */}
-                {showAddField ? (
-                  <View style={[styles.addFieldForm, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
-                    <TextInput
-                      style={[
-                        styles.fieldInput,
-                        { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground },
-                        Platform.OS === "web" ? ({ outlineStyle: "none" } as any) : {},
-                      ]}
-                      value={newFieldName}
-                      onChangeText={setNewFieldName}
-                      placeholder="Field name..."
-                      placeholderTextColor={colors.inputPlaceholder}
-                      autoFocus
-                    />
-                    <View style={styles.typePickerRow}>
-                      {FIELD_TYPES.map((ft) => {
-                        const enabled = canAddType(ft.value);
-                        const isActive = newFieldType === ft.value;
-                        return (
-                          <TouchableOpacity
-                            key={ft.value}
-                            style={[
-                              styles.typeOption,
-                              { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground },
-                              isActive && { borderColor: themeColor, backgroundColor: `${themeColor}10` },
-                              !enabled && styles.typeOptionDisabled,
-                            ]}
-                            onPress={() => enabled && setNewFieldType(ft.value)}
-                            disabled={!enabled}
-                          >
-                            <Text
-                              style={[
-                                styles.typeOptionText,
-                                { color: colors.textSecondary },
-                                isActive && { color: themeColor, fontWeight: "600" as const },
-                                !enabled && { color: colors.textTertiary },
-                              ]}
-                            >
-                              {ft.label}
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-
-                    {/* Dropdown / multiselect options editor */}
-                    {(newFieldType === "dropdown" || newFieldType === "multiselect") && (
-                      <View style={styles.optionsEditor}>
-                        <Text style={[styles.optionsLabel, { color: colors.textTertiary }]}>Options:</Text>
-                        {newFieldOptions.map((opt, i) => (
-                          <View key={i} style={styles.optionRow}>
-                            <TextInput
-                              style={[
-                                styles.optionInput,
-                                { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground },
-                                Platform.OS === "web" ? ({ outlineStyle: "none" } as any) : {},
-                              ]}
-                              value={opt}
-                              onChangeText={(text) => {
-                                const next = [...newFieldOptions];
-                                next[i] = text.replace(/;/g, "");
-                                setNewFieldOptions(next);
-                              }}
-                              placeholder={`Option ${i + 1}`}
-                              placeholderTextColor={colors.inputPlaceholder}
-                            />
-                            <TouchableOpacity
-                              onPress={() => setNewFieldOptions(newFieldOptions.filter((_, j) => j !== i))}
-                              style={styles.optionDeleteBtn}
-                            >
-                              <Ionicons name="close-circle" size={16} color={colors.iconSecondary} />
-                            </TouchableOpacity>
-                          </View>
-                        ))}
+                {/* Dropdown / multiselect options editor */}
+                {(newFieldType === "dropdown" || newFieldType === "multiselect") && (
+                  <View style={styles.optionsEditor}>
+                    <Text style={[styles.optionsLabel, { color: colors.textTertiary }]}>Options:</Text>
+                    {newFieldOptions.map((opt, i) => (
+                      <View key={i} style={styles.optionRow}>
+                        <TextInput
+                          style={[
+                            styles.optionInput,
+                            { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground },
+                            Platform.OS === "web" ? ({ outlineStyle: "none" } as any) : {},
+                          ]}
+                          value={opt}
+                          onChangeText={(text) => {
+                            const next = [...newFieldOptions];
+                            next[i] = text.replace(/;/g, "");
+                            setNewFieldOptions(next);
+                          }}
+                          placeholder={`Option ${i + 1}`}
+                          placeholderTextColor={colors.inputPlaceholder}
+                        />
                         <TouchableOpacity
-                          onPress={() => setNewFieldOptions([...newFieldOptions, ""])}
-                          style={styles.addOptionBtn}
+                          onPress={() => setNewFieldOptions(newFieldOptions.filter((_, j) => j !== i))}
+                          style={styles.optionDeleteBtn}
                         >
-                          <Ionicons name="add" size={12} color={themeColor} />
-                          <Text style={[styles.addOptionText, { color: themeColor }]}>Add option</Text>
+                          <Ionicons name="close-circle" size={16} color={colors.iconSecondary} />
                         </TouchableOpacity>
                       </View>
-                    )}
-
-                    <View style={styles.addFieldActions}>
-                      <TouchableOpacity
-                        onPress={() => {
-                          setShowAddField(false);
-                          setNewFieldName("");
-                          setNewFieldType("text");
-                          setNewFieldOptions([]);
-                        }}
-                        style={styles.cancelFieldBtn}
-                      >
-                        <Text style={[styles.cancelFieldText, { color: colors.textTertiary }]}>Cancel</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        onPress={handleAddField}
-                        style={[
-                          styles.confirmFieldBtn,
-                          { backgroundColor: themeColor },
-                          !canSubmitNewField && styles.btnDisabled,
-                        ]}
-                        disabled={!canSubmitNewField}
-                      >
-                        <Text style={[styles.confirmFieldText, { color: '#fff' }]}>Add Field</Text>
-                      </TouchableOpacity>
-                    </View>
+                    ))}
+                    <TouchableOpacity
+                      onPress={() => setNewFieldOptions([...newFieldOptions, ""])}
+                      style={styles.addOptionBtn}
+                    >
+                      <Ionicons name="add" size={12} color={themeColor} />
+                      <Text style={[styles.addOptionText, { color: themeColor }]}>Add option</Text>
+                    </TouchableOpacity>
                   </View>
-                ) : (
-                  <TouchableOpacity onPress={() => setShowAddField(true)} style={styles.addFieldButton}>
-                    <Ionicons name="add-circle-outline" size={16} color={themeColor} />
-                    <Text style={[styles.addFieldButtonText, { color: themeColor }]}>Add Custom Field</Text>
-                  </TouchableOpacity>
                 )}
-              </>
+
+                <View style={styles.addFieldActions}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setShowAddField(false);
+                      setNewFieldName("");
+                      setNewFieldType("text");
+                      setNewFieldOptions([]);
+                    }}
+                    style={styles.cancelFieldBtn}
+                  >
+                    <Text style={[styles.cancelFieldText, { color: colors.textTertiary }]}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={handleAddField}
+                    style={[
+                      styles.confirmFieldBtn,
+                      { backgroundColor: themeColor },
+                      !canSubmitNewField && styles.btnDisabled,
+                    ]}
+                    disabled={!canSubmitNewField}
+                  >
+                    <Text style={[styles.confirmFieldText, { color: '#fff' }]}>Add Field</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              <TouchableOpacity onPress={() => setShowAddField(true)} style={styles.addFieldButton}>
+                <Ionicons name="add-circle-outline" size={16} color={themeColor} />
+                <Text style={[styles.addFieldButtonText, { color: themeColor }]}>Add Custom Field</Text>
+              </TouchableOpacity>
             )}
 
             {/* Save custom fields button (only when custom fields exist or were modified) */}
-            {!crossGroupMode && customFields.length > 0 && (
+            {customFields.length > 0 && (
               <TouchableOpacity
                 onPress={handleSaveCustomFields}
                 style={[
@@ -828,14 +820,14 @@ export function FollowupSettingsPanel({
           </View>
         )}
 
-        {/* ── Section 4: Member Card Subtitle (hidden in cross-group mode) ── */}
-        {!crossGroupMode && renderSectionHeader(
+        {/* ── Section 4: Member Card Subtitle ── */}
+        {renderSectionHeader(
           "Member Card Subtitle",
           subtitleOpen,
           () => setSubtitleOpen((p) => !p),
           <Text style={[styles.sectionHeaderExtra, { color: colors.textTertiary }]}>(Mobile only)</Text>,
         )}
-        {!crossGroupMode && subtitleOpen && (
+        {subtitleOpen && (
           <View style={[styles.sectionBody, { borderBottomColor: colors.borderLight }]}>
             <Text style={[styles.hintText, { color: colors.textTertiary }]}>
               Choose up to 2 items to show below each member's name.

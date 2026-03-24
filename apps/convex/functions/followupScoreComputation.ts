@@ -227,6 +227,16 @@ export const deleteScoreDoc = internalMutation({
         )
         .first();
       if (cpRecord) {
+        // Clean up junction rows before deleting the communityPeople record
+        const junctionRows = await ctx.db
+          .query("communityPeopleAssignees")
+          .withIndex("by_communityPerson", (q: any) =>
+            q.eq("communityPersonId", cpRecord._id),
+          )
+          .collect();
+        for (const row of junctionRows) {
+          await ctx.db.delete(row._id);
+        }
         await ctx.db.delete(cpRecord._id);
       }
     }

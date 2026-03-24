@@ -45,15 +45,12 @@ export function FollowupDetailContent({
   onClose,
   scrollToNotes,
   scrollToTasks,
-  crossGroupMode,
 }: {
   groupId: string;
   memberId: string;
   onClose?: () => void;
   scrollToNotes?: boolean;
   scrollToTasks?: boolean;
-  /** When true, memberId is groupMemberId (from cross-group view). When false, memberId is communityPeopleId. */
-  crossGroupMode?: boolean;
 }) {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
@@ -1423,7 +1420,6 @@ export function FollowupDetailScreen() {
       <FollowupDetailContent
         groupId={group_id || ""}
         memberId={member_id || ""}
-        crossGroupMode={cross_group === "1"}
       />
     </UserRoute>
   );

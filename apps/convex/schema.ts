@@ -1902,4 +1902,21 @@ export default defineSchema({
     .index("by_user_community", ["createdById", "communityId"]),
 
   // =============================================================================
+  // COMMUNITY PEOPLE ASSIGNEES (junction table for multi-assignee indexing)
+  // =============================================================================
+  // Mirrors the assigneeIds array on communityPeople as individual rows
+  // so we can do efficient indexed lookups by assignee (Convex doesn't
+  // support array-contains in indexes).
+
+  communityPeopleAssignees: defineTable({
+    communityPersonId: v.id("communityPeople"),
+    assigneeUserId: v.id("users"),
+    groupId: v.id("groups"),
+    communityId: v.id("communities"),
+  })
+    .index("by_group_assignee", ["groupId", "assigneeUserId"])
+    .index("by_community_assignee", ["communityId", "assigneeUserId"])
+    .index("by_communityPerson", ["communityPersonId"]),
+
+  // =============================================================================
 });
