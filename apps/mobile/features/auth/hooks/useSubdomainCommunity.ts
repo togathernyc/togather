@@ -6,6 +6,7 @@ import { useQuery, api } from "@services/api/convex";
 import {
   parseSubdomainFromHostname,
   parseSubdomainFromLinkUrl,
+  getCapturedLinkSubdomain,
 } from "@/features/auth/utils/communitySubdomain";
 
 /**
@@ -16,9 +17,10 @@ import {
  * - Falls back to ?subdomain= query param for local development
  *
  * On native:
- * - Parses subdomain from the universal link URL (expo-linking useLinkingURL), which
- *   preserves the full https://community.example/nearme hostname. RN getInitialURL()
- *   often returns only the path (/nearme), which would incorrectly show "Community Required".
+ * - Uses the module-level captured subdomain (set in RootLayout via getLinkingURL()
+ *   before Expo Router consumes the URL). This is reliable on real devices where
+ *   useLinkingURL() never returns the URL in child screens.
+ * - Falls back to useLinkingURL() for hot-reloading / development
  * - Falls back to ?subdomain= query param from deep links
  *
  * Returns:
@@ -35,29 +37,6 @@ export function useSubdomainCommunity() {
   );
   const [isHydrated, setIsHydrated] = useState(false);
 
-  // On native, useLinkingURL() returns null on the first render before the
-  // universal-link URL resolves. We wait briefly for it to arrive so screens
-  // don't flash "Community Required" before the subdomain can be parsed.
-  const [isNativeLinkResolved, setIsNativeLinkResolved] = useState(
-    Platform.OS === "web"
-  );
-
-  // Mark resolved once a linking URL arrives on native
-  useEffect(() => {
-    if (Platform.OS === "web") return;
-    if (linkingUrl) {
-      setIsNativeLinkResolved(true);
-    }
-  }, [linkingUrl]);
-
-  // Timeout fallback: if no linking URL arrives within 1 s (normal app launch,
-  // not via deep link), stop waiting so the screen can render normally.
-  useEffect(() => {
-    if (Platform.OS === "web" || isNativeLinkResolved) return;
-    const timer = setTimeout(() => setIsNativeLinkResolved(true), 1000);
-    return () => clearTimeout(timer);
-  }, [isNativeLinkResolved]);
-
   // Parse hostname on web after hydration
   useEffect(() => {
     if (Platform.OS === "web" && typeof window !== "undefined") {
@@ -73,14 +52,22 @@ export function useSubdomainCommunity() {
     [linkingUrl]
   );
 
-  // Determine subdomain source: hostname (web or native from full link URL) or query param
+  // Determine subdomain source: hostname (web), captured link (native), or query param
   const subdomain = useMemo(() => {
     if (Platform.OS === "web") {
       if (webHostnameSubdomain) {
         return webHostnameSubdomain;
       }
-    } else if (nativeSubdomainFromLink) {
-      return nativeSubdomainFromLink;
+    } else {
+      // On native, prefer useLinkingURL() if available (works in dev/hot-reload),
+      // then fall back to the module-level captured subdomain from RootLayout
+      if (nativeSubdomainFromLink) {
+        return nativeSubdomainFromLink;
+      }
+      const captured = getCapturedLinkSubdomain();
+      if (captured) {
+        return captured;
+      }
     }
 
     const paramSubdomain = params.subdomain;
@@ -103,13 +90,11 @@ export function useSubdomainCommunity() {
 
   // On web, wait for hydration to complete before reporting isLoading as false
   const isWaitingForHydration = Platform.OS === "web" && !isHydrated;
-  // On native, wait for the linking URL to resolve (or timeout)
-  const isWaitingForNativeLink = Platform.OS !== "web" && !isNativeLinkResolved;
 
   return {
     community: community ?? null,
     subdomain,
-    isLoading: isWaitingForHydration || isWaitingForNativeLink || isLoading,
+    isLoading: isWaitingForHydration || isLoading,
     error: null, // Convex throws on error, caught by error boundary
   };
 }
