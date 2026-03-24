@@ -601,6 +601,7 @@ export const internalCrossGroupAttendance = internalQuery({
 
       for (const membership of allMemberships) {
         // Past non-cancelled meetings in window (see "Meeting Status Quirks" at top of file)
+        // Use .take(20) to cover groups meeting up to 2x/week over 60 days (~17 meetings)
         const meetings = await ctx.db
           .query("meetings")
           .withIndex("by_group_scheduledAt", (q) =>
@@ -610,7 +611,7 @@ export const internalCrossGroupAttendance = internalQuery({
           )
           .filter((q) => q.neq(q.field("status"), "cancelled"))
           .order("desc")
-          .take(10);
+          .take(20);
 
         const attendances = await Promise.all(
           meetings.map((m) =>
