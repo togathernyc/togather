@@ -311,9 +311,9 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
         // Handle video (take first only)
         if (videoAssets.length > 0) {
           const video = videoAssets[0];
-          const fileSize = video.fileSize ?? 0;
+          const fileSize = video.fileSize;
 
-          if (fileSize > MAX_FILE_SIZE_BYTES) {
+          if (fileSize != null && fileSize > MAX_FILE_SIZE_BYTES) {
             Alert.alert(
               'Video Too Large',
               `Maximum file size is ${MAX_FILE_SIZE_MB}MB. Please trim or compress your video.`,
@@ -325,7 +325,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
           const videoFile: SelectedFile = {
             uri: video.uri,
             name: video.fileName || `video_${Date.now()}.mp4`,
-            size: fileSize,
+            size: fileSize ?? 0,
             mimeType: video.mimeType || 'video/mp4',
           };
 
@@ -444,8 +444,8 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
 
         if (asset.type === 'video') {
           // Video path — validate size, upload as file
-          const fileSize = asset.fileSize ?? 0;
-          if (fileSize > MAX_FILE_SIZE_BYTES) {
+          const fileSize = asset.fileSize;
+          if (fileSize != null && fileSize > MAX_FILE_SIZE_BYTES) {
             Alert.alert(
               'Video Too Large',
               `Maximum file size is ${MAX_FILE_SIZE_MB}MB. Try recording a shorter clip.`,
@@ -457,7 +457,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
           const videoFile: SelectedFile = {
             uri: asset.uri,
             name: asset.fileName || `video_${Date.now()}.mp4`,
-            size: fileSize,
+            size: fileSize ?? 0,
             mimeType: asset.mimeType || 'video/mp4',
           };
 
