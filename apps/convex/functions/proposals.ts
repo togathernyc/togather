@@ -357,13 +357,13 @@ export const completeSetup = mutation({
       throw new Error("Proposal has no associated community");
     }
 
-    // Validate slug uniqueness
+    // Validate slug uniqueness (allow the proposal's own community to keep its slug)
     const existingCommunity = await ctx.db
       .query("communities")
       .withIndex("by_slug", (q) => q.eq("slug", args.slug))
       .first();
 
-    if (existingCommunity) {
+    if (existingCommunity && existingCommunity._id !== proposal.communityId) {
       throw new Error("Slug is already taken");
     }
 

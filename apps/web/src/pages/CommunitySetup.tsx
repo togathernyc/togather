@@ -343,8 +343,8 @@ export default function CommunitySetup() {
     );
   }
 
-  // Setup already completed
-  if (data.proposal.setupCompletedAt !== undefined) {
+  // Setup already completed AND subscription active -- truly done
+  if (data.proposal.setupCompletedAt !== undefined && data.proposal.stripeSubscriptionId) {
     return (
       <PageContainer>
         <div className="max-w-lg mx-auto text-center py-16">

@@ -159,16 +159,6 @@ export const createCheckoutSession = action({
       throw new Error("A subscription already exists for this proposal");
     }
 
-    // Prevent duplicate Stripe customers from concurrent checkout attempts.
-    // stripeCustomerId is set by saveStripeIds before the webhook fires,
-    // so a second call while checkout is in-progress will be blocked here.
-    if (proposal.stripeCustomerId) {
-      throw new Error(
-        "A checkout session has already been created for this proposal. " +
-        "Please complete the existing checkout or wait for it to expire."
-      );
-    }
-
     if (!proposal.communityId) {
       throw new Error(
         "No community associated with this proposal. Setup may be incomplete."
@@ -185,14 +175,19 @@ export const createCheckoutSession = action({
         apiVersion: "2026-02-25.clover",
       });
 
-      // Create Stripe customer
-      const customer = await stripe.customers.create({
-        name: proposal.communityName,
-        metadata: {
-          communityId,
-          proposalId,
-        },
-      });
+      // Reuse existing Stripe customer if checkout was previously started
+      // (e.g., abandoned or expired session), otherwise create a new one.
+      let customerId = proposal.stripeCustomerId;
+      if (!customerId) {
+        const customer = await stripe.customers.create({
+          name: proposal.communityName,
+          metadata: {
+            communityId,
+            proposalId,
+          },
+        });
+        customerId = customer.id;
+      }
 
       // Create a recurring price for this community's subscription
       const productId = await getOrCreateProductId(stripe);
@@ -208,7 +203,7 @@ export const createCheckoutSession = action({
 
       // Create the checkout session
       const session = await stripe.checkout.sessions.create({
-        customer: customer.id,
+        customer: customerId,
         mode: "subscription",
         line_items: [{ price: price.id, quantity: 1 }],
         success_url:
@@ -229,7 +224,7 @@ export const createCheckoutSession = action({
         internal.functions.billing.saveStripeIds,
         {
           proposalId: proposal._id,
-          stripeCustomerId: customer.id,
+          stripeCustomerId: customerId,
           stripePriceId: price.id,
         }
       );
