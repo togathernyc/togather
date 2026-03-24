@@ -100,6 +100,10 @@ function VideoDownloadFallback({ url, name, isOwnMessage }: VideoPlayerProps) {
 
 function WebVideoPlayer({ url, name, isOwnMessage = false, onLongPress }: VideoPlayerProps) {
   const resolvedUrl = getMediaUrl(url);
+  const fileName = name || url.split('/').pop()?.split('?')[0] || 'Video';
+  const displayName = fileName.length > 20
+    ? fileName.slice(0, 10) + '...' + fileName.slice(-8)
+    : fileName;
 
   return (
     <View style={styles.container}>
@@ -118,6 +122,9 @@ function WebVideoPlayer({ url, name, isOwnMessage = false, onLongPress }: VideoP
           }}
         />
       </Pressable>
+      <Text style={[styles.fileName, isOwnMessage && styles.ownMessageText]} numberOfLines={1}>
+        {displayName}
+      </Text>
     </View>
   );
 }
