@@ -268,11 +268,17 @@ export const list = query({
       const sortKey = indexName.replace("by_group_", "");
       const dir = direction === "desc" ? -1 : 1;
       filtered.sort((a: any, b: any) => {
-        const av = a[sortKey] ?? "";
-        const bv = b[sortKey] ?? "";
-        if (av < bv) return -1 * dir;
-        if (av > bv) return 1 * dir;
-        return 0;
+        const av = a[sortKey];
+        const bv = b[sortKey];
+        // Handle undefined/null: push them to the end regardless of direction
+        if (av == null && bv == null) return 0;
+        if (av == null) return 1;
+        if (bv == null) return -1;
+        // Numeric comparison for numbers, string comparison otherwise
+        if (typeof av === "number" && typeof bv === "number") {
+          return (av - bv) * dir;
+        }
+        return String(av).localeCompare(String(bv)) * dir;
       });
 
       return {
