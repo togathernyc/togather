@@ -11,9 +11,9 @@ import { NativeModules, Platform } from 'react-native';
 // Constants
 // ============================================================================
 
-/** Maximum file size for uploads (10MB) */
-export const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
-export const MAX_FILE_SIZE_MB = 10;
+/** Maximum file size for uploads (50MB) */
+export const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
+export const MAX_FILE_SIZE_MB = 50;
 
 // ============================================================================
 // File Type Definitions

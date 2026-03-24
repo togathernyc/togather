@@ -589,6 +589,7 @@ function MessageItemInner({
         <ImageAttachmentsGrid
           images={validImageAttachments}
           onImagePress={handleImagePress}
+          onLongPress={() => handleLongPress({ nativeEvent: { pageX: 0, pageY: 0 } } as GestureResponderEvent)}
         />
       </View>
     );
@@ -650,6 +651,7 @@ function MessageItemInner({
             url={attachment.url}
             name={attachment.name}
             isOwnMessage={isOwnMessage}
+            onLongPress={handleLongPress}
           />
         ))}
       </View>
@@ -871,14 +873,16 @@ function MessageItemInner({
                     : [styles.otherMessageBubble, { backgroundColor: themeColors.chatBubbleOther }],
                 ]}
               >
-                {renderMessageContent()}
+                <View style={styles.bubbleTextContent}>
+                  {renderMessageContent()}
+                </View>
                 {renderImageAttachments()}
                 {renderDocumentAttachments()}
                 {renderAudioAttachments()}
                 {renderVideoAttachments()}
 
                 {/* Timestamp and edited badge */}
-                <View style={styles.messageFooter}>
+                <View style={[styles.messageFooter, styles.bubbleFooter]}>
                   <Text
                     style={[
                       styles.timestamp,
@@ -1004,8 +1008,7 @@ const styles = StyleSheet.create({
   },
   messageBubble: {
     borderRadius: 14,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    overflow: 'hidden',
   },
   ownMessageBubble: {
     borderBottomRightRadius: 3,
@@ -1089,7 +1092,15 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
   attachmentsContainer: {
-    marginTop: 8,
+    marginTop: 4,
+  },
+  bubbleTextContent: {
+    paddingHorizontal: 10,
+    paddingTop: 6,
+  },
+  bubbleFooter: {
+    paddingHorizontal: 10,
+    paddingBottom: 6,
   },
   reactionsContainer: {
     flexDirection: 'row',

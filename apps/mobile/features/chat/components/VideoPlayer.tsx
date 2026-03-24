@@ -1,10 +1,11 @@
 /**
- * VideoPlayer - Inline video player for chat messages
+ * VideoPlayer - Thumbnail-to-fullscreen video player for chat messages
  *
- * Displays a video player with playback controls.
+ * Displays a thumbnail with a play button. Tapping opens a fullscreen modal
+ * with native video controls.
  * Falls back to a download button if expo-av is not available (OTA update scenario).
  */
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -13,8 +14,11 @@ import {
   Linking,
   Alert,
   Dimensions,
+  Modal,
+  GestureResponderEvent,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { isAudioVideoSupported } from '../utils/fileTypes';
 import { getMediaUrl } from '@/utils/media';
 
@@ -29,6 +33,8 @@ interface VideoPlayerProps {
   name?: string;
   /** Whether this appears in the sender's own message */
   isOwnMessage?: boolean;
+  /** Long press handler (e.g. for reactions) */
+  onLongPress?: (event: GestureResponderEvent) => void;
 }
 
 // ============================================================================
@@ -91,27 +97,74 @@ function VideoDownloadFallback({ url, name, isOwnMessage }: VideoPlayerProps) {
 // Main Component
 // ============================================================================
 
-export function VideoPlayer({ url, name, isOwnMessage = false }: VideoPlayerProps) {
+export function VideoPlayer({ url, name, isOwnMessage = false, onLongPress }: VideoPlayerProps) {
   // Check if expo-av is available
   if (!isAudioVideoSupported()) {
     return <VideoDownloadFallback url={url} name={name} isOwnMessage={isOwnMessage} />;
   }
 
-  // Dynamic import for expo-av (only if available)
-  return <VideoPlayerInner url={url} name={name} isOwnMessage={isOwnMessage} />;
+  return <VideoPlayerInner url={url} name={name} isOwnMessage={isOwnMessage} onLongPress={onLongPress} />;
+}
+
+// ============================================================================
+// Fullscreen Modal Component
+// ============================================================================
+
+function FullscreenVideoModal({
+  visible,
+  videoUrl,
+  onClose,
+}: {
+  visible: boolean;
+  videoUrl: string;
+  onClose: () => void;
+}) {
+  const insets = useSafeAreaInsets();
+  const { Video, ResizeMode } = require('expo-av');
+
+  return (
+    <Modal
+      visible={visible}
+      animationType="fade"
+      supportedOrientations={['portrait', 'landscape']}
+      onRequestClose={onClose}
+    >
+      <View style={styles.modalContainer}>
+        <Video
+          source={{ uri: videoUrl }}
+          style={styles.modalVideo}
+          resizeMode={ResizeMode.CONTAIN}
+          useNativeControls={true}
+          shouldPlay={true}
+          isLooping={false}
+          onError={(error: any) => {
+            console.error('[VideoPlayer] Modal playback error:', error);
+          }}
+        />
+
+        {/* Close button */}
+        <Pressable
+          style={[styles.closeButton, { top: insets.top + 12, right: 16 }]}
+          onPress={onClose}
+          hitSlop={12}
+        >
+          <Ionicons name="close" size={28} color="#fff" />
+        </Pressable>
+      </View>
+    </Modal>
+  );
 }
 
 // ============================================================================
 // Inner Component (with expo-av)
 // ============================================================================
 
-function VideoPlayerInner({ url, name, isOwnMessage = false }: VideoPlayerProps) {
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [showControls, setShowControls] = useState(true);
+function VideoPlayerInner({ url, name, isOwnMessage = false, onLongPress }: VideoPlayerProps) {
+  const [modalVisible, setModalVisible] = useState(false);
+  const [aspectRatio, setAspectRatio] = useState(VIDEO_ASPECT_RATIO);
 
-  const videoRef = useRef<any>(null);
+  const { Video, ResizeMode } = require('expo-av');
+
   const resolvedUrl = getMediaUrl(url);
 
   const fileName = name || url.split('/').pop()?.split('?')[0] || 'Video';
@@ -119,98 +172,58 @@ function VideoPlayerInner({ url, name, isOwnMessage = false }: VideoPlayerProps)
     ? fileName.slice(0, 10) + '...' + fileName.slice(-8)
     : fileName;
 
-  const handlePlaybackStatusUpdate = useCallback((status: any) => {
-    if (status.isLoaded) {
-      setIsLoading(false);
-      setIsPlaying(status.isPlaying);
-
-      if (status.didJustFinish) {
-        setIsPlaying(false);
-        setShowControls(true);
-        videoRef.current?.setPositionAsync(0);
-      }
-    } else if (status.error) {
-      console.error('[VideoPlayer] Playback error:', status.error);
-      setError('Failed to play video');
-      setIsLoading(false);
-    }
+  const handleOpen = useCallback(() => {
+    setModalVisible(true);
   }, []);
 
-  const togglePlayPause = useCallback(async () => {
-    if (!videoRef.current) return;
-
-    try {
-      if (isPlaying) {
-        await videoRef.current.pauseAsync();
-        setShowControls(true);
-      } else {
-        await videoRef.current.playAsync();
-        // Hide controls after starting
-        setTimeout(() => setShowControls(false), 2000);
-      }
-    } catch (err) {
-      console.error('[VideoPlayer] Play/pause error:', err);
-    }
-  }, [isPlaying]);
-
-  const handleVideoPress = useCallback(() => {
-    if (isPlaying) {
-      setShowControls(!showControls);
-      // Auto-hide controls after 3 seconds
-      if (!showControls) {
-        setTimeout(() => setShowControls(false), 3000);
-      }
-    } else {
-      togglePlayPause();
-    }
-  }, [isPlaying, showControls, togglePlayPause]);
-
-  if (error) {
-    return <VideoDownloadFallback url={url} name={name} isOwnMessage={isOwnMessage} />;
-  }
-
-  // Dynamic require for expo-av
-  const { Video, ResizeMode } = require('expo-av');
+  const handleClose = useCallback(() => {
+    setModalVisible(false);
+  }, []);
 
   return (
     <View style={styles.container}>
-      <Pressable onPress={handleVideoPress} style={styles.videoWrapper}>
+      <Pressable
+        onPress={handleOpen}
+        onLongPress={onLongPress}
+        delayLongPress={300}
+        style={[styles.thumbnailWrapper, { aspectRatio }]}
+      >
+        {/* Paused video showing first frame as thumbnail */}
         <Video
-          ref={videoRef}
           source={{ uri: resolvedUrl || '' }}
-          style={styles.video}
-          resizeMode={ResizeMode.CONTAIN}
-          useNativeControls={false}
-          isLooping={false}
-          onPlaybackStatusUpdate={handlePlaybackStatusUpdate}
-          onError={(error: any) => {
-            console.error('[VideoPlayer] Video error:', error);
-            setError('Failed to load video');
+          style={StyleSheet.absoluteFill}
+          resizeMode={ResizeMode.COVER}
+          shouldPlay={false}
+          isMuted={true}
+          onReadyForDisplay={(event: any) => {
+            const { width, height } = event.naturalSize;
+            if (width && height) {
+              setAspectRatio(width / height);
+            }
           }}
         />
 
-        {/* Play/Pause Overlay */}
-        {(showControls || !isPlaying) && (
-          <View style={styles.controlsOverlay}>
-            <View style={styles.playButtonLarge}>
-              {isLoading ? (
-                <View style={styles.loadingIndicator} />
-              ) : (
-                <Ionicons
-                  name={isPlaying ? 'pause' : 'play'}
-                  size={32}
-                  color="#fff"
-                />
-              )}
-            </View>
+        {/* Dark overlay with play button */}
+        <View style={styles.controlsOverlay}>
+          <View style={styles.playButtonLarge}>
+            <Ionicons name="play" size={32} color="#fff" />
           </View>
-        )}
+        </View>
       </Pressable>
 
       {/* File name */}
       <Text style={[styles.fileName, isOwnMessage && styles.ownMessageText]} numberOfLines={1}>
         {displayName}
       </Text>
+
+      {/* Fullscreen modal */}
+      {modalVisible && (
+        <FullscreenVideoModal
+          visible={modalVisible}
+          videoUrl={resolvedUrl || ''}
+          onClose={handleClose}
+        />
+      )}
     </View>
   );
 }
@@ -227,15 +240,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#000',
     maxWidth: VIDEO_MAX_WIDTH,
   },
-  videoWrapper: {
+  thumbnailWrapper: {
     width: '100%',
-    aspectRatio: VIDEO_ASPECT_RATIO,
     backgroundColor: '#000',
     position: 'relative',
-  },
-  video: {
-    width: '100%',
-    height: '100%',
   },
   controlsOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -251,14 +259,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  loadingIndicator: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    borderWidth: 3,
-    borderColor: '#fff',
-    borderTopColor: 'transparent',
-  },
   fileName: {
     fontSize: 11,
     color: '#999',
@@ -270,6 +270,26 @@ const styles = StyleSheet.create({
   },
   ownMessageMeta: {
     color: '#666',
+  },
+  // Modal styles
+  modalContainer: {
+    flex: 1,
+    backgroundColor: '#000',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalVideo: {
+    width: '100%',
+    height: '100%',
+  },
+  closeButton: {
+    position: 'absolute',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   // Fallback styles
   fallbackContainer: {

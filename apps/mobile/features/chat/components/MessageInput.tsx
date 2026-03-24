@@ -121,6 +121,8 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   const [uploadedImageUrls, setUploadedImageUrls] = useState<string[]>([]);
   const [selectedFile, setSelectedFile] = useState<SelectedFile | null>(null);
   const [uploadedFile, setUploadedFile] = useState<{ storagePath: string; name: string; category: FileCategory } | null>(null);
+  const [selectedVideo, setSelectedVideo] = useState<SelectedFile | null>(null);
+  const [uploadedVideo, setUploadedVideo] = useState<{ storagePath: string; name: string; duration?: number } | null>(null);
   const [nativeScrollEnabled, setNativeScrollEnabled] = useState(false);
   const [debouncedText, setDebouncedText] = useState('');
   const [isVoiceRecording, setIsVoiceRecording] = useState(false);
@@ -265,45 +267,88 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   }, [text, cursorPosition, mentionMatch]);
 
   /**
-   * Pick images from gallery (supports multi-select)
+   * Pick photos and videos from gallery (supports multi-select for photos)
    */
-  const pickImage = useCallback(async () => {
+  const pickMedia = useCallback(async () => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images', 'videos'],
         allowsMultipleSelection: true,
         selectionLimit: 10,
         quality: 0.8,
       });
 
       if (!result.canceled && result.assets.length > 0) {
-        const imageUris = result.assets.map(asset => asset.uri);
-        setSelectedImages(prev => [...prev, ...imageUris]);
+        // Split assets by type
+        const imageAssets = result.assets.filter(a => a.type !== 'video');
+        const videoAssets = result.assets.filter(a => a.type === 'video');
 
-        // Upload images in parallel
-        const uploadPromises = imageUris.map(async (uri) => {
-          const uploadResult = await uploadImage(uri);
-          if (uploadResult.error) {
-            console.error('[MessageInput] Upload failed for:', uri, uploadResult.error);
-            return null;
+        // Handle images (existing flow — multi-select, parallel upload)
+        if (imageAssets.length > 0) {
+          const imageUris = imageAssets.map(asset => asset.uri);
+          setSelectedImages(prev => [...prev, ...imageUris]);
+
+          const uploadPromises = imageUris.map(async (uri) => {
+            const uploadResult = await uploadImage(uri);
+            if (uploadResult.error) {
+              console.error('[MessageInput] Upload failed for:', uri, uploadResult.error);
+              return null;
+            }
+            return uploadResult.url;
+          });
+
+          const results = await Promise.all(uploadPromises);
+          const successfulUrls = results.filter((url): url is string => url !== null);
+          setUploadedImageUrls(prev => [...prev, ...successfulUrls]);
+
+          const failedCount = imageUris.length - successfulUrls.length;
+          if (failedCount > 0) {
+            console.warn(`[MessageInput] ${failedCount} images failed to upload`);
           }
-          return uploadResult.url;
-        });
+        }
 
-        const results = await Promise.all(uploadPromises);
-        const successfulUrls = results.filter((url): url is string => url !== null);
-        setUploadedImageUrls(prev => [...prev, ...successfulUrls]);
+        // Handle video (take first only)
+        if (videoAssets.length > 0) {
+          const video = videoAssets[0];
+          const fileSize = video.fileSize ?? 0;
 
-        // Remove failed uploads from selected images
-        const failedCount = imageUris.length - successfulUrls.length;
-        if (failedCount > 0) {
-          console.warn(`[MessageInput] ${failedCount} images failed to upload`);
+          if (fileSize > MAX_FILE_SIZE_BYTES) {
+            Alert.alert(
+              'Video Too Large',
+              `Maximum file size is ${MAX_FILE_SIZE_MB}MB. Please trim or compress your video.`,
+              [{ text: 'OK' }]
+            );
+            return;
+          }
+
+          const videoFile: SelectedFile = {
+            uri: video.uri,
+            name: video.fileName || `video_${Date.now()}.mp4`,
+            size: fileSize,
+            mimeType: video.mimeType || 'video/mp4',
+          };
+
+          setSelectedVideo(videoFile);
+
+          const uploadResult = await uploadFile(videoFile);
+          if (uploadResult.error) {
+            console.error('[MessageInput] Video upload failed:', uploadResult.error);
+            Alert.alert('Upload Failed', uploadResult.error);
+            setSelectedVideo(null);
+            resetFileUpload();
+          } else {
+            setUploadedVideo({
+              storagePath: uploadResult.storagePath,
+              name: uploadResult.name,
+              duration: video.duration ? Math.round(video.duration * 1000) : undefined,
+            });
+          }
         }
       }
     } catch (error) {
-      console.error('[MessageInput] Image picker error:', error);
+      console.error('[MessageInput] Media picker error:', error);
     }
-  }, [uploadImage]);
+  }, [uploadImage, uploadFile, resetFileUpload]);
 
   /**
    * Pick a document file (PDF, DOC, audio, video, etc.)
@@ -376,9 +421,9 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   }, [isFileUploadAvailable, uploadFile, resetFileUpload]);
 
   /**
-   * Take photo with camera
+   * Capture photo or video with camera
    */
-  const takePhoto = useCallback(async () => {
+  const captureMedia = useCallback(async () => {
     try {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
@@ -387,28 +432,68 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
       }
 
       const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['images', 'videos'],
         quality: 0.8,
+        videoMaxDuration: 120,
+        videoQuality: 1,
       });
 
       if (!result.canceled && result.assets[0]) {
-        const imageUri = result.assets[0].uri;
-        setSelectedImages(prev => [...prev, imageUri]);
+        const asset = result.assets[0];
 
-        // Upload image
-        const uploadResult = await uploadImage(imageUri);
-        if (uploadResult.error) {
-          console.error('[MessageInput] Upload failed:', uploadResult.error);
-          // Remove from selected images on failure
-          setSelectedImages(prev => prev.filter(uri => uri !== imageUri));
-          resetImageUpload();
-        } else if (uploadResult.url) {
-          setUploadedImageUrls(prev => [...prev, uploadResult.url]);
+        if (asset.type === 'video') {
+          // Video path — validate size, upload as file
+          const fileSize = asset.fileSize ?? 0;
+          if (fileSize > MAX_FILE_SIZE_BYTES) {
+            Alert.alert(
+              'Video Too Large',
+              `Maximum file size is ${MAX_FILE_SIZE_MB}MB. Try recording a shorter clip.`,
+              [{ text: 'OK' }]
+            );
+            return;
+          }
+
+          const videoFile: SelectedFile = {
+            uri: asset.uri,
+            name: asset.fileName || `video_${Date.now()}.mp4`,
+            size: fileSize,
+            mimeType: asset.mimeType || 'video/mp4',
+          };
+
+          setSelectedVideo(videoFile);
+
+          const uploadResult = await uploadFile(videoFile);
+          if (uploadResult.error) {
+            console.error('[MessageInput] Video upload failed:', uploadResult.error);
+            Alert.alert('Upload Failed', uploadResult.error);
+            setSelectedVideo(null);
+            resetFileUpload();
+          } else {
+            setUploadedVideo({
+              storagePath: uploadResult.storagePath,
+              name: uploadResult.name,
+              duration: asset.duration ? Math.round(asset.duration * 1000) : undefined,
+            });
+          }
+        } else {
+          // Photo path — existing image upload flow
+          const imageUri = asset.uri;
+          setSelectedImages(prev => [...prev, imageUri]);
+
+          const uploadResult = await uploadImage(imageUri);
+          if (uploadResult.error) {
+            console.error('[MessageInput] Upload failed:', uploadResult.error);
+            setSelectedImages(prev => prev.filter(uri => uri !== imageUri));
+            resetImageUpload();
+          } else if (uploadResult.url) {
+            setUploadedImageUrls(prev => [...prev, uploadResult.url]);
+          }
         }
       }
     } catch (error) {
       console.error('[MessageInput] Camera error:', error);
     }
-  }, [uploadImage, resetImageUpload]);
+  }, [uploadImage, resetImageUpload, uploadFile, resetFileUpload]);
 
   /**
    * Handle voice memo send - upload file and send message
@@ -489,6 +574,15 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   }, [resetFileUpload]);
 
   /**
+   * Remove selected video
+   */
+  const removeVideo = useCallback(() => {
+    setSelectedVideo(null);
+    setUploadedVideo(null);
+    resetFileUpload();
+  }, [resetFileUpload]);
+
+  /**
    * Extract mentioned user IDs from text
    * Supports bracketed format @[Display Name] for names with spaces
    */
@@ -518,8 +612,9 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
     const trimmedText = text.trim();
     const hasImages = uploadedImageUrls.length > 0;
     const hasFile = uploadedFile !== null;
+    const hasVideo = uploadedVideo !== null;
 
-    if (!trimmedText && !hasImages && !hasFile) return;
+    if (!trimmedText && !hasImages && !hasFile && !hasVideo) return;
 
     try {
       // Extract mentioned user IDs
@@ -535,12 +630,22 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
         });
       }
 
-      // Add file attachment (documents, audio, video)
+      // Add file attachment (documents, audio)
       if (hasFile && uploadedFile) {
         attachments.push({
-          type: uploadedFile.category, // 'document', 'audio', or 'video'
+          type: uploadedFile.category,
           url: uploadedFile.storagePath,
           name: uploadedFile.name,
+        });
+      }
+
+      // Add video attachment
+      if (hasVideo && uploadedVideo) {
+        attachments.push({
+          type: 'video',
+          url: uploadedVideo.storagePath,
+          name: uploadedVideo.name,
+          ...(uploadedVideo.duration != null && { duration: uploadedVideo.duration }),
         });
       }
 
@@ -562,6 +667,8 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
       setUploadedImageUrls([]);
       setSelectedFile(null);
       setUploadedFile(null);
+      setSelectedVideo(null);
+      setUploadedVideo(null);
       resetImageUpload();
       resetFileUpload();
       setMentionMatch(null);
@@ -584,6 +691,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
     text,
     uploadedImageUrls,
     uploadedFile,
+    uploadedVideo,
     sendMessage,
     extractMentionedUserIds,
     replyToMessage,
@@ -636,13 +744,13 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
     };
   }, [setTyping]);
 
-  const canSend = (text.trim().length > 0 || uploadedImageUrls.length > 0 || uploadedFile !== null) && !isSending && !uploading;
+  const canSend = (text.trim().length > 0 || uploadedImageUrls.length > 0 || uploadedFile !== null || uploadedVideo !== null) && !isSending && !uploading;
 
   // Build attachment panel options (WhatsApp-style grid)
   const attachmentOptions = React.useMemo(() => {
     const options: Array<{ id: string; label: string; icon: keyof typeof Ionicons.glyphMap; iconColor?: string; onPress: () => void }> = [
-      { id: 'photos', label: 'Photos', icon: 'images', iconColor: '#007AFF', onPress: pickImage },
-      { id: 'camera', label: 'Camera', icon: 'camera', iconColor: '#333', onPress: takePhoto },
+      { id: 'media', label: 'Media', icon: 'images', iconColor: '#007AFF', onPress: pickMedia },
+      { id: 'camera', label: 'Camera', icon: 'camera', iconColor: '#333', onPress: captureMedia },
     ];
     if (isVoiceRecordingSupported()) {
       options.push({
@@ -654,7 +762,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
       });
     }
     return options;
-  }, [takePhoto, pickImage, pickFile]);
+  }, [captureMedia, pickMedia]);
 
   const handleOptionPress = useCallback((option: { onPress: () => void }) => {
     setShowAttachmentMenu(false);
@@ -756,6 +864,26 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
             <Text style={[styles.imageCount, { color: themeColors.textSecondary }]}>{selectedImages.length} photos</Text>
           )}
         </View>
+      )}
+
+      {/* Video Preview (before sending) */}
+      {selectedVideo && !isVoiceRecording && (
+        <>
+          <FilePreview
+            name={selectedVideo.name}
+            size={selectedVideo.size}
+            category="video"
+            uploading={fileUploading}
+            progress={fileProgress}
+            onRemove={removeVideo}
+            disabled={fileUploading}
+          />
+          <View style={styles.videoExpirationHint}>
+            <Text style={[styles.videoExpirationText, { color: themeColors.textTertiary }]}>
+              Videos expire after 7 days
+            </Text>
+          </View>
+        </>
       )}
 
       {/* File Preview (before sending) */}
@@ -1030,5 +1158,13 @@ const styles = StyleSheet.create({
   },
   sendButtonDisabled: {
     opacity: 0.4,
+  },
+  videoExpirationHint: {
+    alignItems: 'center',
+    paddingVertical: 2,
+    paddingHorizontal: 12,
+  },
+  videoExpirationText: {
+    fontSize: 11,
   },
 });

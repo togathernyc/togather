@@ -92,7 +92,7 @@ const ALLOWED_FILE_CONTENT_TYPES = [
 ];
 
 // File size limits
-const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
+const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
 
 // ============================================================================
 // Validators
@@ -322,7 +322,7 @@ export const getR2UploadUrl = action({
  * Get presigned URL for R2 file upload (supports documents, audio, video)
  *
  * Similar to getR2UploadUrl but supports a wider range of file types
- * for chat attachments. Has a 10MB size limit enforced on the client.
+ * for chat attachments. Has a 50MB size limit.
  *
  * Supported file types:
  * - Documents: PDF, TXT, DOC, DOCX, XLS, XLSX, CSV

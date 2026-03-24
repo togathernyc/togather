@@ -21,6 +21,7 @@ interface ImageAttachment {
 interface ImageAttachmentsGridProps {
   images: ImageAttachment[];
   onImagePress: (index: number) => void;
+  onLongPress?: () => void;
   maxWidth?: number;
 }
 
@@ -39,6 +40,7 @@ const CELL_SIZE = Math.floor((MAX_GRID_WIDTH - GRID_GAP) / 2);
 export function ImageAttachmentsGrid({
   images,
   onImagePress,
+  onLongPress,
   maxWidth = MAX_GRID_WIDTH,
 }: ImageAttachmentsGridProps) {
   const { colors, isDark } = useTheme();
@@ -55,7 +57,7 @@ export function ImageAttachmentsGrid({
   // Single image - full width
   if (count === 1) {
     return (
-      <Pressable onPress={() => onImagePress(0)}>
+      <Pressable onPress={() => onImagePress(0)} onLongPress={onLongPress} delayLongPress={300}>
         <AppImage
           source={getMediaUrl(images[0].url)}
           style={[styles.singleImage, { maxWidth }]}
@@ -76,7 +78,7 @@ export function ImageAttachmentsGrid({
     return (
       <View style={[styles.row, { maxWidth }]}>
         {displayImages.map((image, index) => (
-          <Pressable key={index} onPress={() => onImagePress(index)}>
+          <Pressable key={index} onPress={() => onImagePress(index)} onLongPress={onLongPress} delayLongPress={300}>
             <AppImage
               source={getMediaUrl(image.url)}
               style={styles.cellImage}
@@ -100,7 +102,7 @@ export function ImageAttachmentsGrid({
       <View style={[styles.gridContainer, { maxWidth }]}>
         <View style={styles.row}>
           {displayImages.slice(0, 2).map((image, index) => (
-            <Pressable key={index} onPress={() => onImagePress(index)}>
+            <Pressable key={index} onPress={() => onImagePress(index)} onLongPress={onLongPress} delayLongPress={300}>
               <AppImage
                 source={getMediaUrl(image.url)}
                 style={styles.cellImage}
@@ -115,7 +117,7 @@ export function ImageAttachmentsGrid({
             </Pressable>
           ))}
         </View>
-        <Pressable onPress={() => onImagePress(2)}>
+        <Pressable onPress={() => onImagePress(2)} onLongPress={onLongPress} delayLongPress={300}>
           <AppImage
             source={getMediaUrl(images[2].url)}
             style={styles.bottomSpanImage}
@@ -137,7 +139,7 @@ export function ImageAttachmentsGrid({
     <View style={[styles.gridContainer, { maxWidth }]}>
       <View style={styles.row}>
         {displayImages.slice(0, 2).map((image, index) => (
-          <Pressable key={index} onPress={() => onImagePress(index)}>
+          <Pressable key={index} onPress={() => onImagePress(index)} onLongPress={onLongPress} delayLongPress={300}>
             <AppImage
               source={getMediaUrl(image.url)}
               style={styles.cellImage}
@@ -153,7 +155,7 @@ export function ImageAttachmentsGrid({
         ))}
       </View>
       <View style={styles.row}>
-        <Pressable onPress={() => onImagePress(2)}>
+        <Pressable onPress={() => onImagePress(2)} onLongPress={onLongPress} delayLongPress={300}>
           <AppImage
             source={getMediaUrl(displayImages[2].url)}
             style={styles.cellImage}
@@ -166,7 +168,7 @@ export function ImageAttachmentsGrid({
             }}
           />
         </Pressable>
-        <Pressable onPress={() => onImagePress(3)}>
+        <Pressable onPress={() => onImagePress(3)} onLongPress={onLongPress} delayLongPress={300}>
           <View>
             <AppImage
               source={getMediaUrl(displayImages[3].url)}
