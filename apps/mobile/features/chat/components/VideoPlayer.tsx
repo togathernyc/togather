@@ -135,7 +135,7 @@ function FullscreenVideoModal({
           style={styles.modalVideo}
           resizeMode={ResizeMode.CONTAIN}
           useNativeControls={true}
-          shouldPlay={true}
+          shouldPlay={visible}
           isLooping={false}
           onError={(error: any) => {
             console.error('[VideoPlayer] Modal playback error:', error);
