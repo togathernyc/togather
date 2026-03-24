@@ -166,9 +166,8 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   const { setTyping } = useTypingIndicators(channelId);
   const { members } = useChannelMembers(channelId);
 
-  // Combined upload state
+  // Combined upload state (used for disabling send button and input)
   const uploading = imageUploading || fileUploading || videoUploading;
-  const progress = imageUploading ? imageProgress : videoUploading ? videoProgress : fileProgress;
 
   // Extract first external URL from debounced text for link preview
   const externalUrl = useMemo(() => extractFirstExternalUrl(debouncedText), [debouncedText]);
