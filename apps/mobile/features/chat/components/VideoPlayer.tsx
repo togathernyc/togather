@@ -130,17 +130,20 @@ function FullscreenVideoModal({
       onRequestClose={onClose}
     >
       <View style={styles.modalContainer}>
-        <Video
-          source={{ uri: videoUrl }}
-          style={styles.modalVideo}
-          resizeMode={ResizeMode.CONTAIN}
-          useNativeControls={true}
-          shouldPlay={visible}
-          isLooping={false}
-          onError={(error: any) => {
-            console.error('[VideoPlayer] Modal playback error:', error);
-          }}
-        />
+        {/* Only load video source when modal is visible to avoid unnecessary downloads */}
+        {visible && (
+          <Video
+            source={{ uri: videoUrl }}
+            style={styles.modalVideo}
+            resizeMode={ResizeMode.CONTAIN}
+            useNativeControls={true}
+            shouldPlay={true}
+            isLooping={false}
+            onError={(error: any) => {
+              console.error('[VideoPlayer] Modal playback error:', error);
+            }}
+          />
+        )}
 
         {/* Close button */}
         <Pressable
