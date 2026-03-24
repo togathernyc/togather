@@ -90,6 +90,16 @@ pnpm dev
 | `PLANNING_CENTER_CLIENT_ID` | OAuth client ID | Integration disabled |
 | `PLANNING_CENTER_CLIENT_SECRET` | OAuth secret | Integration disabled |
 
+### Stripe (Billing)
+
+| Secret | Description | Degradation |
+|--------|-------------|-------------|
+| `STRIPE_SECRET_KEY` | Stripe API secret key (starts with `sk_test_` or `sk_live_`) | Billing disabled |
+| `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret (starts with `whsec_`) | Billing disabled |
+| `STRIPE_PRODUCT_ID` | Stripe Product ID for "Togather Community Hosting" (optional — auto-created if not set) | Auto-created on first use |
+
+> **Note**: These variables are configured in the Convex deployment dashboard. The webhook URL should be registered as `https://<convex-deployment>.convex.site/stripe-webhook`.
+
 ### Development Settings
 
 | Secret | Description |

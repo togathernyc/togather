@@ -54,6 +54,71 @@ function jsonResponse(
 }
 
 // ============================================================================
+// Stripe Signature Verification
+// ============================================================================
+
+/**
+ * Verify a Stripe webhook signature using the Web Crypto API (HMAC-SHA256).
+ *
+ * We can't use the Stripe SDK's `constructEvent` here because httpAction
+ * runs in a serverless Convex environment without Node.js crypto. Instead,
+ * we manually parse the `stripe-signature` header, recompute the HMAC, and
+ * compare it to the expected `v1` signature.
+ *
+ * Also enforces a 5-minute timestamp tolerance to prevent replay attacks.
+ */
+async function verifyStripeSignature(
+  payload: string,
+  signature: string,
+  secret: string
+): Promise<boolean> {
+  try {
+    const parts = signature.split(",").reduce(
+      (acc, part) => {
+        const [key, value] = part.split("=");
+        acc[key.trim()] = value;
+        return acc;
+      },
+      {} as Record<string, string>
+    );
+
+    const timestamp = parts["t"];
+    const expectedSig = parts["v1"];
+
+    if (!timestamp || !expectedSig) return false;
+
+    // Check timestamp is within 5 minutes
+    const currentTime = Math.floor(Date.now() / 1000);
+    if (Math.abs(currentTime - parseInt(timestamp)) > 300) return false;
+
+    const signedPayload = `${timestamp}.${payload}`;
+    const encoder = new TextEncoder();
+
+    const key = await crypto.subtle.importKey(
+      "raw",
+      encoder.encode(secret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+
+    const signatureBytes = await crypto.subtle.sign(
+      "HMAC",
+      key,
+      encoder.encode(signedPayload)
+    );
+
+    const computedSig = Array.from(new Uint8Array(signatureBytes))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+
+    return computedSig === expectedSig;
+  } catch {
+    return false;
+  }
+}
+
+// ============================================================================
 // Link Preview Endpoints (for Cloudflare Worker)
 // ============================================================================
 
@@ -541,6 +606,113 @@ http.route({
     }
 
     return new Response("OK", { status: 200 });
+  }),
+});
+
+// ============================================================================
+// Stripe Webhook
+// ============================================================================
+
+/**
+ * POST /stripe-webhook
+ *
+ * Receives Stripe webhook events for billing lifecycle management.
+ * Verifies the Stripe signature using Web Crypto API (HMAC-SHA256) and
+ * dispatches to the appropriate internal billing mutation.
+ *
+ * Handled events:
+ * - checkout.session.completed -> activates community subscription
+ * - customer.subscription.updated -> syncs subscription status
+ * - customer.subscription.deleted -> marks subscription as canceled
+ * - invoice.payment_failed -> marks subscription as past_due
+ */
+http.route({
+  path: "/stripe-webhook",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const body = await request.text();
+    const signature = request.headers.get("stripe-signature");
+
+    if (!signature) {
+      return new Response("Missing stripe-signature header", { status: 400 });
+    }
+
+    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+    if (!webhookSecret) {
+      console.error("[StripeWebhook] STRIPE_WEBHOOK_SECRET not configured");
+      return new Response("Webhook not configured", { status: 500 });
+    }
+
+    // Verify signature using Web Crypto API
+    const isValid = await verifyStripeSignature(body, signature, webhookSecret);
+    if (!isValid) {
+      console.error("[StripeWebhook] Invalid signature");
+      return new Response("Invalid signature", { status: 400 });
+    }
+
+    const event = JSON.parse(body);
+
+    try {
+      switch (event.type) {
+        case "checkout.session.completed": {
+          const session = event.data.object;
+          await ctx.runMutation(
+            internal.functions.billing.handleCheckoutCompleted,
+            {
+              stripeCustomerId: session.customer,
+              stripeSubscriptionId: session.subscription,
+              communityId: session.metadata.communityId,
+              proposalId: session.metadata.proposalId,
+            }
+          );
+          break;
+        }
+        case "customer.subscription.updated": {
+          const subscription = event.data.object;
+          await ctx.runMutation(
+            internal.functions.billing.handleSubscriptionUpdated,
+            {
+              stripeSubscriptionId: subscription.id,
+              status: subscription.status,
+            }
+          );
+          break;
+        }
+        case "customer.subscription.deleted": {
+          const subscription = event.data.object;
+          await ctx.runMutation(
+            internal.functions.billing.handleSubscriptionUpdated,
+            {
+              stripeSubscriptionId: subscription.id,
+              status: "canceled",
+            }
+          );
+          break;
+        }
+        case "invoice.payment_failed": {
+          const invoice = event.data.object;
+          await ctx.runMutation(
+            internal.functions.billing.handlePaymentFailed,
+            {
+              stripeCustomerId: invoice.customer,
+            }
+          );
+          break;
+        }
+        default:
+          console.log(
+            `[StripeWebhook] Unhandled event type: ${event.type}`
+          );
+      }
+
+      return new Response(JSON.stringify({ received: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch (error) {
+      console.error("[StripeWebhook] Error processing event:", error);
+      return new Response("Webhook processing failed", { status: 500 });
+    }
   }),
 });
 
