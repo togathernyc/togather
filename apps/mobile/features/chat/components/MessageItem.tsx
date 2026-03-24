@@ -1014,6 +1014,8 @@ const styles = StyleSheet.create({
   messageBubble: {
     borderRadius: 14,
     overflow: 'hidden',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
   },
   ownMessageBubble: {
     borderBottomRightRadius: 3,
@@ -1100,12 +1102,8 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   bubbleTextContent: {
-    paddingHorizontal: 10,
-    paddingTop: 6,
   },
   bubbleFooter: {
-    paddingHorizontal: 10,
-    paddingBottom: 6,
   },
   reactionsContainer: {
     flexDirection: 'row',
