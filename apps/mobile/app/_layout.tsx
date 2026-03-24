@@ -42,6 +42,8 @@ import { ConvexProvider, useTokenSync } from "@services/api/convex";
 import { logCollector } from "@utils/logCollector";
 import { ChatPrefetchProvider } from "@features/chat/context/ChatPrefetchContext";
 import { usePrefetchExecutor } from "@features/chat/hooks/usePrefetchChannel";
+import { getLinkingURL } from "expo-linking";
+import { parseSubdomainFromLinkUrl, setCapturedLinkSubdomain } from "@features/auth/utils/communitySubdomain";
 
 // Initialize log collector to capture console output for debugging
 logCollector.initialize();
@@ -249,6 +251,16 @@ export default function RootLayout() {
       }
     }
     loadFonts();
+  }, []);
+
+  // Capture subdomain from initial universal link URL before Expo Router
+  // consumes it. getLinkingURL() is synchronous and returns the full URL
+  // that launched the app, so child screens can read it via getCapturedLinkSubdomain().
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+    const url = getLinkingURL();
+    const subdomain = parseSubdomainFromLinkUrl(url);
+    if (subdomain) setCapturedLinkSubdomain(subdomain);
   }, []);
 
   // Show loading indicator while fonts are loading (web only needs this)

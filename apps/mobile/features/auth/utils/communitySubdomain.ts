@@ -1,5 +1,17 @@
 import { DOMAIN_CONFIG } from "@togather/shared";
 
+// Module-level store for the subdomain captured from the initial universal link URL.
+// Populated once in RootLayout via getLinkingURL() before Expo Router consumes the URL.
+let _capturedLinkSubdomain: string | null = null;
+
+export function setCapturedLinkSubdomain(subdomain: string | null) {
+  _capturedLinkSubdomain = subdomain;
+}
+
+export function getCapturedLinkSubdomain(): string | null {
+  return _capturedLinkSubdomain;
+}
+
 /**
  * Reserved subdomains that should not be treated as community subdomains
  */
