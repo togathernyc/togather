@@ -157,6 +157,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   // Hooks
   const { uploadImage, uploading: imageUploading, progress: imageProgress, reset: resetImageUpload } = useImageUpload();
   const { uploadFile, uploading: fileUploading, progress: fileProgress, reset: resetFileUpload, isAvailable: isFileUploadAvailable } = useFileUpload();
+  const { uploadFile: uploadVideoFile, uploading: videoUploading, progress: videoProgress, reset: resetVideoUpload } = useFileUpload();
   // Use external send function if provided (lifted from parent for optimistic/offline support)
   // Fall back to internal hook for backwards compatibility (e.g., thread views)
   const internalHook = useSendMessage(externalSendMessage ? null : channelId);
@@ -166,8 +167,8 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   const { members } = useChannelMembers(channelId);
 
   // Combined upload state
-  const uploading = imageUploading || fileUploading;
-  const progress = imageUploading ? imageProgress : fileProgress;
+  const uploading = imageUploading || fileUploading || videoUploading;
+  const progress = imageUploading ? imageProgress : videoUploading ? videoProgress : fileProgress;
 
   // Extract first external URL from debounced text for link preview
   const externalUrl = useMemo(() => extractFirstExternalUrl(debouncedText), [debouncedText]);
@@ -330,12 +331,12 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
 
           setSelectedVideo(videoFile);
 
-          const uploadResult = await uploadFile(videoFile);
+          const uploadResult = await uploadVideoFile(videoFile);
           if (uploadResult.error) {
             console.error('[MessageInput] Video upload failed:', uploadResult.error);
             Alert.alert('Upload Failed', uploadResult.error);
             setSelectedVideo(null);
-            resetFileUpload();
+            resetVideoUpload();
           } else {
             setUploadedVideo({
               storagePath: uploadResult.storagePath,
@@ -348,7 +349,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
     } catch (error) {
       console.error('[MessageInput] Media picker error:', error);
     }
-  }, [uploadImage, uploadFile, resetFileUpload]);
+  }, [uploadImage, uploadVideoFile, resetVideoUpload]);
 
   /**
    * Pick a document file (PDF, DOC, audio, video, etc.)
@@ -462,12 +463,12 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
 
           setSelectedVideo(videoFile);
 
-          const uploadResult = await uploadFile(videoFile);
+          const uploadResult = await uploadVideoFile(videoFile);
           if (uploadResult.error) {
             console.error('[MessageInput] Video upload failed:', uploadResult.error);
             Alert.alert('Upload Failed', uploadResult.error);
             setSelectedVideo(null);
-            resetFileUpload();
+            resetVideoUpload();
           } else {
             setUploadedVideo({
               storagePath: uploadResult.storagePath,
@@ -493,7 +494,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
     } catch (error) {
       console.error('[MessageInput] Camera error:', error);
     }
-  }, [uploadImage, resetImageUpload, uploadFile, resetFileUpload]);
+  }, [uploadImage, resetImageUpload, uploadVideoFile, resetVideoUpload]);
 
   /**
    * Handle voice memo send - upload file and send message
@@ -579,8 +580,8 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   const removeVideo = useCallback(() => {
     setSelectedVideo(null);
     setUploadedVideo(null);
-    resetFileUpload();
-  }, [resetFileUpload]);
+    resetVideoUpload();
+  }, [resetVideoUpload]);
 
   /**
    * Extract mentioned user IDs from text
@@ -671,6 +672,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
       setUploadedVideo(null);
       resetImageUpload();
       resetFileUpload();
+      resetVideoUpload();
       setMentionMatch(null);
       setTyping(false);
 
@@ -698,6 +700,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
     onCancelReply,
     resetImageUpload,
     resetFileUpload,
+    resetVideoUpload,
     setTyping,
     isLinkPreviewDismissed,
     clearDraft,
@@ -873,10 +876,10 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
             name={selectedVideo.name}
             size={selectedVideo.size}
             category="video"
-            uploading={fileUploading}
-            progress={fileProgress}
+            uploading={videoUploading}
+            progress={videoProgress}
             onRemove={removeVideo}
-            disabled={fileUploading}
+            disabled={videoUploading}
           />
           <View style={styles.videoExpirationHint}>
             <Text style={[styles.videoExpirationText, { color: themeColors.textTertiary }]}>

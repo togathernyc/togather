@@ -216,14 +216,12 @@ function VideoPlayerInner({ url, name, isOwnMessage = false, onLongPress }: Vide
         {displayName}
       </Text>
 
-      {/* Fullscreen modal */}
-      {modalVisible && (
-        <FullscreenVideoModal
-          visible={modalVisible}
-          videoUrl={resolvedUrl || ''}
-          onClose={handleClose}
-        />
-      )}
+      {/* Fullscreen modal - always mounted so fade-out animation can play */}
+      <FullscreenVideoModal
+        visible={modalVisible}
+        videoUrl={resolvedUrl || ''}
+        onClose={handleClose}
+      />
     </View>
   );
 }
