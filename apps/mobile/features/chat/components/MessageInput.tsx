@@ -341,7 +341,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
             setUploadedVideo({
               storagePath: uploadResult.storagePath,
               name: uploadResult.name,
-              duration: video.duration ? Math.round(video.duration * 1000) : undefined,
+              duration: video.duration ? Math.round(video.duration) : undefined,
             });
           }
         }
@@ -473,7 +473,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
             setUploadedVideo({
               storagePath: uploadResult.storagePath,
               name: uploadResult.name,
-              duration: asset.duration ? Math.round(asset.duration * 1000) : undefined,
+              duration: asset.duration ? Math.round(asset.duration) : undefined,
             });
           }
         } else {
