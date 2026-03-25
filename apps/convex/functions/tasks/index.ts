@@ -1369,7 +1369,7 @@ function canResolvePersonTask(
 ) {
   if (task.responsibilityType !== "person") return true;
   if (!task.assignedToId) return true;
-  return task.assignedToId === userId || role === "admin";
+  return task.assignedToId === userId || isLeaderRole(role);
 }
 
 export const markDone = mutation({
@@ -1387,7 +1387,7 @@ export const markDone = mutation({
     }
     if (!canResolvePersonTask(task, userId, membership.role)) {
       throw new ConvexError(
-        "Only the assignee or an admin can complete this task",
+        "Only the assignee or a group leader can complete this task",
       );
     }
 
@@ -1425,7 +1425,7 @@ export const reopen = mutation({
     }
     if (!canResolvePersonTask(task, userId, membership.role)) {
       throw new ConvexError(
-        "Only the assignee or an admin can reopen this task",
+        "Only the assignee or a group leader can reopen this task",
       );
     }
 
@@ -1575,7 +1575,7 @@ export const snooze = mutation({
     }
     if (!canResolvePersonTask(task, userId, membership.role)) {
       throw new ConvexError(
-        "Only the assignee or an admin can snooze this task",
+        "Only the assignee or a group leader can snooze this task",
       );
     }
 
@@ -1614,7 +1614,7 @@ export const cancel = mutation({
     }
     if (!canResolvePersonTask(task, userId, membership.role)) {
       throw new ConvexError(
-        "Only the assignee or an admin can cancel this task",
+        "Only the assignee or a group leader can cancel this task",
       );
     }
 
