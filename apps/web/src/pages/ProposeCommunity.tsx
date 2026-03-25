@@ -17,7 +17,7 @@ export default function ProposeCommunity() {
   // Redirect to sign-in only when there is no auth AND no verification token
   useEffect(() => {
     if (!isAuthenticated && !hasVerificationToken) {
-      navigate("/onboarding/signin?redirect=/propose", { replace: true });
+      navigate("/onboarding/signin?redirect=/onboarding/proposal", { replace: true });
     }
   }, [isAuthenticated, hasVerificationToken, navigate]);
 

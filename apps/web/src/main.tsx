@@ -34,7 +34,7 @@ createRoot(document.getElementById('root')!).render(
           <Route path="/legal/terms" element={<TermsOfService />} />
           <Route path="/signin" element={<SignIn />} />
           <Route path="/onboarding/signin" element={<SignIn />} />
-          <Route path="/propose" element={<ProposeCommunity />} />
+          <Route path="/onboarding/proposal" element={<ProposeCommunity />} />
           <Route path="/onboarding/setup" element={<CommunitySetup />} />
           <Route path="/onboarding/success" element={<OnboardingSuccess />} />
           <Route path="/admin/proposals" element={<AdminProposals />} />
