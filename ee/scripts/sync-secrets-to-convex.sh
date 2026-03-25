@@ -95,6 +95,9 @@ SECRET_KEYS=(
   "SLACK_BOT_TOKEN"
   "SLACK_SIGNING_SECRET"
   "OPENAI_SECRET_KEY"
+  "STRIPE_SECRET_KEY"
+  "STRIPE_WEBHOOK_SECRET"
+  "STRIPE_PRODUCT_ID"
 )
 
 # ---------------------------------------------------------------------------
