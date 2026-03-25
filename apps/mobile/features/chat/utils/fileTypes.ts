@@ -344,19 +344,13 @@ export function isLinearGradientSupported(): boolean {
     }
   }
 
-  if (!hasNativeModule('ExpoLinearGradient')) {
-    _linearGradientSupported = false;
-    return false;
-  }
-
-  try {
-    const LinearGradientModule = require('expo-linear-gradient');
-    _linearGradientSupported = !!LinearGradientModule?.LinearGradient;
-    return _linearGradientSupported;
-  } catch {
-    _linearGradientSupported = false;
-    return false;
-  }
+  // On native with New Architecture (Fabric), ExpoLinearGradient's view adapter
+  // crashes at render time even though the module registers successfully.
+  // The Fabric ViewManagerAdapter can't find the underlying view manager for
+  // ExpoView subclasses. Disable until expo-linear-gradient ships Fabric support.
+  // See: ADR-013, MEMORY.md "Expo Modules Native Views (Fabric / New Architecture)"
+  _linearGradientSupported = false;
+  return false;
 }
 
 /**
