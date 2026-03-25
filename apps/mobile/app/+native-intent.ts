@@ -1,4 +1,9 @@
+import { Linking } from "react-native";
 import { parseSubdomainFromLinkUrl } from "@/features/auth/utils/communitySubdomain";
+
+// Web-only paths that should never be handled by the app.
+// If iOS universal links intercept these, bounce them to the browser.
+const WEB_ONLY_PREFIXES = ["/onboarding/", "/admin/", "/billing/"];
 
 /**
  * Intercepts incoming universal link URLs before Expo Router strips the hostname.
@@ -18,6 +23,21 @@ export function redirectSystemPath({
   path: string;
   initial: boolean;
 }): string {
+  // Bounce web-only URLs back to the browser
+  try {
+    const url = new URL(path);
+    if (WEB_ONLY_PREFIXES.some((p) => url.pathname.startsWith(p))) {
+      Linking.openURL(path);
+      // Return root so the app doesn't navigate to a broken route
+      return "/";
+    }
+  } catch {
+    // Not a full URL — check raw path
+    if (WEB_ONLY_PREFIXES.some((p) => path.startsWith(p))) {
+      return "/";
+    }
+  }
+
   const subdomain = parseSubdomainFromLinkUrl(path);
   if (!subdomain) return path;
 
