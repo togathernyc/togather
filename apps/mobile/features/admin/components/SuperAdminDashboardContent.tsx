@@ -357,7 +357,7 @@ function ProposalsPanel({
 }) {
   const [statusFilter, setStatusFilter] = useState<ProposalStatus | "all">("pending");
   const [actionInProgress, setActionInProgress] = useState<string | null>(null);
-  const [rejectReason, setRejectReason] = useState("");
+  const [rejectReasons, setRejectReasons] = useState<Record<string, string>>({});
   const [showRejectInput, setShowRejectInput] = useState<string | null>(null);
 
   const proposals = useQuery(
@@ -394,13 +394,14 @@ function ProposalsPanel({
       if (!token) return;
       setActionInProgress(proposalId);
       try {
+        const reason = rejectReasons[proposalId]?.trim();
         await rejectMutation({
           token,
           proposalId: proposalId as any,
-          reason: rejectReason.trim() || undefined,
+          reason: reason || undefined,
         });
         setShowRejectInput(null);
-        setRejectReason("");
+        setRejectReasons((prev) => { const next = { ...prev }; delete next[proposalId]; return next; });
         Alert.alert("Rejected", "Proposal rejected. Notification email sent.");
       } catch (error) {
         Alert.alert("Error", error instanceof Error ? error.message : "Failed to reject proposal");
@@ -408,7 +409,7 @@ function ProposalsPanel({
         setActionInProgress(null);
       }
     },
-    [token, rejectMutation, rejectReason]
+    [token, rejectMutation, rejectReasons]
   );
 
   return (
@@ -505,15 +506,15 @@ function ProposalsPanel({
                       ]}
                       placeholder="Rejection reason (optional)"
                       placeholderTextColor={colors.textTertiary}
-                      value={rejectReason}
-                      onChangeText={setRejectReason}
+                      value={rejectReasons[proposal._id] ?? ""}
+                      onChangeText={(text) => setRejectReasons((prev) => ({ ...prev, [proposal._id]: text }))}
                     />
                     <View style={proposalStyles.rejectActions}>
                       <TouchableOpacity
                         style={[proposalStyles.actionButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
                         onPress={() => {
                           setShowRejectInput(null);
-                          setRejectReason("");
+                          setRejectReasons((prev) => { const next = { ...prev }; delete next[proposal._id]; return next; });
                         }}
                       >
                         <Text style={[proposalStyles.actionButtonText, { color: colors.textSecondary }]}>Cancel</Text>
