@@ -489,14 +489,43 @@ export function genericEmail(data: { title: string; body: string }): string {
  */
 export function proposalReceivedEmail(data: {
   communityName: string;
+  estimatedSize: number;
+  proposedMonthlyPrice: number;
+  needsMigration: boolean;
+  notes?: string | null;
 }): string {
   const content = `
     <h1 style="${baseStyles.heading}">We've received your proposal!</h1>
     <p style="${baseStyles.text}">
-      Thanks for submitting a proposal to create <strong>${escapeHtml(data.communityName)}</strong> on Togather.
+      Thanks for submitting a proposal to create <strong>${escapeHtml(data.communityName)}</strong> on Togather. Here's a summary of what you submitted:
     </p>
+    <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+      <tr>
+        <td style="padding: 10px 12px; border-bottom: 1px solid #eee; color: #666; font-size: 14px;">Community name</td>
+        <td style="padding: 10px 12px; border-bottom: 1px solid #eee; font-size: 14px; font-weight: 600;">${escapeHtml(data.communityName)}</td>
+      </tr>
+      <tr>
+        <td style="padding: 10px 12px; border-bottom: 1px solid #eee; color: #666; font-size: 14px;">Estimated size</td>
+        <td style="padding: 10px 12px; border-bottom: 1px solid #eee; font-size: 14px; font-weight: 600;">${data.estimatedSize} people</td>
+      </tr>
+      <tr>
+        <td style="padding: 10px 12px; border-bottom: 1px solid #eee; color: #666; font-size: 14px;">Proposed monthly payment</td>
+        <td style="padding: 10px 12px; border-bottom: 1px solid #eee; font-size: 14px; font-weight: 600;">$${data.proposedMonthlyPrice}/month</td>
+      </tr>
+      <tr>
+        <td style="padding: 10px 12px; border-bottom: 1px solid #eee; color: #666; font-size: 14px;">Migration assistance</td>
+        <td style="padding: 10px 12px; border-bottom: 1px solid #eee; font-size: 14px; font-weight: 600;">${data.needsMigration ? "Yes" : "No"}</td>
+      </tr>
+      ${data.notes ? `<tr>
+        <td style="padding: 10px 12px; border-bottom: 1px solid #eee; color: #666; font-size: 14px;">Notes</td>
+        <td style="padding: 10px 12px; border-bottom: 1px solid #eee; font-size: 14px;">${escapeHtml(data.notes)}</td>
+      </tr>` : ""}
+    </table>
     <p style="${baseStyles.text}">
-      Our team will review your proposal and get back to you soon. You'll receive an email once a decision has been made.
+      <strong>What happens next?</strong> Our team will review your proposal to determine if we can take on the hosting and support for your community at the proposed monthly payment. We'll get back to you soon with a decision.
+    </p>
+    <p style="${baseStyles.subtext}">
+      Togather is open source and always free to self-host. If you'd prefer to run your own instance, visit our <a href="https://github.com/togathernyc/togather" style="color: #4A90D9;">GitHub repository</a> for setup instructions.
     </p>
   `;
   return wrapInLayout(content);
