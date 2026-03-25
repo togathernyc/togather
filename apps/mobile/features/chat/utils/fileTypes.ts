@@ -224,6 +224,7 @@ export function formatFileSize(bytes: number): string {
 // Cache for module detection results
 let _documentPickerSupported: boolean | null = null;
 let _audioVideoSupported: boolean | null = null;
+let _videoViewSupported: boolean | null = null;
 let _linearGradientSupported: boolean | null = null;
 
 /**
@@ -322,6 +323,37 @@ export function isAudioVideoSupported(): boolean {
 }
 
 /**
+ * Check if expo-av's Video *view* can render on this device.
+ *
+ * expo-av v16+ registers its Video view as 'ExpoVideoView' via
+ * requireNativeViewManager. On Fabric (New Architecture), the
+ * ViewManagerAdapter can't find the underlying view manager for
+ * ExpoView subclasses, causing a runtime crash:
+ *   "ViewManagerAdapter_ExpoVideoView_* must be a function (received undefined)"
+ *
+ * Audio-only playback (isAudioVideoSupported) still works because it
+ * doesn't instantiate the native view. This check gates only the
+ * Video rendering path.
+ */
+export function isVideoViewSupported(): boolean {
+  if (_videoViewSupported !== null) {
+    return _videoViewSupported;
+  }
+
+  // On web, we use HTML5 <video> — no native view needed
+  if (Platform.OS === 'web') {
+    _videoViewSupported = true;
+    return true;
+  }
+
+  // On native with Fabric, ExpoVideoView's view adapter crashes.
+  // Same issue as ExpoLinearGradient — disable until expo-av ships
+  // Fabric-compatible view support (or migration to expo-video).
+  _videoViewSupported = false;
+  return false;
+}
+
+/**
  * Check if expo-linear-gradient is available
  *
  * This module is only available after a native build that includes it.
@@ -382,5 +414,6 @@ export function isVoiceRecordingSupported(): boolean {
 export function resetModuleDetectionCache(): void {
   _documentPickerSupported = null;
   _audioVideoSupported = null;
+  _videoViewSupported = null;
   _linearGradientSupported = null;
 }
