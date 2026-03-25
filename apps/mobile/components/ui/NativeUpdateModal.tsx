@@ -21,7 +21,7 @@ import { useTheme } from '@hooks/useTheme';
 const isStaging = Constants.expoConfig?.extra?.isStaging === true;
 
 // R2 images bucket for release manifests
-const R2_IMAGES_URL = `https://images.${DOMAIN_CONFIG.baseDomain}`;
+const R2_IMAGES_URL = DOMAIN_CONFIG.imageCdnUrl;
 
 const URLS = {
   production: {

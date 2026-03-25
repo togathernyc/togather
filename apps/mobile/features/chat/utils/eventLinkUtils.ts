@@ -124,8 +124,8 @@ export function isTogatherLink(url: string | undefined): boolean {
       'www.togather.nyc',
       'app.togather.nyc',
       'staging.togather.nyc',
-      'togather.dev',
-      'www.togather.dev',
+      DOMAIN_CONFIG.legacyDomain,
+      `www.${DOMAIN_CONFIG.legacyDomain}`,
     ];
 
     return togatherDomains.some(domain => hostname === domain || hostname.endsWith('.' + domain));

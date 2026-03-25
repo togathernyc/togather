@@ -2,6 +2,7 @@
 // Using require + re-export pattern for CommonJS module
 const domain = require("./domain.js");
 export const BASE_DOMAIN: string = domain.BASE_DOMAIN;
+export const ROOT_DOMAIN: string = domain.ROOT_DOMAIN;
 export const BRAND_NAME: string = domain.BRAND_NAME;
 
 // Type definition for DOMAIN_CONFIG (must match domain.js)
@@ -12,6 +13,7 @@ export interface DomainConfig {
   readonly appUrl: string;
   readonly emailDomain: string;
   readonly emailFrom: string;
+  readonly imageCdnUrl: string;
   readonly domainSuffix: string;
   readonly legacyDomain: string;
   readonly convexDeployment: string;

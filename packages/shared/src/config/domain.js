@@ -15,11 +15,32 @@
  * - README files, .env.example files, docs/*
  */
 
-// ============================================================
-// CHANGE THIS VALUE TO UPDATE THE DOMAIN ACROSS THE ENTIRE APP
-// ============================================================
-const BASE_DOMAIN = "togather.nyc";
-// ============================================================
+// Detect domain from environment at module load time.
+// Priority: APP_URL (backend) > APP_ENV (backend) > APP_VARIANT (mobile) > default (production)
+function detectBaseDomain() {
+  if (typeof process !== "undefined" && process.env) {
+    // Backend: APP_URL is the canonical URL (e.g., "https://staging.togather.nyc")
+    if (process.env.APP_URL) {
+      try {
+        return new URL(process.env.APP_URL).hostname;
+      } catch {
+        // Fall through on invalid URL
+      }
+    }
+    // Backend/Mobile: APP_ENV or APP_VARIANT explicitly set to staging
+    if (process.env.APP_ENV === "staging" || process.env.APP_VARIANT === "staging") {
+      return "staging.togather.nyc";
+    }
+  }
+  // Default: production
+  return "togather.nyc";
+}
+
+const BASE_DOMAIN = detectBaseDomain();
+
+// The root domain, always togather.nyc regardless of environment.
+// Used for: email sending domain, image CDN, regex patterns matching all environments.
+const ROOT_DOMAIN = "togather.nyc";
 
 // ============================================================
 // CONVEX DEPLOYMENT CONFIGURATION
@@ -31,7 +52,7 @@ const CONVEX_DEPLOYMENT = process.env.CONVEX_DEPLOYMENT || "";
 const BRAND_NAME = "Togather";
 
 // Escape domain for use in regex patterns
-const ESCAPED_DOMAIN = BASE_DOMAIN.replace(/\./g, '\\.');
+const ESCAPED_DOMAIN = ROOT_DOMAIN.replace(/\./g, '\\.');
 
 // Legacy domain (gatherful.app) for backwards compatibility
 const LEGACY_DOMAIN = "gatherful.app";
@@ -45,8 +66,9 @@ const DOMAIN_CONFIG = {
   brandName: BRAND_NAME,
   landingUrl: `https://${BASE_DOMAIN}`,
   appUrl: `https://${BASE_DOMAIN}`,
-  emailDomain: BASE_DOMAIN,
-  emailFrom: `${BRAND_NAME} <notifications@${BASE_DOMAIN}>`,
+  emailDomain: ROOT_DOMAIN,
+  emailFrom: `${BRAND_NAME} <notifications@${ROOT_DOMAIN}>`,
+  imageCdnUrl: `https://images.${ROOT_DOMAIN}`,
   eventShareUrl: (shortId) => `https://${BASE_DOMAIN}/e/${shortId}`,
   groupShareUrl: (shortId) => `https://${BASE_DOMAIN}/g/${shortId}`,
   communityUrl: (subdomain) => `https://${subdomain}.${BASE_DOMAIN}`,
@@ -78,4 +100,4 @@ const DOMAIN_CONFIG = {
   convexHttpUrl: CONVEX_DEPLOYMENT ? `https://${CONVEX_DEPLOYMENT}.convex.site` : null,
 };
 
-module.exports = { BASE_DOMAIN, BRAND_NAME, DOMAIN_CONFIG };
+module.exports = { BASE_DOMAIN, ROOT_DOMAIN, BRAND_NAME, DOMAIN_CONFIG };

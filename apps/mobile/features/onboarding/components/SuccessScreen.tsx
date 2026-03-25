@@ -12,7 +12,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@hooks/useTheme";
 
-const APP_STORE_URL = "https://apps.apple.com/app/togather/id6738726638";
+const APP_STORE_URL = "https://apps.apple.com/us/app/togather-life-in-community/id6756286011";
 const PLAY_STORE_URL =
   "https://play.google.com/store/apps/details?id=app.gatherful.mobile";
 

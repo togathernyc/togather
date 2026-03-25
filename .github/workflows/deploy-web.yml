@@ -82,6 +82,7 @@ jobs:
       - name: Export web app
         env:
           EXPO_PUBLIC_CONVEX_URL: ${{ env.CONVEX_SITE_URL }}
+          APP_VARIANT: ${{ steps.env.outputs.target == 'staging' && 'staging' || '' }}
         run: npx expo export --platform web
 
       - name: Deploy to EAS Hosting

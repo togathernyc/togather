@@ -3,6 +3,7 @@
  */
 
 export const BASE_DOMAIN: string;
+export const ROOT_DOMAIN: string;
 export const BRAND_NAME: string;
 
 export const DOMAIN_CONFIG: {
@@ -12,6 +13,7 @@ export const DOMAIN_CONFIG: {
   readonly landingUrl: string;
   readonly emailDomain: string;
   readonly emailFrom: string;
+  readonly imageCdnUrl: string;
   readonly domainSuffix: string;
   readonly legacyDomain: string;
   eventShareUrl(shortId: string): string;
