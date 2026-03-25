@@ -651,7 +651,7 @@ export function CommunitySelectionScreen() {
             style={[styles.createCommunityButton, { borderColor: colors.link }]}
             onPress={() => {
               const baseUrl = Environment.isStaging() ? "https://staging.togather.nyc" : DOMAIN_CONFIG.landingUrl;
-              WebBrowser.openBrowserAsync(`${baseUrl}/propose`);
+              WebBrowser.openBrowserAsync(`${baseUrl}/onboarding/proposal`);
             }}
           >
             <Text style={[styles.createCommunityButtonText, { color: colors.link }]}>Create a Community</Text>

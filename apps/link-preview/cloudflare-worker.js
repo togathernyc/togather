@@ -89,7 +89,6 @@ function generateAppleAppSiteAssociation(hostname) {
     "/terms",
     "/contribute",
     "/issue",
-    "/propose",
     "/onboarding/*",
     "/admin/*",
     "/billing/*",
@@ -169,7 +168,7 @@ const DEFAULT_OG_IMAGE = "https://togather.nyc/og-image.png";
 
 // Static paths that should go to the landing page (not the app)
 // Note: /android path handling is environment-aware (see isLandingPagePath)
-const LANDING_PAGE_PATHS = ["/", "/download", "/legal", "/legal/privacy", "/legal/terms", "/contribute", "/issue", "/propose"];
+const LANDING_PAGE_PATHS = ["/", "/download", "/legal", "/legal/privacy", "/legal/terms", "/contribute", "/issue"];
 
 // Path prefixes that should go to the landing page (multi-segment routes)
 const LANDING_PAGE_PREFIXES = ["/onboarding/", "/admin/", "/billing/"];

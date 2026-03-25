@@ -18,7 +18,7 @@ function formatPhoneDisplay(digits: string): string {
 export default function SignIn() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const redirect = searchParams.get("redirect") || "/propose";
+  const redirect = searchParams.get("redirect") || "/onboarding/proposal";
 
   const { signIn } = useWebAuth();
 
@@ -147,10 +147,10 @@ export default function SignIn() {
         signIn(result.access_token, result.refresh_token);
         navigate(redirect, { replace: true });
       } else if (result.phoneVerificationToken) {
-        // New user -- no account yet. Redirect to registration/propose page
+        // New user -- no account yet. Redirect to proposal page
         // with the verification token so they can complete signup.
         navigate(
-          `/propose?phoneVerificationToken=${encodeURIComponent(result.phoneVerificationToken)}&phone=${encodeURIComponent(`+1${phoneDigits}`)}`,
+          `/onboarding/proposal?phoneVerificationToken=${encodeURIComponent(result.phoneVerificationToken)}&phone=${encodeURIComponent(`+1${phoneDigits}`)}`,
           { replace: true }
         );
       } else {
