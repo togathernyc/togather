@@ -649,7 +649,7 @@ export function CommunitySelectionScreen() {
                 // On web, use current origin (works for localhost, staging, and prod)
                 window.open(`${window.location.origin}/onboarding/proposal`, "_blank");
               } else {
-                const baseUrl = Environment.isStaging() ? "https://staging.togather.nyc" : DOMAIN_CONFIG.landingUrl;
+                const baseUrl = DOMAIN_CONFIG.landingUrl;
                 WebBrowser.openBrowserAsync(`${baseUrl}/onboarding/proposal`);
               }
             }}
