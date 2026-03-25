@@ -224,6 +224,7 @@ export function formatFileSize(bytes: number): string {
 // Cache for module detection results
 let _documentPickerSupported: boolean | null = null;
 let _audioVideoSupported: boolean | null = null;
+let _webViewSupported: boolean | null = null;
 let _linearGradientSupported: boolean | null = null;
 
 /**
@@ -322,6 +323,33 @@ export function isAudioVideoSupported(): boolean {
 }
 
 /**
+ * Check if react-native-webview is available.
+ *
+ * Used as the preferred video playback method on native — renders an
+ * HTML5 <video> tag inside a WebView, which works reliably on Fabric
+ * unlike expo-av's ExpoVideoView.
+ */
+export function isWebViewSupported(): boolean {
+  if (_webViewSupported !== null) {
+    return _webViewSupported;
+  }
+
+  if (!hasNativeModule('RNCWebView')) {
+    _webViewSupported = false;
+    return false;
+  }
+
+  try {
+    const WebViewModule = require('react-native-webview');
+    _webViewSupported = !!WebViewModule?.WebView;
+    return _webViewSupported;
+  } catch {
+    _webViewSupported = false;
+    return false;
+  }
+}
+
+/**
  * Check if expo-linear-gradient is available
  *
  * This module is only available after a native build that includes it.
@@ -382,5 +410,6 @@ export function isVoiceRecordingSupported(): boolean {
 export function resetModuleDetectionCache(): void {
   _documentPickerSupported = null;
   _audioVideoSupported = null;
+  _webViewSupported = null;
   _linearGradientSupported = null;
 }
