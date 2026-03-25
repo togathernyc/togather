@@ -11,13 +11,8 @@ import { AndroidDownload } from './pages/AndroidDownload.tsx'
 import { Contribute } from './pages/Contribute.tsx'
 import { ReportIssue } from './pages/ReportIssue.tsx'
 import { CommunityRedirect } from './pages/CommunityRedirect.tsx'
-import SignIn from './pages/SignIn.tsx'
-import ProposeCommunity from './pages/ProposeCommunity.tsx'
-import CommunitySetup from './pages/CommunitySetup.tsx'
-import OnboardingSuccess from './pages/OnboardingSuccess.tsx'
-import AdminProposals from './pages/AdminProposals.tsx'
-import BillingManagement from './pages/BillingManagement.tsx'
 import { ScrollToTop } from './components/ScrollToTop.tsx'
+// Onboarding, billing, admin, and sign-in pages have been moved to the Expo web app.
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -32,13 +27,6 @@ createRoot(document.getElementById('root')!).render(
           <Route path="/issue" element={<ReportIssue />} />
           <Route path="/legal/privacy" element={<PrivacyPolicy />} />
           <Route path="/legal/terms" element={<TermsOfService />} />
-          <Route path="/signin" element={<SignIn />} />
-          <Route path="/onboarding/signin" element={<SignIn />} />
-          <Route path="/onboarding/proposal" element={<ProposeCommunity />} />
-          <Route path="/onboarding/setup" element={<CommunitySetup />} />
-          <Route path="/onboarding/success" element={<OnboardingSuccess />} />
-          <Route path="/admin/proposals" element={<AdminProposals />} />
-          <Route path="/billing/:communityId" element={<BillingManagement />} />
           {/* Catch-all: redirect /:slug to community landing page */}
           <Route path="/:slug" element={<CommunityRedirect />} />
         </Routes>

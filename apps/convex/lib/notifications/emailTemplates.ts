@@ -33,7 +33,7 @@ export function escapeHtml(text: string): string {
 // Base Styles
 // ============================================================================
 
-const baseStyles = {
+export const baseStyles = {
   body: `
     background-color: #f6f9fc;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -133,7 +133,7 @@ const baseStyles = {
 /**
  * Wrap content in the base email layout
  */
-function wrapInLayout(content: string): string {
+export function wrapInLayout(content: string): string {
   return `
 <!DOCTYPE html>
 <html>
@@ -522,6 +522,9 @@ export function proposalReceivedEmail(data: {
       </tr>` : ""}
     </table>
     <p style="${baseStyles.text}">
+      If approved, your community URL will be something like: <strong>${DOMAIN_CONFIG.baseDomain}/${escapeHtml(data.communityName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""))}</strong> (you'll be able to customize this during setup).
+    </p>
+    <p style="${baseStyles.text}">
       <strong>What happens next?</strong> Our team will review your proposal to determine if we can take on the hosting and support for your community at the proposed monthly payment. We'll get back to you soon with a decision.
     </p>
     <p style="${baseStyles.subtext}">
@@ -545,7 +548,7 @@ export function proposalAcceptedEmail(data: {
       Great news, ${escapeHtml(data.proposerFirstName)}! Your proposal to create <strong>${escapeHtml(data.communityName)}</strong> has been accepted.
     </p>
     <p style="${baseStyles.text}">
-      Click the button below to set up your community and start your subscription.
+      Click the button below to set up your community — you'll choose your URL, branding colors, and start your subscription.
     </p>
     <div style="${baseStyles.buttonContainer}">
       <a href="${escapeHtml(data.setupUrl)}" style="${baseStyles.button}">Set Up Your Community</a>
