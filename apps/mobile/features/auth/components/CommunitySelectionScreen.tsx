@@ -9,6 +9,7 @@ import {
   TextInput,
   Alert,
   Platform,
+  Linking,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams } from "expo-router";
@@ -633,7 +634,12 @@ export function CommunitySelectionScreen() {
         <View style={[styles.footer, { borderTopColor: colors.borderLight }]}>
           <Text style={[styles.footerHelpText, { color: colors.textSecondary }]}>
             Can't find your community?{" "}
-            <Text style={{ color: colors.link, fontWeight: "500" }}>Contact support</Text>
+            <Text
+              style={{ color: colors.link, fontWeight: "500" }}
+              onPress={() => Linking.openURL("mailto:help@gettogather.co")}
+            >
+              Contact support
+            </Text>
           </Text>
 
           <TouchableOpacity
