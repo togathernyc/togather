@@ -32,7 +32,7 @@ createRoot(document.getElementById('root')!).render(
           <Route path="/issue" element={<ReportIssue />} />
           <Route path="/legal/privacy" element={<PrivacyPolicy />} />
           <Route path="/legal/terms" element={<TermsOfService />} />
-          <Route path="/signin" element={<SignIn />} />
+          <Route path="/onboarding/signin" element={<SignIn />} />
           <Route path="/propose" element={<ProposeCommunity />} />
           <Route path="/onboarding/setup" element={<CommunitySetup />} />
           <Route path="/onboarding/success" element={<OnboardingSuccess />} />
