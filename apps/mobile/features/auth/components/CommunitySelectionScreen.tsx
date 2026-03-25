@@ -8,13 +8,14 @@ import {
   ActivityIndicator,
   TextInput,
   Alert,
-  Linking,
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as WebBrowser from "expo-web-browser";
 import { useAuth } from "@/providers/AuthProvider";
 import { useSelectCommunity } from "../hooks/useAuth";
+import { Environment } from "@/services/environment";
 import type { CommunitySearchResult } from "../types";
 import { SwipeableCommunityRow } from './SwipeableCommunityRow';
 import { LeaveCommunityModal } from './LeaveCommunityModal';
@@ -648,7 +649,10 @@ export function CommunitySelectionScreen() {
           <Text style={[styles.createCommunitySubtitle, { color: colors.textSecondary }]}>Start your own community on Togather</Text>
           <TouchableOpacity
             style={[styles.createCommunityButton, { borderColor: colors.link }]}
-            onPress={() => Linking.openURL(`${DOMAIN_CONFIG.landingUrl}/propose`)}
+            onPress={() => {
+              const baseUrl = Environment.isStaging() ? "https://staging.togather.nyc" : DOMAIN_CONFIG.landingUrl;
+              WebBrowser.openBrowserAsync(`${baseUrl}/propose`);
+            }}
           >
             <Text style={[styles.createCommunityButtonText, { color: colors.link }]}>Create a Community</Text>
           </TouchableOpacity>
