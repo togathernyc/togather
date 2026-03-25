@@ -109,6 +109,10 @@ export const notifySuperAdminsOfProposal = internalAction({
       if (proposerInfo?.email) {
         const emailHtml = proposalReceivedEmail({
           communityName: proposal.communityName,
+          estimatedSize: proposal.estimatedSize,
+          proposedMonthlyPrice: proposal.proposedMonthlyPrice,
+          needsMigration: proposal.needsMigration,
+          notes: proposal.notes,
         });
         const emailResult = await ctx.runAction(
           internal.functions.notifications.internal.sendEmailNotification,
