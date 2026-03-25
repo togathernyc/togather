@@ -10,11 +10,22 @@ jest.mock("@providers/AuthProvider", () => ({
 
 jest.mock("@services/api/convex", () => ({
   useQuery: jest.fn(),
+  useMutation: jest.fn(() => jest.fn()),
   api: {
     functions: {
       admin: {
         stats: {
           getInternalDashboard: "api.functions.admin.stats.getInternalDashboard",
+        },
+      },
+      ee: {
+        proposals: {
+          list: "api.functions.ee.proposals.list",
+          accept: "api.functions.ee.proposals.accept",
+          reject: "api.functions.ee.proposals.reject",
+        },
+        billing: {
+          getSubscriptionStatus: "api.functions.ee.billing.getSubscriptionStatus",
         },
       },
     },
@@ -47,7 +58,7 @@ describe("SuperAdminDashboardContent", () => {
       user: { is_staff: true, is_superuser: false },
       token: "token",
     });
-    (useQuery as jest.Mock).mockReturnValue({
+    const dashboardData = {
       overview: {
         messagesSent: 42,
         uniqueActiveSenders: 12,
@@ -68,6 +79,10 @@ describe("SuperAdminDashboardContent", () => {
         { bucketStart: 2, label: "Jan 2", messagesSent: 32, dailyActiveUsers: 8, newMembers: 4 },
       ],
       topChannels: [{ channelId: "channel-1", channelName: "General", messagesSent: 25 }],
+    };
+    (useQuery as jest.Mock).mockImplementation((queryFn: string) => {
+      if (queryFn === "api.functions.ee.proposals.list") return [];
+      return dashboardData;
     });
 
     const { getByText } = render(<SuperAdminDashboardContent />);
@@ -83,7 +98,7 @@ describe("SuperAdminDashboardContent", () => {
       user: { is_staff: true, is_superuser: false },
       token: "token",
     });
-    (useQuery as jest.Mock).mockReturnValue({
+    const emptyDashboardData = {
       overview: {
         messagesSent: 0,
         uniqueActiveSenders: 0,
@@ -101,12 +116,19 @@ describe("SuperAdminDashboardContent", () => {
       },
       trend: [],
       topChannels: [],
+    };
+    (useQuery as jest.Mock).mockImplementation((queryFn: string) => {
+      if (queryFn === "api.functions.ee.proposals.list") return [];
+      return emptyDashboardData;
     });
 
     const { getByText } = render(<SuperAdminDashboardContent />);
     fireEvent.press(getByText("7D"));
 
-    const latestArgs = (useQuery as jest.Mock).mock.calls.at(-1)?.[1];
+    const dashboardCalls = (useQuery as jest.Mock).mock.calls.filter(
+      ([fn]: [string]) => fn === "api.functions.admin.stats.getInternalDashboard"
+    );
+    const latestArgs = dashboardCalls.at(-1)?.[1];
     expect(latestArgs.range).toBe("7d");
   });
 });
