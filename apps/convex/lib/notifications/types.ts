@@ -5,7 +5,7 @@
  * with Convex-specific adaptations (e.g., Id types, HTML instead of React elements)
  */
 
-import { Id } from "../../_generated/dataModel";
+import type { Id } from "../../_generated/dataModel";
 
 // Channel types
 export type NotificationChannel = "push" | "email" | "sms" | "chat";

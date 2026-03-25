@@ -12,7 +12,7 @@
  * - communityWideEvents.ts
  */
 
-import { Id } from "../_generated/dataModel";
+import type { Id } from "../_generated/dataModel";
 
 // ============================================================================
 // Community Role Constants

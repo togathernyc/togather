@@ -8,7 +8,7 @@
  * Records auto-reset when the time window expires -- no cleanup job needed.
  */
 
-import { MutationCtx } from "../_generated/server";
+import type { MutationCtx } from "../_generated/server";
 
 /**
  * Check and increment rate limit counter.
