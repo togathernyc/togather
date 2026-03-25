@@ -1042,3 +1042,39 @@ export const _seedPeopleDataMutation = internalMutation({
     };
   },
 });
+
+/**
+ * Dev helper: Set superuser/staff flags on a user by phone number.
+ * Internal-only to prevent unauthorized privilege escalation.
+ * Run with: npx convex run functions/seed:makeSuperuser '{"phone": "+12025550123"}'
+ */
+export const makeSuperuser = internalMutation({
+  args: { phone: v.string() },
+  handler: async (ctx, args) => {
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_phone", (q) => q.eq("phone", args.phone))
+      .first();
+    if (!user) throw new Error(`No user found with phone ${args.phone}`);
+    await ctx.db.patch(user._id, { isSuperuser: true, isStaff: true });
+    return { userId: user._id, name: `${user.firstName} ${user.lastName}` };
+  },
+});
+
+/**
+ * Dev helper: Clear Stripe customer ID from a proposal (e.g. after switching from live to test keys).
+ * Internal-only to prevent unauthorized data modification.
+ * Run with: npx convex run functions/seed:clearProposalStripeData '{"proposalId": "..."}'
+ */
+export const clearProposalStripeData = internalMutation({
+  args: { proposalId: v.id("communityProposals") },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.proposalId, {
+      stripeCustomerId: undefined,
+      stripePriceId: undefined,
+      stripeSubscriptionId: undefined,
+      updatedAt: Date.now(),
+    });
+    return { success: true };
+  },
+});

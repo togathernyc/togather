@@ -1,15 +1,17 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@providers/AuthProvider";
-import { useQuery, api } from "@services/api/convex";
+import { useQuery, useMutation, api } from "@services/api/convex";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
 
@@ -323,9 +325,259 @@ export function SuperAdminDashboardContent() {
           <Text style={[styles.noDataText, { color: colors.textTertiary }]}>No messages in this range.</Text>
         )}
       </View>
+
+      <ProposalsPanel token={token} colors={colors} primaryColor={primaryColor} />
     </ScrollView>
   );
 }
+
+type ProposalStatus = "pending" | "accepted" | "rejected";
+
+const STATUS_FILTERS: Array<{ key: ProposalStatus | "all"; label: string }> = [
+  { key: "all", label: "All" },
+  { key: "pending", label: "Pending" },
+  { key: "accepted", label: "Accepted" },
+  { key: "rejected", label: "Rejected" },
+];
+
+const STATUS_COLORS: Record<ProposalStatus, string> = {
+  pending: "#F59E0B",
+  accepted: "#10B981",
+  rejected: "#EF4444",
+};
+
+function ProposalsPanel({
+  token,
+  colors,
+  primaryColor,
+}: {
+  token: string | null;
+  colors: ReturnType<typeof useTheme>["colors"];
+  primaryColor: string;
+}) {
+  const [statusFilter, setStatusFilter] = useState<ProposalStatus | "all">("pending");
+  const [actionInProgress, setActionInProgress] = useState<string | null>(null);
+  const [rejectReasons, setRejectReasons] = useState<Record<string, string>>({});
+  const [showRejectInput, setShowRejectInput] = useState<string | null>(null);
+
+  const proposals = useQuery(
+    api.functions.ee.proposals.list,
+    token
+      ? {
+          token,
+          status: statusFilter === "all" ? undefined : statusFilter,
+        }
+      : "skip"
+  );
+
+  const acceptMutation = useMutation(api.functions.ee.proposals.accept);
+  const rejectMutation = useMutation(api.functions.ee.proposals.reject);
+
+  const handleAccept = useCallback(
+    async (proposalId: string) => {
+      if (!token) return;
+      setActionInProgress(proposalId);
+      try {
+        await acceptMutation({ token, proposalId: proposalId as any });
+        Alert.alert("Accepted", "Proposal accepted. Setup email sent to proposer.");
+      } catch (error) {
+        Alert.alert("Error", error instanceof Error ? error.message : "Failed to accept proposal");
+      } finally {
+        setActionInProgress(null);
+      }
+    },
+    [token, acceptMutation]
+  );
+
+  const handleReject = useCallback(
+    async (proposalId: string) => {
+      if (!token) return;
+      setActionInProgress(proposalId);
+      try {
+        const reason = rejectReasons[proposalId]?.trim();
+        await rejectMutation({
+          token,
+          proposalId: proposalId as any,
+          reason: reason || undefined,
+        });
+        setShowRejectInput(null);
+        setRejectReasons((prev) => { const next = { ...prev }; delete next[proposalId]; return next; });
+        Alert.alert("Rejected", "Proposal rejected. Notification email sent.");
+      } catch (error) {
+        Alert.alert("Error", error instanceof Error ? error.message : "Failed to reject proposal");
+      } finally {
+        setActionInProgress(null);
+      }
+    },
+    [token, rejectMutation, rejectReasons]
+  );
+
+  return (
+    <View style={[styles.panel, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+      <Text style={[styles.panelTitle, { color: colors.text }]}>Community Proposals</Text>
+
+      <View style={[styles.rangeRow, { marginBottom: 12 }]}>
+        {STATUS_FILTERS.map((filter) => {
+          const selected = filter.key === statusFilter;
+          return (
+            <TouchableOpacity
+              key={filter.key}
+              style={[
+                styles.rangeButton,
+                { borderColor: colors.border, backgroundColor: colors.surface },
+                selected && { backgroundColor: primaryColor, borderColor: primaryColor },
+              ]}
+              onPress={() => setStatusFilter(filter.key)}
+            >
+              <Text
+                style={[
+                  styles.rangeButtonText,
+                  { color: colors.textSecondary },
+                  selected && styles.rangeButtonTextSelected,
+                ]}
+              >
+                {filter.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      {!proposals ? (
+        <ActivityIndicator size="small" color={primaryColor} />
+      ) : proposals.length === 0 ? (
+        <Text style={[styles.noDataText, { color: colors.textTertiary }]}>
+          No {statusFilter === "all" ? "" : statusFilter} proposals.
+        </Text>
+      ) : (
+        proposals.map((proposal) => (
+          <View
+            key={proposal._id}
+            style={[
+              proposalStyles.card,
+              { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
+            ]}
+          >
+            <View style={proposalStyles.cardHeader}>
+              <Text style={[proposalStyles.communityName, { color: colors.text }]}>
+                {proposal.communityName}
+              </Text>
+              <View
+                style={[
+                  proposalStyles.statusBadge,
+                  { backgroundColor: `${STATUS_COLORS[proposal.status as ProposalStatus]}20` },
+                ]}
+              >
+                <Text
+                  style={[
+                    proposalStyles.statusText,
+                    { color: STATUS_COLORS[proposal.status as ProposalStatus] },
+                  ]}
+                >
+                  {proposal.status}
+                </Text>
+              </View>
+            </View>
+
+            <Text style={[proposalStyles.detail, { color: colors.textSecondary }]}>
+              {proposal.proposerName ?? "Unknown"} {proposal.proposerEmail ? `(${proposal.proposerEmail})` : ""}
+            </Text>
+            <Text style={[proposalStyles.detail, { color: colors.textSecondary }]}>
+              {proposal.estimatedSize} people · ${proposal.proposedMonthlyPrice}/mo
+              {proposal.needsMigration ? " · Migration needed" : ""}
+            </Text>
+            {proposal.notes ? (
+              <Text style={[proposalStyles.notes, { color: colors.textTertiary }]} numberOfLines={2}>
+                {proposal.notes}
+              </Text>
+            ) : null}
+            <Text style={[proposalStyles.date, { color: colors.textTertiary }]}>
+              {new Date(proposal.createdAt).toLocaleDateString()}
+            </Text>
+
+            {proposal.status === "pending" && (
+              <View style={proposalStyles.actions}>
+                {showRejectInput === proposal._id ? (
+                  <View style={proposalStyles.rejectInputContainer}>
+                    <TextInput
+                      style={[
+                        proposalStyles.rejectInput,
+                        { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface },
+                      ]}
+                      placeholder="Rejection reason (optional)"
+                      placeholderTextColor={colors.textTertiary}
+                      value={rejectReasons[proposal._id] ?? ""}
+                      onChangeText={(text) => setRejectReasons((prev) => ({ ...prev, [proposal._id]: text }))}
+                    />
+                    <View style={proposalStyles.rejectActions}>
+                      <TouchableOpacity
+                        style={[proposalStyles.actionButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                        onPress={() => {
+                          setShowRejectInput(null);
+                          setRejectReasons((prev) => { const next = { ...prev }; delete next[proposal._id]; return next; });
+                        }}
+                      >
+                        <Text style={[proposalStyles.actionButtonText, { color: colors.textSecondary }]}>Cancel</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[proposalStyles.actionButton, { backgroundColor: "#EF4444" }]}
+                        onPress={() => handleReject(proposal._id)}
+                        disabled={actionInProgress === proposal._id}
+                      >
+                        {actionInProgress === proposal._id ? (
+                          <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                          <Text style={[proposalStyles.actionButtonText, { color: "#fff" }]}>Reject</Text>
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ) : (
+                  <>
+                    <TouchableOpacity
+                      style={[proposalStyles.actionButton, { backgroundColor: "#10B981" }]}
+                      onPress={() => handleAccept(proposal._id)}
+                      disabled={actionInProgress === proposal._id}
+                    >
+                      {actionInProgress === proposal._id ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <Text style={[proposalStyles.actionButtonText, { color: "#fff" }]}>Accept</Text>
+                      )}
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[proposalStyles.actionButton, { backgroundColor: colors.surface, borderColor: "#EF4444", borderWidth: 1 }]}
+                      onPress={() => setShowRejectInput(proposal._id)}
+                    >
+                      <Text style={[proposalStyles.actionButtonText, { color: "#EF4444" }]}>Reject</Text>
+                    </TouchableOpacity>
+                  </>
+                )}
+              </View>
+            )}
+          </View>
+        ))
+      )}
+    </View>
+  );
+}
+
+const proposalStyles = StyleSheet.create({
+  card: { borderRadius: 10, borderWidth: 1, padding: 12, marginBottom: 10 },
+  cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 },
+  communityName: { fontSize: 15, fontWeight: "700", flex: 1 },
+  statusBadge: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
+  statusText: { fontSize: 11, fontWeight: "700", textTransform: "capitalize" },
+  detail: { fontSize: 13, marginBottom: 2 },
+  notes: { fontSize: 12, fontStyle: "italic", marginTop: 4 },
+  date: { fontSize: 11, marginTop: 4 },
+  actions: { flexDirection: "row", gap: 8, marginTop: 10 },
+  actionButton: { borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8, minWidth: 70, alignItems: "center" },
+  actionButtonText: { fontSize: 13, fontWeight: "600" },
+  rejectInputContainer: { flex: 1, gap: 8 },
+  rejectInput: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, fontSize: 13 },
+  rejectActions: { flexDirection: "row", gap: 8 },
+});
 
 const styles = StyleSheet.create({
   container: {

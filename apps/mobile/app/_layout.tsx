@@ -137,6 +137,9 @@ function ThemedStack() {
           gestureEnabled: true,
         }}
       />
+      {/* Onboarding - browser-only flow for community proposals, setup, and billing */}
+      <Stack.Screen name="onboarding" />
+      <Stack.Screen name="billing" />
     </Stack>
   );
 }

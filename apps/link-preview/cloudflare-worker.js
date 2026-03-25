@@ -170,8 +170,8 @@ const DEFAULT_OG_IMAGE = "https://togather.nyc/og-image.png";
 // Note: /android path handling is environment-aware (see isLandingPagePath)
 const LANDING_PAGE_PATHS = ["/", "/download", "/legal", "/legal/privacy", "/legal/terms", "/contribute", "/issue"];
 
-// Path prefixes that should go to the landing page (multi-segment routes)
-const LANDING_PAGE_PREFIXES = ["/onboarding/", "/admin/", "/billing/"];
+// Onboarding, admin, and billing flows are now handled by the Expo web app.
+const LANDING_PAGE_PREFIXES = [];
 
 // Known single-segment app routes that should NOT be redirected to /c/:slug.
 // These come from Expo Router route groups: (tabs), (auth), (user), (landing), and root-level routes.
@@ -189,6 +189,8 @@ const KNOWN_APP_ROUTES = new Set([
   "demo", "get-started", "nearme", "our-story", "support",
   // root
   "inbox", "ui-test", "planning-center",
+  // onboarding & billing (browser-only, served by Expo web app)
+  "onboarding", "billing",
 ]);
 
 // Static asset extensions that should go to the landing page (when at root level)
