@@ -107,7 +107,7 @@ export default function BillingManagement() {
   // Redirect unauthenticated users
   if (!isAuthenticated) {
     navigate(
-      `/signin?redirect=/billing/${communityId ?? ""}`,
+      `/onboarding/signin?redirect=/billing/${communityId ?? ""}`,
       { replace: true }
     );
     return null;

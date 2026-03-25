@@ -153,7 +153,7 @@ export default function AdminProposals() {
   // Redirect unauthenticated users
   useEffect(() => {
     if (!isAuthenticated) {
-      navigate("/signin?redirect=/admin/proposals", { replace: true });
+      navigate("/onboarding/signin?redirect=/admin/proposals", { replace: true });
     }
   }, [isAuthenticated, navigate]);
 
