@@ -521,7 +521,7 @@ export function proposalAcceptedEmail(data: {
     <div style="${baseStyles.buttonContainer}">
       <a href="${escapeHtml(data.setupUrl)}" style="${baseStyles.button}">Set Up Your Community</a>
     </div>
-    <p style="${baseStyles.text}" style="color: #666; font-size: 14px;">
+    <p style="${baseStyles.subtext}">
       This link is unique to your community. Please don't share it.
     </p>
   `;
