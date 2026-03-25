@@ -21,14 +21,17 @@ export function ProposalScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
-  const { isAuthenticated, token, isLoading } = useAuth();
+  const { isAuthenticated, token, isLoading, user } = useAuth();
   const submitProposal = useMutation(api.functions.ee.proposals.submit);
+
+  const userHasEmail = !!user?.email;
 
   const [communityName, setCommunityName] = useState("");
   const [estimatedSize, setEstimatedSize] = useState("");
   const [proposedMonthlyPrice, setProposedMonthlyPrice] = useState("200");
   const [needsMigration, setNeedsMigration] = useState(false);
   const [notes, setNotes] = useState("");
+  const [contactEmail, setContactEmail] = useState("");
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -66,6 +69,13 @@ export function ProposalScreen() {
       return;
     }
 
+    // Validate email — either from profile or entered on form
+    const email = userHasEmail ? user.email : contactEmail.trim();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setError("A valid email address is required so we can contact you about your proposal.");
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       await submitProposal({
@@ -75,6 +85,7 @@ export function ProposalScreen() {
         needsMigration,
         proposedMonthlyPrice: price,
         notes: notes.trim() || undefined,
+        contactEmail: !userHasEmail ? contactEmail.trim() : undefined,
       });
       setSubmitted(true);
     } catch (err) {
@@ -94,6 +105,9 @@ export function ProposalScreen() {
     notes,
     token,
     submitProposal,
+    contactEmail,
+    userHasEmail,
+    user?.email,
   ]);
 
   if (isLoading || !isAuthenticated) {
@@ -151,6 +165,35 @@ export function ProposalScreen() {
 
       {/* Form card */}
       <View style={[styles.card, { backgroundColor: colors.surface }]}>
+        {/* Contact Email (only if user doesn't have one on file) */}
+        {!userHasEmail && (
+          <View style={styles.fieldGroup}>
+            <Text style={[styles.label, { color: colors.text }]}>
+              Contact Email <Text style={{ color: colors.error }}>*</Text>
+            </Text>
+            <TextInput
+              style={[
+                styles.input,
+                {
+                  backgroundColor: colors.inputBackground,
+                  borderColor: colors.inputBorder,
+                  color: colors.text,
+                },
+              ]}
+              value={contactEmail}
+              onChangeText={setContactEmail}
+              placeholder="you@example.com"
+              placeholderTextColor={colors.inputPlaceholder}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <Text style={{ fontSize: 12, color: colors.textTertiary, marginTop: 4 }}>
+              We'll use this email to send you updates about your proposal.
+            </Text>
+          </View>
+        )}
+
         {/* Community Name */}
         <View style={styles.fieldGroup}>
           <Text style={[styles.label, { color: colors.text }]}>

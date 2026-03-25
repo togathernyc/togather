@@ -29,6 +29,7 @@ import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
 import { uploadAsync, FileSystemUploadType } from "expo-file-system/legacy";
 import { ImagePicker } from "@components/ui";
+import * as Linking from "expo-linking";
 import { useCommunitySettings, useGroupTypes, GroupType } from "../hooks";
 import { GroupTypeEditModal } from "./GroupTypeEditModal";
 import { useAvailableIntegrations } from "../../integrations/hooks/useIntegrations";
@@ -36,6 +37,9 @@ import { ColorPicker } from "./ColorPicker";
 import { ColorPreview } from "./ColorPreview";
 import { formatError } from "@/utils/error-handling";
 import { getGroupTypeColor } from "../../explore/constants";
+import { useAuth } from "@providers/AuthProvider";
+import { useQuery, api } from "@services/api/convex";
+import { DOMAIN_CONFIG } from "@togather/shared/config";
 import type { Id } from "@services/api/convex";
 
 export function SettingsContent() {
@@ -62,6 +66,15 @@ export function SettingsContent() {
     createGroupType,
     isCreating,
   } = useGroupTypes();
+
+  // Billing data
+  const { community, token } = useAuth();
+  const billing = useQuery(
+    api.functions.ee.billing.getSubscriptionStatus,
+    community?.id && token
+      ? { token, communityId: community.id as Id<"communities"> }
+      : "skip"
+  );
 
   const {
     data: integrations,
@@ -680,6 +693,87 @@ export function SettingsContent() {
             </View>
           ) : (
             <Text style={[styles.emptyText, { color: colors.textTertiary }]}>No integrations available</Text>
+          )}
+        </View>
+
+        {/* Billing Section */}
+        <View style={[styles.section, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Billing</Text>
+          {billing && billing.subscriptionStatus ? (
+            <>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                <Text style={[styles.sectionDescription, { color: colors.textSecondary, marginBottom: 0 }]}>
+                  Status:
+                </Text>
+                <View style={{
+                  backgroundColor: billing.subscriptionStatus === "active" ? (isDark ? "rgba(52,199,89,0.15)" : "#E8F5E9")
+                    : billing.subscriptionStatus === "past_due" ? (isDark ? "rgba(255,149,0,0.15)" : "#FFF8E1")
+                    : isDark ? "rgba(255,59,48,0.15)" : "#FFF0F0",
+                  paddingHorizontal: 10, paddingVertical: 3, borderRadius: 12,
+                }}>
+                  <Text style={{
+                    fontSize: 12, fontWeight: "600", textTransform: "capitalize",
+                    color: billing.subscriptionStatus === "active" ? colors.success
+                      : billing.subscriptionStatus === "past_due" ? colors.warning
+                      : colors.error,
+                  }}>
+                    {billing.subscriptionStatus}
+                  </Text>
+                </View>
+              </View>
+              {billing.subscriptionPriceMonthly != null && (
+                <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>
+                  ${billing.subscriptionPriceMonthly}/month
+                </Text>
+              )}
+            </>
+          ) : (
+            <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>
+              No subscription set up yet.
+            </Text>
+          )}
+
+          {Platform.OS === "web" ? (
+            <TouchableOpacity
+              style={[styles.integrationItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
+              onPress={() => {
+                if (community?.id) {
+                  window.location.href = `${DOMAIN_CONFIG.landingUrl}/billing/${community.id}`;
+                }
+              }}
+            >
+              <View style={styles.groupTypeInfo}>
+                <Text style={[styles.groupTypeName, { color: colors.text }]}>
+                  {billing?.subscriptionStatus ? "Manage Subscription" : "Set Up Billing"}
+                </Text>
+                <Text style={[styles.groupTypeDescription, { color: colors.textSecondary }]}>
+                  {billing?.subscriptionStatus
+                    ? "Update payment method, view invoices, or manage your plan"
+                    : "Add a subscription to keep your community active"}
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
+            </TouchableOpacity>
+          ) : (
+            <View style={[styles.integrationItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+              <View style={styles.groupTypeInfo}>
+                <Text style={[styles.groupTypeName, { color: colors.text }]}>
+                  Manage on Web
+                </Text>
+                <Text style={[styles.groupTypeDescription, { color: colors.textSecondary }]}>
+                  Billing is managed through the web app. Tap to open in your browser.
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => {
+                  if (community?.id) {
+                    Linking.openURL(`${DOMAIN_CONFIG.landingUrl}/billing/${community.id}`);
+                  }
+                }}
+              >
+                <Ionicons name="open-outline" size={20} color={themePrimaryColor} />
+              </TouchableOpacity>
+            </View>
           )}
         </View>
 
