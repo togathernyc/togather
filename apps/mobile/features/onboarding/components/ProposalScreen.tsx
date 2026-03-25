@@ -105,6 +105,9 @@ export function ProposalScreen() {
     notes,
     token,
     submitProposal,
+    contactEmail,
+    userHasEmail,
+    user?.email,
   ]);
 
   if (isLoading || !isAuthenticated) {
