@@ -3,7 +3,8 @@
  *
  * Displays a thumbnail with a play button. Tapping opens a fullscreen modal
  * with native video controls.
- * Falls back to a download button if expo-av is not available (OTA update scenario).
+ * Falls back to a download button if expo-av is not available (OTA update scenario)
+ * or if the native Video view crashes (Fabric view adapter issue).
  */
 import React, { useState, useCallback } from 'react';
 import {
@@ -20,7 +21,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { isVideoViewSupported } from '../utils/fileTypes';
+import { isAudioVideoSupported } from '../utils/fileTypes';
 import { getMediaUrl } from '@/utils/media';
 
 // ============================================================================
@@ -46,7 +47,37 @@ const VIDEO_MAX_WIDTH = Dimensions.get('window').width * 0.65;
 const VIDEO_ASPECT_RATIO = 16 / 9;
 
 // ============================================================================
-// Fallback Component (when expo-av not available)
+// Error Boundary — catches Fabric ViewManagerAdapter crashes
+// ============================================================================
+
+interface VideoErrorBoundaryState {
+  hasError: boolean;
+}
+
+class VideoErrorBoundary extends React.Component<
+  { children: React.ReactNode; fallback: React.ReactNode },
+  VideoErrorBoundaryState
+> {
+  state: VideoErrorBoundaryState = { hasError: false };
+
+  static getDerivedStateFromError(): VideoErrorBoundaryState {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error) {
+    console.warn('[VideoPlayer] Native view crashed, using download fallback:', error.message);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback;
+    }
+    return this.props.children;
+  }
+}
+
+// ============================================================================
+// Fallback Component (when expo-av not available or view crashes)
 // ============================================================================
 
 function VideoDownloadFallback({ url, name, isOwnMessage }: VideoPlayerProps) {
@@ -139,12 +170,21 @@ export function VideoPlayer({ url, name, isOwnMessage = false, onLongPress }: Vi
     return <WebVideoPlayer url={url} name={name} isOwnMessage={isOwnMessage} onLongPress={onLongPress} />;
   }
 
-  // Native: use expo-av if the Video view can render, otherwise download fallback
-  if (!isVideoViewSupported()) {
+  // Native: use expo-av if available, otherwise download fallback
+  if (!isAudioVideoSupported()) {
     return <VideoDownloadFallback url={url} name={name} isOwnMessage={isOwnMessage} />;
   }
 
-  return <VideoPlayerInner url={url} name={name} isOwnMessage={isOwnMessage} onLongPress={onLongPress} />;
+  // Wrap in error boundary — the expo-av Video view can crash on Fabric
+  // if pnpm dependency resolution changes the module registry. When it
+  // works, you get inline playback; when it crashes, download fallback.
+  const fallback = <VideoDownloadFallback url={url} name={name} isOwnMessage={isOwnMessage} />;
+
+  return (
+    <VideoErrorBoundary fallback={fallback}>
+      <VideoPlayerInner url={url} name={name} isOwnMessage={isOwnMessage} onLongPress={onLongPress} />
+    </VideoErrorBoundary>
+  );
 }
 
 // ============================================================================
