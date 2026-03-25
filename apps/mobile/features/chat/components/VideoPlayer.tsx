@@ -20,7 +20,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { isAudioVideoSupported } from '../utils/fileTypes';
+import { isVideoViewSupported } from '../utils/fileTypes';
 import { getMediaUrl } from '@/utils/media';
 
 // ============================================================================
@@ -139,8 +139,8 @@ export function VideoPlayer({ url, name, isOwnMessage = false, onLongPress }: Vi
     return <WebVideoPlayer url={url} name={name} isOwnMessage={isOwnMessage} onLongPress={onLongPress} />;
   }
 
-  // Native: use expo-av if available, otherwise download fallback
-  if (!isAudioVideoSupported()) {
+  // Native: use expo-av if the Video view can render, otherwise download fallback
+  if (!isVideoViewSupported()) {
     return <VideoDownloadFallback url={url} name={name} isOwnMessage={isOwnMessage} />;
   }
 
