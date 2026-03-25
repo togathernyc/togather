@@ -1115,6 +1115,48 @@ describe("tasks functions", () => {
     ).rejects.toThrow("Leader access required");
   });
 
+  test("co-leader can complete, cancel, snooze, and reopen person tasks assigned to another leader", async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, leaderId, secondLeaderToken } = await seedData(t);
+
+    const taskId = await t.mutation(api.functions.tasks.index.create, {
+      token: secondLeaderToken,
+      groupId,
+      title: "Assigned to leader one",
+      responsibilityType: "person",
+      assignedToId: leaderId,
+    });
+
+    await expect(
+      t.mutation(api.functions.tasks.index.markDone, {
+        token: secondLeaderToken,
+        taskId,
+      }),
+    ).resolves.toEqual({ success: true });
+
+    await expect(
+      t.mutation(api.functions.tasks.index.reopen, {
+        token: secondLeaderToken,
+        taskId,
+      }),
+    ).resolves.toEqual({ success: true });
+
+    await expect(
+      t.mutation(api.functions.tasks.index.snooze, {
+        token: secondLeaderToken,
+        taskId,
+        preset: "1_day",
+      }),
+    ).resolves.toMatchObject({ success: true });
+
+    await expect(
+      t.mutation(api.functions.tasks.index.cancel, {
+        token: secondLeaderToken,
+        taskId,
+      }),
+    ).resolves.toEqual({ success: true });
+  });
+
   test("leader cannot mutate tasks for groups they do not lead", async () => {
     const t = convexTest(schema, modules);
     const {
