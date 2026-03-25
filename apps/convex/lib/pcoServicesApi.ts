@@ -8,9 +8,9 @@
  * We use 80 requests per 20 seconds to be conservative.
  */
 
-import { ActionCtx } from "../_generated/server";
+import type { ActionCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
-import { Id } from "../_generated/dataModel";
+import type { Id } from "../_generated/dataModel";
 import { isTokenExpired } from "./utils";
 
 const PCO_SERVICES_BASE = "https://api.planningcenteronline.com/services/v2";
@@ -25,13 +25,18 @@ const PCO_OAUTH_TOKEN_URL = "https://api.planningcenteronline.com/oauth/token";
 // ============================================================================
 
 export class PcoApiError extends Error {
+  status: number;
+  response?: unknown;
+
   constructor(
-    public status: number,
+    status: number,
     message: string,
-    public response?: unknown
+    response?: unknown
   ) {
     super(message);
     this.name = "PcoApiError";
+    this.status = status;
+    this.response = response;
   }
 }
 

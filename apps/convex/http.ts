@@ -58,6 +58,19 @@ function jsonResponse(
 // ============================================================================
 
 /**
+ * Constant-time string comparison to prevent timing attacks.
+ * Compares every character regardless of where a mismatch occurs.
+ */
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
+}
+
+/**
  * Verify a Stripe webhook signature using the Web Crypto API (HMAC-SHA256).
  *
  * We can't use the Stripe SDK's `constructEvent` here because httpAction
@@ -116,8 +129,8 @@ async function verifyStripeSignature(
       .map((b) => b.toString(16).padStart(2, "0"))
       .join("");
 
-    // Accept if any v1 signature matches
-    return v1Signatures.some((sig) => sig === computedSig);
+    // Accept if any v1 signature matches (constant-time comparison)
+    return v1Signatures.some((sig) => timingSafeEqual(sig, computedSig));
   } catch {
     return false;
   }

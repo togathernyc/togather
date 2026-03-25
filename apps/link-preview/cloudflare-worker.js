@@ -89,6 +89,11 @@ function generateAppleAppSiteAssociation(hostname) {
     "/terms",
     "/contribute",
     "/issue",
+    "/propose",
+    "/signin",
+    "/onboarding/*",
+    "/admin/*",
+    "/billing/*",
   ];
 
   return {
@@ -165,7 +170,10 @@ const DEFAULT_OG_IMAGE = "https://togather.nyc/og-image.png";
 
 // Static paths that should go to the landing page (not the app)
 // Note: /android path handling is environment-aware (see isLandingPagePath)
-const LANDING_PAGE_PATHS = ["/", "/download", "/legal", "/legal/privacy", "/legal/terms", "/contribute", "/issue"];
+const LANDING_PAGE_PATHS = ["/", "/download", "/legal", "/legal/privacy", "/legal/terms", "/contribute", "/issue", "/propose", "/signin"];
+
+// Path prefixes that should go to the landing page (multi-segment routes)
+const LANDING_PAGE_PREFIXES = ["/onboarding/", "/admin/", "/billing/"];
 
 // Known single-segment app routes that should NOT be redirected to /c/:slug.
 // These come from Expo Router route groups: (tabs), (auth), (user), (landing), and root-level routes.
@@ -248,6 +256,10 @@ function isLandingPagePath(pathname) {
   }
   // Paths starting with /android (including /android-staging)
   if (pathname.startsWith("/android")) {
+    return true;
+  }
+  // Multi-segment landing page routes (onboarding, admin, billing)
+  if (LANDING_PAGE_PREFIXES.some(prefix => pathname.startsWith(prefix))) {
     return true;
   }
   // Landing page assets directory (Vite builds to /assets/)
