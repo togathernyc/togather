@@ -347,7 +347,7 @@ function HeroSection() {
             {/* Desktop CTA */}
             <div className="hidden md:flex items-center gap-3">
               <a
-                href="/onboarding/signin"
+                href="/signin"
                 className="px-5 py-2.5 text-sm font-medium text-neutral-700 hover:text-neutral-900"
               >
                 Sign in
@@ -397,7 +397,7 @@ function HeroSection() {
             </a>
             <div className="pt-2 space-y-2">
               <a
-                href="/onboarding/signin"
+                href="/signin"
                 className="block text-center px-4 py-2.5 text-sm font-medium text-neutral-700 rounded-xl border border-neutral-200"
               >
                 Sign in
