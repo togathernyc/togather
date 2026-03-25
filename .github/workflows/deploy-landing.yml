@@ -62,13 +62,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build landing page
-        run: pnpm --filter @togather/web build
-
       - name: Load secrets
         uses: ./.github/actions/load-secrets
         with:
           secrets-json: ${{ toJSON(secrets) }}
+
+      - name: Build landing page
+        run: pnpm --filter @togather/web build
 
       - name: Install Wrangler
         run: npm install -g wrangler
