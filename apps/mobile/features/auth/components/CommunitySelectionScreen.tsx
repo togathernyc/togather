@@ -639,8 +639,13 @@ export function CommunitySelectionScreen() {
           <TouchableOpacity
             style={[styles.createCommunityButton, { backgroundColor: colors.surfaceSecondary }]}
             onPress={() => {
-              const baseUrl = Environment.isStaging() ? "https://staging.togather.nyc" : DOMAIN_CONFIG.landingUrl;
-              WebBrowser.openBrowserAsync(`${baseUrl}/onboarding/proposal`);
+              if (Platform.OS === "web") {
+                // On web, use current origin (works for localhost, staging, and prod)
+                window.open(`${window.location.origin}/onboarding/proposal`, "_blank");
+              } else {
+                const baseUrl = Environment.isStaging() ? "https://staging.togather.nyc" : DOMAIN_CONFIG.landingUrl;
+                WebBrowser.openBrowserAsync(`${baseUrl}/onboarding/proposal`);
+              }
             }}
           >
             <Text style={[styles.createCommunityButtonText, { color: colors.text }]}>Create a Community</Text>
