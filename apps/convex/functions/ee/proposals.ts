@@ -44,9 +44,21 @@ export const submit = mutation({
     needsMigration: v.boolean(),
     proposedMonthlyPrice: v.number(),
     notes: v.optional(v.string()),
+    contactEmail: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
+
+    // Ensure user has an email (required for proposal notifications)
+    const user = await ctx.db.get(userId);
+    if (!user?.email && !args.contactEmail) {
+      throw new Error("An email address is required to submit a proposal");
+    }
+    // Update user's email if they provided one and don't have one on file
+    if (args.contactEmail && !user?.email) {
+      await ctx.db.patch(userId, { email: args.contactEmail.toLowerCase() });
+    }
+
     const now = Date.now();
 
     const proposalId = await ctx.db.insert("communityProposals", {
