@@ -1,10 +1,13 @@
 /**
  * VideoPlayer - Thumbnail-to-fullscreen video player for chat messages
  *
- * Displays a thumbnail with a play button. Tapping opens a fullscreen modal
- * with native video controls.
- * Falls back to a download button if expo-av is not available (OTA update scenario)
- * or if the native Video view crashes (Fabric view adapter issue).
+ * Rendering strategy (in priority order):
+ *   1. Web: HTML5 <video> element
+ *   2. Native + react-native-webview available: WebView with HTML5 <video>
+ *      (works reliably on Fabric, unlike expo-av's native view)
+ *   3. Native + expo-av available: expo-av Video (wrapped in error boundary
+ *      in case the Fabric view adapter crashes)
+ *   4. Download fallback: tap to open in system player
  */
 import React, { useState, useCallback } from 'react';
 import {
@@ -21,7 +24,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { isAudioVideoSupported } from '../utils/fileTypes';
+import { isAudioVideoSupported, isWebViewSupported } from '../utils/fileTypes';
 import { getMediaUrl } from '@/utils/media';
 
 // ============================================================================
@@ -65,7 +68,7 @@ class VideoErrorBoundary extends React.Component<
   }
 
   componentDidCatch(error: Error) {
-    console.warn('[VideoPlayer] Native view crashed, using download fallback:', error.message);
+    console.warn('[VideoPlayer] Native view crashed, using fallback:', error.message);
   }
 
   render() {
@@ -77,7 +80,7 @@ class VideoErrorBoundary extends React.Component<
 }
 
 // ============================================================================
-// Fallback Component (when expo-av not available or view crashes)
+// Fallback Component (when no player available or view crashes)
 // ============================================================================
 
 function VideoDownloadFallback({ url, name, isOwnMessage }: VideoPlayerProps) {
@@ -161,6 +164,65 @@ function WebVideoPlayer({ url, name, isOwnMessage = false, onLongPress }: VideoP
 }
 
 // ============================================================================
+// WebView Video Player (native — uses react-native-webview with HTML5 <video>)
+// ============================================================================
+
+function WebViewVideoPlayer({ url, name, isOwnMessage = false, onLongPress }: VideoPlayerProps) {
+  const resolvedUrl = getMediaUrl(url);
+  const fileName = name || url.split('/').pop()?.split('?')[0] || 'Video';
+  const displayName = fileName.length > 20
+    ? fileName.slice(0, 10) + '...' + fileName.slice(-8)
+    : fileName;
+
+  const { WebView } = require('react-native-webview');
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #000; display: flex; align-items: center; justify-content: center; }
+        video { width: 100%; display: block; background: #000; }
+      </style>
+    </head>
+    <body>
+      <video
+        src="${resolvedUrl || ''}"
+        controls
+        playsinline
+        preload="metadata"
+        poster=""
+      ></video>
+    </body>
+    </html>
+  `;
+
+  return (
+    <View style={styles.container}>
+      <Pressable onLongPress={onLongPress} delayLongPress={300}>
+        <View style={[styles.webviewWrapper, { aspectRatio: VIDEO_ASPECT_RATIO }]}>
+          <WebView
+            source={{ html }}
+            style={styles.webview}
+            allowsInlineMediaPlayback={true}
+            mediaPlaybackRequiresUserAction={false}
+            scrollEnabled={false}
+            bounces={false}
+            javaScriptEnabled={true}
+            allowsFullscreenVideo={true}
+          />
+        </View>
+      </Pressable>
+      <Text style={[styles.fileName, isOwnMessage && styles.ownMessageText]} numberOfLines={1}>
+        {displayName}
+      </Text>
+    </View>
+  );
+}
+
+// ============================================================================
 // Main Component
 // ============================================================================
 
@@ -170,21 +232,23 @@ export function VideoPlayer({ url, name, isOwnMessage = false, onLongPress }: Vi
     return <WebVideoPlayer url={url} name={name} isOwnMessage={isOwnMessage} onLongPress={onLongPress} />;
   }
 
-  // Native: use expo-av if available, otherwise download fallback
-  if (!isAudioVideoSupported()) {
-    return <VideoDownloadFallback url={url} name={name} isOwnMessage={isOwnMessage} />;
+  // Native priority 1: WebView with HTML5 video (reliable on Fabric)
+  if (isWebViewSupported()) {
+    return <WebViewVideoPlayer url={url} name={name} isOwnMessage={isOwnMessage} onLongPress={onLongPress} />;
   }
 
-  // Wrap in error boundary — the expo-av Video view can crash on Fabric
-  // if pnpm dependency resolution changes the module registry. When it
-  // works, you get inline playback; when it crashes, download fallback.
-  const fallback = <VideoDownloadFallback url={url} name={name} isOwnMessage={isOwnMessage} />;
+  // Native priority 2: expo-av Video (may crash on Fabric, wrapped in error boundary)
+  if (isAudioVideoSupported()) {
+    const fallback = <VideoDownloadFallback url={url} name={name} isOwnMessage={isOwnMessage} />;
+    return (
+      <VideoErrorBoundary fallback={fallback}>
+        <VideoPlayerInner url={url} name={name} isOwnMessage={isOwnMessage} onLongPress={onLongPress} />
+      </VideoErrorBoundary>
+    );
+  }
 
-  return (
-    <VideoErrorBoundary fallback={fallback}>
-      <VideoPlayerInner url={url} name={name} isOwnMessage={isOwnMessage} onLongPress={onLongPress} />
-    </VideoErrorBoundary>
-  );
+  // Native priority 3: download fallback
+  return <VideoDownloadFallback url={url} name={name} isOwnMessage={isOwnMessage} />;
 }
 
 // ============================================================================
@@ -211,7 +275,6 @@ function FullscreenVideoModal({
       onRequestClose={onClose}
     >
       <View style={styles.modalContainer}>
-        {/* Only load video source when modal is visible to avoid unnecessary downloads */}
         {visible && (
           <Video
             source={{ uri: videoUrl }}
@@ -226,7 +289,6 @@ function FullscreenVideoModal({
           />
         )}
 
-        {/* Close button */}
         <Pressable
           style={[styles.closeButton, { top: insets.top + 12, right: 16 }]}
           onPress={onClose}
@@ -272,7 +334,6 @@ function VideoPlayerInner({ url, name, isOwnMessage = false, onLongPress }: Vide
         delayLongPress={300}
         style={[styles.thumbnailWrapper, { aspectRatio }]}
       >
-        {/* Paused video showing first frame as thumbnail */}
         <Video
           source={{ uri: resolvedUrl || '' }}
           style={StyleSheet.absoluteFill}
@@ -287,7 +348,6 @@ function VideoPlayerInner({ url, name, isOwnMessage = false, onLongPress }: Vide
           }}
         />
 
-        {/* Dark overlay with play button */}
         <View style={styles.controlsOverlay}>
           <View style={styles.playButtonLarge}>
             <Ionicons name="play" size={32} color="#fff" />
@@ -295,12 +355,10 @@ function VideoPlayerInner({ url, name, isOwnMessage = false, onLongPress }: Vide
         </View>
       </Pressable>
 
-      {/* File name */}
       <Text style={[styles.fileName, isOwnMessage && styles.ownMessageText]} numberOfLines={1}>
         {displayName}
       </Text>
 
-      {/* Fullscreen modal - always mounted so fade-out animation can play */}
       <FullscreenVideoModal
         visible={modalVisible}
         videoUrl={resolvedUrl || ''}
@@ -326,6 +384,15 @@ const styles = StyleSheet.create({
     width: '100%',
     backgroundColor: '#000',
     position: 'relative',
+  },
+  webviewWrapper: {
+    width: '100%',
+    backgroundColor: '#000',
+    overflow: 'hidden',
+  },
+  webview: {
+    flex: 1,
+    backgroundColor: '#000',
   },
   controlsOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -353,7 +420,6 @@ const styles = StyleSheet.create({
   ownMessageMeta: {
     color: '#666',
   },
-  // Modal styles
   modalContainer: {
     flex: 1,
     backgroundColor: '#000',
@@ -373,7 +439,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  // Fallback styles
   fallbackContainer: {
     backgroundColor: 'rgba(244, 67, 54, 0.1)',
     borderRadius: 12,
