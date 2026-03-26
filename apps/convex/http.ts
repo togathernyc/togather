@@ -675,12 +675,15 @@ http.route({
         case "checkout.session.completed": {
           const session = event.data.object;
           await ctx.runMutation(
-            internal.functions.billing.handleCheckoutCompleted,
+            internal.functions.ee.billing.handleCheckoutCompleted,
             {
               stripeCustomerId: session.customer,
               stripeSubscriptionId: session.subscription,
               communityId: session.metadata.communityId,
               proposalId: session.metadata.proposalId,
+              monthlyPrice: session.metadata.monthlyPrice
+                ? Number(session.metadata.monthlyPrice)
+                : undefined,
             }
           );
           break;
@@ -688,7 +691,7 @@ http.route({
         case "customer.subscription.updated": {
           const subscription = event.data.object;
           await ctx.runMutation(
-            internal.functions.billing.handleSubscriptionUpdated,
+            internal.functions.ee.billing.handleSubscriptionUpdated,
             {
               stripeSubscriptionId: subscription.id,
               status: subscription.status,
@@ -699,7 +702,7 @@ http.route({
         case "customer.subscription.deleted": {
           const subscription = event.data.object;
           await ctx.runMutation(
-            internal.functions.billing.handleSubscriptionUpdated,
+            internal.functions.ee.billing.handleSubscriptionUpdated,
             {
               stripeSubscriptionId: subscription.id,
               status: "canceled",
@@ -710,7 +713,7 @@ http.route({
         case "invoice.payment_failed": {
           const invoice = event.data.object;
           await ctx.runMutation(
-            internal.functions.billing.handlePaymentFailed,
+            internal.functions.ee.billing.handlePaymentFailed,
             {
               stripeCustomerId: invoice.customer,
             }

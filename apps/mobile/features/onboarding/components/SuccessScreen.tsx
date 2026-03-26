@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -6,20 +7,90 @@ import {
   Linking,
   StyleSheet,
   Platform,
+  ActivityIndicator,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@hooks/useTheme";
+import { useQuery, api } from "@services/api/convex";
 
 const APP_STORE_URL = "https://apps.apple.com/us/app/togather-life-in-community/id6756286011";
 const PLAY_STORE_URL =
   "https://play.google.com/store/apps/details?id=app.gatherful.mobile";
 
+/** Max time (ms) to wait for the Stripe webhook to activate the community. */
+const WEBHOOK_TIMEOUT_MS = 30_000;
+
 export function SuccessScreen() {
+  const { token } = useLocalSearchParams<{ token?: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
+
+  // Poll proposal status to confirm webhook completed
+  const proposalStatus = useQuery(
+    api.functions.ee.billing.getCheckoutStatus,
+    token ? { setupToken: token } : "skip"
+  );
+
+  const [timedOut, setTimedOut] = useState(false);
+
+  useEffect(() => {
+    if (proposalStatus?.activated) return;
+    const timer = setTimeout(() => setTimedOut(true), WEBHOOK_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [proposalStatus?.activated]);
+
+  // Still waiting for webhook
+  if (token && !proposalStatus?.activated && !timedOut) {
+    return (
+      <ScrollView
+        style={[styles.scrollView, { backgroundColor: colors.backgroundSecondary }]}
+        contentContainerStyle={[
+          styles.contentContainer,
+          { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 40 },
+        ]}
+      >
+        <Text style={[styles.brandText, { color: colors.text }]}>togather</Text>
+        <View style={[styles.card, { backgroundColor: colors.surface }]}>
+          <ActivityIndicator size="large" color={colors.textSecondary} />
+          <Text style={[styles.heading, { color: colors.text, marginTop: 16 }]}>
+            Setting up your community...
+          </Text>
+          <Text style={[styles.subheading, { color: colors.textSecondary }]}>
+            Payment received! We're activating your community now. This usually takes a few seconds.
+          </Text>
+        </View>
+      </ScrollView>
+    );
+  }
+
+  // Webhook timed out
+  if (token && !proposalStatus?.activated && timedOut) {
+    return (
+      <ScrollView
+        style={[styles.scrollView, { backgroundColor: colors.backgroundSecondary }]}
+        contentContainerStyle={[
+          styles.contentContainer,
+          { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 40 },
+        ]}
+      >
+        <Text style={[styles.brandText, { color: colors.text }]}>togather</Text>
+        <View style={[styles.card, { backgroundColor: colors.surface }]}>
+          <Ionicons name="time-outline" size={48} color={colors.warning} />
+          <Text style={[styles.heading, { color: colors.text, marginTop: 16 }]}>
+            Taking longer than expected
+          </Text>
+          <Text style={[styles.subheading, { color: colors.textSecondary }]}>
+            Your payment was successful, but community activation is still processing.
+            This can take a minute. If your community doesn't appear in the app shortly,
+            please contact us at togather@supa.media.
+          </Text>
+        </View>
+      </ScrollView>
+    );
+  }
 
   const handleDownload = (url: string) => {
     if (Platform.OS === "web") {

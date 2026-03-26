@@ -138,6 +138,33 @@ export const getCommunityForSubscription = internalQuery({
 });
 
 // ============================================================================
+// Public Queries
+// ============================================================================
+
+/**
+ * Check whether a community proposal has been fully activated (webhook completed).
+ * Used by SuccessScreen to confirm the Stripe webhook has fired and the community
+ * is ready. Only exposes a boolean — no sensitive data.
+ */
+export const getCheckoutStatus = query({
+  args: { setupToken: v.string() },
+  handler: async (ctx, args) => {
+    const proposal = await ctx.db
+      .query("communityProposals")
+      .withIndex("by_setupToken", (q) => q.eq("setupToken", args.setupToken))
+      .first();
+
+    if (!proposal) {
+      return { activated: false };
+    }
+
+    return {
+      activated: !!proposal.stripeSubscriptionId,
+    };
+  },
+});
+
+// ============================================================================
 // Actions (external API calls to Stripe)
 // ============================================================================
 
@@ -233,7 +260,8 @@ export const createCheckoutSession = action({
         line_items: [{ price: price.id, quantity: 1 }],
         success_url:
           DOMAIN_CONFIG.landingUrl +
-          "/onboarding/success?session_id={CHECKOUT_SESSION_ID}",
+          "/onboarding/success?token=" +
+          args.setupToken,
         cancel_url:
           DOMAIN_CONFIG.landingUrl +
           "/onboarding/setup?token=" +

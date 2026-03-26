@@ -149,7 +149,7 @@ export function proposalRejectedEmail(data: {
     </p>
     ${reasonText}
     <p style="${baseStyles.text}">
-      If you have questions, feel free to reach out to us by replying to this email.
+      If you have questions, feel free to reach out to us at togather@supa.media.
     </p>
   `;
   return wrapInLayout(content);
