@@ -14,6 +14,7 @@ import { requireAuth } from "../lib/auth";
 import { parseDate } from "../lib/validation";
 import { COMMUNITY_ADMIN_THRESHOLD, PRIMARY_ADMIN_ROLE } from "../lib/permissions";
 import { syncUserChannelMembershipsLogic, syncAnnouncementGroupMembership } from "./sync/memberships";
+import { ensureChannelsForGroupLogic } from "./messaging/channels";
 
 // ============================================================================
 // Helper Functions
@@ -93,11 +94,11 @@ export async function addUserToAnnouncementGroup(
     const community = await ctx.db.get(communityId);
     const communityName = community?.name || "Community";
 
-    // Create the announcement group
+    // Create the announcement group (name matches the community name)
     const announcementGroupId = await ctx.db.insert("groups", {
       communityId,
       groupTypeId,
-      name: `${communityName} Announcements`,
+      name: communityName,
       description: "Official community announcements",
       isAnnouncementGroup: true,
       isPublic: true,
@@ -106,7 +107,10 @@ export async function addUserToAnnouncementGroup(
       updatedAt: timestamp,
     });
 
-    console.log("[addUserToAnnouncementGroup] Created announcement group", {
+    // Create general + leaders channels for the announcement group
+    await ensureChannelsForGroupLogic(ctx, announcementGroupId, userId, communityName);
+
+    console.log("[addUserToAnnouncementGroup] Created announcement group with channels", {
       communityId,
       announcementGroupId,
     });

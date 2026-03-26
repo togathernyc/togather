@@ -704,7 +704,7 @@ export const seedDemoData = internalAction({
         {
           communityId,
           groupTypeId: announcementGroupTypeId,
-          name: `${DEMO_COMMUNITY_NAME} Announcements`,
+          name: DEMO_COMMUNITY_NAME,
           description: "Official community announcements",
           isPublic: true,
           isAnnouncementGroup: true,
@@ -729,7 +729,7 @@ export const seedDemoData = internalAction({
         internal.functions.seed.createChatChannels,
         {
           groupId: announcementGroupId,
-          groupName: `${DEMO_COMMUNITY_NAME} Announcements`,
+          groupName: DEMO_COMMUNITY_NAME,
           createdById: testUserId,
         }
       );
