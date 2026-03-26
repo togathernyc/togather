@@ -480,7 +480,7 @@ export function SetupScreen() {
                   {
                     backgroundColor: colors.inputBackground,
                     borderColor:
-                      slugError || (slug && !slugValid)
+                      slugError || (slug && (!slugValid || slugReserved))
                         ? colors.error
                         : colors.inputBorder,
                     color: colors.text,
