@@ -567,14 +567,24 @@ export const handleCheckoutCompleted = internalMutation({
       });
 
       // Make proposer PRIMARY_ADMIN now that payment is confirmed
-      await ctx.db.insert("userCommunities", {
-        userId: proposal.proposerId,
-        communityId,
-        roles: PRIMARY_ADMIN_ROLE,
-        status: 1,
-        createdAt: now,
-        updatedAt: now,
-      });
+      // Guard against duplicate membership on webhook retry (Stripe uses at-least-once delivery)
+      const existingMembership = await ctx.db
+        .query("userCommunities")
+        .withIndex("by_user_community", (q) =>
+          q.eq("userId", proposal.proposerId).eq("communityId", communityId)
+        )
+        .first();
+
+      if (!existingMembership) {
+        await ctx.db.insert("userCommunities", {
+          userId: proposal.proposerId,
+          communityId,
+          roles: PRIMARY_ADMIN_ROLE,
+          status: 1,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
 
       // Create announcement group and add proposer as leader
       await addUserToAnnouncementGroup(
