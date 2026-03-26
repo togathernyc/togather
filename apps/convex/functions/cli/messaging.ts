@@ -152,7 +152,11 @@ export const getMessages = mutation({
     // that point backwards, avoiding loading the full channel into memory.
     let cursorCreatedAt: number | undefined;
     if (args.cursor) {
-      const cursorMsg = await ctx.db.get(args.cursor as any);
+      const cursorMsg = await ctx.db
+        .query("chatMessages")
+        .withIndex("by_channel_createdAt", (q) => q.eq("channelId", args.channelId))
+        .filter((q) => q.eq(q.field("_id"), args.cursor))
+        .first();
       if (cursorMsg) {
         cursorCreatedAt = cursorMsg.createdAt;
       }
