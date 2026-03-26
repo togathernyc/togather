@@ -17,6 +17,7 @@ import { requireCommunityAdmin } from "../lib/permissions";
 import { VALID_CUSTOM_SLOTS } from "../lib/followupConstants";
 import { normalizePhone, buildSearchText, now } from "../lib/utils";
 import { syncUserChannelMembershipsLogic } from "./sync/memberships";
+import { ensureChannelsForGroupLogic } from "./messaging/channels";
 import { checkRateLimit } from "../lib/rateLimit";
 import { parseDateOptional } from "../lib/validation";
 
@@ -280,7 +281,7 @@ export const joinCommunityInternal = internalMutation({
       const announcementGroupId = await ctx.db.insert("groups", {
         communityId: args.communityId,
         groupTypeId: groupType!._id,
-        name: `${communityName} Announcements`,
+        name: communityName,
         description: "Official community announcements",
         isAnnouncementGroup: true,
         isPublic: true,
@@ -288,6 +289,9 @@ export const joinCommunityInternal = internalMutation({
         createdAt: timestamp,
         updatedAt: timestamp,
       });
+
+      // Create general + leaders channels for the announcement group
+      await ensureChannelsForGroupLogic(ctx, announcementGroupId, args.userId, communityName);
 
       announcementGroup = await ctx.db.get(announcementGroupId);
     }
