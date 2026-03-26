@@ -10,12 +10,12 @@
 
 import { v } from "convex/values";
 import { mutation } from "../../_generated/server";
+import { internal } from "../../_generated/api";
 import { requireAuth } from "../../lib/auth";
 import { checkRateLimit } from "../../lib/rateLimit";
 import {
   isCustomChannel,
   channelIsLeaderEnabled,
-  channelEffectiveEnabledForGroup,
   isLeaderRole,
 } from "../../lib/helpers";
 import { getDisplayName, getMediaUrl } from "../../lib/utils";
@@ -146,20 +146,18 @@ export const getMessages = mutation({
       .collect();
     const blockedUserIds = new Set(blockedUsers.map((b) => b.blockedId));
 
-    // Get messages
-    let allMessages = await ctx.db
+    // Get messages ordered by creation time (newest first), paginated
+    let query = ctx.db
       .query("chatMessages")
       .withIndex("by_channel_createdAt", (q) => q.eq("channelId", args.channelId))
-      .collect();
+      .order("desc");
 
-    let topLevelMessages = allMessages
+    // Fetch extra to account for filtered messages, then paginate
+    const fetchLimit = (limit + 1) * 3; // over-fetch to handle filters
+    const rawMessages = await query.take(fetchLimit);
+
+    let topLevelMessages = rawMessages
       .filter((m) => !m.isDeleted && (!m.senderId || !blockedUserIds.has(m.senderId)) && !m.parentMessageId);
-
-    topLevelMessages.sort((a, b) => {
-      const aTime = a.lastActivityAt ?? a.createdAt;
-      const bTime = b.lastActivityAt ?? b.createdAt;
-      return bTime - aTime;
-    });
 
     if (args.cursor) {
       const cursorIndex = topLevelMessages.findIndex((m) => m._id === args.cursor);
@@ -264,6 +262,14 @@ export const sendMessage = mutation({
       lastMessagePreview: preview,
       lastMessageSenderId: userId,
       lastMessageSenderName: senderName,
+      updatedAt: now,
+    });
+
+    // Trigger notification and unread count logic
+    await ctx.scheduler.runAfter(0, internal.functions.messaging.events.onMessageSent, {
+      messageId,
+      channelId: args.channelId,
+      senderId: userId,
     });
 
     return messageId;
