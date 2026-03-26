@@ -603,6 +603,27 @@ export const handleCheckoutCompleted = internalMutation({
         PRIMARY_ADMIN_ROLE,
       );
 
+      // Create a default landing page so /c/[slug] works immediately
+      const existingLandingPage = await ctx.db
+        .query("communityLandingPages")
+        .withIndex("by_community", (q) => q.eq("communityId", communityId))
+        .first();
+
+      if (!existingLandingPage) {
+        await ctx.db.insert("communityLandingPages", {
+          communityId,
+          isEnabled: true,
+          title: `Welcome to ${proposal.communityName}`,
+          description: "We'd love to get to know you! Fill out the form below to connect with our community.",
+          submitButtonText: "Join",
+          successMessage: `Welcome to ${proposal.communityName}!`,
+          formFields: [],
+          automationRules: [],
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+
       // Record the subscription ID on the proposal
       await ctx.db.patch(proposalId, {
         stripeSubscriptionId: args.stripeSubscriptionId,
