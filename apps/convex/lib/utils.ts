@@ -253,6 +253,21 @@ export function isTokenExpired(createdAt: number, expiresIn: number): boolean {
   return nowSeconds >= expiresAt - 300;
 }
 
+/**
+ * Get the Unix timestamp (seconds) for the 1st of next month at midnight UTC.
+ * Used to anchor Stripe subscriptions to a consistent billing date so invoices
+ * always land on the 1st. Stripe prorates the first partial period automatically.
+ *
+ * If the anchor is in the past by the time checkout completes (e.g., session
+ * created March 31, completed April 2), Stripe bills for the elapsed period
+ * and continues the cycle on the 1st — which is the desired behavior.
+ */
+export function getNextFirstOfMonth(): number {
+  const now = new Date();
+  const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+  return Math.floor(next.getTime() / 1000);
+}
+
 /** Return the Monday 00:00 UTC timestamp for the ISO week containing `ts`. */
 export function getWeekStart(ts: number): number {
   const d = new Date(ts);

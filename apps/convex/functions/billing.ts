@@ -28,6 +28,7 @@ import { internal } from "../_generated/api";
 import { requireAuth, requireAuthFromToken } from "../lib/auth";
 import { requirePrimaryAdmin } from "../lib/permissions";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
+import { getNextFirstOfMonth } from "../lib/utils";
 
 import type { Id } from "../_generated/dataModel";
 
@@ -202,10 +203,14 @@ export const createCheckoutSession = action({
       });
 
       // Create the checkout session
+      // Anchor billing to the 1st of next month — Stripe prorates the first partial period
       const session = await stripe.checkout.sessions.create({
         customer: customerId,
         mode: "subscription",
         line_items: [{ price: price.id, quantity: 1 }],
+        subscription_data: {
+          billing_cycle_anchor: getNextFirstOfMonth(),
+        },
         success_url:
           DOMAIN_CONFIG.landingUrl +
           "/onboarding/success?session_id={CHECKOUT_SESSION_ID}",

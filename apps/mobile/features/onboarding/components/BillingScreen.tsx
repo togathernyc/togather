@@ -181,7 +181,7 @@ export function BillingScreen() {
   const [portalLoading, setPortalLoading] = useState(false);
   const [portalError, setPortalError] = useState("");
 
-  const [monthlyPrice, setMonthlyPrice] = useState("");
+  const [monthlyPrice, setMonthlyPrice] = useState("200");
   const [subscribeLoading, setSubscribeLoading] = useState(false);
   const [subscribeError, setSubscribeError] = useState("");
 
