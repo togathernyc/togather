@@ -43,7 +43,7 @@ export function clearSession(): void {
 export function requireSession(): Session {
   const session = loadSession();
   if (!session) {
-    console.error("Not logged in. Run: togather login");
+    console.error("Not logged in. Run: togather send-otp <phone>");
     process.exit(1);
   }
   return session;

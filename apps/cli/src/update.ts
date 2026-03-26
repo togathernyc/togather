@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 
 const UPDATE_CHECK_FILE = path.join(os.homedir(), ".togather", "last-update-check.json");
 const CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
@@ -84,7 +84,7 @@ export async function checkForUpdates(): Promise<void> {
       console.log(`Updating...`);
 
       try {
-        execSync(`npm install -g ${latest.url}`, { stdio: "inherit" });
+        execFileSync("npm", ["install", "-g", latest.url], { stdio: "inherit" });
         console.log(`Updated to ${latest.version}\n`);
       } catch {
         console.log(

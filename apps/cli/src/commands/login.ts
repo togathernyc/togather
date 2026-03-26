@@ -63,7 +63,7 @@ export async function verify(
         console.log(`  ${i + 1}. ${c.name}`);
       });
       console.error(
-        `\nMultiple communities found. Re-run with: togather verify ${phone} ${code} --community <number>`
+        `\nMultiple communities found. Re-run with: togather send-otp ${phone}\nThen: togather verify ${phone} <code> --community <number>`
       );
       process.exit(1);
     }
