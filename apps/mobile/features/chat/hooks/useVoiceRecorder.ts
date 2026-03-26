@@ -1,17 +1,17 @@
 /**
  * useVoiceRecorder - Voice memo recording hook
  *
- * Supports both native (expo-av) and web (MediaRecorder API).
+ * Supports both native (expo-audio, with expo-av fallback) and web (MediaRecorder API).
  * WhatsApp-inspired recording with live waveform, pause/resume, and preview.
  *
  * State machine: IDLE -> RECORDING <-> PAUSED -> PREVIEW -> SENDING -> IDLE
  *
- * Gated: Uses dynamic require for expo-av on native. Add to check-native-imports allowlist.
+ * Gated: Uses dynamic require for expo-audio / expo-av on native. Add to check-native-imports allowlist.
  */
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, type MutableRefObject, type Dispatch, type SetStateAction } from 'react';
 import { Platform } from 'react-native';
-import { isAudioVideoSupported } from '../utils/fileTypes';
+import { isAudioSupported, isAudioVideoSupported } from '../utils/fileTypes';
 
 const MAX_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 const METERING_INTERVAL_MS = 100;
@@ -255,6 +255,160 @@ function useVoiceRecorderWeb(): VoiceRecorderResult {
   };
 }
 
+/**
+ * Tracks which recording backend is in use so cleanup knows which API to call.
+ * 'expo-audio' = new expo-audio AudioRecorder
+ * 'expo-av'    = legacy expo-av Audio.Recording
+ */
+type RecordingBackend = 'expo-audio' | 'expo-av';
+
+/**
+ * Helper: reset iOS audio mode to playback (speaker, not earpiece).
+ * Tries expo-audio first, falls back to expo-av.
+ */
+async function resetToPlaybackMode(): Promise<void> {
+  try {
+    if (isAudioSupported()) {
+      const ExpoAudio = require('expo-audio');
+      await ExpoAudio.setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+      });
+    } else {
+      const { Audio } = require('expo-av');
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+      });
+    }
+  } catch {
+    // best-effort
+  }
+}
+
+/**
+ * Helper: clear metering + timer intervals
+ */
+function clearIntervals(
+  meteringRef: MutableRefObject<ReturnType<typeof setInterval> | null>,
+  timerRef: MutableRefObject<ReturnType<typeof setInterval> | null>
+) {
+  if (meteringRef.current) {
+    clearInterval(meteringRef.current);
+    meteringRef.current = null;
+  }
+  if (timerRef.current) {
+    clearInterval(timerRef.current);
+    timerRef.current = null;
+  }
+}
+
+/**
+ * Start metering + duration polling intervals for expo-audio recorder.
+ * Returns cleanup function. The recorder uses getStatus() which returns RecorderState.
+ */
+function startExpoAudioIntervals(
+  recorderRef: MutableRefObject<any>,
+  meteringIntervalRef: MutableRefObject<ReturnType<typeof setInterval> | null>,
+  timerRef: MutableRefObject<ReturnType<typeof setInterval> | null>,
+  setMeteringData: Dispatch<SetStateAction<number[]>>,
+  setDurationMs: Dispatch<SetStateAction<number>>,
+  setFileUri: Dispatch<SetStateAction<string | null>>,
+  setState: Dispatch<SetStateAction<VoiceRecorderState>>,
+  onAutoStop: () => void
+) {
+  // Metering: poll getStatus() for metering values
+  meteringIntervalRef.current = setInterval(() => {
+    const rec = recorderRef.current;
+    if (!rec) return;
+    try {
+      const status = rec.getStatus();
+      if (status.isRecording && status.metering !== undefined) {
+        const normalized = Math.max(0, Math.min(1, (status.metering + 60) / 60));
+        setMeteringData((prev) => {
+          const next = [...prev, normalized];
+          return next.slice(-WAVEFORM_BAR_COUNT);
+        });
+      }
+      // Also update duration from status
+      if (status.isRecording && status.durationMillis !== undefined) {
+        setDurationMs(status.durationMillis);
+      }
+    } catch {
+      // ignore
+    }
+  }, METERING_INTERVAL_MS);
+
+  // Max duration check
+  timerRef.current = setInterval(async () => {
+    const rec = recorderRef.current;
+    if (!rec) return;
+    try {
+      const status = rec.getStatus();
+      if (status.isRecording && status.durationMillis >= MAX_DURATION_MS) {
+        await rec.stop();
+        const uri = rec.uri;
+        setFileUri(uri);
+        setState('preview');
+        await resetToPlaybackMode();
+        onAutoStop();
+      }
+    } catch {
+      // ignore
+    }
+  }, 500);
+}
+
+/**
+ * Start metering + duration polling intervals for expo-av recorder (fallback).
+ */
+function startExpoAvIntervals(
+  recorderRef: MutableRefObject<any>,
+  meteringIntervalRef: MutableRefObject<ReturnType<typeof setInterval> | null>,
+  timerRef: MutableRefObject<ReturnType<typeof setInterval> | null>,
+  setMeteringData: Dispatch<SetStateAction<number[]>>,
+  setFileUri: Dispatch<SetStateAction<string | null>>,
+  setState: Dispatch<SetStateAction<VoiceRecorderState>>,
+  onAutoStop: () => void
+) {
+  meteringIntervalRef.current = setInterval(async () => {
+    const rec = recorderRef.current;
+    if (!rec) return;
+    try {
+      const status = await rec.getStatusAsync();
+      if (status.isRecording && status.metering !== undefined) {
+        const normalized = Math.max(0, Math.min(1, (status.metering + 60) / 60));
+        setMeteringData((prev) => {
+          const next = [...prev, normalized];
+          return next.slice(-WAVEFORM_BAR_COUNT);
+        });
+      }
+    } catch {
+      // ignore
+    }
+  }, METERING_INTERVAL_MS);
+
+  timerRef.current = setInterval(async () => {
+    const rec = recorderRef.current;
+    if (!rec) return;
+    try {
+      const status = await rec.getStatusAsync();
+      if (status.isRecording && status.durationMillis !== undefined) {
+        if (status.durationMillis >= MAX_DURATION_MS) {
+          await rec.stopAndUnloadAsync();
+          const uri = rec.getURI();
+          setFileUri(uri);
+          setState('preview');
+          await resetToPlaybackMode();
+          onAutoStop();
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, 500);
+}
+
 function useVoiceRecorderNative(): VoiceRecorderResult {
   const [state, setState] = useState<VoiceRecorderState>('idle');
   const [durationMs, setDurationMs] = useState(0);
@@ -263,6 +417,7 @@ function useVoiceRecorderNative(): VoiceRecorderResult {
   const [error, setError] = useState<string | null>(null);
 
   const recordingRef = useRef<any>(null);
+  const backendRef = useRef<RecordingBackend>('expo-audio');
   const meteringIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startTimeRef = useRef<number>(0);
@@ -271,39 +426,35 @@ function useVoiceRecorderNative(): VoiceRecorderResult {
   const mimeType = 'audio/mp4';
   const fileName = 'voice-memo.m4a';
 
+  const clearTimers = useCallback(() => {
+    clearIntervals(meteringIntervalRef, timerRef);
+  }, []);
+
   const cleanup = useCallback(async () => {
-    if (meteringIntervalRef.current) {
-      clearInterval(meteringIntervalRef.current);
-      meteringIntervalRef.current = null;
-    }
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
+    clearTimers();
     const rec = recordingRef.current;
     if (rec) {
       try {
-        const status = await rec.getStatusAsync();
-        if (status.canRecord) {
-          await rec.stopAndUnloadAsync();
+        if (backendRef.current === 'expo-audio') {
+          // expo-audio: stop() returns a promise
+          const status = rec.getStatus();
+          if (status.isRecording || status.canRecord) {
+            await rec.stop();
+          }
+        } else {
+          // expo-av fallback
+          const status = await rec.getStatusAsync();
+          if (status.canRecord) {
+            await rec.stopAndUnloadAsync();
+          }
         }
       } catch {
         // ignore
       }
       recordingRef.current = null;
-
-      // Reset to playback mode so audio plays through the speaker
-      try {
-        const { Audio } = require('expo-av');
-        await Audio.setAudioModeAsync({
-          allowsRecordingIOS: false,
-          playsInSilentModeIOS: true,
-        });
-      } catch {
-        // best-effort
-      }
+      await resetToPlaybackMode();
     }
-  }, []);
+  }, [clearTimers]);
 
   const deleteRecording = useCallback(() => {
     cleanup();
@@ -315,249 +466,264 @@ function useVoiceRecorderNative(): VoiceRecorderResult {
   }, [cleanup]);
 
   const startRecording = useCallback(async () => {
-    if (!isAudioVideoSupported()) {
+    const useExpoAudio = isAudioSupported();
+    const useExpoAv = !useExpoAudio && isAudioVideoSupported();
+
+    if (!useExpoAudio && !useExpoAv) {
       setError('Voice recording not available');
       return;
     }
     setError(null);
-    try {
-      const { Audio } = require('expo-av');
-      await Audio.requestPermissionsAsync();
-      const { granted } = await Audio.getPermissionsAsync();
-      if (!granted) {
-        setError('Microphone permission denied');
-        return;
-      }
 
-      // After the iOS permission dialog dismisses, iOS briefly considers the
-      // app "in background". Both setAudioModeAsync and Recording.createAsync
-      // fail because the audio session can't activate while backgrounded.
-      // Retry the entire setup with backoff to let the app return to foreground.
-      let recording: any = null;
-      for (let attempt = 0; attempt < 5; attempt++) {
-        try {
-          await Audio.setAudioModeAsync({
-            allowsRecordingIOS: true,
-            playsInSilentModeIOS: true,
-            staysActiveInBackground: false,
-            shouldDuckAndroid: true,
-            playThroughEarpieceAndroid: false,
-          });
+    if (useExpoAudio) {
+      backendRef.current = 'expo-audio';
+      try {
+        const ExpoAudio = require('expo-audio');
 
-          const result = await Audio.Recording.createAsync(
-            {
+        await ExpoAudio.requestRecordingPermissionsAsync();
+        const { granted } = await ExpoAudio.getRecordingPermissionsAsync();
+        if (!granted) {
+          setError('Microphone permission denied');
+          return;
+        }
+
+        // Retry setup with backoff for iOS post-permission-dialog background state
+        let recorder: any = null;
+        for (let attempt = 0; attempt < 5; attempt++) {
+          try {
+            await ExpoAudio.setAudioModeAsync({
+              allowsRecording: true,
+              playsInSilentMode: true,
+              shouldPlayInBackground: false,
+              interruptionMode: 'duckOthers' as const,
+              shouldRouteThroughEarpiece: false,
+            });
+
+            // Create recorder and prepare with our voice memo config.
+            // Pass recording options to prepareToRecordAsync which handles
+            // platform-specific option flattening internally.
+            const recordingOptions = {
               isMeteringEnabled: true,
+              extension: '.m4a',
+              sampleRate: 22050,
+              numberOfChannels: 1,
+              bitRate: 32000,
               android: {
-                extension: '.m4a',
-                outputFormat: Audio.AndroidOutputFormat.MPEG_4,
-                audioEncoder: Audio.AndroidAudioEncoder.AAC,
-                sampleRate: 22050,
-                numberOfChannels: 1,
-                bitRate: 32000,
+                outputFormat: 'mpeg4' as const,
+                audioEncoder: 'aac' as const,
               },
               ios: {
-                extension: '.m4a',
-                outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
-                audioQuality: Audio.IOSAudioQuality.LOW,
-                sampleRate: 22050,
-                numberOfChannels: 1,
-                bitRate: 32000,
+                outputFormat: ExpoAudio.IOSOutputFormat.MPEG4AAC,
+                audioQuality: ExpoAudio.AudioQuality.LOW,
               },
               web: {
                 mimeType: 'audio/webm',
                 bitsPerSecond: 32000,
               },
-            },
-            (status: any) => {
-              if (status.isRecording && status.durationMillis !== undefined) {
-                setDurationMs(status.durationMillis);
-              }
-            },
-            100
-          );
-          recording = result.recording;
-          break;
-        } catch (setupErr: any) {
-          const isBgError = setupErr?.message?.includes('background') ||
-            setupErr?.message?.includes('audio session could not be activated');
-          if (isBgError && attempt < 4) {
-            await new Promise(resolve => setTimeout(resolve, 400 * (attempt + 1)));
-          } else {
-            throw setupErr;
-          }
-        }
-      }
-      if (!recording) return;
-
-      recordingRef.current = recording;
-      startTimeRef.current = Date.now();
-      elapsedBeforePauseRef.current = 0;
-      setState('recording');
-      setMeteringData([]);
-
-      meteringIntervalRef.current = setInterval(async () => {
-        const rec = recordingRef.current;
-        if (!rec) return;
-        try {
-          const status = await rec.getStatusAsync();
-          if (status.isRecording && status.metering !== undefined) {
-            const normalized = Math.max(0, Math.min(1, (status.metering + 60) / 60));
-            setMeteringData((prev) => {
-              const next = [...prev, normalized];
-              return next.slice(-WAVEFORM_BAR_COUNT);
-            });
-          }
-        } catch {
-          // ignore
-        }
-      }, METERING_INTERVAL_MS);
-
-      timerRef.current = setInterval(async () => {
-        const rec = recordingRef.current;
-        if (!rec) return;
-        try {
-          const status = await rec.getStatusAsync();
-          if (status.isRecording && status.durationMillis !== undefined) {
-            if (status.durationMillis >= MAX_DURATION_MS) {
-              await rec.stopAndUnloadAsync();
-              const uri = rec.getURI();
-              setFileUri(uri);
-              setState('preview');
-              // Reset to playback mode
-              try {
-                const { Audio: A } = require('expo-av');
-                await A.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
-              } catch { /* best-effort */ }
-              if (meteringIntervalRef.current) {
-                clearInterval(meteringIntervalRef.current);
-                meteringIntervalRef.current = null;
-              }
-              if (timerRef.current) {
-                clearInterval(timerRef.current);
-                timerRef.current = null;
-              }
+            };
+            recorder = new ExpoAudio.AudioRecorder(recordingOptions);
+            await recorder.prepareToRecordAsync(recordingOptions);
+            recorder.record();
+            break;
+          } catch (setupErr: any) {
+            const isBgError = setupErr?.message?.includes('background') ||
+              setupErr?.message?.includes('audio session could not be activated');
+            if (isBgError && attempt < 4) {
+              await new Promise(resolve => setTimeout(resolve, 400 * (attempt + 1)));
+            } else {
+              throw setupErr;
             }
           }
-        } catch {
-          // ignore
         }
-      }, 500);
-    } catch (err) {
-      console.error('[useVoiceRecorder] Native start error:', err);
-      setError(err instanceof Error ? err.message : 'Failed to start recording');
-      setState('idle');
+        if (!recorder) return;
+
+        recordingRef.current = recorder;
+        startTimeRef.current = Date.now();
+        elapsedBeforePauseRef.current = 0;
+        setState('recording');
+        setMeteringData([]);
+
+        startExpoAudioIntervals(
+          recordingRef,
+          meteringIntervalRef,
+          timerRef,
+          setMeteringData,
+          setDurationMs,
+          setFileUri,
+          setState,
+          clearTimers
+        );
+      } catch (err) {
+        console.error('[useVoiceRecorder] expo-audio start error:', err);
+        setError(err instanceof Error ? err.message : 'Failed to start recording');
+        setState('idle');
+      }
+    } else {
+      // expo-av fallback
+      backendRef.current = 'expo-av';
+      try {
+        const { Audio } = require('expo-av');
+        await Audio.requestPermissionsAsync();
+        const { granted } = await Audio.getPermissionsAsync();
+        if (!granted) {
+          setError('Microphone permission denied');
+          return;
+        }
+
+        let recording: any = null;
+        for (let attempt = 0; attempt < 5; attempt++) {
+          try {
+            await Audio.setAudioModeAsync({
+              allowsRecordingIOS: true,
+              playsInSilentModeIOS: true,
+              staysActiveInBackground: false,
+              shouldDuckAndroid: true,
+              playThroughEarpieceAndroid: false,
+            });
+
+            const result = await Audio.Recording.createAsync(
+              {
+                isMeteringEnabled: true,
+                android: {
+                  extension: '.m4a',
+                  outputFormat: Audio.AndroidOutputFormat.MPEG_4,
+                  audioEncoder: Audio.AndroidAudioEncoder.AAC,
+                  sampleRate: 22050,
+                  numberOfChannels: 1,
+                  bitRate: 32000,
+                },
+                ios: {
+                  extension: '.m4a',
+                  outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
+                  audioQuality: Audio.IOSAudioQuality.LOW,
+                  sampleRate: 22050,
+                  numberOfChannels: 1,
+                  bitRate: 32000,
+                },
+                web: {
+                  mimeType: 'audio/webm',
+                  bitsPerSecond: 32000,
+                },
+              },
+              (status: any) => {
+                if (status.isRecording && status.durationMillis !== undefined) {
+                  setDurationMs(status.durationMillis);
+                }
+              },
+              100
+            );
+            recording = result.recording;
+            break;
+          } catch (setupErr: any) {
+            const isBgError = setupErr?.message?.includes('background') ||
+              setupErr?.message?.includes('audio session could not be activated');
+            if (isBgError && attempt < 4) {
+              await new Promise(resolve => setTimeout(resolve, 400 * (attempt + 1)));
+            } else {
+              throw setupErr;
+            }
+          }
+        }
+        if (!recording) return;
+
+        recordingRef.current = recording;
+        startTimeRef.current = Date.now();
+        elapsedBeforePauseRef.current = 0;
+        setState('recording');
+        setMeteringData([]);
+
+        startExpoAvIntervals(
+          recordingRef,
+          meteringIntervalRef,
+          timerRef,
+          setMeteringData,
+          setFileUri,
+          setState,
+          clearTimers
+        );
+      } catch (err) {
+        console.error('[useVoiceRecorder] expo-av start error:', err);
+        setError(err instanceof Error ? err.message : 'Failed to start recording');
+        setState('idle');
+      }
     }
-  }, []);
+  }, [clearTimers]);
 
   const pauseRecording = useCallback(async () => {
     const rec = recordingRef.current;
     if (rec && state === 'recording') {
-      await rec.pauseAsync();
+      if (backendRef.current === 'expo-audio') {
+        rec.pause();
+      } else {
+        await rec.pauseAsync();
+      }
       elapsedBeforePauseRef.current = durationMs;
-      if (meteringIntervalRef.current) {
-        clearInterval(meteringIntervalRef.current);
-        meteringIntervalRef.current = null;
-      }
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
+      clearTimers();
       setState('paused');
     }
-  }, [state, durationMs]);
+  }, [state, durationMs, clearTimers]);
 
   const resumeRecording = useCallback(async () => {
     const rec = recordingRef.current;
     if (rec && state === 'paused') {
-      await rec.startAsync();
-      startTimeRef.current = Date.now();
-      meteringIntervalRef.current = setInterval(async () => {
-        const r = recordingRef.current;
-        if (!r) return;
-        try {
-          const status = await r.getStatusAsync();
-          if (status.isRecording && status.metering !== undefined) {
-            const normalized = Math.max(0, Math.min(1, (status.metering + 60) / 60));
-            setMeteringData((prev) => {
-              const next = [...prev, normalized];
-              return next.slice(-WAVEFORM_BAR_COUNT);
-            });
-          }
-        } catch {
-          // ignore
-        }
-      }, METERING_INTERVAL_MS);
-      timerRef.current = setInterval(async () => {
-        const r = recordingRef.current;
-        if (!r) return;
-        try {
-          const status = await r.getStatusAsync();
-          if (status.isRecording && status.durationMillis !== undefined) {
-            if (status.durationMillis >= MAX_DURATION_MS) {
-              await r.stopAndUnloadAsync();
-              const uri = r.getURI();
-              setFileUri(uri);
-              setState('preview');
-              // Reset to playback mode
-              try {
-                const { Audio: A } = require('expo-av');
-                await A.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
-              } catch { /* best-effort */ }
-              if (meteringIntervalRef.current) {
-                clearInterval(meteringIntervalRef.current);
-                meteringIntervalRef.current = null;
-              }
-              if (timerRef.current) {
-                clearInterval(timerRef.current);
-                timerRef.current = null;
-              }
-            }
-          }
-        } catch {
-          // ignore
-        }
-      }, 500);
+      if (backendRef.current === 'expo-audio') {
+        rec.record();
+        startTimeRef.current = Date.now();
+        startExpoAudioIntervals(
+          recordingRef,
+          meteringIntervalRef,
+          timerRef,
+          setMeteringData,
+          setDurationMs,
+          setFileUri,
+          setState,
+          clearTimers
+        );
+      } else {
+        await rec.startAsync();
+        startTimeRef.current = Date.now();
+        startExpoAvIntervals(
+          recordingRef,
+          meteringIntervalRef,
+          timerRef,
+          setMeteringData,
+          setFileUri,
+          setState,
+          clearTimers
+        );
+      }
       setState('recording');
     }
-  }, [state]);
+  }, [state, clearTimers]);
 
   const stopRecording = useCallback(async () => {
     const rec = recordingRef.current;
     if (rec && (state === 'recording' || state === 'paused')) {
       try {
-        await rec.stopAndUnloadAsync();
-        const uri = rec.getURI();
-        setFileUri(uri);
+        if (backendRef.current === 'expo-audio') {
+          await rec.stop();
+          const uri = rec.uri;
+          setFileUri(uri);
+        } else {
+          await rec.stopAndUnloadAsync();
+          const uri = rec.getURI();
+          setFileUri(uri);
+        }
         setState('preview');
 
         // Switch back to playback mode so audio plays through the speaker
         // instead of the earpiece. Without this, all playback after recording
         // is routed to the earpiece and sounds inaudible.
-        try {
-          const { Audio } = require('expo-av');
-          await Audio.setAudioModeAsync({
-            allowsRecordingIOS: false,
-            playsInSilentModeIOS: true,
-          });
-        } catch {
-          // Best-effort — don't block the flow
-        }
+        await resetToPlaybackMode();
       } catch (err) {
         console.error('[useVoiceRecorder] Stop error:', err);
         setError(err instanceof Error ? err.message : 'Failed to stop');
         setState('idle');
       }
-      if (meteringIntervalRef.current) {
-        clearInterval(meteringIntervalRef.current);
-        meteringIntervalRef.current = null;
-      }
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
+      clearTimers();
       recordingRef.current = null;
     }
-  }, [state]);
+  }, [state, clearTimers]);
 
   const sendRecording = useCallback(
     async (onSend: (file: { uri: string; name: string; size: number; mimeType: string; waveform: number[]; durationMs: number }) => Promise<void>): Promise<boolean> => {

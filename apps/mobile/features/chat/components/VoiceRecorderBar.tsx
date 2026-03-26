@@ -21,7 +21,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { WaveformBars } from './WaveformBars';
 import { useVoiceRecorder } from '../hooks/useVoiceRecorder';
-import { isAudioVideoSupported } from '../utils/fileTypes';
+import { isAudioSupported, isAudioVideoSupported } from '../utils/fileTypes';
 import { ThemeContext } from '@/providers/ThemeProvider';
 
 const DISCLAIMER_TEXT = 'Voice messages delete after 7 days';
@@ -110,39 +110,74 @@ export function VoiceRecorderBar({ onSend, onCancel }: VoiceRecorderBarProps) {
       }
       return;
     }
-    if (!isAudioVideoSupported() || !fileUri) return;
-    try {
-      const { Audio } = require('expo-av');
-      if (!soundRef.current) {
-        const { sound } = await Audio.Sound.createAsync(
-          { uri: fileUri },
-          { shouldPlay: true },
-          (status: any) => {
-            if (status.isLoaded && status.durationMillis) {
-              setPreviewPlayedFraction(status.positionMillis / status.durationMillis);
+    if (!fileUri) return;
+    // Prefer expo-audio for preview playback, fall back to expo-av
+    if (isAudioSupported()) {
+      try {
+        const ExpoAudio = require('expo-audio');
+        if (!soundRef.current) {
+          const player = ExpoAudio.createAudioPlayer({ uri: fileUri }, { updateInterval: 100 });
+          soundRef.current = player;
+
+          player.addListener('playbackStatusUpdate', (status: any) => {
+            if (status.isLoaded && status.duration > 0) {
+              setPreviewPlayedFraction(status.currentTime / status.duration);
               if (status.didJustFinish) {
                 setPreviewPlaying(false);
                 setPreviewPlayedFraction(1);
               }
             }
-          }
-        );
-        soundRef.current = sound;
-        setPreviewPlaying(true);
-      } else {
-        const status = await soundRef.current.getStatusAsync();
-        if (status.isLoaded) {
-          if (status.isPlaying) {
-            await soundRef.current.pauseAsync();
+          });
+
+          player.play();
+          setPreviewPlaying(true);
+        } else {
+          const player = soundRef.current;
+          if (player.playing) {
+            player.pause();
             setPreviewPlaying(false);
           } else {
-            await soundRef.current.playAsync();
+            player.play();
             setPreviewPlaying(true);
           }
         }
+      } catch (err) {
+        console.error('[VoiceRecorderBar] expo-audio preview error:', err);
       }
-    } catch (err) {
-      console.error('[VoiceRecorderBar] Preview play error:', err);
+    } else if (isAudioVideoSupported()) {
+      try {
+        const { Audio } = require('expo-av');
+        if (!soundRef.current) {
+          const { sound } = await Audio.Sound.createAsync(
+            { uri: fileUri },
+            { shouldPlay: true },
+            (status: any) => {
+              if (status.isLoaded && status.durationMillis) {
+                setPreviewPlayedFraction(status.positionMillis / status.durationMillis);
+                if (status.didJustFinish) {
+                  setPreviewPlaying(false);
+                  setPreviewPlayedFraction(1);
+                }
+              }
+            }
+          );
+          soundRef.current = sound;
+          setPreviewPlaying(true);
+        } else {
+          const status = await soundRef.current.getStatusAsync();
+          if (status.isLoaded) {
+            if (status.isPlaying) {
+              await soundRef.current.pauseAsync();
+              setPreviewPlaying(false);
+            } else {
+              await soundRef.current.playAsync();
+              setPreviewPlaying(true);
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[VoiceRecorderBar] expo-av preview error:', err);
+      }
     }
   }, [fileUri]);
 
@@ -161,7 +196,12 @@ export function VoiceRecorderBar({ onSend, onCancel }: VoiceRecorderBarProps) {
           audio.pause();
           audio.src = '';
         } else {
-          sound.unloadAsync?.().catch(() => {});
+          // expo-audio AudioPlayer uses remove(), expo-av Sound uses unloadAsync()
+          if (typeof sound.remove === 'function') {
+            sound.remove();
+          } else {
+            sound.unloadAsync?.().catch(() => {});
+          }
         }
         soundRef.current = null;
       }

@@ -1,10 +1,14 @@
 /**
- * VideoPlayer - Thumbnail-to-fullscreen video player for chat messages
+ * VideoPlayer - Video player for chat messages
  *
- * Displays a thumbnail with a play button. Tapping opens a fullscreen modal
- * with native video controls.
- * Falls back to a download button if expo-av is not available (OTA update scenario)
- * or if the native Video view crashes (Fabric view adapter issue).
+ * Priority chain:
+ * 1. Web → HTML5 <video> element (WebVideoPlayer)
+ * 2. expo-video available → ExpoVideoPlayer (preferred native player)
+ * 3. expo-av available → VideoPlayerInner (legacy fallback)
+ * 4. VideoDownloadFallback (download button)
+ *
+ * Falls back to a download button if no native video module is available
+ * (OTA update scenario) or if the native view crashes (Fabric issue).
  */
 import React, { useState, useCallback } from 'react';
 import {
@@ -21,7 +25,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { isAudioVideoSupported } from '../utils/fileTypes';
+import { isAudioVideoSupported, isVideoSupported } from '../utils/fileTypes';
 import { getMediaUrl } from '@/utils/media';
 
 // ============================================================================
@@ -161,6 +165,49 @@ function WebVideoPlayer({ url, name, isOwnMessage = false, onLongPress }: VideoP
 }
 
 // ============================================================================
+// Expo Video Player (preferred native player using expo-video)
+// ============================================================================
+
+function ExpoVideoPlayer({ url, name, isOwnMessage = false, onLongPress }: VideoPlayerProps) {
+  // Dynamic require — expo-video is a gated native dependency
+  const { useVideoPlayer, VideoView } = require('expo-video');
+
+  const resolvedUrl = getMediaUrl(url);
+
+  const player = useVideoPlayer(resolvedUrl || '', (p: any) => {
+    p.loop = false;
+  });
+
+  const fileName = name || url.split('/').pop()?.split('?')[0] || 'Video';
+  const displayName = fileName.length > 20
+    ? fileName.slice(0, 10) + '...' + fileName.slice(-8)
+    : fileName;
+
+  return (
+    <View style={styles.container}>
+      <Pressable
+        onLongPress={onLongPress}
+        delayLongPress={300}
+        style={[styles.thumbnailWrapper, { aspectRatio: VIDEO_ASPECT_RATIO }]}
+      >
+        <VideoView
+          player={player}
+          style={StyleSheet.absoluteFill}
+          contentFit="cover"
+          allowsFullscreen={true}
+          nativeControls={true}
+        />
+      </Pressable>
+
+      {/* File name */}
+      <Text style={[styles.fileName, isOwnMessage && styles.ownMessageText]} numberOfLines={1}>
+        {displayName}
+      </Text>
+    </View>
+  );
+}
+
+// ============================================================================
 // Main Component
 // ============================================================================
 
@@ -170,21 +217,28 @@ export function VideoPlayer({ url, name, isOwnMessage = false, onLongPress }: Vi
     return <WebVideoPlayer url={url} name={name} isOwnMessage={isOwnMessage} onLongPress={onLongPress} />;
   }
 
-  // Native: use expo-av if available, otherwise download fallback
-  if (!isAudioVideoSupported()) {
-    return <VideoDownloadFallback url={url} name={name} isOwnMessage={isOwnMessage} />;
-  }
-
-  // Wrap in error boundary — the expo-av Video view can crash on Fabric
-  // if pnpm dependency resolution changes the module registry. When it
-  // works, you get inline playback; when it crashes, download fallback.
   const fallback = <VideoDownloadFallback url={url} name={name} isOwnMessage={isOwnMessage} />;
 
-  return (
-    <VideoErrorBoundary fallback={fallback}>
-      <VideoPlayerInner url={url} name={name} isOwnMessage={isOwnMessage} onLongPress={onLongPress} />
-    </VideoErrorBoundary>
-  );
+  // Native: prefer expo-video (modern API with built-in fullscreen)
+  if (isVideoSupported()) {
+    return (
+      <VideoErrorBoundary fallback={fallback}>
+        <ExpoVideoPlayer url={url} name={name} isOwnMessage={isOwnMessage} onLongPress={onLongPress} />
+      </VideoErrorBoundary>
+    );
+  }
+
+  // Legacy fallback: expo-av
+  if (isAudioVideoSupported()) {
+    return (
+      <VideoErrorBoundary fallback={fallback}>
+        <VideoPlayerInner url={url} name={name} isOwnMessage={isOwnMessage} onLongPress={onLongPress} />
+      </VideoErrorBoundary>
+    );
+  }
+
+  // No native video support — download fallback
+  return fallback;
 }
 
 // ============================================================================

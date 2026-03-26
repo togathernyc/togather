@@ -225,6 +225,8 @@ export function formatFileSize(bytes: number): string {
 let _documentPickerSupported: boolean | null = null;
 let _audioVideoSupported: boolean | null = null;
 let _linearGradientSupported: boolean | null = null;
+let _videoSupported: boolean | null = null;
+let _audioSupported: boolean | null = null;
 
 /**
  * Check if a native module is registered, supporting both architectures.
@@ -354,6 +356,58 @@ export function isLinearGradientSupported(): boolean {
 }
 
 /**
+ * Check if expo-video is available
+ *
+ * This module is only available after a native build update.
+ * Returns false for OTA updates where the module isn't installed.
+ */
+export function isVideoSupported(): boolean {
+  if (_videoSupported !== null) {
+    return _videoSupported;
+  }
+
+  if (!hasNativeModule('ExpoVideo')) {
+    _videoSupported = false;
+    return false;
+  }
+
+  try {
+    const ExpoVideo = require('expo-video');
+    _videoSupported = !!ExpoVideo?.useVideoPlayer && !!ExpoVideo?.VideoView;
+    return _videoSupported;
+  } catch {
+    _videoSupported = false;
+    return false;
+  }
+}
+
+/**
+ * Check if expo-audio is available
+ *
+ * This module is only available after a native build update.
+ * Returns false for OTA updates where the module isn't installed.
+ */
+export function isAudioSupported(): boolean {
+  if (_audioSupported !== null) {
+    return _audioSupported;
+  }
+
+  if (!hasNativeModule('ExpoAudio')) {
+    _audioSupported = false;
+    return false;
+  }
+
+  try {
+    const ExpoAudio = require('expo-audio');
+    _audioSupported = !!ExpoAudio?.useAudioPlayer;
+    return _audioSupported;
+  } catch {
+    _audioSupported = false;
+    return false;
+  }
+}
+
+/**
  * Check if voice recording is supported
  *
  * Returns true when:
@@ -372,8 +426,8 @@ export function isVoiceRecordingSupported(): boolean {
     }
   }
 
-  // Native: Use expo-av (gated)
-  return isAudioVideoSupported();
+  // Native: Prefer expo-audio, fall back to expo-av
+  return isAudioSupported() || isAudioVideoSupported();
 }
 
 /**
@@ -383,4 +437,6 @@ export function resetModuleDetectionCache(): void {
   _documentPickerSupported = null;
   _audioVideoSupported = null;
   _linearGradientSupported = null;
+  _videoSupported = null;
+  _audioSupported = null;
 }
