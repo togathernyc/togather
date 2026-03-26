@@ -43,9 +43,21 @@ function nameToSlug(name: string): string {
     .replace(/^-|-$/g, "");
 }
 
+/** Slugs reserved for infrastructure, app routes, or future use. Must match the backend list. */
+const RESERVED_SLUGS = new Set([
+  "api", "www", "app", "staging", "dev",
+  "admin", "billing", "onboarding", "help", "support", "blog",
+  "docs", "status", "mail", "auth", "login", "signup",
+]);
+
 /** Validate a slug: lowercase alphanumeric + hyphens, no leading/trailing hyphens, min 2 chars. */
 function isValidSlug(slug: string): boolean {
   return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug) && slug.length >= 2;
+}
+
+/** Check if a slug is reserved. */
+function isReservedSlug(slug: string): boolean {
+  return RESERVED_SLUGS.has(slug);
 }
 
 /** Validate a hex color string (#RRGGBB). */
@@ -240,9 +252,11 @@ export function SetupScreen() {
   const slugValid = isValidSlug(slug);
   const primaryColorValid = isValidHex(primaryColor);
   const secondaryColorValid = isValidHex(secondaryColor);
+  const slugReserved = isReservedSlug(slug);
   const formValid =
     name.trim().length > 0 &&
     slugValid &&
+    !slugReserved &&
     primaryColorValid &&
     secondaryColorValid;
 
@@ -283,7 +297,11 @@ export function SetupScreen() {
       const message =
         err instanceof Error ? err.message : "Something went wrong";
 
-      if (message.includes("Slug is already taken")) {
+      if (message.includes("is reserved")) {
+        setSlugError(
+          "That URL slug is reserved. Please choose a different one."
+        );
+      } else if (message.includes("Slug is already taken")) {
         setSlugError(
           "That URL slug is already taken. Please choose a different one."
         );
@@ -462,7 +480,7 @@ export function SetupScreen() {
                   {
                     backgroundColor: colors.inputBackground,
                     borderColor:
-                      slugError || (slug && !slugValid)
+                      slugError || (slug && (!slugValid || slugReserved))
                         ? colors.error
                         : colors.inputBorder,
                     color: colors.text,
@@ -494,7 +512,12 @@ export function SetupScreen() {
                   {slugError}
                 </Text>
               )}
-              {!slugError && slug && !slugValid && (
+              {!slugError && slug && slugReserved && (
+                <Text style={[styles.fieldHint, { color: colors.error }]}>
+                  "{slug}" is reserved and cannot be used as a community URL.
+                </Text>
+              )}
+              {!slugError && slug && !slugReserved && !slugValid && (
                 <Text style={[styles.fieldHint, { color: colors.error }]}>
                   Slug must be at least 2 characters, lowercase letters,
                   numbers, and hyphens only.

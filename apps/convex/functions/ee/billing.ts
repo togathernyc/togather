@@ -138,6 +138,33 @@ export const getCommunityForSubscription = internalQuery({
 });
 
 // ============================================================================
+// Public Queries
+// ============================================================================
+
+/**
+ * Check whether a community proposal has been fully activated (webhook completed).
+ * Used by SuccessScreen to confirm the Stripe webhook has fired and the community
+ * is ready. Only exposes a boolean — no sensitive data.
+ */
+export const getCheckoutStatus = query({
+  args: { setupToken: v.string() },
+  handler: async (ctx, args) => {
+    const proposal = await ctx.db
+      .query("communityProposals")
+      .withIndex("by_setupToken", (q) => q.eq("setupToken", args.setupToken))
+      .first();
+
+    if (!proposal) {
+      return { activated: false };
+    }
+
+    return {
+      activated: !!proposal.stripeSubscriptionId,
+    };
+  },
+});
+
+// ============================================================================
 // Actions (external API calls to Stripe)
 // ============================================================================
 
@@ -233,7 +260,8 @@ export const createCheckoutSession = action({
         line_items: [{ price: price.id, quantity: 1 }],
         success_url:
           DOMAIN_CONFIG.landingUrl +
-          "/onboarding/success?session_id={CHECKOUT_SESSION_ID}",
+          "/onboarding/success?token=" +
+          args.setupToken,
         cancel_url:
           DOMAIN_CONFIG.landingUrl +
           "/onboarding/setup?token=" +
@@ -539,14 +567,24 @@ export const handleCheckoutCompleted = internalMutation({
       });
 
       // Make proposer PRIMARY_ADMIN now that payment is confirmed
-      await ctx.db.insert("userCommunities", {
-        userId: proposal.proposerId,
-        communityId,
-        roles: PRIMARY_ADMIN_ROLE,
-        status: 1,
-        createdAt: now,
-        updatedAt: now,
-      });
+      // Guard against duplicate membership on webhook retry (Stripe uses at-least-once delivery)
+      const existingMembership = await ctx.db
+        .query("userCommunities")
+        .withIndex("by_user_community", (q) =>
+          q.eq("userId", proposal.proposerId).eq("communityId", communityId)
+        )
+        .first();
+
+      if (!existingMembership) {
+        await ctx.db.insert("userCommunities", {
+          userId: proposal.proposerId,
+          communityId,
+          roles: PRIMARY_ADMIN_ROLE,
+          status: 1,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
 
       // Create announcement group and add proposer as leader
       await addUserToAnnouncementGroup(
