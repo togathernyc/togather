@@ -146,28 +146,46 @@ export const getMessages = mutation({
       .collect();
     const blockedUserIds = new Set(blockedUsers.map((b) => b.blockedId));
 
-    // Get messages ordered by creation time (newest first), paginated
-    let query = ctx.db
-      .query("chatMessages")
-      .withIndex("by_channel_createdAt", (q) => q.eq("channelId", args.channelId))
-      .order("desc");
-
-    // Fetch extra to account for filtered messages, then paginate
-    const fetchLimit = (limit + 1) * 3; // over-fetch to handle filters
-    const rawMessages = await query.take(fetchLimit);
-
-    let topLevelMessages = rawMessages
-      .filter((m) => !m.isDeleted && (!m.senderId || !blockedUserIds.has(m.senderId)) && !m.parentMessageId);
-
+    // Get messages ordered by creation time (newest first), paginated.
+    // If a cursor (message ID) is provided, look up the cursor message's
+    // createdAt and restrict the index range so the DB only scans from
+    // that point backwards, avoiding loading the full channel into memory.
+    let cursorCreatedAt: number | undefined;
     if (args.cursor) {
-      const cursorIndex = topLevelMessages.findIndex((m) => m._id === args.cursor);
-      if (cursorIndex >= 0) {
-        topLevelMessages = topLevelMessages.slice(cursorIndex + 1);
+      const cursorMsg = await ctx.db.get(args.cursor as any);
+      if (cursorMsg) {
+        cursorCreatedAt = cursorMsg.createdAt;
       }
     }
 
-    const hasMore = topLevelMessages.length > limit;
-    const page = topLevelMessages.slice(0, limit);
+    const messageQuery = ctx.db
+      .query("chatMessages")
+      .withIndex("by_channel_createdAt", (q) => {
+        const q1 = q.eq("channelId", args.channelId);
+        if (cursorCreatedAt !== undefined) {
+          return q1.lt("createdAt", cursorCreatedAt);
+        }
+        return q1;
+      })
+      .order("desc");
+
+    // Iterate through the query collecting filtered results until we have
+    // enough for a page, rather than loading all messages at once.
+    const collected: Array<any> = [];
+    let exhausted = true;
+    for await (const m of messageQuery) {
+      if (m.isDeleted || (m.senderId && blockedUserIds.has(m.senderId)) || m.parentMessageId) {
+        continue;
+      }
+      collected.push(m);
+      if (collected.length > limit) {
+        exhausted = false;
+        break;
+      }
+    }
+
+    const hasMore = !exhausted;
+    const page = collected.slice(0, limit);
     const cursor = page.length > 0 ? page[page.length - 1]!._id : undefined;
 
     return {
