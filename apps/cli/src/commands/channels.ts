@@ -1,15 +1,12 @@
 import { api } from "../api.js";
 import { getClient } from "../client.js";
 import { requireSession } from "../session.js";
-import { checkRateLimit } from "../rate-limit.js";
 
 export async function listChannels() {
-  checkRateLimit("read", 10, 60_000);
-
   const session = requireSession();
   const client = getClient();
 
-  const channels = await client.query(api.functions.messaging.channels.getUserChannels, {
+  const channels = await client.mutation(api.functions.cli.messaging.getUserChannels, {
     token: session.accessToken,
   });
 
