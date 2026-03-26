@@ -32,6 +32,7 @@ import { internal } from "../../_generated/api";
 import { requireAuth, requireAuthFromToken } from "../../lib/auth";
 import { requireCommunityAdmin, PRIMARY_ADMIN_ROLE } from "../../lib/permissions";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
+import { getNextFirstOfMonth } from "../../lib/utils";
 import { addUserToAnnouncementGroup } from "../communities";
 
 import type { Id } from "../../_generated/dataModel";
@@ -39,17 +40,6 @@ import type { Id } from "../../_generated/dataModel";
 // ============================================================================
 // Helpers
 // ============================================================================
-
-/**
- * Get the Unix timestamp (seconds) for the 1st of next month at midnight UTC.
- * Used to anchor all subscriptions to a consistent billing date so invoices
- * always land on the 1st. Stripe prorates the first partial period automatically.
- */
-function getNextFirstOfMonth(): number {
-  const now = new Date();
-  const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
-  return Math.floor(next.getTime() / 1000);
-}
 
 /**
  * Create the Togather product in Stripe if STRIPE_PRODUCT_ID is not configured.

@@ -253,6 +253,25 @@ export function isTokenExpired(createdAt: number, expiresIn: number): boolean {
   return nowSeconds >= expiresAt - 300;
 }
 
+/**
+ * Get the Unix timestamp (seconds) for the 1st of next month at midnight UTC.
+ * Used to anchor Stripe subscriptions to a consistent billing date.
+ *
+ * If the computed anchor is less than 48 hours away, push to the 1st of the
+ * month after that. This prevents the anchor from being in the past by the
+ * time the user completes checkout (Stripe sessions can be completed hours
+ * or days after creation).
+ */
+export function getNextFirstOfMonth(): number {
+  const now = new Date();
+  const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+  const hoursUntilAnchor = (next.getTime() - now.getTime()) / (1000 * 60 * 60);
+  if (hoursUntilAnchor < 48) {
+    next.setUTCMonth(next.getUTCMonth() + 1);
+  }
+  return Math.floor(next.getTime() / 1000);
+}
+
 /** Return the Monday 00:00 UTC timestamp for the ISO week containing `ts`. */
 export function getWeekStart(ts: number): number {
   const d = new Date(ts);
