@@ -255,20 +255,16 @@ export function isTokenExpired(createdAt: number, expiresIn: number): boolean {
 
 /**
  * Get the Unix timestamp (seconds) for the 1st of next month at midnight UTC.
- * Used to anchor Stripe subscriptions to a consistent billing date.
+ * Used to anchor Stripe subscriptions to a consistent billing date so invoices
+ * always land on the 1st. Stripe prorates the first partial period automatically.
  *
- * If the computed anchor is less than 48 hours away, push to the 1st of the
- * month after that. This prevents the anchor from being in the past by the
- * time the user completes checkout (Stripe sessions can be completed hours
- * or days after creation).
+ * If the anchor is in the past by the time checkout completes (e.g., session
+ * created March 31, completed April 2), Stripe bills for the elapsed period
+ * and continues the cycle on the 1st — which is the desired behavior.
  */
 export function getNextFirstOfMonth(): number {
   const now = new Date();
   const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
-  const hoursUntilAnchor = (next.getTime() - now.getTime()) / (1000 * 60 * 60);
-  if (hoursUntilAnchor < 48) {
-    next.setUTCMonth(next.getUTCMonth() + 1);
-  }
   return Math.floor(next.getTime() / 1000);
 }
 
