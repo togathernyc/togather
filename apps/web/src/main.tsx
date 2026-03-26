@@ -1,8 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
-import { ConvexProvider } from 'convex/react'
-import { convex } from './lib/convex'
 import './index.css'
 import App from './App.tsx'
 import { PrivacyPolicy } from './pages/PrivacyPolicy.tsx'
@@ -16,21 +14,19 @@ import { ScrollToTop } from './components/ScrollToTop.tsx'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <ConvexProvider client={convex}>
-      <BrowserRouter>
-        <ScrollToTop />
-        <Routes>
-          <Route path="/" element={<App />} />
-          <Route path="/android" element={<AndroidDownload />} />
-          <Route path="/android-staging" element={<AndroidDownload variant="staging" />} />
-          <Route path="/contribute" element={<Contribute />} />
-          <Route path="/issue" element={<ReportIssue />} />
-          <Route path="/legal/privacy" element={<PrivacyPolicy />} />
-          <Route path="/legal/terms" element={<TermsOfService />} />
-          {/* Catch-all: redirect /:slug to community landing page */}
-          <Route path="/:slug" element={<CommunityRedirect />} />
-        </Routes>
-      </BrowserRouter>
-    </ConvexProvider>
+    <BrowserRouter>
+      <ScrollToTop />
+      <Routes>
+        <Route path="/" element={<App />} />
+        <Route path="/android" element={<AndroidDownload />} />
+        <Route path="/android-staging" element={<AndroidDownload variant="staging" />} />
+        <Route path="/contribute" element={<Contribute />} />
+        <Route path="/issue" element={<ReportIssue />} />
+        <Route path="/legal/privacy" element={<PrivacyPolicy />} />
+        <Route path="/legal/terms" element={<TermsOfService />} />
+        {/* Catch-all: redirect /:slug to community landing page */}
+        <Route path="/:slug" element={<CommunityRedirect />} />
+      </Routes>
+    </BrowserRouter>
   </StrictMode>,
 )
