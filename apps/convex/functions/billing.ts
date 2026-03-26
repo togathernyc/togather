@@ -36,6 +36,17 @@ import type { Id } from "../_generated/dataModel";
 // ============================================================================
 
 /**
+ * Get the Unix timestamp (seconds) for the 1st of next month at midnight UTC.
+ * Used to anchor all subscriptions to a consistent billing date so invoices
+ * always land on the 1st. Stripe prorates the first partial period automatically.
+ */
+function getNextFirstOfMonth(): number {
+  const now = new Date();
+  const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+  return Math.floor(next.getTime() / 1000);
+}
+
+/**
  * Create the Togather product in Stripe if STRIPE_PRODUCT_ID is not configured.
  * This is a convenience for initial setup — in production, set STRIPE_PRODUCT_ID.
  */
@@ -202,10 +213,14 @@ export const createCheckoutSession = action({
       });
 
       // Create the checkout session
+      // Anchor billing to the 1st of next month — Stripe prorates the first partial period
       const session = await stripe.checkout.sessions.create({
         customer: customerId,
         mode: "subscription",
         line_items: [{ price: price.id, quantity: 1 }],
+        subscription_data: {
+          billing_cycle_anchor: getNextFirstOfMonth(),
+        },
         success_url:
           DOMAIN_CONFIG.landingUrl +
           "/onboarding/success?session_id={CHECKOUT_SESSION_ID}",
