@@ -359,6 +359,7 @@ function AudioPlayerExpoAudio({ url, name, isOwnMessage = false, waveform, store
     const seekSeconds = fraction * status.duration;
 
     try {
+      // expo-audio seekTo() expects seconds (confirmed by TypeScript types and native iOS implementation)
       await player.seekTo(seekSeconds);
     } catch (err) {
       console.error('[AudioPlayerExpoAudio] Seek error:', err);

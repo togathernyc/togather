@@ -367,6 +367,7 @@ function startExpoAvIntervals(
   meteringIntervalRef: MutableRefObject<ReturnType<typeof setInterval> | null>,
   timerRef: MutableRefObject<ReturnType<typeof setInterval> | null>,
   setMeteringData: Dispatch<SetStateAction<number[]>>,
+  setDurationMs: Dispatch<SetStateAction<number>>,
   setFileUri: Dispatch<SetStateAction<string | null>>,
   setState: Dispatch<SetStateAction<VoiceRecorderState>>,
   onAutoStop: () => void
@@ -382,6 +383,10 @@ function startExpoAvIntervals(
           const next = [...prev, normalized];
           return next.slice(-WAVEFORM_BAR_COUNT);
         });
+      }
+      // Update duration from polling so timer display stays current after pause/resume
+      if (status.isRecording && status.durationMillis !== undefined) {
+        setDurationMs(status.durationMillis);
       }
     } catch {
       // ignore
@@ -637,6 +642,7 @@ function useVoiceRecorderNative(): VoiceRecorderResult {
           meteringIntervalRef,
           timerRef,
           setMeteringData,
+          setDurationMs,
           setFileUri,
           setState,
           clearTimers
@@ -687,6 +693,7 @@ function useVoiceRecorderNative(): VoiceRecorderResult {
           meteringIntervalRef,
           timerRef,
           setMeteringData,
+          setDurationMs,
           setFileUri,
           setState,
           clearTimers
