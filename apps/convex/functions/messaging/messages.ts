@@ -17,6 +17,7 @@ import {
 } from "../../lib/helpers";
 import { getDisplayName, getMediaUrl } from "../../lib/utils";
 import { isCommunityAdmin } from "../../lib/permissions";
+import { checkRateLimit } from "../../lib/rateLimit";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
 
 // ============================================================================
@@ -360,6 +361,9 @@ export const sendMessage = mutation({
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
+
+    // Global rate limit: 20 messages per minute per user
+    await checkRateLimit(ctx, `msg:${userId}`, 20, 60_000);
 
     // Check channel membership
     const membership = await ctx.db

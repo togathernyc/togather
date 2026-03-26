@@ -1,0 +1,22 @@
+{
+  "name": "@supamedia/togather-cli",
+  "version": "0.1.0",
+  "description": "CLI for Togather messaging",
+  "type": "module",
+  "bin": {
+    "togather": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "convex": "^1.31.3"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.3.0"
+  }
+}

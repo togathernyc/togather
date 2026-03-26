@@ -1,0 +1,125 @@
+# Deploy Togather CLI
+#
+# Automatically deploys staging CLI on push to main (when apps/cli changes)
+# Production deployment is manual only (workflow_dispatch)
+#
+# Staging: images.togather.nyc/cli-staging/togather-cli-<version>.tgz
+# Production: images.togather.nyc/cli/togather-cli-<version>.tgz
+
+name: Deploy CLI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/cli/**"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to deploy to"
+        required: true
+        default: "staging"
+        type: choice
+        options:
+          - staging
+          - production
+
+concurrency:
+  group: deploy-cli-${{ github.event.inputs.environment || 'staging' }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy CLI
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine environment
+        id: env
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            GH_ENV="${{ github.event.inputs.environment }}"
+          else
+            GH_ENV="staging"
+          fi
+          echo "environment=$GH_ENV" >> $GITHUB_OUTPUT
+
+          if [ "$GH_ENV" = "staging" ]; then
+            echo "r2_prefix=cli-staging" >> $GITHUB_OUTPUT
+          else
+            echo "r2_prefix=cli" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Load secrets from 1Password
+        uses: ./.github/actions/load-secrets
+        with:
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          environment: ${{ steps.env.outputs.environment }}
+
+      - name: Build CLI
+        run: CLI_ENV=${{ steps.env.outputs.environment }} pnpm --filter @supamedia/togather-cli build
+
+      - name: Package tarball
+        id: pack
+        working-directory: apps/cli
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          npm pack
+          TARBALL="supamedia-togather-cli-${VERSION}.tgz"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tarball=$TARBALL" >> $GITHUB_OUTPUT
+
+      - name: Upload tarball to R2
+        uses: ryand56/r2-upload-action@latest
+        with:
+          r2-account-id: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
+          r2-access-key-id: ${{ env.R2_ACCESS_KEY_ID }}
+          r2-secret-access-key: ${{ env.R2_SECRET_ACCESS_KEY }}
+          r2-bucket: ${{ env.R2_BUCKET_NAME }}
+          source-dir: apps/cli/${{ steps.pack.outputs.tarball }}
+          destination-dir: ${{ steps.env.outputs.r2_prefix }}/togather-cli-${{ steps.pack.outputs.version }}.tgz
+
+      - name: Upload latest.json to R2
+        run: |
+          PREFIX="${{ steps.env.outputs.r2_prefix }}"
+          VERSION="${{ steps.pack.outputs.version }}"
+          CDN="${R2_PUBLIC_URL}"
+
+          echo "{\"version\":\"${VERSION}\",\"url\":\"${CDN}/${PREFIX}/togather-cli-${VERSION}.tgz\"}" > /tmp/latest.json
+
+          # Install wrangler and upload
+          npx wrangler r2 object put "${R2_BUCKET_NAME}/${PREFIX}/latest.json" \
+            --file /tmp/latest.json \
+            --content-type application/json
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ env.CLOUDFLARE_API_TOKEN }}
+
+      - name: Deployment summary
+        run: |
+          PREFIX="${{ steps.env.outputs.r2_prefix }}"
+          VERSION="${{ steps.pack.outputs.version }}"
+          CDN="${R2_PUBLIC_URL}"
+          echo "## CLI Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment:** ${{ steps.env.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version:** ${VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Install:** \`npm install -g ${CDN}/${PREFIX}/togather-cli-${VERSION}.tgz\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
