@@ -57,6 +57,7 @@ export function VoiceRecorderBar({ onSend, onCancel }: VoiceRecorderBarProps) {
   const [previewPlaying, setPreviewPlaying] = useState(false);
   const [previewPlayedFraction, setPreviewPlayedFraction] = useState(0);
   const soundRef = useRef<any>(null);
+  const subscriptionRef = useRef<{ remove(): void } | null>(null);
 
   const handleDelete = useCallback(() => {
     if (state === 'recording' || state === 'paused') {
@@ -119,8 +120,8 @@ export function VoiceRecorderBar({ onSend, onCancel }: VoiceRecorderBarProps) {
           const player = ExpoAudio.createAudioPlayer({ uri: fileUri }, { updateInterval: 100 });
           soundRef.current = player;
 
-          player.addListener('playbackStatusUpdate', (status: any) => {
-            if (status.isLoaded && status.duration > 0) {
+          subscriptionRef.current = player.addListener('playbackStatusUpdate', (status: any) => {
+            if (status.duration > 0) {
               setPreviewPlayedFraction(status.currentTime / status.duration);
               if (status.didJustFinish) {
                 setPreviewPlaying(false);
@@ -189,19 +190,20 @@ export function VoiceRecorderBar({ onSend, onCancel }: VoiceRecorderBarProps) {
 
   useEffect(() => {
     return () => {
+      subscriptionRef.current?.remove();
+      subscriptionRef.current = null;
       const sound = soundRef.current;
       if (sound) {
         if (Platform.OS === 'web') {
           const audio = sound as HTMLAudioElement;
           audio.pause();
           audio.src = '';
+        } else if (typeof sound.release === 'function') {
+          // expo-audio AudioPlayer: release native resources
+          sound.release();
         } else {
-          // expo-audio AudioPlayer uses remove(), expo-av Sound uses unloadAsync()
-          if (typeof sound.remove === 'function') {
-            sound.remove();
-          } else {
-            sound.unloadAsync?.().catch(() => {});
-          }
+          // expo-av Sound: unload the audio
+          sound.unloadAsync?.().catch(() => {});
         }
         soundRef.current = null;
       }
