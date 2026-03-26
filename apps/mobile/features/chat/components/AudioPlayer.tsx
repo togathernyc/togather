@@ -1,10 +1,11 @@
 /**
  * AudioPlayer - Inline audio player for chat messages
  *
- * Platform-aware audio playback:
- * - Web: HTML5 Audio API (plays all formats including WebM)
- * - Native + expo-av: expo-av Sound API (M4A, MP3, AAC, WAV)
- * - Native without expo-av: Download fallback (OTA update scenario)
+ * Platform-aware audio playback (priority order):
+ * 1. Web: HTML5 Audio API (plays all formats including WebM)
+ * 2. Native + expo-audio: expo-audio hooks API (preferred native player)
+ * 3. Native + expo-av: expo-av Sound API (legacy fallback)
+ * 4. Native without audio libs: Download fallback (OTA update scenario)
  */
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
@@ -17,7 +18,7 @@ import {
   Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { isAudioVideoSupported } from '../utils/fileTypes';
+import { isAudioSupported, isAudioVideoSupported } from '../utils/fileTypes';
 import { getMediaUrl } from '@/utils/media';
 import { useTheme } from '@hooks/useTheme';
 import { WaveformBars } from './WaveformBars';
@@ -93,11 +94,15 @@ export function AudioPlayer({ url, name, isOwnMessage = false, waveform, duratio
     return <AudioPlayerWeb url={url} name={name} isOwnMessage={isOwnMessage} waveform={waveform} storedDuration={storedDuration} />;
   }
 
-  if (!isAudioVideoSupported()) {
-    return <AudioDownloadFallback url={url} name={name} isOwnMessage={isOwnMessage} />;
+  if (isAudioSupported()) {
+    return <AudioPlayerExpoAudio url={url} name={name} isOwnMessage={isOwnMessage} waveform={waveform} storedDuration={storedDuration} />;
   }
 
-  return <AudioPlayerInner url={url} name={name} isOwnMessage={isOwnMessage} waveform={waveform} storedDuration={storedDuration} />;
+  if (isAudioVideoSupported()) {
+    return <AudioPlayerInner url={url} name={name} isOwnMessage={isOwnMessage} waveform={waveform} storedDuration={storedDuration} />;
+  }
+
+  return <AudioDownloadFallback url={url} name={name} isOwnMessage={isOwnMessage} />;
 }
 
 // ============================================================================
@@ -267,7 +272,165 @@ function AudioPlayerWeb({ url, name, isOwnMessage = false, waveform, storedDurat
 }
 
 // ============================================================================
-// Native Component (expo-av)
+// Native Component (expo-audio) — preferred
+// ============================================================================
+
+function AudioPlayerExpoAudio({ url, name, isOwnMessage = false, waveform, storedDuration }: AudioPlayerProps & { storedDuration?: number }) {
+  // Dynamic require — expo-audio is a gated native dependency.
+  // This component is only rendered when isAudioSupported() is true,
+  // so the require will succeed. Hooks must be called unconditionally.
+  const ExpoAudio = require('expo-audio');
+  const { useAudioPlayer, useAudioPlayerStatus, setAudioModeAsync } = ExpoAudio as {
+    useAudioPlayer: (source?: any, options?: any) => any;
+    useAudioPlayerStatus: (player: any) => any;
+    setAudioModeAsync: (mode: any) => Promise<void>;
+  };
+
+  const { colors, isDark } = useTheme();
+  const resolvedUrl = getMediaUrl(url);
+  const [error, setError] = useState<string | null>(null);
+  const hasSetAudioMode = useRef(false);
+
+  // Create audio source — must be stable across renders for the hook
+  const audioSource = React.useMemo(
+    () => (resolvedUrl ? { uri: resolvedUrl } : null),
+    [resolvedUrl],
+  );
+
+  // useAudioPlayer is a React hook — called unconditionally at top level
+  const player = useAudioPlayer(audioSource, { updateInterval: 100 });
+  const status = useAudioPlayerStatus(player);
+
+  // Set audio mode for iOS (play through speaker, not earpiece)
+  useEffect(() => {
+    if (hasSetAudioMode.current) return;
+    hasSetAudioMode.current = true;
+    setAudioModeAsync({
+      playsInSilentMode: true,
+      allowsRecording: false,
+      shouldRouteThroughEarpiece: false,
+    }).catch((err: any) => {
+      console.warn('[AudioPlayerExpoAudio] Failed to set audio mode:', err);
+    });
+  }, [setAudioModeAsync]);
+
+  // Detect load errors
+  useEffect(() => {
+    if (!resolvedUrl) {
+      setError('Invalid audio URL');
+    }
+  }, [resolvedUrl]);
+
+  // Reset position when playback finishes
+  useEffect(() => {
+    if (status.didJustFinish) {
+      player.seekTo(0).catch(() => {});
+    }
+  }, [status.didJustFinish, player]);
+
+  const togglePlayPause = useCallback(async () => {
+    try {
+      // Re-set audio mode before playing — critical after recording voice messages
+      // where the iOS audio session may still be in recording mode (earpiece).
+      if (!status.playing) {
+        await setAudioModeAsync({
+          playsInSilentMode: true,
+          allowsRecording: false,
+          shouldRouteThroughEarpiece: false,
+        });
+        player.play();
+      } else {
+        player.pause();
+      }
+    } catch (err) {
+      console.error('[AudioPlayerExpoAudio] Play/pause error:', err);
+    }
+  }, [status.playing, player, setAudioModeAsync]);
+
+  const handleWaveformPress = useCallback(async (event: any) => {
+    // expo-audio duration is in seconds
+    const durationMs = status.duration * 1000;
+    if (!durationMs) return;
+
+    const nativeEvent = event.nativeEvent;
+    const locationX = nativeEvent.locationX ?? 0;
+    const layoutWidth = nativeEvent.layout?.width || 200;
+    const fraction = Math.max(0, Math.min(1, locationX / layoutWidth));
+    const seekSeconds = fraction * status.duration;
+
+    try {
+      // expo-audio seekTo() expects seconds (confirmed by TypeScript types and native iOS implementation)
+      await player.seekTo(seekSeconds);
+    } catch (err) {
+      console.error('[AudioPlayerExpoAudio] Seek error:', err);
+    }
+  }, [status.duration, player]);
+
+  const formatTime = (millis: number): string => {
+    if (!isFinite(millis) || millis < 0) return '0:00';
+    const seconds = Math.floor(millis / 1000);
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  // Convert expo-audio seconds to milliseconds for UI consistency
+  const positionMs = status.currentTime * 1000;
+  const durationMs = status.duration * 1000;
+  const displayDuration = durationMs || storedDuration || 0;
+  const playedFraction = durationMs > 0 ? positionMs / durationMs : 0;
+  const isLoading = !status.isLoaded && !error;
+  const accentColor = isOwnMessage
+    ? (isDark ? '#fff' : 'rgba(0,0,0,0.55)')
+    : (isDark ? '#aaa' : '#333');
+
+  if (error) {
+    return <AudioDownloadFallback url={url} name={name} isOwnMessage={isOwnMessage} />;
+  }
+
+  return (
+    <View style={styles.container}>
+      <Pressable
+        style={[styles.playButton, { backgroundColor: isOwnMessage ? (isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.12)') : (isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)') }]}
+        onPress={togglePlayPause}
+        disabled={isLoading}
+      >
+        {isLoading ? (
+          <View style={styles.loadingIndicator} />
+        ) : (
+          <Ionicons
+            name={status.playing ? 'pause' : 'play'}
+            size={18}
+            color={isOwnMessage ? (isDark ? '#fff' : 'rgba(0,0,0,0.6)') : colors.text}
+          />
+        )}
+      </Pressable>
+
+      <Pressable
+        style={styles.waveformContainer}
+        onPress={handleWaveformPress}
+        onLayout={() => {
+          // Layout measured for seek calculations via nativeEvent
+        }}
+      >
+        <WaveformBars
+          meteringData={waveform || []}
+          playedFraction={playedFraction}
+          barCount={30}
+          accentColor={accentColor}
+          height={24}
+        />
+      </Pressable>
+
+      <Text style={[styles.time, { color: isOwnMessage ? (isDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.45)') : colors.textSecondary }]}>
+        {formatTime(status.playing ? positionMs : displayDuration)}
+      </Text>
+    </View>
+  );
+}
+
+// ============================================================================
+// Native Component (expo-av) — legacy fallback
 // ============================================================================
 
 function AudioPlayerInner({ url, name, isOwnMessage = false, waveform, storedDuration }: AudioPlayerProps & { storedDuration?: number }) {

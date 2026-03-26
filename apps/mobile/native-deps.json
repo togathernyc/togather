@@ -52,6 +52,9 @@
   "gated": [
     "expo-linear-gradient",
     "expo-av",
-    "expo-document-picker"
+    "expo-document-picker",
+    "expo-video",
+    "expo-audio",
+    "react-native-webview"
   ]
 }
