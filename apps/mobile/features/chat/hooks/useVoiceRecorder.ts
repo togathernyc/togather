@@ -521,7 +521,7 @@ function useVoiceRecorderNative(): VoiceRecorderResult {
                 bitsPerSecond: 32000,
               },
             };
-            recorder = new ExpoAudio.AudioRecorder(recordingOptions);
+            recorder = new ExpoAudio.AudioModule.AudioRecorder(recordingOptions);
             await recorder.prepareToRecordAsync(recordingOptions);
             recorder.record();
             break;
