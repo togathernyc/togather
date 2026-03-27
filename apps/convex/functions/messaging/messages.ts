@@ -281,7 +281,8 @@ export const getMessages = query({
         break;
       }
 
-      const acceptedBefore = accepted.length;
+      // Count how many candidates are genuinely new (not already processed)
+      let newCandidateCount = 0;
 
       for (const m of candidates) {
         // Skip messages already processed (from previous page or previous batch)
@@ -289,6 +290,7 @@ export const getMessages = query({
           continue;
         }
         processedIds.add(m._id);
+        newCandidateCount++;
 
         // Filter: top-level, not deleted, not blocked
         if (m.isDeleted) continue;
@@ -305,10 +307,12 @@ export const getMessages = query({
         break;
       }
 
-      // If no new messages were accepted in this batch and we processed
-      // all candidates, we're stuck at a timestamp with only filtered-out
-      // messages. Break to avoid an infinite loop.
-      if (accepted.length === acceptedBefore) {
+      // If every candidate in this batch was already in processedIds, we're
+      // genuinely stuck (all messages at this timestamp were already seen).
+      // Break to avoid an infinite loop. But if we saw new candidates that
+      // were merely filtered out (deleted, blocked, etc.), keep scanning —
+      // valid messages may exist further down the index.
+      if (newCandidateCount === 0) {
         break;
       }
 
