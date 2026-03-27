@@ -895,7 +895,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   return (
     <KeyboardAvoidingView
       style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.surface }]}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      behavior="padding"
       keyboardVerticalOffset={0}
     >
       <Pressable style={[styles.container, { backgroundColor: colors.surface }]} onPress={Platform.OS === 'web' ? undefined : dismissKeyboard}>
