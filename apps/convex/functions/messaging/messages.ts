@@ -231,39 +231,96 @@ export const getMessages = query({
 
     const blockedUserIds = new Set(blockedUsers.map((b) => b.blockedId));
 
-    // Get all messages for this channel
-    let allMessages = await ctx.db
-      .query("chatMessages")
-      .withIndex("by_channel_createdAt", (q) => q.eq("channelId", args.channelId))
-      .collect();
+    // --- Index-driven pagination using by_channel_lastActivityAt ---
+    // Instead of .collect() on ALL messages, scan the index in desc order
+    // and only read enough to fill one page. This is O(page_size) instead
+    // of O(total_messages).
 
-    // Filter out deleted, blocked users, and thread replies
-    // Bot messages (no senderId) are never blocked
-    let topLevelMessages = allMessages
-      .filter((m) => !m.isDeleted && (!m.senderId || !blockedUserIds.has(m.senderId)) && !m.parentMessageId);
-
-    // Sort by lastActivityAt descending (thread bump ordering)
-    // Fall back to createdAt for messages without lastActivityAt (pre-migration)
-    topLevelMessages.sort((a, b) => {
-      const aTime = a.lastActivityAt ?? a.createdAt;
-      const bTime = b.lastActivityAt ?? b.createdAt;
-      return bTime - aTime;
-    });
-
-    // If cursor provided, find cursor position and slice after it
+    // Decode cursor: "timestamp:messageId" for tie-breaking
+    let cursorTime: number | undefined;
+    let cursorId: string | undefined;
     if (args.cursor) {
-      const cursorIndex = topLevelMessages.findIndex((m) => m._id === args.cursor);
-      if (cursorIndex >= 0) {
-        topLevelMessages = topLevelMessages.slice(cursorIndex + 1);
+      const sepIdx = args.cursor.indexOf(":");
+      if (sepIdx > 0) {
+        cursorTime = Number(args.cursor.substring(0, sepIdx));
+        cursorId = args.cursor.substring(sepIdx + 1);
       }
     }
 
-    const hasMore = topLevelMessages.length > limit;
-    const pageMessages = topLevelMessages.slice(0, limit);
+    // Over-fetch to account for filtered-out messages (deleted, blocked, replies).
+    // Typically ~15% of messages are filtered, so 3x is generous.
+    const OVER_FETCH_MULTIPLIER = 3;
+    const fetchBatch = limit * OVER_FETCH_MULTIPLIER;
+    const accepted: (typeof candidates)[number][] = [];
+    let exhausted = false;
+    let scanCursorTime = cursorTime;
+    let scanCursorId = cursorId;
 
-    // Get cursor for pagination (oldest-activity message in this batch)
+    // Fetch in batches until we have enough accepted messages or run out
+    let candidates = await ctx.db
+      .query("chatMessages")
+      .withIndex("by_channel_lastActivityAt", (q) => {
+        const q1 = q.eq("channelId", args.channelId);
+        // Use lte + skip for first batch to handle tie-breaking,
+        // lt for subsequent batches
+        if (scanCursorTime !== undefined) {
+          return q1.lte("lastActivityAt", scanCursorTime);
+        }
+        return q1;
+      })
+      .order("desc")
+      .take(fetchBatch);
+
+    while (true) {
+      if (candidates.length === 0) {
+        exhausted = true;
+        break;
+      }
+
+      for (const m of candidates) {
+        // Skip the exact cursor message and any message already seen at cursor boundary
+        if (scanCursorId && m.lastActivityAt === cursorTime && m._id === scanCursorId) {
+          scanCursorId = undefined; // only skip once
+          continue;
+        }
+
+        // Filter: top-level, not deleted, not blocked
+        if (m.isDeleted) continue;
+        if (m.parentMessageId) continue;
+        if (m.lastActivityAt === undefined) continue; // pre-migration, shouldn't happen post-backfill
+        if (m.senderId && blockedUserIds.has(m.senderId)) continue;
+
+        accepted.push(m);
+
+        // Collected enough (+1 to detect hasMore)
+        if (accepted.length > limit) break;
+      }
+
+      if (accepted.length > limit || candidates.length < fetchBatch) {
+        exhausted = candidates.length < fetchBatch;
+        break;
+      }
+
+      // Need more — fetch next batch starting after the last candidate
+      const lastCandidate = candidates[candidates.length - 1];
+      scanCursorTime = lastCandidate.lastActivityAt ?? lastCandidate.createdAt;
+      scanCursorId = lastCandidate._id;
+
+      candidates = await ctx.db
+        .query("chatMessages")
+        .withIndex("by_channel_lastActivityAt", (q) =>
+          q.eq("channelId", args.channelId).lt("lastActivityAt", scanCursorTime!)
+        )
+        .order("desc")
+        .take(fetchBatch);
+    }
+
+    const hasMore = accepted.length > limit;
+    const pageMessages = accepted.slice(0, limit);
+
+    // Encode cursor as "timestamp:messageId" for next page
     const cursor = pageMessages.length > 0
-      ? pageMessages[pageMessages.length - 1]._id
+      ? `${pageMessages[pageMessages.length - 1].lastActivityAt}:${pageMessages[pageMessages.length - 1]._id}`
       : undefined;
 
     // Reverse to chronological order (oldest first, newest at bottom)
@@ -272,7 +329,7 @@ export const getMessages = query({
 
     return {
       messages: chronologicalMessages,
-      hasMore,
+      hasMore: hasMore || !exhausted,
       cursor,
     };
   },

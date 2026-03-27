@@ -1394,6 +1394,7 @@ export default defineSchema({
   })
     .index("by_channel", ["channelId"])
     .index("by_channel_createdAt", ["channelId", "createdAt"])
+    .index("by_channel_lastActivityAt", ["channelId", "lastActivityAt"])
     .index("by_sender", ["senderId"])
     .index("by_parentMessage", ["parentMessageId"])
     .index("by_createdAt", ["createdAt"])
