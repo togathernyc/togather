@@ -33,6 +33,7 @@ import type * as functions_auth_registration from "../functions/auth/registratio
 import type * as functions_auth_tokens from "../functions/auth/tokens.js";
 import type * as functions_authInternal from "../functions/authInternal.js";
 import type * as functions_billing from "../functions/billing.js";
+import type * as functions_cli_messaging from "../functions/cli/messaging.js";
 import type * as functions_communities from "../functions/communities.js";
 import type * as functions_communityLandingPage from "../functions/communityLandingPage.js";
 import type * as functions_communityLandingPageActions from "../functions/communityLandingPageActions.js";
@@ -155,6 +156,7 @@ import type * as lib_utils from "../lib/utils.js";
 import type * as lib_validation from "../lib/validation.js";
 import type * as lib_validators from "../lib/validators.js";
 import type * as migrations_addChannelSlugs from "../migrations/addChannelSlugs.js";
+import type * as migrations_backfillLastActivityAt from "../migrations/backfillLastActivityAt.js";
 
 import type {
   ApiFromModules,
@@ -188,6 +190,7 @@ declare const fullApi: ApiFromModules<{
   "functions/auth/tokens": typeof functions_auth_tokens;
   "functions/authInternal": typeof functions_authInternal;
   "functions/billing": typeof functions_billing;
+  "functions/cli/messaging": typeof functions_cli_messaging;
   "functions/communities": typeof functions_communities;
   "functions/communityLandingPage": typeof functions_communityLandingPage;
   "functions/communityLandingPageActions": typeof functions_communityLandingPageActions;
@@ -310,6 +313,7 @@ declare const fullApi: ApiFromModules<{
   "lib/validation": typeof lib_validation;
   "lib/validators": typeof lib_validators;
   "migrations/addChannelSlugs": typeof migrations_addChannelSlugs;
+  "migrations/backfillLastActivityAt": typeof migrations_backfillLastActivityAt;
 }>;
 
 /**
