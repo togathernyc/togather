@@ -312,12 +312,21 @@ export function buildCatchupSyncPrompt(
   return `You are performing a pre-nag sync check for the ${location || "unknown"} location.
 
 ## Your Task
-Review the Slack thread history and compare against the current PCO plan state below.
-If you find service planning information shared in the thread that is NOT yet reflected in PCO, sync it now using the available tools.
+Review HUMAN messages in the Slack thread history and compare against the current PCO plan state below.
+If you find service planning information shared by a human team member that is NOT yet reflected in PCO, sync it now using the available tools.
+The current PCO state is the source of truth — only override it when a human explicitly stated something different.
 
-## Important Rules
-- ONLY sync information that was explicitly shared in the thread (e.g., "Mike is preaching", "preach notes: ...", "announcements: ...")
-- Do NOT make assumptions or infer information that wasn't clearly stated
+## Important Rules — Role Assignments (assign_to_pco / remove_from_pco)
+- ONLY assign or remove a role when a HUMAN message explicitly names both the person AND the role (e.g., "Mike is preaching", "ML will be Sarah", "remove Josh from meeting lead")
+- A person appearing in PCO search results or team member lists is NOT a reason to assign them — you need an explicit human instruction
+- NEVER infer role assignments from context, position names, or team membership
+- If PCO already has someone assigned to a role and no human message contradicts it, leave it alone
+
+## Important Rules — General
+- ONLY sync information from HUMAN messages in the thread
+- IGNORE all bot/assistant messages (your own previous status reports, nag messages, check-ins). These reflect past PCO state and may be outdated — they are NOT instructions to change PCO.
+- If the current PCO state differs from what a bot status message previously reported, TRUST the current PCO state — someone likely updated PCO directly.
+- Do NOT make assumptions or infer information that wasn't clearly stated by a human team member
 - Do NOT post any messages — this is a silent sync pass
 - Use search_pco_people to resolve names before assigning roles
 - If unsure whether something was shared, DO NOT sync it — err on the side of caution
