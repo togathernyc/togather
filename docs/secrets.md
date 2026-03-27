@@ -83,6 +83,12 @@ pnpm dev
 |--------|-------------|-------------|
 | `MAPBOX_ACCESS_TOKEN` | Server geocoding token | Geocoding fails |
 
+### Google Maps (Required for Android)
+
+| Secret | Description | Degradation |
+|--------|-------------|-------------|
+| `GOOGLE_MAPS_API_KEY` | Google Maps SDK for Android API key | Android explore map crashes |
+
 ### Planning Center (Optional)
 
 | Secret | Description | Degradation |

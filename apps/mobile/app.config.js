@@ -196,6 +196,12 @@ export default {
       "expo-mail-composer",
       "expo-localization",
       [
+        "react-native-maps",
+        {
+          googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY || ""
+        }
+      ],
+      [
         "@sentry/react-native/expo",
         {
           url: "https://sentry.io/",
