@@ -13,7 +13,6 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "@hooks/useTheme";
-import { UserRoute } from "@components/guards/UserRoute";
 import { GroupDetailSkeleton } from "./GroupDetailSkeleton";
 import { useAuth } from "@providers/AuthProvider";
 import {
@@ -206,15 +205,15 @@ export function GroupDetailScreen() {
 
   if (isLoading) {
     return (
-      <UserRoute>
+      <>
         <GroupDetailSkeleton />
-      </UserRoute>
+      </>
     );
   }
 
   if (error || !group) {
     return (
-      <UserRoute>
+      <>
         <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
           <Text style={[styles.errorText, { color: colors.error }]}>Group not found</Text>
           <TouchableOpacity
@@ -230,7 +229,7 @@ export function GroupDetailScreen() {
             <Text style={[styles.buttonText, { color: colors.textInverse }]}>Go Back</Text>
           </TouchableOpacity>
         </View>
-      </UserRoute>
+      </>
     );
   }
 
@@ -239,7 +238,7 @@ export function GroupDetailScreen() {
   // but the GroupNonMemberView provides admin-specific features (menu, member list access).
   if (!isMember) {
     return (
-      <UserRoute>
+      <>
         <GroupNonMemberView
           group={group}
           onJoinPress={handleJoinGroup}
@@ -284,7 +283,7 @@ export function GroupDetailScreen() {
             </View>
           </View>
         </Modal>
-      </UserRoute>
+      </>
     );
   }
 
@@ -309,7 +308,7 @@ export function GroupDetailScreen() {
 
   // Show member view
   return (
-    <UserRoute>
+    <>
       <ScrollView
         style={[styles.scrollView, { backgroundColor: colors.background }]}
         contentContainerStyle={{ paddingTop: insets.top }}
@@ -477,7 +476,7 @@ export function GroupDetailScreen() {
         isLeaving={leaveGroupMutation.isPending}
         isArchiving={archiveGroupMutation.isPending}
       />
-    </UserRoute>
+    </>
   );
 }
 

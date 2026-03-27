@@ -8,7 +8,6 @@ import {
   ScrollView,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { UserRoute } from "@components/guards/UserRoute";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AttendanceDetails } from "./AttendanceDetails";
@@ -92,7 +91,7 @@ export function AttendanceScreen() {
 
   if (isLoadingGroup) {
     return (
-      <UserRoute>
+      <>
         <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
           <DragHandle />
           <View style={styles.loadingContainer}>
@@ -100,13 +99,13 @@ export function AttendanceScreen() {
             <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading...</Text>
           </View>
         </View>
-      </UserRoute>
+      </>
     );
   }
 
   if (groupError || !group) {
     return (
-      <UserRoute>
+      <>
         <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
           <DragHandle />
           <View style={styles.errorContainer}>
@@ -125,14 +124,14 @@ export function AttendanceScreen() {
             </TouchableOpacity>
           </View>
         </View>
-      </UserRoute>
+      </>
     );
   }
 
   // Always show attendance details, even if no past event exists
   // Users can select any date to take attendance or modify RSVPs
   return (
-    <UserRoute>
+    <>
       <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
         <DragHandle />
         <View style={[styles.header, { paddingTop: insets.top + 16, backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
@@ -178,7 +177,7 @@ export function AttendanceScreen() {
           )}
         </ScrollView>
       </View>
-    </UserRoute>
+    </>
   );
 }
 
