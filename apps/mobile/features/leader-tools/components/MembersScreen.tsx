@@ -8,7 +8,6 @@ import {
   Alert,
 } from "react-native";
 import { useLocalSearchParams } from "expo-router";
-import { UserRoute } from "@components/guards/UserRoute";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuthenticatedMutation, api } from "@services/api/convex";
@@ -73,7 +72,7 @@ export function MembersScreen() {
 
   if (isLoadingGroup) {
     return (
-      <UserRoute>
+      <>
         <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
           <DragHandle />
           <View style={styles.loadingContainer}>
@@ -81,13 +80,13 @@ export function MembersScreen() {
             <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading...</Text>
           </View>
         </View>
-      </UserRoute>
+      </>
     );
   }
 
   if (groupError || !group) {
     return (
-      <UserRoute>
+      <>
         <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
           <DragHandle />
           <View style={styles.errorContainer}>
@@ -100,12 +99,12 @@ export function MembersScreen() {
             </TouchableOpacity>
           </View>
         </View>
-      </UserRoute>
+      </>
     );
   }
 
   return (
-    <UserRoute>
+    <>
       <DragHandle />
       {/* Header */}
       <View style={[styles.header, { paddingTop: insets.top + 16, backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
@@ -160,7 +159,7 @@ export function MembersScreen() {
           canManageMembers={canManageMembers}
         />
       </View>
-    </UserRoute>
+    </>
   );
 }
 

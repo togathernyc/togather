@@ -15,7 +15,6 @@ import {
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { UserRoute } from "@components/guards/UserRoute";
 import {
   api,
   Id,
@@ -2306,7 +2305,7 @@ export function TasksTabScreen() {
     </View>
   );
 
-  return <UserRoute>{content}</UserRoute>;
+  return content;
 }
 
 const styles = StyleSheet.create({

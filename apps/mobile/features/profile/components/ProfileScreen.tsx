@@ -9,7 +9,6 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
 import { useAuth } from "@providers/AuthProvider";
-import { UserRoute } from "@components/guards/UserRoute";
 import { Card } from "@components/ui";
 import { Ionicons } from "@expo/vector-icons";
 import { ProfileHeader } from "./ProfileHeader";
@@ -45,8 +44,7 @@ export function ProfileScreen() {
   };
 
   return (
-    <UserRoute>
-      <ScrollView style={[styles.scrollView, { backgroundColor: colors.backgroundSecondary }]}>
+    <ScrollView style={[styles.scrollView, { backgroundColor: colors.backgroundSecondary }]}>
         <View style={[styles.header, { paddingTop: insets.top + 16, backgroundColor: colors.backgroundSecondary }]}>
           <Text style={[styles.headerTitle, { color: colors.text }]}>Profile</Text>
         </View>
@@ -138,8 +136,7 @@ export function ProfileScreen() {
             <Text style={[styles.menuText, { color: colors.text }]}>Log out</Text>
           </TouchableOpacity>
         </Card>
-      </ScrollView>
-    </UserRoute>
+    </ScrollView>
   );
 }
 

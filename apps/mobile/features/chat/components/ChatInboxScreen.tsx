@@ -19,7 +19,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter, usePathname } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@providers/AuthProvider";
-import { UserRoute } from "@components/guards/UserRoute";
 import { useQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
@@ -133,8 +132,7 @@ export function ChatInboxScreen({
     []
   );
 
-  // In sidebar mode, skip UserRoute wrapper and reduce header padding
-  const Wrapper = sidebarMode ? React.Fragment : UserRoute;
+  const Wrapper = React.Fragment;
   const headerPaddingTop = sidebarMode ? 16 : insets.top + 16;
 
   // Auto-select first conversation when in sidebar mode and no conversation is active

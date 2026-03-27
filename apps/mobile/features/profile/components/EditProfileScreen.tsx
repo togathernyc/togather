@@ -8,7 +8,7 @@ import {
   Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { UserRoute } from '@components/guards/UserRoute';
+
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { EditProfileForm } from './EditProfileForm';
@@ -20,27 +20,25 @@ export function EditProfileScreen() {
   const { colors } = useTheme();
 
   return (
-    <UserRoute>
-      <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
-        <View style={[styles.header, { paddingTop: insets.top + 12, backgroundColor: colors.surface }]}>
-          <TouchableOpacity
-            onPress={() => router.back()}
-            style={styles.backButton}
-          >
-            <Ionicons name="arrow-back" size={24} color={colors.text} />
-          </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: colors.text }]}>Edit Profile</Text>
-          <View style={styles.headerSpacer} />
-        </View>
-
-        <ScrollView
-          style={styles.scrollView}
-          contentContainerStyle={styles.scrollContent}
+    <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
+      <View style={[styles.header, { paddingTop: insets.top + 12, backgroundColor: colors.surface }]}>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={styles.backButton}
         >
-          <EditProfileForm />
-        </ScrollView>
+          <Ionicons name="arrow-back" size={24} color={colors.text} />
+        </TouchableOpacity>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>Edit Profile</Text>
+        <View style={styles.headerSpacer} />
       </View>
-    </UserRoute>
+
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+      >
+        <EditProfileForm />
+      </ScrollView>
+    </View>
   );
 }
 

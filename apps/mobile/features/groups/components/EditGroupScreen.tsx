@@ -33,7 +33,6 @@ import {
   DatePicker,
   ImagePicker,
 } from "@components/ui";
-import { UserRoute } from "@components/guards/UserRoute";
 import { useGroupDetails, useUpdateGroup } from "../hooks";
 import { GroupUpdateData } from "../types";
 import type { components } from "@/types/api";
@@ -362,7 +361,7 @@ export function EditGroupScreen() {
 
   if (isLoading) {
     return (
-      <UserRoute>
+      <>
         <View style={[styles.container, { paddingTop: insets.top }]}>
           <View style={styles.header}>
             <SkeletonCard style={{ height: 44 }} />
@@ -375,14 +374,14 @@ export function EditGroupScreen() {
             </View>
           </ScrollView>
         </View>
-      </UserRoute>
+      </>
     );
   }
 
   // If user is not a leader or community admin, show access denied
   if (!canEditGroup) {
     return (
-      <UserRoute>
+      <>
         <View style={[styles.container, { paddingTop: insets.top }]}>
           <View style={styles.header}>
             <TouchableOpacity
@@ -400,12 +399,12 @@ export function EditGroupScreen() {
             </Text>
           </View>
         </View>
-      </UserRoute>
+      </>
     );
   }
 
   return (
-    <UserRoute>
+    <>
       <View style={[styles.container, { paddingTop: insets.top }]}>
         {/* Header */}
         <View style={styles.header}>
@@ -717,7 +716,7 @@ export function EditGroupScreen() {
           </View>
         </ScrollView>
       </View>
-    </UserRoute>
+    </>
   );
 }
 

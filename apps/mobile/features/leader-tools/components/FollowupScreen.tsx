@@ -1,6 +1,6 @@
 import React from "react";
 import { useLocalSearchParams } from "expo-router";
-import { UserRoute } from "@components/guards/UserRoute";
+
 import { useIsDesktopWeb } from "@hooks/useIsDesktopWeb";
 import { FollowupDesktopTable } from "./FollowupDesktopTable";
 import { FollowupMobileGrid } from "./FollowupMobileGrid";
@@ -17,12 +17,12 @@ export function FollowupScreen() {
   const groupId = group_id || "";
 
   return (
-    <UserRoute>
+    <>
       {isDesktop ? (
         <FollowupDesktopTable groupId={groupId} />
       ) : (
         <FollowupMobileGrid groupId={groupId} />
       )}
-    </UserRoute>
+    </>
   );
 }

@@ -13,7 +13,6 @@ import {
   Platform,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { UserRoute } from "@components/guards/UserRoute";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { uploadAsync, FileSystemUploadType } from "expo-file-system/legacy";
@@ -668,7 +667,7 @@ export function CreateEventScreen() {
   // Show loading state while fetching meeting data for edit
   if (isEditMode && isLoadingMeeting) {
     return (
-      <UserRoute>
+      <>
         <View style={[styles.container, { paddingTop: insets.top + 16, backgroundColor: colors.backgroundSecondary }]}>
           <DragHandle />
           <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
@@ -687,14 +686,14 @@ export function CreateEventScreen() {
             <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading event details...</Text>
           </View>
         </View>
-      </UserRoute>
+      </>
     );
   }
 
   // Show error state if meeting not found
   if (isEditMode && !meeting && !isLoadingMeeting) {
     return (
-      <UserRoute>
+      <>
         <View style={[styles.container, { paddingTop: insets.top + 16, backgroundColor: colors.backgroundSecondary }]}>
           <DragHandle />
           <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
@@ -718,12 +717,12 @@ export function CreateEventScreen() {
             </TouchableOpacity>
           </View>
         </View>
-      </UserRoute>
+      </>
     );
   }
 
   return (
-    <UserRoute>
+    <>
       <KeyboardAvoidingView
         style={[styles.container, { backgroundColor: colors.backgroundSecondary }]}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -1176,7 +1175,7 @@ export function CreateEventScreen() {
           cancelText="Cancel"
         />
       </KeyboardAvoidingView>
-    </UserRoute>
+    </>
   );
 }
 

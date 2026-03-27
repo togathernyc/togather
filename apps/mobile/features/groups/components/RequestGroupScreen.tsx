@@ -35,7 +35,6 @@ import {
   Button,
   Select,
 } from "@components/ui";
-import { UserRoute } from "@components/guards/UserRoute";
 import { useRequestGroup, RequestGroupFormData } from "../hooks/useRequestGroup";
 import { validateZipCode, normalizeZipCode } from "../utils/geocodeLocation";
 import { useQuery, api } from "@services/api/convex";
@@ -261,7 +260,7 @@ export function RequestGroupScreen() {
   const selectedGroupType = groupTypes?.find((t: any) => t.id === selectedGroupTypeId);
 
   return (
-    <UserRoute>
+    <>
       <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.backgroundSecondary }]}>
         {/* Header */}
         <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
@@ -641,7 +640,7 @@ export function RequestGroupScreen() {
           </View>
         </ScrollView>
       </View>
-    </UserRoute>
+    </>
   );
 }
 

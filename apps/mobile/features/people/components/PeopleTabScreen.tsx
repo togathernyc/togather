@@ -1,7 +1,6 @@
 import React from "react";
 import { View, ActivityIndicator } from "react-native";
 import { useLocalSearchParams, usePathname } from "expo-router";
-import { UserRoute } from "@components/guards/UserRoute";
 import { useIsDesktopWeb } from "@hooks/useIsDesktopWeb";
 import { useAuthenticatedQuery, api } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
@@ -28,21 +27,19 @@ export function PeopleTabScreen() {
 
   if (!announcementGroupId || !currentUserId) {
     return (
-      <UserRoute>
-        <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-          <ActivityIndicator size="large" />
-        </View>
-      </UserRoute>
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+        <ActivityIndicator size="large" />
+      </View>
     );
   }
 
   return (
-    <UserRoute>
+    <>
       {isDesktop ? (
         <FollowupDesktopTable groupId={announcementGroupId} enforcedAssigneeUserId={currentUserId} returnTo={returnTo} />
       ) : (
         <FollowupMobileGrid groupId={announcementGroupId} enforcedAssigneeUserId={currentUserId} returnTo={returnTo} />
       )}
-    </UserRoute>
+    </>
   );
 }

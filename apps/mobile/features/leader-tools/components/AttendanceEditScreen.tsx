@@ -8,7 +8,6 @@ import {
   ScrollView,
 } from "react-native";
 import { useLocalSearchParams } from "expo-router";
-import { UserRoute } from "@components/guards/UserRoute";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AttendanceDetails } from "./AttendanceDetails";
@@ -55,7 +54,7 @@ export function AttendanceEditScreen() {
 
   if (isLoadingGroup) {
     return (
-      <UserRoute>
+      <>
         <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
           <DragHandle />
           <View style={styles.loadingContainer}>
@@ -63,13 +62,13 @@ export function AttendanceEditScreen() {
             <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading...</Text>
           </View>
         </View>
-      </UserRoute>
+      </>
     );
   }
 
   if (groupError || !group) {
     return (
-      <UserRoute>
+      <>
         <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
           <DragHandle />
           <View style={styles.errorContainer}>
@@ -82,7 +81,7 @@ export function AttendanceEditScreen() {
             </TouchableOpacity>
           </View>
         </View>
-      </UserRoute>
+      </>
     );
   }
 
@@ -96,7 +95,7 @@ export function AttendanceEditScreen() {
 
   if (isFutureEvent) {
     return (
-      <UserRoute>
+      <>
         <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
           <DragHandle />
           <View style={[styles.header, { paddingTop: insets.top + 16, backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
@@ -115,7 +114,7 @@ export function AttendanceEditScreen() {
             </TouchableOpacity>
           </View>
         </View>
-      </UserRoute>
+      </>
     );
   }
 
@@ -123,7 +122,7 @@ export function AttendanceEditScreen() {
   // The hasAttendanceSubmitted check has been removed to allow editing
 
   return (
-    <UserRoute>
+    <>
       <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
         <DragHandle />
         <View style={[styles.header, { paddingTop: insets.top + 16, backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
@@ -152,7 +151,7 @@ export function AttendanceEditScreen() {
           />
         </View>
       </View>
-    </UserRoute>
+    </>
   );
 }
 

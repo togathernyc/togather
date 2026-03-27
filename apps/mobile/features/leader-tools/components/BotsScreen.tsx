@@ -10,7 +10,6 @@ import {
   RefreshControl,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { UserRoute } from "@components/guards/UserRoute";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery, useAuthenticatedMutation, api } from "@services/api/convex";
@@ -255,7 +254,7 @@ export function BotsScreen() {
   };
 
   return (
-    <UserRoute>
+    <>
       <DragHandle />
       {/* Header - always visible */}
       <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
@@ -308,7 +307,7 @@ export function BotsScreen() {
           onSave={handleSaveCommunicationBotConfig}
         />
       )}
-    </UserRoute>
+    </>
   );
 }
 

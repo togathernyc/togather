@@ -14,7 +14,6 @@ import {
   Image,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { UserRoute } from "@components/guards/UserRoute";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery, useAuthenticatedQuery, useAuthenticatedMutation, api } from "@services/api/convex";
@@ -1404,7 +1403,7 @@ export function FollowupDetailContent({
 }
 
 /**
- * Full-screen route wrapper — adds UserRoute guard and DragHandle.
+ * Full-screen route wrapper — adds DragHandle.
  */
 export function FollowupDetailScreen() {
   const { colors } = useTheme();
@@ -1415,13 +1414,13 @@ export function FollowupDetailScreen() {
   }>();
 
   return (
-    <UserRoute>
+    <>
       <DragHandle />
       <FollowupDetailContent
         groupId={group_id || ""}
         memberId={member_id || ""}
       />
-    </UserRoute>
+    </>
   );
 }
 

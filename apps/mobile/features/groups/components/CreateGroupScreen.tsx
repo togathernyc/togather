@@ -35,7 +35,6 @@ import {
   ImagePicker,
   MemberSearch,
 } from "@components/ui";
-import { UserRoute } from "@components/guards/UserRoute";
 import { useCreateGroup, CreateGroupFormData } from "../hooks/useCreateGroup";
 import type { CommunityMember } from "@/types/community";
 import { validateZipCode, normalizeZipCode } from "../utils/geocodeLocation";
@@ -293,7 +292,7 @@ export function CreateGroupScreen() {
   };
 
   return (
-    <UserRoute>
+    <>
       <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.backgroundSecondary }]}>
         {/* Header */}
         <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
@@ -663,7 +662,7 @@ export function CreateGroupScreen() {
           </View>
         </ScrollView>
       </View>
-    </UserRoute>
+    </>
   );
 }
 

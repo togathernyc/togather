@@ -8,7 +8,6 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { UserRoute } from "@components/guards/UserRoute";
 import { Ionicons } from "@expo/vector-icons";
 import { RecentAttendance } from "./RecentAttendance";
 import { useGroupLeaderTools } from "../hooks/useGroupLeaderTools";
@@ -70,7 +69,7 @@ export function GroupLeaderToolsScreen() {
 
   if (isLoadingGroup) {
     return (
-      <UserRoute>
+      <>
         <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
           <DragHandle />
           <View style={styles.loadingContainer}>
@@ -78,13 +77,13 @@ export function GroupLeaderToolsScreen() {
             <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading...</Text>
           </View>
         </View>
-      </UserRoute>
+      </>
     );
   }
 
   if (groupError || !group) {
     return (
-      <UserRoute>
+      <>
         <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
           <DragHandle />
           <View style={styles.errorContainer}>
@@ -103,12 +102,12 @@ export function GroupLeaderToolsScreen() {
             </TouchableOpacity>
           </View>
         </View>
-      </UserRoute>
+      </>
     );
   }
 
   return (
-    <UserRoute>
+    <>
       <DragHandle />
       {/* Header */}
       <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
@@ -229,7 +228,7 @@ export function GroupLeaderToolsScreen() {
 
         </View>
       )}
-    </UserRoute>
+    </>
   );
 }
 

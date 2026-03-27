@@ -14,7 +14,6 @@ import {
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { UserRoute } from "@components/guards/UserRoute";
 import {
   api,
   Id,
@@ -339,7 +338,7 @@ export function TaskDetailScreen({ groupIdProp, taskIdProp, embedded }: TaskDeta
         <Text style={[styles.errorText, { color: colors.error }]}>Missing task route params.</Text>
       </View>
     );
-    return embedded ? missingView : <UserRoute>{missingView}</UserRoute>;
+    return missingView;
   }
 
   if (!task) {
@@ -349,7 +348,7 @@ export function TaskDetailScreen({ groupIdProp, taskIdProp, embedded }: TaskDeta
         <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading task details...</Text>
       </View>
     );
-    return embedded ? loadingView : <UserRoute>{loadingView}</UserRoute>;
+    return loadingView;
   }
 
   const content = (
@@ -715,7 +714,7 @@ export function TaskDetailScreen({ groupIdProp, taskIdProp, embedded }: TaskDeta
   );
 
   if (embedded) return content;
-  return <UserRoute>{content}</UserRoute>;
+  return content;
 }
 
 const styles = StyleSheet.create({
