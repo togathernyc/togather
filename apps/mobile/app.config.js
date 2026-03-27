@@ -138,7 +138,7 @@ export default {
   expo: {
     name: getAppName(),
     slug: "togather",
-    version: "1.0.22",
+    version: "1.0.23",
     orientation: "portrait",
     icon: getAppIcon(),
     userInterfaceStyle: "automatic",
