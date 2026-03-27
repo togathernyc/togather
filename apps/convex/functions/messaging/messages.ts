@@ -7,7 +7,7 @@
 import { v } from "convex/values";
 import { query, mutation, internalMutation } from "../../_generated/server";
 import { internal } from "../../_generated/api";
-import type { Id } from "../../_generated/dataModel";
+import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import {
   isCustomChannel,
@@ -236,14 +236,17 @@ export const getMessages = query({
     // and only read enough to fill one page. This is O(page_size) instead
     // of O(total_messages).
 
-    // Decode cursor: "timestamp:messageId" for tie-breaking
+    // Decode cursor: "timestamp:seenIds" for correct tie-breaking.
+    // seenIds is a comma-separated list of message IDs already returned at the
+    // cursor timestamp, so we can skip them without duplicates.
     let cursorTime: number | undefined;
-    let cursorId: string | undefined;
+    let cursorSeenIds: Set<string> | undefined;
     if (args.cursor) {
       const sepIdx = args.cursor.indexOf(":");
       if (sepIdx > 0) {
         cursorTime = Number(args.cursor.substring(0, sepIdx));
-        cursorId = args.cursor.substring(sepIdx + 1);
+        const idsStr = args.cursor.substring(sepIdx + 1);
+        cursorSeenIds = new Set(idsStr.split(","));
       }
     }
 
@@ -251,18 +254,18 @@ export const getMessages = query({
     // Typically ~15% of messages are filtered, so 3x is generous.
     const OVER_FETCH_MULTIPLIER = 3;
     const fetchBatch = limit * OVER_FETCH_MULTIPLIER;
-    const accepted: (typeof candidates)[number][] = [];
+    const accepted: Doc<"chatMessages">[] = [];
     let exhausted = false;
     let scanCursorTime = cursorTime;
-    let scanCursorId = cursorId;
 
     // Fetch in batches until we have enough accepted messages or run out
     let candidates = await ctx.db
       .query("chatMessages")
       .withIndex("by_channel_lastActivityAt", (q) => {
         const q1 = q.eq("channelId", args.channelId);
-        // Use lte + skip for first batch to handle tie-breaking,
-        // lt for subsequent batches
+        // Use lte to include messages at the cursor timestamp (we skip
+        // already-seen ones by ID below). This avoids dropping messages
+        // that share the same timestamp as the cursor.
         if (scanCursorTime !== undefined) {
           return q1.lte("lastActivityAt", scanCursorTime);
         }
@@ -278,16 +281,14 @@ export const getMessages = query({
       }
 
       for (const m of candidates) {
-        // Skip the exact cursor message and any message already seen at cursor boundary
-        if (scanCursorId && m.lastActivityAt === cursorTime && m._id === scanCursorId) {
-          scanCursorId = undefined; // only skip once
+        // Skip messages already seen on the previous page (same timestamp as cursor)
+        if (cursorSeenIds && m.lastActivityAt === cursorTime && cursorSeenIds.has(m._id)) {
           continue;
         }
 
         // Filter: top-level, not deleted, not blocked
         if (m.isDeleted) continue;
         if (m.parentMessageId) continue;
-        if (m.lastActivityAt === undefined) continue; // pre-migration, shouldn't happen post-backfill
         if (m.senderId && blockedUserIds.has(m.senderId)) continue;
 
         accepted.push(m);
@@ -301,15 +302,40 @@ export const getMessages = query({
         break;
       }
 
-      // Need more — fetch next batch starting after the last candidate
+      // Need more — fetch next batch. Use lte (not lt) to avoid dropping
+      // messages that share the same timestamp at the batch boundary.
+      // We track seen IDs to skip duplicates across batches.
       const lastCandidate = candidates[candidates.length - 1];
-      scanCursorTime = lastCandidate.lastActivityAt ?? lastCandidate.createdAt;
-      scanCursorId = lastCandidate._id;
+      const lastTime = lastCandidate.lastActivityAt ?? lastCandidate.createdAt;
+
+      // Collect IDs of all candidates at the boundary timestamp so we can
+      // skip them in the next batch (they were already processed).
+      if (lastTime === scanCursorTime) {
+        // Same timestamp as previous batch boundary — accumulate seen IDs
+        for (const c of candidates) {
+          const t = c.lastActivityAt ?? c.createdAt;
+          if (t === lastTime) {
+            if (!cursorSeenIds) cursorSeenIds = new Set();
+            cursorSeenIds.add(c._id);
+          }
+        }
+      } else {
+        // New boundary timestamp — reset seen IDs to just this batch's boundary
+        cursorSeenIds = new Set<string>();
+        cursorTime = lastTime;
+        for (const c of candidates) {
+          const t = c.lastActivityAt ?? c.createdAt;
+          if (t === lastTime) {
+            cursorSeenIds.add(c._id);
+          }
+        }
+      }
+      scanCursorTime = lastTime;
 
       candidates = await ctx.db
         .query("chatMessages")
         .withIndex("by_channel_lastActivityAt", (q) =>
-          q.eq("channelId", args.channelId).lt("lastActivityAt", scanCursorTime!)
+          q.eq("channelId", args.channelId).lte("lastActivityAt", scanCursorTime!)
         )
         .order("desc")
         .take(fetchBatch);
@@ -318,10 +344,22 @@ export const getMessages = query({
     const hasMore = accepted.length > limit;
     const pageMessages = accepted.slice(0, limit);
 
-    // Encode cursor as "timestamp:messageId" for next page
-    const cursor = pageMessages.length > 0
-      ? `${pageMessages[pageMessages.length - 1].lastActivityAt}:${pageMessages[pageMessages.length - 1]._id}`
-      : undefined;
+    // Encode cursor: "timestamp:id1,id2,..." — includes all message IDs at the
+    // last page entry's timestamp so the next page can skip them correctly.
+    let cursor: string | undefined;
+    if (pageMessages.length > 0) {
+      const lastMsg = pageMessages[pageMessages.length - 1];
+      const lastActivityAt = lastMsg.lastActivityAt ?? lastMsg.createdAt;
+      // Collect all accepted message IDs at the boundary timestamp
+      const boundaryIds: string[] = [];
+      for (const m of pageMessages) {
+        const t = m.lastActivityAt ?? m.createdAt;
+        if (t === lastActivityAt) {
+          boundaryIds.push(m._id);
+        }
+      }
+      cursor = `${lastActivityAt}:${boundaryIds.join(",")}`;
+    }
 
     // Reverse to chronological order (oldest first, newest at bottom)
     // This is the expected order for chat UIs
@@ -329,7 +367,7 @@ export const getMessages = query({
 
     return {
       messages: chronologicalMessages,
-      hasMore: hasMore || !exhausted,
+      hasMore,
       cursor,
     };
   },
