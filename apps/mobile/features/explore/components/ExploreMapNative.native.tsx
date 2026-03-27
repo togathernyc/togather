@@ -10,7 +10,8 @@
 
 import React, { useEffect, useRef, useState, useCallback, useMemo, useLayoutEffect } from 'react';
 import { View, StyleSheet, Image, Text } from 'react-native';
-import MapView, { Marker, Region, Camera } from 'react-native-maps';
+import MapView, { Marker, Region, Camera, PROVIDER_GOOGLE } from 'react-native-maps';
+import { Platform } from 'react-native';
 import { Group } from '@features/groups/types';
 import { MAP_CONFIG, GROUP_TYPE_COLORS, DEFAULT_GROUP_COLOR } from '../constants';
 import type { MapBounds } from './ExploreMap';
@@ -383,6 +384,7 @@ export function ExploreMapNative({
       <MapView
         ref={mapRef}
         style={styles.map}
+        provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
         initialCamera={initialCamera}
         onMapReady={() => setMapReady(true)}
         onRegionChangeComplete={handleRegionChangeComplete}
