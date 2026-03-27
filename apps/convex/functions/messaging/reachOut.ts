@@ -149,6 +149,7 @@ export const submitTaskRequest = mutation({
       taskId,
       createdAt: now,
       isDeleted: false,
+      lastActivityAt: now,
     });
 
     await ctx.db.patch(leadersChannel._id, {
@@ -521,6 +522,7 @@ export const submitRequest = mutation({
       reachOutRequestId: requestId,
       createdAt: now,
       isDeleted: false,
+      lastActivityAt: now,
     });
 
     // Update the request with the message reference

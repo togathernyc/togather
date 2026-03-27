@@ -18,22 +18,42 @@ import { v } from "convex/values";
 export const backfillLastActivityAt = internalMutation({
   args: {
     afterCreationTime: v.optional(v.number()),
+    lastProcessedId: v.optional(v.string()),
     batchSize: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const batchSize = args.batchSize ?? 500;
 
-    // Use by_createdAt index to scan in order, resuming from where we left off
-    let q = ctx.db.query("chatMessages").withIndex("by_createdAt");
+    // Use by_createdAt index to scan in order, resuming from where we left off.
+    // We use gte (not gt) to avoid skipping messages that share the boundary
+    // timestamp, then skip any we've already processed by checking lastProcessedId.
+    let batch;
     if (args.afterCreationTime !== undefined) {
-      q = ctx.db
+      batch = await ctx.db
         .query("chatMessages")
         .withIndex("by_createdAt", (idx) =>
-          idx.gt("createdAt", args.afterCreationTime!)
-        );
+          idx.gte("createdAt", args.afterCreationTime!)
+        )
+        .order("asc")
+        .take(batchSize + 100); // over-fetch to account for skipped duplicates
+    } else {
+      batch = await ctx.db
+        .query("chatMessages")
+        .withIndex("by_createdAt")
+        .order("asc")
+        .take(batchSize);
     }
 
-    const batch = await q.order("asc").take(batchSize);
+    // Skip messages we already processed in the previous batch (same timestamp boundary)
+    if (args.lastProcessedId) {
+      const skipIdx = batch.findIndex((m) => m._id === args.lastProcessedId);
+      if (skipIdx >= 0) {
+        batch = batch.slice(skipIdx + 1);
+      }
+    }
+
+    // Trim back to batch size
+    batch = batch.slice(0, batchSize);
 
     if (batch.length === 0) {
       console.log("Migration complete — no more messages to process.");
@@ -60,7 +80,7 @@ export const backfillLastActivityAt = internalMutation({
       migratedCount++;
     }
 
-    const lastCreatedAt = batch[batch.length - 1].createdAt;
+    const lastMsg = batch[batch.length - 1];
     const isDone = batch.length < batchSize;
 
     console.log(
@@ -72,7 +92,11 @@ export const backfillLastActivityAt = internalMutation({
       await ctx.scheduler.runAfter(
         0,
         internal.migrations.backfillLastActivityAt.backfillLastActivityAt,
-        { afterCreationTime: lastCreatedAt, batchSize },
+        {
+          afterCreationTime: lastMsg.createdAt,
+          lastProcessedId: lastMsg._id,
+          batchSize,
+        },
       );
     }
 

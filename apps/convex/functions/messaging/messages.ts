@@ -255,7 +255,9 @@ export const getMessages = query({
     const OVER_FETCH_MULTIPLIER = 3;
     const fetchBatch = limit * OVER_FETCH_MULTIPLIER;
     const accepted: Doc<"chatMessages">[] = [];
-    let exhausted = false;
+    // Track all message IDs we've already processed across batches to avoid
+    // duplicates when using lte on the same timestamp boundary.
+    const processedIds = new Set<string>(cursorSeenIds ?? []);
     let scanCursorTime = cursorTime;
 
     // Fetch in batches until we have enough accepted messages or run out
@@ -276,15 +278,17 @@ export const getMessages = query({
 
     while (true) {
       if (candidates.length === 0) {
-        exhausted = true;
         break;
       }
 
+      const acceptedBefore = accepted.length;
+
       for (const m of candidates) {
-        // Skip messages already seen on the previous page (same timestamp as cursor)
-        if (cursorSeenIds && m.lastActivityAt === cursorTime && cursorSeenIds.has(m._id)) {
+        // Skip messages already processed (from previous page or previous batch)
+        if (processedIds.has(m._id)) {
           continue;
         }
+        processedIds.add(m._id);
 
         // Filter: top-level, not deleted, not blocked
         if (m.isDeleted) continue;
@@ -298,39 +302,19 @@ export const getMessages = query({
       }
 
       if (accepted.length > limit || candidates.length < fetchBatch) {
-        exhausted = candidates.length < fetchBatch;
         break;
       }
 
-      // Need more — fetch next batch. Use lte (not lt) to avoid dropping
-      // messages that share the same timestamp at the batch boundary.
-      // We track seen IDs to skip duplicates across batches.
-      const lastCandidate = candidates[candidates.length - 1];
-      const lastTime = lastCandidate.lastActivityAt ?? lastCandidate.createdAt;
-
-      // Collect IDs of all candidates at the boundary timestamp so we can
-      // skip them in the next batch (they were already processed).
-      if (lastTime === scanCursorTime) {
-        // Same timestamp as previous batch boundary — accumulate seen IDs
-        for (const c of candidates) {
-          const t = c.lastActivityAt ?? c.createdAt;
-          if (t === lastTime) {
-            if (!cursorSeenIds) cursorSeenIds = new Set();
-            cursorSeenIds.add(c._id);
-          }
-        }
-      } else {
-        // New boundary timestamp — reset seen IDs to just this batch's boundary
-        cursorSeenIds = new Set<string>();
-        cursorTime = lastTime;
-        for (const c of candidates) {
-          const t = c.lastActivityAt ?? c.createdAt;
-          if (t === lastTime) {
-            cursorSeenIds.add(c._id);
-          }
-        }
+      // If no new messages were accepted in this batch and we processed
+      // all candidates, we're stuck at a timestamp with only filtered-out
+      // messages. Break to avoid an infinite loop.
+      if (accepted.length === acceptedBefore) {
+        break;
       }
-      scanCursorTime = lastTime;
+
+      // Advance scan cursor to the last candidate's timestamp for next batch
+      const lastCandidate = candidates[candidates.length - 1];
+      scanCursorTime = lastCandidate.lastActivityAt ?? lastCandidate.createdAt;
 
       candidates = await ctx.db
         .query("chatMessages")

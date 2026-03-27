@@ -1810,6 +1810,7 @@ export const insertBotMessage = internalMutation({
       mentionedUserIds: mentionedUserIds || undefined,
       taskId,
       sourceKey,
+      lastActivityAt: now_,
     });
 
     // Update channel with last message info
