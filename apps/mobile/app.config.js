@@ -177,7 +177,12 @@ export default {
       package: getBundleIdentifier(),
       edgeToEdgeEnabled: true,
       predictiveBackGestureEnabled: false,
-      intentFilters: getAndroidIntentFilters()
+      intentFilters: getAndroidIntentFilters(),
+      config: {
+        googleMaps: {
+          apiKey: process.env.GOOGLE_MAPS_API_KEY || ""
+        }
+      }
     },
     web: {
       favicon: getAppIcon(),
@@ -195,12 +200,6 @@ export default {
       "expo-contacts",
       "expo-mail-composer",
       "expo-localization",
-      [
-        "react-native-maps",
-        {
-          googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY || ""
-        }
-      ],
       [
         "@sentry/react-native/expo",
         {
