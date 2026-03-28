@@ -569,11 +569,21 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   }, [rotateAnim]);
 
   /**
-   * Remove selected image by index
+   * Remove selected image by index.
+   * For GIF URLs (external https://), match by URL to avoid index mismatch
+   * when regular image uploads are still in progress.
    */
   const removeImage = useCallback((index: number) => {
-    setSelectedImages(prev => prev.filter((_, i) => i !== index));
-    setUploadedImageUrls(prev => prev.filter((_, i) => i !== index));
+    setSelectedImages(prev => {
+      const removedUrl = prev[index];
+      // If it's an external URL (GIF), also remove by URL from uploadedImageUrls
+      if (removedUrl?.startsWith('https://')) {
+        setUploadedImageUrls(urls => urls.filter(u => u !== removedUrl));
+      } else {
+        setUploadedImageUrls(urls => urls.filter((_, i) => i !== index));
+      }
+      return prev.filter((_, i) => i !== index);
+    });
   }, []);
 
   /**
