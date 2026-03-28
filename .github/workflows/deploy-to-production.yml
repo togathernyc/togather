@@ -213,6 +213,7 @@ jobs:
           eas env:create --name EXPO_PUBLIC_PROJECT_ID --value "$EAS_PROJECT_ID" --environment production --visibility plaintext --force --non-interactive || true
           # Google Maps API key for Android (react-native-maps)
           eas env:create --name GOOGLE_MAPS_API_KEY --value "$GOOGLE_MAPS_API_KEY" --environment production --visibility sensitive --force --non-interactive || true
+          eas env:create --name EXPO_PUBLIC_KLIPY_API_KEY --value "$EXPO_PUBLIC_KLIPY_API_KEY" --environment production --visibility plaintext --force --non-interactive || true
           echo "✓ Synced secrets to EAS production environment"
 
       - name: Build iOS
@@ -404,6 +405,7 @@ jobs:
           eas env:create --name EXPO_PUBLIC_CONVEX_URL --value "$CONVEX_SITE_URL" --environment production --visibility plaintext --force --non-interactive || true
           # Project ID for push notifications (constant across all environments)
           eas env:create --name EXPO_PUBLIC_PROJECT_ID --value "$EAS_PROJECT_ID" --environment production --visibility plaintext --force --non-interactive || true
+          eas env:create --name EXPO_PUBLIC_KLIPY_API_KEY --value "$EXPO_PUBLIC_KLIPY_API_KEY" --environment production --visibility plaintext --force --non-interactive || true
           echo "✓ Synced secrets to EAS production environment"
 
       - name: Verify fingerprint matches

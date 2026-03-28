@@ -45,6 +45,7 @@ import { useTheme } from '@hooks/useTheme';
 import { VoiceRecorderBar } from './VoiceRecorderBar';
 import { AttachmentPanel } from './AttachmentPanel';
 import { useDraftStore } from '../../../stores/draftStore';
+import { GifPicker } from './GifPicker';
 
 interface MessageInputProps {
   channelId: Id<"chatChannels"> | null;
@@ -127,6 +128,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   const [debouncedText, setDebouncedText] = useState('');
   const [isVoiceRecording, setIsVoiceRecording] = useState(false);
   const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
+  const [showGifPicker, setShowGifPicker] = useState(false);
   const isWeb = Platform.OS === 'web';
   const prevChannelIdRef = useRef(channelId);
 
@@ -550,6 +552,23 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   }, [rotateAnim]);
 
   /**
+   * Handle GIF selection - stage as preview (like images), user sends with send button
+   */
+  const handleGifSelect = useCallback((gifUrl: string) => {
+    setShowGifPicker(false);
+    setShowAttachmentMenu(false);
+    Animated.timing(rotateAnim, {
+      toValue: 0,
+      duration: 200,
+      useNativeDriver: true,
+    }).start();
+
+    // Add to selected/uploaded images so it appears in the preview and sends on tap
+    setSelectedImages(prev => [...prev, gifUrl]);
+    setUploadedImageUrls(prev => [...prev, gifUrl]);
+  }, [rotateAnim]);
+
+  /**
    * Remove selected image by index
    */
   const removeImage = useCallback((index: number) => {
@@ -717,6 +736,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
     const showSubscription = Keyboard.addListener(showEvent, () => {
       setIsKeyboardVisible(true);
       setShowAttachmentMenu(false);
+      setShowGifPicker(false);
       Animated.timing(rotateAnim, {
         toValue: 0,
         duration: 200,
@@ -756,6 +776,15 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
       { id: 'media', label: 'Media', icon: 'images', iconColor: '#007AFF', onPress: pickMedia },
       { id: 'camera', label: 'Camera', icon: 'camera', iconColor: '#333', onPress: captureMedia },
     ];
+    if (process.env.EXPO_PUBLIC_KLIPY_API_KEY) {
+      options.push({
+        id: 'gif',
+        label: 'GIF',
+        icon: 'happy-outline',
+        iconColor: '#8E44AD',
+        onPress: () => setShowGifPicker(true),
+      });
+    }
     if (isVoiceRecordingSupported()) {
       options.push({
         id: 'voice',
@@ -1006,6 +1035,13 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
       />
       </>
       )}
+
+      {/* GIF Picker Modal */}
+      <GifPicker
+        visible={showGifPicker}
+        onSelect={handleGifSelect}
+        onClose={() => setShowGifPicker(false)}
+      />
     </View>
   );
 }

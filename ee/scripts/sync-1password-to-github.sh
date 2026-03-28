@@ -142,6 +142,7 @@ OPTIONAL_SECRETS=(
   "EXPO_PUBLIC_SENTRY_DSN"
   "EXPO_PUBLIC_POSTHOG_API_KEY"
   "GOOGLE_MAPS_API_KEY"
+  "EXPO_PUBLIC_KLIPY_API_KEY"
 )
 
 # ---------------------------------------------------------------------------
