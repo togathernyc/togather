@@ -736,7 +736,6 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
     const showSubscription = Keyboard.addListener(showEvent, () => {
       setIsKeyboardVisible(true);
       setShowAttachmentMenu(false);
-      setShowGifPicker(false);
       Animated.timing(rotateAnim, {
         toValue: 0,
         duration: 200,
