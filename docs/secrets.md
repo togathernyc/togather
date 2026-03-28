@@ -106,6 +106,12 @@ pnpm dev
 
 > **Note**: These variables are configured in the Convex deployment dashboard. The webhook URL should be registered as `https://<convex-deployment>.convex.site/stripe-webhook`.
 
+### KLIPY GIF API (Optional)
+
+| Secret | Description | Degradation |
+|--------|-------------|-------------|
+| `EXPO_PUBLIC_KLIPY_API_KEY` | KLIPY API key (from partner.klipy.com) | GIF picker hidden |
+
 ### Development Settings
 
 | Secret | Description |
