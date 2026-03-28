@@ -174,9 +174,9 @@ export function GifPicker({ visible, onSelect, onClose }: GifPickerProps) {
   }, [fetchGifs, page, hasMore, loadingMore]);
 
   const handleSelect = useCallback((gif: KlipyGif) => {
-    const hd = gif.file?.hd;
-    const md = gif.file?.md;
-    const url = hd?.gif?.url || md?.gif?.url || hd?.webp?.url || md?.webp?.url;
+    const { hd, md, sm, xs } = gif.file ?? {};
+    const url = hd?.gif?.url || md?.gif?.url || sm?.gif?.url || xs?.gif?.url
+      || hd?.webp?.url || md?.webp?.url || sm?.webp?.url || xs?.webp?.url;
     if (url) {
       onSelect(url);
     }
