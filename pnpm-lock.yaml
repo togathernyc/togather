@@ -222,8 +222,8 @@ importers:
         specifier: ~7.0.8
         version: 7.0.8(expo@54.0.33)
       expo-audio:
-        specifier: ^1.1.1
-        version: 1.1.1(expo-asset@12.0.12)(expo@54.0.33)(react-native@0.81.5)(react@19.1.0)
+        specifier: ^55.0.9
+        version: 55.0.9(expo-asset@12.0.12)(expo@54.0.33)(react-native@0.81.5)(react@19.1.0)
       expo-auth-session:
         specifier: ~7.0.8
         version: 7.0.10(expo@54.0.33)(react-native@0.81.5)(react@19.1.0)
@@ -9479,8 +9479,8 @@ packages:
     transitivePeerDependencies:
       - supports-color
 
-  /expo-audio@1.1.1(expo-asset@12.0.12)(expo@54.0.33)(react-native@0.81.5)(react@19.1.0):
-    resolution: {integrity: sha512-CPCpJ+0AEHdzWROc0f00Zh6e+irLSl2ALos/LPvxEeIcJw1APfBa4DuHPkL4CQCWsVe7EnUjFpdwpqsEUWcP0g==}
+  /expo-audio@55.0.9(expo-asset@12.0.12)(expo@54.0.33)(react-native@0.81.5)(react@19.1.0):
+    resolution: {integrity: sha512-3SsyjwrupXRBbOoDjD5rcqgGnQ5RiB8z4KF1eel88q4z8yue7NKik2o9e3QBMDKLX7xnbJo673ah14BKnF9OVA==}
     peerDependencies:
       expo: '*'
       expo-asset: '*'
