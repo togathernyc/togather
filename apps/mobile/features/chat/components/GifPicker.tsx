@@ -17,9 +17,9 @@ import {
   StyleSheet,
   ActivityIndicator,
   Modal,
-  Dimensions,
   Platform,
   KeyboardAvoidingView,
+  useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -64,14 +64,14 @@ interface GifPickerProps {
   onClose: () => void;
 }
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const NUM_COLUMNS = 2;
 const GRID_GAP = 4;
-const ITEM_WIDTH = (SCREEN_WIDTH - GRID_GAP * (NUM_COLUMNS + 1)) / NUM_COLUMNS;
 
 export function GifPicker({ visible, onSelect, onClose }: GifPickerProps) {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
+  const { width: screenWidth } = useWindowDimensions();
+  const itemWidth = (screenWidth - GRID_GAP * (NUM_COLUMNS + 1)) / NUM_COLUMNS;
   const [query, setQuery] = useState('');
   const [gifs, setGifs] = useState<KlipyGif[]>([]);
   const [loading, setLoading] = useState(true);
@@ -178,6 +178,10 @@ export function GifPicker({ visible, onSelect, onClose }: GifPickerProps) {
   }, [onSelect]);
 
   const handleCancel = useCallback(() => {
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+    }
     setQuery('');
     currentQueryRef.current = '';
     onClose();
@@ -191,7 +195,7 @@ export function GifPicker({ visible, onSelect, onClose }: GifPickerProps) {
 
     return (
       <Pressable
-        style={[styles.gifItem, { width: ITEM_WIDTH, height: ITEM_WIDTH }]}
+        style={[styles.gifItem, { width: itemWidth, height: itemWidth }]}
         onPress={() => handleSelect(item)}
       >
         <Image
@@ -201,7 +205,7 @@ export function GifPicker({ visible, onSelect, onClose }: GifPickerProps) {
         />
       </Pressable>
     );
-  }, [handleSelect]);
+  }, [handleSelect, itemWidth]);
 
   const backgroundColor = isDark ? '#1c1c1e' : '#fff';
 
