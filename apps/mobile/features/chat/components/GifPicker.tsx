@@ -155,12 +155,17 @@ export function GifPicker({ visible, onSelect, onClose }: GifPickerProps) {
     }, SEARCH_DEBOUNCE_MS);
   }, [fetchGifs]);
 
-  // Pagination
+  // Pagination — capture query at call time to discard stale responses
   const loadMore = useCallback(() => {
     if (loadingMore || !hasMore) return;
+    const queryAtCallTime = currentQueryRef.current;
     const nextPage = page + 1;
     setLoadingMore(true);
-    fetchGifs(currentQueryRef.current, nextPage).then(({ data, hasNext }) => {
+    fetchGifs(queryAtCallTime, nextPage).then(({ data, hasNext }) => {
+      if (currentQueryRef.current !== queryAtCallTime) {
+        setLoadingMore(false);
+        return;
+      }
       setGifs(prev => [...prev, ...data]);
       setPage(nextPage);
       setHasMore(hasNext);
