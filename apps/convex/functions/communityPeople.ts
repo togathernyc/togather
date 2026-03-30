@@ -266,20 +266,31 @@ export const list = query({
       // Derive the actual document field from the index name (by_group_<field> → <field>)
       // to handle cases like sortBy="assignee" → field="assigneeSortKey".
       const sortKey = indexName.replace("by_group_", "");
+      const isScoreSort = sortKey.startsWith("score");
       const dir = direction === "desc" ? -1 : 1;
       filtered.sort((a: any, b: any) => {
         const av = a[sortKey];
         const bv = b[sortKey];
         // Match Convex index ordering: undefined sorts before all values.
         // Ascending: undefined first. Descending: undefined last.
-        if (av == null && bv == null) return 0;
+        if (av == null && bv == null) {
+          // For score sorts, break ties by addedAt (same direction as primary)
+          if (isScoreSort) return ((a.addedAt ?? 0) - (b.addedAt ?? 0)) * dir;
+          return 0;
+        }
         if (av == null) return -1 * dir;
         if (bv == null) return 1 * dir;
-        // Numeric comparison for numbers, string comparison otherwise
+        let cmp: number;
         if (typeof av === "number" && typeof bv === "number") {
-          return (av - bv) * dir;
+          cmp = (av - bv) * dir;
+        } else {
+          cmp = String(av).localeCompare(String(bv)) * dir;
         }
-        return String(av).localeCompare(String(bv)) * dir;
+        // For score sorts, break ties by addedAt (matches composite index behavior)
+        if (cmp === 0 && isScoreSort) {
+          return ((a.addedAt ?? 0) - (b.addedAt ?? 0)) * dir;
+        }
+        return cmp;
       });
 
       return {

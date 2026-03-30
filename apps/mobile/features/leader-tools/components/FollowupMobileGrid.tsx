@@ -205,21 +205,6 @@ function formatDate(timestamp?: number, emptyText = "Never"): string {
   });
 }
 
-function compareSortValues(
-  a: string | number,
-  b: string | number,
-  direction: SortDirection,
-): number {
-  const multiplier = direction === "asc" ? 1 : -1;
-  if (typeof a === "number" && typeof b === "number") {
-    return (a - b) * multiplier;
-  }
-  return (
-    String(a).localeCompare(String(b), undefined, { sensitivity: "base" }) *
-    multiplier
-  );
-}
-
 export function FollowupMobileGrid({
   groupId,
   enforcedAssigneeUserId,
@@ -467,11 +452,8 @@ export function FollowupMobileGrid({
     return filters;
   }, [parsedQuery, effectiveAssigneeFilter, enforcedAssigneeUserId]);
 
-  const isClientSideSort = !SERVER_SORTABLE_FIELDS.has(sortField);
-  const serverSortBy = SERVER_SORTABLE_FIELDS.has(sortField)
-    ? sortField
-    : "score3";
-  const serverSortDirection = isClientSideSort ? "desc" : sortDirection;
+  const serverSortBy = sortField;
+  const serverSortDirection = sortDirection;
 
   const {
     results: perGroupRawMembersRaw,
@@ -550,94 +532,18 @@ export function FollowupMobileGrid({
     [groupId]
   );
 
-  const getSortFieldValue = useCallback(
-    (member: FollowupMember, field: string): string | number => {
-      if (field.startsWith("score")) {
-        // System scores: direct slot access (score1, score2, score3)
-        const slot = field as "score1" | "score2" | "score3";
-        return getSystemScoreValue(member, slot) ?? 0;
-      }
-
-      switch (field) {
-        case "firstName":
-          return member.firstName ?? "";
-        case "lastName":
-          return member.lastName ?? "";
-        case "addedAt":
-          return member.addedAt ?? 0;
-        case "status":
-          return member.status ?? "";
-        case "assignee": {
-          const assigneeIds = getAssigneeIds(member);
-          if (assigneeIds.length === 0) return "";
-          const leader = leaderMap.get(assigneeIds[0]);
-          return leader ? `${leader.firstName} ${leader.lastName}`.trim() : "";
-        }
-        case "lastAttendedAt":
-          return member.lastAttendedAt ?? 0;
-        case "lastFollowupAt":
-          return member.lastFollowupAt ?? 0;
-        case "lastActiveAt":
-          return member.lastActiveAt ?? 0;
-        default:
-          if (field.startsWith("customBool")) {
-            return (member as Record<string, unknown>)[field] ? 1 : 0;
-          }
-          return (
-            ((member as Record<string, unknown>)[field] as
-              | string
-              | number
-              | undefined
-              | null) ?? ""
-          );
-      }
-    },
-    [leaderMap, getAssigneeIds],
-  );
-
   const members = useMemo(() => {
     const source = (
       hasTextSearch ? (searchResults ?? []) : (rawMembers ?? [])
     ) as FollowupMember[];
     if (source.length === 0) return [];
     const filtered = applyParsedFollowupFilters(source, parsedQuery);
-
-    // For score sorts, always apply secondary sort by addedAt (most recent first)
-    // even when the server handled the primary sort, to break ties consistently
-    if (sortField.startsWith("score")) {
-      const sorted = [...filtered];
-      sorted.sort((a, b) => {
-        const primary = compareSortValues(
-          getSortFieldValue(a, sortField),
-          getSortFieldValue(b, sortField),
-          sortDirection,
-        );
-        if (primary !== 0) return primary;
-        return (b.addedAt ?? 0) - (a.addedAt ?? 0);
-      });
-      return sorted;
-    }
-
-    if (!hasTextSearch && !isClientSideSort) return filtered;
-
-    const sorted = [...filtered];
-    sorted.sort((a, b) =>
-      compareSortValues(
-        getSortFieldValue(a, sortField),
-        getSortFieldValue(b, sortField),
-        sortDirection,
-      ),
-    );
-    return sorted;
+    return filtered;
   }, [
     hasTextSearch,
     searchResults,
     rawMembers,
-    isClientSideSort,
     parsedQuery,
-    sortField,
-    sortDirection,
-    getSortFieldValue,
   ]);
 
   const isSearchLoading = hasTextSearch && searchResults === undefined;

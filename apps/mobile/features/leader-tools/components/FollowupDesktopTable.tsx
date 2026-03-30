@@ -750,12 +750,9 @@ export function FollowupDesktopTable({
   const getColWidth = (col: ColumnDef) =>
     colWidths[col.key] ?? col.defaultWidth;
 
-  // Server sort key — score3+ have no server index, use client-side sorting
-  const isClientSideSort = !(sortField in SERVER_SORT_KEYS);
-
   const serverSortBy = useMemo(() => {
     if (sortField in SERVER_SORT_KEYS) return SERVER_SORT_KEYS[sortField];
-    return "score3";
+    return sortField;
   }, [sortField]);
 
   // Build filter args for list query (structured filters only, no text search)
@@ -797,11 +794,7 @@ export function FollowupDesktopTable({
           sortBy:
             activeViewId === FOLLOWUP_MAP_VIEW_ID ? "zipCode" : serverSortBy,
           sortDirection:
-            activeViewId === FOLLOWUP_MAP_VIEW_ID
-              ? "desc"
-              : isClientSideSort
-                ? "desc"
-                : sortDirection,
+            activeViewId === FOLLOWUP_MAP_VIEW_ID ? "desc" : sortDirection,
           ...listFilterArgs,
         }
       : "skip",
@@ -865,46 +858,11 @@ export function FollowupDesktopTable({
     );
     const filtered = applyParsedFollowupFilters(adapted, parsedQuery);
 
-    if (filtered.length === 0) return filtered;
-
-    // For score sorts, always apply secondary sort by addedAt (most recent first)
-    // even when the server handled the primary sort, to break ties consistently
-    if (sortField.startsWith("score")) {
-      const sorted = [...filtered];
-      const slot = sortField as "score1" | "score2" | "score3";
-      sorted.sort((a, b) => {
-        const aVal = getSystemScoreValue(a, slot) ?? 0;
-        const bVal = getSystemScoreValue(b, slot) ?? 0;
-        const primary = sortDirection === "asc" ? aVal - bVal : bVal - aVal;
-        if (primary !== 0) return primary;
-        // Secondary sort: most recently added first
-        return (b.addedAt ?? 0) - (a.addedAt ?? 0);
-      });
-      return sorted;
-    }
-
-    if (!isClientSideSort) return filtered;
-
-    // Client-side sort by other fields (cross-group mode)
-    const sorted = [...filtered];
-    const multiplier = sortDirection === "asc" ? 1 : -1;
-    sorted.sort((a, b) => {
-      const aVal = (a as any)[sortField] ?? "";
-      const bVal = (b as any)[sortField] ?? "";
-      if (typeof aVal === "number" && typeof bVal === "number") {
-        return (aVal - bVal) * multiplier;
-      }
-      return String(aVal).localeCompare(String(bVal)) * multiplier;
-    });
-
-    return sorted;
+    return filtered;
   }, [
     hasTextSearch,
     searchResults,
     rawMembers,
-    isClientSideSort,
-    sortField,
-    sortDirection,
     parsedQuery,
   ]);
 
