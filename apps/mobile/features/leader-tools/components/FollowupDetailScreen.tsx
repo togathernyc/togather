@@ -85,6 +85,12 @@ export function FollowupDetailContent({
   const [isCreatingTask, setIsCreatingTask] = useState(false);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState("");
+  const [convertEntry, setConvertEntry] = useState<{
+    id: string;
+    type: string;
+    content?: string | null;
+  } | null>(null);
+  const [isConvertingFollowup, setIsConvertingFollowup] = useState(false);
 
   // Reset local state when switching between members (desktop side-sheet reuses component)
   useEffect(() => {
@@ -106,6 +112,8 @@ export function FollowupDetailContent({
     setIsCreatingTask(false);
     setSelectedTags([]);
     setTagInput("");
+    setConvertEntry(null);
+    setIsConvertingFollowup(false);
   }, [memberId]);
 
   const group_id = groupId;
@@ -225,6 +233,9 @@ export function FollowupDetailContent({
   const snoozeMember = useAuthenticatedMutation(api.functions.communityPeople.snooze);
   const updateAttendance = useAuthenticatedMutation(api.functions.memberFollowups.updateAttendance);
   const deleteFollowupMut = useAuthenticatedMutation(api.functions.memberFollowups.deleteFollowup);
+  const convertFollowupTypeMut = useAuthenticatedMutation(
+    api.functions.communityPeople.convertFollowupType,
+  );
 
   // Confirmation hook — logs action only after user confirms they completed it
   const { setPendingAction } = useContactConfirmation({
@@ -360,6 +371,37 @@ export function FollowupDetailContent({
       targetUserId: history.member.odUserId, // Use Convex user ID
       status: newStatus,
     });
+  };
+
+  const FOLLOWUP_TYPES_CONVERTIBLE = useMemo(
+    () => new Set(["note", "call", "text", "followed_up", "reach_out"]),
+    [],
+  );
+
+  const canConvertFollowupEntry = (type: string) =>
+    FOLLOWUP_TYPES_CONVERTIBLE.has(type) && type !== "snooze";
+
+  const getFollowupTypeLabel = (type: string) => {
+    if (type === "followed_up") return "In-person";
+    if (type === "reach_out") return "Reach out";
+    return type.charAt(0).toUpperCase() + type.slice(1).replace("_", " ");
+  };
+
+  const handleConvertFollowup = async (newType: "call" | "text" | "followed_up") => {
+    if (!convertEntry || !member_id) return;
+    setIsConvertingFollowup(true);
+    try {
+      await convertFollowupTypeMut({
+        communityPeopleId: member_id as Id<"communityPeople">,
+        followupId: convertEntry.id as Id<"memberFollowups">,
+        newType,
+      });
+      setConvertEntry(null);
+    } catch (err: any) {
+      Alert.alert("Error", err.message || "Could not update this entry");
+    } finally {
+      setIsConvertingFollowup(false);
+    }
   };
 
   const handleDeleteFollowup = (followupId: string) => {
@@ -1093,16 +1135,36 @@ export function FollowupDetailContent({
                   <View style={styles.timelineContent}>
                     <View style={styles.timelineHeader}>
                       <Text style={[styles.timelineType, { color: colors.text }]}>
-                        {entry.type.charAt(0).toUpperCase() + entry.type.slice(1).replace("_", " ")}
+                        {getFollowupTypeLabel(entry.type)}
                       </Text>
-                      {entry.createdBy?.id === currentUserId && (
-                        <TouchableOpacity
-                          onPress={() => handleDeleteFollowup(entry.id)}
-                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        >
-                          <Ionicons name="trash-outline" size={16} color={colors.destructive} />
-                        </TouchableOpacity>
-                      )}
+                      <View style={styles.timelineHeaderActions}>
+                        {canConvertFollowupEntry(entry.type) && (
+                          <TouchableOpacity
+                            onPress={() =>
+                              setConvertEntry({
+                                id: entry.id,
+                                type: entry.type,
+                                content: entry.content,
+                              })
+                            }
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          >
+                            <Ionicons
+                              name="ellipsis-horizontal"
+                              size={18}
+                              color={colors.textSecondary}
+                            />
+                          </TouchableOpacity>
+                        )}
+                        {entry.createdBy?.id === currentUserId && (
+                          <TouchableOpacity
+                            onPress={() => handleDeleteFollowup(entry.id)}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          >
+                            <Ionicons name="trash-outline" size={16} color={colors.destructive} />
+                          </TouchableOpacity>
+                        )}
+                      </View>
                     </View>
                     {entry.content && (
                       <Text style={[styles.timelineNote, { color: colors.textSecondary }]}>{entry.content}</Text>
@@ -1120,6 +1182,88 @@ export function FollowupDetailContent({
 
         <View style={{ height: 100 }} />
       </ScrollView>
+
+      {/* Convert history entry (e.g. note → text/call/in-person) */}
+      <Modal
+        visible={!!convertEntry}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !isConvertingFollowup && setConvertEntry(null)}
+      >
+        <Pressable
+          style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}
+          onPress={() => !isConvertingFollowup && setConvertEntry(null)}
+        >
+          <Pressable
+            style={[styles.modalContent, { backgroundColor: colors.modalBackground }]}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Record as</Text>
+            <Text style={[styles.modalSubtitle, { color: colors.textSecondary }]}>
+              Change how this history entry counts for follow-up scoring. The original text and date
+              are kept.
+            </Text>
+            {convertEntry && (
+              <View style={{ marginBottom: 12 }}>
+                <Text style={[styles.convertPreviewLabel, { color: colors.textTertiary }]}>
+                  Current: {getFollowupTypeLabel(convertEntry.type)}
+                </Text>
+                {!!convertEntry.content?.trim() && (
+                  <Text
+                    style={[styles.convertPreviewBody, { color: colors.textSecondary }]}
+                    numberOfLines={4}
+                  >
+                    {convertEntry.content}
+                  </Text>
+                )}
+              </View>
+            )}
+            <View style={styles.convertOptions}>
+              {convertEntry?.type !== "text" && (
+                <TouchableOpacity
+                  style={[styles.convertOption, { backgroundColor: colors.surfaceSecondary }]}
+                  onPress={() => handleConvertFollowup("text")}
+                  disabled={isConvertingFollowup}
+                >
+                  <Ionicons name="chatbubble-outline" size={22} color={colors.link} />
+                  <Text style={[styles.convertOptionText, { color: colors.text }]}>Text</Text>
+                </TouchableOpacity>
+              )}
+              {convertEntry?.type !== "call" && (
+                <TouchableOpacity
+                  style={[styles.convertOption, { backgroundColor: colors.surfaceSecondary }]}
+                  onPress={() => handleConvertFollowup("call")}
+                  disabled={isConvertingFollowup}
+                >
+                  <Ionicons name="call-outline" size={22} color={colors.success} />
+                  <Text style={[styles.convertOptionText, { color: colors.text }]}>Call</Text>
+                </TouchableOpacity>
+              )}
+              {convertEntry?.type !== "followed_up" && (
+                <TouchableOpacity
+                  style={[styles.convertOption, { backgroundColor: colors.surfaceSecondary }]}
+                  onPress={() => handleConvertFollowup("followed_up")}
+                  disabled={isConvertingFollowup}
+                >
+                  <Ionicons name="checkmark-circle-outline" size={22} color={colors.success} />
+                  <Text style={[styles.convertOptionText, { color: colors.text }]}>
+                    In-person follow-up
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            {isConvertingFollowup && (
+              <ActivityIndicator size="small" color={primaryColor} style={{ marginTop: 12 }} />
+            )}
+            <TouchableOpacity
+              style={styles.modalCancelButton}
+              onPress={() => !isConvertingFollowup && setConvertEntry(null)}
+            >
+              <Text style={[styles.modalCancelText, { color: colors.textSecondary }]}>Cancel</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {/* Snooze Modal */}
       <Modal
@@ -1664,6 +1808,33 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+  },
+  timelineHeaderActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  convertPreviewLabel: {
+    fontSize: 12,
+    marginBottom: 4,
+  },
+  convertPreviewBody: {
+    fontSize: 13,
+  },
+  convertOptions: {
+    gap: 8,
+  },
+  convertOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+  },
+  convertOptionText: {
+    fontSize: 16,
+    fontWeight: "500",
   },
   timelineType: {
     fontSize: 14,
