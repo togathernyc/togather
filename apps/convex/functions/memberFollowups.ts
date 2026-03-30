@@ -1386,6 +1386,11 @@ export const history = query({
           .first();
         if (callerMembership && (callerMembership.role === "leader" || callerMembership.role === "admin")) {
           canEdit = true;
+        } else if (
+          otherGroup?.communityId &&
+          (await isCommunityAdmin(ctx, otherGroup.communityId, args.currentUserId))
+        ) {
+          canEdit = true;
         }
       }
 
@@ -3174,6 +3179,36 @@ export const updateAttendance = mutation({
     const meeting = await ctx.db.get(args.meetingId);
     if (!meeting || meeting.groupId !== args.groupId) {
       throw new Error("Meeting not found in this group");
+    }
+
+    const group = await ctx.db.get(args.groupId);
+    if (!group) {
+      throw new ConvexError("Group not found");
+    }
+
+    const callerMembership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", args.groupId).eq("userId", userId)
+      )
+      .first();
+    const isGroupLeader =
+      !!callerMembership &&
+      isActiveMembership(callerMembership) &&
+      isLeaderRole(callerMembership.role);
+    const callerIsCommunityAdmin = await isCommunityAdmin(ctx, group.communityId, userId);
+    if (!isGroupLeader && !callerIsCommunityAdmin) {
+      throw new ConvexError("Only group leaders, group admins, or community admins can edit attendance");
+    }
+
+    const targetMembership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", args.groupId).eq("userId", args.targetUserId)
+      )
+      .first();
+    if (!isActiveMembership(targetMembership)) {
+      throw new ConvexError("Member is not active in this group");
     }
 
     // Check for existing attendance record

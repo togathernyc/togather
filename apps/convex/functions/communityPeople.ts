@@ -1174,6 +1174,8 @@ export const history = query({
 
     await requireCommunityMember(ctx, cpRecord.communityId, authUserId);
 
+    const viewerId = args.currentUserId ?? authUserId;
+
     const user = await ctx.db.get(cpRecord.userId);
     if (!user) {
       throw new ConvexError("User not found");
@@ -1283,20 +1285,20 @@ export const history = query({
     for (const { membership, group } of communityMemberships) {
       // Check if current user can edit attendance in this group
       let canEdit = false;
-      if (args.currentUserId) {
-        const callerMembership = await ctx.db
-          .query("groupMembers")
-          .withIndex("by_group_user", (q: any) =>
-            q.eq("groupId", group._id).eq("userId", args.currentUserId!),
-          )
-          .first();
-        if (
-          callerMembership &&
-          (callerMembership.role === "leader" ||
-            callerMembership.role === "admin")
-        ) {
-          canEdit = true;
-        }
+      const callerMembership = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q: any) =>
+          q.eq("groupId", group._id).eq("userId", viewerId),
+        )
+        .first();
+      if (
+        callerMembership &&
+        (callerMembership.role === "leader" ||
+          callerMembership.role === "admin")
+      ) {
+        canEdit = true;
+      } else if (await isCommunityAdmin(ctx, cpRecord.communityId, viewerId)) {
+        canEdit = true;
       }
 
       const attendanceCutoff = Math.max(membership.joinedAt ?? 0, sixtyDaysAgo);
