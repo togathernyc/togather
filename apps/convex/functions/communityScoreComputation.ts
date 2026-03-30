@@ -229,26 +229,8 @@ export const computeCommunityScoresBatch = internalQuery({
             ? Math.floor((currentTime - entry.createdAt) / DAY_MS)
             : Infinity;
 
-        // Consecutive missed meetings — from cross-group data (all groups)
-        const consecutiveMissed =
-          (crossGroupData && typeof crossGroupData === "object")
-            ? (crossGroupData.consecutiveMissed ?? 0)
-            : 0;
-
-        // Get last attended date
+        // lastAttendedAt will be computed from cross-group data below
         let lastAttendedAt: number | undefined;
-        for (const meeting of memberMeetings) {
-          const attendance = await ctx.db
-            .query("meetingAttendances")
-            .withIndex("by_meeting_user", (q) =>
-              q.eq("meetingId", meeting._id).eq("userId", member.userId)
-            )
-            .first();
-          if (attendance?.status === 1) {
-            lastAttendedAt = meeting.scheduledAt;
-            break;
-          }
-        }
 
         // Check snooze state
         let snoozedUntil: number | undefined;
@@ -320,6 +302,17 @@ export const computeCommunityScoresBatch = internalQuery({
             (crossGroupPct / 100) * totalWeeksInWindow,
           );
           meetingWeeksInWindow = totalWeeksInWindow;
+        }
+
+        // Consecutive missed meetings — from cross-group data (all groups)
+        const consecutiveMissed =
+          (crossGroupData && typeof crossGroupData === "object")
+            ? (crossGroupData.consecutiveMissed ?? 0)
+            : 0;
+
+        // Last attended date — most recent attended week start from cross-group data
+        if (crossGroupData && typeof crossGroupData === "object" && crossGroupData.attendedWeekStarts.length > 0) {
+          lastAttendedAt = Math.max(...crossGroupData.attendedWeekStarts);
         }
 
         // PCO serving count
