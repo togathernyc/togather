@@ -18,6 +18,7 @@
  *   1. missed_weeks = weeks_with_meetings − attended_weeks  (join date respected)
  *   2. attendance_pct = max(0, 100 − missed_weeks × 15)
  *   3. attendance_portion = 70 × (attendance_pct / 100)       → 0-70 points
+ *      (If no meetings exist in window → score is 0; nothing to evaluate)
  *   4. remaining = 100 − attendance_portion                   → 30-100 points
  *   5. Follow-up fills the remaining space based on channel + recency:
  *        In-person: 100% of remaining, decays over ~100 days
@@ -213,11 +214,12 @@ export function calculateSystemScore(
     case "sys_togather": {
       // ── Attendance portion: 0-70 points ──
       // Deduct 15 points per missed week (only weeks with meetings count).
-      // If no meetings existed in the window, full attendance credit.
+      // If no meetings existed in the window, score starts at 0 — we have
+      // no data to evaluate, so the member needs outreach.
       const meetingWeeks = rawValues.meeting_weeks_in_window;
       const attendedWeeks = rawValues.attended_weeks_in_window;
-      const missedWeeks =
-        meetingWeeks <= 0 ? 0 : Math.max(0, meetingWeeks - attendedWeeks);
+      if (meetingWeeks <= 0) return 0;
+      const missedWeeks = Math.max(0, meetingWeeks - attendedWeeks);
       const attendancePct = Math.max(0, 100 - missedWeeks * 15);
       const attendancePortion = Math.round(70 * (attendancePct / 100));
 
