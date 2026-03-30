@@ -64,6 +64,7 @@ import { FollowupQuickAddPanel } from "./FollowupQuickAddPanel";
 import { FollowupMapView, FOLLOWUP_MAP_VIEW_ID } from "./FollowupMapView";
 import { useTheme } from "@hooks/useTheme";
 import type { ThemeColors } from "@/theme/colors";
+import { ScoreBreakdownModal, type ScoreBreakdownData } from "./ScoreBreakdownModal";
 
 type SortDirection = "asc" | "desc";
 
@@ -151,6 +152,7 @@ const STATUS_OPTIONS: Array<{ value?: string; label: string }> = [
 const SERVER_SORTABLE_FIELDS = new Set([
   "score1",
   "score2",
+  "score3",
   "firstName",
   "lastName",
   "addedAt",
@@ -203,21 +205,6 @@ function formatDate(timestamp?: number, emptyText = "Never"): string {
   });
 }
 
-function compareSortValues(
-  a: string | number,
-  b: string | number,
-  direction: SortDirection,
-): number {
-  const multiplier = direction === "asc" ? 1 : -1;
-  if (typeof a === "number" && typeof b === "number") {
-    return (a - b) * multiplier;
-  }
-  return (
-    String(a).localeCompare(String(b), undefined, { sensitivity: "base" }) *
-    multiplier
-  );
-}
-
 export function FollowupMobileGrid({
   groupId,
   enforcedAssigneeUserId,
@@ -235,7 +222,7 @@ export function FollowupMobileGrid({
   const currentUserId = user?.id as Id<"users"> | undefined;
   const { primaryColor } = useCommunityTheme();
 
-  const [sortField, setSortField] = useState("score1");
+  const [sortField, setSortField] = useState("score3");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearchFocused, setIsSearchFocused] = useState(false);
@@ -256,6 +243,7 @@ export function FollowupMobileGrid({
   const [showRemoveModal, setShowRemoveModal] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
   const [showQuickAddModal, setShowQuickAddModal] = useState(false);
+  const [scoreBreakdownSheet, setScoreBreakdownSheet] = useState<ScoreBreakdownData | null>(null);
 
   // PeopleViewBar state (system_scores feature flag)
   const [activeViewId, setActiveViewId] = useState<string | null>(null);
@@ -390,7 +378,7 @@ export function FollowupMobileGrid({
     // System scores always have score1-score3; validate against those.
     const validSlots = new Set(SYSTEM_SCORE_COLUMNS.map((sc) => sc.slot));
     if (!validSlots.has(sortField as "score1" | "score2" | "score3")) {
-      setSortField("score1");
+      setSortField("score3");
     }
   }, [isConfigLoaded, scoreConfig, sortField]);
 
@@ -464,11 +452,8 @@ export function FollowupMobileGrid({
     return filters;
   }, [parsedQuery, effectiveAssigneeFilter, enforcedAssigneeUserId]);
 
-  const isClientSideSort = !SERVER_SORTABLE_FIELDS.has(sortField);
-  const serverSortBy = SERVER_SORTABLE_FIELDS.has(sortField)
-    ? sortField
-    : "score1";
-  const serverSortDirection = isClientSideSort ? "desc" : sortDirection;
+  const serverSortBy = sortField;
+  const serverSortDirection = sortDirection;
 
   const {
     results: perGroupRawMembersRaw,
@@ -547,77 +532,18 @@ export function FollowupMobileGrid({
     [groupId]
   );
 
-  const getSortFieldValue = useCallback(
-    (member: FollowupMember, field: string): string | number => {
-      if (field.startsWith("score")) {
-        // System scores: direct slot access (score1, score2, score3)
-        const slot = field as "score1" | "score2" | "score3";
-        return getSystemScoreValue(member, slot) ?? 0;
-      }
-
-      switch (field) {
-        case "firstName":
-          return member.firstName ?? "";
-        case "lastName":
-          return member.lastName ?? "";
-        case "addedAt":
-          return member.addedAt ?? 0;
-        case "status":
-          return member.status ?? "";
-        case "assignee": {
-          const assigneeIds = getAssigneeIds(member);
-          if (assigneeIds.length === 0) return "";
-          const leader = leaderMap.get(assigneeIds[0]);
-          return leader ? `${leader.firstName} ${leader.lastName}`.trim() : "";
-        }
-        case "lastAttendedAt":
-          return member.lastAttendedAt ?? 0;
-        case "lastFollowupAt":
-          return member.lastFollowupAt ?? 0;
-        case "lastActiveAt":
-          return member.lastActiveAt ?? 0;
-        default:
-          if (field.startsWith("customBool")) {
-            return (member as Record<string, unknown>)[field] ? 1 : 0;
-          }
-          return (
-            ((member as Record<string, unknown>)[field] as
-              | string
-              | number
-              | undefined
-              | null) ?? ""
-          );
-      }
-    },
-    [leaderMap, getAssigneeIds],
-  );
-
   const members = useMemo(() => {
     const source = (
       hasTextSearch ? (searchResults ?? []) : (rawMembers ?? [])
     ) as FollowupMember[];
     if (source.length === 0) return [];
     const filtered = applyParsedFollowupFilters(source, parsedQuery);
-    if (!hasTextSearch && !isClientSideSort) return filtered;
-
-    const sorted = [...filtered];
-    sorted.sort((a, b) =>
-      compareSortValues(
-        getSortFieldValue(a, sortField),
-        getSortFieldValue(b, sortField),
-        sortDirection,
-      ),
-    );
-    return sorted;
+    return filtered;
   }, [
     hasTextSearch,
     searchResults,
     rawMembers,
-    isClientSideSort,
     parsedQuery,
-    sortField,
-    sortDirection,
-    getSortFieldValue,
   ]);
 
   const isSearchLoading = hasTextSearch && searchResults === undefined;
@@ -1459,7 +1385,20 @@ export function FollowupMobileGrid({
     if (column.kind === "score" && typeof value === "number") {
       const scoreStyles = getScoreStyles(value, colors);
       return (
-        <View
+        <TouchableOpacity
+          activeOpacity={0.7}
+          onPress={() => {
+            setScoreBreakdownSheet({
+              memberId: member.groupMemberId,
+              memberName: `${member.firstName} ${member.lastName}`.trim(),
+              scores: SYSTEM_SCORE_COLUMNS.map((sc) => ({
+                id: sc.id,
+                name: sc.name,
+                slot: sc.slot,
+                value: getSystemScoreValue(member, sc.slot) ?? 0,
+              })),
+            });
+          }}
           style={[
             styles.scorePill,
             {
@@ -1471,7 +1410,7 @@ export function FollowupMobileGrid({
           <Text style={[styles.scorePillText, { color: scoreStyles.text }]}>
             {value}%
           </Text>
-        </View>
+        </TouchableOpacity>
       );
     }
 
@@ -1948,8 +1887,8 @@ export function FollowupMobileGrid({
               return;
             }
             setActiveViewId(null);
-            setSortField("score1");
-            setSortDirection("desc");
+            setSortField("score3");
+            setSortDirection("asc");
             setSearchQuery("");
           }}
           onDeleteView={(viewId, viewName, isShared) => {
@@ -2416,6 +2355,8 @@ export function FollowupMobileGrid({
         confirmText="Delete"
         destructive
       />
+
+      <ScoreBreakdownModal data={scoreBreakdownSheet} onClose={() => setScoreBreakdownSheet(null)} />
     </View>
   );
 }

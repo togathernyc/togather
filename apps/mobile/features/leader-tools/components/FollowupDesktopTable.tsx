@@ -63,6 +63,7 @@ import {
 } from "./followupGridHelpers";
 import { useTheme } from "@hooks/useTheme";
 import type { ThemeColors } from "@/theme/colors";
+import { ScoreBreakdownModal, type ScoreBreakdownData } from "./ScoreBreakdownModal";
 
 // ============================================================================
 // Types
@@ -124,6 +125,7 @@ type FollowupMember = {
 const SERVER_SORT_KEYS: Record<string, string> = {
   score1: "score1",
   score2: "score2",
+  score3: "score3",
   firstName: "firstName",
   lastName: "lastName",
   addedAt: "addedAt",
@@ -247,7 +249,7 @@ export function FollowupDesktopTable({
   const { primaryColor } = useCommunityTheme();
 
   // Sort state
-  const [sortField, setSortField] = useState<string>("score1");
+  const [sortField, setSortField] = useState<string>("score3");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
 
   // Search state
@@ -259,6 +261,9 @@ export function FollowupDesktopTable({
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
   const [scrollToNotes, setScrollToNotes] = useState(false);
   const [scrollToTasks, setScrollToTasks] = useState(false);
+
+  // Score breakdown modal
+  const [scoreBreakdownSheet, setScoreBreakdownSheet] = useState<ScoreBreakdownData | null>(null);
 
   // Inline editing
   const [editingInlineField, setEditingInlineField] = useState<string | null>(
@@ -744,12 +749,9 @@ export function FollowupDesktopTable({
   const getColWidth = (col: ColumnDef) =>
     colWidths[col.key] ?? col.defaultWidth;
 
-  // Server sort key — score3+ have no server index, use client-side sorting
-  const isClientSideSort = !(sortField in SERVER_SORT_KEYS);
-
   const serverSortBy = useMemo(() => {
     if (sortField in SERVER_SORT_KEYS) return SERVER_SORT_KEYS[sortField];
-    return "score1";
+    return sortField;
   }, [sortField]);
 
   // Build filter args for list query (structured filters only, no text search)
@@ -791,11 +793,7 @@ export function FollowupDesktopTable({
           sortBy:
             activeViewId === FOLLOWUP_MAP_VIEW_ID ? "zipCode" : serverSortBy,
           sortDirection:
-            activeViewId === FOLLOWUP_MAP_VIEW_ID
-              ? "desc"
-              : isClientSideSort
-                ? "desc"
-                : sortDirection,
+            activeViewId === FOLLOWUP_MAP_VIEW_ID ? "desc" : sortDirection,
           ...listFilterArgs,
         }
       : "skip",
@@ -859,38 +857,11 @@ export function FollowupDesktopTable({
     );
     const filtered = applyParsedFollowupFilters(adapted, parsedQuery);
 
-    if (!isClientSideSort || filtered.length === 0) return filtered;
-
-    const sorted = [...filtered];
-
-    if (sortField.startsWith("score")) {
-      const slot = sortField as "score1" | "score2" | "score3";
-      sorted.sort((a, b) => {
-        const aVal = getSystemScoreValue(a, slot) ?? 0;
-        const bVal = getSystemScoreValue(b, slot) ?? 0;
-        return sortDirection === "asc" ? aVal - bVal : bVal - aVal;
-      });
-    } else {
-      // Client-side sort by other fields (cross-group mode)
-      const multiplier = sortDirection === "asc" ? 1 : -1;
-      sorted.sort((a, b) => {
-        const aVal = (a as any)[sortField] ?? "";
-        const bVal = (b as any)[sortField] ?? "";
-        if (typeof aVal === "number" && typeof bVal === "number") {
-          return (aVal - bVal) * multiplier;
-        }
-        return String(aVal).localeCompare(String(bVal)) * multiplier;
-      });
-    }
-
-    return sorted;
+    return filtered;
   }, [
     hasTextSearch,
     searchResults,
     rawMembers,
-    isClientSideSort,
-    sortField,
-    sortDirection,
     parsedQuery,
   ]);
 
@@ -1825,13 +1796,27 @@ export function FollowupDesktopTable({
           const slot = col.key as "score1" | "score2" | "score3";
           const value = getSystemScoreValue(item, slot) ?? 0;
           return (
-            <View
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPress={(e: any) => {
+                e.stopPropagation?.();
+                setScoreBreakdownSheet({
+                  memberId: item._id ?? item.groupMemberId ?? "",
+                  memberName: `${item.firstName} ${item.lastName}`.trim(),
+                  scores: SYSTEM_SCORE_COLUMNS.map((sc) => ({
+                    id: sc.id,
+                    name: sc.name,
+                    slot: sc.slot,
+                    value: getSystemScoreValue(item, sc.slot) ?? 0,
+                  })),
+                });
+              }}
               style={[s.scoreCell, { backgroundColor: getScoreBgColor(value, colors) }]}
             >
               <Text style={[s.scoreCellText, { color: getScoreColor(value, colors) }]}>
                 {value}%
               </Text>
-            </View>
+            </TouchableOpacity>
           );
         }
 
@@ -2284,8 +2269,8 @@ export function FollowupDesktopTable({
             setActiveViewId(null);
             setLocalColumnOrder(null);
             setLocalHiddenColumns(null);
-            setSortField("score1");
-            setSortDirection("desc");
+            setSortField("score3");
+            setSortDirection("asc");
             setSearchQuery("");
           }}
           onDeleteView={(viewId, viewName, isShared) => {
@@ -3169,6 +3154,8 @@ export function FollowupDesktopTable({
         confirmText="Delete"
         destructive
       />
+
+      <ScoreBreakdownModal data={scoreBreakdownSheet} onClose={() => setScoreBreakdownSheet(null)} />
     </View>
   );
 }

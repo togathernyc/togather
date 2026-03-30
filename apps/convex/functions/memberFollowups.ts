@@ -585,7 +585,7 @@ export const internalCrossGroupAttendance = internalQuery({
     const sixtyDaysAgo = currentTime - 60 * 24 * 60 * 60 * 1000;
     const results: Record<
       string,
-      { pct: number; attendedWeekStarts: number[] }
+      { pct: number; attendedWeekStarts: number[]; meetingWeekStarts: number[] }
     > = {};
 
     for (const userId of args.userIds) {
@@ -598,6 +598,7 @@ export const internalCrossGroupAttendance = internalQuery({
       let allGroupsTotal = 0;
       let allGroupsAttended = 0;
       const attendedWeekSet = new Set<number>();
+      const meetingWeekSet = new Set<number>();
 
       for (const membership of allMemberships) {
         // Past non-cancelled meetings in window (see "Meeting Status Quirks" at top of file)
@@ -626,6 +627,8 @@ export const internalCrossGroupAttendance = internalQuery({
 
         allGroupsTotal += meetings.length;
         for (let i = 0; i < meetings.length; i++) {
+          // Track every week that had a meeting (for connection score)
+          meetingWeekSet.add(getWeekStart(meetings[i].scheduledAt));
           if (attendances[i]?.status === 1) {
             allGroupsAttended++;
             // Track the ISO week start (Monday) for this attended meeting
@@ -640,6 +643,7 @@ export const internalCrossGroupAttendance = internalQuery({
             ? Math.round((allGroupsAttended / allGroupsTotal) * 100)
             : 0,
         attendedWeekStarts: Array.from(attendedWeekSet),
+        meetingWeekStarts: Array.from(meetingWeekSet),
       };
     }
 

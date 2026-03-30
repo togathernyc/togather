@@ -266,20 +266,31 @@ export const list = query({
       // Derive the actual document field from the index name (by_group_<field> → <field>)
       // to handle cases like sortBy="assignee" → field="assigneeSortKey".
       const sortKey = indexName.replace("by_group_", "");
+      const isScoreSort = sortKey.startsWith("score");
       const dir = direction === "desc" ? -1 : 1;
       filtered.sort((a: any, b: any) => {
         const av = a[sortKey];
         const bv = b[sortKey];
         // Match Convex index ordering: undefined sorts before all values.
         // Ascending: undefined first. Descending: undefined last.
-        if (av == null && bv == null) return 0;
+        if (av == null && bv == null) {
+          // For score sorts, break ties by addedAt (same direction as primary)
+          if (isScoreSort) return ((a.addedAt ?? 0) - (b.addedAt ?? 0)) * dir;
+          return 0;
+        }
         if (av == null) return -1 * dir;
         if (bv == null) return 1 * dir;
-        // Numeric comparison for numbers, string comparison otherwise
+        let cmp: number;
         if (typeof av === "number" && typeof bv === "number") {
-          return (av - bv) * dir;
+          cmp = (av - bv) * dir;
+        } else {
+          cmp = String(av).localeCompare(String(bv)) * dir;
         }
-        return String(av).localeCompare(String(bv)) * dir;
+        // For score sorts, break ties by addedAt (matches composite index behavior)
+        if (cmp === 0 && isScoreSort) {
+          return ((a.addedAt ?? 0) - (b.addedAt ?? 0)) * dir;
+        }
+        return cmp;
       });
 
       return {
@@ -1334,19 +1345,45 @@ export const history = query({
 
     // Build score breakdown from rawValues on the communityPeople record
     const rawValues = cpRecord.rawValues ?? {};
-    const scoreBreakdown = SYSTEM_SCORES.map((scoreDef: any) => ({
+    const scoreBreakdown = SYSTEM_SCORES.map((scoreDef) => ({
       id: scoreDef.id,
       name: scoreDef.name,
+      description: scoreDef.description,
       value: (cpRecord as any)[scoreDef.slot] ?? 0,
       variables:
-        scoreDef.variables?.map((v: any) => ({
-          id: v.variableId,
-          label: v.label ?? v.variableId,
-          normHint: v.normHint ?? "",
-          rawValue: (rawValues as any)[v.variableId] ?? 0,
-          normalizedValue: 0,
-          weight: v.weight ?? 1,
-        })) ?? [],
+        scoreDef.variables?.map((v) => {
+          const raw = (rawValues as any)[v.variableId] ?? 0;
+          // Compute a 0-100 display value for the bar chart
+          let normalizedValue = 0;
+          if (v.variableId === "pco_services_past_2mo") {
+            normalizedValue = Math.min(100, raw * 20);
+          } else if (v.variableId === "days_since_last_in_person" || v.variableId === "days_since_last_call" || v.variableId === "days_since_last_text") {
+            // Match the actual scoring formula's decay multiplier:
+            // when attendedWeeks === 0, decay windows are halved
+            const attendedWeeks = (rawValues as any).attended_weeks_in_window ?? 0;
+            const decayMultiplier = attendedWeeks === 0 ? 0.5 : 1;
+            const baseWindow = v.variableId === "days_since_last_in_person" ? 100
+              : v.variableId === "days_since_last_call" ? 85
+              : 70;
+            const maxContrib = v.variableId === "days_since_last_in_person" ? 1.0
+              : v.variableId === "days_since_last_call" ? 0.75
+              : 0.5;
+            normalizedValue = raw < 1000
+              ? Math.max(0, Math.min(100, 100 * maxContrib * (1 - raw / (baseWindow * decayMultiplier))))
+              : 0;
+          } else if (v.variableId === "attended_weeks_in_window" || v.variableId === "total_weeks_in_window" || v.variableId === "meeting_weeks_in_window") {
+            // For week counts, normalize relative to max window (approx 9 weeks in 60 days)
+            normalizedValue = Math.min(100, Math.round((raw / 9) * 100));
+          }
+          return {
+            id: v.variableId,
+            label: v.label,
+            normHint: v.normHint,
+            rawValue: raw,
+            normalizedValue,
+            weight: v.weight,
+          };
+        }) ?? [],
     }));
 
     // Serving history from announcement group's PCO data

@@ -302,13 +302,14 @@ export const computeCommunityScoresBatch = internalQuery({
         const crossGroupData = args.crossGroupAttendanceMap?.[
           member.userId.toString()
         ] as
-          | { pct: number; attendedWeekStarts: number[] }
+          | { pct: number; attendedWeekStarts: number[]; meetingWeekStarts?: number[] }
           | number // backwards-compat with legacy callers
           | undefined;
 
         let crossGroupPct: number;
         let attendedWeeksInWindow: number;
         let totalWeeksInWindow: number;
+        let meetingWeeksInWindow: number;
 
         // Count distinct ISO weeks in the join-date-adjusted window
         const WEEK_MS = 7 * DAY_MS;
@@ -330,6 +331,10 @@ export const computeCommunityScoresBatch = internalQuery({
           attendedWeeksInWindow = crossGroupData.attendedWeekStarts.filter(
             (ws) => ws >= firstWeek,
           ).length;
+          // Weeks that actually had meetings (within member's window)
+          meetingWeeksInWindow = crossGroupData.meetingWeekStarts
+            ? crossGroupData.meetingWeekStarts.filter((ws) => ws >= firstWeek).length
+            : totalWeeksInWindow; // fallback: assume all weeks had meetings
         } else {
           // Legacy fallback: plain number percentage
           crossGroupPct = (crossGroupData as number) ?? 0;
@@ -340,6 +345,7 @@ export const computeCommunityScoresBatch = internalQuery({
           attendedWeeksInWindow = Math.round(
             (crossGroupPct / 100) * totalWeeksInWindow,
           );
+          meetingWeeksInWindow = totalWeeksInWindow;
         }
 
         // PCO serving count
@@ -351,6 +357,7 @@ export const computeCommunityScoresBatch = internalQuery({
           consecutiveMissed,
           attendedWeeksInWindow,
           totalWeeksInWindow,
+          meetingWeeksInWindow,
           daysSinceLastFollowup: daysSince(lastFollowup),
           daysSinceLastInPerson: daysSince(lastInPerson),
           daysSinceLastCall: daysSince(lastCall),
