@@ -1780,6 +1780,7 @@ export const upsertFromSubmission = internalMutation({
       lastActiveAt: (scoreDoc as any).lastActiveAt,
       lastAttendedAt: (scoreDoc as any).lastAttendedAt,
       addedAt: (scoreDoc as any).addedAt ?? groupMember.joinedAt,
+      addedAtInv: Number.MAX_SAFE_INTEGER - ((scoreDoc as any).addedAt ?? groupMember.joinedAt),
       latestNote: (scoreDoc as any).latestNote,
       latestNoteAt: (scoreDoc as any).latestNoteAt,
       alerts: (scoreDoc as any).alerts ?? [],
