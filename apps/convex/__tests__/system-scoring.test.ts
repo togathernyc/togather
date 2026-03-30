@@ -7,10 +7,11 @@
  *   - sys_togather (Connection): Attendance base + follow-up fills remaining
  *
  * The connection score is the primary triage metric. Its formula:
- *   1. attendance_pct = min(100, (attended_weeks / meeting_weeks) × 100)
+ *   1. attendance_pct = max(0, 100 − consecutive_missed × 15)
  *      attendance_portion = round(70 × attendance_pct / 100)
  *   2. remaining = 100 − attendance_portion
  *   3. follow-up fills remaining: in-person 100%, call 75%, text 50% (decaying)
+ *   Note: decayMultiplier still uses attended_weeks === 0 ? 0.5 : 1
  */
 
 import { describe, expect, test } from "vitest";
@@ -121,40 +122,40 @@ describe("sys_togather — attendance portion", () => {
     ).toBe(70);
   });
 
-  test("1 missed week out of 6 = 58 (attendance_pct = 83.33)", () => {
-    // attendance_pct = (5/6)*100 = 83.33 → portion = round(70 * 0.8333) = 58
+  test("1 consecutive miss = 60 (attendance_pct = 85)", () => {
+    // attendance_pct = max(0, 100 - 1*15) = 85 → portion = round(70 * 0.85) = 60
     expect(
       calculateSystemScore(
         "sys_togather",
-        makeRaw({ meeting_weeks_in_window: 6, attended_weeks_in_window: 5 }),
+        makeRaw({ meeting_weeks_in_window: 6, attended_weeks_in_window: 5, consecutive_missed: 1 }),
       ),
-    ).toBe(58);
+    ).toBe(60);
   });
 
-  test("4 attended out of 8 = 35 (attendance_pct = 50)", () => {
-    // attendance_pct = (4/8)*100 = 50 → portion = round(70 * 0.50) = 35
+  test("4 consecutive misses = 28 (attendance_pct = 40)", () => {
+    // attendance_pct = max(0, 100 - 4*15) = 40 → portion = round(70 * 0.40) = 28
     expect(
       calculateSystemScore(
         "sys_togather",
-        makeRaw({ meeting_weeks_in_window: 8, attended_weeks_in_window: 4 }),
+        makeRaw({ meeting_weeks_in_window: 8, attended_weeks_in_window: 4, consecutive_missed: 4 }),
       ),
-    ).toBe(35);
+    ).toBe(28);
   });
 
-  test("1 attended out of 8 = 9 (attendance_pct = 12.5)", () => {
-    // attendance_pct = (1/8)*100 = 12.5 → portion = round(70 * 0.125) = 9
+  test("7 consecutive misses = 0 (attendance_pct clamped to 0)", () => {
+    // attendance_pct = max(0, 100 - 7*15) = max(0, -5) = 0 → portion = 0
     expect(
       calculateSystemScore(
         "sys_togather",
-        makeRaw({ meeting_weeks_in_window: 8, attended_weeks_in_window: 1 }),
+        makeRaw({ meeting_weeks_in_window: 8, attended_weeks_in_window: 1, consecutive_missed: 7 }),
       ),
-    ).toBe(9);
+    ).toBe(0);
 
-    // 0 attended = 0
+    // 8 consecutive misses (all missed) = also 0
     expect(
       calculateSystemScore(
         "sys_togather",
-        makeRaw({ meeting_weeks_in_window: 8, attended_weeks_in_window: 0 }),
+        makeRaw({ meeting_weeks_in_window: 8, attended_weeks_in_window: 0, consecutive_missed: 8 }),
       ),
     ).toBe(0);
   });
@@ -168,14 +169,14 @@ describe("sys_togather — attendance portion", () => {
     ).toBe(70);
   });
 
-  test("member who joined recently, 2 meeting weeks, attended 1 = 35", () => {
-    // attendance_pct = (1/2)*100 = 50 → portion = round(70 * 0.50) = 35
+  test("member who joined recently, 2 meeting weeks, 1 consecutive miss = 60", () => {
+    // attendance_pct = max(0, 100 - 1*15) = 85 → portion = round(70 * 0.85) = 60
     expect(
       calculateSystemScore(
         "sys_togather",
-        makeRaw({ meeting_weeks_in_window: 2, attended_weeks_in_window: 1 }),
+        makeRaw({ meeting_weeks_in_window: 2, attended_weeks_in_window: 1, consecutive_missed: 1 }),
       ),
-    ).toBe(35);
+    ).toBe(60);
   });
 });
 
@@ -226,13 +227,15 @@ describe("sys_togather — follow-up fills remaining", () => {
   });
 
   test("no attendance + in-person today = 100 (follow-up fills all 100)", () => {
-    // attendance portion = 0, remaining = 100, in-person fill = 1.0
+    // consecutive_missed: 8 → attendancePct = 0, portion = 0, remaining = 100
+    // in-person fill = 1.0, followup = 100. Total = 100
     expect(
       calculateSystemScore(
         "sys_togather",
         makeRaw({
           meeting_weeks_in_window: 8,
           attended_weeks_in_window: 0,
+          consecutive_missed: 8,
           days_since_last_in_person: 0,
         }),
       ),
@@ -240,12 +243,15 @@ describe("sys_togather — follow-up fills remaining", () => {
   });
 
   test("no attendance + call today = 75 (75% of 100 remaining)", () => {
+    // consecutive_missed: 8 → attendancePct = 0, portion = 0, remaining = 100
+    // call fill = 0.75, followup = round(100 * 0.75) = 75
     expect(
       calculateSystemScore(
         "sys_togather",
         makeRaw({
           meeting_weeks_in_window: 8,
           attended_weeks_in_window: 0,
+          consecutive_missed: 8,
           days_since_last_call: 0,
         }),
       ),
@@ -253,58 +259,67 @@ describe("sys_togather — follow-up fills remaining", () => {
   });
 
   test("no attendance + text today = 50 (50% of 100 remaining)", () => {
+    // consecutive_missed: 8 → attendancePct = 0, portion = 0, remaining = 100
+    // text fill = 0.50, followup = round(100 * 0.50) = 50
     expect(
       calculateSystemScore(
         "sys_togather",
         makeRaw({
           meeting_weeks_in_window: 8,
           attended_weeks_in_window: 0,
+          consecutive_missed: 8,
           days_since_last_text: 0,
         }),
       ),
     ).toBe(50);
   });
 
-  test("4 attended of 8 + in-person today = 100", () => {
-    // attendance portion = 35, remaining = 65, fill = 1.0 → 65
+  test("4 consecutive misses + in-person today = 100", () => {
+    // consecutive_missed: 4 → attendancePct = 40, portion = 28, remaining = 72
+    // in-person fill = 1.0, followup = 72. Total = 28 + 72 = 100
     expect(
       calculateSystemScore(
         "sys_togather",
         makeRaw({
           meeting_weeks_in_window: 8,
           attended_weeks_in_window: 4,
+          consecutive_missed: 4,
           days_since_last_in_person: 0,
         }),
       ),
     ).toBe(100);
   });
 
-  test("4 attended of 8 + call today = 84", () => {
-    // attendance = 35, remaining = 65, call fill = 0.75 → round(65 * 0.75) = 49
+  test("4 consecutive misses + call today = 82", () => {
+    // consecutive_missed: 4 → attendancePct = 40, portion = round(70*0.40) = 28, remaining = 72
+    // call fill = 0.75, followup = round(72 * 0.75) = 54. Total = 28 + 54 = 82
     expect(
       calculateSystemScore(
         "sys_togather",
         makeRaw({
           meeting_weeks_in_window: 8,
           attended_weeks_in_window: 4,
+          consecutive_missed: 4,
           days_since_last_call: 0,
         }),
       ),
-    ).toBe(84);
+    ).toBe(82);
   });
 
-  test("4 attended of 8 + text today = 68", () => {
-    // attendance = 35, remaining = 65, text fill = 0.50 → round(65 * 0.50) = 33
+  test("4 consecutive misses + text today = 64", () => {
+    // consecutive_missed: 4 → attendancePct = 40, portion = round(70*0.40) = 28, remaining = 72
+    // text fill = 0.50, followup = round(72 * 0.50) = 36. Total = 28 + 36 = 64
     expect(
       calculateSystemScore(
         "sys_togather",
         makeRaw({
           meeting_weeks_in_window: 8,
           attended_weeks_in_window: 4,
+          consecutive_missed: 4,
           days_since_last_text: 0,
         }),
       ),
-    ).toBe(68);
+    ).toBe(64);
   });
 });
 
@@ -314,15 +329,17 @@ describe("sys_togather — follow-up fills remaining", () => {
 
 describe("sys_togather — follow-up decay", () => {
   test("in-person 25 days ago with no attendance decays to 50% (2× faster decay)", () => {
+    // consecutive_missed: 8 → attendancePct = 0, portion = 0, remaining = 100
     // No attendance → decay window halved: 100 → 50 days
     // fill = 1.0 * (1 - 25/50) = 0.50
-    // remaining = 100, followup = 100 * 0.50 = 50
+    // remaining = 100, followup = round(100 * 0.50) = 50
     expect(
       calculateSystemScore(
         "sys_togather",
         makeRaw({
           meeting_weeks_in_window: 8,
           attended_weeks_in_window: 0,
+          consecutive_missed: 8,
           days_since_last_in_person: 25,
         }),
       ),
@@ -330,6 +347,7 @@ describe("sys_togather — follow-up decay", () => {
   });
 
   test("in-person 50 days ago with no attendance fully decayed (2× faster)", () => {
+    // consecutive_missed: 8 → attendancePct = 0, portion = 0, remaining = 100
     // No attendance → decay window halved: 100 → 50 days
     // fill = 1.0 * (1 - 50/50) = 0
     expect(
@@ -338,6 +356,7 @@ describe("sys_togather — follow-up decay", () => {
         makeRaw({
           meeting_weeks_in_window: 8,
           attended_weeks_in_window: 0,
+          consecutive_missed: 8,
           days_since_last_in_person: 50,
         }),
       ),
@@ -361,32 +380,37 @@ describe("sys_togather — follow-up decay", () => {
     ).toBe(85);
   });
 
-  test("call 42 days ago with partial attendance", () => {
-    // attendance: 6/8 → pct = 75, portion = round(70*0.75) = 53, remaining = 47
-    // Has attendance → normal decay: call fill = 0.75 * (1 - 42/85) ≈ 0.75 * 0.506 ≈ 0.379
-    // followup = round(47 * 0.379) = round(17.83) = 18
+  test("call 42 days ago with 2 consecutive misses", () => {
+    // consecutive_missed: 2 → attendancePct = max(0, 100-30) = 70
+    // portion = round(70*0.70) = 49, remaining = 51
+    // Has attendance → normal decay: call fill = 0.75 * (1 - 42/85) ≈ 0.75 * 0.5059 ≈ 0.3794
+    // followup = round(51 * 0.3794) = round(19.35) = 19
+    // Total = 49 + 19 = 68
     expect(
       calculateSystemScore(
         "sys_togather",
         makeRaw({
           meeting_weeks_in_window: 8,
           attended_weeks_in_window: 6,
+          consecutive_missed: 2,
           days_since_last_call: 42,
         }),
       ),
-    ).toBe(71);
+    ).toBe(68);
   });
 
-  test("text 17 days ago, no attendance = 25 (2× faster decay)", () => {
+  test("text 17 days ago, no attendance = 26 (2× faster decay)", () => {
+    // consecutive_missed: 8 → attendancePct = 0, portion = 0, remaining = 100
     // No attendance → text decay window halved: 70 → 35 days
     // fill = 0.5 * (1 - 17/35) ≈ 0.5 * 0.514 ≈ 0.257
-    // remaining = 100, followup = round(100 * 0.257) = 26
+    // followup = round(100 * 0.257) = 26
     expect(
       calculateSystemScore(
         "sys_togather",
         makeRaw({
           meeting_weeks_in_window: 8,
           attended_weeks_in_window: 0,
+          consecutive_missed: 8,
           days_since_last_text: 17,
         }),
       ),
@@ -394,6 +418,7 @@ describe("sys_togather — follow-up decay", () => {
   });
 
   test("text 35 days ago, no attendance fully decayed (2× faster)", () => {
+    // consecutive_missed: 8 → attendancePct = 0, portion = 0, remaining = 100
     // No attendance → text decay window halved: 70 → 35 days
     // fill = 0.5 * (1 - 35/35) = 0
     expect(
@@ -402,6 +427,7 @@ describe("sys_togather — follow-up decay", () => {
         makeRaw({
           meeting_weeks_in_window: 8,
           attended_weeks_in_window: 0,
+          consecutive_missed: 8,
           days_since_last_text: 35,
         }),
       ),
@@ -409,6 +435,7 @@ describe("sys_togather — follow-up decay", () => {
   });
 
   test("call 42.5 days ago, no attendance fully decayed (2× faster)", () => {
+    // consecutive_missed: 8 → attendancePct = 0, portion = 0, remaining = 100
     // No attendance → call decay window halved: 85 → 42.5 days
     // fill = 0.75 * (1 - 42.5/42.5) = 0
     expect(
@@ -417,6 +444,7 @@ describe("sys_togather — follow-up decay", () => {
         makeRaw({
           meeting_weeks_in_window: 8,
           attended_weeks_in_window: 0,
+          consecutive_missed: 8,
           days_since_last_call: 42.5,
         }),
       ),
@@ -436,6 +464,7 @@ describe("sys_togather — best channel selection", () => {
       makeRaw({
         meeting_weeks_in_window: 8,
         attended_weeks_in_window: 4,
+        consecutive_missed: 4,
         days_since_last_in_person: 0,
         days_since_last_call: 0,
       }),
@@ -445,6 +474,7 @@ describe("sys_togather — best channel selection", () => {
       makeRaw({
         meeting_weeks_in_window: 8,
         attended_weeks_in_window: 4,
+        consecutive_missed: 4,
         days_since_last_call: 0,
       }),
     );
@@ -452,34 +482,39 @@ describe("sys_togather — best channel selection", () => {
   });
 
   test("stale in-person loses to recent call", () => {
+    // consecutive_missed: 4 → attendancePct = 40, portion = 28, remaining = 72
     // in-person 90 days ago: fill = 1.0 * (1 - 90/100) = 0.10
-    // call today: fill = 0.75
+    // call today: fill = 0.75 → call wins
+    // call wins: 28 + round(72 * 0.75) = 28 + 54 = 82
     const result = calculateSystemScore(
       "sys_togather",
       makeRaw({
         meeting_weeks_in_window: 8,
         attended_weeks_in_window: 4,
+        consecutive_missed: 4,
         days_since_last_in_person: 90,
         days_since_last_call: 0,
       }),
     );
-    // call wins: 35 + round(65 * 0.75) = 35 + 49 = 84
-    expect(result).toBe(84);
+    expect(result).toBe(82);
   });
 
   test("stale call loses to recent text", () => {
-    // call 80 days ago: fill = 0.75 * (1 - 80/85) ≈ 0.044
-    // text today: fill = 0.50
+    // consecutive_missed: 8 → attendancePct = 0, portion = 0, remaining = 100
+    // decayMultiplier = 0.5 (no attendance)
+    // call 80 days ago: fill = 0.75 * max(0, 1 - 80/42.5) = 0 (fully decayed)
+    // text today: fill = 0.50 → text wins
+    // 0 + round(100 * 0.50) = 50
     const result = calculateSystemScore(
       "sys_togather",
       makeRaw({
         meeting_weeks_in_window: 8,
         attended_weeks_in_window: 0,
+        consecutive_missed: 8,
         days_since_last_call: 80,
         days_since_last_text: 0,
       }),
     );
-    // text wins: 0 + round(100 * 0.50) = 50
     expect(result).toBe(50);
   });
 });
@@ -495,6 +530,7 @@ describe("sys_togather — service excluded", () => {
       makeRaw({
         meeting_weeks_in_window: 8,
         attended_weeks_in_window: 4,
+        consecutive_missed: 4,
         pco_services_past_2mo: 10,
       }),
     );
@@ -503,6 +539,7 @@ describe("sys_togather — service excluded", () => {
       makeRaw({
         meeting_weeks_in_window: 8,
         attended_weeks_in_window: 4,
+        consecutive_missed: 4,
         pco_services_past_2mo: 0,
       }),
     );
@@ -530,12 +567,15 @@ describe("sys_togather — no follow-up data", () => {
   });
 
   test("no attendance + no follow-up = 0", () => {
+    // consecutive_missed: 8 → attendancePct = 0, portion = 0
+    // All follow-up at sentinel → 0
     expect(
       calculateSystemScore(
         "sys_togather",
         makeRaw({
           meeting_weeks_in_window: 8,
           attended_weeks_in_window: 0,
+          consecutive_missed: 8,
           days_since_last_in_person: 9999,
           days_since_last_call: 9999,
           days_since_last_text: 9999,
@@ -556,6 +596,7 @@ describe("sys_togather — follow-up space scales inversely with attendance", ()
       makeRaw({
         meeting_weeks_in_window: 8,
         attended_weeks_in_window: 8,
+        consecutive_missed: 0,
         days_since_last_in_person: 0,
       }),
     );
@@ -564,6 +605,7 @@ describe("sys_togather — follow-up space scales inversely with attendance", ()
       makeRaw({
         meeting_weeks_in_window: 8,
         attended_weeks_in_window: 0,
+        consecutive_missed: 8,
         days_since_last_in_person: 0,
       }),
     );
@@ -577,6 +619,7 @@ describe("sys_togather — follow-up space scales inversely with attendance", ()
       makeRaw({
         meeting_weeks_in_window: 8,
         attended_weeks_in_window: 8,
+        consecutive_missed: 0,
         days_since_last_call: 50,
       }),
     );
@@ -585,11 +628,12 @@ describe("sys_togather — follow-up space scales inversely with attendance", ()
       makeRaw({
         meeting_weeks_in_window: 8,
         attended_weeks_in_window: 0,
+        consecutive_missed: 8,
         days_since_last_call: 50,
       }),
     );
     // Perfect attend has higher base but less room for call
-    // Poor attend has no base but more room for call
+    // Poor attend has no base but more room for call (but 2x faster decay)
     expect(perfectAttendStaleCall).toBeGreaterThan(poorAttendStaleCall);
   });
 });
@@ -631,6 +675,7 @@ describe("sys_togather — edge cases", () => {
         makeRaw({
           meeting_weeks_in_window: 8,
           attended_weeks_in_window: 0,
+          consecutive_missed: 8,
           days_since_last_in_person: 200,
           days_since_last_call: 200,
           days_since_last_text: 200,
@@ -660,13 +705,14 @@ describe("calculateAllSystemScores", () => {
       attended_weeks_in_window: 6,
       total_weeks_in_window: 8,
       meeting_weeks_in_window: 8,
+      consecutive_missed: 2,
       days_since_last_in_person: 0,
     });
     const scores = calculateAllSystemScores(raw);
 
     expect(scores.score1).toBe(60); // 3 * 20
     expect(scores.score2).toBe(75); // 6/8 * 100
-    expect(scores.score3).toBe(100); // 6/8 → portion 53, remaining 47, in-person today fills all
+    expect(scores.score3).toBe(100); // consecutive_missed=2 → portion=49, remaining=51, in-person today fills all
   });
 });
 
