@@ -601,6 +601,23 @@ export function FollowupMobileGrid({
     ) as FollowupMember[];
     if (source.length === 0) return [];
     const filtered = applyParsedFollowupFilters(source, parsedQuery);
+
+    // For score sorts, always apply secondary sort by addedAt (most recent first)
+    // even when the server handled the primary sort, to break ties consistently
+    if (sortField.startsWith("score")) {
+      const sorted = [...filtered];
+      sorted.sort((a, b) => {
+        const primary = compareSortValues(
+          getSortFieldValue(a, sortField),
+          getSortFieldValue(b, sortField),
+          sortDirection,
+        );
+        if (primary !== 0) return primary;
+        return (b.addedAt ?? 0) - (a.addedAt ?? 0);
+      });
+      return sorted;
+    }
+
     if (!hasTextSearch && !isClientSideSort) return filtered;
 
     const sorted = [...filtered];
