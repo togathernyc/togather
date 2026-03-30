@@ -274,8 +274,8 @@ export const list = query({
         // Match Convex index ordering: undefined sorts before all values.
         // Ascending: undefined first. Descending: undefined last.
         if (av == null && bv == null) {
-          // For score sorts, break ties by addedAt (same direction as primary)
-          if (isScoreSort) return ((a.addedAt ?? 0) - (b.addedAt ?? 0)) * dir;
+          // For score sorts, break ties by addedAtInv (newest first, matching composite index)
+          if (isScoreSort) return ((a.addedAtInv ?? 0) - (b.addedAtInv ?? 0)) * dir;
           return 0;
         }
         if (av == null) return -1 * dir;
@@ -286,9 +286,9 @@ export const list = query({
         } else {
           cmp = String(av).localeCompare(String(bv)) * dir;
         }
-        // For score sorts, break ties by addedAt (matches composite index behavior)
+        // For score sorts, break ties by addedAtInv (matches composite index behavior)
         if (cmp === 0 && isScoreSort) {
-          return ((a.addedAt ?? 0) - (b.addedAt ?? 0)) * dir;
+          return ((a.addedAtInv ?? 0) - (b.addedAtInv ?? 0)) * dir;
         }
         return cmp;
       });
@@ -1780,6 +1780,7 @@ export const upsertFromSubmission = internalMutation({
       lastActiveAt: (scoreDoc as any).lastActiveAt,
       lastAttendedAt: (scoreDoc as any).lastAttendedAt,
       addedAt: (scoreDoc as any).addedAt ?? groupMember.joinedAt,
+      addedAtInv: Number.MAX_SAFE_INTEGER - ((scoreDoc as any).addedAt ?? groupMember.joinedAt),
       latestNote: (scoreDoc as any).latestNote,
       latestNoteAt: (scoreDoc as any).latestNoteAt,
       alerts: (scoreDoc as any).alerts ?? [],

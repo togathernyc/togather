@@ -1834,6 +1834,10 @@ export default defineSchema({
     customBool4: v.optional(v.boolean()),
     customBool5: v.optional(v.boolean()),
 
+    // Inverted addedAt for composite index sorting (MAX_SAFE_INTEGER - addedAt)
+    // Allows score ASC + addedAt DESC via a single index direction
+    addedAtInv: v.optional(v.number()),
+
     // Raw values (for detail view breakdown)
     rawValues: v.optional(v.any()),
 
@@ -1845,9 +1849,9 @@ export default defineSchema({
     .index("by_community_user", ["communityId", "userId"])
     .index("by_group", ["groupId"])
     .index("by_group_user", ["groupId", "userId"])
-    .index("by_group_score1", ["groupId", "score1", "addedAt"])
-    .index("by_group_score2", ["groupId", "score2", "addedAt"])
-    .index("by_group_score3", ["groupId", "score3", "addedAt"])
+    .index("by_group_score1", ["groupId", "score1", "addedAtInv"])
+    .index("by_group_score2", ["groupId", "score2", "addedAtInv"])
+    .index("by_group_score3", ["groupId", "score3", "addedAtInv"])
     .index("by_group_firstName", ["groupId", "firstName"])
     .index("by_group_lastName", ["groupId", "lastName"])
     .index("by_group_addedAt", ["groupId", "addedAt"])
