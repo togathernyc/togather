@@ -1282,6 +1282,12 @@ export const history = query({
     let allGroupsAttended = 0;
     let allGroupsTotal = 0;
 
+    const viewerIsCommunityAdmin = await isCommunityAdmin(
+      ctx,
+      cpRecord.communityId,
+      viewerId,
+    );
+
     for (const { membership, group } of communityMemberships) {
       // Check if current user can edit attendance in this group
       let canEdit = false;
@@ -1297,7 +1303,7 @@ export const history = query({
           callerMembership.role === "admin")
       ) {
         canEdit = true;
-      } else if (await isCommunityAdmin(ctx, cpRecord.communityId, viewerId)) {
+      } else if (viewerIsCommunityAdmin) {
         canEdit = true;
       }
 
