@@ -585,7 +585,7 @@ export const internalCrossGroupAttendance = internalQuery({
     const sixtyDaysAgo = currentTime - 60 * 24 * 60 * 60 * 1000;
     const results: Record<
       string,
-      { pct: number; attendedWeekStarts: number[]; meetingWeekStarts: number[]; consecutiveMissed: number }
+      { pct: number; attendedWeekStarts: number[]; meetingWeekStarts: number[]; meetingEntries: Array<{ scheduledAt: number; attended: boolean }> }
     > = {};
 
     for (const userId of args.userIds) {
@@ -641,13 +641,8 @@ export const internalCrossGroupAttendance = internalQuery({
         }
       }
 
-      // Count consecutive missed meetings from the most recent across all groups
+      // Sort meetings by date descending for consecutive-miss calculation by consumer
       allMeetingEntries.sort((a, b) => b.scheduledAt - a.scheduledAt);
-      let consecutiveMissed = 0;
-      for (const entry of allMeetingEntries) {
-        if (entry.attended) break;
-        consecutiveMissed++;
-      }
 
       results[userId.toString()] = {
         pct:
@@ -656,7 +651,7 @@ export const internalCrossGroupAttendance = internalQuery({
             : 0,
         attendedWeekStarts: Array.from(attendedWeekSet),
         meetingWeekStarts: Array.from(meetingWeekSet),
-        consecutiveMissed,
+        meetingEntries: allMeetingEntries,
       };
     }
 

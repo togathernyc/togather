@@ -258,7 +258,7 @@ export const computeCommunityScoresBatch = internalQuery({
         const crossGroupData = args.crossGroupAttendanceMap?.[
           member.userId.toString()
         ] as
-          | { pct: number; attendedWeekStarts: number[]; meetingWeekStarts?: number[]; consecutiveMissed?: number }
+          | { pct: number; attendedWeekStarts: number[]; meetingWeekStarts?: number[]; meetingEntries?: Array<{ scheduledAt: number; attended: boolean }> }
           | number // backwards-compat with legacy callers
           | undefined;
 
@@ -304,15 +304,22 @@ export const computeCommunityScoresBatch = internalQuery({
           meetingWeeksInWindow = totalWeeksInWindow;
         }
 
-        // Consecutive missed meetings — from cross-group data (all groups)
-        const consecutiveMissed =
-          (crossGroupData && typeof crossGroupData === "object")
-            ? (crossGroupData.consecutiveMissed ?? 0)
-            : 0;
-
-        // Last attended date — most recent attended week start from cross-group data
-        if (crossGroupData && typeof crossGroupData === "object" && crossGroupData.attendedWeekStarts.length > 0) {
-          lastAttendedAt = Math.max(...crossGroupData.attendedWeekStarts);
+        // Consecutive missed meetings — from cross-group meeting entries, filtered by join date
+        let consecutiveMissed = 0;
+        if (crossGroupData && typeof crossGroupData === "object" && crossGroupData.meetingEntries) {
+          // Filter to meetings after member joined, already sorted desc by scheduledAt
+          const memberMeetings = crossGroupData.meetingEntries.filter(
+            (e: any) => e.scheduledAt >= member.joinedAt,
+          );
+          for (const entry of memberMeetings) {
+            if (entry.attended) break;
+            consecutiveMissed++;
+          }
+          // Last attended date — actual meeting timestamp (not week start)
+          const lastAttendedEntry = memberMeetings.find((e: any) => e.attended);
+          if (lastAttendedEntry) {
+            lastAttendedAt = lastAttendedEntry.scheduledAt;
+          }
         }
 
         // PCO serving count
@@ -649,7 +656,7 @@ export const computeCommunityScores = internalAction({
       // Step 4: Compute cross-group attendance for this batch
       const crossGroupAttendanceMap: Record<
         string,
-        { pct: number; attendedWeekStarts: number[]; meetingWeekStarts: number[]; consecutiveMissed: number }
+        { pct: number; attendedWeekStarts: number[]; meetingWeekStarts: number[]; meetingEntries: Array<{ scheduledAt: number; attended: boolean }> }
       > = {};
       const userIds = page.members.map((m) => m.userId);
       for (let i = 0; i < userIds.length; i += CROSS_GROUP_BATCH_SIZE) {
