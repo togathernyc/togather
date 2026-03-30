@@ -221,7 +221,10 @@ export function calculateSystemScore(
       const meetingWeeks = rawValues.meeting_weeks_in_window;
       const attendedWeeks = rawValues.attended_weeks_in_window;
       if (meetingWeeks <= 0) return 0;
-      const consecutiveMissed = rawValues.consecutive_missed;
+      // If zero attendance across all groups, treat as having missed all meetings
+      const consecutiveMissed = attendedWeeks === 0
+        ? Math.max(rawValues.consecutive_missed, meetingWeeks)
+        : rawValues.consecutive_missed;
       const attendancePct = Math.max(0, 100 - consecutiveMissed * 15);
       const attendancePortion = Math.round(70 * (attendancePct / 100));
 

@@ -585,7 +585,7 @@ export const internalCrossGroupAttendance = internalQuery({
     const sixtyDaysAgo = currentTime - 60 * 24 * 60 * 60 * 1000;
     const results: Record<
       string,
-      { pct: number; attendedWeekStarts: number[]; meetingWeekStarts: number[] }
+      { pct: number; attendedWeekStarts: number[]; meetingWeekStarts: number[]; meetingEntries: Array<{ scheduledAt: number; attended: boolean }> }
     > = {};
 
     for (const userId of args.userIds) {
@@ -599,6 +599,8 @@ export const internalCrossGroupAttendance = internalQuery({
       let allGroupsAttended = 0;
       const attendedWeekSet = new Set<number>();
       const meetingWeekSet = new Set<number>();
+      // Collect all meetings with their attendance status for consecutive-miss calculation
+      const allMeetingEntries: Array<{ scheduledAt: number; attended: boolean }> = [];
 
       for (const membership of allMemberships) {
         // Past non-cancelled meetings in window (see "Meeting Status Quirks" at top of file)
@@ -629,13 +631,18 @@ export const internalCrossGroupAttendance = internalQuery({
         for (let i = 0; i < meetings.length; i++) {
           // Track every week that had a meeting (for connection score)
           meetingWeekSet.add(getWeekStart(meetings[i].scheduledAt));
-          if (attendances[i]?.status === 1) {
+          const attended = attendances[i]?.status === 1;
+          allMeetingEntries.push({ scheduledAt: meetings[i].scheduledAt, attended });
+          if (attended) {
             allGroupsAttended++;
             // Track the ISO week start (Monday) for this attended meeting
             attendedWeekSet.add(getWeekStart(meetings[i].scheduledAt));
           }
         }
       }
+
+      // Sort meetings by date descending for consecutive-miss calculation by consumer
+      allMeetingEntries.sort((a, b) => b.scheduledAt - a.scheduledAt);
 
       results[userId.toString()] = {
         pct:
@@ -644,6 +651,7 @@ export const internalCrossGroupAttendance = internalQuery({
             : 0,
         attendedWeekStarts: Array.from(attendedWeekSet),
         meetingWeekStarts: Array.from(meetingWeekSet),
+        meetingEntries: allMeetingEntries,
       };
     }
 

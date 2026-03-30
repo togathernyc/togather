@@ -229,52 +229,8 @@ export const computeCommunityScoresBatch = internalQuery({
             ? Math.floor((currentTime - entry.createdAt) / DAY_MS)
             : Infinity;
 
-        // Consecutive missed meetings — look at all groups this user is in
-        // We use cross-group data for this. For consecutive missed, we need
-        // the announcement group meetings specifically.
-        const meetings = await ctx.db
-          .query("meetings")
-          .withIndex("by_group_scheduledAt", (q) =>
-            q
-              .eq("groupId", args.announcementGroupId)
-              .lt("scheduledAt", currentTime)
-          )
-          .filter((q) => q.neq(q.field("status"), "cancelled"))
-          .order("desc")
-          .take(20);
-
-        // Filter to meetings after member joined
-        const memberMeetings = meetings.filter(
-          (m) => m.scheduledAt >= member.joinedAt
-        );
-
-        // Check attendance for each meeting
-        let consecutiveMissed = 0;
-        for (const meeting of memberMeetings) {
-          const attendance = await ctx.db
-            .query("meetingAttendances")
-            .withIndex("by_meeting_user", (q) =>
-              q.eq("meetingId", meeting._id).eq("userId", member.userId)
-            )
-            .first();
-          if (attendance?.status === 1) break;
-          consecutiveMissed++;
-        }
-
-        // Get last attended date
+        // lastAttendedAt will be computed from cross-group data below
         let lastAttendedAt: number | undefined;
-        for (const meeting of memberMeetings) {
-          const attendance = await ctx.db
-            .query("meetingAttendances")
-            .withIndex("by_meeting_user", (q) =>
-              q.eq("meetingId", meeting._id).eq("userId", member.userId)
-            )
-            .first();
-          if (attendance?.status === 1) {
-            lastAttendedAt = meeting.scheduledAt;
-            break;
-          }
-        }
 
         // Check snooze state
         let snoozedUntil: number | undefined;
@@ -302,7 +258,7 @@ export const computeCommunityScoresBatch = internalQuery({
         const crossGroupData = args.crossGroupAttendanceMap?.[
           member.userId.toString()
         ] as
-          | { pct: number; attendedWeekStarts: number[]; meetingWeekStarts?: number[] }
+          | { pct: number; attendedWeekStarts: number[]; meetingWeekStarts?: number[]; meetingEntries?: Array<{ scheduledAt: number; attended: boolean }> }
           | number // backwards-compat with legacy callers
           | undefined;
 
@@ -346,6 +302,24 @@ export const computeCommunityScoresBatch = internalQuery({
             (crossGroupPct / 100) * totalWeeksInWindow,
           );
           meetingWeeksInWindow = totalWeeksInWindow;
+        }
+
+        // Consecutive missed meetings — from cross-group meeting entries, filtered by join date
+        let consecutiveMissed = 0;
+        if (crossGroupData && typeof crossGroupData === "object" && crossGroupData.meetingEntries) {
+          // Filter to meetings after member joined, already sorted desc by scheduledAt
+          const memberMeetings = crossGroupData.meetingEntries.filter(
+            (e: any) => e.scheduledAt >= member.joinedAt,
+          );
+          for (const entry of memberMeetings) {
+            if (entry.attended) break;
+            consecutiveMissed++;
+          }
+          // Last attended date — actual meeting timestamp (not week start)
+          const lastAttendedEntry = memberMeetings.find((e: any) => e.attended);
+          if (lastAttendedEntry) {
+            lastAttendedAt = lastAttendedEntry.scheduledAt;
+          }
         }
 
         // PCO serving count
@@ -682,7 +656,7 @@ export const computeCommunityScores = internalAction({
       // Step 4: Compute cross-group attendance for this batch
       const crossGroupAttendanceMap: Record<
         string,
-        { pct: number; attendedWeekStarts: number[] }
+        { pct: number; attendedWeekStarts: number[]; meetingWeekStarts: number[]; meetingEntries: Array<{ scheduledAt: number; attended: boolean }> }
       > = {};
       const userIds = page.members.map((m) => m.userId);
       for (let i = 0; i < userIds.length; i += CROSS_GROUP_BATCH_SIZE) {
