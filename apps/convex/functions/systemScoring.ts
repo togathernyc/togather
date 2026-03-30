@@ -12,14 +12,18 @@
  * Connection Score Philosophy:
  * The connection score reflects how well leaders are connecting with each member,
  * NOT the member's own engagement. It's a triage tool: low scores surface people
- * who need outreach. Recent 1:1 follow-up is the dominant factor.
+ * who need outreach.
  *
- * Formula:
- * - Base engagement (attendance 70% + service 30%) provides a foundation, capped at 70%.
- * - Follow-up recency (in-person=100, call=85, text=70, decaying 1pt/day) is the
- *   primary driver. A recent follow-up alone produces a high score.
- * - No follow-up data at all: score = base * 0.70 (max 70).
- * - With follow-up: score = followupRecency + up to 15pt bonus from base engagement.
+ * Formula (0-100):
+ *   1. missed_weeks = weeks_with_meetings − attended_weeks  (join date respected)
+ *   2. attendance_pct = max(0, 100 − missed_weeks × 15)
+ *   3. attendance_portion = 70 × (attendance_pct / 100)       → 0-70 points
+ *   4. remaining = 100 − attendance_portion                   → 30-100 points
+ *   5. Follow-up fills the remaining space based on channel + recency:
+ *        In-person: 100% of remaining, decays over ~100 days
+ *        Call:       75% of remaining, decays over ~85 days
+ *        Text:       50% of remaining, decays over ~70 days
+ *   6. total = attendance_portion + followup_portion           → 0-100
  */
 
 // ============================================================================
@@ -48,6 +52,8 @@ export interface SystemRawValues {
   consecutive_missed: number;
   attended_weeks_in_window: number;
   total_weeks_in_window: number;
+  /** Weeks that actually had meetings (subset of total_weeks_in_window) */
+  meeting_weeks_in_window: number;
 
   // Followup recency
   days_since_last_followup: number;
@@ -105,37 +111,37 @@ export const SYSTEM_SCORES: SystemScoreDefinition[] = [
     slot: "score3",
     name: "Connection",
     description:
-      "How well leaders are connecting with this person. A recent follow-up alone produces a high score. Attendance and service provide a small bonus, but cap at 70% without follow-up. Use this to triage who needs outreach.",
+      "How well leaders are connecting with this person. Attendance provides a base (max 70pts, -15 per missed week). Follow-up fills the rest: the lower the attendance, the more follow-up matters. Use this to triage who needs outreach.",
     variables: [
+      {
+        variableId: "meeting_weeks_in_window",
+        label: "Weeks with meetings",
+        normHint: "Weeks in the past 2 months that had meetings (adjusted for join date)",
+        weight: 1,
+      },
+      {
+        variableId: "attended_weeks_in_window",
+        label: "Weeks attended",
+        normHint: "Weeks where member had at least one attendance",
+        weight: 1,
+      },
       {
         variableId: "days_since_last_in_person",
         label: "Days since in-person",
-        normHint: "In-person follow-up: starts at 100, -1/day",
-        weight: 0.7,
+        normHint: "In-person follow-up: fills 100% of remaining, decays over ~100 days",
+        weight: 1,
       },
       {
         variableId: "days_since_last_call",
         label: "Days since call",
-        normHint: "Phone call: starts at 85, -1/day",
-        weight: 0.7,
+        normHint: "Phone call: fills 75% of remaining, decays over ~85 days",
+        weight: 0.75,
       },
       {
         variableId: "days_since_last_text",
         label: "Days since text",
-        normHint: "Text message: starts at 70, -1/day",
-        weight: 0.7,
-      },
-      {
-        variableId: "attendance_all_groups_pct",
-        label: "Attendance %",
-        normHint: "Cross-group attendance, 70% of base engagement",
-        weight: 0.3,
-      },
-      {
-        variableId: "pco_services_past_2mo",
-        label: "Service (2 months)",
-        normHint: "Serving frequency, 30% of base engagement",
-        weight: 0.3,
+        normHint: "Text message: fills 50% of remaining, decays over ~70 days",
+        weight: 0.5,
       },
     ],
   },
@@ -158,6 +164,7 @@ export const SYSTEM_VARIABLE_IDS: ReadonlySet<string> = new Set([
   "consecutive_missed",
   "attended_weeks_in_window",
   "total_weeks_in_window",
+  "meeting_weeks_in_window",
   "days_since_last_followup",
   "days_since_last_in_person",
   "days_since_last_call",
@@ -174,8 +181,8 @@ export const SYSTEM_VARIABLE_IDS: ReadonlySet<string> = new Set([
  *
  * - `sys_service`: 20 points per PCO service in the past 2 months, max 100 at 5+.
  * - `sys_attendance`: Percentage of weeks (in a join-date-adjusted 60-day window) with ≥1 attendance.
- * - `sys_togather`: Composite of attendance consistency (consecutive misses penalty)
- *   and best followup recency (face-to-face > call > text), averaged equally.
+ * - `sys_togather`: Attendance (0-70pts, weekly over 2mo, only weeks with meetings)
+ *   + Follow-up (0-30pts: in-person=30, call=22.5, text=15, decaying over time).
  *
  * @param scoreId - One of "sys_service", "sys_attendance", or "sys_togather"
  * @param rawValues - The raw metric values for the member
@@ -204,52 +211,41 @@ export function calculateSystemScore(
     }
 
     case "sys_togather": {
-      // Base engagement: attendance (70%) + service (30%), 0-100
-      const attendancePct = Math.max(
-        0,
-        Math.min(100, rawValues.attendance_all_groups_pct),
-      );
-      const servicePct = Math.min(
-        100,
-        rawValues.pco_services_past_2mo * 20,
-      );
-      const baseEngagement = attendancePct * 0.7 + servicePct * 0.3;
+      // ── Attendance portion: 0-70 points ──
+      // Deduct 15 points per missed week (only weeks with meetings count).
+      // If no meetings existed in the window, full attendance credit.
+      const meetingWeeks = rawValues.meeting_weeks_in_window;
+      const attendedWeeks = rawValues.attended_weeks_in_window;
+      const missedWeeks =
+        meetingWeeks <= 0 ? 0 : Math.max(0, meetingWeeks - attendedWeeks);
+      const attendancePct = Math.max(0, 100 - missedWeeks * 15);
+      const attendancePortion = Math.round(70 * (attendancePct / 100));
 
-      // Follow-up recency: best channel (each with different ceiling)
-      // In-person=100, call=85, text=70, each decaying 1pt/day
+      // ── Follow-up portion: fills remaining space (100 - attendancePortion) ──
+      // Channel fill rate (decaying over time):
+      //   In-person: 100% of remaining, decays over ~100 days
+      //   Call:       75% of remaining, decays over ~85 days
+      //   Text:       50% of remaining, decays over ~70 days
+      const remaining = 100 - attendancePortion;
       const NO_DATA_THRESHOLD = 1000;
-      const hasFollowupData =
-        rawValues.days_since_last_in_person < NO_DATA_THRESHOLD ||
-        rawValues.days_since_last_call < NO_DATA_THRESHOLD ||
-        rawValues.days_since_last_text < NO_DATA_THRESHOLD;
 
-      if (!hasFollowupData) {
-        // No follow-up data: score driven by base engagement, capped at 70
-        return Math.round(Math.min(baseEngagement * 0.7, 70));
-      }
+      const inPersonFill =
+        rawValues.days_since_last_in_person < NO_DATA_THRESHOLD
+          ? 1.0 * Math.max(0, 1 - rawValues.days_since_last_in_person / 100)
+          : 0;
+      const callFill =
+        rawValues.days_since_last_call < NO_DATA_THRESHOLD
+          ? 0.75 * Math.max(0, 1 - rawValues.days_since_last_call / 85)
+          : 0;
+      const textFill =
+        rawValues.days_since_last_text < NO_DATA_THRESHOLD
+          ? 0.5 * Math.max(0, 1 - rawValues.days_since_last_text / 70)
+          : 0;
 
-      const faceToFace = Math.max(
-        0,
-        100 - rawValues.days_since_last_in_person,
-      );
-      const phoneCall = Math.max(0, 85 - rawValues.days_since_last_call);
-      const text = Math.max(0, 70 - rawValues.days_since_last_text);
-      const followupRecency = Math.max(faceToFace, phoneCall, text);
+      const bestFill = Math.max(inPersonFill, callFill, textFill);
+      const followupPortion = Math.round(remaining * bestFill);
 
-      if (followupRecency === 0) {
-        // Follow-up data exists but all channels are stale: cap at 70
-        return Math.round(Math.min(baseEngagement * 0.7, 70));
-      }
-
-      // Follow-up recency is the primary signal. A recent follow-up alone
-      // should produce a high score even with zero attendance/service.
-      // Base engagement adds a small bonus on top.
-      // Floor: followupRecency itself (e.g. in-person today = 100)
-      // Bonus: up to 15 points from base engagement
-      const baseBonus = baseEngagement * 0.15;
-      return Math.round(
-        Math.min(Math.max(followupRecency, followupRecency + baseBonus), 100),
-      );
+      return Math.min(attendancePortion + followupPortion, 100);
     }
 
     default:
@@ -296,6 +292,7 @@ export function extractSystemRawValues(params: {
   consecutiveMissed: number;
   attendedWeeksInWindow: number;
   totalWeeksInWindow: number;
+  meetingWeeksInWindow: number;
   daysSinceLastFollowup: number;
   daysSinceLastInPerson: number;
   daysSinceLastCall: number;
@@ -309,6 +306,7 @@ export function extractSystemRawValues(params: {
     consecutive_missed: params.consecutiveMissed,
     attended_weeks_in_window: params.attendedWeeksInWindow,
     total_weeks_in_window: params.totalWeeksInWindow,
+    meeting_weeks_in_window: params.meetingWeeksInWindow,
     days_since_last_followup: cap(params.daysSinceLastFollowup),
     days_since_last_in_person: cap(params.daysSinceLastInPerson),
     days_since_last_call: cap(params.daysSinceLastCall),

@@ -3228,12 +3228,12 @@ export function FollowupDesktopTable({
                     ? colors.warning
                     : colors.destructive;
                 const description = score.id === "sys_togather"
-                  ? "How well leaders are connecting with this person. A recent follow-up alone produces a high score. Attendance and service provide a small bonus, but cap at 70% without follow-up."
+                  ? "How well leaders are connecting with this person. Attendance provides a base (max 70pts). Follow-up fills the rest \u2014 the lower the attendance, the more follow-up matters."
                   : score.id === "sys_attendance"
                     ? "Percentage of weeks with at least one attendance across all groups in the last 60 days."
                     : "Serving frequency from Planning Center in the past 2 months. 20 points per service, max 100.";
                 const formula = score.id === "sys_togather"
-                  ? "With follow-up: score = follow-up recency + up to 15pt bonus from base engagement\nWithout follow-up: base engagement \u00D7 70%, capped at 70%\n\nBase engagement = attendance (70%) + service (30%)\nFollow-up channels: In-person (100pts), Call (85pts), Text (70pts) \u2014 each decays 1pt/day"
+                  ? "1. Missed weeks = weeks with meetings \u2212 weeks attended\n2. Attendance % = 100 \u2212 (missed weeks \u00D7 15)\n3. Attendance portion = 70 \u00D7 (attendance % / 100)\n4. Remaining = 100 \u2212 attendance portion\n5. Follow-up fills remaining:\n   In-person: 100%, Call: 75%, Text: 50%\n   Each decays over time (~100/85/70 days)"
                   : score.id === "sys_attendance"
                     ? "Weeks attended \u00F7 total weeks in window \u00D7 100\nWindow: last 60 days (adjusted for join date)"
                     : "Services count \u00D7 20 (max 100)\nBased on Planning Center serving data";
