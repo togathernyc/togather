@@ -21,9 +21,9 @@
  *      (If no meetings exist in window → score is 0; nothing to evaluate)
  *   4. remaining = 100 − attendance_portion                   → 30-100 points
  *   5. Follow-up fills the remaining space based on channel + recency:
- *        In-person: 100% of remaining, decays over ~100 days
- *        Call:       75% of remaining, decays over ~85 days
- *        Text:       50% of remaining, decays over ~70 days
+ *        In-person: 100% of remaining, decays over ~100 days (~50 days if 0 attendance)
+ *        Call:       75% of remaining, decays over ~85 days  (~42 days if 0 attendance)
+ *        Text:       50% of remaining, decays over ~70 days  (~35 days if 0 attendance)
  *   6. total = attendance_portion + followup_portion           → 0-100
  */
 
@@ -129,19 +129,19 @@ export const SYSTEM_SCORES: SystemScoreDefinition[] = [
       {
         variableId: "days_since_last_in_person",
         label: "Days since in-person",
-        normHint: "In-person follow-up: fills 100% of remaining, decays over ~100 days",
+        normHint: "In-person follow-up: fills 100% of remaining, decays over ~100 days (~50 if no attendance)",
         weight: 1,
       },
       {
         variableId: "days_since_last_call",
         label: "Days since call",
-        normHint: "Phone call: fills 75% of remaining, decays over ~85 days",
+        normHint: "Phone call: fills 75% of remaining, decays over ~85 days (~42 if no attendance)",
         weight: 0.75,
       },
       {
         variableId: "days_since_last_text",
         label: "Days since text",
-        normHint: "Text message: fills 50% of remaining, decays over ~70 days",
+        normHint: "Text message: fills 50% of remaining, decays over ~70 days (~35 if no attendance)",
         weight: 0.5,
       },
     ],
@@ -228,20 +228,23 @@ export function calculateSystemScore(
       //   In-person: 100% of remaining, decays over ~100 days
       //   Call:       75% of remaining, decays over ~85 days
       //   Text:       50% of remaining, decays over ~70 days
+      // When the member has ZERO attendance, decay is 2× faster (halved windows)
+      // to reflect urgency — no attendance + stale follow-up = needs outreach soon.
       const remaining = 100 - attendancePortion;
       const NO_DATA_THRESHOLD = 1000;
+      const decayMultiplier = attendedWeeks === 0 ? 0.5 : 1;
 
       const inPersonFill =
         rawValues.days_since_last_in_person < NO_DATA_THRESHOLD
-          ? 1.0 * Math.max(0, 1 - rawValues.days_since_last_in_person / 100)
+          ? 1.0 * Math.max(0, 1 - rawValues.days_since_last_in_person / (100 * decayMultiplier))
           : 0;
       const callFill =
         rawValues.days_since_last_call < NO_DATA_THRESHOLD
-          ? 0.75 * Math.max(0, 1 - rawValues.days_since_last_call / 85)
+          ? 0.75 * Math.max(0, 1 - rawValues.days_since_last_call / (85 * decayMultiplier))
           : 0;
       const textFill =
         rawValues.days_since_last_text < NO_DATA_THRESHOLD
-          ? 0.5 * Math.max(0, 1 - rawValues.days_since_last_text / 70)
+          ? 0.5 * Math.max(0, 1 - rawValues.days_since_last_text / (70 * decayMultiplier))
           : 0;
 
       const bestFill = Math.max(inPersonFill, callFill, textFill);

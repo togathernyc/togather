@@ -312,9 +312,25 @@ describe("sys_togather — follow-up fills remaining", () => {
 // ============================================================================
 
 describe("sys_togather — follow-up decay", () => {
-  test("in-person 50 days ago decays to 50% fill", () => {
-    // fill = 1.0 * (1 - 50/100) = 0.50
-    // no attendance: remaining = 100, followup = 100 * 0.50 = 50
+  test("in-person 25 days ago with no attendance decays to 50% (2× faster decay)", () => {
+    // No attendance → decay window halved: 100 → 50 days
+    // fill = 1.0 * (1 - 25/50) = 0.50
+    // remaining = 100, followup = 100 * 0.50 = 50
+    expect(
+      calculateSystemScore(
+        "sys_togather",
+        makeRaw({
+          meeting_weeks_in_window: 8,
+          attended_weeks_in_window: 0,
+          days_since_last_in_person: 25,
+        }),
+      ),
+    ).toBe(50);
+  });
+
+  test("in-person 50 days ago with no attendance fully decayed (2× faster)", () => {
+    // No attendance → decay window halved: 100 → 50 days
+    // fill = 1.0 * (1 - 50/50) = 0
     expect(
       calculateSystemScore(
         "sys_togather",
@@ -324,26 +340,29 @@ describe("sys_togather — follow-up decay", () => {
           days_since_last_in_person: 50,
         }),
       ),
-    ).toBe(50);
+    ).toBe(0);
   });
 
-  test("in-person 100 days ago decays to 0", () => {
-    // fill = 1.0 * (1 - 100/100) = 0
+  test("in-person 50 days ago WITH attendance decays to 50% (normal rate)", () => {
+    // Has attendance → normal decay window: 100 days
+    // fill = 1.0 * (1 - 50/100) = 0.50
+    // attendance: 8/8 → portion = 70, remaining = 30
+    // followup = round(30 * 0.50) = 15
     expect(
       calculateSystemScore(
         "sys_togather",
         makeRaw({
           meeting_weeks_in_window: 8,
-          attended_weeks_in_window: 0,
-          days_since_last_in_person: 100,
+          attended_weeks_in_window: 8,
+          days_since_last_in_person: 50,
         }),
       ),
-    ).toBe(0);
+    ).toBe(85);
   });
 
   test("call 42 days ago with partial attendance", () => {
     // attendance: 2 missed → pct = 70, portion = 49, remaining = 51
-    // call fill = 0.75 * (1 - 42/85) ≈ 0.75 * 0.506 ≈ 0.379
+    // Has attendance → normal decay: call fill = 0.75 * (1 - 42/85) ≈ 0.75 * 0.506 ≈ 0.379
     // followup = round(51 * 0.379) = round(19.35) = 19
     expect(
       calculateSystemScore(
@@ -357,9 +376,25 @@ describe("sys_togather — follow-up decay", () => {
     ).toBe(68);
   });
 
-  test("text 35 days ago, no attendance", () => {
-    // fill = 0.5 * (1 - 35/70) = 0.5 * 0.5 = 0.25
-    // remaining = 100, followup = round(100 * 0.25) = 25
+  test("text 17 days ago, no attendance = 25 (2× faster decay)", () => {
+    // No attendance → text decay window halved: 70 → 35 days
+    // fill = 0.5 * (1 - 17/35) ≈ 0.5 * 0.514 ≈ 0.257
+    // remaining = 100, followup = round(100 * 0.257) = 26
+    expect(
+      calculateSystemScore(
+        "sys_togather",
+        makeRaw({
+          meeting_weeks_in_window: 8,
+          attended_weeks_in_window: 0,
+          days_since_last_text: 17,
+        }),
+      ),
+    ).toBe(26);
+  });
+
+  test("text 35 days ago, no attendance fully decayed (2× faster)", () => {
+    // No attendance → text decay window halved: 70 → 35 days
+    // fill = 0.5 * (1 - 35/35) = 0
     expect(
       calculateSystemScore(
         "sys_togather",
@@ -369,31 +404,19 @@ describe("sys_togather — follow-up decay", () => {
           days_since_last_text: 35,
         }),
       ),
-    ).toBe(25);
-  });
-
-  test("text 70 days ago fully decayed", () => {
-    // fill = 0.5 * (1 - 70/70) = 0
-    expect(
-      calculateSystemScore(
-        "sys_togather",
-        makeRaw({
-          meeting_weeks_in_window: 8,
-          attended_weeks_in_window: 0,
-          days_since_last_text: 70,
-        }),
-      ),
     ).toBe(0);
   });
 
-  test("call 85 days ago fully decayed", () => {
+  test("call 42.5 days ago, no attendance fully decayed (2× faster)", () => {
+    // No attendance → call decay window halved: 85 → 42.5 days
+    // fill = 0.75 * (1 - 42.5/42.5) = 0
     expect(
       calculateSystemScore(
         "sys_togather",
         makeRaw({
           meeting_weeks_in_window: 8,
           attended_weeks_in_window: 0,
-          days_since_last_call: 85,
+          days_since_last_call: 42.5,
         }),
       ),
     ).toBe(0);
