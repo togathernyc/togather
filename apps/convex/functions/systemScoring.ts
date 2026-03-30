@@ -15,16 +15,15 @@
  * who need outreach.
  *
  * Formula (0-100):
- *   1. missed_weeks = weeks_with_meetings − attended_weeks  (join date respected)
- *   2. attendance_pct = max(0, 100 − missed_weeks × 15)
- *   3. attendance_portion = 70 × (attendance_pct / 100)       → 0-70 points
+ *   1. attendance_pct = attended_weeks / weeks_with_meetings × 100  (join date respected)
  *      (If no meetings exist in window → score is 0; nothing to evaluate)
- *   4. remaining = 100 − attendance_portion                   → 30-100 points
- *   5. Follow-up fills the remaining space based on channel + recency:
+ *   2. attendance_portion = 70 × (attendance_pct / 100)       → 0-70 points
+ *   3. remaining = 100 − attendance_portion                   → 30-100 points
+ *   4. Follow-up fills the remaining space based on channel + recency:
  *        In-person: 100% of remaining, decays over ~100 days (~50 days if 0 attendance)
  *        Call:       75% of remaining, decays over ~85 days  (~42 days if 0 attendance)
  *        Text:       50% of remaining, decays over ~70 days  (~35 days if 0 attendance)
- *   6. total = attendance_portion + followup_portion           → 0-100
+ *   5. total = attendance_portion + followup_portion           → 0-100
  */
 
 // ============================================================================
@@ -182,8 +181,8 @@ export const SYSTEM_VARIABLE_IDS: ReadonlySet<string> = new Set([
  *
  * - `sys_service`: 20 points per PCO service in the past 2 months, max 100 at 5+.
  * - `sys_attendance`: Percentage of weeks (in a join-date-adjusted 60-day window) with ≥1 attendance.
- * - `sys_togather`: Attendance (0-70pts, weekly over 2mo, only weeks with meetings)
- *   + Follow-up (0-30pts: in-person=30, call=22.5, text=15, decaying over time).
+ * - `sys_togather`: Attendance ratio (0-70pts, attended/meeting weeks over 2mo)
+ *   + Follow-up (fills remaining: in-person=100%, call=75%, text=50%, decaying over time).
  *
  * @param scoreId - One of "sys_service", "sys_attendance", or "sys_togather"
  * @param rawValues - The raw metric values for the member
@@ -213,14 +212,12 @@ export function calculateSystemScore(
 
     case "sys_togather": {
       // ── Attendance portion: 0-70 points ──
-      // Deduct 15 points per missed week (only weeks with meetings count).
-      // If no meetings existed in the window, score starts at 0 — we have
-      // no data to evaluate, so the member needs outreach.
+      // Uses the actual attendance ratio (attended / meetings with meetings).
+      // If no meetings existed in the window, score is 0 — nothing to evaluate.
       const meetingWeeks = rawValues.meeting_weeks_in_window;
       const attendedWeeks = rawValues.attended_weeks_in_window;
       if (meetingWeeks <= 0) return 0;
-      const missedWeeks = Math.max(0, meetingWeeks - attendedWeeks);
-      const attendancePct = Math.max(0, 100 - missedWeeks * 15);
+      const attendancePct = Math.min(100, (attendedWeeks / meetingWeeks) * 100);
       const attendancePortion = Math.round(70 * (attendancePct / 100));
 
       // ── Follow-up portion: fills remaining space (100 - attendancePortion) ──
