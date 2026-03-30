@@ -2471,15 +2471,15 @@ export function FollowupMobileGrid({
                     ? colors.warning
                     : colors.destructive;
                 const description = score.id === "sys_togather"
-                  ? "How well leaders are connecting with this person. Attendance provides a base (max 70pts). Follow-up fills the rest \u2014 the lower the attendance, the more follow-up matters."
+                  ? "Measures how well leaders are connecting with this person. Use this to triage who needs outreach \u2014 lower scores mean someone needs attention."
                   : score.id === "sys_attendance"
                     ? "Percentage of weeks with at least one attendance across all groups in the last 60 days."
                     : "Serving frequency from Planning Center in the past 2 months. 20 points per service, max 100.";
                 const formula = score.id === "sys_togather"
-                  ? "1. Missed weeks = weeks with meetings \u2212 weeks attended\n2. Attendance % = 100 \u2212 (missed weeks \u00D7 15)\n3. Attendance portion = 70 \u00D7 (attendance % / 100)\n4. Remaining = 100 \u2212 attendance portion\n5. Follow-up fills remaining:\n   In-person: 100%, Call: 75%, Text: 50%\n   Each decays over time (~100/85/70 days)"
+                  ? "Attendance (up to 70 pts):\nEach missed week deducts 15 pts from a perfect attendance score. Only weeks that had meetings count \u2014 weeks with no events don\u2019t count against anyone.\n\nExample: 2 missed weeks = 70 pts lost \u2192 attendance portion is 49 out of 70.\n\nFollow-up (fills the rest):\nThe remaining points (up to 100) are filled by the most recent follow-up:\n\u2022 In-person visit \u2192 fills 100% of remaining\n\u2022 Phone call \u2192 fills 75%\n\u2022 Text message \u2192 fills 50%\n\nFollow-ups fade over time. In-person lasts ~100 days, calls ~85 days, texts ~70 days. If someone has zero attendance, follow-ups fade twice as fast.\n\nThe less someone attends, the more follow-up matters. Someone who never attends but was visited today still scores 100."
                   : score.id === "sys_attendance"
-                    ? "Weeks attended \u00F7 total weeks in window \u00D7 100\nWindow: last 60 days (adjusted for join date)"
-                    : "Services count \u00D7 20 (max 100)\nBased on Planning Center serving data";
+                    ? "Weeks attended out of total weeks in the last 60 days.\nAdjusted for join date \u2014 new members aren\u2019t penalized for weeks before they joined."
+                    : "20 points per service in the past 2 months, up to 100.\nBased on Planning Center serving data.";
 
                 return (
                   <View key={score.id} style={[styles.scoreBreakdownItem, { borderColor: colors.borderLight }]}>
@@ -2496,7 +2496,7 @@ export function FollowupMobileGrid({
                     </Text>
                     <View style={[styles.scoreBreakdownFormulaBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderLight }]}>
                       <Text style={[styles.scoreBreakdownFormulaLabel, { color: colors.textTertiary }]}>
-                        Formula
+                        How it works
                       </Text>
                       <Text style={[styles.scoreBreakdownFormula, { color: colors.text }]}>
                         {formula}
