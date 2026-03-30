@@ -17,9 +17,9 @@
  * Formula:
  * - Base engagement (attendance 70% + service 30%) provides a foundation, capped at 70%.
  * - Follow-up recency (in-person=100, call=85, text=70, decaying 1pt/day) is the
- *   primary driver, weighted at 70% when present.
+ *   primary driver. A recent follow-up alone produces a high score.
  * - No follow-up data at all: score = base * 0.70 (max 70).
- * - With follow-up: score = followup * 0.70 + base * 0.30 (can reach 100).
+ * - With follow-up: score = followupRecency + up to 15pt bonus from base engagement.
  */
 
 // ============================================================================
@@ -105,7 +105,7 @@ export const SYSTEM_SCORES: SystemScoreDefinition[] = [
     slot: "score3",
     name: "Connection",
     description:
-      "How well leaders are connecting with this person. Recent 1:1 follow-up is the primary driver (70% weight). Attendance and service provide a base, but cap at 70% without follow-up. Use this to triage who needs outreach.",
+      "How well leaders are connecting with this person. A recent follow-up alone produces a high score. Attendance and service provide a small bonus, but cap at 70% without follow-up. Use this to triage who needs outreach.",
     variables: [
       {
         variableId: "days_since_last_in_person",
@@ -241,9 +241,14 @@ export function calculateSystemScore(
         return Math.round(Math.min(baseEngagement * 0.7, 70));
       }
 
-      // Follow-up is the primary driver (70%), base engagement secondary (30%)
+      // Follow-up recency is the primary signal. A recent follow-up alone
+      // should produce a high score even with zero attendance/service.
+      // Base engagement adds a small bonus on top.
+      // Floor: followupRecency itself (e.g. in-person today = 100)
+      // Bonus: up to 15 points from base engagement
+      const baseBonus = baseEngagement * 0.15;
       return Math.round(
-        Math.min(followupRecency * 0.7 + baseEngagement * 0.3, 100),
+        Math.min(Math.max(followupRecency, followupRecency + baseBonus), 100),
       );
     }
 
