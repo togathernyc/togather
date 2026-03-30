@@ -374,6 +374,7 @@ export const computeCommunityScoresBatch = internalQuery({
           lastActiveAt: member.lastActiveAt,
           lastAttendedAt,
           addedAt: member.joinedAt,
+          addedAtInv: Number.MAX_SAFE_INTEGER - member.joinedAt,
           latestNote,
           latestNoteAt,
         };
@@ -435,6 +436,7 @@ export const upsertCommunityPeopleBatch = internalMutation({
         lastActiveAt: member.lastActiveAt,
         lastAttendedAt: member.lastAttendedAt,
         addedAt: member.addedAt,
+        addedAtInv: member.addedAt ? Number.MAX_SAFE_INTEGER - member.addedAt : undefined,
         latestNote: member.latestNote,
         latestNoteAt: member.latestNoteAt,
         updatedAt: nowTs,
@@ -967,6 +969,7 @@ export const getScoredDataForUsers = internalQuery({
           lastActiveAt: existing.lastActiveAt,
           lastAttendedAt: existing.lastAttendedAt,
           addedAt: existing.addedAt,
+          addedAtInv: existing.addedAt ? Number.MAX_SAFE_INTEGER - existing.addedAt : undefined,
         });
       }
     }
