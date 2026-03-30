@@ -1357,14 +1357,20 @@ export const history = query({
           let normalizedValue = 0;
           if (v.variableId === "pco_services_past_2mo") {
             normalizedValue = Math.min(100, raw * 20);
-          } else if (v.variableId === "attendance_all_groups_pct") {
-            normalizedValue = Math.max(0, Math.min(100, raw));
-          } else if (v.variableId === "days_since_last_in_person") {
-            normalizedValue = raw < 1000 ? Math.max(0, Math.min(100, 100 * (1 - raw / 100))) : 0;
-          } else if (v.variableId === "days_since_last_call") {
-            normalizedValue = raw < 1000 ? Math.max(0, Math.min(100, 100 * 0.75 * (1 - raw / 85))) : 0;
-          } else if (v.variableId === "days_since_last_text") {
-            normalizedValue = raw < 1000 ? Math.max(0, Math.min(100, 100 * 0.5 * (1 - raw / 70))) : 0;
+          } else if (v.variableId === "days_since_last_in_person" || v.variableId === "days_since_last_call" || v.variableId === "days_since_last_text") {
+            // Match the actual scoring formula's decay multiplier:
+            // when attendedWeeks === 0, decay windows are halved
+            const attendedWeeks = (rawValues as any).attended_weeks_in_window ?? 0;
+            const decayMultiplier = attendedWeeks === 0 ? 0.5 : 1;
+            const baseWindow = v.variableId === "days_since_last_in_person" ? 100
+              : v.variableId === "days_since_last_call" ? 85
+              : 70;
+            const maxContrib = v.variableId === "days_since_last_in_person" ? 1.0
+              : v.variableId === "days_since_last_call" ? 0.75
+              : 0.5;
+            normalizedValue = raw < 1000
+              ? Math.max(0, Math.min(100, 100 * maxContrib * (1 - raw / (baseWindow * decayMultiplier))))
+              : 0;
           } else if (v.variableId === "attended_weeks_in_window" || v.variableId === "total_weeks_in_window" || v.variableId === "meeting_weeks_in_window") {
             // For week counts, normalize relative to max window (approx 9 weeks in 60 days)
             normalizedValue = Math.min(100, Math.round((raw / 9) * 100));
