@@ -1334,19 +1334,39 @@ export const history = query({
 
     // Build score breakdown from rawValues on the communityPeople record
     const rawValues = cpRecord.rawValues ?? {};
-    const scoreBreakdown = SYSTEM_SCORES.map((scoreDef: any) => ({
+    const scoreBreakdown = SYSTEM_SCORES.map((scoreDef) => ({
       id: scoreDef.id,
       name: scoreDef.name,
+      description: scoreDef.description,
       value: (cpRecord as any)[scoreDef.slot] ?? 0,
       variables:
-        scoreDef.variables?.map((v: any) => ({
-          id: v.variableId,
-          label: v.label ?? v.variableId,
-          normHint: v.normHint ?? "",
-          rawValue: (rawValues as any)[v.variableId] ?? 0,
-          normalizedValue: 0,
-          weight: v.weight ?? 1,
-        })) ?? [],
+        scoreDef.variables?.map((v) => {
+          const raw = (rawValues as any)[v.variableId] ?? 0;
+          // Compute a 0-100 display value for the bar chart
+          let normalizedValue = 0;
+          if (v.variableId === "pco_services_past_2mo") {
+            normalizedValue = Math.min(100, raw * 20);
+          } else if (v.variableId === "attendance_all_groups_pct") {
+            normalizedValue = Math.max(0, Math.min(100, raw));
+          } else if (v.variableId === "days_since_last_in_person") {
+            normalizedValue = raw < 1000 ? Math.max(0, 100 - raw) : 0;
+          } else if (v.variableId === "days_since_last_call") {
+            normalizedValue = raw < 1000 ? Math.max(0, 85 - raw) : 0;
+          } else if (v.variableId === "days_since_last_text") {
+            normalizedValue = raw < 1000 ? Math.max(0, 70 - raw) : 0;
+          } else if (v.variableId === "attended_weeks_in_window" || v.variableId === "total_weeks_in_window") {
+            // For week counts, normalize relative to max window (approx 9 weeks in 60 days)
+            normalizedValue = Math.min(100, Math.round((raw / 9) * 100));
+          }
+          return {
+            id: v.variableId,
+            label: v.label,
+            normHint: v.normHint,
+            rawValue: raw,
+            normalizedValue,
+            weight: v.weight,
+          };
+        }) ?? [],
     }));
 
     // Serving history from announcement group's PCO data

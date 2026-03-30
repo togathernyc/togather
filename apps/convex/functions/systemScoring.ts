@@ -7,18 +7,39 @@
  * Score slots:
  *   score1 = Service (PCO serving frequency)
  *   score2 = Attendance (cross-group attendance %)
- *   score3 = Connection (composite engagement score)
+ *   score3 = Connection (leader outreach effectiveness — the primary triage score)
+ *
+ * Connection Score Philosophy:
+ * The connection score reflects how well leaders are connecting with each member,
+ * NOT the member's own engagement. It's a triage tool: low scores surface people
+ * who need outreach. Recent 1:1 follow-up is the dominant factor.
+ *
+ * Formula:
+ * - Base engagement (attendance 70% + service 30%) provides a foundation, capped at 70%.
+ * - Follow-up recency (in-person=100, call=85, text=70, decaying 1pt/day) is the
+ *   primary driver, weighted at 70% when present.
+ * - No follow-up data at all: score = base * 0.70 (max 70).
+ * - With follow-up: score = followup * 0.70 + base * 0.30 (can reach 100).
  */
 
 // ============================================================================
 // Types
 // ============================================================================
 
+export interface SystemScoreVariable {
+  variableId: string;
+  label: string;
+  normHint: string;
+  weight: number;
+}
+
 export interface SystemScoreDefinition {
   id: string;
   slot: "score1" | "score2" | "score3";
   name: string;
   description: string;
+  /** Variables that feed into this score, shown in the breakdown panel */
+  variables?: SystemScoreVariable[];
 }
 
 export interface SystemRawValues {
@@ -49,6 +70,14 @@ export const SYSTEM_SCORES: SystemScoreDefinition[] = [
     name: "Service",
     description:
       "PCO serving frequency in past 2 months (20pts per service, max 100)",
+    variables: [
+      {
+        variableId: "pco_services_past_2mo",
+        label: "Services (2 months)",
+        normHint: "20 points per service, max 100 at 5+",
+        weight: 1,
+      },
+    ],
   },
   {
     id: "sys_attendance",
@@ -56,13 +85,59 @@ export const SYSTEM_SCORES: SystemScoreDefinition[] = [
     name: "Attendance",
     description:
       "Percentage of weeks with at least one attendance in the last 60 days (adjusted for join date)",
+    variables: [
+      {
+        variableId: "attended_weeks_in_window",
+        label: "Weeks attended",
+        normHint: "Number of weeks with at least one attendance",
+        weight: 1,
+      },
+      {
+        variableId: "total_weeks_in_window",
+        label: "Total weeks",
+        normHint: "Total weeks in 60-day window (adjusted for join date)",
+        weight: 1,
+      },
+    ],
   },
   {
     id: "sys_togather",
     slot: "score3",
     name: "Connection",
     description:
-      "Composite engagement score combining attendance consistency and followup recency",
+      "How well leaders are connecting with this person. Recent 1:1 follow-up is the primary driver (70% weight). Attendance and service provide a base, but cap at 70% without follow-up. Use this to triage who needs outreach.",
+    variables: [
+      {
+        variableId: "days_since_last_in_person",
+        label: "Days since in-person",
+        normHint: "In-person follow-up: starts at 100, -1/day",
+        weight: 0.7,
+      },
+      {
+        variableId: "days_since_last_call",
+        label: "Days since call",
+        normHint: "Phone call: starts at 85, -1/day",
+        weight: 0.7,
+      },
+      {
+        variableId: "days_since_last_text",
+        label: "Days since text",
+        normHint: "Text message: starts at 70, -1/day",
+        weight: 0.7,
+      },
+      {
+        variableId: "attendance_all_groups_pct",
+        label: "Attendance %",
+        normHint: "Cross-group attendance, 70% of base engagement",
+        weight: 0.3,
+      },
+      {
+        variableId: "pco_services_past_2mo",
+        label: "Service (2 months)",
+        normHint: "Serving frequency, 30% of base engagement",
+        weight: 0.3,
+      },
+    ],
   },
 ];
 
@@ -129,32 +204,47 @@ export function calculateSystemScore(
     }
 
     case "sys_togather": {
-      // Attendance component: penalize consecutive misses at -15 per miss
-      const attendanceComponent = Math.max(
+      // Base engagement: attendance (70%) + service (30%), 0-100
+      const attendancePct = Math.max(
         0,
-        100 - 15 * rawValues.consecutive_missed,
+        Math.min(100, rawValues.attendance_all_groups_pct),
       );
+      const servicePct = Math.min(
+        100,
+        rawValues.pco_services_past_2mo * 20,
+      );
+      const baseEngagement = attendancePct * 0.7 + servicePct * 0.3;
 
-      // Followup component: best of face-to-face, call, or text recency
-      // Each channel has a different ceiling reflecting its engagement value
+      // Follow-up recency: best channel (each with different ceiling)
+      // In-person=100, call=85, text=70, each decaying 1pt/day
       const NO_DATA_THRESHOLD = 1000;
       const hasFollowupData =
         rawValues.days_since_last_in_person < NO_DATA_THRESHOLD ||
         rawValues.days_since_last_call < NO_DATA_THRESHOLD ||
         rawValues.days_since_last_text < NO_DATA_THRESHOLD;
 
-      let followupComponent = 0;
-      if (hasFollowupData) {
-        const faceToFace = Math.max(
-          0,
-          100 - rawValues.days_since_last_in_person,
-        );
-        const phoneCall = Math.max(0, 85 - rawValues.days_since_last_call);
-        const text = Math.max(0, 70 - rawValues.days_since_last_text);
-        followupComponent = Math.max(faceToFace, phoneCall, text);
+      if (!hasFollowupData) {
+        // No follow-up data: score driven by base engagement, capped at 70
+        return Math.round(Math.min(baseEngagement * 0.7, 70));
       }
 
-      return Math.round((attendanceComponent + followupComponent) / 2);
+      const faceToFace = Math.max(
+        0,
+        100 - rawValues.days_since_last_in_person,
+      );
+      const phoneCall = Math.max(0, 85 - rawValues.days_since_last_call);
+      const text = Math.max(0, 70 - rawValues.days_since_last_text);
+      const followupRecency = Math.max(faceToFace, phoneCall, text);
+
+      if (followupRecency === 0) {
+        // Follow-up data exists but all channels are stale: cap at 70
+        return Math.round(Math.min(baseEngagement * 0.7, 70));
+      }
+
+      // Follow-up is the primary driver (70%), base engagement secondary (30%)
+      return Math.round(
+        Math.min(followupRecency * 0.7 + baseEngagement * 0.3, 100),
+      );
     }
 
     default:

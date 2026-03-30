@@ -151,6 +151,7 @@ const STATUS_OPTIONS: Array<{ value?: string; label: string }> = [
 const SERVER_SORTABLE_FIELDS = new Set([
   "score1",
   "score2",
+  "score3",
   "firstName",
   "lastName",
   "addedAt",
@@ -235,7 +236,7 @@ export function FollowupMobileGrid({
   const currentUserId = user?.id as Id<"users"> | undefined;
   const { primaryColor } = useCommunityTheme();
 
-  const [sortField, setSortField] = useState("score1");
+  const [sortField, setSortField] = useState("score3");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearchFocused, setIsSearchFocused] = useState(false);
@@ -256,6 +257,11 @@ export function FollowupMobileGrid({
   const [showRemoveModal, setShowRemoveModal] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
   const [showQuickAddModal, setShowQuickAddModal] = useState(false);
+  const [scoreBreakdownSheet, setScoreBreakdownSheet] = useState<{
+    memberId: string;
+    memberName: string;
+    scores: Array<{ id: string; name: string; slot: string; value: number }>;
+  } | null>(null);
 
   // PeopleViewBar state (system_scores feature flag)
   const [activeViewId, setActiveViewId] = useState<string | null>(null);
@@ -390,7 +396,7 @@ export function FollowupMobileGrid({
     // System scores always have score1-score3; validate against those.
     const validSlots = new Set(SYSTEM_SCORE_COLUMNS.map((sc) => sc.slot));
     if (!validSlots.has(sortField as "score1" | "score2" | "score3")) {
-      setSortField("score1");
+      setSortField("score3");
     }
   }, [isConfigLoaded, scoreConfig, sortField]);
 
@@ -467,7 +473,7 @@ export function FollowupMobileGrid({
   const isClientSideSort = !SERVER_SORTABLE_FIELDS.has(sortField);
   const serverSortBy = SERVER_SORTABLE_FIELDS.has(sortField)
     ? sortField
-    : "score1";
+    : "score3";
   const serverSortDirection = isClientSideSort ? "desc" : sortDirection;
 
   const {
@@ -1459,7 +1465,20 @@ export function FollowupMobileGrid({
     if (column.kind === "score" && typeof value === "number") {
       const scoreStyles = getScoreStyles(value, colors);
       return (
-        <View
+        <TouchableOpacity
+          activeOpacity={0.7}
+          onPress={() => {
+            setScoreBreakdownSheet({
+              memberId: member.groupMemberId,
+              memberName: `${member.firstName} ${member.lastName}`.trim(),
+              scores: SYSTEM_SCORE_COLUMNS.map((sc) => ({
+                id: sc.id,
+                name: sc.name,
+                slot: sc.slot,
+                value: getSystemScoreValue(member, sc.slot) ?? 0,
+              })),
+            });
+          }}
           style={[
             styles.scorePill,
             {
@@ -1471,7 +1490,7 @@ export function FollowupMobileGrid({
           <Text style={[styles.scorePillText, { color: scoreStyles.text }]}>
             {value}%
           </Text>
-        </View>
+        </TouchableOpacity>
       );
     }
 
@@ -1948,8 +1967,8 @@ export function FollowupMobileGrid({
               return;
             }
             setActiveViewId(null);
-            setSortField("score1");
-            setSortDirection("desc");
+            setSortField("score3");
+            setSortDirection("asc");
             setSearchQuery("");
           }}
           onDeleteView={(viewId, viewName, isShared) => {
@@ -2416,6 +2435,83 @@ export function FollowupMobileGrid({
         confirmText="Delete"
         destructive
       />
+
+      {/* Score Breakdown Modal */}
+      <Modal
+        visible={!!scoreBreakdownSheet}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setScoreBreakdownSheet(null)}
+      >
+        <Pressable
+          style={[styles.modalBackdrop, { backgroundColor: colors.overlay }]}
+          onPress={() => setScoreBreakdownSheet(null)}
+        >
+          <Pressable
+            style={[styles.scoreBreakdownCard, { backgroundColor: colors.modalBackground }]}
+            onPress={() => undefined}
+          >
+            <View style={styles.scoreBreakdownHeader}>
+              <Text style={[styles.editSheetTitle, { color: colors.text }]}>
+                Score Breakdown
+              </Text>
+              <TouchableOpacity onPress={() => setScoreBreakdownSheet(null)}>
+                <Ionicons name="close" size={22} color={colors.icon} />
+              </TouchableOpacity>
+            </View>
+            <Text style={[styles.editSheetSubtitle, { color: colors.textSecondary }]}>
+              {scoreBreakdownSheet?.memberName}
+            </Text>
+
+            <ScrollView style={styles.scoreBreakdownScroll}>
+              {scoreBreakdownSheet?.scores.map((score) => {
+                const scoreColor = score.value >= 70
+                  ? colors.success
+                  : score.value >= 40
+                    ? colors.warning
+                    : colors.destructive;
+                const description = score.id === "sys_togather"
+                  ? "How well leaders are connecting with this person. Recent 1:1 follow-up is the primary driver (70%). Attendance and service provide a base, but cap at 70% without follow-up."
+                  : score.id === "sys_attendance"
+                    ? "Percentage of weeks with at least one attendance across all groups in the last 60 days."
+                    : "Serving frequency from Planning Center in the past 2 months. 20 points per service, max 100.";
+                const formula = score.id === "sys_togather"
+                  ? "With follow-up: (best follow-up recency \u00D7 70%) + (base engagement \u00D7 30%)\nWithout follow-up: base engagement \u00D7 70%, capped at 70%\n\nBase engagement = attendance (70%) + service (30%)\nFollow-up channels: In-person (100pts), Call (85pts), Text (70pts) \u2014 each decays 1pt/day"
+                  : score.id === "sys_attendance"
+                    ? "Weeks attended \u00F7 total weeks in window \u00D7 100\nWindow: last 60 days (adjusted for join date)"
+                    : "Services count \u00D7 20 (max 100)\nBased on Planning Center serving data";
+
+                return (
+                  <View key={score.id} style={[styles.scoreBreakdownItem, { borderColor: colors.borderLight }]}>
+                    <View style={styles.scoreBreakdownItemHeader}>
+                      <Text style={[styles.scoreBreakdownScoreName, { color: colors.text }]}>
+                        {score.name}
+                      </Text>
+                      <View style={[styles.scoreBreakdownBadge, { backgroundColor: scoreColor }]}>
+                        <Text style={styles.scoreBreakdownBadgeText}>{score.value}%</Text>
+                      </View>
+                    </View>
+                    <Text style={[styles.scoreBreakdownDescription, { color: colors.textSecondary }]}>
+                      {description}
+                    </Text>
+                    <View style={[styles.scoreBreakdownFormulaBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderLight }]}>
+                      <Text style={[styles.scoreBreakdownFormulaLabel, { color: colors.textTertiary }]}>
+                        Formula
+                      </Text>
+                      <Text style={[styles.scoreBreakdownFormula, { color: colors.text }]}>
+                        {formula}
+                      </Text>
+                    </View>
+                    <View style={[styles.scoreBreakdownBar, { backgroundColor: colors.borderLight }]}>
+                      <View style={[styles.scoreBreakdownBarFill, { width: `${Math.max(2, score.value)}%`, backgroundColor: scoreColor }]} />
+                    </View>
+                  </View>
+                );
+              })}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -2877,5 +2973,85 @@ const styles = StyleSheet.create({
   },
   multiselectCheckboxIcon: {
     marginRight: 10,
+  },
+  scoreBreakdownCard: {
+    borderRadius: 14,
+    maxHeight: "85%",
+    paddingVertical: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    elevation: 6,
+    width: "92%",
+    maxWidth: 420,
+  },
+  scoreBreakdownHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    marginBottom: 2,
+  },
+  scoreBreakdownScroll: {
+    paddingHorizontal: 16,
+    marginTop: 8,
+  },
+  scoreBreakdownItem: {
+    borderBottomWidth: 1,
+    paddingBottom: 14,
+    marginBottom: 14,
+  },
+  scoreBreakdownItemHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 6,
+  },
+  scoreBreakdownScoreName: {
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  scoreBreakdownBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+  },
+  scoreBreakdownBadgeText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  scoreBreakdownDescription: {
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 8,
+  },
+  scoreBreakdownFormulaBox: {
+    borderRadius: 8,
+    borderWidth: 1,
+    padding: 10,
+    marginBottom: 8,
+  },
+  scoreBreakdownFormulaLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  scoreBreakdownFormula: {
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: "monospace",
+  },
+  scoreBreakdownBar: {
+    height: 6,
+    borderRadius: 3,
+    overflow: "hidden",
+  },
+  scoreBreakdownBarFill: {
+    height: "100%",
+    borderRadius: 3,
   },
 });

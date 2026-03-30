@@ -16,6 +16,7 @@ import {
   ActivityIndicator,
   Platform,
   Alert,
+  Modal,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -124,6 +125,7 @@ type FollowupMember = {
 const SERVER_SORT_KEYS: Record<string, string> = {
   score1: "score1",
   score2: "score2",
+  score3: "score3",
   firstName: "firstName",
   lastName: "lastName",
   addedAt: "addedAt",
@@ -247,7 +249,7 @@ export function FollowupDesktopTable({
   const { primaryColor } = useCommunityTheme();
 
   // Sort state
-  const [sortField, setSortField] = useState<string>("score1");
+  const [sortField, setSortField] = useState<string>("score3");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
 
   // Search state
@@ -259,6 +261,13 @@ export function FollowupDesktopTable({
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
   const [scrollToNotes, setScrollToNotes] = useState(false);
   const [scrollToTasks, setScrollToTasks] = useState(false);
+
+  // Score breakdown modal
+  const [scoreBreakdownSheet, setScoreBreakdownSheet] = useState<{
+    memberId: string;
+    memberName: string;
+    scores: Array<{ id: string; name: string; slot: string; value: number }>;
+  } | null>(null);
 
   // Inline editing
   const [editingInlineField, setEditingInlineField] = useState<string | null>(
@@ -749,7 +758,7 @@ export function FollowupDesktopTable({
 
   const serverSortBy = useMemo(() => {
     if (sortField in SERVER_SORT_KEYS) return SERVER_SORT_KEYS[sortField];
-    return "score1";
+    return "score3";
   }, [sortField]);
 
   // Build filter args for list query (structured filters only, no text search)
@@ -1825,13 +1834,27 @@ export function FollowupDesktopTable({
           const slot = col.key as "score1" | "score2" | "score3";
           const value = getSystemScoreValue(item, slot) ?? 0;
           return (
-            <View
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPress={(e: any) => {
+                e.stopPropagation?.();
+                setScoreBreakdownSheet({
+                  memberId: item._id ?? item.groupMemberId ?? "",
+                  memberName: `${item.firstName} ${item.lastName}`.trim(),
+                  scores: SYSTEM_SCORE_COLUMNS.map((sc) => ({
+                    id: sc.id,
+                    name: sc.name,
+                    slot: sc.slot,
+                    value: getSystemScoreValue(item, sc.slot) ?? 0,
+                  })),
+                });
+              }}
               style={[s.scoreCell, { backgroundColor: getScoreBgColor(value, colors) }]}
             >
               <Text style={[s.scoreCellText, { color: getScoreColor(value, colors) }]}>
                 {value}%
               </Text>
-            </View>
+            </TouchableOpacity>
           );
         }
 
@@ -2284,8 +2307,8 @@ export function FollowupDesktopTable({
             setActiveViewId(null);
             setLocalColumnOrder(null);
             setLocalHiddenColumns(null);
-            setSortField("score1");
-            setSortDirection("desc");
+            setSortField("score3");
+            setSortDirection("asc");
             setSearchQuery("");
           }}
           onDeleteView={(viewId, viewName, isShared) => {
@@ -3169,6 +3192,83 @@ export function FollowupDesktopTable({
         confirmText="Delete"
         destructive
       />
+
+      {/* Score Breakdown Modal */}
+      <Modal
+        visible={!!scoreBreakdownSheet}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setScoreBreakdownSheet(null)}
+      >
+        <Pressable
+          style={[s.modalOverlay, { backgroundColor: colors.overlay }]}
+          onPress={() => setScoreBreakdownSheet(null)}
+        >
+          <Pressable
+            style={[s.scoreBreakdownCard, { backgroundColor: colors.modalBackground }]}
+            onPress={() => undefined}
+          >
+            <View style={s.scoreBreakdownHeader}>
+              <Text style={[s.scoreBreakdownTitle, { color: colors.text }]}>
+                Score Breakdown
+              </Text>
+              <TouchableOpacity onPress={() => setScoreBreakdownSheet(null)}>
+                <Ionicons name="close" size={22} color={colors.icon} />
+              </TouchableOpacity>
+            </View>
+            <Text style={[s.scoreBreakdownSubtitle, { color: colors.textSecondary }]}>
+              {scoreBreakdownSheet?.memberName}
+            </Text>
+
+            <ScrollView style={s.scoreBreakdownScroll}>
+              {scoreBreakdownSheet?.scores.map((score) => {
+                const scoreColor = score.value >= 70
+                  ? colors.success
+                  : score.value >= 40
+                    ? colors.warning
+                    : colors.destructive;
+                const description = score.id === "sys_togather"
+                  ? "How well leaders are connecting with this person. Recent 1:1 follow-up is the primary driver (70%). Attendance and service provide a base, but cap at 70% without follow-up."
+                  : score.id === "sys_attendance"
+                    ? "Percentage of weeks with at least one attendance across all groups in the last 60 days."
+                    : "Serving frequency from Planning Center in the past 2 months. 20 points per service, max 100.";
+                const formula = score.id === "sys_togather"
+                  ? "With follow-up: (best follow-up recency \u00D7 70%) + (base engagement \u00D7 30%)\nWithout follow-up: base engagement \u00D7 70%, capped at 70%\n\nBase engagement = attendance (70%) + service (30%)\nFollow-up channels: In-person (100pts), Call (85pts), Text (70pts) \u2014 each decays 1pt/day"
+                  : score.id === "sys_attendance"
+                    ? "Weeks attended \u00F7 total weeks in window \u00D7 100\nWindow: last 60 days (adjusted for join date)"
+                    : "Services count \u00D7 20 (max 100)\nBased on Planning Center serving data";
+
+                return (
+                  <View key={score.id} style={[s.scoreBreakdownItem, { borderColor: colors.borderLight }]}>
+                    <View style={s.scoreBreakdownItemHeader}>
+                      <Text style={[s.scoreBreakdownScoreName, { color: colors.text }]}>
+                        {score.name}
+                      </Text>
+                      <View style={[s.scoreBreakdownBadge, { backgroundColor: scoreColor }]}>
+                        <Text style={s.scoreBreakdownBadgeText}>{score.value}%</Text>
+                      </View>
+                    </View>
+                    <Text style={[s.scoreBreakdownDescription, { color: colors.textSecondary }]}>
+                      {description}
+                    </Text>
+                    <View style={[s.scoreBreakdownFormulaBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderLight }]}>
+                      <Text style={[s.scoreBreakdownFormulaLabel, { color: colors.textTertiary }]}>
+                        Formula
+                      </Text>
+                      <Text style={[s.scoreBreakdownFormula, { color: colors.text }]}>
+                        {formula}
+                      </Text>
+                    </View>
+                    <View style={[s.scoreBreakdownBar, { backgroundColor: colors.borderLight }]}>
+                      <View style={[s.scoreBreakdownBarFill, { width: `${Math.max(2, score.value)}%`, backgroundColor: scoreColor }]} />
+                    </View>
+                  </View>
+                );
+              })}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -3674,5 +3774,98 @@ const s = StyleSheet.create({
   },
   contextMenuText: {
     fontSize: 13,
+  },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  scoreBreakdownCard: {
+    borderRadius: 14,
+    maxHeight: "80%",
+    paddingVertical: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    elevation: 6,
+    width: 440,
+    maxWidth: "92%",
+  },
+  scoreBreakdownHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    marginBottom: 2,
+  },
+  scoreBreakdownTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  scoreBreakdownSubtitle: {
+    fontSize: 13,
+    paddingHorizontal: 16,
+    marginBottom: 8,
+  },
+  scoreBreakdownScroll: {
+    paddingHorizontal: 16,
+    marginTop: 8,
+  },
+  scoreBreakdownItem: {
+    borderBottomWidth: 1,
+    paddingBottom: 14,
+    marginBottom: 14,
+  },
+  scoreBreakdownItemHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 6,
+  },
+  scoreBreakdownScoreName: {
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  scoreBreakdownBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+  },
+  scoreBreakdownBadgeText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  scoreBreakdownDescription: {
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 8,
+  },
+  scoreBreakdownFormulaBox: {
+    borderRadius: 8,
+    borderWidth: 1,
+    padding: 10,
+    marginBottom: 8,
+  },
+  scoreBreakdownFormulaLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  scoreBreakdownFormula: {
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  scoreBreakdownBar: {
+    height: 6,
+    borderRadius: 3,
+    overflow: "hidden",
+  },
+  scoreBreakdownBarFill: {
+    height: "100%",
+    borderRadius: 3,
   },
 });
