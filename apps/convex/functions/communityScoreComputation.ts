@@ -229,37 +229,11 @@ export const computeCommunityScoresBatch = internalQuery({
             ? Math.floor((currentTime - entry.createdAt) / DAY_MS)
             : Infinity;
 
-        // Consecutive missed meetings — look at all groups this user is in
-        // We use cross-group data for this. For consecutive missed, we need
-        // the announcement group meetings specifically.
-        const meetings = await ctx.db
-          .query("meetings")
-          .withIndex("by_group_scheduledAt", (q) =>
-            q
-              .eq("groupId", args.announcementGroupId)
-              .lt("scheduledAt", currentTime)
-          )
-          .filter((q) => q.neq(q.field("status"), "cancelled"))
-          .order("desc")
-          .take(20);
-
-        // Filter to meetings after member joined
-        const memberMeetings = meetings.filter(
-          (m) => m.scheduledAt >= member.joinedAt
-        );
-
-        // Check attendance for each meeting
-        let consecutiveMissed = 0;
-        for (const meeting of memberMeetings) {
-          const attendance = await ctx.db
-            .query("meetingAttendances")
-            .withIndex("by_meeting_user", (q) =>
-              q.eq("meetingId", meeting._id).eq("userId", member.userId)
-            )
-            .first();
-          if (attendance?.status === 1) break;
-          consecutiveMissed++;
-        }
+        // Consecutive missed meetings — from cross-group data (all groups)
+        const consecutiveMissed =
+          (crossGroupData && typeof crossGroupData === "object")
+            ? (crossGroupData.consecutiveMissed ?? 0)
+            : 0;
 
         // Get last attended date
         let lastAttendedAt: number | undefined;
@@ -302,7 +276,7 @@ export const computeCommunityScoresBatch = internalQuery({
         const crossGroupData = args.crossGroupAttendanceMap?.[
           member.userId.toString()
         ] as
-          | { pct: number; attendedWeekStarts: number[]; meetingWeekStarts?: number[] }
+          | { pct: number; attendedWeekStarts: number[]; meetingWeekStarts?: number[]; consecutiveMissed?: number }
           | number // backwards-compat with legacy callers
           | undefined;
 
@@ -682,7 +656,7 @@ export const computeCommunityScores = internalAction({
       // Step 4: Compute cross-group attendance for this batch
       const crossGroupAttendanceMap: Record<
         string,
-        { pct: number; attendedWeekStarts: number[] }
+        { pct: number; attendedWeekStarts: number[]; meetingWeekStarts: number[]; consecutiveMissed: number }
       > = {};
       const userIds = page.members.map((m) => m.userId);
       for (let i = 0; i < userIds.length; i += CROSS_GROUP_BATCH_SIZE) {
