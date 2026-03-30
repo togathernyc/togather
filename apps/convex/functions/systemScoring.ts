@@ -15,8 +15,10 @@
  * who need outreach.
  *
  * Formula (0-100):
- *   1. attendance_pct = attended_weeks / weeks_with_meetings × 100  (join date respected)
+ *   1. attendance_pct = max(0, 100 − consecutive_missed × 15)
  *      (If no meetings exist in window → score is 0; nothing to evaluate)
+ *      Attended last meeting → 0 consecutive misses → full 70 pts
+ *      Missed 7+ in a row → 0 pts
  *   2. attendance_portion = 70 × (attendance_pct / 100)       → 0-70 points
  *   3. remaining = 100 − attendance_portion                   → 30-100 points
  *   4. Follow-up fills the remaining space based on channel + recency:
@@ -181,7 +183,7 @@ export const SYSTEM_VARIABLE_IDS: ReadonlySet<string> = new Set([
  *
  * - `sys_service`: 20 points per PCO service in the past 2 months, max 100 at 5+.
  * - `sys_attendance`: Percentage of weeks (in a join-date-adjusted 60-day window) with ≥1 attendance.
- * - `sys_togather`: Attendance ratio (0-70pts, attended/meeting weeks over 2mo)
+ * - `sys_togather`: Consecutive misses (0-70pts, -15 per consecutive missed meeting)
  *   + Follow-up (fills remaining: in-person=100%, call=75%, text=50%, decaying over time).
  *
  * @param scoreId - One of "sys_service", "sys_attendance", or "sys_togather"
@@ -212,12 +214,15 @@ export function calculateSystemScore(
 
     case "sys_togather": {
       // ── Attendance portion: 0-70 points ──
-      // Uses the actual attendance ratio (attended / meetings with meetings).
+      // Based on consecutive missed meetings from the most recent one.
+      // Attending the latest meeting resets to full credit (70 pts).
+      // Each consecutive miss deducts 15 pct-points; 7+ misses → 0.
       // If no meetings existed in the window, score is 0 — nothing to evaluate.
       const meetingWeeks = rawValues.meeting_weeks_in_window;
       const attendedWeeks = rawValues.attended_weeks_in_window;
       if (meetingWeeks <= 0) return 0;
-      const attendancePct = Math.min(100, (attendedWeeks / meetingWeeks) * 100);
+      const consecutiveMissed = rawValues.consecutive_missed;
+      const attendancePct = Math.max(0, 100 - consecutiveMissed * 15);
       const attendancePortion = Math.round(70 * (attendancePct / 100));
 
       // ── Follow-up portion: fills remaining space (100 - attendancePortion) ──
