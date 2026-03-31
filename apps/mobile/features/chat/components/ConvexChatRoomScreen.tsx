@@ -864,7 +864,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   const isDataReady = !isFromNotification || (
     resolvedGroupId &&
     groupDetails !== undefined &&
-    activeChannelId !== null
+    activeChannelId != null
   );
 
   // Loading state: show placeholder while group ID resolves or notification data loads

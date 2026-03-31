@@ -652,6 +652,8 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
 
     if (!trimmedText && !hasImages && !hasFile && !hasVideo) return;
 
+    const textAtSend = text;
+
     try {
       // Extract mentioned user IDs
       const mentionedUserIds = extractMentionedUserIds(trimmedText);
@@ -694,11 +696,16 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
         hideLinkPreview: isLinkPreviewDismissed ? true : undefined,
       });
 
-      // Clear input and draft
-      setText('');
-      setDebouncedText('');
+      // Clear only the text that was present when send started; if the user typed
+      // while the request was in flight, keep their current input.
+      if (text === textAtSend) {
+        setText('');
+        setDebouncedText('');
+        if (channelId) clearDraft(channelId);
+      } else {
+        setDebouncedText(text);
+      }
       setNativeScrollEnabled(false);
-      if (channelId) clearDraft(channelId);
       setSelectedImages([]);
       setUploadedImageUrls([]);
       setSelectedFile(null);

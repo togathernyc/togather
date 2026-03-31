@@ -53,6 +53,10 @@ export function useMessages(
     messages: [],
   });
 
+  // Last live page while cursor is undefined — used when pagination sets cursor and
+  // useQuery briefly returns undefined so the list does not flash empty.
+  const liveMessagesSnapshotRef = useRef<any[]>([]);
+
   const [hasMore, setHasMore] = useState(false);
 
   // Track if we're currently loading more (to prevent duplicate loads)
@@ -71,6 +75,7 @@ export function useMessages(
     isLoadingMoreRef.current = false;
     olderMessagesRef.current = { channelId: null, messages: [] };
     lastCursorRef.current = undefined;
+    liveMessagesSnapshotRef.current = [];
   }
 
   // Skip query if no channelId or no token
@@ -129,13 +134,24 @@ export function useMessages(
     }
   }, [result, channelId, cursor, setChannelMessages]);
 
+  useEffect(() => {
+    if (channelId && result?.messages && cursor === undefined) {
+      liveMessagesSnapshotRef.current = result.messages;
+    }
+  }, [result?.messages, cursor, channelId]);
+
   // Merge live messages with accumulated older messages
   const mergedMessages = useMemo(() => {
-    if (!result?.messages && olderMessagesRef.current.channelId !== channelId) {
+    const liveMessages =
+      cursor === undefined && result?.messages
+        ? result.messages
+        : cursor !== undefined && liveMessagesSnapshotRef.current.length > 0
+          ? liveMessagesSnapshotRef.current
+          : [];
+
+    if (liveMessages.length === 0 && olderMessagesRef.current.channelId !== channelId) {
       return [];
     }
-
-    const liveMessages = (cursor === undefined && result?.messages) ? result.messages : [];
     const olderMessages = olderMessagesRef.current.channelId === channelId
       ? olderMessagesRef.current.messages
       : [];
