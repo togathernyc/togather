@@ -19,6 +19,8 @@ import {
   TouchableOpacity,
   Image,
   Alert,
+  Modal,
+  Pressable,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -50,6 +52,14 @@ export function PersonDetailScreen() {
   const [isUpdatingRole, setIsUpdatingRole] = useState(false);
   const [isTransferring, setIsTransferring] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
+  const [editingAttendance, setEditingAttendance] = useState<{
+    meetingId: string;
+    groupId: string;
+    groupName: string;
+    meetingDate: string | number;
+    currentPresent: boolean;
+  } | null>(null);
+  const [isUpdatingAttendance, setIsUpdatingAttendance] = useState(false);
 
   // Fetch member details using Convex
   const rawMember = useQuery(
@@ -106,10 +116,32 @@ export function PersonDetailScreen() {
   const updateRoleMutation = useAuthenticatedMutation(api.functions.admin.members.updateMemberRole);
   const transferPrimaryAdminMutation = useAuthenticatedMutation(api.functions.admin.members.transferPrimaryAdmin);
   const removeMemberMutation = useAuthenticatedMutation(api.functions.communities.removeMember);
+  const updateAttendanceMutation = useAuthenticatedMutation(api.functions.memberFollowups.updateAttendance);
 
   const canManageAdmins = currentUser?.is_primary_admin ?? false;
   const isCurrentUserAdmin = currentUser?.is_admin || currentUser?.is_primary_admin;
   const isSelf = currentUser?.id === userId;
+
+  const handleAdminUpdateAttendance = useCallback(
+    async (status: number) => {
+      if (!editingAttendance || !userId || !community?.id) return;
+      setIsUpdatingAttendance(true);
+      try {
+        await updateAttendanceMutation({
+          groupId: editingAttendance.groupId as Id<"groups">,
+          meetingId: editingAttendance.meetingId as Id<"meetings">,
+          targetUserId: userId as Id<"users">,
+          status,
+        });
+        setEditingAttendance(null);
+      } catch (error: any) {
+        Alert.alert("Error", formatError(error, "Failed to update attendance"));
+      } finally {
+        setIsUpdatingAttendance(false);
+      }
+    },
+    [editingAttendance, userId, community?.id, updateAttendanceMutation]
+  );
 
   const handleMakeAdmin = useCallback(async () => {
     if (!userId || !community?.id || !currentUser?.id) return;
@@ -476,40 +508,70 @@ export function PersonDetailScreen() {
 
           {member.recent_attendance.length > 0 && (
             <>
-              <Text style={[styles.subsectionTitle, { color: colors.textSecondary }]}>Recent Attendance</Text>
-              {member.recent_attendance.map((record, index) => (
-                <View key={`${record.meeting_id}-${index}`} style={[styles.attendanceCard, { backgroundColor: colors.surfaceSecondary }]}>
-                  <View style={styles.attendanceInfo}>
-                    <Text style={[styles.attendanceName, { color: colors.text }]}>{record.group_name}</Text>
-                    <Text style={[styles.attendanceDate, { color: colors.textSecondary }]}>
-                      {formatDateTime(record.meeting_date)}
-                    </Text>
-                  </View>
-                  <View
-                    style={[
-                      styles.attendanceStatus,
-                      { backgroundColor: record.attended
-                          ? (isDark ? 'rgba(48,209,88,0.15)' : '#4CAF5020')
-                          : (isDark ? 'rgba(255,69,58,0.15)' : '#FF6B6B20')
-                      },
-                    ]}
+              <Text style={[styles.subsectionTitle, { color: colors.textSecondary }]}>
+                {isCurrentUserAdmin ? "Recent Attendance (tap to edit)" : "Recent Attendance"}
+              </Text>
+              {member.recent_attendance.map((record, index) => {
+                const RowWrapper = isCurrentUserAdmin ? TouchableOpacity : View;
+                const rowProps = isCurrentUserAdmin
+                  ? {
+                      onPress: () =>
+                        setEditingAttendance({
+                          meetingId: String(record.meeting_id),
+                          groupId: String(record.group_id),
+                          groupName: record.group_name,
+                          meetingDate: record.meeting_date,
+                          currentPresent: record.attended,
+                        }),
+                      activeOpacity: 0.7,
+                    }
+                  : {};
+                return (
+                  <RowWrapper
+                    key={`${record.meeting_id}-${index}`}
+                    style={[styles.attendanceCard, { backgroundColor: colors.surfaceSecondary }]}
+                    {...rowProps}
                   >
-                    <Ionicons
-                      name={record.attended ? "checkmark-circle" : "close-circle"}
-                      size={20}
-                      color={record.attended ? colors.success : colors.destructive}
-                    />
-                    <Text
+                    <View style={styles.attendanceInfo}>
+                      <Text style={[styles.attendanceName, { color: colors.text }]}>{record.group_name}</Text>
+                      <Text style={[styles.attendanceDate, { color: colors.textSecondary }]}>
+                        {formatDateTime(record.meeting_date)}
+                      </Text>
+                    </View>
+                    <View
                       style={[
-                        styles.attendanceStatusText,
-                        { color: record.attended ? colors.success : colors.destructive },
+                        styles.attendanceStatus,
+                        {
+                          backgroundColor: record.attended
+                            ? isDark
+                              ? "rgba(48,209,88,0.15)"
+                              : "#4CAF5020"
+                            : isDark
+                              ? "rgba(255,69,58,0.15)"
+                              : "#FF6B6B20",
+                        },
                       ]}
                     >
-                      {record.attended ? "Present" : "Absent"}
-                    </Text>
-                  </View>
-                </View>
-              ))}
+                      <Ionicons
+                        name={record.attended ? "checkmark-circle" : "close-circle"}
+                        size={20}
+                        color={record.attended ? colors.success : colors.destructive}
+                      />
+                      <Text
+                        style={[
+                          styles.attendanceStatusText,
+                          { color: record.attended ? colors.success : colors.destructive },
+                        ]}
+                      >
+                        {record.attended ? "Present" : "Absent"}
+                      </Text>
+                    </View>
+                    {isCurrentUserAdmin && (
+                      <Ionicons name="chevron-forward" size={16} color={colors.iconSecondary} style={{ marginLeft: 4 }} />
+                    )}
+                  </RowWrapper>
+                );
+              })}
             </>
           )}
 
@@ -611,6 +673,55 @@ export function PersonDetailScreen() {
           </View>
         )}
       </ScrollView>
+
+      <Modal
+        visible={!!editingAttendance}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setEditingAttendance(null)}
+      >
+        <Pressable
+          style={[styles.modalOverlay, { backgroundColor: isDark ? "rgba(0,0,0,0.65)" : "rgba(0,0,0,0.45)" }]}
+          onPress={() => setEditingAttendance(null)}
+        >
+          <Pressable style={[styles.modalCard, { backgroundColor: colors.surface }]} onPress={(e) => e.stopPropagation()}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Edit attendance</Text>
+            {editingAttendance && (
+              <>
+                <Text style={[styles.modalSubtitle, { color: colors.text }]} numberOfLines={2}>
+                  {editingAttendance.groupName}
+                </Text>
+                <Text style={[styles.modalMeta, { color: colors.textSecondary }]}>
+                  {formatDateTime(editingAttendance.meetingDate)}
+                </Text>
+                <Text style={[styles.modalCurrent, { color: colors.textSecondary }]}>
+                  Current: {editingAttendance.currentPresent ? "Present" : "Absent"}
+                </Text>
+                <TouchableOpacity
+                  style={[styles.modalOptionBtn, { backgroundColor: colors.success }]}
+                  onPress={() => handleAdminUpdateAttendance(1)}
+                  disabled={isUpdatingAttendance}
+                >
+                  <Ionicons name="checkmark-circle" size={22} color="#fff" />
+                  <Text style={styles.modalOptionText}>Mark present</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modalOptionBtn, { backgroundColor: colors.destructive }]}
+                  onPress={() => handleAdminUpdateAttendance(0)}
+                  disabled={isUpdatingAttendance}
+                >
+                  <Ionicons name="close-circle" size={22} color="#fff" />
+                  <Text style={styles.modalOptionText}>Mark absent</Text>
+                </TouchableOpacity>
+                {isUpdatingAttendance && <ActivityIndicator size="small" color={primaryColor} style={{ marginTop: 12 }} />}
+              </>
+            )}
+            <TouchableOpacity style={styles.modalCancelWrap} onPress={() => setEditingAttendance(null)}>
+              <Text style={[styles.modalCancelText, { color: colors.textSecondary }]}>Cancel</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -994,5 +1105,57 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 16,
     marginTop: 12,
+  },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+  },
+  modalCard: {
+    width: "100%",
+    maxWidth: 360,
+    borderRadius: 12,
+    padding: 20,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "600",
+    marginBottom: 8,
+  },
+  modalSubtitle: {
+    fontSize: 16,
+    fontWeight: "500",
+  },
+  modalMeta: {
+    fontSize: 13,
+    marginTop: 4,
+  },
+  modalCurrent: {
+    fontSize: 13,
+    marginTop: 12,
+    marginBottom: 16,
+  },
+  modalOptionBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 10,
+    marginBottom: 10,
+  },
+  modalOptionText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  modalCancelWrap: {
+    marginTop: 8,
+    alignItems: "center",
+    paddingVertical: 8,
+  },
+  modalCancelText: {
+    fontSize: 16,
   },
 });

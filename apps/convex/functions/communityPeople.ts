@@ -1174,6 +1174,8 @@ export const history = query({
 
     await requireCommunityMember(ctx, cpRecord.communityId, authUserId);
 
+    const viewerId = args.currentUserId ?? authUserId;
+
     const user = await ctx.db.get(cpRecord.userId);
     if (!user) {
       throw new ConvexError("User not found");
@@ -1283,20 +1285,20 @@ export const history = query({
     for (const { membership, group } of communityMemberships) {
       // Check if current user can edit attendance in this group
       let canEdit = false;
-      if (args.currentUserId) {
-        const callerMembership = await ctx.db
-          .query("groupMembers")
-          .withIndex("by_group_user", (q: any) =>
-            q.eq("groupId", group._id).eq("userId", args.currentUserId!),
-          )
-          .first();
-        if (
-          callerMembership &&
-          (callerMembership.role === "leader" ||
-            callerMembership.role === "admin")
-        ) {
-          canEdit = true;
-        }
+      const callerMembership = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q: any) =>
+          q.eq("groupId", group._id).eq("userId", viewerId),
+        )
+        .first();
+      if (
+        callerMembership &&
+        (callerMembership.role === "leader" ||
+          callerMembership.role === "admin")
+      ) {
+        canEdit = true;
+      } else if (await isCommunityAdmin(ctx, cpRecord.communityId, viewerId)) {
+        canEdit = true;
       }
 
       const attendanceCutoff = Math.max(membership.joinedAt ?? 0, sixtyDaysAgo);
@@ -1680,6 +1682,115 @@ export const addFollowup = mutation({
           }
         : null,
     };
+  },
+});
+
+const CONVERTIBLE_FOLLOWUP_TYPES = new Set([
+  "note",
+  "call",
+  "text",
+  "followed_up",
+  "reach_out",
+]);
+
+/**
+ * Change an existing history row to a contact type (text, call, or in-person).
+ * Preserves original content and timestamp so scoring reflects when the touchpoint happened.
+ */
+export const convertFollowupType = mutation({
+  args: {
+    token: v.string(),
+    communityPeopleId: v.id("communityPeople"),
+    followupId: v.id("memberFollowups"),
+    newType: v.union(
+      v.literal("call"),
+      v.literal("text"),
+      v.literal("followed_up"),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const cpRecord = await ctx.db.get(args.communityPeopleId);
+    if (!cpRecord) {
+      throw new ConvexError("Community person record not found");
+    }
+
+    await requireCommunityLeader(ctx, cpRecord.communityId, userId);
+
+    const followup = await ctx.db.get(args.followupId);
+    if (!followup) {
+      throw new ConvexError("Follow-up entry not found");
+    }
+
+    if (!CONVERTIBLE_FOLLOWUP_TYPES.has(followup.type)) {
+      throw new ConvexError("This entry cannot be converted");
+    }
+
+    if (followup.type === args.newType) {
+      throw new ConvexError("Entry is already this type");
+    }
+
+    const announcementGroup = await ctx.db
+      .query("groups")
+      .withIndex("by_community", (q: any) =>
+        q.eq("communityId", cpRecord.communityId),
+      )
+      .filter((q: any) => q.eq(q.field("isAnnouncementGroup"), true))
+      .first();
+
+    if (!announcementGroup) {
+      throw new ConvexError("Announcement group not found");
+    }
+
+    const primaryGroupMember = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q: any) =>
+        q.eq("groupId", announcementGroup._id).eq("userId", cpRecord.userId),
+      )
+      .first();
+
+    if (
+      !primaryGroupMember ||
+      primaryGroupMember.leftAt !== undefined ||
+      followup.groupMemberId !== primaryGroupMember._id
+    ) {
+      throw new ConvexError("Follow-up does not belong to this person");
+    }
+
+    let content = followup.content;
+    if (args.newType === "call" && (!content || !content.trim())) {
+      content = "Made a phone call";
+    } else if (args.newType === "text" && (!content || !content.trim())) {
+      content = "Sent a text message";
+    } else if (args.newType === "followed_up" && (!content || !content.trim())) {
+      content = "Marked as followed up";
+    }
+
+    await ctx.db.patch(args.followupId, {
+      type: args.newType,
+      content,
+      snoozeUntil: undefined,
+    });
+
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.followupScoreComputation.computeSingleMemberScore,
+      {
+        groupId: announcementGroup._id,
+        groupMemberId: followup.groupMemberId,
+      },
+    );
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.communityScoreComputation.recomputeForGroupMember,
+      {
+        groupId: announcementGroup._id,
+        userId: cpRecord.userId,
+      },
+    );
+
+    return { success: true };
   },
 });
 
