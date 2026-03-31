@@ -143,9 +143,12 @@ export function useMessages(
   // Merge live messages with accumulated older messages
   const mergedMessages = useMemo(() => {
     const liveMessages =
-      cursor === undefined && result?.messages
-        ? result.messages
-        : cursor !== undefined && liveMessagesSnapshotRef.current.length > 0
+      cursor === undefined
+        ? (result?.messages ??
+          (liveMessagesSnapshotRef.current.length > 0
+            ? liveMessagesSnapshotRef.current
+            : []))
+        : liveMessagesSnapshotRef.current.length > 0
           ? liveMessagesSnapshotRef.current
           : [];
 
@@ -194,7 +197,6 @@ export function useMessages(
   }, []);
 
   // Determine loading state
-  const hasStaleData = !result && channelId !== null;
   const isQueryLoading = result === undefined && !shouldSkip;
   const isPaginating = isLoadingMoreRef.current;
 
