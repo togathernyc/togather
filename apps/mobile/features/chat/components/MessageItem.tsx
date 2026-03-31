@@ -10,7 +10,7 @@
  * - Images from attachments
  * - Long press action menu
  */
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -19,6 +19,7 @@ import {
   GestureResponderEvent,
   Linking,
   ActivityIndicator,
+  Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -228,6 +229,38 @@ function MessageItemInner({
 }: MessageItemProps) {
   const router = useRouter();
   const { colors: themeColors } = useTheme();
+
+  // Slide-up from keyboard + bounce animation for new messages
+  const isNewMessage = isOptimistic && optimisticStatus === 'sending';
+  const hasMedia = !!(message.attachments && message.attachments.length > 0);
+  // Media messages slide further since they're taller, and skip scale to avoid shrinking images/videos
+  const slideAnim = useRef(new Animated.Value(isNewMessage ? (hasMedia ? 60 : 40) : 0)).current;
+  const scaleAnim = useRef(new Animated.Value(isNewMessage && !hasMedia ? 0.85 : 1)).current;
+
+  useEffect(() => {
+    if (isNewMessage) {
+      const animations = [
+        Animated.spring(slideAnim, {
+          toValue: 0,
+          tension: hasMedia ? 50 : 65,
+          friction: hasMedia ? 9 : 8,
+          useNativeDriver: true,
+        }),
+      ];
+      // Only scale text messages — media looks better with just a slide
+      if (!hasMedia) {
+        animations.push(
+          Animated.spring(scaleAnim, {
+            toValue: 1,
+            tension: 65,
+            friction: 7,
+            useNativeDriver: true,
+          }),
+        );
+      }
+      Animated.parallel(animations).start();
+    }
+  }, []); // Only on mount
 
   const isOwnMessage = message.senderId === currentUserId;
 
@@ -758,12 +791,10 @@ function MessageItemInner({
   const renderOptimisticStatus = () => {
     if (!isOptimistic || !optimisticStatus) return null;
 
-    if (optimisticStatus === 'sending') {
-      return (
-        <View testID="optimistic-sending" style={styles.optimisticStatusContainer}>
-          <ActivityIndicator size={10} color={themeColors.textTertiary} />
-        </View>
-      );
+    // For sending/sent, don't show any special indicator — render like a real message
+    // to avoid jitter when the optimistic message is replaced by the real one.
+    if (optimisticStatus === 'sending' || optimisticStatus === 'sent') {
+      return null;
     }
 
     if (optimisticStatus === 'queued') {
@@ -793,16 +824,11 @@ function MessageItemInner({
       return null;
     }
 
-    // With prefetch, data should be ready immediately
-    // If still loading (edge case), don't render to avoid flicker
-    if (readReceiptsLoading) {
-      return null;
-    }
-
-    // Show checkmarks based on read state
-    // ✓ = sent (always shown)
-    // ✓✓ = delivered (shown when totalMembers > 0)
-    // ✓✓ + count = read (shown when readByCount > 0)
+    // Show checkmarks based on read state — all states render the same height
+    // container to prevent vertical jitter during transitions:
+    // ✓  = sent / loading receipts
+    // ✓✓ = delivered (dimmed)
+    // ✓✓ + count = read (colored)
 
     if (readByCount > 0) {
       // Read by some people
@@ -822,7 +848,7 @@ function MessageItemInner({
         </View>
       );
     } else {
-      // Just sent
+      // Sent / receipts still loading
       return (
         <View style={styles.readReceiptsContainer}>
           <Text style={[styles.sentCheck, { color: themeColors.textTertiary }]}>✓</Text>
@@ -832,12 +858,13 @@ function MessageItemInner({
   };
 
   return (
+    <Animated.View style={{ transform: [{ translateY: slideAnim }, { scale: scaleAnim }] }}>
     <Pressable onLongPress={handleLongPress} delayLongPress={300}>
       <View
         style={[
           styles.container,
           isOwnMessage ? styles.ownMessageContainer : styles.otherMessageContainer,
-          isOptimistic && optimisticStatus !== 'error' && { opacity: 0.7 },
+          isOptimistic && (optimisticStatus === 'error' || optimisticStatus === 'queued') && { opacity: 0.7 },
         ]}
       >
         {/* Avatar (only for others' messages) */}
@@ -946,7 +973,11 @@ function MessageItemInner({
           {renderThreadReplies()}
 
           {/* Read receipts or optimistic status */}
-          {isOptimistic ? renderOptimisticStatus() : renderReadReceipts()}
+          {isOptimistic
+            ? (optimisticStatus === 'sending' || optimisticStatus === 'sent'
+                ? (isOwnMessage ? <View style={styles.readReceiptsContainer}><Text style={[styles.sentCheck, { color: themeColors.textTertiary }]}>✓</Text></View> : null)
+                : renderOptimisticStatus())
+            : renderReadReceipts()}
         </View>
       </View>
 
@@ -966,6 +997,7 @@ function MessageItemInner({
         onClose={handleReactionModalClose}
       />
     </Pressable>
+    </Animated.View>
   );
 }
 

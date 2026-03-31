@@ -82,6 +82,7 @@ type ChatRoomParams = {
   leadersChannelId?: string;
   isAnnouncementGroup?: string;
   externalChatLink?: string;
+  fromNotification?: string;
 };
 
 const ConvexChatRoomScreenInner: React.FC = () => {
@@ -126,6 +127,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
     isLeader,
     isAnnouncementGroup: isAnnouncementGroupParam,
     externalChatLink: externalChatLinkParam,
+    fromNotification,
   } = params;
 
   // Resolve channel slug - prefer channelSlug, fall back to channelType for backwards compatibility
@@ -855,9 +857,18 @@ const ConvexChatRoomScreenInner: React.FC = () => {
     Keyboard.dismiss();
   }, []);
 
-  // Loading state: Only show loading if we don't have a group ID yet
-  // If we have a group ID but channel ID is still loading, the components will handle their own loading states
-  if (!resolvedGroupId) {
+  // When arriving from a notification, wait for essential data to resolve before
+  // showing the full UI — otherwise the header, tabs, and message list all pop in
+  // at different times causing layout jumps.
+  const isFromNotification = fromNotification === "1";
+  const isDataReady = !isFromNotification || (
+    resolvedGroupId &&
+    groupDetails !== undefined &&
+    activeChannelId != null
+  );
+
+  // Loading state: show placeholder while group ID resolves or notification data loads
+  if (!resolvedGroupId || !isDataReady) {
     return (
       <View style={[styles.container, { backgroundColor: colors.surface }]}>
         <ChatHeaderPlaceholder
@@ -876,10 +887,6 @@ const ConvexChatRoomScreenInner: React.FC = () => {
       </View>
     );
   }
-
-  // Note: We no longer show a blocking "Loading channel..." screen.
-  // If activeChannelId is null, the MessageList will show its own loading/empty state.
-  // This prevents the jarring sequential loading screens.
 
   if (!currentUserId) {
     return (

@@ -93,22 +93,6 @@ export const onMessageSent = internalMutation({
       const channel = await ctx.db.get(args.channelId);
       const sender = args.senderId ? await ctx.db.get(args.senderId) : null;
 
-      // Get group info for notification content
-      const group = channel?.groupId ? await ctx.db.get(channel.groupId) : null;
-      const community = group?.communityId ? await ctx.db.get(group.communityId) : null;
-
-      // Build recipient lists by notification type
-      const mentionRecipients: Id<"users">[] = [];
-      const regularRecipients: Id<"users">[] = [];
-
-      for (const member of members) {
-        if (message.mentionedUserIds?.includes(member.userId)) {
-          mentionRecipients.push(member.userId);
-        } else {
-          regularRecipients.push(member.userId);
-        }
-      }
-
       // Determine sender name - use override for bots, otherwise get from sender record
       const senderName = args.senderNameOverride
         ? args.senderNameOverride
@@ -116,27 +100,133 @@ export const onMessageSent = internalMutation({
           ? `${sender.firstName || ""} ${sender.lastName || ""}`.trim() || "Someone"
           : "Togather Bot";
       const senderAvatarUrl = message.senderProfilePhoto;
-
-      // Schedule the notification action
-      console.log(`[onMessageSent] Scheduling notifications for ${mentionRecipients.length} mentions and ${regularRecipients.length} regular recipients`);
-      console.log(`[onMessageSent] Regular recipient IDs: ${regularRecipients.join(', ')}`);
       const channelSlug = channel ? getChannelSlug(channel) : "general";
 
-      await ctx.scheduler.runAfter(0, internal.functions.messaging.events.sendMessageNotifications, {
-        channelId: args.channelId,
-        messageId: args.messageId,
-        senderName,
-        messagePreview: preview,
-        senderAvatarUrl,
-        groupId: group?._id,
-        groupName: group?.name || 'Group Chat',
-        communityId: community?._id,
-        channelName: channel?.name,
-        channelType: channel?.channelType || "main",
-        channelSlug,
-        mentionRecipients,
-        regularRecipients,
-      });
+      // For shared channels, each member may belong to a different group.
+      // We need to route notifications to each member's actual group so tapping
+      // the notification opens the correct group context.
+      const isSharedChannel = channel?.isShared && channel.sharedGroups?.some(
+        (sg) => sg.status === "accepted"
+      );
+
+      if (isSharedChannel && channel) {
+        // Collect all group IDs: primary + accepted shared groups
+        const allGroupIds: Id<"groups">[] = [channel.groupId];
+        for (const sg of channel.sharedGroups || []) {
+          if (sg.status === "accepted") {
+            allGroupIds.push(sg.groupId);
+          }
+        }
+
+        // For each member, determine which group they belong to
+        // Map: groupId -> { group, mentionRecipients, regularRecipients }
+        const groupBuckets = new Map<string, {
+          groupId: Id<"groups">;
+          groupName: string;
+          communityId?: Id<"communities">;
+          mentionRecipients: Id<"users">[];
+          regularRecipients: Id<"users">[];
+        }>();
+
+        // Pre-fetch all groups
+        const groupDocs = await Promise.all(allGroupIds.map((gId) => ctx.db.get(gId)));
+        const groupMap = new Map<string, { _id: Id<"groups">; name: string; communityId?: Id<"communities"> }>();
+        for (const g of groupDocs) {
+          if (g) groupMap.set(g._id, { _id: g._id, name: g.name, communityId: g.communityId });
+        }
+
+        for (const member of members) {
+          // Find which group this member belongs to
+          let memberGroupId: Id<"groups"> | null = null;
+          for (const gId of allGroupIds) {
+            const gm = await ctx.db
+              .query("groupMembers")
+              .withIndex("by_group_user", (q) => q.eq("groupId", gId).eq("userId", member.userId))
+              .first();
+            if (gm && !gm.leftAt) {
+              memberGroupId = gId;
+              break;
+            }
+          }
+
+          // Fallback to primary group if membership lookup fails
+          const effectiveGroupId = memberGroupId || channel.groupId;
+          const key = effectiveGroupId;
+
+          if (!groupBuckets.has(key)) {
+            const g = groupMap.get(effectiveGroupId);
+            groupBuckets.set(key, {
+              groupId: effectiveGroupId,
+              groupName: g?.name || "Group Chat",
+              communityId: g?.communityId,
+              mentionRecipients: [],
+              regularRecipients: [],
+            });
+          }
+
+          const bucket = groupBuckets.get(key)!;
+          if (message.mentionedUserIds?.includes(member.userId)) {
+            bucket.mentionRecipients.push(member.userId);
+          } else {
+            bucket.regularRecipients.push(member.userId);
+          }
+        }
+
+        // Schedule one notification action per group bucket
+        for (const bucket of groupBuckets.values()) {
+          if (bucket.mentionRecipients.length === 0 && bucket.regularRecipients.length === 0) continue;
+          console.log(`[onMessageSent] Scheduling notifications for group ${bucket.groupId}: ${bucket.mentionRecipients.length} mentions, ${bucket.regularRecipients.length} regular`);
+          await ctx.scheduler.runAfter(0, internal.functions.messaging.events.sendMessageNotifications, {
+            channelId: args.channelId,
+            messageId: args.messageId,
+            senderName,
+            messagePreview: preview,
+            senderAvatarUrl,
+            groupId: bucket.groupId,
+            groupName: bucket.groupName,
+            communityId: bucket.communityId,
+            channelName: channel.name,
+            channelType: channel.channelType || "main",
+            channelSlug,
+            mentionRecipients: bucket.mentionRecipients,
+            regularRecipients: bucket.regularRecipients,
+          });
+        }
+      } else {
+        // Non-shared channel: original single-group path
+        const group = channel?.groupId ? await ctx.db.get(channel.groupId) : null;
+        const community = group?.communityId ? await ctx.db.get(group.communityId) : null;
+
+        const mentionRecipients: Id<"users">[] = [];
+        const regularRecipients: Id<"users">[] = [];
+
+        for (const member of members) {
+          if (message.mentionedUserIds?.includes(member.userId)) {
+            mentionRecipients.push(member.userId);
+          } else {
+            regularRecipients.push(member.userId);
+          }
+        }
+
+        console.log(`[onMessageSent] Scheduling notifications for ${mentionRecipients.length} mentions and ${regularRecipients.length} regular recipients`);
+        console.log(`[onMessageSent] Regular recipient IDs: ${regularRecipients.join(', ')}`);
+
+        await ctx.scheduler.runAfter(0, internal.functions.messaging.events.sendMessageNotifications, {
+          channelId: args.channelId,
+          messageId: args.messageId,
+          senderName,
+          messagePreview: preview,
+          senderAvatarUrl,
+          groupId: group?._id,
+          groupName: group?.name || 'Group Chat',
+          communityId: community?._id,
+          channelName: channel?.name,
+          channelType: channel?.channelType || "main",
+          channelSlug,
+          mentionRecipients,
+          regularRecipients,
+        });
+      }
     }
   },
 });

@@ -566,6 +566,11 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
     // Add to selected/uploaded images so it appears in the preview and sends on tap
     setSelectedImages(prev => [...prev, gifUrl]);
     setUploadedImageUrls(prev => [...prev, gifUrl]);
+
+    // Re-focus input so keyboard comes back for adding a caption
+    if (Platform.OS !== 'web') {
+      setTimeout(() => textInputRef.current?.focus(), 100);
+    }
   }, [rotateAnim]);
 
   /**
@@ -647,6 +652,8 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
 
     if (!trimmedText && !hasImages && !hasFile && !hasVideo) return;
 
+    const textAtSend = text;
+
     try {
       // Extract mentioned user IDs
       const mentionedUserIds = extractMentionedUserIds(trimmedText);
@@ -689,11 +696,16 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
         hideLinkPreview: isLinkPreviewDismissed ? true : undefined,
       });
 
-      // Clear input and draft
-      setText('');
-      setDebouncedText('');
+      // Clear only the text that was present when send started; if the user typed
+      // while the request was in flight, keep their current input.
+      if (text === textAtSend) {
+        setText('');
+        setDebouncedText('');
+        if (channelId) clearDraft(channelId);
+      } else {
+        setDebouncedText(text);
+      }
       setNativeScrollEnabled(false);
-      if (channelId) clearDraft(channelId);
       setSelectedImages([]);
       setUploadedImageUrls([]);
       setSelectedFile(null);
@@ -714,6 +726,11 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
       // Cancel reply
       if (replyToMessage && onCancelReply) {
         onCancelReply();
+      }
+
+      // Re-focus input so keyboard stays open (like iMessage)
+      if (Platform.OS !== 'web') {
+        textInputRef.current?.focus();
       }
     } catch (error) {
       console.error('[MessageInput] Send failed:', error);
@@ -1019,7 +1036,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
           multiline
           scrollEnabled={isWeb ? true : nativeScrollEnabled}
           maxLength={2000}
-          editable={!uploading && !isSending}
+          editable={!uploading}
         />
 
         {/* Send Button */}

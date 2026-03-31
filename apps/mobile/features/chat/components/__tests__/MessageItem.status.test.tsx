@@ -71,8 +71,8 @@ const baseMessage = {
 };
 
 describe('MessageItem status indicators', () => {
-  it('renders ActivityIndicator when isOptimistic=true and optimisticStatus=sending', () => {
-    const { getByTestId } = render(
+  it('renders sent checkmark when isOptimistic=true and optimisticStatus=sending (no spinner)', () => {
+    const { queryByTestId, queryByText } = render(
       <MessageItem
         message={baseMessage}
         currentUserId={'user-1' as any}
@@ -80,7 +80,10 @@ describe('MessageItem status indicators', () => {
         optimisticStatus="sending"
       />
     );
-    expect(getByTestId('optimistic-sending')).toBeTruthy();
+    // No spinner — optimistic sending messages look identical to real messages
+    expect(queryByTestId('optimistic-sending')).toBeNull();
+    // Shows single checkmark (sent indicator) to prevent jitter on transition
+    expect(queryByText('✓')).toBeTruthy();
   });
 
   it('renders clock icon and "Queued" when optimisticStatus=queued', () => {
@@ -124,7 +127,7 @@ describe('MessageItem status indicators', () => {
     expect(onRetry).toHaveBeenCalled();
   });
 
-  it('does NOT render read receipts when isOptimistic=true', () => {
+  it('renders single checkmark for own optimistic sending messages', () => {
     const { queryByText } = render(
       <MessageItem
         message={baseMessage}
@@ -133,8 +136,10 @@ describe('MessageItem status indicators', () => {
         optimisticStatus="sending"
       />
     );
-    // Read receipts show checkmark symbols - should not be present
-    expect(queryByText('\u2713')).toBeNull();
+    // Shows single checkmark (sent) to maintain consistent height and prevent jitter
+    expect(queryByText('✓')).toBeTruthy();
+    // Does NOT show double checkmarks (delivered/read)
+    expect(queryByText('✓✓')).toBeNull();
   });
 
   it('renders task card when message contentType is task_card', () => {
