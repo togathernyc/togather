@@ -312,17 +312,18 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
       case 'mention': {
         // Prefer url when present (backend sends pre-computed deep link for Issue #48)
         // Fallback: build path from groupId + channelSlug or channelType
+        // Pass fromNotification flag so chat screen can wait for data before rendering
         if (groupId && channelSlug) {
           const targetPath = `/inbox/${groupId}/${channelSlug}`;
           console.log(`[${type}] Navigating to:`, targetPath);
-          router.push(targetPath as any);
+          router.push({ pathname: targetPath, params: { fromNotification: "1" } } as any);
         } else if (groupId && channelType) {
           // Map channelType to slug: "main" -> "general", "leaders" -> "leaders"
           // For custom channels, the channelType IS the slug
           const channelSlug = channelType === 'main' ? 'general' : (channelType === 'leaders' ? 'leaders' : channelType);
           const targetPath = `/inbox/${groupId}/${channelSlug}`;
           console.log(`[${type}] Navigating to:`, targetPath);
-          router.push(targetPath as any);
+          router.push({ pathname: targetPath, params: { fromNotification: "1" } } as any);
         } else if (channelId) {
           // Use legacy route which will query DB to determine correct channel slug
           // This ensures leaders channel notifications land on the correct tab
@@ -330,14 +331,14 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
           console.log(`[${type}] Navigating to legacy route:`, targetPath);
           router.push({
             pathname: targetPath,
-            params: groupId ? { groupId } : undefined,
+            params: { ...(groupId ? { groupId } : {}), fromNotification: "1" },
           } as any);
         } else if (groupId) {
           // Last resort: have groupId but no channelType and no channelId
           // Default to general (best guess)
           const targetPath = `/inbox/${groupId}/general`;
           console.log(`[${type}] Navigating with default channelSlug:`, targetPath);
-          router.push(targetPath as any);
+          router.push({ pathname: targetPath, params: { fromNotification: "1" } } as any);
         } else {
           console.log(`[${type}] No groupId or channelId, falling back to /(tabs)/chat`);
           router.push('/(tabs)/chat');

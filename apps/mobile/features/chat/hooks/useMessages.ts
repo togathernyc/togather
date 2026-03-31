@@ -3,6 +3,14 @@
  *
  * Paginated message list with real-time updates.
  * Automatically subscribes to new messages and provides pagination support.
+ *
+ * Architecture:
+ * - A live subscription (cursor=undefined) always watches the latest messages.
+ * - When the user scrolls up, a pagination query fetches older messages.
+ * - Once the pagination response arrives, older messages are merged into an
+ *   accumulator and the cursor is reset so the live subscription resumes.
+ * - The final message list merges the live result with the accumulated older
+ *   messages, deduplicating by ID.
  */
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
@@ -34,32 +42,43 @@ export function useMessages(
 ): UseMessagesResult {
   const { token } = useAuth();
   const { getChannelMessages, setChannelMessages } = useMessageCache();
+
+  // Pagination cursor — set temporarily during pagination, then reset to undefined
+  // so the live subscription always watches the latest messages.
   const [cursor, setCursor] = useState<string | undefined>(undefined);
-  const [messagesState, setMessagesState] = useState<{
-    channelId: Id<"chatChannels"> | null;
-    messages: any[];
-  }>({ channelId: null, messages: [] });
+
+  // Accumulated older messages from pagination (not covered by the live query)
+  const olderMessagesRef = useRef<{ channelId: Id<"chatChannels"> | null; messages: any[] }>({
+    channelId: null,
+    messages: [],
+  });
+
   const [hasMore, setHasMore] = useState(false);
 
   // Track if we're currently loading more (to prevent duplicate loads)
   const isLoadingMoreRef = useRef(false);
 
-  // Reset cursor when channelId changes
+  // Store the last known cursor for loadMore
+  const lastCursorRef = useRef<string | undefined>(undefined);
+
+  // Reset when channelId changes
   const prevChannelIdRef = useRef<Id<"chatChannels"> | null>(null);
   if (channelId !== prevChannelIdRef.current) {
-    // Synchronous reset - happens during render, not in effect
     if (prevChannelIdRef.current !== null) {
-      // Only reset cursor if we had a previous channel (not initial mount)
       setCursor(undefined);
     }
     prevChannelIdRef.current = channelId;
     isLoadingMoreRef.current = false;
+    olderMessagesRef.current = { channelId: null, messages: [] };
+    lastCursorRef.current = undefined;
   }
 
   // Skip query if no channelId or no token
   const shouldSkip = !channelId || !token;
 
-  // Fetch messages from Convex
+  // Fetch messages from Convex — this is the single subscription.
+  // When cursor is undefined, it returns the latest N messages (reactive).
+  // When cursor is set (pagination), it returns older messages (one-shot).
   const result = useQuery(
     api.functions.messaging.messages.getMessages,
     shouldSkip
@@ -73,66 +92,104 @@ export function useMessages(
         }
   );
 
-  // Update state when query result changes
+  // Handle query results
   useEffect(() => {
     if (result && channelId) {
-      if (cursor === undefined) {
-        // Initial load - replace all messages for this channel
-        setMessagesState({ channelId, messages: result.messages || [] });
-      } else if (messagesState.channelId === channelId) {
-        // Pagination for same channel - prepend older messages
-        setMessagesState((prev) => {
-          if (prev.channelId !== channelId) {
-            // Channel changed mid-pagination, ignore
-            return prev;
-          }
-          // Deduplicate messages by ID
-          const existingIds = new Set(prev.messages.map((m) => m._id));
-          const newMessages = (result.messages || []).filter(
-            (m) => !existingIds.has(m._id)
-          );
-          // Prepend older messages
-          return { channelId, messages: [...newMessages, ...prev.messages] };
-        });
+      if (cursor !== undefined) {
+        // Pagination result — merge older messages into the accumulator,
+        // then reset cursor so the live subscription resumes.
+        const existingIds = new Set(olderMessagesRef.current.messages.map((m) => m._id));
+        const newOlderMessages = (result.messages || []).filter(
+          (m: any) => !existingIds.has(m._id)
+        );
+        olderMessagesRef.current = {
+          channelId,
+          messages: [...olderMessagesRef.current.messages, ...newOlderMessages],
+        };
+        setHasMore(result.hasMore || false);
+        lastCursorRef.current = result.cursor;
+        isLoadingMoreRef.current = false;
+        // Reset cursor so useQuery goes back to watching latest messages
+        setCursor(undefined);
+      } else {
+        // Live subscription result — update hasMore and lastCursor
+        // Only update these from the live query if we haven't paginated yet
+        if (olderMessagesRef.current.messages.length === 0) {
+          setHasMore(result.hasMore || false);
+          lastCursorRef.current = result.cursor;
+        }
       }
-      setHasMore(result.hasMore || false);
-      isLoadingMoreRef.current = false;
     }
   }, [result, cursor, channelId]);
 
-  // Cache messages for offline use
+  // Cache messages for offline use (only the live page)
   useEffect(() => {
     if (result && channelId && result.messages && result.messages.length > 0 && cursor === undefined) {
-      // Only cache the initial page (not paginated results)
       setChannelMessages(channelId, result.messages);
     }
   }, [result, channelId, cursor, setChannelMessages]);
 
-  // Load more messages (pagination)
-  const loadMore = useCallback(() => {
-    if (!result || !result.hasMore || isLoadingMoreRef.current) {
-      return;
+  // Merge live messages with accumulated older messages
+  const mergedMessages = useMemo(() => {
+    if (!result?.messages && olderMessagesRef.current.channelId !== channelId) {
+      return [];
     }
 
+    const liveMessages = (cursor === undefined && result?.messages) ? result.messages : [];
+    const olderMessages = olderMessagesRef.current.channelId === channelId
+      ? olderMessagesRef.current.messages
+      : [];
+
+    if (olderMessages.length === 0) return liveMessages;
+    if (liveMessages.length === 0) return olderMessages;
+
+    // Merge: live messages (newest) + older messages, deduplicating by ID
+    const seenIds = new Set<string>();
+    const merged: any[] = [];
+
+    // Live messages first (they're the latest)
+    for (const msg of liveMessages) {
+      if (!seenIds.has(msg._id)) {
+        seenIds.add(msg._id);
+        merged.push(msg);
+      }
+    }
+
+    // Then older messages
+    for (const msg of olderMessages) {
+      if (!seenIds.has(msg._id)) {
+        seenIds.add(msg._id);
+        merged.push(msg);
+      }
+    }
+
+    // Sort by createdAt ascending (oldest first, MessageList reverses for inverted FlatList)
+    merged.sort((a, b) => a.createdAt - b.createdAt);
+    return merged;
+  }, [result?.messages, channelId, cursor]);
+
+  // Load more messages (pagination)
+  const loadMore = useCallback(() => {
+    if (isLoadingMoreRef.current) return;
+    if (!lastCursorRef.current) return;
+
     isLoadingMoreRef.current = true;
-    setCursor(result.cursor);
-  }, [result]);
+    setCursor(lastCursorRef.current);
+  }, []);
 
-  // Determine if we're loading:
-  // 1. No result yet for current query
-  // 2. OR we have messages for a DIFFERENT channel (stale data)
-  const hasStaleData = messagesState.channelId !== channelId;
-  const isQueryLoading = result === undefined || hasStaleData;
+  // Determine loading state
+  const hasStaleData = !result && channelId !== null;
+  const isQueryLoading = result === undefined && !shouldSkip;
+  const isPaginating = isLoadingMoreRef.current;
 
-  // Stale-while-revalidate: show cached messages immediately whenever
-  // the live query hasn't resolved yet. This prevents empty flashes
-  // on re-navigation and provides offline support.
-  // Stale-while-revalidate is driven by query loading state (result === undefined),
-  // not by connection status. This correctly handles both offline and re-navigation cases.
   let messages: any[];
   let isStale = false;
 
-  if (isQueryLoading && channelId) {
+  if (isPaginating) {
+    // During pagination, keep showing current merged messages
+    messages = mergedMessages.length > 0 ? mergedMessages : [];
+  } else if (isQueryLoading && channelId) {
+    // Initial load — try cache
     const cached = getChannelMessages(channelId);
     if (cached && cached.length > 0) {
       messages = cached;
@@ -141,10 +198,10 @@ export function useMessages(
       messages = [];
     }
   } else {
-    messages = hasStaleData ? [] : messagesState.messages;
+    messages = mergedMessages;
   }
 
-  const isLoading = isQueryLoading && !isStale;
+  const isLoading = isQueryLoading && !isStale && !isPaginating;
 
   return {
     messages,
@@ -152,6 +209,6 @@ export function useMessages(
     hasMore,
     isLoading,
     isStale,
-    cursor: result?.cursor,
+    cursor: lastCursorRef.current,
   };
 }

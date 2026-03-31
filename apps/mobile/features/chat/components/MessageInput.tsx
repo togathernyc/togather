@@ -566,6 +566,11 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
     // Add to selected/uploaded images so it appears in the preview and sends on tap
     setSelectedImages(prev => [...prev, gifUrl]);
     setUploadedImageUrls(prev => [...prev, gifUrl]);
+
+    // Re-focus input so keyboard comes back for adding a caption
+    if (Platform.OS !== 'web') {
+      setTimeout(() => textInputRef.current?.focus(), 100);
+    }
   }, [rotateAnim]);
 
   /**
@@ -714,6 +719,11 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
       // Cancel reply
       if (replyToMessage && onCancelReply) {
         onCancelReply();
+      }
+
+      // Re-focus input so keyboard stays open (like iMessage)
+      if (Platform.OS !== 'web') {
+        textInputRef.current?.focus();
       }
     } catch (error) {
       console.error('[MessageInput] Send failed:', error);
@@ -1019,7 +1029,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
           multiline
           scrollEnabled={isWeb ? true : nativeScrollEnabled}
           maxLength={2000}
-          editable={!uploading && !isSending}
+          editable={!uploading}
         />
 
         {/* Send Button */}
