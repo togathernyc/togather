@@ -11,6 +11,7 @@ import { v } from "convex/values";
 import { mutation, query, action } from "../_generated/server";
 import type { Id } from "../_generated/dataModel";
 import { requireAuth, requireAuthFromToken } from "../lib/auth";
+import { requireGroupLeaderOrCommunityAdmin } from "./groups/mutations";
 
 // ============================================================================
 // Constants
@@ -180,10 +181,12 @@ export const confirmUpload = mutation({
         }
         case "group": {
           const entityId = args.entityId as Id<"groups">;
-          const group = await ctx.db.get(entityId);
-          if (!group) {
-            throw new Error("Group not found");
-          }
+          await requireGroupLeaderOrCommunityAdmin(
+            ctx,
+            entityId,
+            authUserId,
+            "update this group's preview image"
+          );
           await ctx.db.patch(entityId, { preview: url });
           break;
         }
@@ -193,6 +196,12 @@ export const confirmUpload = mutation({
           if (!meeting) {
             throw new Error("Meeting not found");
           }
+          await requireGroupLeaderOrCommunityAdmin(
+            ctx,
+            meeting.groupId,
+            authUserId,
+            "update this meeting's cover image"
+          );
           await ctx.db.patch(entityId, { coverImage: url });
           break;
         }
