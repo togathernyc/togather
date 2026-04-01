@@ -20,6 +20,7 @@ import {
   internalAction,
   internalMutation,
   internalQuery,
+  type MutationCtx,
 } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
@@ -1367,7 +1368,7 @@ export const runTaskReminderBot = internalAction({
  * bot config's community timezone. Used by both task reminder and birthday bot.
  */
 async function rescheduleBotConfigToNext9AM(
-  ctx: { db: any },
+  ctx: MutationCtx,
   configId: Id<"groupBotConfigs">
 ) {
   const config = await ctx.db.get(configId);
