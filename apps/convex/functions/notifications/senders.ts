@@ -108,7 +108,6 @@ export const notifyJoinRequestReceived = internalAction({
 
 /**
  * Notify user when their join request is approved
- * Called from reviewJoinRequest mutation
  *
  * Sends both push notification and email (if enabled).
  */

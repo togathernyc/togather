@@ -142,4 +142,17 @@ describe("GroupPreviewCard", () => {
     );
     expect(getByText("Join")).toBeTruthy();
   });
+
+  it("resets to Join when membership is revoked while card is mounted", () => {
+    const memberGroup = { ...mockGroup, is_member: true, user_role: "member" };
+    const { getByText, rerender } = render(<GroupPreviewCard group={memberGroup} />);
+    expect(getByText("Member")).toBeTruthy();
+
+    rerender(
+      <GroupPreviewCard
+        group={{ ...mockGroup, is_member: false, user_role: undefined, has_pending_request: false }}
+      />,
+    );
+    expect(getByText("Join")).toBeTruthy();
+  });
 });

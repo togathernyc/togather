@@ -45,6 +45,13 @@ export function GroupPreviewCard({ group }: GroupPreviewCardProps) {
       setJoinState("requested");
     } else if (
       !isJoining &&
+      joinState === "joined" &&
+      !group.is_member &&
+      !group.user_role
+    ) {
+      setJoinState("idle");
+    } else if (
+      !isJoining &&
       joinState === "requested" &&
       hadServerPendingRequestRef.current
     ) {
