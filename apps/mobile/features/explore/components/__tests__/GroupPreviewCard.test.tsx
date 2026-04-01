@@ -129,4 +129,17 @@ describe("GroupPreviewCard", () => {
     );
     expect(getByText("Member")).toBeTruthy();
   });
+
+  it("resets to Join after server clears pending request (e.g. declined)", () => {
+    const pendingGroup = { ...mockGroup, has_pending_request: true };
+    const { getByText, rerender } = render(<GroupPreviewCard group={pendingGroup} />);
+    expect(getByText("Requested")).toBeTruthy();
+
+    rerender(
+      <GroupPreviewCard
+        group={{ ...mockGroup, is_member: false, user_role: undefined, has_pending_request: false }}
+      />,
+    );
+    expect(getByText("Join")).toBeTruthy();
+  });
 });

@@ -838,22 +838,52 @@ export const reviewJoinRequest = mutation({
     }
 
     if (args.decision === "accepted") {
+      // Same returning-member heuristic as admin/requests.reviewPendingRequest
+      const isReturningMember = request.joinedAt !== request.requestedAt;
+
       // Approve: activate membership
       await ctx.db.patch(request._id, {
         requestStatus: "accepted",
         requestReviewedAt: timestamp,
         requestReviewedById: reviewerId,
         leftAt: undefined, // Clear leftAt to make them an active member
+        joinedAt: timestamp,
       });
 
       // Sync channel memberships for the new member
       await syncUserChannelMembershipsLogic(ctx, args.userId, args.groupId);
 
-      // Notify the user their request was approved
-      ctx.scheduler.runAfter(0, internal.functions.notifications.senders.notifyJoinRequestApproved, {
-        userId: args.userId,
-        groupId: args.groupId,
-      });
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.followupScoreComputation.computeSingleMemberScore,
+        { groupId: args.groupId, groupMemberId: request._id }
+      );
+
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.communityScoreComputation.recomputeForGroupMember,
+        { groupId: args.groupId, userId: args.userId }
+      );
+
+      if (!isReturningMember) {
+        await ctx.scheduler.runAfter(
+          0,
+          internal.functions.scheduledJobs.sendWelcomeMessage,
+          {
+            groupId: args.groupId,
+            userId: args.userId,
+          }
+        );
+      }
+
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.notifications.senders.notifyJoinRequestApproved,
+        {
+          userId: args.userId,
+          groupId: args.groupId,
+        }
+      );
     } else {
       // Decline: update status
       await ctx.db.patch(request._id, {

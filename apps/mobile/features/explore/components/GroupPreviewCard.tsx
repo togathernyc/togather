@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Platform, ActivityIndicator } from "react-native";
 import { useRouter } from "expo-router";
 import { Avatar, AppImage } from "@components/ui";
@@ -30,16 +30,34 @@ export function GroupPreviewCard({ group }: GroupPreviewCardProps) {
 
   const [joinState, setJoinState] = useState<JoinState>(getInitialJoinState);
   const [isJoining, setIsJoining] = useState(false);
+  const hadServerPendingRequestRef = useRef(false);
 
   // Keep local state in sync when Convex refreshes membership (e.g. auto-approve after join).
-  // Do not force "idle" here — optimistic "requested" may precede has_pending_request on the wire.
+  // Only reset to "idle" after a server-confirmed pending request clears (decline); not while
+  // optimistic "requested" is ahead of has_pending_request on the wire.
   useEffect(() => {
+    if (group.has_pending_request) {
+      hadServerPendingRequestRef.current = true;
+    }
     if (group.is_member || group.user_role) {
       setJoinState("joined");
     } else if (group.has_pending_request) {
       setJoinState("requested");
+    } else if (
+      !isJoining &&
+      joinState === "requested" &&
+      hadServerPendingRequestRef.current
+    ) {
+      setJoinState("idle");
+      hadServerPendingRequestRef.current = false;
     }
-  }, [group.is_member, group.user_role, group.has_pending_request]);
+  }, [
+    group.is_member,
+    group.user_role,
+    group.has_pending_request,
+    isJoining,
+    joinState,
+  ]);
 
   // Prefer group_type_name from API, fallback to ID lookup
   const typeLabel = getGroupTypeLabel(group.group_type_name ?? group.group_type ?? group.type ?? 1, user);
