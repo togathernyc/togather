@@ -186,6 +186,7 @@ describe("resetPassword", () => {
     await createUserWithPassword(t, email);
     await t.mutation(internal.functions.authInternal.storeEmailVerificationCode, {
       email,
+      purpose: "password_reset",
       code: "654321",
       expiresAt: Date.now() + 10 * 60 * 1000,
     });
@@ -207,5 +208,84 @@ describe("resetPassword", () => {
         newPassword: "newpassword123",
       })
     ).rejects.toThrow("Too many attempts");
+  });
+});
+
+describe("email OTP purpose isolation", () => {
+  test("password reset code is not accepted by account claim verification", async () => {
+    const t = convexTest(schema, modules);
+    const email = "isolation-a@example.com";
+    await createUserWithPassword(t, email);
+    const expiresAt = Date.now() + 10 * 60 * 1000;
+    await t.mutation(internal.functions.authInternal.storeEmailVerificationCode, {
+      email,
+      purpose: "password_reset",
+      code: "222222",
+      expiresAt,
+    });
+
+    await expect(
+      t.action(api.functions.auth.accountClaim.claimAccount, {
+        action: "verify_only",
+        email,
+        code: "222222",
+        phone: "+15555550002",
+      })
+    ).rejects.toThrow("Invalid or expired verification code");
+  });
+
+  test("account claim code is not accepted for password reset", async () => {
+    const t = convexTest(schema, modules);
+    const email = "isolation-b@example.com";
+    await createUserWithPassword(t, email);
+    const expiresAt = Date.now() + 10 * 60 * 1000;
+    await t.mutation(internal.functions.authInternal.storeEmailVerificationCode, {
+      email,
+      purpose: "account_claim",
+      code: "111111",
+      expiresAt,
+    });
+
+    await expect(
+      t.action(api.functions.auth.registration.resetPassword, {
+        email,
+        code: "111111",
+        newPassword: "newpassword123",
+      })
+    ).rejects.toThrow("Invalid or expired reset code");
+  });
+
+  test("storing password reset OTP does not remove an existing account-claim OTP", async () => {
+    const t = convexTest(schema, modules);
+    const email = "isolation-c@example.com";
+    await createUserWithPassword(t, email);
+    const expiresAt = Date.now() + 10 * 60 * 1000;
+    await t.mutation(internal.functions.authInternal.storeEmailVerificationCode, {
+      email,
+      purpose: "account_claim",
+      code: "111111",
+      expiresAt,
+    });
+    await t.mutation(internal.functions.authInternal.storeEmailVerificationCode, {
+      email,
+      purpose: "password_reset",
+      code: "222222",
+      expiresAt,
+    });
+
+    const claimResult = await t.action(api.functions.auth.accountClaim.claimAccount, {
+      action: "verify_only",
+      email,
+      code: "111111",
+      phone: "+15555550003",
+    });
+    expect(claimResult.verified).toBe(true);
+
+    const resetResult = await t.action(api.functions.auth.registration.resetPassword, {
+      email,
+      code: "222222",
+      newPassword: "newpassword123",
+    });
+    expect(resetResult.success).toBe(true);
   });
 });

@@ -19,6 +19,9 @@ import { ActionCtx } from "../../_generated/server";
 import { MAGIC_CODE, isTestEmail } from "./helpers";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
 
+/** Which auth flow the email OTP belongs to (stored and verified with the code). */
+export type EmailOtpPurpose = "account_claim" | "password_reset";
+
 // Email sender address - use shared config (notifications@togather.nyc)
 const EMAIL_FROM = DOMAIN_CONFIG.emailFrom;
 
@@ -48,7 +51,8 @@ function generateVerificationCode(): string {
  */
 export async function sendEmailOTP(
   ctx: ActionCtx,
-  email: string
+  email: string,
+  purpose: EmailOtpPurpose
 ): Promise<boolean> {
   const normalizedEmail = email.toLowerCase();
 
@@ -64,6 +68,7 @@ export async function sendEmailOTP(
     const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
     await ctx.runMutation(internal.functions.authInternal.storeEmailVerificationCode, {
       email: normalizedEmail,
+      purpose,
       code: MAGIC_CODE,
       expiresAt,
     });
@@ -84,7 +89,7 @@ export async function sendEmailOTP(
   // This prevents race conditions when users click "Resend" rapidly
   const hasRecentCode = await ctx.runQuery(
     internal.functions.authInternal.hasRecentEmailCode,
-    { email: normalizedEmail }
+    { email: normalizedEmail, purpose }
   );
 
   if (hasRecentCode) {
@@ -101,6 +106,7 @@ export async function sendEmailOTP(
   // Store the code in the database
   await ctx.runMutation(internal.functions.authInternal.storeEmailVerificationCode, {
     email: normalizedEmail,
+    purpose,
     code,
     expiresAt,
   });
@@ -159,7 +165,8 @@ export async function sendEmailOTP(
 export async function verifyEmailOTP(
   ctx: ActionCtx,
   email: string,
-  code: string
+  code: string,
+  purpose: EmailOtpPurpose
 ): Promise<boolean> {
   const normalizedEmail = email.toLowerCase();
 
@@ -180,6 +187,7 @@ export async function verifyEmailOTP(
   // Verify the code against the database
   const result = await ctx.runMutation(internal.functions.authInternal.verifyEmailCode, {
     email: normalizedEmail,
+    purpose,
     code,
   });
 

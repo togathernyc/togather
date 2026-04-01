@@ -372,7 +372,7 @@ export const sendResetPasswordEmail = action({
     // Send OTP via Resend (reuses email OTP infrastructure).
     // Swallow send failures so responses match the non-existent-user path (enumeration-safe).
     try {
-      await sendEmailOTP(ctx, normalizedEmail);
+      await sendEmailOTP(ctx, normalizedEmail, "password_reset");
     } catch (error) {
       console.error("sendResetPasswordEmail: failed to send OTP", {
         email: normalizedEmail,
@@ -423,7 +423,12 @@ export const resetPassword = action({
     }
 
     // Verify the OTP code
-    const isValid = await verifyEmailOTP(ctx, normalizedEmail, args.code);
+    const isValid = await verifyEmailOTP(
+      ctx,
+      normalizedEmail,
+      args.code,
+      "password_reset"
+    );
     if (!isValid) {
       throw new Error("Invalid or expired reset code");
     }
