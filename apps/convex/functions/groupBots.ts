@@ -14,7 +14,7 @@ import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
 import { now } from "../lib/utils";
 import { calculateCommunicationBotNextSchedule } from "../lib/scheduling";
-import { requireAuth, requireAuthFromToken } from "../lib/auth";
+import { requireAuth, requireAuthFromTokenAction } from "../lib/auth";
 import { isActiveMembership, isLeaderRole } from "../lib/helpers";
 
 // ============================================================================
@@ -675,7 +675,7 @@ export const testTaskReminder = action({
     | { success: false; error: string }
   > => {
     // Verify auth - throws if invalid
-    const userId = await requireAuthFromToken(args.token);
+    const userId = await requireAuthFromTokenAction(ctx, args.token);
 
     // Verify user is a leader/admin of this group
     const membership = await ctx.runQuery(
@@ -760,7 +760,7 @@ export const sendCommunicationNow = action({
     | { success: false; error: string }
   > => {
     // Verify auth
-    const userId = await requireAuthFromToken(args.token);
+    const userId = await requireAuthFromTokenAction(ctx, args.token);
 
     // Verify user is a leader/admin of this group
     const membership = await ctx.runQuery(

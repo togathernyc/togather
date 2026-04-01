@@ -195,12 +195,17 @@ export function useLogout() {
     setIsPending(true);
     setError(null);
     try {
-      await signout({});
+      // Pass the current token so the server can revoke it
+      const token = await storage.getItem('access_token');
+      await signout({ token: token ?? undefined });
       // Clear tokens from storage
       await storage.removeItem('access_token');
       await storage.removeItem('refresh_token');
       return { success: true };
     } catch (err) {
+      // Even if server-side revocation fails, clear local tokens
+      await storage.removeItem('access_token');
+      await storage.removeItem('refresh_token');
       setError(err as Error);
       throw err;
     } finally {

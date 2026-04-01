@@ -13,7 +13,7 @@ import { action } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import { normalizePhone, isValidPhone } from "../../lib/utils";
-import { generateTokens, verifyAccessToken } from "../../lib/auth";
+import { generateTokens, requireAuthFromTokenAction } from "../../lib/auth";
 
 /**
  * Look up a phone number to check if user exists
@@ -26,7 +26,7 @@ export const phoneLookup = action({
   },
   handler: async (
     ctx,
-    args
+    args,
   ): Promise<{
     exists: boolean;
     hasVerifiedPhone: boolean;
@@ -56,7 +56,7 @@ export const phoneLookup = action({
     // Look up user
     const result = await ctx.runQuery(
       internal.functions.authInternal.getUserWithCommunitiesInternal,
-      { phone: normalizedPhone }
+      { phone: normalizedPhone },
     );
 
     if (!result) {
@@ -94,7 +94,7 @@ export const legacyLogin = action({
   },
   handler: async (
     ctx,
-    args
+    args,
   ): Promise<{
     access_token: string;
     refresh_token: string;
@@ -114,7 +114,7 @@ export const legacyLogin = action({
     // Get user by email
     const user = await ctx.runQuery(
       internal.functions.authInternal.getUserByEmailInternal,
-      { email: args.email }
+      { email: args.email },
     );
 
     if (!user || !user.password) {
@@ -132,7 +132,7 @@ export const legacyLogin = action({
     // Get communities
     const result = await ctx.runQuery(
       internal.functions.authInternal.getUserWithCommunitiesInternal,
-      { phone: user.phone || "" }
+      { phone: user.phone || "" },
     );
 
     const communities = result?.communities || [];
@@ -175,7 +175,7 @@ export const selectCommunity = action({
   },
   handler: async (
     ctx,
-    args
+    args,
   ): Promise<{
     access_token: string;
     refresh_token: string;
@@ -183,23 +183,14 @@ export const selectCommunity = action({
     communityId: string;
     communityName: string;
   }> => {
-    // Verify the caller's identity via token to prevent IDOR
-    if (!args.token) {
-      throw new Error("Authentication required");
-    }
-
-    const payload = await verifyAccessToken(args.token);
-    if (!payload) {
-      throw new Error("Invalid or expired authentication token");
-    }
-
-    // Use the userId from the verified token, NOT from client args
-    const userId = payload.userId as Id<"users">;
+    // Verify the caller's identity via token (including revocation) to prevent IDOR
+    const userIdRaw = await requireAuthFromTokenAction(ctx, args.token);
+    const userId = userIdRaw as Id<"users">;
 
     // Verify community exists
     const community = await ctx.runQuery(
       internal.functions.communities.getByIdInternal,
-      { communityId: args.communityId }
+      { communityId: args.communityId },
     );
 
     if (!community) {
@@ -214,7 +205,7 @@ export const selectCommunity = action({
         userId,
         communityId: args.communityId,
         updateLastLogin: true,
-      }
+      },
     );
 
     // Generate new JWT tokens with community

@@ -11,7 +11,7 @@ import { internal } from "../../_generated/api";
 import { Id } from "../../_generated/dataModel";
 import { notify, getCurrentEnvironment } from "../../lib/notifications/send";
 import type { NotificationChannel, SendMode } from "../../lib/notifications/types";
-import { requireAuthFromToken } from "../../lib/auth";
+import { requireAuthFromTokenAction } from "../../lib/auth";
 
 // ============================================================================
 // Types
@@ -60,7 +60,7 @@ export const sendTest = action({
     shortId: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<TestNotificationResult> => {
-    await requireAuthFromToken(args.token);
+    await requireAuthFromTokenAction(ctx, args.token);
     const env = getCurrentEnvironment();
 
     // Block in production for security - no client-controlled bypass allowed
@@ -407,7 +407,7 @@ export const sendTestNotification = action({
     chatTarget: v.optional(v.string()), // "main" or "leaders"
   },
   handler: async (ctx, args) => {
-    await requireAuthFromToken(args.token);
+    await requireAuthFromTokenAction(ctx, args.token);
     const env = getCurrentEnvironment();
 
     // Block in production for security - no client-controlled bypass allowed

@@ -25,7 +25,7 @@ import {
   query,
 } from "../_generated/server";
 import { internal } from "../_generated/api";
-import { requireAuth, requireAuthFromToken } from "../lib/auth";
+import { requireAuth, requireAuthFromTokenAction } from "../lib/auth";
 import { requirePrimaryAdmin } from "../lib/permissions";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
 import { getNextFirstOfMonth } from "../lib/utils";

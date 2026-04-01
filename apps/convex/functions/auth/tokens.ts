@@ -11,7 +11,7 @@ import { v } from "convex/values";
 import { action } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
-import { generateTokens, verifyRefreshToken, verifyAccessToken } from "../../lib/auth";
+import { generateTokens, verifyRefreshToken, requireAuthFromTokenAction, getCommunityFromToken } from "../../lib/auth";
 
 /**
  * Refresh access token using a refresh token
@@ -38,6 +38,14 @@ export const refreshToken = action({
 
     if (!payload) {
       throw new Error("Invalid refresh token");
+    }
+
+    const revoked = await ctx.runQuery(
+      internal.functions.authInternal.isJwtSubjectRevokedInternal,
+      { jwtUserId: payload.userId, issuedAt: payload.issuedAt }
+    );
+    if (revoked) {
+      throw new Error("Session revoked");
     }
 
     // Verify user still exists
@@ -101,13 +109,11 @@ export const updateLastActivity = action({
     token: v.string(),
   },
   handler: async (ctx, args): Promise<{ success: boolean }> => {
-    // Verify the access token
-    const payload = await verifyAccessToken(args.token);
-    if (!payload) {
-      throw new Error("Invalid or expired token");
-    }
+    // Verify the access token (with revocation check)
+    const userId = await requireAuthFromTokenAction(ctx, args.token);
 
-    const { userId, communityId } = payload;
+    // Get community from token payload
+    const communityId = await getCommunityFromToken(args.token);
 
     // Must have a community selected to update last activity
     if (!communityId) {

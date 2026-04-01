@@ -10,7 +10,7 @@ import { action, internalAction } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import { Id } from "../../_generated/dataModel";
 import { escapeHtml } from "../../lib/notifications/emailTemplates";
-import { requireAuthFromToken } from "../../lib/auth";
+import { requireAuthFromTokenAction } from "../../lib/auth";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
 
 /**
@@ -401,7 +401,7 @@ export const reportUserBlocked = action({
   handler: async (ctx, args): Promise<{ success: boolean; emailId?: string; error?: string }> => {
     // Verify auth and get user ID from token
     // This may be a Convex ID or legacy ID depending on how it was generated
-    const tokenUserId = await requireAuthFromToken(args.authToken);
+    const tokenUserId = await requireAuthFromTokenAction(ctx, args.authToken);
 
     // Try to get blocker's contact info
     // First try as legacy ID, then as Convex ID

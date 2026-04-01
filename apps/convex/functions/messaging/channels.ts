@@ -8,7 +8,7 @@ import { v, ConvexError } from "convex/values";
 import { query, mutation, action, internalMutation } from "../../_generated/server";
 import type { MutationCtx, QueryCtx } from "../../_generated/server";
 import type { Id, Doc } from "../../_generated/dataModel";
-import { requireAuth, requireAuthFromToken } from "../../lib/auth";
+import { requireAuth, requireAuthFromTokenAction } from "../../lib/auth";
 import { getDisplayName, getMediaUrl } from "../../lib/utils";
 import {
   isAutoChannel,
@@ -3037,7 +3037,7 @@ export const ensureChannels = action({
   },
   handler: async (ctx, args): Promise<{ created: boolean; createdChannelIds: Id<"chatChannels">[] }> => {
     // Verify token and get user ID string
-    const tokenUserId = await requireAuthFromToken(args.token);
+    const tokenUserId = await requireAuthFromTokenAction(ctx, args.token);
 
     // Resolve to Convex user ID using internal query from users module
     const userLookup = await ctx.runQuery(

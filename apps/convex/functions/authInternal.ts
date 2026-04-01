@@ -16,7 +16,11 @@ import {
 } from "../_generated/server";
 import { api, internal } from "../_generated/api";
 import { now, normalizePhone, getMediaUrl, buildSearchText } from "../lib/utils";
-import { requireAuth } from "../auth";
+import { requireAuth, requireAuthIgnoringRevocation } from "../auth";
+import {
+  isRevokedForJwtSubject,
+  REFRESH_TOKEN_MAX_AGE_MS,
+} from "../lib/auth";
 import { COMMUNITY_ROLES, COMMUNITY_ADMIN_THRESHOLD } from "../lib/permissions";
 import { checkRateLimit } from "../lib/rateLimit";
 
@@ -774,6 +778,45 @@ export const cleanupExpiredPhoneTokens = internalMutation({
   },
 });
 
+/**
+ * Internal: Cleanup stale token revocation records
+ *
+ * Revocations must cover the longest-lived JWT we validate against them (refresh tokens,
+ * ~10 years). Only delete once no refresh token issued before revokedBefore could still be valid.
+ */
+export const cleanupStaleTokenRevocations = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const oneDayMs = 24 * 60 * 60 * 1000;
+    const cutoffRevokedBefore =
+      Date.now() - REFRESH_TOKEN_MAX_AGE_MS - oneDayMs;
+
+    const staleRevocations = await ctx.db
+      .query("tokenRevocations")
+      .filter((q) => q.lt(q.field("revokedBefore"), cutoffRevokedBefore))
+      .collect();
+
+    for (const revocation of staleRevocations) {
+      await ctx.db.delete(revocation._id);
+    }
+
+    return { deletedCount: staleRevocations.length };
+  },
+});
+
+/**
+ * Internal: refresh-token blacklist check (same iat vs revokedBefore as access tokens).
+ */
+export const isJwtSubjectRevokedInternal = internalQuery({
+  args: {
+    jwtUserId: v.string(),
+    issuedAt: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    return await isRevokedForJwtSubject(ctx, args.jwtUserId, args.issuedAt);
+  },
+});
+
 // ============================================================================
 // Public Queries
 // ============================================================================
@@ -808,11 +851,36 @@ export const phoneStatus = query({
  * tRPC equivalent: signout
  */
 export const signout = mutation({
-  args: {},
-  handler: async () => {
-    // NOTE: Token blacklisting is not implemented. JWTs expire naturally.
-    // Client-side logout clears stored tokens. If token theft becomes a concern,
-    // add a revocation table and check it in requireAuth/verifyAccessToken.
+  args: { token: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    if (!args.token) {
+      // No token provided — client-only logout (clear local storage)
+      return { success: true };
+    }
+
+    const userId = await requireAuthIgnoringRevocation(ctx, args.token);
+
+    // Record revocation: all tokens issued before now are invalid for this user
+    const now = Date.now();
+
+    // Upsert: replace existing revocation record for this user
+    const existing = await ctx.db
+      .query("tokenRevocations")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .first();
+
+    if (existing) {
+      // Never move revokedBefore backward (clock skew / NTP) — would shrink the revocation window
+      const revokedBefore = Math.max(now, existing.revokedBefore);
+      await ctx.db.patch(existing._id, { revokedBefore, createdAt: revokedBefore });
+    } else {
+      await ctx.db.insert("tokenRevocations", {
+        userId,
+        revokedBefore: now,
+        createdAt: now,
+      });
+    }
+
     return { success: true };
   },
 });
