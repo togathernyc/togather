@@ -15,6 +15,7 @@ describe("followupCsvExportHelpers", () => {
     { slot: "customText1", name: "Dept", type: "text" },
     { slot: "customBool1", name: "VIP", type: "boolean" },
     { slot: "customText2", name: "Tags", type: "multiselect" },
+    { slot: "customNum1", name: "Score", type: "number" },
   ];
 
   const baseMember = {
@@ -61,6 +62,18 @@ describe("followupCsvExportHelpers", () => {
         customFields,
       }),
     ).toBe("alpha; beta");
+
+    expect(
+      cellValueForColumn(
+        "customNum1",
+        { ...baseMember, customNum1: Number.NaN },
+        {
+          leaderMap,
+          tasksByMember: new Map(),
+          customFields,
+        },
+      ),
+    ).toBe("");
   });
 
   it("generateFollowupPeopleCsv escapes quotes in notes", () => {
