@@ -123,6 +123,11 @@ export const create = mutation({
         visibility: "community",
         rsvpEnabled: true,
         rsvpOptions: DEFAULT_RSVP_OPTIONS,
+        communityId: args.communityId,
+        searchText: buildMeetingSearchText({
+          title: args.title,
+          groupName: group.name,
+        }),
         // Community-wide event link
         communityWideEventId,
         isOverridden: false,
