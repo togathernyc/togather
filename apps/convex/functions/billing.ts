@@ -398,12 +398,12 @@ export const handleSubscriptionUpdated = internalMutation({
   },
   handler: async (ctx, args) => {
     // Find the community with this subscription ID
-    // No dedicated index exists, so we look up via the stripeCustomerId index
-    // or scan communities. Since subscriptions are rare, a filtered query is acceptable.
-    const communities = await ctx.db.query("communities").collect();
-    const community = communities.find(
-      (c) => c.stripeSubscriptionId === args.stripeSubscriptionId
-    );
+    const community = await ctx.db
+      .query("communities")
+      .withIndex("by_stripeSubscriptionId", (q) =>
+        q.eq("stripeSubscriptionId", args.stripeSubscriptionId)
+      )
+      .first();
 
     if (!community) {
       // Log but don't throw — the webhook may fire for subscriptions we don't track
