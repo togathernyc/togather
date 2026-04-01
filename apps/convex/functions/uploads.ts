@@ -9,7 +9,8 @@
 
 import { v } from "convex/values";
 import { mutation, query, action } from "../_generated/server";
-import { requireAuth, requireAuthFromTokenAction } from "../lib/auth";
+import type { Id } from "../_generated/dataModel";
+import { requireAuth, requireAuthFromToken } from "../lib/auth";
 
 // ============================================================================
 // Constants
@@ -156,7 +157,7 @@ export const confirmUpload = mutation({
     storageId: string;
     url: string;
   }> => {
-    await requireAuth(ctx, args.token);
+    const authUserId = await requireAuth(ctx, args.token);
 
     // Get the file URL
     const url = await ctx.storage.getUrl(args.storageId);
@@ -166,9 +167,37 @@ export const confirmUpload = mutation({
       );
     }
 
-    // NOTE: entityType/entityId params are accepted but entity updates
-    // (profilePhoto, group.preview, meeting.coverImage) are handled by
-    // the caller after confirmUpload returns the URL.
+    // If entity provided, update the corresponding record
+    if (args.entityType && args.entityId) {
+      switch (args.entityType) {
+        case "user": {
+          const entityId = args.entityId as Id<"users">;
+          if (entityId !== authUserId) {
+            throw new Error("Cannot update another user's profile photo");
+          }
+          await ctx.db.patch(entityId, { profilePhoto: url });
+          break;
+        }
+        case "group": {
+          const entityId = args.entityId as Id<"groups">;
+          const group = await ctx.db.get(entityId);
+          if (!group) {
+            throw new Error("Group not found");
+          }
+          await ctx.db.patch(entityId, { preview: url });
+          break;
+        }
+        case "meeting": {
+          const entityId = args.entityId as Id<"meetings">;
+          const meeting = await ctx.db.get(entityId);
+          if (!meeting) {
+            throw new Error("Meeting not found");
+          }
+          await ctx.db.patch(entityId, { coverImage: url });
+          break;
+        }
+      }
+    }
 
     return {
       success: true,
