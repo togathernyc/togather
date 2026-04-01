@@ -562,8 +562,22 @@ export const deleteAccountInternal = internalMutation({
     // 2. Remove community memberships
     await deleteByUserIndex("userCommunities", "by_user");
 
-    // 3. Remove group memberships
-    await deleteByUserIndex("groupMembers", "by_user");
+    // 3. Remove group memberships (collect IDs first for followup score cleanup)
+    const groupMemberRecords = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_user", (q: any) => q.eq("userId", args.userId))
+      .collect();
+    for (const record of groupMemberRecords) {
+      // Remove associated memberFollowupScores
+      const followupScores = await ctx.db
+        .query("memberFollowupScores")
+        .withIndex("by_groupMember", (q) => q.eq("groupMemberId", record._id))
+        .collect();
+      for (const score of followupScores) {
+        await ctx.db.delete(score._id);
+      }
+      await ctx.db.delete(record._id);
+    }
 
     // 4. Remove chat channel memberships
     await deleteByUserIndex("chatChannelMembers", "by_user");
@@ -602,6 +616,31 @@ export const deleteAccountInternal = internalMutation({
       .withIndex("by_blocked", (q) => q.eq("blockedId", args.userId))
       .collect();
     for (const record of blockedRecords) {
+      await ctx.db.delete(record._id);
+    }
+
+    // 10b. Remove channel join requests
+    await deleteByUserIndex("channelJoinRequests", "by_user");
+
+    // 10c. Remove chat message reactions
+    await deleteByUserIndex("chatMessageReactions", "by_user");
+
+    // 10d. Remove chat user flags (both as reporter and reported)
+    await deleteByUserIndex("chatUserFlags", "by_user");
+    const userFlagsByReporter = await ctx.db
+      .query("chatUserFlags")
+      .withIndex("by_reportedBy", (q: any) => q.eq("reportedById", args.userId))
+      .collect();
+    for (const record of userFlagsByReporter) {
+      await ctx.db.delete(record._id);
+    }
+
+    // 10e. Remove chat message flags reported by this user
+    const messageFlagsByReporter = await ctx.db
+      .query("chatMessageFlags")
+      .withIndex("by_reportedBy", (q: any) => q.eq("reportedById", args.userId))
+      .collect();
+    for (const record of messageFlagsByReporter) {
       await ctx.db.delete(record._id);
     }
 
