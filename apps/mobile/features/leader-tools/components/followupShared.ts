@@ -163,6 +163,7 @@ export function adaptCommunityPerson(cp: any) {
     email: cp.email,
     phone: cp.phone,
     zipCode: cp.zipCode,
+    dateOfBirth: cp.dateOfBirth,
     score1: cp.score1 ?? 0,
     score2: cp.score2 ?? 0,
     score3: cp.score3 ?? 0,
