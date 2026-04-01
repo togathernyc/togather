@@ -329,16 +329,9 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
         if (channelId && groupId) {
           // Prefetch messages before navigating (same as inbox, 3s timeout)
           console.log(`[${type}] Prefetching channel ${channelId} before navigation`);
-          const prefetchReady = await awaitPrefetch(
-            channelId as Id<"chatChannels">,
-            3000
-          );
-          // On timeout, ConvexChatRoomScreen needs fromNotification so it waits for channels/header data
-          const fromNotificationParam = prefetchReady ? {} : { fromNotification: "1" as const };
+          await awaitPrefetch(channelId as Id<"chatChannels">, 3000);
 
-          // Without slug/type, do not default the URL to /general: ConvexChatRoomScreen would
-          // highlight "general" while activeChannelId still came from prefetched channelId.
-          // Legacy route resolves group + slug from the channel then replaces to /inbox/[groupId]/[slug].
+          // Without slug/type, use legacy route which resolves slug from the channel
           if (!resolvedSlug) {
             const targetPath = `/inbox/${channelId}`;
             console.log(`[${type}] Navigating to legacy route (no slug in payload):`, targetPath);
@@ -347,7 +340,6 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
               params: {
                 groupId,
                 ...(groupName ? { groupName } : {}),
-                ...fromNotificationParam,
               },
             } as any);
             break;
@@ -358,29 +350,20 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
           router.push({
             pathname: targetPath,
             params: {
-              // Pass channelId so ConvexChatRoomScreen uses prefetched data immediately
               channelId,
-              // Pass display data from notification payload (same as inbox)
               ...(groupName ? { groupName } : {}),
-              ...fromNotificationParam,
             },
           } as any);
         } else if (groupId) {
           // No channelId available — navigate without prefetch, screen will load data
           const targetPath = `/inbox/${groupId}/${resolvedSlug || 'general'}`;
           console.log(`[${type}] Navigating (no prefetch):`, targetPath);
-          router.push({
-            pathname: targetPath,
-            params: { fromNotification: "1" },
-          } as any);
+          router.push({ pathname: targetPath } as any);
         } else if (channelId) {
           // Only channelId, no groupId — use legacy route
           const targetPath = `/inbox/${channelId}`;
           console.log(`[${type}] Navigating to legacy route:`, targetPath);
-          router.push({
-            pathname: targetPath,
-            params: { fromNotification: "1" },
-          } as any);
+          router.push({ pathname: targetPath } as any);
         } else {
           console.log(`[${type}] No groupId or channelId, falling back to /(tabs)/chat`);
           router.push('/(tabs)/chat');
