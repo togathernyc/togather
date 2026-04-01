@@ -55,7 +55,7 @@ const fullEventData = {
   id: 'meeting-1',
   shortId: 'evt123',
   title: 'Planning Night',
-  scheduledAt: '2026-04-01T17:00:00.000Z',
+  scheduledAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
   coverImage: null,
   locationOverride: 'Main Hall',
   meetingType: 1,
@@ -129,7 +129,7 @@ describe('EventLinkCard RSVP counts', () => {
       id: 'meeting-1',
       shortId: 'evt123',
       title: 'Planning Night',
-      scheduledAt: '2026-04-01T17:00:00.000Z',
+      scheduledAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
       rsvpEnabled: true,
       hasAccess: true,
     };
