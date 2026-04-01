@@ -1206,6 +1206,11 @@ export default defineSchema({
 
   emailVerificationCodes: defineTable({
     email: v.string(), // The email address
+    /** Distinguishes account-claim vs password-reset so OTPs are not interchangeable. */
+    purpose: v.union(
+      v.literal("account_claim"),
+      v.literal("password_reset")
+    ),
     code: v.string(), // The 6-digit verification code
     expiresAt: v.number(), // Unix timestamp ms when the code expires
     usedAt: v.optional(v.number()), // Unix timestamp ms when the code was used
@@ -1213,6 +1218,8 @@ export default defineSchema({
   })
     .index("by_email", ["email"])
     .index("by_email_code", ["email", "code"])
+    .index("by_email_purpose", ["email", "purpose"])
+    .index("by_email_code_purpose", ["email", "code", "purpose"])
     .index("by_expiresAt", ["expiresAt"]),
 
   // =============================================================================

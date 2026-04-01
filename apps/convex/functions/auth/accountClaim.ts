@@ -98,7 +98,7 @@ export const claimAccount = action({
       }
 
       // Send OTP via Resend
-      await sendEmailOTP(ctx, args.email);
+      await sendEmailOTP(ctx, args.email, "account_claim");
 
       return {
         user_found: true,
@@ -114,7 +114,7 @@ export const claimAccount = action({
       }
 
       // Send OTP via Resend - no user existence check
-      await sendEmailOTP(ctx, args.email);
+      await sendEmailOTP(ctx, args.email, "account_claim");
 
       return {
         masked_email: maskEmail(args.email),
@@ -128,7 +128,12 @@ export const claimAccount = action({
         throw new Error("Email and code are required for verification");
       }
 
-      const isValid = await verifyEmailOTP(ctx, args.email, args.code);
+      const isValid = await verifyEmailOTP(
+        ctx,
+        args.email,
+        args.code,
+        "account_claim"
+      );
 
       if (!isValid) {
         throw new Error("Invalid or expired verification code");
@@ -143,7 +148,12 @@ export const claimAccount = action({
         throw new Error("Email and code are required for verification");
       }
 
-      const isValid = await verifyEmailOTP(ctx, args.email, args.code);
+      const isValid = await verifyEmailOTP(
+        ctx,
+        args.email,
+        args.code,
+        "account_claim"
+      );
 
       if (!isValid) {
         throw new Error("Invalid verification code");

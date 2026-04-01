@@ -522,7 +522,10 @@ export const createAccountClaimRequestInternal = internalMutation({
  * Used to prevent race conditions when users click "Resend" rapidly.
  */
 export const hasRecentEmailCode = internalQuery({
-  args: { email: v.string() },
+  args: {
+    email: v.string(),
+    purpose: v.union(v.literal("account_claim"), v.literal("password_reset")),
+  },
   handler: async (ctx, args): Promise<boolean> => {
     const normalizedEmail = args.email.toLowerCase();
     const rateLimitWindow = 30 * 1000; // 30 seconds
@@ -530,7 +533,9 @@ export const hasRecentEmailCode = internalQuery({
 
     const recentCode = await ctx.db
       .query("emailVerificationCodes")
-      .withIndex("by_email", (q) => q.eq("email", normalizedEmail))
+      .withIndex("by_email_purpose", (q) =>
+        q.eq("email", normalizedEmail).eq("purpose", args.purpose)
+      )
       .filter((q) =>
         q.and(
           q.gt(q.field("createdAt"), cutoffTime),
@@ -547,21 +552,24 @@ export const hasRecentEmailCode = internalQuery({
  * Internal: Store email verification code
  *
  * Stores a verification code for email-based authentication.
- * Cleans up any existing codes for the email before inserting.
+ * Cleans up any existing codes for the same email and purpose before inserting.
  */
 export const storeEmailVerificationCode = internalMutation({
   args: {
     email: v.string(),
+    purpose: v.union(v.literal("account_claim"), v.literal("password_reset")),
     code: v.string(),
     expiresAt: v.number(),
   },
   handler: async (ctx, args) => {
     const normalizedEmail = args.email.toLowerCase();
 
-    // Delete any existing codes for this email (cleanup)
+    // Delete any existing codes for this email and flow only (other flows keep their OTP)
     const existingCodes = await ctx.db
       .query("emailVerificationCodes")
-      .withIndex("by_email", (q) => q.eq("email", normalizedEmail))
+      .withIndex("by_email_purpose", (q) =>
+        q.eq("email", normalizedEmail).eq("purpose", args.purpose)
+      )
       .collect();
 
     for (const code of existingCodes) {
@@ -571,6 +579,7 @@ export const storeEmailVerificationCode = internalMutation({
     // Insert new verification code
     const codeId = await ctx.db.insert("emailVerificationCodes", {
       email: normalizedEmail,
+      purpose: args.purpose,
       code: args.code,
       expiresAt: args.expiresAt,
       createdAt: now(),
@@ -590,17 +599,21 @@ export const storeEmailVerificationCode = internalMutation({
 export const verifyEmailCode = internalMutation({
   args: {
     email: v.string(),
+    purpose: v.union(v.literal("account_claim"), v.literal("password_reset")),
     code: v.string(),
   },
   handler: async (ctx, args): Promise<{ valid: boolean }> => {
     const normalizedEmail = args.email.toLowerCase();
     const currentTime = Date.now();
 
-    // Query for matching email + code that hasn't expired and hasn't been used
+    // Query for matching email + code + purpose that hasn't expired and hasn't been used
     const verificationCode = await ctx.db
       .query("emailVerificationCodes")
-      .withIndex("by_email_code", (q) =>
-        q.eq("email", normalizedEmail).eq("code", args.code)
+      .withIndex("by_email_code_purpose", (q) =>
+        q
+          .eq("email", normalizedEmail)
+          .eq("code", args.code)
+          .eq("purpose", args.purpose)
       )
       .first();
 
