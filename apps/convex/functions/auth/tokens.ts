@@ -40,6 +40,14 @@ export const refreshToken = action({
       throw new Error("Invalid refresh token");
     }
 
+    const revoked = await ctx.runQuery(
+      internal.functions.authInternal.isJwtSubjectRevokedInternal,
+      { jwtUserId: payload.userId, issuedAt: payload.issuedAt }
+    );
+    if (revoked) {
+      throw new Error("Session revoked");
+    }
+
     // Verify user still exists
     // Try to get user by Convex ID first
     let user = null;

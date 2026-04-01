@@ -16,7 +16,8 @@ import {
 } from "../_generated/server";
 import { api, internal } from "../_generated/api";
 import { now, normalizePhone, getMediaUrl, buildSearchText } from "../lib/utils";
-import { requireAuth } from "../auth";
+import { requireAuth, requireAuthIgnoringRevocation } from "../auth";
+import { isRevokedForJwtSubject } from "../lib/auth";
 import { COMMUNITY_ROLES, COMMUNITY_ADMIN_THRESHOLD } from "../lib/permissions";
 import { checkRateLimit } from "../lib/rateLimit";
 
@@ -798,6 +799,19 @@ export const cleanupStaleTokenRevocations = internalMutation({
   },
 });
 
+/**
+ * Internal: refresh-token blacklist check (same iat vs revokedBefore as access tokens).
+ */
+export const isJwtSubjectRevokedInternal = internalQuery({
+  args: {
+    jwtUserId: v.string(),
+    issuedAt: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    return await isRevokedForJwtSubject(ctx, args.jwtUserId, args.issuedAt);
+  },
+});
+
 // ============================================================================
 // Public Queries
 // ============================================================================
@@ -839,8 +853,7 @@ export const signout = mutation({
       return { success: true };
     }
 
-    // Verify the token to get the userId
-    const userId = await requireAuth(ctx, args.token);
+    const userId = await requireAuthIgnoringRevocation(ctx, args.token);
 
     // Record revocation: all tokens issued before now are invalid for this user
     const revokedBefore = Date.now();

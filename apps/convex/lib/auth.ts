@@ -104,6 +104,8 @@ export interface AccessTokenPayload {
 export interface RefreshTokenPayload {
   userId: string;
   type: "refresh";
+  /** Unix timestamp (seconds) from JWT iat claim */
+  issuedAt?: number;
 }
 
 /**
@@ -268,6 +270,7 @@ export async function verifyRefreshToken(
     return {
       userId: payload.userId as string,
       type: "refresh",
+      issuedAt: payload.iat,
     };
   } catch {
     // Token is invalid, expired, or malformed
@@ -394,7 +397,7 @@ async function resolveUserId(
  * @param issuedAt - Token's iat claim (Unix seconds), undefined if missing
  * @returns true if the token is revoked
  */
-async function isTokenRevoked(
+export async function isTokenRevoked(
   ctx: QueryCtx | MutationCtx,
   userId: Id<"users">,
   issuedAt: number | undefined
@@ -417,6 +420,22 @@ async function isTokenRevoked(
   // JWT iat is in seconds, revokedBefore is in milliseconds
   const issuedAtMs = issuedAt * 1000;
   return issuedAtMs < revocation.revokedBefore;
+}
+
+/**
+ * Whether a JWT for this subject (Convex or legacy id string) was issued before
+ * the user's last signout. Used for refresh tokens (same iat semantics as access).
+ */
+export async function isRevokedForJwtSubject(
+  ctx: QueryCtx | MutationCtx,
+  jwtUserId: string,
+  issuedAt: number | undefined
+): Promise<boolean> {
+  const userId = await resolveUserId(ctx, jwtUserId);
+  if (!userId) {
+    return false;
+  }
+  return isTokenRevoked(ctx, userId, issuedAt);
 }
 
 // ============================================================================
@@ -466,6 +485,31 @@ export async function requireAuth(
 
   // Check if the token was revoked (issued before the user's last signout)
   if (await isTokenRevoked(ctx, userId, payload.issuedAt)) {
+    throw new Error("Not authenticated");
+  }
+
+  return userId;
+}
+
+/**
+ * Like {@link requireAuth} but skips revocation — used by signout so another
+ * device can finish logout after tokens were already blacklisted.
+ */
+export async function requireAuthIgnoringRevocation(
+  ctx: QueryCtx | MutationCtx,
+  token: string
+): Promise<Id<"users">> {
+  if (!token) {
+    throw new Error("Not authenticated");
+  }
+
+  const payload = await verifyAccessToken(token);
+  if (!payload) {
+    throw new Error("Not authenticated");
+  }
+
+  const userId = await resolveUserId(ctx, payload.userId);
+  if (!userId) {
     throw new Error("Not authenticated");
   }
 

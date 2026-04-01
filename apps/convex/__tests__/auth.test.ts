@@ -10,8 +10,9 @@
 import { convexTest } from "convex-test";
 import { expect, test, describe } from "vitest";
 import schema from "../schema";
-import { internal } from "../_generated/api";
+import { api, internal } from "../_generated/api";
 import { modules } from "../test.setup";
+import { generateTokens, verifyRefreshToken } from "../lib/auth";
 
 // ============================================================================
 // Constants
@@ -29,6 +30,86 @@ const MEMBERSHIP_STATUS = {
   INACTIVE: 2,
   BLOCKED: 3,
 } as const;
+
+// ============================================================================
+// Token revocation (signout blacklist)
+// ============================================================================
+
+describe("Token revocation", () => {
+  test("signout succeeds with valid access token even if already revoked", async () => {
+    const t = convexTest(schema, modules);
+
+    const userId = await t.run(async (ctx) => {
+      return await ctx.db.insert("users", {
+        phone: "+11234567890",
+        firstName: "John",
+        lastName: "Doe",
+        isActive: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+
+    const { accessToken } = await generateTokens(userId);
+    const revokedBefore = Date.now() + 60_000;
+    await t.run(async (ctx) => {
+      await ctx.db.insert("tokenRevocations", {
+        userId,
+        revokedBefore,
+        createdAt: Date.now(),
+      });
+    });
+
+    await expect(
+      t.query(api.functions.authInternal.phoneStatus, { token: accessToken })
+    ).rejects.toThrow("Not authenticated");
+
+    const out = await t.mutation(api.functions.authInternal.signout, {
+      token: accessToken,
+    });
+    expect(out).toEqual({ success: true });
+  });
+
+  test("isJwtSubjectRevokedInternal flags refresh tokens issued before signout", async () => {
+    const t = convexTest(schema, modules);
+
+    const userId = await t.run(async (ctx) => {
+      return await ctx.db.insert("users", {
+        phone: "+11234567891",
+        firstName: "Jane",
+        lastName: "Doe",
+        isActive: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+
+    const { refreshToken } = await generateTokens(userId);
+    const refreshPayload = await verifyRefreshToken(refreshToken);
+    expect(refreshPayload).not.toBeNull();
+
+    const notRevoked = await t.query(
+      internal.functions.authInternal.isJwtSubjectRevokedInternal,
+      { jwtUserId: userId, issuedAt: refreshPayload!.issuedAt }
+    );
+    expect(notRevoked).toBe(false);
+
+    const revokedBefore = Date.now() + 60_000;
+    await t.run(async (ctx) => {
+      await ctx.db.insert("tokenRevocations", {
+        userId,
+        revokedBefore,
+        createdAt: Date.now(),
+      });
+    });
+
+    const revoked = await t.query(
+      internal.functions.authInternal.isJwtSubjectRevokedInternal,
+      { jwtUserId: userId, issuedAt: refreshPayload!.issuedAt }
+    );
+    expect(revoked).toBe(true);
+  });
+});
 
 // ============================================================================
 // getUserByPhoneInternal Tests
