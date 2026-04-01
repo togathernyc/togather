@@ -210,6 +210,8 @@ export const confirmUpload = mutation({
           await ctx.db.patch(entityId, { coverImage: url });
           break;
         }
+        default:
+          throw new Error(`Unknown entity type: ${args.entityType}`);
       }
     }
 
