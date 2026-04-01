@@ -454,7 +454,7 @@ export const myRsvpEvents = query({
  * Search events by text within a community.
  *
  * Uses the searchIndex on meetings for full-text search across
- * title, location, and group name. Returns upcoming scheduled events
+ * title, location, and group name. Returns upcoming non-cancelled events
  * by default, with optional date range filtering.
  */
 export const searchEvents = query({
@@ -486,6 +486,7 @@ export const searchEvents = query({
         .withIndex("by_user_community", (q) =>
           q.eq("userId", userId).eq("communityId", args.communityId)
         )
+        .filter((q) => q.eq(q.field("status"), 1))
         .first();
       isCommunityMember = !!communityMembership;
 
@@ -493,6 +494,15 @@ export const searchEvents = query({
         const groupMemberships = await ctx.db
           .query("groupMembers")
           .withIndex("by_user", (q) => q.eq("userId", userId))
+          .filter((q) =>
+            q.and(
+              q.eq(q.field("leftAt"), undefined),
+              q.or(
+                q.eq(q.field("requestStatus"), undefined),
+                q.eq(q.field("requestStatus"), "accepted")
+              )
+            )
+          )
           .collect();
         userGroupIds = new Set(groupMemberships.map((m) => m.groupId));
       }
@@ -505,13 +515,14 @@ export const searchEvents = query({
         q
           .search("searchText", args.searchTerm.trim())
           .eq("communityId", args.communityId)
-          .eq("status", "scheduled")
       )
       .take(maxResults * 2); // Over-fetch to account for visibility filtering
 
     // Filter by date range and visibility
     const currentTime = now();
     const filtered = searchResults.filter((meeting) => {
+      if (meeting.status === "cancelled") return false;
+
       // Date range filtering
       const afterCutoff = args.startAfter ?? currentTime;
       if (meeting.scheduledAt < afterCutoff) return false;

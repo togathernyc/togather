@@ -80,6 +80,7 @@ async function createUserWithMembership(
       userId,
       communityId,
       roles: 1,
+      status: 1,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     });
@@ -222,6 +223,33 @@ describe("searchEvents", () => {
     );
 
     expect(result.events).toHaveLength(1);
+  });
+
+  test("includes confirmed events", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId } = await seedCommunityWithGroup(t);
+    const { accessToken } = await createUserWithMembership(
+      t,
+      communityId,
+      groupId
+    );
+
+    await createMeeting(t, groupId, communityId, {
+      title: "Confirmed Gathering",
+      status: "confirmed",
+    });
+
+    const result = await t.query(
+      api.functions.meetings.explore.searchEvents,
+      {
+        token: accessToken,
+        communityId,
+        searchTerm: "confirmed",
+      }
+    );
+
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0].title).toBe("Confirmed Gathering");
   });
 
   test("excludes cancelled events", async () => {
