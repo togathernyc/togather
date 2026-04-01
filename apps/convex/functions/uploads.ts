@@ -9,8 +9,10 @@
 
 import { v } from "convex/values";
 import { mutation, query, action } from "../_generated/server";
+import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { requireAuth, requireAuthFromToken } from "../lib/auth";
+import { now } from "../lib/utils";
 import { requireGroupLeaderOrCommunityAdmin } from "./groups/mutations";
 
 // ============================================================================
@@ -176,7 +178,10 @@ export const confirmUpload = mutation({
           if (entityId !== authUserId) {
             throw new Error("Cannot update another user's profile photo");
           }
-          await ctx.db.patch(entityId, { profilePhoto: url });
+          await ctx.db.patch(entityId, { profilePhoto: url, updatedAt: now() });
+          await ctx.scheduler.runAfter(0, internal.functions.sync.memberships.syncUserProfileToChannels, {
+            userId: entityId,
+          });
           break;
         }
         case "group": {
