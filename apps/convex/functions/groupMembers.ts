@@ -790,6 +790,89 @@ export const cancelJoinRequest = mutation({
 });
 
 /**
+ * Review (approve or decline) a pending join request
+ * Only group leaders or community admins can review requests
+ */
+export const reviewJoinRequest = mutation({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+    userId: v.id("users"),
+    decision: v.union(v.literal("accepted"), v.literal("declined")),
+  },
+  handler: async (ctx, args) => {
+    const reviewerId = await requireAuth(ctx, args.token);
+    const timestamp = now();
+
+    // Get the group
+    const group = await ctx.db.get(args.groupId);
+    if (!group) {
+      throw new Error("Group not found");
+    }
+
+    // Verify caller is a group leader or community admin
+    const callerMembership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", args.groupId).eq("userId", reviewerId)
+      )
+      .first();
+
+    const isGroupLeaderOrAdmin = isActiveLeader(callerMembership);
+    const isCommAdmin = await isCommunityAdmin(ctx, group.communityId, reviewerId);
+
+    if (!isGroupLeaderOrAdmin && !isCommAdmin) {
+      throw new Error("Only group leaders or community admins can review join requests");
+    }
+
+    // Find the pending request
+    const request = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", args.groupId).eq("userId", args.userId)
+      )
+      .first();
+
+    if (!request || request.requestStatus !== "pending") {
+      throw new Error("No pending join request found for this user");
+    }
+
+    if (args.decision === "accepted") {
+      // Approve: activate membership
+      await ctx.db.patch(request._id, {
+        requestStatus: "accepted",
+        requestReviewedAt: timestamp,
+        requestReviewedById: reviewerId,
+        leftAt: undefined, // Clear leftAt to make them an active member
+      });
+
+      // Sync channel memberships for the new member
+      await syncUserChannelMembershipsLogic(ctx, args.userId, args.groupId);
+
+      // Notify the user their request was approved
+      ctx.scheduler.runAfter(0, internal.functions.notifications.senders.notifyJoinRequestApproved, {
+        userId: args.userId,
+        groupId: args.groupId,
+      });
+    } else {
+      // Decline: update status
+      await ctx.db.patch(request._id, {
+        requestStatus: "declined",
+        requestReviewedAt: timestamp,
+        requestReviewedById: reviewerId,
+      });
+    }
+
+    return {
+      success: true,
+      decision: args.decision,
+      userId: args.userId,
+      groupId: args.groupId,
+    };
+  },
+});
+
+/**
  * List pending join requests for a group
  * Only community admins can view join requests
  */

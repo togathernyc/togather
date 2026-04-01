@@ -1,20 +1,35 @@
-import React from "react";
-import { View, Text, StyleSheet, TouchableOpacity, Platform } from "react-native";
+import React, { useState, useCallback } from "react";
+import { View, Text, StyleSheet, TouchableOpacity, Platform, ActivityIndicator } from "react-native";
 import { useRouter } from "expo-router";
 import { Avatar, AppImage } from "@components/ui";
 import { getGroupTypeLabel } from "@features/groups/utils";
 import { useAuth } from "@providers/AuthProvider";
 import { Group, GroupMember } from "@features/groups/types";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useAuthenticatedMutation } from "@services/api/convex";
+import { api } from "@services/api/convex";
 
 interface GroupPreviewCardProps {
   group: Group;
 }
 
+type JoinState = "idle" | "joined" | "requested";
+
 export function GroupPreviewCard({ group }: GroupPreviewCardProps) {
   const router = useRouter();
   const { user } = useAuth();
   const { primaryColor } = useCommunityTheme();
+  const createJoinRequest = useAuthenticatedMutation(api.functions.groupMembers.createJoinRequest);
+
+  // Determine initial join state from group data
+  const getInitialJoinState = (): JoinState => {
+    if (group.is_member || group.user_role) return "joined";
+    if (group.has_pending_request) return "requested";
+    return "idle";
+  };
+
+  const [joinState, setJoinState] = useState<JoinState>(getInitialJoinState);
+  const [isJoining, setIsJoining] = useState(false);
 
   // Prefer group_type_name from API, fallback to ID lookup
   const typeLabel = getGroupTypeLabel(group.group_type_name ?? group.group_type ?? group.type ?? 1, user);
@@ -69,9 +84,57 @@ export function GroupPreviewCard({ group }: GroupPreviewCardProps) {
     router.push(`/groups/${groupId}`);
   };
 
-  const handleJoin = () => {
-    // TODO: Implement join functionality
-    router.push(`/groups/${groupId}`);
+  const handleJoin = useCallback(async () => {
+    if (joinState !== "idle" || isJoining) return;
+
+    setIsJoining(true);
+    try {
+      await createJoinRequest({ groupId: group._id as any });
+      // All groups use the request flow — show "Requested" optimistically.
+      // If the group is open and auto-approves, the server will resolve it
+      // and the next query refresh will show "Member".
+      setJoinState("requested");
+    } catch (error: any) {
+      if (error?.message?.includes("already a member")) {
+        setJoinState("joined");
+      } else if (error?.message?.includes("already have a pending")) {
+        setJoinState("requested");
+      }
+      // For other errors, remain in idle state so the user can retry
+    } finally {
+      setIsJoining(false);
+    }
+  }, [joinState, isJoining, createJoinRequest, group._id]);
+
+  const getJoinButtonLabel = () => {
+    if (isJoining) return "";
+    switch (joinState) {
+      case "joined": return "Member";
+      case "requested": return "Requested";
+      default: return "Join";
+    }
+  };
+
+  const getJoinButtonStyle = () => {
+    switch (joinState) {
+      case "joined":
+        return { backgroundColor: `${primaryColor}15`, borderWidth: 1.5, borderColor: primaryColor };
+      case "requested":
+        return { backgroundColor: "#F5F5F5", borderWidth: 1.5, borderColor: "#E5E5E5" };
+      default:
+        return { backgroundColor: primaryColor };
+    }
+  };
+
+  const getJoinButtonTextStyle = () => {
+    switch (joinState) {
+      case "joined":
+        return { color: primaryColor };
+      case "requested":
+        return { color: "#666" };
+      default:
+        return { color: "#fff" };
+    }
   };
 
   return (
@@ -157,11 +220,18 @@ export function GroupPreviewCard({ group }: GroupPreviewCardProps) {
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.button, { backgroundColor: primaryColor }]}
-            onPress={handleJoin}
-            activeOpacity={0.7}
+            style={[styles.button, getJoinButtonStyle()]}
+            onPress={joinState === "idle" ? handleJoin : undefined}
+            activeOpacity={joinState === "idle" ? 0.7 : 1}
+            disabled={joinState !== "idle" || isJoining}
           >
-            <Text style={styles.primaryButtonText}>Join</Text>
+            {isJoining ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Text style={[styles.primaryButtonText, getJoinButtonTextStyle()]}>
+                {getJoinButtonLabel()}
+              </Text>
+            )}
           </TouchableOpacity>
         </View>
       </View>
