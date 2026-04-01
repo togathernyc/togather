@@ -369,8 +369,16 @@ export const sendResetPasswordEmail = action({
       return { success: true };
     }
 
-    // Send OTP via Resend (reuses email OTP infrastructure)
-    await sendEmailOTP(ctx, normalizedEmail);
+    // Send OTP via Resend (reuses email OTP infrastructure).
+    // Swallow send failures so responses match the non-existent-user path (enumeration-safe).
+    try {
+      await sendEmailOTP(ctx, normalizedEmail);
+    } catch (error) {
+      console.error("sendResetPasswordEmail: failed to send OTP", {
+        email: normalizedEmail,
+        error,
+      });
+    }
 
     return { success: true };
   },

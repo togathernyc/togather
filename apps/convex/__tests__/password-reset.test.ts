@@ -85,6 +85,26 @@ describe("sendResetPasswordEmail", () => {
 
     expect(result.success).toBe(true);
   });
+
+  test("returns success when Resend is unavailable (prevents enumeration vs missing user)", async () => {
+    const t = convexTest(schema, modules);
+    const prevKey = process.env.RESEND_API_KEY;
+    delete process.env.RESEND_API_KEY;
+    try {
+      await createUserWithPassword(t, "realuser@example.com");
+      const result = await t.action(
+        api.functions.auth.registration.sendResetPasswordEmail,
+        { email: "realuser@example.com" }
+      );
+      expect(result.success).toBe(true);
+    } finally {
+      if (prevKey !== undefined) {
+        process.env.RESEND_API_KEY = prevKey;
+      } else {
+        delete process.env.RESEND_API_KEY;
+      }
+    }
+  });
 });
 
 describe("resetPassword", () => {
