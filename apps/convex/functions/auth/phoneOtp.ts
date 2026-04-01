@@ -12,7 +12,7 @@ import { v } from "convex/values";
 import { action, internalAction } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import { normalizePhone } from "../../lib/utils";
-import { generateTokens, requireAuthFromToken } from "../../lib/auth";
+import { generateTokens, requireAuthFromTokenAction } from "../../lib/auth";
 import {
   MAGIC_CODE,
   isTestPhone,
@@ -439,7 +439,7 @@ export const registerPhone = action({
     } | null;
   }> => {
     // Derive userId from auth token instead of accepting from client
-    const tokenUserId = await requireAuthFromToken(args.token);
+    const tokenUserId = await requireAuthFromTokenAction(ctx, args.token);
     const resolved = await ctx.runQuery(internal.functions.users.resolveUserIdInternal, {
       tokenUserId,
     });

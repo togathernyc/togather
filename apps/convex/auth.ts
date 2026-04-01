@@ -20,4 +20,5 @@ export {
   getOptionalAuth,
   requireAuthUser,
   verifyAccessToken,
+  requireAuthFromTokenAction,
 } from "./lib/auth";

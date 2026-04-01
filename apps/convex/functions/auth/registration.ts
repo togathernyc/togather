@@ -12,7 +12,7 @@ import { v } from "convex/values";
 import { action } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import { normalizePhone } from "../../lib/utils";
-import { generateTokens, requireAuthFromToken } from "../../lib/auth";
+import { generateTokens, requireAuthFromTokenAction } from "../../lib/auth";
 import { parseAndValidateDate } from "./helpers";
 
 /**
@@ -289,7 +289,7 @@ export const changePassword = action({
   },
   handler: async (ctx, args): Promise<{ success: boolean }> => {
     // Derive userId from auth token instead of accepting from client
-    const tokenUserId = await requireAuthFromToken(args.token);
+    const tokenUserId = await requireAuthFromTokenAction(ctx, args.token);
 
     // Resolve to Convex user ID
     const resolved = await ctx.runQuery(internal.functions.users.resolveUserIdInternal, {

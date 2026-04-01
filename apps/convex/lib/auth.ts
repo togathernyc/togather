@@ -29,7 +29,8 @@
 
 import * as jose from "jose";
 import type { Id } from "../_generated/dataModel";
-import type { QueryCtx, MutationCtx } from "../_generated/server";
+import type { QueryCtx, MutationCtx, ActionCtx } from "../_generated/server";
+import { internal } from "../_generated/api";
 
 // ============================================================================
 // Configuration
@@ -644,6 +645,39 @@ export async function requireAuthFromToken(
   const payload = await verifyAccessToken(token);
   if (!payload) {
     throw new AuthenticationError("Invalid or expired authentication token");
+  }
+
+  return payload.userId;
+}
+
+/**
+ * Like {@link requireAuthFromToken} but also checks the token revocation
+ * blacklist via an internal query. Use this in actions where you have `ctx`.
+ *
+ * @param ctx - Convex action context
+ * @param token - JWT access token
+ * @returns The authenticated user's ID from the token payload
+ * @throws AuthenticationError if token is missing, invalid, expired, or revoked
+ */
+export async function requireAuthFromTokenAction(
+  ctx: ActionCtx,
+  token: string | undefined
+): Promise<string> {
+  if (!token) {
+    throw new AuthenticationError("No authentication token provided");
+  }
+
+  const payload = await verifyAccessToken(token);
+  if (!payload) {
+    throw new AuthenticationError("Invalid or expired authentication token");
+  }
+
+  const revoked = await ctx.runQuery(
+    internal.functions.authInternal.isJwtSubjectRevokedInternal,
+    { jwtUserId: payload.userId, issuedAt: payload.issuedAt }
+  );
+  if (revoked) {
+    throw new AuthenticationError("Session revoked");
   }
 
   return payload.userId;

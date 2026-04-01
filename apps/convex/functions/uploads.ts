@@ -9,7 +9,7 @@
 
 import { v } from "convex/values";
 import { mutation, query, action } from "../_generated/server";
-import { requireAuth, requireAuthFromToken } from "../lib/auth";
+import { requireAuth, requireAuthFromTokenAction } from "../lib/auth";
 
 // ============================================================================
 // Constants
@@ -246,13 +246,13 @@ export const getR2UploadUrl = action({
     contentType: v.string(),
     folder: folderValidator,
   },
-  handler: async (_ctx, args): Promise<{
+  handler: async (ctx, args): Promise<{
     uploadUrl: string;
     key: string;
     publicUrl: string;
     storagePath: string; // Path to store in database (r2:prefix)
   }> => {
-    await requireAuthFromToken(args.token);
+    await requireAuthFromTokenAction(ctx, args.token);
     // Validate file extension
     const ext = "." + args.fileName.split(".").pop()?.toLowerCase();
     if (!ALLOWED_EXTENSIONS.includes(ext)) {
@@ -338,13 +338,13 @@ export const getR2FileUploadUrl = action({
     fileSize: v.number(),
     folder: folderValidator,
   },
-  handler: async (_ctx, args): Promise<{
+  handler: async (ctx, args): Promise<{
     uploadUrl: string;
     key: string;
     publicUrl: string;
     storagePath: string;
   }> => {
-    await requireAuthFromToken(args.token);
+    await requireAuthFromTokenAction(ctx, args.token);
     // Validate file size
     if (args.fileSize > MAX_FILE_SIZE_BYTES) {
       throw new Error(
