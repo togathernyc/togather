@@ -5,6 +5,8 @@ import { modules } from "../test.setup";
 import { api, internal } from "../_generated/api";
 import { generateTokens } from "../lib/auth";
 
+process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
+
 vi.useFakeTimers();
 
 async function seedFollowupRefreshFixture(t: ReturnType<typeof convexTest>) {

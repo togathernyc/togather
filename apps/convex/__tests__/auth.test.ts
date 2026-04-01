@@ -20,6 +20,8 @@ import {
   isTokenRevoked,
 } from "../lib/auth";
 
+process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
+
 // ============================================================================
 // Constants
 // ============================================================================

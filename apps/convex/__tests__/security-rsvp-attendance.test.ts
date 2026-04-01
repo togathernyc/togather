@@ -20,6 +20,8 @@ import { modules } from "../test.setup";
 import type { Id } from "../_generated/dataModel";
 import { generateTokens } from "../lib/auth";
 
+process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
+
 // ============================================================================
 // Test Helper Functions
 // ============================================================================
