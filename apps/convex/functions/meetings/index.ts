@@ -16,6 +16,7 @@ import {
   DEFAULT_MEETING_DURATION_MS,
   DEFAULT_RSVP_OPTIONS,
 } from "../../lib/meetingConfig";
+import { buildMeetingSearchText } from "../../lib/meetingSearchText";
 
 // Re-export meeting config for consumers that import from this module
 export {
@@ -24,21 +25,6 @@ export {
   DEFAULT_MEETING_DURATION_MS,
   DEFAULT_RSVP_OPTIONS,
 } from "../../lib/meetingConfig";
-
-/**
- * Build denormalized search text for a meeting.
- * Combines title, location, and group name for full-text search.
- */
-function buildMeetingSearchText(fields: {
-  title?: string;
-  locationOverride?: string;
-  groupName?: string;
-}): string {
-  return [fields.title, fields.locationOverride, fields.groupName]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-}
 
 // ============================================================================
 // Re-exports
