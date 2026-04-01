@@ -143,6 +143,18 @@ crons.hourly(
 );
 
 // =============================================================================
+// TOKEN REVOCATION CLEANUP
+// =============================================================================
+// Runs daily to delete stale token revocation records (older than 31 days).
+// Access tokens expire after 30 days, so older revocations are no longer needed.
+
+crons.daily(
+  "token-revocation-cleanup",
+  { hourUTC: 4, minuteUTC: 0 },
+  internal.functions.authInternal.cleanupStaleTokenRevocations
+);
+
+// =============================================================================
 // FOLLOWUP SCORE REFRESH
 // =============================================================================
 // Runs daily at 7:00 UTC (2:00 AM EST) to refresh time-decay scores.

@@ -94,6 +94,7 @@ export interface AccessTokenPayload {
   userId: string; // Convex user ID (e.g., "jh7xyz123...")
   communityId?: string; // Optional Convex community ID
   type: "access";
+  issuedAt?: number; // Unix timestamp (seconds) from JWT iat claim
 }
 
 /**
@@ -239,6 +240,7 @@ export async function verifyAccessToken(
       userId: payload.userId as string,
       communityId: payload.communityId as string | undefined,
       type: "access",
+      issuedAt: payload.iat,
     };
   } catch {
     // Token is invalid, expired, or malformed
@@ -381,6 +383,42 @@ async function resolveUserId(
   return getUserByLegacyId(ctx, tokenUserId);
 }
 
+/**
+ * Check if a token has been revoked via signout.
+ *
+ * Compares the token's issued-at time against the user's latest revocation
+ * timestamp. If the token was issued before the user signed out, it's rejected.
+ *
+ * @param ctx - Convex query or mutation context
+ * @param userId - Resolved Convex user ID
+ * @param issuedAt - Token's iat claim (Unix seconds), undefined if missing
+ * @returns true if the token is revoked
+ */
+async function isTokenRevoked(
+  ctx: QueryCtx | MutationCtx,
+  userId: Id<"users">,
+  issuedAt: number | undefined
+): Promise<boolean> {
+  const revocation = await ctx.db
+    .query("tokenRevocations")
+    .withIndex("by_userId", (q) => q.eq("userId", userId))
+    .first();
+
+  if (!revocation) {
+    return false;
+  }
+
+  // If the token has no iat claim, treat it as revoked (legacy tokens
+  // without iat should be re-issued after a signout)
+  if (issuedAt === undefined) {
+    return true;
+  }
+
+  // JWT iat is in seconds, revokedBefore is in milliseconds
+  const issuedAtMs = issuedAt * 1000;
+  return issuedAtMs < revocation.revokedBefore;
+}
+
 // ============================================================================
 // Auth Helpers for Queries/Mutations
 // ============================================================================
@@ -423,6 +461,11 @@ export async function requireAuth(
   // Resolve user ID (handles both Convex and legacy IDs)
   const userId = await resolveUserId(ctx, payload.userId);
   if (!userId) {
+    throw new Error("Not authenticated");
+  }
+
+  // Check if the token was revoked (issued before the user's last signout)
+  if (await isTokenRevoked(ctx, userId, payload.issuedAt)) {
     throw new Error("Not authenticated");
   }
 
@@ -469,7 +512,17 @@ export async function getOptionalAuth(
     return null;
   }
 
-  return resolveUserId(ctx, payload.userId);
+  const userId = await resolveUserId(ctx, payload.userId);
+  if (!userId) {
+    return null;
+  }
+
+  // Check if the token was revoked (issued before the user's last signout)
+  if (await isTokenRevoked(ctx, userId, payload.issuedAt)) {
+    return null;
+  }
+
+  return userId;
 }
 
 /**

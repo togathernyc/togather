@@ -774,6 +774,30 @@ export const cleanupExpiredPhoneTokens = internalMutation({
   },
 });
 
+/**
+ * Internal: Cleanup stale token revocation records
+ *
+ * Revocation records only need to live as long as the longest-lived access token.
+ * Access tokens expire after 30 days, so revocations older than 31 days are safe to delete.
+ */
+export const cleanupStaleTokenRevocations = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const thirtyOneDaysAgo = Date.now() - 31 * 24 * 60 * 60 * 1000;
+
+    const staleRevocations = await ctx.db
+      .query("tokenRevocations")
+      .filter((q) => q.lt(q.field("revokedBefore"), thirtyOneDaysAgo))
+      .collect();
+
+    for (const revocation of staleRevocations) {
+      await ctx.db.delete(revocation._id);
+    }
+
+    return { deletedCount: staleRevocations.length };
+  },
+});
+
 // ============================================================================
 // Public Queries
 // ============================================================================
@@ -808,9 +832,35 @@ export const phoneStatus = query({
  * tRPC equivalent: signout
  */
 export const signout = mutation({
-  args: {},
-  handler: async () => {
-    // TODO: Add token to blacklist if needed
+  args: { token: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    if (!args.token) {
+      // No token provided — client-only logout (clear local storage)
+      return { success: true };
+    }
+
+    // Verify the token to get the userId
+    const userId = await requireAuth(ctx, args.token);
+
+    // Record revocation: all tokens issued before now are invalid for this user
+    const revokedBefore = Date.now();
+
+    // Upsert: replace existing revocation record for this user
+    const existing = await ctx.db
+      .query("tokenRevocations")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .first();
+
+    if (existing) {
+      await ctx.db.patch(existing._id, { revokedBefore, createdAt: revokedBefore });
+    } else {
+      await ctx.db.insert("tokenRevocations", {
+        userId,
+        revokedBefore,
+        createdAt: revokedBefore,
+      });
+    }
+
     return { success: true };
   },
 });
