@@ -252,6 +252,53 @@ export async function verifyAccessToken(
 }
 
 /**
+ * Verify access token signature and shape but do not enforce `exp` / `nbf`.
+ * Used for signout so a stale access token in local storage can still identify
+ * the user and record revocation (refresh tokens may far outlive access).
+ */
+async function verifyAccessTokenIgnoringExpiration(
+  token: string,
+): Promise<AccessTokenPayload | null> {
+  try {
+    const secret = getJwtSecret();
+    const verified = await jose.compactVerify(token, secret);
+    if (
+      verified.protectedHeader.crit?.includes("b64") &&
+      verified.protectedHeader.b64 === false
+    ) {
+      return null;
+    }
+    let raw: unknown;
+    try {
+      raw = JSON.parse(new TextDecoder().decode(verified.payload));
+    } catch {
+      return null;
+    }
+    if (
+      !raw ||
+      typeof raw !== "object" ||
+      (raw as { type?: unknown }).type !== "access" ||
+      typeof (raw as { userId?: unknown }).userId !== "string"
+    ) {
+      return null;
+    }
+    const o = raw as {
+      userId: string;
+      communityId?: unknown;
+      iat?: unknown;
+    };
+    return {
+      userId: o.userId,
+      ...(typeof o.communityId === "string" ? { communityId: o.communityId } : {}),
+      type: "access",
+      ...(typeof o.iat === "number" ? { issuedAt: o.iat } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Verify and decode a refresh token
  *
  * @param token - JWT refresh token
@@ -498,8 +545,10 @@ export async function requireAuth(
 }
 
 /**
- * Like {@link requireAuth} but skips revocation — used by signout so another
- * device can finish logout after tokens were already blacklisted.
+ * Like {@link requireAuth} but skips revocation and does not require a
+ * non-expired access token — used by signout so another device can finish
+ * logout after tokens were already blacklisted, and so users with only an
+ * expired access token in storage can still revoke refresh tokens.
  */
 export async function requireAuthIgnoringRevocation(
   ctx: QueryCtx | MutationCtx,
@@ -509,7 +558,7 @@ export async function requireAuthIgnoringRevocation(
     throw new Error("Not authenticated");
   }
 
-  const payload = await verifyAccessToken(token);
+  const payload = await verifyAccessTokenIgnoringExpiration(token);
   if (!payload) {
     throw new Error("Not authenticated");
   }

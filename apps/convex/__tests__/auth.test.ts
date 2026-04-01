@@ -14,6 +14,7 @@ import { api, internal } from "../_generated/api";
 import { modules } from "../test.setup";
 import {
   generateTokens,
+  verifyAccessToken,
   verifyRefreshToken,
   REFRESH_TOKEN_MAX_AGE_MS,
   isTokenRevoked,
@@ -116,6 +117,44 @@ describe("Token revocation", () => {
       token: accessToken,
     });
     expect(out).toEqual({ success: true });
+  });
+
+  test("signout records revocation when access token is expired", async () => {
+    const t = convexTest(schema, modules);
+
+    const userId = await t.run(async (ctx) => {
+      return await ctx.db.insert("users", {
+        phone: "+11234567893",
+        firstName: "Stale",
+        lastName: "Token",
+        isActive: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+
+    const { accessToken } = await generateTokens(userId);
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(Date.now() + 40 * 24 * 60 * 60 * 1000));
+    try {
+      expect(await verifyAccessToken(accessToken)).toBeNull();
+
+      await t.mutation(api.functions.authInternal.signout, {
+        token: accessToken,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const row = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("tokenRevocations")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .first();
+    });
+    expect(row).not.toBeNull();
+    expect(row?.userId).toBe(userId);
   });
 
   test("isJwtSubjectRevokedInternal flags refresh tokens issued before signout", async () => {
