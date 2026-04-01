@@ -657,10 +657,34 @@ export const deleteAccount = action({
     }
     const userId = resolved.userId;
 
+    const user = await ctx.runQuery(internal.functions.users.getByIdInternal, {
+      userId,
+    });
+    if (!user?.phone) {
+      throw new Error(
+        "Account has no phone number on file; contact support to delete your account."
+      );
+    }
+    const normalizedPhone = normalizePhone(user.phone);
+    if (normalizePhone(args.phone) !== normalizedPhone) {
+      throw new Error("Phone number does not match your account");
+    }
+
     // 2. Verify OTP code
-    const normalizedPhone = normalizePhone(args.phone);
     const isMagicCode =
       isMagicCodeAllowed(normalizedPhone) && args.code === MAGIC_CODE;
+
+    const skipRateLimit = isMagicCode && isTestPhone(normalizedPhone);
+    if (!skipRateLimit) {
+      await ctx.runMutation(
+        internal.functions.authInternal.checkRateLimitInternal,
+        {
+          key: `delete:${normalizedPhone}`,
+          maxAttempts: 10,
+          windowMs: 15 * 60 * 1000, // 15 minutes
+        }
+      );
+    }
 
     let isValid = isMagicCode;
 
