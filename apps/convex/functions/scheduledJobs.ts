@@ -1362,24 +1362,35 @@ export const runTaskReminderBot = internalAction({
   },
 });
 
+/**
+ * Shared reschedule logic: sets nextScheduledAt to next 9 AM in the
+ * bot config's community timezone. Used by both task reminder and birthday bot.
+ */
+async function rescheduleBotConfigToNext9AM(
+  ctx: { db: any },
+  configId: Id<"groupBotConfigs">
+) {
+  const config = await ctx.db.get(configId);
+  if (!config) return;
+
+  const group = await ctx.db.get(config.groupId);
+  if (!group) return;
+
+  const community = await ctx.db.get(group.communityId);
+  const timezone = community?.timezone || "America/New_York";
+
+  const next9AM = calculateNext9AMInTimezone(timezone);
+
+  await ctx.db.patch(configId, {
+    nextScheduledAt: next9AM,
+    updatedAt: now(),
+  });
+}
+
 export const rescheduleTaskReminder = internalMutation({
   args: { configId: v.id("groupBotConfigs") },
   handler: async (ctx, { configId }) => {
-    const config = await ctx.db.get(configId);
-    if (!config) return;
-
-    const group = await ctx.db.get(config.groupId);
-    if (!group) return;
-
-    const community = await ctx.db.get(group.communityId);
-    const timezone = community?.timezone || "America/New_York";
-
-    const next9AM = calculateNext9AMInTimezone(timezone);
-
-    await ctx.db.patch(configId, {
-      nextScheduledAt: next9AM,
-      updatedAt: now(),
-    });
+    await rescheduleBotConfigToNext9AM(ctx, configId);
   },
 });
 
@@ -1389,21 +1400,7 @@ export const rescheduleTaskReminder = internalMutation({
 export const rescheduleBirthdayBot = internalMutation({
   args: { configId: v.id("groupBotConfigs") },
   handler: async (ctx, { configId }) => {
-    const config = await ctx.db.get(configId);
-    if (!config) return;
-
-    const group = await ctx.db.get(config.groupId);
-    if (!group) return;
-
-    const community = await ctx.db.get(group.communityId);
-    const timezone = community?.timezone || "America/New_York";
-
-    const next9AM = calculateNext9AMInTimezone(timezone);
-
-    await ctx.db.patch(configId, {
-      nextScheduledAt: next9AM,
-      updatedAt: now(),
-    });
+    await rescheduleBotConfigToNext9AM(ctx, configId);
   },
 });
 
