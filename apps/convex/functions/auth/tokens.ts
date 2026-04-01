@@ -56,8 +56,7 @@ export const refreshToken = action({
         userId: payload.userId as any,
       });
     } catch {
-      // If it fails, the userId might be a legacy ID format
-      // For now, just fail since we're using Convex IDs
+      // Invalid ID format — user stays null and we throw "User not found" below
     }
 
     if (!user) {

@@ -133,7 +133,9 @@ function DropboxVideoPlayer({ url }: { url: string }) {
     } catch (err) {
       console.error("Failed to open video:", err);
       // Fallback to external browser
-      Linking.openURL(playableUrl).catch(() => {});
+      Linking.openURL(playableUrl).catch((linkErr) => {
+        console.error('[RunSheetScreen] Failed to open video URL:', linkErr);
+      });
     }
   }, [playableUrl]);
 

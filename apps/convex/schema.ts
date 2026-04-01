@@ -108,6 +108,7 @@ export default defineSchema({
     .index("by_slug", ["slug"])
     .index("by_public", ["isPublic"])
     .index("by_stripeCustomerId", ["stripeCustomerId"])
+    .index("by_stripeSubscriptionId", ["stripeSubscriptionId"])
     .searchIndex("search_communities", {
       searchField: "searchText",
       filterFields: ["isPublic"],

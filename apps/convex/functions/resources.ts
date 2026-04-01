@@ -286,7 +286,6 @@ export const getGroupTypeBySlug = query({
  * Get basic community stats
  *
  * Returns aggregate statistics for a community dashboard.
- * TODO: Implement when needed
  */
 export const getCommunityStats = query({
   args: {
@@ -322,8 +321,7 @@ export const getCommunityStats = query({
       activeGroups: activeGroups.length,
       archivedGroups: groups.length - activeGroups.length,
       groupTypes: groupTypes.length,
-      // Note: Member counts would require userCommunities table query
-      // TODO: Add member stats when userCommunities is populated
+      // NOTE: Member counts available via userCommunities table if needed
     };
   },
 });

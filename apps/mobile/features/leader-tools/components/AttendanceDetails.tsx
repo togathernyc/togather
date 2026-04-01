@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { useAuth } from "@providers/AuthProvider";
+import { ToastManager } from "@components/ui/Toast";
 import { AddGuest, SubmitAttendance } from "./modals";
 import {
   useAttendanceReport,
@@ -184,7 +185,7 @@ export function AttendanceDetails({
       setShowSubmitModal(false);
     } catch (error) {
       console.error("Failed to submit attendance:", error);
-      // TODO: Show error toast
+      ToastManager.error("Failed to save attendance. Please try again.");
     }
   };
 
