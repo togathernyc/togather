@@ -16,6 +16,7 @@ import { getGroupCoordinates, geocodeZipCode, geocodeAddressAsync } from '@featu
 import { useExploreFilters, ExploreView } from '../hooks/useExploreFilters';
 import { filterExploreGroups } from '../utils/filterGroups';
 import { useCommunityEvents, useLeaderGroups, useMyRsvpedEvents, CommunityEvent } from '../hooks/useCommunityEvents';
+import { useEventSearch } from '../hooks/useEventSearch';
 import { AppImage } from '@components/ui';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
 import { useTheme } from '@hooks/useTheme';
@@ -115,6 +116,16 @@ export function ExploreScreen() {
     refetch: refetchEvents,
     isFetching: isFetchingEvents,
   } = useCommunityEvents(exploreFilters, { enabled: hasCommunityContext });
+
+  // Backend event search (replaces client-side filtering when searching)
+  const {
+    data: eventSearchData,
+    isLoading: isSearchingEvents,
+    isSearching: hasActiveEventSearch,
+  } = useEventSearch(
+    exploreFilters.view === 'events' ? searchQuery : '',
+    community?.id
+  );
 
   // Fetch user's leader groups for events filter modal (requires community context)
   const { data: leaderGroups, isLoading: isLoadingLeaderGroups } = useLeaderGroups({ enabled: hasCommunityContext });
@@ -596,6 +607,8 @@ export function ExploreScreen() {
           onGroupSelect={handleGroupSelect}
           isLoadingGroups={isLoading}
           events={eventsData?.events ?? []}
+          eventSearchResults={hasActiveEventSearch ? eventSearchData?.events : undefined}
+          isSearchingEvents={isSearchingEvents}
           onEventPress={handleEventPress}
           isLoadingEvents={isLoadingEvents}
           onRefreshEvents={handleRefreshEvents}
