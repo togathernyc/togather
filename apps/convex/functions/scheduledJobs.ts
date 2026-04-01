@@ -39,6 +39,11 @@ const APP_URL = process.env.APP_URL || DOMAIN_CONFIG.appUrl;
 const BRAND_NAME = DOMAIN_CONFIG.brandName;
 const DEFAULT_INITIALS_AVATAR_BG = "007AFF";
 
+/** Expo push API max batch size */
+const PUSH_BATCH_SIZE = 100;
+/** Safety limit for group member queries to bound memory usage */
+const GROUP_MEMBER_QUERY_LIMIT = 500;
+
 function getInitials(name: string | undefined | null): string {
   if (!name) return "G";
   const words = name.trim().split(/\s+/).filter(Boolean);
@@ -582,7 +587,7 @@ export const getMembersWithBirthdayToday = internalQuery({
       .query("groupMembers")
       .withIndex("by_group", (q) => q.eq("groupId", groupId))
       .filter((q) => q.eq(q.field("leftAt"), undefined))
-      .take(500); // Safety limit
+      .take(GROUP_MEMBER_QUERY_LIMIT);
 
     // Batch fetch all users upfront
     const userIds = members.map((m) => m.userId);
@@ -1890,9 +1895,9 @@ async function sendExpoPushNotifications(
   let sent = 0;
   let failed = 0;
 
-  // Send in batches of 100
-  for (let i = 0; i < messages.length; i += 100) {
-    const chunk = messages.slice(i, i + 100);
+  // Send in batches per Expo push API limits
+  for (let i = 0; i < messages.length; i += PUSH_BATCH_SIZE) {
+    const chunk = messages.slice(i, i + PUSH_BATCH_SIZE);
 
     try {
       const response = await fetch("https://exp.host/--/api/v2/push/send", {
@@ -1998,7 +2003,7 @@ async function sendAttendanceConfirmationEmail(
     </html>
   `;
 
-  await fetch("https://api.resend.com/emails", {
+  const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -2011,6 +2016,13 @@ async function sendAttendanceConfirmationEmail(
       html,
     }),
   });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "unknown");
+    console.error(
+      `[scheduledJobs] Attendance email failed (${response.status}): ${body}`
+    );
+  }
 }
 
 // ============================================================================
