@@ -322,7 +322,12 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
         if (channelId && groupId) {
           // Prefetch messages before navigating (same as inbox, 3s timeout)
           console.log(`[${type}] Prefetching channel ${channelId} before navigation`);
-          await awaitPrefetch(channelId as Id<"chatChannels">, 3000);
+          const prefetchReady = await awaitPrefetch(
+            channelId as Id<"chatChannels">,
+            3000
+          );
+          // On timeout, ConvexChatRoomScreen needs fromNotification so it waits for channels/header data
+          const fromNotificationParam = prefetchReady ? {} : { fromNotification: "1" as const };
 
           // Without slug/type, do not default the URL to /general: ConvexChatRoomScreen would
           // highlight "general" while activeChannelId still came from prefetched channelId.
@@ -335,6 +340,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
               params: {
                 groupId,
                 ...(groupName ? { groupName } : {}),
+                ...fromNotificationParam,
               },
             } as any);
             break;
@@ -349,6 +355,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
               channelId,
               // Pass display data from notification payload (same as inbox)
               ...(groupName ? { groupName } : {}),
+              ...fromNotificationParam,
             },
           } as any);
         } else if (groupId) {
