@@ -23,7 +23,7 @@ import React, {
   useCallback,
   useRef,
 } from 'react';
-import { Platform, AppState, AppStateStatus } from 'react-native';
+import { Platform, AppState, AppStateStatus, Alert, Linking } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import { router } from 'expo-router';
@@ -127,10 +127,15 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
     activeChannelIdRef.current = activeChannelId;
   }, [activeChannelId]);
 
-  // Load auth token from AsyncStorage
+  // Load auth token from AsyncStorage — must re-run when auth state changes
+  // so that after logout + login the fresh token is picked up for registerToken()
   useEffect(() => {
-    AsyncStorage.getItem('auth_token').then(setAuthToken);
-  }, []);
+    if (isAuthenticated) {
+      AsyncStorage.getItem('auth_token').then(setAuthToken);
+    } else {
+      setAuthToken(null);
+    }
+  }, [isAuthenticated]);
 
   // Use reactive query for unread count - only when we have a valid auth token
   const unreadCountResult = useQuery(
@@ -474,6 +479,19 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
       if (granted) {
         // Register token
         await registerToken();
+      } else if (Platform.OS !== 'web') {
+        // Nag the user to enable notifications if they haven't
+        Alert.alert(
+          'Turn on Notifications',
+          "Don't miss messages from your community! Enable push notifications to stay in the loop.",
+          [
+            { text: 'Not Now', style: 'cancel' },
+            {
+              text: 'Open Settings',
+              onPress: () => Linking.openSettings(),
+            },
+          ],
+        );
       }
 
       // Get initial unread count
