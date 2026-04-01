@@ -19,6 +19,7 @@ import { CustomModal } from "@/components/ui/Modal";
 import { OTPInput } from "@/components/ui/OTPInput";
 import { useAuth } from "@/providers/AuthProvider";
 import { useAction, api } from "@services/api/convex";
+import { useDeleteAccount } from "@/features/profile/hooks";
 import { useTheme } from "@hooks/useTheme";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
@@ -47,11 +48,8 @@ export function DeleteAccountModal({
   // Get last 4 digits of phone for display
   const phoneLast4 = user?.phone?.slice(-4) || "****";
 
-  // Convex actions for OTP and account deletion
   const sendPhoneOTP = useAction(api.functions.auth.phoneOtp.sendPhoneOTP);
-  const deleteAccountAction = useAction(
-    api.functions.auth.phoneOtp.deleteAccount
-  );
+  const { mutateAsync: deleteAccount } = useDeleteAccount();
 
   // Reset state when modal closes
   useEffect(() => {
@@ -131,11 +129,7 @@ export function DeleteAccountModal({
     setError(null);
 
     try {
-      await deleteAccountAction({
-        token,
-        phone: user.phone,
-        code: otpCode,
-      });
+      await deleteAccount({ code: otpCode });
 
       // Clear stored tokens
       await AsyncStorage.removeItem("access_token");
@@ -155,7 +149,7 @@ export function DeleteAccountModal({
     } finally {
       setIsLoading(false);
     }
-  }, [otpCode, token, user?.phone, deleteAccountAction, onClose, logout, router]);
+  }, [otpCode, token, user?.phone, deleteAccount, onClose, logout, router]);
 
   const renderConfirmStep = () => (
     <>

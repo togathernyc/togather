@@ -497,6 +497,30 @@ export const deleteAccountInternal = internalMutation({
 
     const timestamp = now();
 
+    const communityMemberships = await ctx.db
+      .query("userCommunities")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .collect();
+    const communityIdsForAssigneeCleanup = new Set(
+      communityMemberships.map((m) => m.communityId.toString()),
+    );
+
+    async function buildAssigneeSortKey(
+      assigneeIds: Id<"users">[] | undefined,
+    ): Promise<string | undefined> {
+      if (!assigneeIds?.length) return undefined;
+      const names: string[] = [];
+      for (const id of assigneeIds) {
+        const u = await ctx.db.get(id);
+        if (u) {
+          names.push(
+            `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim() || id,
+          );
+        }
+      }
+      return names.length > 0 ? names.join(", ") : undefined;
+    }
+
     // 1. Anonymize the user record
     await ctx.db.patch(args.userId, {
       firstName: "Deleted",
@@ -584,6 +608,39 @@ export const deleteAccountInternal = internalMutation({
     // 11. Remove meeting RSVPs and attendances
     await deleteByUserIndex("meetingRsvps", "by_user");
     await deleteByUserIndex("meetingAttendances", "by_user");
+
+    // 11b. Remove this user as assignee on other members' communityPeople rows
+    for (const communityIdStr of communityIdsForAssigneeCleanup) {
+      const communityId = communityIdStr as Id<"communities">;
+      const junctionAsAssignee = await ctx.db
+        .query("communityPeopleAssignees")
+        .withIndex("by_community_assignee", (q) =>
+          q.eq("communityId", communityId).eq("assigneeUserId", args.userId),
+        )
+        .collect();
+      const affectedPersonIds = new Set(
+        junctionAsAssignee.map((r) => r.communityPersonId.toString()),
+      );
+      for (const row of junctionAsAssignee) {
+        await ctx.db.delete(row._id);
+      }
+      for (const personIdStr of affectedPersonIds) {
+        const cp = await ctx.db.get(personIdStr as Id<"communityPeople">);
+        if (!cp) continue;
+        const filtered = (cp.assigneeIds ?? []).filter(
+          (id) => id !== args.userId,
+        ) as Id<"users">[];
+        const newAssigneeIds =
+          filtered.length > 0 ? filtered : undefined;
+        const newAssigneeId = newAssigneeIds?.[0];
+        await ctx.db.patch(cp._id, {
+          assigneeIds: newAssigneeIds,
+          assigneeId: newAssigneeId,
+          assigneeSortKey: await buildAssigneeSortKey(newAssigneeIds),
+          updatedAt: timestamp,
+        });
+      }
+    }
 
     // 12. Remove communityPeople records
     const cpRecords = await ctx.db

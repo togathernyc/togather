@@ -348,4 +348,88 @@ describe("deleteAccountInternal", () => {
     expect(cpRecords).toHaveLength(0);
     expect(assigneeRecords).toHaveLength(0);
   });
+
+  test("removes assignee junction rows where deleted user was assignee on others", async () => {
+    const t = convexTest(schema, modules);
+
+    const { communityId, groupId } = await seedFullUser(t);
+
+    const assigneeUserId = await t.run(async (ctx) => {
+      return await ctx.db.insert("users", {
+        firstName: "Assignee",
+        lastName: "Leader",
+        isActive: true,
+        searchText: "assignee leader",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("userCommunities", {
+        userId: assigneeUserId,
+        communityId,
+        roles: 1,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+
+    const memberUserId = await t.run(async (ctx) => {
+      return await ctx.db.insert("users", {
+        firstName: "Member",
+        lastName: "Person",
+        isActive: true,
+        searchText: "member person",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+
+    const otherCpId = await t.run(async (ctx) => {
+      return await ctx.db.insert("communityPeople", {
+        communityId,
+        groupId,
+        userId: memberUserId,
+        firstName: "Member",
+        lastName: "Person",
+        assigneeId: assigneeUserId,
+        assigneeIds: [assigneeUserId],
+        assigneeSortKey: "Assignee Leader",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("communityPeopleAssignees", {
+        communityPersonId: otherCpId,
+        assigneeUserId,
+        groupId,
+        communityId,
+      });
+    });
+
+    await t.mutation(internal.functions.users.deleteAccountInternal, {
+      userId: assigneeUserId,
+    });
+
+    const junctionAfter = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("communityPeopleAssignees")
+        .withIndex("by_communityPerson", (q) =>
+          q.eq("communityPersonId", otherCpId),
+        )
+        .collect();
+    });
+
+    const otherCpAfter = await t.run(async (ctx) => {
+      return await ctx.db.get(otherCpId);
+    });
+
+    expect(junctionAfter).toHaveLength(0);
+    expect(otherCpAfter?.assigneeIds).toBeUndefined();
+    expect(otherCpAfter?.assigneeId).toBeUndefined();
+    expect(otherCpAfter?.assigneeSortKey).toBeUndefined();
+  });
 });
