@@ -18,6 +18,7 @@ jobs:
       shared: ${{ steps.changes.outputs.shared }}
       mobile: ${{ steps.changes.outputs.mobile }}
       convex: ${{ steps.changes.outputs.convex }}
+      e2e: ${{ steps.changes.outputs.e2e }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -47,6 +48,14 @@ jobs:
               - 'package.json'
               - 'pnpm-lock.yaml'
               - 'tsconfig.json'
+              - 'pnpm-workspace.yaml'
+            e2e:
+              - 'apps/mobile/**'
+              - 'packages/shared/**'
+              - 'tests/e2e/**'
+              - 'playwright.config.ts'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
 
   test-shared:
@@ -159,10 +168,52 @@ jobs:
         working-directory: apps/convex
         run: pnpm test
 
+  test-e2e:
+    name: E2E Tests (Playwright)
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.e2e == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 8.15.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run E2E tests
+        run: pnpm test:e2e
+        env:
+          CI: true
+          EXPO_PUBLIC_PROJECT_ID: "dummy-project-id"
+          EXPO_PUBLIC_MAPBOX_TOKEN: "pk.dummy-token"
+          EXPO_PUBLIC_CONVEX_URL: "https://dummy-convex-url.convex.cloud"
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: test-results/
+          retention-days: 7
+
   test-summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [detect-changes, test-shared, test-mobile, test-convex]
+    needs: [detect-changes, test-shared, test-mobile, test-convex, test-e2e]
     if: always()
     steps:
       - name: Check test results
@@ -180,9 +231,10 @@ jobs:
           shared="${{ needs.test-shared.result }}"
           mobile="${{ needs.test-mobile.result }}"
           convex="${{ needs.test-convex.result }}"
+          e2e="${{ needs.test-e2e.result }}"
 
           failed=false
-          for job in shared mobile convex; do
+          for job in shared mobile convex e2e; do
             result=$(eval echo \$$job)
             if [ "$result" != "success" ] && [ "$result" != "skipped" ]; then
               echo "❌ test-$job: $result"
