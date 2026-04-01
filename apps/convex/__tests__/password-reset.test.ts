@@ -177,7 +177,7 @@ describe("resetPassword", () => {
         code: MAGIC_CODE,
         newPassword: "newpassword123",
       })
-    ).rejects.toThrow("No account found with this email");
+    ).rejects.toThrow("Invalid or expired reset code");
   });
 
   test("rate limits repeated wrong codes (non-test email)", async () => {

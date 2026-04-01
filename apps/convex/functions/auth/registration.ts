@@ -440,7 +440,9 @@ export const resetPassword = action({
     );
 
     if (!user) {
-      throw new Error("No account found with this email");
+      // Return generic error to prevent account enumeration.
+      // The OTP was already consumed, so an attacker can't retry.
+      throw new Error("Invalid or expired reset code");
     }
 
     // Hash new password
