@@ -5,30 +5,24 @@
  * and access leader channels, and that access is properly revoked when
  * users are demoted.
  *
- * TDD APPROACH:
- * These tests define the EXPECTED behavior for leader chat access control.
- * Some tests may fail initially because they expose bugs in the implementation.
- *
- * KNOWN BUGS FOUND:
- * 1. getChannel allows non-group members to access main channels (security issue)
- *    - Test: "non-group members CANNOT access any channel"
- *    - Issue: The function only checks group membership for "leaders" channels
- *
  * TEST COVERAGE:
  * 1. Basic access control (getChannel query)
  *    - Leaders can access leader channels
  *    - Regular members cannot access leader channels
- *    - Non-group members cannot access any channel (BUG: fails)
+ *    - Non-group members cannot access any channel
  *
- * 2. Channel visibility (getChannelsByGroup query)
+ * 2. Slug-based access control (getChannelBySlug query)
+ *    - Non-group members cannot access channels via slug
+ *
+ * 3. Channel visibility (getChannelsByGroup query)
  *    - Leaders see both main and leaders channels
  *    - Regular members only see main channel
  *
- * 3. Role change scenarios
+ * 4. Role change scenarios
  *    - Promotion: member -> leader gains access
  *    - Demotion: leader -> member loses access
  *
- * 4. Channel membership sync
+ * 5. Channel membership sync
  *    - Verify syncUserChannelMemberships correctly adds/removes users
  */
 
@@ -226,14 +220,6 @@ describe("Leader Channel Access Control", () => {
     expect(channel?.channelType).toBe("main");
   });
 
-  /**
-   * BUG DETECTED: This test FAILS because getChannel doesn't properly check
-   * group membership for main channels. The implementation only enforces
-   * group membership for "leaders" channels, but main channels should also
-   * require group membership.
-   *
-   * This is a security issue - non-group members can access main channel data.
-   */
   test("non-group members CANNOT access any channel", async () => {
     const t = convexTest(schema, modules);
     const { communityId, groupId } = await seedTestData(t);
@@ -787,5 +773,50 @@ describe("Leader Channel Access Edge Cases", () => {
 
     expect(channels).toHaveLength(1);
     expect(channels[0].channelType).toBe("main");
+  });
+});
+
+// ============================================================================
+// Slug-Based Access Control Tests (getChannelBySlug)
+// ============================================================================
+
+describe("Slug-Based Channel Access Control", () => {
+  test("non-group members CANNOT access main channel via slug", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    await createBothChannels(t, groupId, leaderToken);
+
+    // Create a user who is NOT a member of the group
+    const nonMemberId = await t.run(async (ctx) => {
+      return await ctx.db.insert("users", {
+        firstName: "Non",
+        lastName: "Member",
+        phone: "+15555550088",
+        phoneVerified: true,
+        activeCommunityId: communityId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+
+    const { accessToken: nonMemberToken } = await generateTokens(nonMemberId);
+
+    // Non-member should NOT be able to get the main channel by slug
+    const mainChannel = await t.query(api.functions.messaging.channels.getChannelBySlug, {
+      token: nonMemberToken,
+      groupId,
+      slug: "general",
+    });
+    expect(mainChannel).toBeNull();
+
+    // Non-member should NOT be able to get the leaders channel by slug
+    const leadersChannel = await t.query(api.functions.messaging.channels.getChannelBySlug, {
+      token: nonMemberToken,
+      groupId,
+      slug: "leaders",
+    });
+    expect(leadersChannel).toBeNull();
   });
 });
