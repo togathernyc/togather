@@ -260,6 +260,9 @@ export const ExploreBottomSheet = forwardRef<ExploreBottomSheetRef, ExploreBotto
     // When backend search results are available, map them to CommunityEvent shape.
     // Otherwise fall back to client-side filtering.
     const filteredEvents = useMemo(() => {
+      if (searchQuery.trim() && isSearchingEvents) {
+        return [];
+      }
       if (eventSearchResults) {
         // Map backend search results to CommunityEvent-compatible objects
         return eventSearchResults.map((result) => ({
@@ -296,7 +299,7 @@ export const ExploreBottomSheet = forwardRef<ExploreBottomSheetRef, ExploreBotto
         const location = (event.locationOverride || '').toLowerCase();
         return title.includes(query) || groupName.includes(query) || location.includes(query);
       });
-    }, [events, eventSearchResults, searchQuery]);
+    }, [events, eventSearchResults, searchQuery, isSearchingEvents]);
 
     // Group events by date sections
     const eventSections = useMemo(() => {
@@ -438,6 +441,15 @@ export const ExploreBottomSheet = forwardRef<ExploreBottomSheetRef, ExploreBotto
 
     // Events empty component
     const EventsEmptyComponent = useCallback(() => {
+      if (isSearchingEvents && searchQuery.trim()) {
+        return (
+          <View>
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+          </View>
+        );
+      }
       if (isLoadingEvents) {
         return (
           <View>
@@ -454,7 +466,7 @@ export const ExploreBottomSheet = forwardRef<ExploreBottomSheetRef, ExploreBotto
           <Text style={[styles.emptyText, { color: colors.textSecondary }]}>Check back later for new events</Text>
         </View>
       );
-    }, [isLoadingEvents, colors]);
+    }, [isLoadingEvents, isSearchingEvents, searchQuery, colors]);
 
     // Shared list content for both web and native
     const groupsListContent = (
