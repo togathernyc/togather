@@ -20,7 +20,7 @@
  *
  * Pattern for protected queries/mutations:
  * 1. Client includes JWT token in function args
- * 2. Function calls requireAuth(ctx, token) or requireAuthFromToken(token)
+ * 2. Function calls requireAuth(ctx, token), or in actions requireAuthFromTokenAction(ctx, token)
  * 3. Helper verifies token and returns userId (Convex ID)
  * 4. Function uses userId to fetch user data and perform authorized operations
  *
@@ -159,7 +159,7 @@ export interface TokenGenerationResult {
  */
 export async function generateTokens(
   userId: string,
-  communityId?: string
+  communityId?: string,
 ): Promise<TokenGenerationResult> {
   const secret = getJwtSecret();
 
@@ -178,7 +178,7 @@ export async function generateTokens(
 
   // Generate access token
   const accessToken = await new jose.SignJWT(
-    accessPayload as unknown as jose.JWTPayload
+    accessPayload as unknown as jose.JWTPayload,
   )
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
@@ -187,7 +187,7 @@ export async function generateTokens(
 
   // Generate refresh token
   const refreshToken = await new jose.SignJWT(
-    refreshPayload as unknown as jose.JWTPayload
+    refreshPayload as unknown as jose.JWTPayload,
   )
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
@@ -213,12 +213,9 @@ export async function generateTokens(
  */
 export async function generateTokensForLegacyId(
   userId: bigint,
-  communityId?: number
+  communityId?: number,
 ): Promise<TokenGenerationResult> {
-  return generateTokens(
-    userId.toString(),
-    communityId?.toString()
-  );
+  return generateTokens(userId.toString(), communityId?.toString());
 }
 
 // ============================================================================
@@ -232,7 +229,7 @@ export async function generateTokensForLegacyId(
  * @returns Decoded payload with userId and optional communityId, or null if invalid
  */
 export async function verifyAccessToken(
-  token: string
+  token: string,
 ): Promise<AccessTokenPayload | null> {
   try {
     const secret = getJwtSecret();
@@ -261,7 +258,7 @@ export async function verifyAccessToken(
  * @returns Decoded payload with userId, or null if invalid
  */
 export async function verifyRefreshToken(
-  token: string
+  token: string,
 ): Promise<RefreshTokenPayload | null> {
   try {
     const secret = getJwtSecret();
@@ -289,7 +286,7 @@ export async function verifyRefreshToken(
  * Note: This is async because jose.jwtVerify is async
  */
 export async function verifyAccessTokenSync(
-  token: string
+  token: string,
 ): Promise<AccessTokenPayload | null> {
   return verifyAccessToken(token);
 }
@@ -310,7 +307,10 @@ export async function verifyAccessTokenSync(
  * @returns Decoded payload with userId and optional communityId, or null if malformed
  * @throws Error if called in production environment without devToolsEnabled
  */
-export function decodeTokenUnsafe(token: string, devToolsEnabled?: boolean): AccessTokenPayload | null {
+export function decodeTokenUnsafe(
+  token: string,
+  devToolsEnabled?: boolean,
+): AccessTokenPayload | null {
   // Defense-in-depth: throw if accidentally called in production (unless dev tools enabled via server-side validation)
   if (process.env.NODE_ENV === "production" && devToolsEnabled !== true) {
     throw new Error("decodeTokenUnsafe cannot be used in production");
@@ -346,7 +346,7 @@ export function decodeTokenUnsafe(token: string, devToolsEnabled?: boolean): Acc
  */
 async function getUserByLegacyId(
   ctx: QueryCtx | MutationCtx,
-  legacyId: string
+  legacyId: string,
 ): Promise<Id<"users"> | null> {
   const user = await ctx.db
     .query("users")
@@ -362,7 +362,7 @@ async function getUserByLegacyId(
  */
 async function getUserByConvexId(
   ctx: QueryCtx | MutationCtx,
-  userId: string
+  userId: string,
 ): Promise<Id<"users"> | null> {
   try {
     const user = await ctx.db.get(userId as Id<"users">);
@@ -378,7 +378,7 @@ async function getUserByConvexId(
  */
 async function resolveUserId(
   ctx: QueryCtx | MutationCtx,
-  tokenUserId: string
+  tokenUserId: string,
 ): Promise<Id<"users"> | null> {
   // First, try to look up as a Convex ID
   const convexUser = await getUserByConvexId(ctx, tokenUserId);
@@ -404,7 +404,7 @@ async function resolveUserId(
 export async function isTokenRevoked(
   ctx: QueryCtx | MutationCtx,
   userId: Id<"users">,
-  issuedAt: number | undefined
+  issuedAt: number | undefined,
 ): Promise<boolean> {
   const revocation = await ctx.db
     .query("tokenRevocations")
@@ -435,7 +435,7 @@ export async function isTokenRevoked(
 export async function isRevokedForJwtSubject(
   ctx: QueryCtx | MutationCtx,
   jwtUserId: string,
-  issuedAt: number | undefined
+  issuedAt: number | undefined,
 ): Promise<boolean> {
   const userId = await resolveUserId(ctx, jwtUserId);
   if (!userId) {
@@ -472,7 +472,7 @@ export async function isRevokedForJwtSubject(
  */
 export async function requireAuth(
   ctx: QueryCtx | MutationCtx,
-  token: string
+  token: string,
 ): Promise<Id<"users">> {
   if (!token) {
     throw new Error("Not authenticated");
@@ -503,7 +503,7 @@ export async function requireAuth(
  */
 export async function requireAuthIgnoringRevocation(
   ctx: QueryCtx | MutationCtx,
-  token: string
+  token: string,
 ): Promise<Id<"users">> {
   if (!token) {
     throw new Error("Not authenticated");
@@ -551,7 +551,7 @@ export async function requireAuthIgnoringRevocation(
  */
 export async function getOptionalAuth(
   ctx: QueryCtx | MutationCtx,
-  token: string | undefined
+  token: string | undefined,
 ): Promise<Id<"users"> | null> {
   if (!token) {
     return null;
@@ -585,7 +585,7 @@ export async function getOptionalAuth(
  */
 export async function requireAuthUser(
   ctx: QueryCtx | MutationCtx,
-  token: string
+  token: string,
 ) {
   const userId = await requireAuth(ctx, token);
   const user = await ctx.db.get(userId);
@@ -602,57 +602,19 @@ export async function requireAuthUser(
  * @returns Community ID or undefined
  */
 export async function getCommunityFromToken(
-  token: string
+  token: string,
 ): Promise<string | undefined> {
   const payload = await verifyAccessToken(token);
   return payload?.communityId;
 }
 
 // ============================================================================
-// Standalone Auth Helpers (no database lookup)
+// Auth from client-supplied access token in actions
 // ============================================================================
 
 /**
- * Require authentication from a token, returning the userId.
- *
- * This is a standalone function that does NOT look up the user in the database.
- * It only verifies the token and returns the userId from the payload.
- * Use this when you don't have a database context or want to defer the lookup.
- *
- * @param token - JWT access token (passed from client)
- * @returns The authenticated user's ID from the token payload
- * @throws AuthenticationError if token is missing, invalid, or expired
- *
- * @example
- * ```ts
- * export const myProtectedAction = action({
- *   args: { token: v.string() },
- *   handler: async (ctx, args) => {
- *     const userId = await requireAuthFromToken(args.token);
- *     // userId is the raw value from the token
- *     // May be a Convex ID or legacy ID depending on how it was generated
- *   },
- * });
- * ```
- */
-export async function requireAuthFromToken(
-  token: string | undefined
-): Promise<string> {
-  if (!token) {
-    throw new AuthenticationError("No authentication token provided");
-  }
-
-  const payload = await verifyAccessToken(token);
-  if (!payload) {
-    throw new AuthenticationError("Invalid or expired authentication token");
-  }
-
-  return payload.userId;
-}
-
-/**
- * Like {@link requireAuthFromToken} but also checks the token revocation
- * blacklist via an internal query. Use this in actions where you have `ctx`.
+ * Verifies the JWT access token and checks the token revocation blacklist via
+ * an internal query. Use this in actions where you have `ctx`.
  *
  * @param ctx - Convex action context
  * @param token - JWT access token
@@ -661,7 +623,7 @@ export async function requireAuthFromToken(
  */
 export async function requireAuthFromTokenAction(
   ctx: ActionCtx,
-  token: string | undefined
+  token: string | undefined,
 ): Promise<string> {
   if (!token) {
     throw new AuthenticationError("No authentication token provided");
@@ -674,7 +636,7 @@ export async function requireAuthFromTokenAction(
 
   const revoked = await ctx.runQuery(
     internal.functions.authInternal.isJwtSubjectRevokedInternal,
-    { jwtUserId: payload.userId, issuedAt: payload.issuedAt }
+    { jwtUserId: payload.userId, issuedAt: payload.issuedAt },
   );
   if (revoked) {
     throw new AuthenticationError("Session revoked");
@@ -686,7 +648,7 @@ export async function requireAuthFromTokenAction(
 /**
  * Verify authentication from a token, returning the payload or null.
  *
- * Similar to requireAuthFromToken but returns null instead of throwing.
+ * Similar to {@link verifyAccessToken} but returns null instead of throwing for missing token.
  * Useful for optional authentication or when you want to handle unauthenticated
  * users differently.
  *
@@ -710,7 +672,7 @@ export async function requireAuthFromTokenAction(
  * ```
  */
 export async function verifyAuthFromToken(
-  token: string | undefined
+  token: string | undefined,
 ): Promise<AccessTokenPayload | null> {
   if (!token) {
     return null;
@@ -739,7 +701,7 @@ export async function verifyAuthFromToken(
  *   method: "GET",
  *   handler: httpAction(async (ctx, request) => {
  *     const token = extractTokenFromHeaders(request);
- *     const userId = await requireAuthFromToken(token);
+ *     const userId = await requireAuthFromTokenAction(ctx, token);
  *     // ... handle authenticated request
  *   }),
  * });
@@ -778,7 +740,7 @@ export function extractTokenFromHeaders(request: Request): string | null {
 export async function signOAuthState(
   userId: string,
   communityId: number,
-  redirectUri?: string
+  redirectUri?: string,
 ): Promise<string> {
   const secret = getJwtSecret();
 
@@ -805,7 +767,7 @@ export async function signOAuthState(
  * @returns Decoded payload or null if invalid/expired
  */
 export async function verifyOAuthState(
-  token: string
+  token: string,
 ): Promise<OAuthStatePayload | null> {
   try {
     const secret = getJwtSecret();
@@ -848,7 +810,7 @@ export async function verifyOAuthState(
  * @returns Payload with userId as BigInt, or null if invalid
  */
 export async function verifyAccessTokenForLegacyId(
-  token: string
+  token: string,
 ): Promise<{ userId: bigint; communityId?: number; type: "access" } | null> {
   const payload = await verifyAccessToken(token);
   if (!payload) {
@@ -858,7 +820,9 @@ export async function verifyAccessTokenForLegacyId(
   try {
     return {
       userId: BigInt(payload.userId),
-      communityId: payload.communityId ? parseInt(payload.communityId, 10) : undefined,
+      communityId: payload.communityId
+        ? parseInt(payload.communityId, 10)
+        : undefined,
       type: "access",
     };
   } catch {
