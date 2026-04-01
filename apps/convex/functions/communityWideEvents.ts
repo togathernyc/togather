@@ -24,6 +24,7 @@ import {
   DEFAULT_MEETING_DURATION_MS,
   DEFAULT_RSVP_OPTIONS,
 } from "../lib/meetingConfig";
+import { buildMeetingSearchText } from "../lib/meetingSearchText";
 
 // ============================================================================
 // Mutations
@@ -267,7 +268,17 @@ export const update = mutation({
         }
       }
 
-      await ctx.db.patch(meeting._id, childUpdates);
+      const patchPayload: Record<string, unknown> = { ...childUpdates };
+      if (args.title !== undefined) {
+        const group = await ctx.db.get(meeting.groupId);
+        patchPayload.searchText = buildMeetingSearchText({
+          title: args.title,
+          locationOverride: meeting.locationOverride,
+          groupName: group?.name,
+        });
+      }
+
+      await ctx.db.patch(meeting._id, patchPayload);
 
       // Reschedule jobs if time changed and store new job IDs
       if (args.scheduledAt !== undefined) {

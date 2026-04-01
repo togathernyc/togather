@@ -497,4 +497,62 @@ describe("meeting create populates search fields", () => {
 
     expect(searchResult.events).toHaveLength(1);
   });
+
+  test("communityWideEvents.update rebuilds child meeting searchText when title changes", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, groupTypeId } =
+      await seedCommunityWithGroup(t);
+    const { accessToken } = await createUserWithMembership(
+      t,
+      communityId,
+      groupId,
+      { communityRoles: 3 }
+    );
+
+    const created = await t.mutation(
+      api.functions.meetings.index.createCommunityWideEvent,
+      {
+        token: accessToken,
+        communityId,
+        groupTypeId,
+        title: "Alpha Workshop",
+        scheduledAt: Date.now() + 86400000,
+        meetingType: 1,
+      }
+    );
+
+    await t.mutation(api.functions.communityWideEvents.update, {
+      token: accessToken,
+      communityWideEventId: created.communityWideEventId,
+      title: "Beta Workshop",
+    });
+
+    const meeting = await t.run(async (ctx) =>
+      ctx.db.get(created.meetingIds[0])
+    );
+
+    expect(meeting!.title).toBe("Beta Workshop");
+    expect(meeting!.searchText).toContain("beta workshop");
+    expect(meeting!.searchText).not.toContain("alpha workshop");
+
+    const oldTerm = await t.query(
+      api.functions.meetings.explore.searchEvents,
+      {
+        token: accessToken,
+        communityId,
+        searchTerm: "alpha",
+      }
+    );
+    expect(oldTerm.events).toHaveLength(0);
+
+    const newTerm = await t.query(
+      api.functions.meetings.explore.searchEvents,
+      {
+        token: accessToken,
+        communityId,
+        searchTerm: "beta",
+      }
+    );
+    expect(newTerm.events).toHaveLength(1);
+  });
 });
