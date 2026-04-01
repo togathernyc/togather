@@ -369,16 +369,36 @@ export function MessageList({
     []
   );
 
-  // Loading state - don't show spinner, just show empty container
-  // Loading happens in the inbox before navigation, so this should be brief
-  if (isLoading && messages.length === 0) {
+  // Delay showing "No messages yet" to avoid flashing it during notification
+  // deep links where the subscription needs a moment to deliver messages.
+  const [showEmptyState, setShowEmptyState] = useState(false);
+  const emptyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!isLoading && messages.length === 0) {
+      // Wait before showing empty state so subscription has time to deliver
+      emptyTimerRef.current = setTimeout(() => setShowEmptyState(true), 500);
+    } else {
+      setShowEmptyState(false);
+      if (emptyTimerRef.current) {
+        clearTimeout(emptyTimerRef.current);
+        emptyTimerRef.current = null;
+      }
+    }
+    return () => {
+      if (emptyTimerRef.current) clearTimeout(emptyTimerRef.current);
+    };
+  }, [isLoading, messages.length]);
+
+  // Loading state or waiting for messages — show empty container
+  if (messages.length === 0 && !showEmptyState) {
     return (
       <View style={[styles.container, { backgroundColor: themeColors.surface }]} />
     );
   }
 
-  // Empty state
-  if (!isLoading && messages.length === 0) {
+  // Empty state — only shown after delay confirms no messages
+  if (showEmptyState && messages.length === 0) {
     return (
       <View style={[styles.centerContainer, { backgroundColor: themeColors.surface }]}>
         <Ionicons name="chatbubbles-outline" size={64} color={themeColors.iconSecondary} style={{ marginBottom: 16 }} />
