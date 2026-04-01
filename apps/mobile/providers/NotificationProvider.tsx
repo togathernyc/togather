@@ -314,6 +314,13 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
         break;
       case 'new_message':
       case 'mention': {
+        // If user is already viewing this channel, skip navigation entirely
+        // to avoid re-mounting the screen and causing a blank flash.
+        if (channelId && activeChannelIdRef.current === channelId) {
+          console.log(`[${type}] Already viewing channel ${channelId}, skipping navigation`);
+          break;
+        }
+
         // Use the same prefetch-then-navigate flow as the inbox for a smooth experience.
         // Notification payload includes channelId, groupId, groupName, channelSlug.
         const resolvedSlug = channelSlug || (channelType === 'main' ? 'general' : channelType === 'leaders' ? 'leaders' : channelType);
