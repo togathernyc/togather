@@ -13,13 +13,20 @@ import { convexTest } from "convex-test";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import schema from "../../schema";
 import { modules } from "../../test.setup";
+import { api } from "../../_generated/api";
 import { Id } from "../../_generated/dataModel";
+import { generateTokens } from "../../lib/auth";
 import { mockTimestamp } from "./fixtures";
+
+// Set up JWT secret for testing
+process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
 
 // Mock the PCO API functions
 vi.mock("../../lib/pcoServicesApi", () => ({
   getValidAccessToken: vi.fn().mockResolvedValue("mock-access-token"),
-  fetchServiceTypes: vi.fn(),
+  fetchServiceTypes: vi.fn().mockResolvedValue([
+    { id: "st-1", attributes: { name: "Sunday Service" } },
+  ]),
   fetchTeamsForServiceType: vi.fn(),
   fetchUpcomingPlans: vi.fn(),
   fetchPlanTeamMembers: vi.fn(),
@@ -27,6 +34,7 @@ vi.mock("../../lib/pcoServicesApi", () => ({
 }));
 
 import {
+  fetchServiceTypes,
   fetchUpcomingPlans,
   fetchPlanTeamMembers,
   getPersonContactInfo,
@@ -36,9 +44,16 @@ describe("PCO Services Filter Actions", () => {
   let t: ReturnType<typeof convexTest>;
   let communityId: Id<"communities">;
   let userId: Id<"users">;
+  let adminToken: string;
 
   beforeEach(async () => {
     vi.clearAllMocks();
+
+    // Re-apply default mock for fetchServiceTypes after clearAllMocks
+    (fetchServiceTypes as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "st-1", attributes: { name: "Sunday Service" } },
+    ]);
+
     t = convexTest(schema, modules);
 
     // Setup: Create community and admin user
@@ -54,17 +69,17 @@ describe("PCO Services Filter Actions", () => {
         lastName: "User",
         email: "admin@example.com",
         isActive: true,
-        roles: 2, // Admin
+        roles: 3,
         createdAt: mockTimestamp(),
         updatedAt: mockTimestamp(),
       });
 
-      // Add user as admin to community
+      // Add user as admin to community (roles >= 3 required for admin)
       await ctx.db.insert("userCommunities", {
         userId,
         communityId,
-        roles: 2, // Admin role
-        status: 1, // Active
+        roles: 3,
+        status: 1,
         createdAt: mockTimestamp(),
       });
 
@@ -90,11 +105,14 @@ describe("PCO Services Filter Actions", () => {
 
     communityId = setupResult.communityId;
     userId = setupResult.userId;
+
+    // Generate auth token for test user
+    const tokens = await generateTokens(userId as string);
+    adminToken = tokens.accessToken;
   });
 
   describe("getAvailablePositions action", () => {
     it("returns unique positions sorted by frequency", async () => {
-      // Mock PCO API responses
       (fetchUpcomingPlans as ReturnType<typeof vi.fn>).mockResolvedValue([
         { id: "plan-1", attributes: { sort_date: "2026-02-01", title: "Sunday Service", dates: "Feb 1" } },
         { id: "plan-2", attributes: { sort_date: "2026-02-08", title: "Sunday Service", dates: "Feb 8" } },
@@ -116,41 +134,40 @@ describe("PCO Services Filter Actions", () => {
         }
       );
 
-      // TODO: Call the action once implemented
-      // const result = await t.action(api.functions.pcoServices.actions.getAvailablePositions, {
-      //   token: "mock-auth-token",
-      //   communityId,
-      //   serviceTypeIds: ["st-1"],
-      // });
+      const result = await t.action(api.functions.pcoServices.actions.getAvailablePositions, {
+        token: adminToken,
+        communityId,
+        serviceTypeIds: ["st-1"],
+      });
 
-      // For now, verify mocks are called correctly
-      // expect(result).toEqual([
-      //   { name: "Drums", count: 3 },
-      //   { name: "Lead Vocals", count: 1 },
-      //   { name: "Guitar", count: 1 },
-      // ]);
-
-      // Placeholder assertion until action is implemented
-      expect(true).toBe(true);
+      // Drums appears 3 times across plans, should be first
+      expect(result[0].name).toBe("Drums");
+      expect(result[0].count).toBe(3);
+      // Lead Vocals and Guitar each appear once
+      expect(result).toHaveLength(3);
+      const names = result.map((p) => p.name);
+      expect(names).toContain("Lead Vocals");
+      expect(names).toContain("Guitar");
     });
 
     it("handles empty results gracefully", async () => {
       (fetchUpcomingPlans as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
-      // TODO: Call the action once implemented
-      // const result = await t.action(api.functions.pcoServices.actions.getAvailablePositions, {
-      //   token: "mock-auth-token",
-      //   communityId,
-      //   serviceTypeIds: ["st-1"],
-      // });
+      const result = await t.action(api.functions.pcoServices.actions.getAvailablePositions, {
+        token: adminToken,
+        communityId,
+        serviceTypeIds: ["st-1"],
+      });
 
-      // expect(result).toEqual([]);
-
-      // Placeholder assertion
-      expect(true).toBe(true);
+      expect(result).toEqual([]);
     });
 
     it("aggregates positions across multiple service types", async () => {
+      (fetchServiceTypes as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { id: "st-1", attributes: { name: "Sunday Service" } },
+        { id: "st-2", attributes: { name: "Wednesday Service" } },
+      ]);
+
       (fetchUpcomingPlans as ReturnType<typeof vi.fn>).mockResolvedValue([
         { id: "plan-1", attributes: { sort_date: "2026-02-01", title: "Service", dates: "Feb 1" } },
       ]);
@@ -159,15 +176,15 @@ describe("PCO Services Filter Actions", () => {
         { id: "m1", name: "John", status: "C", position: "Director", pcoPersonId: "p1", teamId: "t1", teamName: "Team" },
       ]);
 
-      // TODO: Call the action with multiple service types once implemented
-      // const result = await t.action(api.functions.pcoServices.actions.getAvailablePositions, {
-      //   token: "mock-auth-token",
-      //   communityId,
-      //   serviceTypeIds: ["st-1", "st-2"],
-      // });
+      const result = await t.action(api.functions.pcoServices.actions.getAvailablePositions, {
+        token: adminToken,
+        communityId,
+        serviceTypeIds: ["st-1", "st-2"],
+      });
 
-      // Placeholder assertion
-      expect(true).toBe(true);
+      // Director should appear for each service type (different composite keys)
+      expect(result.length).toBeGreaterThanOrEqual(1);
+      expect(result.every((p) => p.name === "Director")).toBe(true);
     });
   });
 
@@ -192,22 +209,18 @@ describe("PCO Services Filter Actions", () => {
         { id: "m3", name: "Bob Brown", status: "C", position: "Guitar", pcoPersonId: "p3", teamId: "t1", teamName: "Band" },
       ]);
 
-      // TODO: Call the action once implemented
-      // const result = await t.action(api.functions.pcoServices.actions.previewFilterResults, {
-      //   token: "mock-auth-token",
-      //   communityId,
-      //   filters: {
-      //     serviceTypeIds: ["st-1"],
-      //   },
-      //   addMembersDaysBefore: 5,
-      // });
+      const result = await t.action(api.functions.pcoServices.actions.previewFilterResults, {
+        token: adminToken,
+        communityId,
+        filters: {
+          serviceTypeIds: ["st-1"],
+        },
+        addMembersDaysBefore: 5,
+      });
 
-      // expect(result.totalCount).toBe(3);
-      // expect(result.sample).toHaveLength(3);
-      // expect(result.nextServiceDate).toBe(planDate);
-
-      // Placeholder assertion
-      expect(true).toBe(true);
+      expect(result.totalCount).toBe(3);
+      expect(result.sample).toHaveLength(3);
+      expect(result.nextServiceDate).not.toBeNull();
     });
 
     it("filters by team when teamIds is specified", async () => {
@@ -229,22 +242,18 @@ describe("PCO Services Filter Actions", () => {
         { id: "m2", name: "Jane", status: "C", position: "Lead Vocals", pcoPersonId: "p2", teamId: "t2", teamName: "Vocals" },
       ]);
 
-      // TODO: Call the action with team filter once implemented
-      // const result = await t.action(api.functions.pcoServices.actions.previewFilterResults, {
-      //   token: "mock-auth-token",
-      //   communityId,
-      //   filters: {
-      //     serviceTypeIds: ["st-1"],
-      //     teamIds: ["t1"],
-      //   },
-      //   addMembersDaysBefore: 5,
-      // });
+      const result = await t.action(api.functions.pcoServices.actions.previewFilterResults, {
+        token: adminToken,
+        communityId,
+        filters: {
+          serviceTypeIds: ["st-1"],
+          teamIds: ["t1"],
+        },
+        addMembersDaysBefore: 5,
+      });
 
-      // expect(result.totalCount).toBe(1);
-      // expect(result.sample[0].team).toBe("Band");
-
-      // Placeholder assertion
-      expect(true).toBe(true);
+      expect(result.totalCount).toBe(1);
+      expect(result.sample[0].team).toBe("Band");
     });
 
     it("filters by position with fuzzy matching", async () => {
@@ -267,21 +276,17 @@ describe("PCO Services Filter Actions", () => {
         { id: "m3", name: "Bob", status: "C", position: "Drums", pcoPersonId: "p3", teamId: "t2", teamName: "Band" },
       ]);
 
-      // TODO: Call the action with position filter once implemented
-      // const result = await t.action(api.functions.pcoServices.actions.previewFilterResults, {
-      //   token: "mock-auth-token",
-      //   communityId,
-      //   filters: {
-      //     serviceTypeIds: ["st-1"],
-      //     positions: ["Director"], // Should match both "Music Director" and "Worship Director"
-      //   },
-      //   addMembersDaysBefore: 5,
-      // });
+      const result = await t.action(api.functions.pcoServices.actions.previewFilterResults, {
+        token: adminToken,
+        communityId,
+        filters: {
+          serviceTypeIds: ["st-1"],
+          positions: ["Director"], // Should match both "Music Director" and "Worship Director"
+        },
+        addMembersDaysBefore: 5,
+      });
 
-      // expect(result.totalCount).toBe(2);
-
-      // Placeholder assertion
-      expect(true).toBe(true);
+      expect(result.totalCount).toBe(2);
     });
 
     it("filters by status", async () => {
@@ -300,25 +305,22 @@ describe("PCO Services Filter Actions", () => {
 
       (fetchPlanTeamMembers as ReturnType<typeof vi.fn>).mockResolvedValue([
         { id: "m1", name: "John", status: "C", position: "Drums", pcoPersonId: "p1", teamId: "t1", teamName: "Band" },
-        { id: "m2", name: "Jane", status: "D", position: "Vocals", pcoPersonId: "p2", teamId: "t2", teamName: "Vocals" }, // Declined
-        { id: "m3", name: "Bob", status: "U", position: "Guitar", pcoPersonId: "p3", teamId: "t1", teamName: "Band" }, // Unconfirmed
+        { id: "m2", name: "Jane", status: "D", position: "Vocals", pcoPersonId: "p2", teamId: "t2", teamName: "Vocals" },
+        { id: "m3", name: "Bob", status: "U", position: "Guitar", pcoPersonId: "p3", teamId: "t1", teamName: "Band" },
       ]);
 
-      // TODO: Call the action with status filter once implemented
-      // const result = await t.action(api.functions.pcoServices.actions.previewFilterResults, {
-      //   token: "mock-auth-token",
-      //   communityId,
-      //   filters: {
-      //     serviceTypeIds: ["st-1"],
-      //     statuses: ["C"], // Only confirmed
-      //   },
-      //   addMembersDaysBefore: 5,
-      // });
+      const result = await t.action(api.functions.pcoServices.actions.previewFilterResults, {
+        token: adminToken,
+        communityId,
+        filters: {
+          serviceTypeIds: ["st-1"],
+          statuses: ["C"],
+        },
+        addMembersDaysBefore: 5,
+      });
 
-      // expect(result.totalCount).toBe(1);
-
-      // Placeholder assertion
-      expect(true).toBe(true);
+      expect(result.totalCount).toBe(1);
+      expect(result.sample[0].name).toBe("John");
     });
 
     it("excludes declined by default when statuses not specified", async () => {
@@ -337,23 +339,20 @@ describe("PCO Services Filter Actions", () => {
 
       (fetchPlanTeamMembers as ReturnType<typeof vi.fn>).mockResolvedValue([
         { id: "m1", name: "John", status: "C", position: "Drums", pcoPersonId: "p1", teamId: "t1", teamName: "Band" },
-        { id: "m2", name: "Jane", status: "D", position: "Vocals", pcoPersonId: "p2", teamId: "t2", teamName: "Vocals" }, // Declined
+        { id: "m2", name: "Jane", status: "D", position: "Vocals", pcoPersonId: "p2", teamId: "t2", teamName: "Vocals" },
       ]);
 
-      // TODO: Call the action without status filter once implemented
-      // const result = await t.action(api.functions.pcoServices.actions.previewFilterResults, {
-      //   token: "mock-auth-token",
-      //   communityId,
-      //   filters: {
-      //     serviceTypeIds: ["st-1"],
-      //   },
-      //   addMembersDaysBefore: 5,
-      // });
+      const result = await t.action(api.functions.pcoServices.actions.previewFilterResults, {
+        token: adminToken,
+        communityId,
+        filters: {
+          serviceTypeIds: ["st-1"],
+        },
+        addMembersDaysBefore: 5,
+      });
 
-      // expect(result.totalCount).toBe(1); // Only confirmed, not declined
-
-      // Placeholder assertion
-      expect(true).toBe(true);
+      expect(result.totalCount).toBe(1); // Only confirmed, not declined
+      expect(result.sample[0].name).toBe("John");
     });
 
     it("deduplicates people appearing in multiple services/teams", async () => {
@@ -375,20 +374,16 @@ describe("PCO Services Filter Actions", () => {
         { id: "m2", name: "John", status: "C", position: "Vocals", pcoPersonId: "p1", teamId: "t2", teamName: "Vocals" }, // Same person
       ]);
 
-      // TODO: Call the action once implemented
-      // const result = await t.action(api.functions.pcoServices.actions.previewFilterResults, {
-      //   token: "mock-auth-token",
-      //   communityId,
-      //   filters: {
-      //     serviceTypeIds: ["st-1"],
-      //   },
-      //   addMembersDaysBefore: 5,
-      // });
+      const result = await t.action(api.functions.pcoServices.actions.previewFilterResults, {
+        token: adminToken,
+        communityId,
+        filters: {
+          serviceTypeIds: ["st-1"],
+        },
+        addMembersDaysBefore: 5,
+      });
 
-      // expect(result.totalCount).toBe(1); // John only counted once
-
-      // Placeholder assertion
-      expect(true).toBe(true);
+      expect(result.totalCount).toBe(1); // John only counted once
     });
 
     it("limits sample to first 5 people", async () => {
@@ -417,21 +412,17 @@ describe("PCO Services Filter Actions", () => {
       }));
       (fetchPlanTeamMembers as ReturnType<typeof vi.fn>).mockResolvedValue(members);
 
-      // TODO: Call the action once implemented
-      // const result = await t.action(api.functions.pcoServices.actions.previewFilterResults, {
-      //   token: "mock-auth-token",
-      //   communityId,
-      //   filters: {
-      //     serviceTypeIds: ["st-1"],
-      //   },
-      //   addMembersDaysBefore: 5,
-      // });
+      const result = await t.action(api.functions.pcoServices.actions.previewFilterResults, {
+        token: adminToken,
+        communityId,
+        filters: {
+          serviceTypeIds: ["st-1"],
+        },
+        addMembersDaysBefore: 5,
+      });
 
-      // expect(result.totalCount).toBe(10);
-      // expect(result.sample).toHaveLength(5);
-
-      // Placeholder assertion
-      expect(true).toBe(true);
+      expect(result.totalCount).toBe(10);
+      expect(result.sample).toHaveLength(5);
     });
 
     it("returns null nextServiceDate when no plans within add window", async () => {
@@ -449,21 +440,17 @@ describe("PCO Services Filter Actions", () => {
         },
       ]);
 
-      // TODO: Call the action once implemented
-      // const result = await t.action(api.functions.pcoServices.actions.previewFilterResults, {
-      //   token: "mock-auth-token",
-      //   communityId,
-      //   filters: {
-      //     serviceTypeIds: ["st-1"],
-      //   },
-      //   addMembersDaysBefore: 5,
-      // });
+      const result = await t.action(api.functions.pcoServices.actions.previewFilterResults, {
+        token: adminToken,
+        communityId,
+        filters: {
+          serviceTypeIds: ["st-1"],
+        },
+        addMembersDaysBefore: 5,
+      });
 
-      // expect(result.totalCount).toBe(0);
-      // expect(result.nextServiceDate).toBeNull();
-
-      // Placeholder assertion
-      expect(true).toBe(true);
+      expect(result.totalCount).toBe(0);
+      expect(result.nextServiceDate).toBeNull();
     });
   });
 });
