@@ -1384,7 +1384,7 @@ export const history = query({
             q.eq("groupId", otherMember.groupId).eq("userId", args.currentUserId!)
           )
           .first();
-        if (callerMembership && (callerMembership.role === "leader" || callerMembership.role === "admin")) {
+        if (callerMembership && isLeaderRole(callerMembership.role)) {
           canEdit = true;
         } else if (
           otherGroup?.communityId &&
@@ -2119,7 +2119,7 @@ async function requireImportAccess(
     .first();
 
   const isLeaderOrAdmin =
-    !!membership && !membership.leftAt && (membership.role === "leader" || membership.role === "admin");
+    !!membership && !membership.leftAt && isLeaderRole(membership.role);
   const isCommAdmin = await isCommunityAdmin(ctx, group.communityId, userId);
   if (!isLeaderOrAdmin && !isCommAdmin) {
     throw new ConvexError("Only group leaders or community admins can import CSV members");
