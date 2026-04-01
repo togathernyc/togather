@@ -183,7 +183,7 @@ describe("PCO Services Filter Actions", () => {
       });
 
       // Director should appear for each service type (different composite keys)
-      expect(result.length).toBeGreaterThanOrEqual(1);
+      expect(result).toHaveLength(2);
       expect(result.every((p) => p.name === "Director")).toBe(true);
     });
   });
