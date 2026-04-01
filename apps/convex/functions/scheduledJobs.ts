@@ -20,6 +20,7 @@ import {
   internalAction,
   internalMutation,
   internalQuery,
+  type MutationCtx,
 } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
@@ -38,6 +39,11 @@ import { DOMAIN_CONFIG } from "@togather/shared/config";
 const APP_URL = process.env.APP_URL || DOMAIN_CONFIG.appUrl;
 const BRAND_NAME = DOMAIN_CONFIG.brandName;
 const DEFAULT_INITIALS_AVATAR_BG = "007AFF";
+
+/** Expo push API max batch size */
+const PUSH_BATCH_SIZE = 100;
+/** Safety limit for group member queries to bound memory usage */
+const GROUP_MEMBER_QUERY_LIMIT = 500;
 
 function getInitials(name: string | undefined | null): string {
   if (!name) return "G";
@@ -582,7 +588,7 @@ export const getMembersWithBirthdayToday = internalQuery({
       .query("groupMembers")
       .withIndex("by_group", (q) => q.eq("groupId", groupId))
       .filter((q) => q.eq(q.field("leftAt"), undefined))
-      .take(500); // Safety limit
+      .take(GROUP_MEMBER_QUERY_LIMIT);
 
     // Batch fetch all users upfront
     const userIds = members.map((m) => m.userId);
@@ -1357,24 +1363,35 @@ export const runTaskReminderBot = internalAction({
   },
 });
 
+/**
+ * Shared reschedule logic: sets nextScheduledAt to next 9 AM in the
+ * bot config's community timezone. Used by both task reminder and birthday bot.
+ */
+async function rescheduleBotConfigToNext9AM(
+  ctx: MutationCtx,
+  configId: Id<"groupBotConfigs">
+) {
+  const config = await ctx.db.get(configId);
+  if (!config) return;
+
+  const group = await ctx.db.get(config.groupId);
+  if (!group) return;
+
+  const community = await ctx.db.get(group.communityId);
+  const timezone = community?.timezone || "America/New_York";
+
+  const next9AM = calculateNext9AMInTimezone(timezone);
+
+  await ctx.db.patch(configId, {
+    nextScheduledAt: next9AM,
+    updatedAt: now(),
+  });
+}
+
 export const rescheduleTaskReminder = internalMutation({
   args: { configId: v.id("groupBotConfigs") },
   handler: async (ctx, { configId }) => {
-    const config = await ctx.db.get(configId);
-    if (!config) return;
-
-    const group = await ctx.db.get(config.groupId);
-    if (!group) return;
-
-    const community = await ctx.db.get(group.communityId);
-    const timezone = community?.timezone || "America/New_York";
-
-    const next9AM = calculateNext9AMInTimezone(timezone);
-
-    await ctx.db.patch(configId, {
-      nextScheduledAt: next9AM,
-      updatedAt: now(),
-    });
+    await rescheduleBotConfigToNext9AM(ctx, configId);
   },
 });
 
@@ -1384,21 +1401,7 @@ export const rescheduleTaskReminder = internalMutation({
 export const rescheduleBirthdayBot = internalMutation({
   args: { configId: v.id("groupBotConfigs") },
   handler: async (ctx, { configId }) => {
-    const config = await ctx.db.get(configId);
-    if (!config) return;
-
-    const group = await ctx.db.get(config.groupId);
-    if (!group) return;
-
-    const community = await ctx.db.get(group.communityId);
-    const timezone = community?.timezone || "America/New_York";
-
-    const next9AM = calculateNext9AMInTimezone(timezone);
-
-    await ctx.db.patch(configId, {
-      nextScheduledAt: next9AM,
-      updatedAt: now(),
-    });
+    await rescheduleBotConfigToNext9AM(ctx, configId);
   },
 });
 
@@ -1890,9 +1893,9 @@ async function sendExpoPushNotifications(
   let sent = 0;
   let failed = 0;
 
-  // Send in batches of 100
-  for (let i = 0; i < messages.length; i += 100) {
-    const chunk = messages.slice(i, i + 100);
+  // Send in batches per Expo push API limits
+  for (let i = 0; i < messages.length; i += PUSH_BATCH_SIZE) {
+    const chunk = messages.slice(i, i + PUSH_BATCH_SIZE);
 
     try {
       const response = await fetch("https://exp.host/--/api/v2/push/send", {
@@ -1998,7 +2001,7 @@ async function sendAttendanceConfirmationEmail(
     </html>
   `;
 
-  await fetch("https://api.resend.com/emails", {
+  const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -2011,6 +2014,13 @@ async function sendAttendanceConfirmationEmail(
       html,
     }),
   });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "unknown");
+    console.error(
+      `[scheduledJobs] Attendance email failed (${response.status}): ${body}`
+    );
+  }
 }
 
 // ============================================================================

@@ -166,28 +166,9 @@ export const confirmUpload = mutation({
       );
     }
 
-    // If entity provided, update the corresponding record
-    if (args.entityType && args.entityId) {
-      // TODO: Implement entity updates based on type
-      // This would update user.profilePhoto, group.preview, or meeting.coverImage
-      // For now, just return success with the URL
-      //
-      // Example implementation:
-      // switch (args.entityType) {
-      //   case "user":
-      //     const userId = args.entityId as Id<"users">;
-      //     await ctx.db.patch(userId, { profilePhoto: url });
-      //     break;
-      //   case "group":
-      //     const groupId = args.entityId as Id<"groups">;
-      //     await ctx.db.patch(groupId, { preview: url });
-      //     break;
-      //   case "meeting":
-      //     const meetingId = args.entityId as Id<"meetings">;
-      //     await ctx.db.patch(meetingId, { coverImage: url });
-      //     break;
-      // }
-    }
+    // NOTE: entityType/entityId params are accepted but entity updates
+    // (profilePhoto, group.preview, meeting.coverImage) are handled by
+    // the caller after confirmUpload returns the URL.
 
     return {
       success: true,

@@ -417,12 +417,7 @@ export function GroupDetailScreen() {
         <GroupMapSection group={group} />
 
         {/* Next Event - Always show if group has date info */}
-        {/* TODO: RSVP functionality removed */}
-        <NextEventSection
-          group={group}
-          currentRSVP={null}
-          onRSVPPress={() => console.log("RSVP functionality removed")}
-        />
+        <NextEventSection group={group} currentRSVP={null} />
 
         {/* Members - Show if members or leaders exist, or if members_count > 0 */}
         {/* Clickable for admins/leaders to navigate to members page */}
@@ -463,8 +458,6 @@ export function GroupDetailScreen() {
           />
         )}
       </ScrollView>
-
-      {/* TODO: RSVP Modal removed - functionality deleted */}
 
       {/* Options Modal */}
       <GroupOptionsModal

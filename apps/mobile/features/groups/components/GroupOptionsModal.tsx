@@ -85,16 +85,6 @@ export function GroupOptionsModal({
     }
   }, [visible, slideAnim, fadeAnim]);
 
-  // TODO: Message group functionality removed
-  const handleMessageGroup = async () => {
-    console.log("Message group functionality has been removed");
-    Alert.alert(
-      "Feature Unavailable",
-      "Message group functionality is currently unavailable.",
-      [{ text: "OK" }]
-    );
-  };
-
   const handleLeaveGroup = () => {
     onLeaveGroup();
   };

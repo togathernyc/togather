@@ -183,6 +183,7 @@ export const checkAndSyncUserToAutoChannels = internalAction({
     }
 
     let syncedToChannels = 0;
+    const failedConfigIds: string[] = [];
 
     // For each config, run a sync to check if this user should be added
     // The sync logic will handle checking if the user is scheduled and adding them if so
@@ -195,10 +196,15 @@ export const checkAndSyncUserToAutoChannels = internalAction({
         syncedToChannels++;
       } catch (error) {
         console.error(`Failed to sync auto-channel ${config._id}:`, error);
+        failedConfigIds.push(config._id);
       }
     }
 
-    return { synced: true, channelCount: syncedToChannels };
+    return {
+      synced: true,
+      channelCount: syncedToChannels,
+      failedConfigIds: failedConfigIds.length > 0 ? failedConfigIds : undefined,
+    };
   },
 });
 
