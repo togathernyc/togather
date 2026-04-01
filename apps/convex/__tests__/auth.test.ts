@@ -8,7 +8,7 @@
  */
 
 import { convexTest } from "convex-test";
-import { expect, test, describe } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import schema from "../schema";
 import { api, internal } from "../_generated/api";
 import { modules } from "../test.setup";
@@ -41,6 +41,49 @@ const MEMBERSHIP_STATUS = {
 // ============================================================================
 
 describe("Token revocation", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test("signout does not lower revokedBefore when clock moves backward", async () => {
+    const t = convexTest(schema, modules);
+
+    const userId = await t.run(async (ctx) => {
+      return await ctx.db.insert("users", {
+        phone: "+11234567892",
+        firstName: "Clock",
+        lastName: "Skew",
+        isActive: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+
+    const futureRevokedBefore = 2_000_000_000_000;
+    await t.run(async (ctx) => {
+      await ctx.db.insert("tokenRevocations", {
+        userId,
+        revokedBefore: futureRevokedBefore,
+        createdAt: futureRevokedBefore,
+      });
+    });
+
+    const { accessToken } = await generateTokens(userId);
+    vi.spyOn(Date, "now").mockReturnValue(1_000_000_000_000);
+
+    await t.mutation(api.functions.authInternal.signout, {
+      token: accessToken,
+    });
+
+    const row = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("tokenRevocations")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .first();
+    });
+    expect(row?.revokedBefore).toBe(futureRevokedBefore);
+  });
+
   test("signout succeeds with valid access token even if already revoked", async () => {
     const t = convexTest(schema, modules);
 

@@ -861,7 +861,7 @@ export const signout = mutation({
     const userId = await requireAuthIgnoringRevocation(ctx, args.token);
 
     // Record revocation: all tokens issued before now are invalid for this user
-    const revokedBefore = Date.now();
+    const now = Date.now();
 
     // Upsert: replace existing revocation record for this user
     const existing = await ctx.db
@@ -870,12 +870,14 @@ export const signout = mutation({
       .first();
 
     if (existing) {
+      // Never move revokedBefore backward (clock skew / NTP) — would shrink the revocation window
+      const revokedBefore = Math.max(now, existing.revokedBefore);
       await ctx.db.patch(existing._id, { revokedBefore, createdAt: revokedBefore });
     } else {
       await ctx.db.insert("tokenRevocations", {
         userId,
-        revokedBefore,
-        createdAt: revokedBefore,
+        revokedBefore: now,
+        createdAt: now,
       });
     }
 
