@@ -137,9 +137,14 @@ export function useAttendanceEdit(
       return;
     }
 
-    // Prevent submitting attendance for future events
+    // Prevent submitting attendance for invalid or future event dates
     const eventDateObj = new Date(eventDate);
-    if (isNaN(eventDateObj.getTime()) || eventDateObj > new Date()) {
+    if (isNaN(eventDateObj.getTime())) {
+      console.error("Invalid event date for attendance submission");
+      ToastManager.error("Invalid event date. Please select a valid date.");
+      return;
+    }
+    if (eventDateObj > new Date()) {
       console.error("Cannot submit attendance for future events");
       ToastManager.error("Cannot submit attendance for future events.");
       return;

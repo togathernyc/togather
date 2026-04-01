@@ -59,6 +59,13 @@ jest.mock("../useGroupMembers", () => ({
   useGroupMembers: (...args: any[]) => mockUseGroupMembers(...args),
 }));
 
+const mockToastError = jest.fn();
+jest.mock("@components/ui/Toast", () => ({
+  ToastManager: {
+    error: (...args: unknown[]) => mockToastError(...args),
+  },
+}));
+
 // Import after mocks
 import { useAttendanceEdit } from "../useAttendanceEdit";
 
@@ -244,6 +251,73 @@ describe("useAttendanceEdit", () => {
       await waitFor(() => {
         expect(result.current.eventDate).toBe("2024-01-15T10:00:00Z");
       });
+    });
+  });
+
+  describe("handleSubmitAttendance date validation", () => {
+    beforeEach(() => {
+      mockUseGroupMembers.mockReturnValue({
+        members: [{ user: { _id: "member-1" } }],
+        isLoading: false,
+      });
+      mockMarkAttendance.mockResolvedValue(undefined);
+    });
+
+    it("shows invalid-date toast when eventDate is unparseable", async () => {
+      mockUseQuery.mockReturnValue({
+        _id: "group-123",
+        name: "Test Group",
+        defaultStartTime: "10:00",
+      });
+
+      const { result } = renderHook(() =>
+        useAttendanceEdit("group-123", "not-a-valid-date", "meeting-1")
+      );
+
+      await waitFor(() => {
+        expect(result.current.eventDate).toBe("not-a-valid-date");
+      });
+
+      await act(() => {
+        result.current.setAttendanceList(["member-1"]);
+      });
+      await act(async () => {
+        await result.current.handleSubmitAttendance();
+      });
+
+      expect(mockToastError).toHaveBeenCalledWith(
+        "Invalid event date. Please select a valid date."
+      );
+      expect(mockMarkAttendance).not.toHaveBeenCalled();
+    });
+
+    it("shows future-event toast when eventDate is in the future", async () => {
+      const futureIso = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+      mockUseQuery.mockReturnValue({
+        _id: "group-123",
+        name: "Test Group",
+        defaultStartTime: "10:00",
+      });
+
+      const { result } = renderHook(() =>
+        useAttendanceEdit("group-123", futureIso, "meeting-1")
+      );
+
+      await waitFor(() => {
+        expect(result.current.eventDate).toBe(futureIso);
+      });
+
+      await act(() => {
+        result.current.setAttendanceList(["member-1"]);
+      });
+      await act(async () => {
+        await result.current.handleSubmitAttendance();
+      });
+
+      expect(mockToastError).toHaveBeenCalledWith(
+        "Cannot submit attendance for future events."
+      );
+      expect(mockMarkAttendance).not.toHaveBeenCalled();
     });
   });
 });
