@@ -4,6 +4,7 @@ import { useQuery, useAuthenticatedMutation, api } from "@services/api/convex";
 import { Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { useGroupMembers } from "./useGroupMembers";
+import { ToastManager } from "@components/ui/Toast";
 
 export function useAttendanceEdit(
   groupId: string,
@@ -127,7 +128,7 @@ export function useAttendanceEdit(
 
     if (!meetingId) {
       console.error("Meeting ID not found for selected date. Cannot submit attendance.");
-      // TODO: Show error toast to user
+      ToastManager.error("No meeting found for this date. Please select a valid meeting.");
       return;
     }
 
@@ -136,11 +137,16 @@ export function useAttendanceEdit(
       return;
     }
 
-    // Prevent submitting attendance for future events
+    // Prevent submitting attendance for invalid or future event dates
     const eventDateObj = new Date(eventDate);
-    if (isNaN(eventDateObj.getTime()) || eventDateObj > new Date()) {
+    if (isNaN(eventDateObj.getTime())) {
+      console.error("Invalid event date for attendance submission");
+      ToastManager.error("Invalid event date. Please select a valid date.");
+      return;
+    }
+    if (eventDateObj > new Date()) {
       console.error("Cannot submit attendance for future events");
-      // TODO: Show error toast to user
+      ToastManager.error("Cannot submit attendance for future events.");
       return;
     }
 
@@ -164,7 +170,7 @@ export function useAttendanceEdit(
       router.push(`/(user)/leader-tools/${groupId}/attendance`);
     } catch (error) {
       console.error("Failed to submit attendance:", error);
-      // TODO: Show error toast
+      ToastManager.error("Failed to save attendance. Please try again.");
     }
   };
 
