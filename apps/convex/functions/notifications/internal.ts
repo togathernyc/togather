@@ -9,6 +9,7 @@ import { v } from "convex/values";
 import { internalQuery, internalAction } from "../../_generated/server";
 import { Id } from "../../_generated/dataModel";
 import { COMMUNITY_ADMIN_THRESHOLD } from "../../lib/permissions";
+import { isLeaderRole } from "../../lib/helpers";
 import { getMediaUrlWithTransform, ImagePresets } from "../../lib/utils";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
 
@@ -203,9 +204,7 @@ export const getGroupMembersForNotification = internalQuery({
 
     // Filter by role if specified
     if (args.filter === "leaders") {
-      members = members.filter(
-        (m) => m.role === "leader" || m.role === "admin"
-      );
+      members = members.filter((m) => isLeaderRole(m.role));
     }
 
     return members.map((m) => m.userId);
