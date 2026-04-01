@@ -30,6 +30,7 @@ import { router } from 'expo-router';
 import { useAuth } from './AuthProvider';
 import { convexVanilla, api, useQuery, useMutation } from '@services/api/convex';
 import type { Id } from '@services/api/convex';
+import { useAwaitPrefetch } from '@features/chat/hooks/usePrefetchChannel';
 
 // Try to import expo-notifications - may not be installed yet
 let Notifications: typeof import('expo-notifications') | null = null;
@@ -109,6 +110,9 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
   const [isReady, setIsReady] = useState(false);
   const [lastNotification, setLastNotification] = useState<NotificationData | null>(null);
   const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
+
+  // Prefetch hook — same one the inbox uses for smooth chat navigation
+  const awaitPrefetch = useAwaitPrefetch();
 
   const notificationListener = useRef<any>(null);
   const responseListener = useRef<any>(null);
@@ -310,35 +314,66 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
         break;
       case 'new_message':
       case 'mention': {
-        // Prefer url when present (backend sends pre-computed deep link for Issue #48)
-        // Fallback: build path from groupId + channelSlug or channelType
-        // Pass fromNotification flag so chat screen can wait for data before rendering
-        if (groupId && channelSlug) {
-          const targetPath = `/inbox/${groupId}/${channelSlug}`;
+        // Use the same prefetch-then-navigate flow as the inbox for a smooth experience.
+        // Notification payload includes channelId, groupId, groupName, channelSlug.
+        const resolvedSlug = channelSlug || (channelType === 'main' ? 'general' : channelType === 'leaders' ? 'leaders' : channelType);
+        const groupName = (data.groupName || nestedData?.groupName) as string | undefined;
+
+        if (channelId && groupId) {
+          // Prefetch messages before navigating (same as inbox, 3s timeout)
+          console.log(`[${type}] Prefetching channel ${channelId} before navigation`);
+          const prefetchReady = await awaitPrefetch(
+            channelId as Id<"chatChannels">,
+            3000
+          );
+          // On timeout, ConvexChatRoomScreen needs fromNotification so it waits for channels/header data
+          const fromNotificationParam = prefetchReady ? {} : { fromNotification: "1" as const };
+
+          // Without slug/type, do not default the URL to /general: ConvexChatRoomScreen would
+          // highlight "general" while activeChannelId still came from prefetched channelId.
+          // Legacy route resolves group + slug from the channel then replaces to /inbox/[groupId]/[slug].
+          if (!resolvedSlug) {
+            const targetPath = `/inbox/${channelId}`;
+            console.log(`[${type}] Navigating to legacy route (no slug in payload):`, targetPath);
+            router.push({
+              pathname: targetPath,
+              params: {
+                groupId,
+                ...(groupName ? { groupName } : {}),
+                ...fromNotificationParam,
+              },
+            } as any);
+            break;
+          }
+
+          const targetPath = `/inbox/${groupId}/${resolvedSlug}`;
           console.log(`[${type}] Navigating to:`, targetPath);
-          router.push({ pathname: targetPath, params: { fromNotification: "1" } } as any);
-        } else if (groupId && channelType) {
-          // Map channelType to slug: "main" -> "general", "leaders" -> "leaders"
-          // For custom channels, the channelType IS the slug
-          const channelSlug = channelType === 'main' ? 'general' : (channelType === 'leaders' ? 'leaders' : channelType);
-          const targetPath = `/inbox/${groupId}/${channelSlug}`;
-          console.log(`[${type}] Navigating to:`, targetPath);
-          router.push({ pathname: targetPath, params: { fromNotification: "1" } } as any);
+          router.push({
+            pathname: targetPath,
+            params: {
+              // Pass channelId so ConvexChatRoomScreen uses prefetched data immediately
+              channelId,
+              // Pass display data from notification payload (same as inbox)
+              ...(groupName ? { groupName } : {}),
+              ...fromNotificationParam,
+            },
+          } as any);
+        } else if (groupId) {
+          // No channelId available — navigate without prefetch, screen will load data
+          const targetPath = `/inbox/${groupId}/${resolvedSlug || 'general'}`;
+          console.log(`[${type}] Navigating (no prefetch):`, targetPath);
+          router.push({
+            pathname: targetPath,
+            params: { fromNotification: "1" },
+          } as any);
         } else if (channelId) {
-          // Use legacy route which will query DB to determine correct channel slug
-          // This ensures leaders channel notifications land on the correct tab
+          // Only channelId, no groupId — use legacy route
           const targetPath = `/inbox/${channelId}`;
           console.log(`[${type}] Navigating to legacy route:`, targetPath);
           router.push({
             pathname: targetPath,
-            params: { ...(groupId ? { groupId } : {}), fromNotification: "1" },
+            params: { fromNotification: "1" },
           } as any);
-        } else if (groupId) {
-          // Last resort: have groupId but no channelType and no channelId
-          // Default to general (best guess)
-          const targetPath = `/inbox/${groupId}/general`;
-          console.log(`[${type}] Navigating with default channelSlug:`, targetPath);
-          router.push({ pathname: targetPath, params: { fromNotification: "1" } } as any);
         } else {
           console.log(`[${type}] No groupId or channelId, falling back to /(tabs)/chat`);
           router.push('/(tabs)/chat');
@@ -383,7 +418,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
         // Default: do nothing or navigate to home
         console.log('Unknown notification type:', type);
     }
-  }, [community?.id, setCommunity, resolveGroupIdForNavigation]);
+  }, [community?.id, setCommunity, resolveGroupIdForNavigation, awaitPrefetch]);
 
   // Configure notification handler
   useEffect(() => {

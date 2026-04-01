@@ -209,10 +209,10 @@ function AppLayout() {
         <QueryClientProvider client={queryClient}>
         <AuthProvider>
           <PostHogProvider>
-            <NotificationProvider>
-              <ImageViewerProvider>
-              <ChatPrefetchProvider>
-                <PrefetchExecutorRegistration>
+            <ImageViewerProvider>
+            <ChatPrefetchProvider>
+              <PrefetchExecutorRegistration>
+              <NotificationProvider>
                   <StatusBarAwareContainer>
                     <NativeUpdateModal />
                     <OTAUpdateModal />
@@ -220,10 +220,10 @@ function AppLayout() {
                     <TestFlightBanner />
                     <ThemedStack />
                   </StatusBarAwareContainer>
-                </PrefetchExecutorRegistration>
-              </ChatPrefetchProvider>
-              </ImageViewerProvider>
-            </NotificationProvider>
+              </NotificationProvider>
+              </PrefetchExecutorRegistration>
+            </ChatPrefetchProvider>
+            </ImageViewerProvider>
           </PostHogProvider>
         </AuthProvider>
         </QueryClientProvider>
