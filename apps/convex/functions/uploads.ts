@@ -192,7 +192,7 @@ export const confirmUpload = mutation({
             authUserId,
             "update this group's preview image"
           );
-          await ctx.db.patch(entityId, { preview: url });
+          await ctx.db.patch(entityId, { preview: url, updatedAt: now() });
           break;
         }
         case "meeting": {
