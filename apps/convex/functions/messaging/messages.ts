@@ -132,7 +132,8 @@ export const getMessage = query({
       }
 
       return message;
-    } catch {
+    } catch (error) {
+      console.error("[getMessage] Failed to fetch message:", error);
       return null;
     }
   },

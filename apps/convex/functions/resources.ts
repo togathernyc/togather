@@ -286,7 +286,6 @@ export const getGroupTypeBySlug = query({
  * Get basic community stats
  *
  * Returns aggregate statistics for a community dashboard.
- * TODO: Implement when needed
  */
 export const getCommunityStats = query({
   args: {
