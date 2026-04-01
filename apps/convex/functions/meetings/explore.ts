@@ -518,9 +518,18 @@ export const searchEvents = query({
       )
       .take(maxResults * 2); // Over-fetch to account for visibility filtering
 
+    const searchGroupIds = [...new Set(searchResults.map((m) => m.groupId))];
+    const searchGroups = await Promise.all(
+      searchGroupIds.map((id) => ctx.db.get(id))
+    );
+    const nonArchivedGroupIds = new Set(
+      searchGroups.filter((g) => g && !g.isArchived).map((g) => g!._id)
+    );
+
     // Filter by date range and visibility
     const currentTime = now();
     const filtered = searchResults.filter((meeting) => {
+      if (!nonArchivedGroupIds.has(meeting.groupId)) return false;
       if (meeting.status === "cancelled") return false;
 
       // Date range filtering

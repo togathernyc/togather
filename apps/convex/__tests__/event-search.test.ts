@@ -61,7 +61,8 @@ async function seedCommunityWithGroup(t: ReturnType<typeof convexTest>) {
 async function createUserWithMembership(
   t: ReturnType<typeof convexTest>,
   communityId: Id<"communities">,
-  groupId: Id<"groups">
+  groupId: Id<"groups">,
+  options?: { communityRoles?: number }
 ) {
   const userId = await t.run(async (ctx) => {
     return await ctx.db.insert("users", {
@@ -79,7 +80,7 @@ async function createUserWithMembership(
     await ctx.db.insert("userCommunities", {
       userId,
       communityId,
-      roles: 1,
+      roles: options?.communityRoles ?? 1,
       status: 1,
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -394,6 +395,35 @@ describe("searchEvents", () => {
     // Community event should be visible (user is community member)
     expect(communityResult.events).toHaveLength(1);
   });
+
+  test("excludes events from archived groups", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId } = await seedCommunityWithGroup(t);
+    const { accessToken } = await createUserWithMembership(
+      t,
+      communityId,
+      groupId
+    );
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(groupId, { isArchived: true });
+    });
+
+    await createMeeting(t, groupId, communityId, {
+      title: "Archived Group Event",
+    });
+
+    const result = await t.query(
+      api.functions.meetings.explore.searchEvents,
+      {
+        token: accessToken,
+        communityId,
+        searchTerm: "archived",
+      }
+    );
+
+    expect(result.events).toHaveLength(0);
+  });
 });
 
 describe("meeting create populates search fields", () => {
@@ -421,5 +451,50 @@ describe("meeting create populates search fields", () => {
     expect(meeting!.searchText).toContain("test event at central park");
     expect(meeting!.searchText).toContain("central park");
     expect(meeting!.searchText).toContain("downtown bible study");
+  });
+
+  test("createCommunityWideEvent sets communityId and searchText on spawned meetings", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, groupTypeId } =
+      await seedCommunityWithGroup(t);
+    const { accessToken } = await createUserWithMembership(
+      t,
+      communityId,
+      groupId,
+      { communityRoles: 3 }
+    );
+
+    const result = await t.mutation(
+      api.functions.meetings.index.createCommunityWideEvent,
+      {
+        token: accessToken,
+        communityId,
+        groupTypeId,
+        title: "All Hands Picnic",
+        scheduledAt: Date.now() + 86400000,
+        meetingType: 1,
+      }
+    );
+
+    expect(result.meetingIds).toHaveLength(1);
+
+    const meeting = await t.run(async (ctx) =>
+      ctx.db.get(result.meetingIds[0])
+    );
+
+    expect(meeting!.communityId).toBe(communityId);
+    expect(meeting!.searchText).toContain("all hands picnic");
+    expect(meeting!.searchText).toContain("downtown bible study");
+
+    const searchResult = await t.query(
+      api.functions.meetings.explore.searchEvents,
+      {
+        token: accessToken,
+        communityId,
+        searchTerm: "picnic",
+      }
+    );
+
+    expect(searchResult.events).toHaveLength(1);
   });
 });

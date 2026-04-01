@@ -135,6 +135,8 @@ export const createCommunityWideEvent = mutation({
         createdAt: timestamp,
         rsvpEnabled: effectiveRsvpEnabled,
         rsvpOptions: effectiveRsvpOptions,
+        communityId: args.communityId,
+        searchText: [args.title, group.name].filter(Boolean).join(" ").toLowerCase(),
         // Link to parent event
         communityWideEventId,
         isOverridden: false,
