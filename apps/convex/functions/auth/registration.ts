@@ -15,7 +15,7 @@ import { action } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import { normalizePhone } from "../../lib/utils";
 import { generateTokens, requireAuthFromTokenAction } from "../../lib/auth";
-import { parseAndValidateDate } from "./helpers";
+import { parseAndValidateDate, isTestEmail, MAGIC_CODE } from "./helpers";
 import { sendEmailOTP, verifyEmailOTP } from "./emailOtp";
 
 /**
@@ -401,6 +401,25 @@ export const resetPassword = action({
     // Validate new password length
     if (args.newPassword.length < 8) {
       throw new Error("Password must be at least 8 characters");
+    }
+
+    // Rate limit verification attempts (aligned with verifyPhoneOTP: 10 / 15 min).
+    // Skip when test email uses magic code — same conditions as verifyEmailOTP.
+    const isProduction = process.env.NODE_ENV === "production";
+    const isDebug = process.env.DEBUG === "true";
+    const skipRateLimit =
+      isTestEmail(normalizedEmail) &&
+      args.code === MAGIC_CODE &&
+      (!isProduction || isDebug);
+    if (!skipRateLimit) {
+      await ctx.runMutation(
+        internal.functions.authInternal.checkRateLimitInternal,
+        {
+          key: `reset_password_verify:${normalizedEmail}`,
+          maxAttempts: 10,
+          windowMs: 15 * 60 * 1000,
+        }
+      );
     }
 
     // Verify the OTP code

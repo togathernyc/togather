@@ -179,4 +179,33 @@ describe("resetPassword", () => {
       })
     ).rejects.toThrow("No account found with this email");
   });
+
+  test("rate limits repeated wrong codes (non-test email)", async () => {
+    const t = convexTest(schema, modules);
+    const email = "brute@example.com";
+    await createUserWithPassword(t, email);
+    await t.mutation(internal.functions.authInternal.storeEmailVerificationCode, {
+      email,
+      code: "654321",
+      expiresAt: Date.now() + 10 * 60 * 1000,
+    });
+
+    for (let i = 0; i < 10; i++) {
+      await expect(
+        t.action(api.functions.auth.registration.resetPassword, {
+          email,
+          code: "111111",
+          newPassword: "newpassword123",
+        })
+      ).rejects.toThrow("Invalid or expired reset code");
+    }
+
+    await expect(
+      t.action(api.functions.auth.registration.resetPassword, {
+        email,
+        code: "111111",
+        newPassword: "newpassword123",
+      })
+    ).rejects.toThrow("Too many attempts");
+  });
 });
