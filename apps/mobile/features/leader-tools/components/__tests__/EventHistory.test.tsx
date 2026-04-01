@@ -117,8 +117,7 @@ describe("EventHistory", () => {
   ];
 
 
-  // TODO: Fix flaky test - times out intermittently
-  it.skip("renders event history with events", async () => {
+  it("renders event history with events", async () => {
     // Mock Convex to return raw meeting data (the hook transforms it)
     mockUseMeetingsQuery.mockReturnValue(mockConvexMeetings);
 
@@ -141,11 +140,12 @@ describe("EventHistory", () => {
       expect(getByText("New Event")).toBeTruthy();
     });
 
+    const month = getCurrentMonth();
     await waitFor(() => {
-      // Component formats dates as "EEE, M/d" (e.g., "Fri, 12/26")
-      expect(getByText(/12\/26/)).toBeTruthy();
-      expect(getByText(/12\/19/)).toBeTruthy();
-      expect(getByText(/12\/5/)).toBeTruthy();
+      // Component formats dates as "EEE, M/d" (e.g., "Fri, 3/26")
+      expect(getByText(new RegExp(`${month}\\/26`))).toBeTruthy();
+      expect(getByText(new RegExp(`${month}\\/19`))).toBeTruthy();
+      expect(getByText(new RegExp(`${month}\\/5`))).toBeTruthy();
     });
   });
 
