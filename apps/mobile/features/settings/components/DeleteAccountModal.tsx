@@ -37,7 +37,7 @@ export function DeleteAccountModal({
 }: DeleteAccountModalProps) {
   const router = useRouter();
   const { colors } = useTheme();
-  const { user, logout } = useAuth();
+  const { user, token, logout } = useAuth();
   const [step, setStep] = useState<Step>("confirm");
   const [otpCode, setOtpCode] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -47,8 +47,11 @@ export function DeleteAccountModal({
   // Get last 4 digits of phone for display
   const phoneLast4 = user?.phone?.slice(-4) || "****";
 
-  // Convex actions for OTP
+  // Convex actions for OTP and account deletion
   const sendPhoneOTP = useAction(api.functions.auth.phoneOtp.sendPhoneOTP);
+  const deleteAccountAction = useAction(
+    api.functions.auth.phoneOtp.deleteAccount
+  );
 
   // Reset state when modal closes
   useEffect(() => {
@@ -119,29 +122,31 @@ export function DeleteAccountModal({
       return;
     }
 
+    if (!token || !user?.phone) {
+      setError("Not authenticated. Please sign in again.");
+      return;
+    }
+
     setIsLoading(true);
     setError(null);
 
     try {
-      // TODO: Implement deleteAccount action in Convex
-      // For now, we'll throw an error since this functionality
-      // needs to be implemented in the Convex backend
-      // await deleteAccount({ code: otpCode });
+      await deleteAccountAction({
+        token,
+        phone: user.phone,
+        code: otpCode,
+      });
 
-      // Placeholder: This should call a Convex action/mutation for account deletion
-      throw new Error("Account deletion is not yet implemented in Convex. Please contact support.");
+      // Clear stored tokens
+      await AsyncStorage.removeItem("access_token");
+      await AsyncStorage.removeItem("refresh_token");
 
-      // Once implemented, the flow would be:
-      // 1. Verify OTP
-      // 2. Delete account data
-      // 3. Clear stored tokens
-      // await AsyncStorage.removeItem("access_token");
-      // await AsyncStorage.removeItem("refresh_token");
-      // 4. Close modal
-      // onClose();
-      // 5. Logout and navigate
-      // await logout();
-      // router.replace("/(auth)/signin");
+      // Close modal
+      onClose();
+
+      // Logout and navigate to sign in
+      await logout();
+      router.replace("/(auth)/signin");
     } catch (err: any) {
       const message =
         err?.message ||
@@ -150,7 +155,7 @@ export function DeleteAccountModal({
     } finally {
       setIsLoading(false);
     }
-  }, [otpCode, onClose, logout, router]);
+  }, [otpCode, token, user?.phone, deleteAccountAction, onClose, logout, router]);
 
   const renderConfirmStep = () => (
     <>

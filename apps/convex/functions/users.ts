@@ -470,6 +470,145 @@ export const resolveUserIdInternal = internalQuery({
 });
 
 // ============================================================================
+// Account Deletion
+// ============================================================================
+
+/**
+ * Soft-delete a user account by anonymizing PII and removing memberships.
+ *
+ * This does NOT hard-delete the user record (to preserve referential integrity
+ * in chat messages, tasks, etc.). Instead it:
+ * 1. Anonymizes the user record (clears PII, sets isActive: false)
+ * 2. Removes community memberships (userCommunities)
+ * 3. Removes group memberships (groupMembers)
+ * 4. Removes chat channel memberships (chatChannelMembers)
+ * 5. Removes push tokens
+ * 6. Removes notifications
+ * 7. Removes chat read states and typing indicators
+ * 8. Removes attendance confirmation tokens
+ */
+export const deleteAccountInternal = internalMutation({
+  args: { userId: v.id("users") },
+  handler: async (ctx, args) => {
+    const user = await ctx.db.get(args.userId);
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    const timestamp = now();
+
+    // 1. Anonymize the user record
+    await ctx.db.patch(args.userId, {
+      firstName: "Deleted",
+      lastName: "User",
+      email: undefined,
+      phone: undefined,
+      password: undefined,
+      profilePhoto: undefined,
+      dateOfBirth: undefined,
+      zipCode: undefined,
+      timezone: undefined,
+      phoneVerified: false,
+      isActive: false,
+      pushNotificationsEnabled: false,
+      emailNotificationsEnabled: false,
+      smsNotificationsEnabled: false,
+      activeCommunityId: undefined,
+      searchText: "deleted user",
+      externalIds: undefined,
+      associatedEmails: undefined,
+      updatedAt: timestamp,
+    });
+
+    // Helper to collect and delete all records from a table by index
+    async function deleteByUserIndex(
+      table: string,
+      index: string = "by_user"
+    ) {
+      const records = await ctx.db
+        .query(table as any)
+        .withIndex(index, (q: any) => q.eq("userId", args.userId))
+        .collect();
+      for (const record of records) {
+        await ctx.db.delete(record._id);
+      }
+      return records.length;
+    }
+
+    // 2. Remove community memberships
+    await deleteByUserIndex("userCommunities", "by_user");
+
+    // 3. Remove group memberships
+    await deleteByUserIndex("groupMembers", "by_user");
+
+    // 4. Remove chat channel memberships
+    await deleteByUserIndex("chatChannelMembers", "by_user");
+
+    // 5. Remove push tokens
+    await deleteByUserIndex("pushTokens", "by_user");
+
+    // 6. Remove notifications
+    await deleteByUserIndex("notifications", "by_user");
+
+    // 7. Remove chat read states
+    await deleteByUserIndex("chatReadState", "by_user");
+
+    // 8. Typing indicators are ephemeral (auto-expire in 5s) — no cleanup needed
+
+    // 9. Remove attendance confirmation tokens (uses by_user_meeting index)
+    const confirmTokens = await ctx.db
+      .query("attendanceConfirmationTokens")
+      .withIndex("by_user_meeting", (q) => q.eq("userId", args.userId))
+      .collect();
+    for (const record of confirmTokens) {
+      await ctx.db.delete(record._id);
+    }
+
+    // 10. Remove chat blocks (both as blocker and blocked)
+    const blockerRecords = await ctx.db
+      .query("chatUserBlocks")
+      .withIndex("by_blocker", (q) => q.eq("blockerId", args.userId))
+      .collect();
+    for (const record of blockerRecords) {
+      await ctx.db.delete(record._id);
+    }
+
+    const blockedRecords = await ctx.db
+      .query("chatUserBlocks")
+      .withIndex("by_blocked", (q) => q.eq("blockedId", args.userId))
+      .collect();
+    for (const record of blockedRecords) {
+      await ctx.db.delete(record._id);
+    }
+
+    // 11. Remove meeting RSVPs and attendances
+    await deleteByUserIndex("meetingRsvps", "by_user");
+    await deleteByUserIndex("meetingAttendances", "by_user");
+
+    // 12. Remove communityPeople records
+    const cpRecords = await ctx.db
+      .query("communityPeople")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .collect();
+    for (const record of cpRecords) {
+      // Also remove associated assignee junction records
+      const assigneeRecords = await ctx.db
+        .query("communityPeopleAssignees")
+        .withIndex("by_communityPerson", (q) =>
+          q.eq("communityPersonId", record._id)
+        )
+        .collect();
+      for (const assignee of assigneeRecords) {
+        await ctx.db.delete(assignee._id);
+      }
+      await ctx.db.delete(record._id);
+    }
+
+    return { success: true };
+  },
+});
+
+// ============================================================================
 // Migration Functions (for Supabase to Convex sync)
 // ============================================================================
 
