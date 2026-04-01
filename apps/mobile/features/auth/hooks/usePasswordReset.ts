@@ -1,16 +1,15 @@
 // usePasswordReset hook - handles password reset logic
-// TODO: Implement password reset in Convex (sendResetPasswordEmail and resetPassword actions)
 
 import { useState, useCallback } from "react";
 import { useRouter } from "expo-router";
-import { formatAuthError } from "../utils";
+import { useAction, api } from "@services/api/convex";
 
 /**
  * Password Reset Hook
  *
- * Note: Password reset functionality is not yet implemented in the Convex backend.
- * This hook provides a placeholder that will show an error message until
- * the backend support is added.
+ * Two-step flow:
+ * 1. Enter email -> sends OTP code via Resend
+ * 2. Enter code + new password -> verifies OTP and resets password
  */
 export function usePasswordReset() {
   const router = useRouter();
@@ -23,19 +22,32 @@ export function usePasswordReset() {
   const [isSendingEmail, setIsSendingEmail] = useState(false);
   const [isResettingPassword, setIsResettingPassword] = useState(false);
 
-  const handleSendEmail = useCallback(() => {
+  const sendResetEmail = useAction(
+    api.functions.auth.registration.sendResetPasswordEmail
+  );
+  const resetPasswordAction = useAction(
+    api.functions.auth.registration.resetPassword
+  );
+
+  const handleSendEmail = useCallback(async () => {
     setError("");
     if (!email) {
       setError("Please enter your email address");
       return;
     }
 
-    // TODO: Implement when backend support is added
-    // For now, show a message that this feature is coming soon
-    setError("Password reset is temporarily unavailable. Please contact support at help@gettogather.co for assistance.");
-  }, [email]);
+    setIsSendingEmail(true);
+    try {
+      await sendResetEmail({ email });
+      setStep("reset");
+    } catch (err: any) {
+      setError(err?.message || "Failed to send reset email. Please try again.");
+    } finally {
+      setIsSendingEmail(false);
+    }
+  }, [email, sendResetEmail]);
 
-  const handleResetPassword = useCallback(() => {
+  const handleResetPassword = useCallback(async () => {
     setError("");
 
     if (!code) {
@@ -55,9 +67,23 @@ export function usePasswordReset() {
       return;
     }
 
-    // TODO: Implement when backend support is added
-    setError("Password reset is temporarily unavailable. Please contact support at help@gettogather.co for assistance.");
-  }, [code, newPassword, confirmPassword]);
+    setIsResettingPassword(true);
+    try {
+      await resetPasswordAction({
+        email,
+        code,
+        newPassword,
+      });
+      // Navigate back to sign-in on success
+      router.push("/(auth)/signin");
+    } catch (err: any) {
+      setError(
+        err?.message || "Failed to reset password. Please try again."
+      );
+    } finally {
+      setIsResettingPassword(false);
+    }
+  }, [code, newPassword, confirmPassword, email, resetPasswordAction, router]);
 
   return {
     step,
