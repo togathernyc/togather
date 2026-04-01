@@ -116,4 +116,17 @@ describe("GroupPreviewCard", () => {
     const { getByText } = render(<GroupPreviewCard group={requestedGroup} />);
     expect(getByText("Requested")).toBeTruthy();
   });
+
+  it("updates join button when group membership props refresh after optimistic join", () => {
+    const joiningGroup = { ...mockGroup, has_pending_request: true };
+    const { getByText, rerender } = render(<GroupPreviewCard group={joiningGroup} />);
+    expect(getByText("Requested")).toBeTruthy();
+
+    rerender(
+      <GroupPreviewCard
+        group={{ ...mockGroup, is_member: true, user_role: "member", has_pending_request: false }}
+      />,
+    );
+    expect(getByText("Member")).toBeTruthy();
+  });
 });
