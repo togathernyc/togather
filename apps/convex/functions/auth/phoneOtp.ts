@@ -22,6 +22,85 @@ import {
 } from "./helpers";
 
 /**
+ * Calls Twilio Verify VerificationCheck for the given phone and code.
+ * Returns true if Twilio approved the code; false if Verify is not configured or the check did not approve.
+ * Throws on Twilio API errors (mapped to user-friendly messages).
+ */
+async function verifyTwilioOtpCheck(
+  normalizedPhone: string,
+  code: string
+): Promise<boolean> {
+  const twilioAuth = getTwilioAuthCredentials();
+  const verifyServiceSid = process.env.TWILIO_VERIFY_SERVICE_SID;
+
+  if (!twilioAuth || !verifyServiceSid) {
+    return false;
+  }
+
+  const response = await fetch(
+    `https://verify.twilio.com/v2/Services/${verifyServiceSid}/VerificationCheck`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${btoa(`${twilioAuth.username}:${twilioAuth.password}`)}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        To: normalizedPhone,
+        Code: code,
+      }),
+    }
+  );
+
+  if (response.ok) {
+    const result = await response.json();
+    const approved = result.status === "approved";
+
+    if (!approved && result.status) {
+      console.log("Twilio verification check result:", {
+        status: result.status,
+        phone: normalizedPhone,
+      });
+    }
+
+    return approved;
+  }
+
+  const errorText = await response.text();
+  let errorData;
+  try {
+    errorData = JSON.parse(errorText);
+  } catch {
+    errorData = { message: errorText };
+  }
+
+  console.error("Twilio Verify check error:", {
+    status: response.status,
+    statusText: response.statusText,
+    errorCode: errorData?.code,
+    errorMessage: errorData?.message,
+    phone: normalizedPhone,
+    fullError: errorData,
+  });
+
+  const twilioErrorCode = errorData?.code;
+  const twilioMessage = errorData?.message || "";
+
+  if (response.status === 404 || twilioErrorCode === 20404) {
+    throw new Error(
+      "Verification code expired. Please request a new code."
+    );
+  }
+
+  const userMessage = mapTwilioError(
+    response.status,
+    twilioErrorCode,
+    twilioMessage
+  );
+  throw new Error(userMessage);
+}
+
+/**
  * Send OTP to a phone number
  * tRPC equivalent: sendPhoneOTP
  */
@@ -187,77 +266,8 @@ export const verifyPhoneOTP = action({
 
     let isValid = isMagicCode;
 
-    // Verify with Twilio if not magic code
     if (!isValid) {
-      const twilioAuth = getTwilioAuthCredentials();
-      const verifyServiceSid = process.env.TWILIO_VERIFY_SERVICE_SID;
-
-      if (twilioAuth && verifyServiceSid) {
-        const response = await fetch(
-          `https://verify.twilio.com/v2/Services/${verifyServiceSid}/VerificationCheck`,
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Basic ${btoa(`${twilioAuth.username}:${twilioAuth.password}`)}`,
-              "Content-Type": "application/x-www-form-urlencoded",
-            },
-            body: new URLSearchParams({
-              To: normalizedPhone,
-              Code: args.code,
-            }),
-          }
-        );
-
-        if (response.ok) {
-          const result = await response.json();
-          isValid = result.status === "approved";
-
-          // Log non-approved statuses for debugging
-          if (!isValid && result.status) {
-            console.log("Twilio verification check result:", {
-              status: result.status,
-              phone: normalizedPhone,
-            });
-          }
-        } else {
-          // Handle Twilio API errors during verification check
-          const errorText = await response.text();
-          let errorData;
-          try {
-            errorData = JSON.parse(errorText);
-          } catch {
-            errorData = { message: errorText };
-          }
-
-          console.error("Twilio Verify check error:", {
-            status: response.status,
-            statusText: response.statusText,
-            errorCode: errorData?.code,
-            errorMessage: errorData?.message,
-            phone: normalizedPhone,
-            fullError: errorData,
-          });
-
-          // Map Twilio errors to user-friendly messages
-          const twilioErrorCode = errorData?.code;
-          const twilioMessage = errorData?.message || "";
-
-          // Special handling for expired verifications (404)
-          if (response.status === 404 || twilioErrorCode === 20404) {
-            throw new Error(
-              "Verification code expired. Please request a new code."
-            );
-          }
-
-          // Map other errors
-          const userMessage = mapTwilioError(
-            response.status,
-            twilioErrorCode,
-            twilioMessage
-          );
-          throw new Error(userMessage);
-        }
-      }
+      isValid = await verifyTwilioOtpCheck(normalizedPhone, args.code);
     }
 
     if (!isValid) {
@@ -470,73 +480,7 @@ export const registerPhone = action({
     let isValid = isMagicCode;
 
     if (!isValid) {
-      const twilioAuth = getTwilioAuthCredentials();
-      const verifyServiceSid = process.env.TWILIO_VERIFY_SERVICE_SID;
-
-      if (twilioAuth && verifyServiceSid) {
-        const response = await fetch(
-          `https://verify.twilio.com/v2/Services/${verifyServiceSid}/VerificationCheck`,
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Basic ${btoa(`${twilioAuth.username}:${twilioAuth.password}`)}`,
-              "Content-Type": "application/x-www-form-urlencoded",
-            },
-            body: new URLSearchParams({
-              To: normalizedPhone,
-              Code: args.code,
-            }),
-          }
-        );
-
-        if (response.ok) {
-          const result = await response.json();
-          isValid = result.status === "approved";
-
-          // Log non-approved statuses for debugging
-          if (!isValid && result.status) {
-            console.log("Twilio verification check result:", {
-              status: result.status,
-              phone: normalizedPhone,
-            });
-          }
-        } else {
-          // Handle Twilio API errors during verification check
-          const errorText = await response.text();
-          let errorData;
-          try {
-            errorData = JSON.parse(errorText);
-          } catch {
-            errorData = { message: errorText };
-          }
-
-          console.error("Twilio Verify check error:", {
-            status: response.status,
-            statusText: response.statusText,
-            errorCode: errorData?.code,
-            errorMessage: errorData?.message,
-            phone: normalizedPhone,
-            fullError: errorData,
-          });
-
-          // Special handling for expired verifications (404)
-          if (response.status === 404 || errorData?.code === 20404) {
-            throw new Error(
-              "Verification code expired. Please request a new code."
-            );
-          }
-
-          // Map other errors
-          const twilioErrorCode = errorData?.code;
-          const twilioMessage = errorData?.message || "";
-          const userMessage = mapTwilioError(
-            response.status,
-            twilioErrorCode,
-            twilioMessage
-          );
-          throw new Error(userMessage);
-        }
-      }
+      isValid = await verifyTwilioOtpCheck(normalizedPhone, args.code);
     }
 
     if (!isValid) {
@@ -621,6 +565,86 @@ export const sendSMS = internalAction({
         `SMS delivery failed (HTTP ${response.status}): ${error}. Please try again.`
       );
     }
+
+    return { success: true };
+  },
+});
+
+/**
+ * Delete user account after OTP verification.
+ *
+ * Flow:
+ * 1. Client calls sendPhoneOTP to send a code to the user's phone
+ * 2. Client calls this action with the token + OTP code
+ * 3. This action verifies the OTP, then runs the internal deletion mutation
+ */
+export const deleteAccount = action({
+  args: {
+    token: v.string(),
+    phone: v.string(),
+    code: v.string(),
+  },
+  handler: async (
+    ctx,
+    args
+  ): Promise<{ success: boolean }> => {
+    // 1. Verify the user is authenticated
+    const tokenUserId = await requireAuthFromToken(args.token);
+
+    // Resolve to Convex user ID
+    const resolved = await ctx.runQuery(
+      internal.functions.users.resolveUserIdInternal,
+      { tokenUserId }
+    );
+    if (!resolved) {
+      throw new Error("User not found");
+    }
+    const userId = resolved.userId;
+
+    const user = await ctx.runQuery(internal.functions.users.getByIdInternal, {
+      userId,
+    });
+    if (!user?.phone) {
+      throw new Error(
+        "Account has no phone number on file; contact support to delete your account."
+      );
+    }
+    const normalizedPhone = normalizePhone(user.phone);
+    if (normalizePhone(args.phone) !== normalizedPhone) {
+      throw new Error("Phone number does not match your account");
+    }
+
+    // 2. Verify OTP code
+    const isMagicCode =
+      isMagicCodeAllowed(normalizedPhone) && args.code === MAGIC_CODE;
+
+    const skipRateLimit = isMagicCode && isTestPhone(normalizedPhone);
+    if (!skipRateLimit) {
+      await ctx.runMutation(
+        internal.functions.authInternal.checkRateLimitInternal,
+        {
+          key: `delete:${normalizedPhone}`,
+          maxAttempts: 10,
+          windowMs: 15 * 60 * 1000, // 15 minutes
+        }
+      );
+    }
+
+    let isValid = isMagicCode;
+
+    if (!isValid) {
+      isValid = await verifyTwilioOtpCheck(normalizedPhone, args.code);
+    }
+
+    if (!isValid) {
+      throw new Error("Invalid verification code");
+    }
+
+    // 3. Delete the account
+    await ctx.runMutation(
+      internal.functions.users.deleteAccountInternal,
+      { userId }
+    );
 
     return { success: true };
   },

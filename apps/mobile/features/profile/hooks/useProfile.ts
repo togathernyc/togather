@@ -1,4 +1,4 @@
-import { useAuthenticatedQuery, useAuthenticatedMutation, api } from '@services/api/convex';
+import { useAuthenticatedQuery, useAuthenticatedMutation, api, useAction } from '@services/api/convex';
 import { useAuth } from '@providers/AuthProvider';
 import type { Id } from '@services/api/convex';
 
@@ -232,15 +232,16 @@ export function useCurrentCommunity() {
  * await deleteAccount.mutateAsync({ code: '123456' });
  */
 export function useDeleteAccount() {
-  const { user, logout } = useAuth();
-  const userId = user?.id as Id<"users"> | undefined;
+  const { user, token } = useAuth();
+  const deleteAccount = useAction(api.functions.auth.phoneOtp.deleteAccount);
 
-  // TODO: Implement deleteAccount in Convex users.ts
-  // For now, this is a placeholder that throws an error
   const mutateAsync = async (data: { code: string }) => {
-    if (!userId) throw new Error("User not authenticated");
-    // The actual implementation would call a Convex action/mutation
-    throw new Error("Account deletion not yet implemented in Convex");
+    if (!user?.phone || !token) throw new Error("User not authenticated");
+    return deleteAccount({
+      token,
+      phone: user.phone,
+      code: data.code,
+    });
   };
 
   return { mutateAsync };
