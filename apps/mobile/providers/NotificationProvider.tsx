@@ -363,10 +363,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
           // Only channelId, no groupId — use legacy route
           const targetPath = `/inbox/${channelId}`;
           console.log(`[${type}] Navigating to legacy route:`, targetPath);
-          router.push({
-            pathname: targetPath,
-            params: { fromNotification: "1" },
-          } as any);
+          router.push({ pathname: targetPath } as any);
         } else {
           console.log(`[${type}] No groupId or channelId, falling back to /(tabs)/chat`);
           router.push('/(tabs)/chat');
