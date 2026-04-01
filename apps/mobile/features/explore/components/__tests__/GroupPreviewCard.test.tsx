@@ -20,6 +20,17 @@ jest.mock("@features/groups/utils", () => ({
   getGroupTypeLabel: jest.fn(() => "Dinner Party"),
 }));
 
+jest.mock("@services/api/convex", () => ({
+  useAuthenticatedMutation: () => jest.fn(),
+  api: {
+    functions: {
+      groupMembers: {
+        createJoinRequest: "createJoinRequest",
+      },
+    },
+  },
+}));
+
 describe("GroupPreviewCard", () => {
   const mockGroup: Group = {
     _id: "group_123",
@@ -92,5 +103,17 @@ describe("GroupPreviewCard", () => {
     };
     const { getByText } = render(<GroupPreviewCard group={groupWithOneMember} />);
     expect(getByText("1 member")).toBeTruthy();
+  });
+
+  it("shows 'Member' badge when user is already a member", () => {
+    const memberGroup = { ...mockGroup, is_member: true, user_role: "member" };
+    const { getByText } = render(<GroupPreviewCard group={memberGroup} />);
+    expect(getByText("Member")).toBeTruthy();
+  });
+
+  it("shows 'Requested' when user has a pending join request", () => {
+    const requestedGroup = { ...mockGroup, has_pending_request: true };
+    const { getByText } = render(<GroupPreviewCard group={requestedGroup} />);
+    expect(getByText("Requested")).toBeTruthy();
   });
 });
