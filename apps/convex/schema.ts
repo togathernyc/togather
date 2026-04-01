@@ -573,6 +573,10 @@ export default defineSchema({
     // Community-wide event link
     communityWideEventId: v.optional(v.id("communityWideEvents")), // Link to parent
     isOverridden: v.optional(v.boolean()), // Leader customized, stops cascade
+
+    // Search support (denormalized)
+    communityId: v.optional(v.id("communities")), // Denormalized from group for search filtering
+    searchText: v.optional(v.string()), // Denormalized: title + location + group name
   })
     .index("by_legacyId", ["legacyId"])
     .index("by_group", ["groupId"])
@@ -587,7 +591,12 @@ export default defineSchema({
       "attendanceConfirmationAt",
       "attendanceConfirmationSent",
     ])
-    .index("by_communityWideEvent", ["communityWideEventId"]),
+    .index("by_communityWideEvent", ["communityWideEventId"])
+    .index("by_community", ["communityId"])
+    .searchIndex("search_meetings", {
+      searchField: "searchText",
+      filterFields: ["communityId", "status"],
+    }),
 
   // =============================================================================
   // MEETING RSVP

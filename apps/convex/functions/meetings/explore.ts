@@ -449,3 +449,118 @@ export const myRsvpEvents = query({
     return { events };
   },
 });
+
+/**
+ * Search events by text within a community.
+ *
+ * Uses the searchIndex on meetings for full-text search across
+ * title, location, and group name. Returns upcoming scheduled events
+ * by default, with optional date range filtering.
+ */
+export const searchEvents = query({
+  args: {
+    token: v.optional(v.string()),
+    communityId: v.id("communities"),
+    searchTerm: v.string(),
+    startAfter: v.optional(v.number()), // Unix timestamp ms
+    startBefore: v.optional(v.number()), // Unix timestamp ms
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const maxResults = args.limit ?? 20;
+
+    if (!args.searchTerm.trim()) {
+      return { events: [] };
+    }
+
+    // Resolve user for visibility filtering
+    const userId = await getOptionalAuth(ctx, args.token);
+
+    // Get user's group memberships for visibility filtering
+    let userGroupIds: Set<string> = new Set();
+    let isCommunityMember = false;
+
+    if (userId) {
+      const communityMembership = await ctx.db
+        .query("userCommunities")
+        .withIndex("by_user_community", (q) =>
+          q.eq("userId", userId).eq("communityId", args.communityId)
+        )
+        .first();
+      isCommunityMember = !!communityMembership;
+
+      if (isCommunityMember) {
+        const groupMemberships = await ctx.db
+          .query("groupMembers")
+          .withIndex("by_user", (q) => q.eq("userId", userId))
+          .collect();
+        userGroupIds = new Set(groupMemberships.map((m) => m.groupId));
+      }
+    }
+
+    // Full-text search using searchIndex
+    const searchResults = await ctx.db
+      .query("meetings")
+      .withSearchIndex("search_meetings", (q) =>
+        q
+          .search("searchText", args.searchTerm.trim())
+          .eq("communityId", args.communityId)
+          .eq("status", "scheduled")
+      )
+      .take(maxResults * 2); // Over-fetch to account for visibility filtering
+
+    // Filter by date range and visibility
+    const currentTime = now();
+    const filtered = searchResults.filter((meeting) => {
+      // Date range filtering
+      const afterCutoff = args.startAfter ?? currentTime;
+      if (meeting.scheduledAt < afterCutoff) return false;
+      if (args.startBefore && meeting.scheduledAt > args.startBefore) return false;
+
+      // Visibility filtering
+      const visibility = meeting.visibility ?? "group";
+      if (visibility === "public") return true;
+      if (visibility === "community") return isCommunityMember;
+      // Default "group" visibility: must be member
+      return userGroupIds.has(meeting.groupId);
+    });
+
+    // Take only the requested number
+    const events = filtered.slice(0, maxResults);
+
+    // Batch fetch groups
+    const groupIds = [...new Set(events.map((e) => e.groupId))];
+    const groups = await Promise.all(groupIds.map((id) => ctx.db.get(id)));
+    const groupMap = new Map(
+      groups.filter(Boolean).map((g) => [g!._id, g!])
+    );
+
+    // Return enriched results
+    return {
+      events: events.map((meeting) => {
+        const group = groupMap.get(meeting.groupId);
+        return {
+          _id: meeting._id,
+          title: meeting.title || "Untitled Event",
+          scheduledAt: meeting.scheduledAt,
+          actualEnd: meeting.actualEnd,
+          meetingType: meeting.meetingType,
+          locationOverride: meeting.locationOverride,
+          shortId: meeting.shortId,
+          visibility: meeting.visibility,
+          coverImage: meeting.coverImage
+            ? getMediaUrl(meeting.coverImage)
+            : null,
+          group: group
+            ? {
+                _id: group._id,
+                name: group.name,
+                city: group.city || null,
+                state: group.state || null,
+              }
+            : null,
+        };
+      }),
+    };
+  },
+});
