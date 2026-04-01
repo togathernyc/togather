@@ -140,7 +140,7 @@ export async function initializeGroupAfterCreation(
  * @param action - Description of the action for error messages (e.g., "update toolbar settings")
  * @returns The group document if user has permission
  */
-async function requireGroupLeaderOrCommunityAdmin(
+export async function requireGroupLeaderOrCommunityAdmin(
   ctx: MutationCtx,
   groupId: Id<"groups">,
   userId: Id<"users">,

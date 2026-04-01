@@ -9,7 +9,11 @@
 
 import { v } from "convex/values";
 import { mutation, query, action } from "../_generated/server";
-import { requireAuth, requireAuthFromTokenAction } from "../lib/auth";
+import { internal } from "../_generated/api";
+import type { Id } from "../_generated/dataModel";
+import { requireAuth, requireAuthFromToken } from "../lib/auth";
+import { now } from "../lib/utils";
+import { requireGroupLeaderOrCommunityAdmin } from "./groups/mutations";
 
 // ============================================================================
 // Constants
@@ -156,7 +160,7 @@ export const confirmUpload = mutation({
     storageId: string;
     url: string;
   }> => {
-    await requireAuth(ctx, args.token);
+    const authUserId = await requireAuth(ctx, args.token);
 
     // Get the file URL
     const url = await ctx.storage.getUrl(args.storageId);
@@ -166,9 +170,50 @@ export const confirmUpload = mutation({
       );
     }
 
-    // NOTE: entityType/entityId params are accepted but entity updates
-    // (profilePhoto, group.preview, meeting.coverImage) are handled by
-    // the caller after confirmUpload returns the URL.
+    // If entity provided, update the corresponding record
+    if (args.entityType && args.entityId) {
+      switch (args.entityType) {
+        case "user": {
+          const entityId = args.entityId as Id<"users">;
+          if (entityId !== authUserId) {
+            throw new Error("Cannot update another user's profile photo");
+          }
+          await ctx.db.patch(entityId, { profilePhoto: url, updatedAt: now() });
+          await ctx.scheduler.runAfter(0, internal.functions.sync.memberships.syncUserProfileToChannels, {
+            userId: entityId,
+          });
+          break;
+        }
+        case "group": {
+          const entityId = args.entityId as Id<"groups">;
+          await requireGroupLeaderOrCommunityAdmin(
+            ctx,
+            entityId,
+            authUserId,
+            "update this group's preview image"
+          );
+          await ctx.db.patch(entityId, { preview: url, updatedAt: now() });
+          break;
+        }
+        case "meeting": {
+          const entityId = args.entityId as Id<"meetings">;
+          const meeting = await ctx.db.get(entityId);
+          if (!meeting) {
+            throw new Error("Meeting not found");
+          }
+          await requireGroupLeaderOrCommunityAdmin(
+            ctx,
+            meeting.groupId,
+            authUserId,
+            "update this meeting's cover image"
+          );
+          await ctx.db.patch(entityId, { coverImage: url });
+          break;
+        }
+        default:
+          throw new Error(`Unknown entity type: ${args.entityType}`);
+      }
+    }
 
     return {
       success: true,

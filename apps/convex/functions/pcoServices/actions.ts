@@ -18,6 +18,7 @@ import {
 } from "../../lib/pcoServicesApi";
 import { requireAuth } from "../../lib/auth";
 import { isCommunityAdmin } from "../../lib/permissions";
+import { isLeaderRole } from "../../lib/helpers";
 import { applyFilters, deduplicateByPersonId } from "./filterHelpers";
 import {
   formatTeamDisplayName,

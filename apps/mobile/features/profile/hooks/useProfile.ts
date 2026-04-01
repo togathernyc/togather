@@ -78,7 +78,6 @@ export function useUpdateProfilePhoto() {
   const userId = user?.id as Id<"users"> | undefined;
   const generateUploadUrl = useAuthenticatedMutation(api.functions.uploads.generateUploadUrl);
   const confirmUpload = useAuthenticatedMutation(api.functions.uploads.confirmUpload);
-  const updateUser = useAuthenticatedMutation(api.functions.users.update);
 
   const mutateAsync = async (data: { fileName: string; contentType: string }) => {
     if (!userId) throw new Error("User not authenticated");
@@ -90,17 +89,12 @@ export function useUpdateProfilePhoto() {
     return {
       uploadUrl,
       confirmUpload: async (storageId: Id<"_storage">) => {
-        // Step 2: Confirm upload to get the public URL
+        // Step 2: Confirm upload and update user profile in one step
         const result = await confirmUpload({
           storageId,
           entityType: "user",
           entityId: userId,
           folder: "profiles",
-        });
-
-        // Step 3: Update user profile with the new photo URL
-        await updateUser({
-          profilePhoto: result.url,
         });
 
         await refreshUser();
