@@ -55,6 +55,7 @@ describe("storeEmailVerificationCode", () => {
       internal.functions.authInternal.storeEmailVerificationCode,
       {
         email: "test@example.com",
+        purpose: "account_claim",
         code: "123456",
         expiresAt: Date.now() + 10 * 60 * 1000,
       }
@@ -70,6 +71,7 @@ describe("storeEmailVerificationCode", () => {
       internal.functions.authInternal.storeEmailVerificationCode,
       {
         email: "Test@EXAMPLE.com",
+        purpose: "account_claim",
         code: "123456",
         expiresAt: Date.now() + 10 * 60 * 1000,
       }
@@ -95,6 +97,7 @@ describe("storeEmailVerificationCode", () => {
       internal.functions.authInternal.storeEmailVerificationCode,
       {
         email: "test@example.com",
+        purpose: "account_claim",
         code: "111111",
         expiresAt: Date.now() + 10 * 60 * 1000,
       }
@@ -105,6 +108,7 @@ describe("storeEmailVerificationCode", () => {
       internal.functions.authInternal.storeEmailVerificationCode,
       {
         email: "test@example.com",
+        purpose: "account_claim",
         code: "222222",
         expiresAt: Date.now() + 10 * 60 * 1000,
       }
@@ -131,6 +135,7 @@ describe("verifyEmailCode", () => {
       internal.functions.authInternal.storeEmailVerificationCode,
       {
         email: "test@example.com",
+        purpose: "account_claim",
         code: "123456",
         expiresAt: Date.now() + 10 * 60 * 1000,
       }
@@ -138,7 +143,7 @@ describe("verifyEmailCode", () => {
 
     const result = await t.mutation(
       internal.functions.authInternal.verifyEmailCode,
-      { email: "test@example.com", code: "123456" }
+      { email: "test@example.com", purpose: "account_claim", code: "123456" }
     );
 
     expect(result.valid).toBe(true);
@@ -151,6 +156,7 @@ describe("verifyEmailCode", () => {
       internal.functions.authInternal.storeEmailVerificationCode,
       {
         email: "test@example.com",
+        purpose: "account_claim",
         code: "123456",
         expiresAt: Date.now() + 10 * 60 * 1000,
       }
@@ -158,7 +164,7 @@ describe("verifyEmailCode", () => {
 
     const result = await t.mutation(
       internal.functions.authInternal.verifyEmailCode,
-      { email: "test@example.com", code: "999999" }
+      { email: "test@example.com", purpose: "account_claim", code: "999999" }
     );
 
     expect(result.valid).toBe(false);
@@ -169,7 +175,7 @@ describe("verifyEmailCode", () => {
 
     const result = await t.mutation(
       internal.functions.authInternal.verifyEmailCode,
-      { email: "nobody@example.com", code: "123456" }
+      { email: "nobody@example.com", purpose: "account_claim", code: "123456" }
     );
 
     expect(result.valid).toBe(false);
@@ -183,6 +189,7 @@ describe("verifyEmailCode", () => {
       internal.functions.authInternal.storeEmailVerificationCode,
       {
         email: "test@example.com",
+        purpose: "account_claim",
         code: "123456",
         expiresAt: Date.now() - 1000, // expired 1 second ago
       }
@@ -190,7 +197,7 @@ describe("verifyEmailCode", () => {
 
     const result = await t.mutation(
       internal.functions.authInternal.verifyEmailCode,
-      { email: "test@example.com", code: "123456" }
+      { email: "test@example.com", purpose: "account_claim", code: "123456" }
     );
 
     expect(result.valid).toBe(false);
@@ -203,6 +210,7 @@ describe("verifyEmailCode", () => {
       internal.functions.authInternal.storeEmailVerificationCode,
       {
         email: "test@example.com",
+        purpose: "account_claim",
         code: "123456",
         expiresAt: Date.now() + 10 * 60 * 1000,
       }
@@ -211,14 +219,14 @@ describe("verifyEmailCode", () => {
     // Use the code
     const first = await t.mutation(
       internal.functions.authInternal.verifyEmailCode,
-      { email: "test@example.com", code: "123456" }
+      { email: "test@example.com", purpose: "account_claim", code: "123456" }
     );
     expect(first.valid).toBe(true);
 
     // Try to use it again
     const second = await t.mutation(
       internal.functions.authInternal.verifyEmailCode,
-      { email: "test@example.com", code: "123456" }
+      { email: "test@example.com", purpose: "account_claim", code: "123456" }
     );
     expect(second.valid).toBe(false);
   });
@@ -230,6 +238,7 @@ describe("verifyEmailCode", () => {
       internal.functions.authInternal.storeEmailVerificationCode,
       {
         email: "test@example.com",
+        purpose: "account_claim",
         code: "123456",
         expiresAt: Date.now() + 10 * 60 * 1000,
       }
@@ -238,7 +247,7 @@ describe("verifyEmailCode", () => {
     // Verify with different casing
     const result = await t.mutation(
       internal.functions.authInternal.verifyEmailCode,
-      { email: "TEST@Example.COM", code: "123456" }
+      { email: "TEST@Example.COM", purpose: "account_claim", code: "123456" }
     );
 
     expect(result.valid).toBe(true);
@@ -253,6 +262,7 @@ describe("cleanupExpiredEmailCodes", () => {
     await t.run(async (ctx) => {
       await ctx.db.insert("emailVerificationCodes", {
         email: "old@example.com",
+        purpose: "account_claim",
         code: "111111",
         expiresAt: Date.now() - 60 * 1000, // expired 1 min ago
         createdAt: Date.now() - 120 * 1000,
@@ -274,6 +284,7 @@ describe("cleanupExpiredEmailCodes", () => {
     await t.run(async (ctx) => {
       await ctx.db.insert("emailVerificationCodes", {
         email: "active@example.com",
+        purpose: "account_claim",
         code: "222222",
         expiresAt: Date.now() + 60 * 60 * 1000, // expires in 1 hour
         createdAt: Date.now(),
