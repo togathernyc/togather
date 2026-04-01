@@ -321,8 +321,7 @@ export const getCommunityStats = query({
       activeGroups: activeGroups.length,
       archivedGroups: groups.length - activeGroups.length,
       groupTypes: groupTypes.length,
-      // Note: Member counts would require userCommunities table query
-      // TODO: Add member stats when userCommunities is populated
+      // NOTE: Member counts available via userCommunities table if needed
     };
   },
 });
