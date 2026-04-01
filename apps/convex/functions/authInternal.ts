@@ -17,7 +17,10 @@ import {
 import { api, internal } from "../_generated/api";
 import { now, normalizePhone, getMediaUrl, buildSearchText } from "../lib/utils";
 import { requireAuth, requireAuthIgnoringRevocation } from "../auth";
-import { isRevokedForJwtSubject } from "../lib/auth";
+import {
+  isRevokedForJwtSubject,
+  REFRESH_TOKEN_MAX_AGE_MS,
+} from "../lib/auth";
 import { COMMUNITY_ROLES, COMMUNITY_ADMIN_THRESHOLD } from "../lib/permissions";
 import { checkRateLimit } from "../lib/rateLimit";
 
@@ -778,17 +781,19 @@ export const cleanupExpiredPhoneTokens = internalMutation({
 /**
  * Internal: Cleanup stale token revocation records
  *
- * Revocation records only need to live as long as the longest-lived access token.
- * Access tokens expire after 30 days, so revocations older than 31 days are safe to delete.
+ * Revocations must cover the longest-lived JWT we validate against them (refresh tokens,
+ * ~10 years). Only delete once no refresh token issued before revokedBefore could still be valid.
  */
 export const cleanupStaleTokenRevocations = internalMutation({
   args: {},
   handler: async (ctx) => {
-    const thirtyOneDaysAgo = Date.now() - 31 * 24 * 60 * 60 * 1000;
+    const oneDayMs = 24 * 60 * 60 * 1000;
+    const cutoffRevokedBefore =
+      Date.now() - REFRESH_TOKEN_MAX_AGE_MS - oneDayMs;
 
     const staleRevocations = await ctx.db
       .query("tokenRevocations")
-      .filter((q) => q.lt(q.field("revokedBefore"), thirtyOneDaysAgo))
+      .filter((q) => q.lt(q.field("revokedBefore"), cutoffRevokedBefore))
       .collect();
 
     for (const revocation of staleRevocations) {

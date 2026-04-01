@@ -37,6 +37,9 @@ import type { QueryCtx, MutationCtx } from "../_generated/server";
 
 const ACCESS_TOKEN_EXPIRY = "30d"; // 30 days
 const REFRESH_TOKEN_EXPIRY = "520w"; // ~10 years
+
+/** Wall-clock max lifetime of refresh tokens in ms; must stay in sync with REFRESH_TOKEN_EXPIRY. */
+export const REFRESH_TOKEN_MAX_AGE_MS = 520 * 7 * 24 * 60 * 60 * 1000;
 const OAUTH_STATE_EXPIRY = "10m"; // 10 minutes for OAuth state tokens
 
 /**

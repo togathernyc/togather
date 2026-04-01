@@ -12,7 +12,11 @@ import { expect, test, describe } from "vitest";
 import schema from "../schema";
 import { api, internal } from "../_generated/api";
 import { modules } from "../test.setup";
-import { generateTokens, verifyRefreshToken } from "../lib/auth";
+import {
+  generateTokens,
+  verifyRefreshToken,
+  REFRESH_TOKEN_MAX_AGE_MS,
+} from "../lib/auth";
 
 // ============================================================================
 // Constants
@@ -108,6 +112,63 @@ describe("Token revocation", () => {
       { jwtUserId: userId, issuedAt: refreshPayload!.issuedAt }
     );
     expect(revoked).toBe(true);
+  });
+
+  test("cleanupStaleTokenRevocations keeps rows needed for refresh token lifetime", async () => {
+    const t = convexTest(schema, modules);
+    const oneDayMs = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+
+    const keepUserId = await t.run(async (ctx) => {
+      return await ctx.db.insert("users", {
+        phone: "+11234567892",
+        firstName: "Keep",
+        lastName: "Revocation",
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+    const deleteUserId = await t.run(async (ctx) => {
+      return await ctx.db.insert("users", {
+        phone: "+11234567893",
+        firstName: "Stale",
+        lastName: "Revocation",
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+
+    const stillNeededRevokedBefore = now - REFRESH_TOKEN_MAX_AGE_MS;
+    const staleRevokedBefore =
+      now - REFRESH_TOKEN_MAX_AGE_MS - 2 * oneDayMs;
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("tokenRevocations", {
+        userId: keepUserId,
+        revokedBefore: stillNeededRevokedBefore,
+        createdAt: now,
+      });
+      await ctx.db.insert("tokenRevocations", {
+        userId: deleteUserId,
+        revokedBefore: staleRevokedBefore,
+        createdAt: now,
+      });
+    });
+
+    const { deletedCount } = await t.mutation(
+      internal.functions.authInternal.cleanupStaleTokenRevocations,
+      {}
+    );
+    expect(deletedCount).toBe(1);
+
+    const remaining = await t.run(async (ctx) => {
+      return await ctx.db.query("tokenRevocations").collect();
+    });
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].userId).toEqual(keepUserId);
+    expect(remaining[0].revokedBefore).toBe(stillNeededRevokedBefore);
   });
 });
 

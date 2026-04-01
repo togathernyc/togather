@@ -145,8 +145,8 @@ crons.hourly(
 // =============================================================================
 // TOKEN REVOCATION CLEANUP
 // =============================================================================
-// Runs daily to delete stale token revocation records (older than 31 days).
-// Access tokens expire after 30 days, so older revocations are no longer needed.
+// Runs daily to delete token revocation records past refresh-token max lifetime (+ buffer).
+// Refresh flows validate revocations, so records must outlive the longest refresh JWT.
 
 crons.daily(
   "token-revocation-cleanup",
