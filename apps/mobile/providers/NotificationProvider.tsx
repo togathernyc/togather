@@ -324,7 +324,23 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
           console.log(`[${type}] Prefetching channel ${channelId} before navigation`);
           await awaitPrefetch(channelId as Id<"chatChannels">, 3000);
 
-          const targetPath = `/inbox/${groupId}/${resolvedSlug || 'general'}`;
+          // Without slug/type, do not default the URL to /general: ConvexChatRoomScreen would
+          // highlight "general" while activeChannelId still came from prefetched channelId.
+          // Legacy route resolves group + slug from the channel then replaces to /inbox/[groupId]/[slug].
+          if (!resolvedSlug) {
+            const targetPath = `/inbox/${channelId}`;
+            console.log(`[${type}] Navigating to legacy route (no slug in payload):`, targetPath);
+            router.push({
+              pathname: targetPath,
+              params: {
+                groupId,
+                ...(groupName ? { groupName } : {}),
+              },
+            } as any);
+            break;
+          }
+
+          const targetPath = `/inbox/${groupId}/${resolvedSlug}`;
           console.log(`[${type}] Navigating to:`, targetPath);
           router.push({
             pathname: targetPath,
