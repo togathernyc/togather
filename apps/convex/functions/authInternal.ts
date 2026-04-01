@@ -810,7 +810,9 @@ export const phoneStatus = query({
 export const signout = mutation({
   args: {},
   handler: async () => {
-    // TODO: Add token to blacklist if needed
+    // NOTE: Token blacklisting is not implemented. JWTs expire naturally.
+    // Client-side logout clears stored tokens. If token theft becomes a concern,
+    // add a revocation table and check it in requireAuth/verifyAccessToken.
     return { success: true };
   },
 });
