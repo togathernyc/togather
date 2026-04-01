@@ -397,7 +397,7 @@ async function resolveUserId(
  *
  * @param ctx - Convex query or mutation context
  * @param userId - Resolved Convex user ID
- * @param issuedAt - Token's iat claim (Unix seconds), undefined if missing
+ * @param issuedAt - Token's iat claim (Unix whole seconds), undefined if missing
  * @returns true if the token is revoked
  */
 export async function isTokenRevoked(
@@ -420,9 +420,11 @@ export async function isTokenRevoked(
     return true;
   }
 
-  // JWT iat is in seconds, revokedBefore is in milliseconds
-  const issuedAtMs = issuedAt * 1000;
-  return issuedAtMs < revocation.revokedBefore;
+  // JWT iat is whole Unix seconds; revokedBefore is ms. Compare in seconds so a token
+  // issued in the same second as signout is not falsely rejected (iat * 1000 is only
+  // the start of that second).
+  const cutoffSec = Math.floor(revocation.revokedBefore / 1000);
+  return issuedAt < cutoffSec;
 }
 
 /**
@@ -436,7 +438,7 @@ export async function isRevokedForJwtSubject(
 ): Promise<boolean> {
   const userId = await resolveUserId(ctx, jwtUserId);
   if (!userId) {
-    return false;
+    return true;
   }
   return isTokenRevoked(ctx, userId, issuedAt);
 }

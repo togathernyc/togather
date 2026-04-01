@@ -16,6 +16,7 @@ import {
   generateTokens,
   verifyRefreshToken,
   REFRESH_TOKEN_MAX_AGE_MS,
+  isTokenRevoked,
 } from "../lib/auth";
 
 // ============================================================================
@@ -110,6 +111,46 @@ describe("Token revocation", () => {
     const revoked = await t.query(
       internal.functions.authInternal.isJwtSubjectRevokedInternal,
       { jwtUserId: userId, issuedAt: refreshPayload!.issuedAt }
+    );
+    expect(revoked).toBe(true);
+  });
+
+  test("isTokenRevoked does not reject token when iat second equals floor(revokedBefore ms)", async () => {
+    const t = convexTest(schema, modules);
+
+    const userId = await t.run(async (ctx) => {
+      return await ctx.db.insert("users", {
+        phone: "+11234567894",
+        firstName: "Same",
+        lastName: "Second",
+        isActive: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+
+    const issuedAt = 1_700_000_000;
+    const revokedBefore = issuedAt * 1000 + 500;
+    await t.run(async (ctx) => {
+      await ctx.db.insert("tokenRevocations", {
+        userId,
+        revokedBefore,
+        createdAt: Date.now(),
+      });
+    });
+
+    const revoked = await t.run(async (ctx) =>
+      isTokenRevoked(ctx, userId, issuedAt)
+    );
+    expect(revoked).toBe(false);
+  });
+
+  test("isJwtSubjectRevokedInternal returns true when subject cannot be resolved", async () => {
+    const t = convexTest(schema, modules);
+
+    const revoked = await t.query(
+      internal.functions.authInternal.isJwtSubjectRevokedInternal,
+      { jwtUserId: "nonexistent_subject_xyz", issuedAt: 1_700_000_001 }
     );
     expect(revoked).toBe(true);
   });

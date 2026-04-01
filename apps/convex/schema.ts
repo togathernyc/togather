@@ -34,7 +34,7 @@ export default defineSchema({
   // Each record means "all tokens for this user issued before revokedBefore are invalid."
   tokenRevocations: defineTable({
     userId: v.id("users"),
-    revokedBefore: v.number(), // Unix timestamp ms — tokens with iat < this are rejected
+    revokedBefore: v.number(), // Unix ms; compared to JWT iat (whole seconds) via floor(revokedBefore/1000)
     createdAt: v.number(), // Unix timestamp ms
   }).index("by_userId", ["userId"]),
 
