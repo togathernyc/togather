@@ -113,8 +113,7 @@ export const verifyGroupAccess = internalMutation({
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
 
-    const isGroupLeader = groupMembership &&
-      (groupMembership.role === "leader" || groupMembership.role === "admin");
+    const isGroupLeader = groupMembership && isLeaderRole(groupMembership.role);
 
     // Check if user is a community admin
     const isAdmin = await isCommunityAdmin(ctx, group.communityId, userId);
@@ -254,8 +253,7 @@ export const verifyChannelAccess = internalMutation({
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
 
-    const isGroupLeader = groupMembership &&
-      (groupMembership.role === "leader" || groupMembership.role === "admin");
+    const isGroupLeader = groupMembership && isLeaderRole(groupMembership.role);
 
     // Allow sync if user is either a channel member OR a group leader
     if (!channelMembership && !isGroupLeader) {
