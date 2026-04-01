@@ -589,7 +589,7 @@ export const deleteAccount = action({
     args
   ): Promise<{ success: boolean }> => {
     // 1. Verify the user is authenticated
-    const tokenUserId = await requireAuthFromToken(args.token);
+    const tokenUserId = await requireAuthFromTokenAction(ctx, args.token);
 
     // Resolve to Convex user ID
     const resolved = await ctx.runQuery(
