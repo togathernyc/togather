@@ -10,7 +10,7 @@
  * - Toggle pin/unpin for each channel
  * - Save button to persist changes
  */
-import React, { useState, useCallback, useMemo, useEffect } from "react";
+import React, { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -76,13 +76,16 @@ export function ChannelPinningScreen({
     );
   }, [channels]);
 
-  // Initialize pinned slugs from server data
+  // Initialize pinned slugs from server data (once only).
+  // Reactive query updates must not overwrite unsaved local reordering.
+  const initializedRef = useRef(false);
   useEffect(() => {
-    if (channels) {
+    if (channels && !initializedRef.current) {
       const serverPinnedSlugs = channels
         .filter((ch: Channel) => ch.isPinned)
         .map((ch: Channel) => ch.slug);
       setPinnedChannelSlugs(serverPinnedSlugs);
+      initializedRef.current = true;
     }
   }, [channels]);
 
