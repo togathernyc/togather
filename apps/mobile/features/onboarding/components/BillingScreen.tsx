@@ -297,7 +297,13 @@ export function BillingScreen() {
         <View style={styles.container}>
           {/* Back link */}
           <Pressable
-            onPress={() => router.back()}
+            onPress={() => {
+              if (Platform.OS === "web") {
+                router.push("/");
+              } else {
+                router.back();
+              }
+            }}
             style={styles.backButton}
           >
             <Ionicons
