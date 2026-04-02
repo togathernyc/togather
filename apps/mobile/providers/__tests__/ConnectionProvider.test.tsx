@@ -254,11 +254,16 @@ describe('ConnectionProvider', () => {
     expect(result.current.isEffectivelyOffline).toBe(true);
   });
 
-  it('starts in connecting and shows disconnected after 6s grace if no connection on cold start', async () => {
+  it('starts in connecting and shows disconnected after 6s grace if network is down on cold start', async () => {
     mockIsWebSocketConnected = false;
     const { result } = renderHook(() => useConnectionStatus(), { wrapper });
 
     expect(result.current.status).toBe('connecting');
+
+    // Simulate network being down (not just WebSocket)
+    act(() => {
+      simulateNetInfoChange({ isConnected: false, isInternetReachable: false });
+    });
 
     // 2s debounce does NOT apply during cold start
     act(() => {
@@ -266,11 +271,29 @@ describe('ConnectionProvider', () => {
     });
     expect(result.current.status).toBe('connecting');
 
-    // After 6s grace period, show disconnected
+    // After 6s grace period, show disconnected (network is actually down)
     act(() => {
       jest.advanceTimersByTime(4000); // total 6s
     });
     expect(result.current.status).toBe('disconnected');
+  });
+
+  it('stays in connecting (no banner) after 6s grace if network is up but WebSocket is slow', async () => {
+    mockIsWebSocketConnected = false;
+    const { result } = renderHook(() => useConnectionStatus(), { wrapper });
+
+    expect(result.current.status).toBe('connecting');
+
+    // NetInfo reports network is available (default state)
+    act(() => {
+      simulateNetInfoChange({ isConnected: true, isInternetReachable: true });
+    });
+
+    // After 6s grace period, should NOT show disconnected — network is fine
+    act(() => {
+      jest.advanceTimersByTime(6000);
+    });
+    expect(result.current.status).toBe('connecting');
   });
 
   it('transitions from connecting to connected silently when connection established within grace period', async () => {
