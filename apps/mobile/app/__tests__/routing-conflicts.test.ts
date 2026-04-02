@@ -689,3 +689,32 @@ describe("Routing Structure Validation", () => {
   });
 });
 
+/**
+ * Guard against removing nested `_layout.tsx` files under `inbox/`.
+ *
+ * Parent stacks declare `<Stack.Screen name="[chat_id]" />` and
+ * `<Stack.Screen name="thread" />`. Without a layout in those directories,
+ * Expo Router can flatten child routes (e.g. `thread/[messageId]`), which
+ * mismatched React Navigation screen names and contributed to production
+ * "Maximum update depth exceeded" crashes (Sentry REACT-NATIVE-3F).
+ */
+describe("Inbox nested layout files (navigator name alignment)", () => {
+  const appDir = path.join(__dirname, "..");
+
+  it("includes inbox/[chat_id]/_layout.tsx", () => {
+    const layoutPath = path.join(appDir, "inbox", "[chat_id]", "_layout.tsx");
+    expect(fs.existsSync(layoutPath)).toBe(true);
+  });
+
+  it("includes inbox/[groupId]/thread/_layout.tsx", () => {
+    const layoutPath = path.join(
+      appDir,
+      "inbox",
+      "[groupId]",
+      "thread",
+      "_layout.tsx"
+    );
+    expect(fs.existsSync(layoutPath)).toBe(true);
+  });
+});
+
