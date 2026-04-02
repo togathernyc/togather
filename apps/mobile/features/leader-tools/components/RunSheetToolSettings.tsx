@@ -54,6 +54,7 @@ export function RunSheetToolSettings({ groupId }: Props) {
   const [defaultServiceTypeIds, setDefaultServiceTypeIds] = useState<string[]>([]);
   const [loadingServiceTypes, setLoadingServiceTypes] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
+  const [hasInitializedDefaults, setHasInitializedDefaults] = useState(false);
   const [chipConfig, setChipConfig] = useState<{
     hidden: string[];
     order: string[];
@@ -92,19 +93,29 @@ export function RunSheetToolSettings({ groupId }: Props) {
     return Array.from(normalized).sort();
   }, [allCategories]);
 
-  // Load existing config when group data is available
+  // Load existing config when group data is available (only once on initial load)
   useEffect(() => {
+    if (hasInitializedDefaults) return;
     if (groupData?.runSheetConfig?.defaultServiceTypeIds) {
       setDefaultServiceTypeIds(groupData.runSheetConfig.defaultServiceTypeIds);
+      setHasInitializedDefaults(true);
+    } else if (groupData !== undefined) {
+      // groupData loaded but no config exists yet
+      setHasInitializedDefaults(true);
     }
-  }, [groupData?.runSheetConfig?.defaultServiceTypeIds]);
+  }, [groupData, hasInitializedDefaults]);
 
-  // Load existing chipConfig from group data
+  // Load existing chipConfig from group data (only once on initial load)
+  const [hasInitializedChipConfig, setHasInitializedChipConfig] = useState(false);
   useEffect(() => {
+    if (hasInitializedChipConfig) return;
     if (groupData?.runSheetConfig?.chipConfig) {
       setChipConfig(groupData.runSheetConfig.chipConfig);
+      setHasInitializedChipConfig(true);
+    } else if (groupData !== undefined) {
+      setHasInitializedChipConfig(true);
     }
-  }, [groupData?.runSheetConfig?.chipConfig]);
+  }, [groupData, hasInitializedChipConfig]);
 
   // Fetch available service types
   useEffect(() => {
