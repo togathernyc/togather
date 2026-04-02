@@ -155,6 +155,11 @@ export function ImagePickerComponent({
   };
 
   const showImageOptions = () => {
+    if (Platform.OS === 'web') {
+      // Web: Camera not available, go straight to file picker
+      pickImage();
+      return;
+    }
     Alert.alert(
       'Select Image',
       'Choose an option',

@@ -158,18 +158,37 @@ export function CreateGroupScreen() {
         folder: "groups",
       });
 
-      // Upload file to R2 using expo-file-system/legacy
-      const uploadResult = await uploadAsync(uploadUrl, imageUri, {
-        httpMethod: 'PUT',
-        uploadType: FileSystemUploadType.BINARY_CONTENT,
-        headers: {
-          'Content-Type': contentType,
-        },
-      });
+      // Upload file to R2
+      if (Platform.OS === 'web') {
+        // Web: Use fetch/blob
+        const response = await fetch(imageUri);
+        const blob = await response.blob();
 
-      if (uploadResult.status < 200 || uploadResult.status >= 300) {
-        console.error('R2 upload failed:', uploadResult.status, uploadResult.body);
-        throw new Error('Failed to upload image to R2');
+        const uploadResponse = await fetch(uploadUrl, {
+          method: 'PUT',
+          body: blob,
+          headers: {
+            'Content-Type': contentType,
+          },
+        });
+
+        if (!uploadResponse.ok) {
+          throw new Error(`R2 upload failed: ${uploadResponse.status}`);
+        }
+      } else {
+        // Native (iOS/Android): Use expo-file-system for proper file handling
+        const uploadResult = await uploadAsync(uploadUrl, imageUri, {
+          httpMethod: 'PUT',
+          uploadType: FileSystemUploadType.BINARY_CONTENT,
+          headers: {
+            'Content-Type': contentType,
+          },
+        });
+
+        if (uploadResult.status < 200 || uploadResult.status >= 300) {
+          console.error('R2 upload failed:', uploadResult.status, uploadResult.body);
+          throw new Error('Failed to upload image to R2');
+        }
       }
 
       // Save the R2 storage path to the group's preview field
