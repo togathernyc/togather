@@ -521,6 +521,11 @@ export const join = mutation({
  *
  * Used by both the `leave` mutation (user leaves) and `removeMember` mutation (admin removes).
  */
+/**
+ * Phase 1: Lightweight synchronous removal.
+ * Deletes community membership (blocks re-access), clears activeCommunityId,
+ * cleans up communityPeople, then schedules background cleanup for groups.
+ */
 async function removeUserFromCommunity(
   ctx: any,
   userId: Id<"users">,
@@ -528,66 +533,21 @@ async function removeUserFromCommunity(
   membershipId: Id<"userCommunities">,
   logPrefix: string = "[communities.removeUserFromCommunity]"
 ): Promise<void> {
-  console.log(`${logPrefix} Starting community removal cleanup`, {
-    userId,
-    communityId,
-  });
+  console.log(`${logPrefix} Starting community removal`, { userId, communityId });
 
-  // 1. Delete the community membership record
+  // 1. Delete the community membership record (immediate access revocation)
   await ctx.db.delete(membershipId);
 
-  // 2. Find all groups in this community
-  const groupsInCommunity = await ctx.db
-    .query("groups")
-    .withIndex("by_community", (q: any) => q.eq("communityId", communityId))
-    .collect();
-
-  const groupIds = groupsInCommunity.map((g: any) => g._id);
-  console.log(`${logPrefix} Found groups in community`, {
-    groupCount: groupIds.length,
-  });
-
-  // 3. Delete user from all groups in this community
-  const userGroupMemberships = await ctx.db
-    .query("groupMembers")
-    .withIndex("by_user", (q: any) => q.eq("userId", userId))
-    .collect();
-
-  const groupMembershipsToRemove = userGroupMemberships.filter((gm: any) =>
-    groupIds.includes(gm.groupId)
-  );
-
-  console.log(`${logPrefix} Deleting group memberships`, {
-    count: groupMembershipsToRemove.length,
-  });
-
-  let followupsDeleted = 0;
-  let followupScoresDeleted = 0;
-  for (const gm of groupMembershipsToRemove) {
-    // Clean up follow-up artifacts tied to this membership to prevent zombie rows
-    // in the denormalized follow-up table after community removal.
-    const followups = await ctx.db
-      .query("memberFollowups")
-      .withIndex("by_groupMember", (q: any) => q.eq("groupMemberId", gm._id))
-      .collect();
-    for (const followup of followups) {
-      await ctx.db.delete(followup._id);
-      followupsDeleted++;
-    }
-
-    const scoreDoc = await ctx.db
-      .query("memberFollowupScores")
-      .withIndex("by_groupMember", (q: any) => q.eq("groupMemberId", gm._id))
-      .first();
-    if (scoreDoc) {
-      await ctx.db.delete(scoreDoc._id);
-      followupScoresDeleted++;
-    }
-
-    await ctx.db.delete(gm._id);
+  // 2. Clear user's activeCommunityId if it matches this community
+  const user = await ctx.db.get(userId);
+  if (user && user.activeCommunityId === communityId) {
+    await ctx.db.patch(userId, {
+      activeCommunityId: undefined,
+      updatedAt: now(),
+    });
   }
 
-  // Clean up communityPeople records for this user in this community
+  // 3. Clean up communityPeople records (lightweight — typically 1 record)
   const cpRecords = await ctx.db
     .query("communityPeople")
     .withIndex("by_community_user", (q: any) =>
@@ -598,58 +558,115 @@ async function removeUserFromCommunity(
     await ctx.db.delete(cp._id);
   }
 
-  console.log(`${logPrefix} Removed follow-up artifacts`, {
-    followupsDeleted,
-    followupScoresDeleted,
+  // 4. Schedule background cleanup for group memberships, followups, RSVPs, channels
+  await ctx.scheduler.runAfter(
+    0,
+    internal.functions.communities.cleanupRemovedMemberGroups,
+    { userId, communityId, groupOffset: 0 }
+  );
+
+  console.log(`${logPrefix} Membership deleted, background cleanup scheduled`, {
     communityPeopleDeleted: cpRecords.length,
   });
+}
 
-  // 4. Find all meetings in these groups and delete RSVPs
-  let rsvpsCancelled = 0;
-  for (const groupId of groupIds) {
-    const meetings = await ctx.db
-      .query("meetings")
-      .withIndex("by_group", (q: any) => q.eq("groupId", groupId))
+const CLEANUP_BATCH_SIZE = 5;
+
+/**
+ * Phase 2: Background cleanup of group-level data for a removed community member.
+ * Processes groups in batches, self-rescheduling until all groups are cleaned up.
+ * Idempotent — safe to retry if a previous run partially completed.
+ */
+export const cleanupRemovedMemberGroups = internalMutation({
+  args: {
+    userId: v.id("users"),
+    communityId: v.id("communities"),
+    groupOffset: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const { userId, communityId, groupOffset } = args;
+    const logPrefix = "[communities.cleanupRemovedMemberGroups]";
+
+    // Get all groups in the community
+    const allGroups = await ctx.db
+      .query("groups")
+      .withIndex("by_community", (q) => q.eq("communityId", communityId))
       .collect();
 
-    for (const meeting of meetings) {
-      const rsvp = await ctx.db
-        .query("meetingRsvps")
-        .withIndex("by_meeting_user", (q: any) =>
-          q.eq("meetingId", meeting._id).eq("userId", userId)
-        )
-        .first();
+    const batch = allGroups.slice(groupOffset, groupOffset + CLEANUP_BATCH_SIZE);
+    if (batch.length === 0) {
+      console.log(`${logPrefix} All groups cleaned up`, { userId, communityId });
+      return;
+    }
 
-      if (rsvp) {
+    const batchGroupIds = new Set(batch.map((g) => g._id));
+    console.log(`${logPrefix} Processing groups ${groupOffset}–${groupOffset + batch.length - 1} of ${allGroups.length}`, {
+      userId,
+    });
+
+    // Delete group memberships + followup artifacts for this batch
+    const userGroupMemberships = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+
+    const membershipsInBatch = userGroupMemberships.filter((gm) =>
+      batchGroupIds.has(gm.groupId)
+    );
+
+    for (const gm of membershipsInBatch) {
+      const followups = await ctx.db
+        .query("memberFollowups")
+        .withIndex("by_groupMember", (q) => q.eq("groupMemberId", gm._id))
+        .collect();
+      for (const followup of followups) {
+        await ctx.db.delete(followup._id);
+      }
+
+      const scoreDoc = await ctx.db
+        .query("memberFollowupScores")
+        .withIndex("by_groupMember", (q) => q.eq("groupMemberId", gm._id))
+        .first();
+      if (scoreDoc) {
+        await ctx.db.delete(scoreDoc._id);
+      }
+
+      await ctx.db.delete(gm._id);
+    }
+
+    // Delete RSVPs for meetings in this batch's groups using the by_user index
+    // (avoids iterating every meeting per group)
+    const userRsvps = await ctx.db
+      .query("meetingRsvps")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+
+    for (const rsvp of userRsvps) {
+      const meeting = await ctx.db.get(rsvp.meetingId);
+      if (meeting && batchGroupIds.has(meeting.groupId)) {
         await ctx.db.delete(rsvp._id);
-        rsvpsCancelled++;
       }
     }
-  }
 
-  console.log(`${logPrefix} Cancelled RSVPs`, {
-    count: rsvpsCancelled,
-  });
+    // Sync channel memberships (soft-delete via leftAt)
+    for (const group of batch) {
+      await syncUserChannelMembershipsLogic(ctx, userId, group._id);
+    }
 
-  // 5. Sync Convex-native channel memberships for each group (transactional)
-  // This soft-deletes chatChannelMembers by setting leftAt (preserves displayName/profilePhoto for historical messages)
-  // The sync logic checks groupMembers, finds user is no longer a member, and sets leftAt on their channel memberships
-  for (const groupId of groupIds) {
-    await syncUserChannelMembershipsLogic(ctx, userId, groupId);
-  }
-
-  console.log(`${logPrefix} Cleanup complete, soft-deleted channel memberships for ${groupIds.length} groups`);
-
-  // 6. Clear user's activeCommunityId if it matches this community
-  const user = await ctx.db.get(userId);
-  if (user && user.activeCommunityId === communityId) {
-    await ctx.db.patch(userId, {
-      activeCommunityId: undefined,
-      updatedAt: now(),
-    });
-    console.log(`${logPrefix} Cleared user's activeCommunityId`, { userId, communityId });
-  }
-}
+    // Self-reschedule if more groups remain
+    const nextOffset = groupOffset + CLEANUP_BATCH_SIZE;
+    if (nextOffset < allGroups.length) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.communities.cleanupRemovedMemberGroups,
+        { userId, communityId, groupOffset: nextOffset }
+      );
+      console.log(`${logPrefix} Scheduled next batch at offset ${nextOffset}`);
+    } else {
+      console.log(`${logPrefix} Cleanup complete`, { userId, communityId });
+    }
+  },
+});
 
 /**
  * Leave a community
