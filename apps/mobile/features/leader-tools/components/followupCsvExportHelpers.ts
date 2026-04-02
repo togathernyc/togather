@@ -1,27 +1,8 @@
+import { generateCSV } from "../../admin/utils/csvExportCore";
 import type { CustomFieldDef } from "./ColumnPickerModal";
 import { parseMultiSelectValues } from "./followupSelectFields";
 import { SYSTEM_SCORE_COLUMNS } from "./followupShared";
 import type { LeaderInfo } from "./followupGridHelpers";
-
-function escapeCSVField(field: string | number | null | undefined): string {
-  if (field === null || field === undefined) {
-    return "";
-  }
-  const str = String(field);
-  if (str.includes(",") || str.includes('"') || str.includes("\n") || str.includes("\r")) {
-    return `"${str.replace(/"/g, '""')}"`;
-  }
-  return str;
-}
-
-function generateCSV(
-  headers: string[],
-  rows: (string | number | null | undefined)[][],
-): string {
-  const headerLine = headers.map(escapeCSVField).join(",");
-  const dataLines = rows.map((row) => row.map(escapeCSVField).join(","));
-  return [headerLine, ...dataLines].join("\n");
-}
 
 export type FollowupCsvExportMember = {
   userId: string;
@@ -145,7 +126,7 @@ function formatCustomSlotValue(
     return raw === true ? "true" : raw === false ? "false" : "";
   }
   if (type === "number") {
-    return typeof raw === "number" && Number.isFinite(raw) ? String(raw) : String(raw);
+    return typeof raw === "number" && Number.isFinite(raw) ? String(raw) : "";
   }
   if (type === "multiselect") {
     const str = String(raw).trim();
