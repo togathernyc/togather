@@ -112,6 +112,7 @@ type FollowupMember = {
   customBool3?: boolean;
   customBool4?: boolean;
   customBool5?: boolean;
+  isLeader: boolean;
 };
 
 type LeaderRecord = {
@@ -1383,6 +1384,22 @@ export function FollowupMobileGrid({
   const renderDataCell = (member: FollowupMember, column: GridColumn) => {
     const value = column.getValue(member);
     if (column.kind === "score" && typeof value === "number") {
+      // Leader/admin scores are redacted for non-admin viewers
+      if (member.isLeader) {
+        return (
+          <View
+            style={[
+              styles.scorePill,
+              { borderColor: colors.border, backgroundColor: colors.border + "40" },
+            ]}
+          >
+            <Text style={[styles.scorePillText, { color: colors.textSecondary, fontSize: 10 }]}>
+              Leader
+            </Text>
+          </View>
+        );
+      }
+
       const scoreStyles = getScoreStyles(value, colors);
       return (
         <TouchableOpacity
@@ -1661,9 +1678,16 @@ export function FollowupMobileGrid({
           )}
 
           <View style={styles.memberTextWrap}>
-            <Text style={[styles.memberName, { color: colors.text }]} numberOfLines={1}>
-              {item.firstName} {item.lastName}
-            </Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+              <Text style={[styles.memberName, { color: colors.text }]} numberOfLines={1}>
+                {item.firstName} {item.lastName}
+              </Text>
+              {item.isLeader && (
+                <View style={styles.leaderBadge}>
+                  <Text style={styles.leaderBadgeText}>Leader</Text>
+                </View>
+              )}
+            </View>
             <Text style={[styles.memberSubtitle, { color: colors.textSecondary }]} numberOfLines={1}>
               {subtitleLine}
             </Text>
@@ -2649,6 +2673,17 @@ const styles = StyleSheet.create({
   memberSubtitle: {
     marginTop: 2,
     fontSize: 10,
+  },
+  leaderBadge: {
+    backgroundColor: "#6366f120",
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  leaderBadgeText: {
+    fontSize: 10,
+    color: "#6366f1",
+    fontWeight: "600",
   },
   groupNameBadge: {
     fontSize: 11,

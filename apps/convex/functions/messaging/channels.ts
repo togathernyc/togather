@@ -8,7 +8,7 @@ import { v, ConvexError } from "convex/values";
 import { query, mutation, action, internalMutation } from "../../_generated/server";
 import type { MutationCtx, QueryCtx } from "../../_generated/server";
 import type { Id, Doc } from "../../_generated/dataModel";
-import { requireAuth, requireAuthFromToken } from "../../lib/auth";
+import { requireAuth, requireAuthFromTokenAction } from "../../lib/auth";
 import { getDisplayName, getMediaUrl } from "../../lib/utils";
 import {
   isAutoChannel,
@@ -225,8 +225,7 @@ export const getChannel = query({
       return null;
     }
 
-    const isLeaderOrAdmin =
-      groupMembership.role === "leader" || groupMembership.role === "admin";
+    const isLeaderOrAdmin = isLeaderRole(groupMembership.role);
 
     // Leader-disabled custom/PCO: members cannot open the channel
     if (
@@ -379,8 +378,7 @@ export const getChannelBySlug = query({
       .first();
 
     const isMember = !!channelMembership;
-    const isLeaderOrAdmin =
-      groupMembership.role === "leader" || groupMembership.role === "admin";
+    const isLeaderOrAdmin = isLeaderRole(groupMembership.role);
 
     // Access control based on channel type
     if (resolvedChannel.channelType === "leaders") {
@@ -464,8 +462,7 @@ export const getChannelsByGroup = query({
     }
 
     // Filter based on role and membership
-    const isLeader =
-      groupMembership.role === "leader" || groupMembership.role === "admin";
+    const isLeader = isLeaderRole(groupMembership.role);
 
     const filteredChannels = channels.filter((channel) => {
       // Leaders channel requires leader/admin role
@@ -1429,8 +1426,7 @@ export const updateChannel = mutation({
       .first();
 
     const isChannelAdmin = membership?.role === "admin";
-    const isGroupLeader =
-      groupMembership?.role === "leader" || groupMembership?.role === "admin";
+    const isGroupLeader = isLeaderRole(groupMembership?.role);
 
     if (!isChannelAdmin && !isGroupLeader) {
       throw new Error("Not authorized to update this channel");
@@ -3041,7 +3037,7 @@ export const ensureChannels = action({
   },
   handler: async (ctx, args): Promise<{ created: boolean; createdChannelIds: Id<"chatChannels">[] }> => {
     // Verify token and get user ID string
-    const tokenUserId = await requireAuthFromToken(args.token);
+    const tokenUserId = await requireAuthFromTokenAction(ctx, args.token);
 
     // Resolve to Convex user ID using internal query from users module
     const userLookup = await ctx.runQuery(

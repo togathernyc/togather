@@ -8,10 +8,19 @@
  */
 
 import { convexTest } from "convex-test";
-import { expect, test, describe } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import schema from "../schema";
-import { internal } from "../_generated/api";
+import { api, internal } from "../_generated/api";
 import { modules } from "../test.setup";
+import {
+  generateTokens,
+  verifyAccessToken,
+  verifyRefreshToken,
+  REFRESH_TOKEN_MAX_AGE_MS,
+  isTokenRevoked,
+} from "../lib/auth";
+
+process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
 
 // ============================================================================
 // Constants
@@ -29,6 +38,264 @@ const MEMBERSHIP_STATUS = {
   INACTIVE: 2,
   BLOCKED: 3,
 } as const;
+
+// ============================================================================
+// Token revocation (signout blacklist)
+// ============================================================================
+
+describe("Token revocation", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test("signout does not lower revokedBefore when clock moves backward", async () => {
+    const t = convexTest(schema, modules);
+
+    const userId = await t.run(async (ctx) => {
+      return await ctx.db.insert("users", {
+        phone: "+11234567892",
+        firstName: "Clock",
+        lastName: "Skew",
+        isActive: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+
+    const futureRevokedBefore = 2_000_000_000_000;
+    await t.run(async (ctx) => {
+      await ctx.db.insert("tokenRevocations", {
+        userId,
+        revokedBefore: futureRevokedBefore,
+        createdAt: futureRevokedBefore,
+      });
+    });
+
+    const { accessToken } = await generateTokens(userId);
+    vi.spyOn(Date, "now").mockReturnValue(1_000_000_000_000);
+
+    await t.mutation(api.functions.authInternal.signout, {
+      token: accessToken,
+    });
+
+    const row = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("tokenRevocations")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .first();
+    });
+    expect(row?.revokedBefore).toBe(futureRevokedBefore);
+  });
+
+  test("signout succeeds with valid access token even if already revoked", async () => {
+    const t = convexTest(schema, modules);
+
+    const userId = await t.run(async (ctx) => {
+      return await ctx.db.insert("users", {
+        phone: "+11234567890",
+        firstName: "John",
+        lastName: "Doe",
+        isActive: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+
+    const { accessToken } = await generateTokens(userId);
+    const revokedBefore = Date.now() + 60_000;
+    await t.run(async (ctx) => {
+      await ctx.db.insert("tokenRevocations", {
+        userId,
+        revokedBefore,
+        createdAt: Date.now(),
+      });
+    });
+
+    await expect(
+      t.query(api.functions.authInternal.phoneStatus, { token: accessToken })
+    ).rejects.toThrow("Not authenticated");
+
+    const out = await t.mutation(api.functions.authInternal.signout, {
+      token: accessToken,
+    });
+    expect(out).toEqual({ success: true });
+  });
+
+  test("signout records revocation when access token is expired", async () => {
+    const t = convexTest(schema, modules);
+
+    const userId = await t.run(async (ctx) => {
+      return await ctx.db.insert("users", {
+        phone: "+11234567893",
+        firstName: "Stale",
+        lastName: "Token",
+        isActive: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+
+    const { accessToken } = await generateTokens(userId);
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(Date.now() + 40 * 24 * 60 * 60 * 1000));
+    try {
+      expect(await verifyAccessToken(accessToken)).toBeNull();
+
+      await t.mutation(api.functions.authInternal.signout, {
+        token: accessToken,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const row = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("tokenRevocations")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .first();
+    });
+    expect(row).not.toBeNull();
+    expect(row?.userId).toBe(userId);
+  });
+
+  test("isJwtSubjectRevokedInternal flags refresh tokens issued before signout", async () => {
+    const t = convexTest(schema, modules);
+
+    const userId = await t.run(async (ctx) => {
+      return await ctx.db.insert("users", {
+        phone: "+11234567891",
+        firstName: "Jane",
+        lastName: "Doe",
+        isActive: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+
+    const { refreshToken } = await generateTokens(userId);
+    const refreshPayload = await verifyRefreshToken(refreshToken);
+    expect(refreshPayload).not.toBeNull();
+
+    const notRevoked = await t.query(
+      internal.functions.authInternal.isJwtSubjectRevokedInternal,
+      { jwtUserId: userId, issuedAt: refreshPayload!.issuedAt }
+    );
+    expect(notRevoked).toBe(false);
+
+    const revokedBefore = Date.now() + 60_000;
+    await t.run(async (ctx) => {
+      await ctx.db.insert("tokenRevocations", {
+        userId,
+        revokedBefore,
+        createdAt: Date.now(),
+      });
+    });
+
+    const revoked = await t.query(
+      internal.functions.authInternal.isJwtSubjectRevokedInternal,
+      { jwtUserId: userId, issuedAt: refreshPayload!.issuedAt }
+    );
+    expect(revoked).toBe(true);
+  });
+
+  test("isTokenRevoked does not reject token when iat second equals floor(revokedBefore ms)", async () => {
+    const t = convexTest(schema, modules);
+
+    const userId = await t.run(async (ctx) => {
+      return await ctx.db.insert("users", {
+        phone: "+11234567894",
+        firstName: "Same",
+        lastName: "Second",
+        isActive: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+
+    const issuedAt = 1_700_000_000;
+    const revokedBefore = issuedAt * 1000 + 500;
+    await t.run(async (ctx) => {
+      await ctx.db.insert("tokenRevocations", {
+        userId,
+        revokedBefore,
+        createdAt: Date.now(),
+      });
+    });
+
+    const revoked = await t.run(async (ctx) =>
+      isTokenRevoked(ctx, userId, issuedAt)
+    );
+    expect(revoked).toBe(false);
+  });
+
+  test("isJwtSubjectRevokedInternal returns true when subject cannot be resolved", async () => {
+    const t = convexTest(schema, modules);
+
+    const revoked = await t.query(
+      internal.functions.authInternal.isJwtSubjectRevokedInternal,
+      { jwtUserId: "nonexistent_subject_xyz", issuedAt: 1_700_000_001 }
+    );
+    expect(revoked).toBe(true);
+  });
+
+  test("cleanupStaleTokenRevocations keeps rows needed for refresh token lifetime", async () => {
+    const t = convexTest(schema, modules);
+    const oneDayMs = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+
+    const keepUserId = await t.run(async (ctx) => {
+      return await ctx.db.insert("users", {
+        phone: "+11234567892",
+        firstName: "Keep",
+        lastName: "Revocation",
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+    const deleteUserId = await t.run(async (ctx) => {
+      return await ctx.db.insert("users", {
+        phone: "+11234567893",
+        firstName: "Stale",
+        lastName: "Revocation",
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+
+    const stillNeededRevokedBefore = now - REFRESH_TOKEN_MAX_AGE_MS;
+    const staleRevokedBefore =
+      now - REFRESH_TOKEN_MAX_AGE_MS - 2 * oneDayMs;
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("tokenRevocations", {
+        userId: keepUserId,
+        revokedBefore: stillNeededRevokedBefore,
+        createdAt: now,
+      });
+      await ctx.db.insert("tokenRevocations", {
+        userId: deleteUserId,
+        revokedBefore: staleRevokedBefore,
+        createdAt: now,
+      });
+    });
+
+    const { deletedCount } = await t.mutation(
+      internal.functions.authInternal.cleanupStaleTokenRevocations,
+      {}
+    );
+    expect(deletedCount).toBe(1);
+
+    const remaining = await t.run(async (ctx) => {
+      return await ctx.db.query("tokenRevocations").collect();
+    });
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].userId).toEqual(keepUserId);
+    expect(remaining[0].revokedBefore).toBe(stillNeededRevokedBefore);
+  });
+});
 
 // ============================================================================
 // getUserByPhoneInternal Tests

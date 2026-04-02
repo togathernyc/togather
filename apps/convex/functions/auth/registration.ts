@@ -6,14 +6,17 @@
  * - registerNewUser: Phone-based registration for new users
  * - signup: Legacy email/password signup
  * - changePassword: Password change for existing users
+ * - sendResetPasswordEmail: Send password reset code via email
+ * - resetPassword: Verify code and set new password
  */
 
 import { v } from "convex/values";
 import { action } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import { normalizePhone } from "../../lib/utils";
-import { generateTokens, requireAuthFromToken } from "../../lib/auth";
-import { parseAndValidateDate } from "./helpers";
+import { generateTokens, requireAuthFromTokenAction } from "../../lib/auth";
+import { parseAndValidateDate, isTestEmail, MAGIC_CODE } from "./helpers";
+import { sendEmailOTP, verifyEmailOTP } from "./emailOtp";
 
 /**
  * Register a new user and return JWT tokens
@@ -289,7 +292,7 @@ export const changePassword = action({
   },
   handler: async (ctx, args): Promise<{ success: boolean }> => {
     // Derive userId from auth token instead of accepting from client
-    const tokenUserId = await requireAuthFromToken(args.token);
+    const tokenUserId = await requireAuthFromTokenAction(ctx, args.token);
 
     // Resolve to Convex user ID
     const resolved = await ctx.runQuery(internal.functions.users.resolveUserIdInternal, {
@@ -334,6 +337,124 @@ export const changePassword = action({
       {
         userId,
         passwordHash: newPasswordHash,
+      }
+    );
+
+    return { success: true };
+  },
+});
+
+/**
+ * Send a password reset code to the user's email.
+ *
+ * Looks up the user by email and sends a 6-digit OTP via Resend.
+ * For security, always returns success even if no user is found
+ * (prevents email enumeration).
+ */
+export const sendResetPasswordEmail = action({
+  args: {
+    email: v.string(),
+  },
+  handler: async (ctx, args): Promise<{ success: boolean }> => {
+    const normalizedEmail = args.email.toLowerCase().trim();
+
+    // Look up user by email (don't reveal if they exist)
+    const user = await ctx.runQuery(
+      internal.functions.authInternal.getUserByEmailInternal,
+      { email: normalizedEmail }
+    );
+
+    if (!user) {
+      // Return success to prevent email enumeration
+      return { success: true };
+    }
+
+    // Send OTP via Resend (reuses email OTP infrastructure).
+    // Swallow send failures so responses match the non-existent-user path (enumeration-safe).
+    try {
+      await sendEmailOTP(ctx, normalizedEmail, "password_reset");
+    } catch (error) {
+      console.error("sendResetPasswordEmail: failed to send OTP", {
+        email: normalizedEmail,
+        error,
+      });
+    }
+
+    return { success: true };
+  },
+});
+
+/**
+ * Reset password using email OTP verification.
+ *
+ * Verifies the email OTP code, then sets the new password.
+ */
+export const resetPassword = action({
+  args: {
+    email: v.string(),
+    code: v.string(),
+    newPassword: v.string(),
+  },
+  handler: async (ctx, args): Promise<{ success: boolean }> => {
+    const normalizedEmail = args.email.toLowerCase().trim();
+
+    // Validate new password length
+    if (args.newPassword.length < 8) {
+      throw new Error("Password must be at least 8 characters");
+    }
+
+    // Rate limit verification attempts (aligned with verifyPhoneOTP: 10 / 15 min).
+    // Skip when test email uses magic code — same conditions as verifyEmailOTP.
+    const isProduction = process.env.NODE_ENV === "production";
+    const isDebug = process.env.DEBUG === "true";
+    const skipRateLimit =
+      isTestEmail(normalizedEmail) &&
+      args.code === MAGIC_CODE &&
+      (!isProduction || isDebug);
+    if (!skipRateLimit) {
+      await ctx.runMutation(
+        internal.functions.authInternal.checkRateLimitInternal,
+        {
+          key: `reset_password_verify:${normalizedEmail}`,
+          maxAttempts: 10,
+          windowMs: 15 * 60 * 1000,
+        }
+      );
+    }
+
+    // Verify the OTP code
+    const isValid = await verifyEmailOTP(
+      ctx,
+      normalizedEmail,
+      args.code,
+      "password_reset"
+    );
+    if (!isValid) {
+      throw new Error("Invalid or expired reset code");
+    }
+
+    // Look up user by email
+    const user = await ctx.runQuery(
+      internal.functions.authInternal.getUserByEmailInternal,
+      { email: normalizedEmail }
+    );
+
+    if (!user) {
+      // Return generic error to prevent account enumeration.
+      // The OTP was already consumed, so an attacker can't retry.
+      throw new Error("Invalid or expired reset code");
+    }
+
+    // Hash new password
+    const bcrypt = await import("bcryptjs");
+    const passwordHash = await bcrypt.hash(args.newPassword, 10);
+
+    // Update password
+    await ctx.runMutation(
+      internal.functions.authInternal.updatePasswordInternal,
+      {
+        userId: user._id,
+        passwordHash,
       }
     );
 

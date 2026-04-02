@@ -23,13 +23,14 @@ import React, {
   useCallback,
   useRef,
 } from 'react';
-import { Platform, AppState, AppStateStatus } from 'react-native';
+import { Platform, AppState, AppStateStatus, Alert, Linking } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import { router } from 'expo-router';
 import { useAuth } from './AuthProvider';
 import { convexVanilla, api, useQuery, useMutation } from '@services/api/convex';
 import type { Id } from '@services/api/convex';
+import { useAwaitPrefetch } from '@features/chat/hooks/usePrefetchChannel';
 
 // Try to import expo-notifications - may not be installed yet
 let Notifications: typeof import('expo-notifications') | null = null;
@@ -110,6 +111,9 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
   const [lastNotification, setLastNotification] = useState<NotificationData | null>(null);
   const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
 
+  // Prefetch hook — same one the inbox uses for smooth chat navigation
+  const awaitPrefetch = useAwaitPrefetch();
+
   const notificationListener = useRef<any>(null);
   const responseListener = useRef<any>(null);
   const appState = useRef(AppState.currentState);
@@ -123,10 +127,15 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
     activeChannelIdRef.current = activeChannelId;
   }, [activeChannelId]);
 
-  // Load auth token from AsyncStorage
+  // Load auth token from AsyncStorage — must re-run when auth state changes
+  // so that after logout + login the fresh token is picked up for registerToken()
   useEffect(() => {
-    AsyncStorage.getItem('auth_token').then(setAuthToken);
-  }, []);
+    if (isAuthenticated) {
+      AsyncStorage.getItem('auth_token').then(setAuthToken);
+    } else {
+      setAuthToken(null);
+    }
+  }, [isAuthenticated]);
 
   // Use reactive query for unread count - only when we have a valid auth token
   const unreadCountResult = useQuery(
@@ -310,35 +319,56 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
         break;
       case 'new_message':
       case 'mention': {
-        // Prefer url when present (backend sends pre-computed deep link for Issue #48)
-        // Fallback: build path from groupId + channelSlug or channelType
-        // Pass fromNotification flag so chat screen can wait for data before rendering
-        if (groupId && channelSlug) {
-          const targetPath = `/inbox/${groupId}/${channelSlug}`;
+        // If user is already viewing this channel, skip navigation entirely
+        // to avoid re-mounting the screen and causing a blank flash.
+        if (channelId && activeChannelIdRef.current === channelId) {
+          console.log(`[${type}] Already viewing channel ${channelId}, skipping navigation`);
+          break;
+        }
+
+        // Use the same prefetch-then-navigate flow as the inbox for a smooth experience.
+        // Notification payload includes channelId, groupId, groupName, channelSlug.
+        const resolvedSlug = channelSlug || (channelType === 'main' ? 'general' : channelType === 'leaders' ? 'leaders' : channelType);
+        const groupName = (data.groupName || nestedData?.groupName) as string | undefined;
+
+        if (channelId && groupId) {
+          // Prefetch messages before navigating (same as inbox, 3s timeout)
+          console.log(`[${type}] Prefetching channel ${channelId} before navigation`);
+          await awaitPrefetch(channelId as Id<"chatChannels">, 3000);
+
+          // Without slug/type, use legacy route which resolves slug from the channel
+          if (!resolvedSlug) {
+            const targetPath = `/inbox/${channelId}`;
+            console.log(`[${type}] Navigating to legacy route (no slug in payload):`, targetPath);
+            router.push({
+              pathname: targetPath,
+              params: {
+                groupId,
+                ...(groupName ? { groupName } : {}),
+              },
+            } as any);
+            break;
+          }
+
+          const targetPath = `/inbox/${groupId}/${resolvedSlug}`;
           console.log(`[${type}] Navigating to:`, targetPath);
-          router.push({ pathname: targetPath, params: { fromNotification: "1" } } as any);
-        } else if (groupId && channelType) {
-          // Map channelType to slug: "main" -> "general", "leaders" -> "leaders"
-          // For custom channels, the channelType IS the slug
-          const channelSlug = channelType === 'main' ? 'general' : (channelType === 'leaders' ? 'leaders' : channelType);
-          const targetPath = `/inbox/${groupId}/${channelSlug}`;
-          console.log(`[${type}] Navigating to:`, targetPath);
-          router.push({ pathname: targetPath, params: { fromNotification: "1" } } as any);
-        } else if (channelId) {
-          // Use legacy route which will query DB to determine correct channel slug
-          // This ensures leaders channel notifications land on the correct tab
-          const targetPath = `/inbox/${channelId}`;
-          console.log(`[${type}] Navigating to legacy route:`, targetPath);
           router.push({
             pathname: targetPath,
-            params: { ...(groupId ? { groupId } : {}), fromNotification: "1" },
+            params: {
+              channelId,
+              ...(groupName ? { groupName } : {}),
+            },
           } as any);
         } else if (groupId) {
-          // Last resort: have groupId but no channelType and no channelId
-          // Default to general (best guess)
-          const targetPath = `/inbox/${groupId}/general`;
-          console.log(`[${type}] Navigating with default channelSlug:`, targetPath);
-          router.push({ pathname: targetPath, params: { fromNotification: "1" } } as any);
+          // No channelId available — navigate without prefetch, screen will load data
+          const targetPath = `/inbox/${groupId}/${resolvedSlug || 'general'}`;
+          console.log(`[${type}] Navigating (no prefetch):`, targetPath);
+          router.push({ pathname: targetPath } as any);
+        } else if (channelId) {
+          // Only channelId, no groupId — use legacy route
+          const targetPath = `/inbox/${channelId}`;
+          console.log(`[${type}] Navigating to legacy route:`, targetPath);
+          router.push({ pathname: targetPath } as any);
         } else {
           console.log(`[${type}] No groupId or channelId, falling back to /(tabs)/chat`);
           router.push('/(tabs)/chat');
@@ -383,7 +413,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
         // Default: do nothing or navigate to home
         console.log('Unknown notification type:', type);
     }
-  }, [community?.id, setCommunity, resolveGroupIdForNavigation]);
+  }, [community?.id, setCommunity, resolveGroupIdForNavigation, awaitPrefetch]);
 
   // Configure notification handler
   useEffect(() => {
@@ -449,6 +479,19 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
       if (granted) {
         // Register token
         await registerToken();
+      } else if (Platform.OS !== 'web') {
+        // Nag the user to enable notifications if they haven't
+        Alert.alert(
+          'Turn on Notifications',
+          "Don't miss messages from your community! Enable push notifications to stay in the loop.",
+          [
+            { text: 'Not Now', style: 'cancel' },
+            {
+              text: 'Open Settings',
+              onPress: () => Linking.openSettings(),
+            },
+          ],
+        );
       }
 
       // Get initial unread count

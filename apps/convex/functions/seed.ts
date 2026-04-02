@@ -22,6 +22,7 @@ import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
 import { now, generateShortId, normalizePhone, buildSearchText } from "../lib/utils";
 import { COMMUNITY_ROLES } from "../lib/permissions";
+import { isLeaderRole } from "../lib/helpers";
 
 // ============================================================================
 // Constants
@@ -930,7 +931,7 @@ export const _seedPeopleDataMutation = internalMutation({
       .withIndex("by_user", (q: any) => q.eq("userId", testUser._id))
       .collect();
     const leaderMemberships = memberships.filter(
-      (m) => m.leftAt === undefined && (m.role === "leader" || m.role === "admin")
+      (m) => m.leftAt === undefined && isLeaderRole(m.role)
     );
 
     console.log(`[seedPeople] Found ${leaderMemberships.length} leader groups`);

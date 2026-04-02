@@ -82,7 +82,6 @@ type ChatRoomParams = {
   leadersChannelId?: string;
   isAnnouncementGroup?: string;
   externalChatLink?: string;
-  fromNotification?: string;
 };
 
 const ConvexChatRoomScreenInner: React.FC = () => {
@@ -127,7 +126,6 @@ const ConvexChatRoomScreenInner: React.FC = () => {
     isLeader,
     isAnnouncementGroup: isAnnouncementGroupParam,
     externalChatLink: externalChatLinkParam,
-    fromNotification,
   } = params;
 
   // Resolve channel slug - prefer channelSlug, fall back to channelType for backwards compatibility
@@ -857,18 +855,13 @@ const ConvexChatRoomScreenInner: React.FC = () => {
     Keyboard.dismiss();
   }, []);
 
-  // When arriving from a notification, wait for essential data to resolve before
-  // showing the full UI — otherwise the header, tabs, and message list all pop in
-  // at different times causing layout jumps.
-  const isFromNotification = fromNotification === "1";
-  const isDataReady = !isFromNotification || (
-    resolvedGroupId &&
-    groupDetails !== undefined &&
-    activeChannelId != null
-  );
+  // Don't render the full UI until essential data is ready. Without this gate,
+  // the toolbar and message list flash empty then populate, causing visible jitter.
+  // The inbox flow resolves quickly (prefetch + params), notifications may take longer.
+  const isEssentialDataReady = resolvedGroupId && activeChannelId != null;
 
-  // Loading state: show placeholder while group ID resolves or notification data loads
-  if (!resolvedGroupId || !isDataReady) {
+  // Loading state: show placeholder while essential data resolves
+  if (!isEssentialDataReady) {
     return (
       <View style={[styles.container, { backgroundColor: colors.surface }]}>
         <ChatHeaderPlaceholder

@@ -203,7 +203,9 @@ export function VoiceRecorderBar({ onSend, onCancel }: VoiceRecorderBarProps) {
           sound.release();
         } else {
           // expo-av Sound: unload the audio
-          sound.unloadAsync?.().catch(() => {});
+          sound.unloadAsync?.().catch((err) => {
+            console.warn('[VoiceRecorderBar] Failed to unload audio:', err);
+          });
         }
         soundRef.current = null;
       }

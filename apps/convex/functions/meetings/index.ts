@@ -16,6 +16,7 @@ import {
   DEFAULT_MEETING_DURATION_MS,
   DEFAULT_RSVP_OPTIONS,
 } from "../../lib/meetingConfig";
+import { buildMeetingSearchText } from "../../lib/meetingSearchText";
 
 // Re-export meeting config for consumers that import from this module
 export {
@@ -130,6 +131,12 @@ export const create = mutation({
 
     const timestamp = now();
 
+    // Look up group for communityId and name (used for search)
+    const group = await ctx.db.get(args.groupId);
+    if (!group) {
+      throw new Error("Group not found");
+    }
+
     // Generate a short ID for URLs (e.g., "abc123xyz")
     const shortId = generateShortId();
 
@@ -167,6 +174,13 @@ export const create = mutation({
       reminderSent: false,
       attendanceConfirmationAt,
       attendanceConfirmationSent: false,
+      // Denormalized search fields
+      communityId: group.communityId,
+      searchText: buildMeetingSearchText({
+        title: args.title,
+        locationOverride: args.locationOverride,
+        groupName: group.name,
+      }),
     });
 
     // Schedule reminder (only if reminderAt is in the future) and store job ID
@@ -352,6 +366,16 @@ export const update = mutation({
       // Store new job IDs (will be patched along with other updates)
       cleanedUpdates.reminderJobId = newReminderJobId;
       cleanedUpdates.attendanceConfirmationJobId = newAttendanceConfirmationJobId;
+    }
+
+    // Rebuild searchText if title or location changed
+    if (updates.title !== undefined || updates.locationOverride !== undefined) {
+      const group = await ctx.db.get(meeting.groupId);
+      cleanedUpdates.searchText = buildMeetingSearchText({
+        title: updates.title ?? meeting.title,
+        locationOverride: updates.locationOverride ?? meeting.locationOverride,
+        groupName: group?.name,
+      });
     }
 
     // Apply updates

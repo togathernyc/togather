@@ -237,3 +237,4 @@ apps/mobile/secrets/
 # Root-level screenshots
 /*.png
 /*.csv
+apps/mobile/build-output/

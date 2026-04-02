@@ -9,6 +9,7 @@
 import { v } from "convex/values";
 import { internalQuery, query } from "../../_generated/server";
 import { requireAuth } from "../../lib/auth";
+import { isLeaderRole } from "../../lib/helpers";
 
 /**
  * Get the PCO integration for a community (internal use only).
@@ -102,8 +103,7 @@ export const getAutoChannelConfigByChannel = query({
         .first();
 
       // For custom/pco_services channels, need to be a channel member or group leader/admin
-      const isLeaderOrAdmin =
-        groupMembership.role === "leader" || groupMembership.role === "admin";
+      const isLeaderOrAdmin = isLeaderRole(groupMembership.role);
 
       if (!channelMembership && !isLeaderOrAdmin) {
         return null;

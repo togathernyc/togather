@@ -18,6 +18,7 @@ import {
 } from "../../lib/pcoServicesApi";
 import { requireAuth } from "../../lib/auth";
 import { isCommunityAdmin } from "../../lib/permissions";
+import { isLeaderRole } from "../../lib/helpers";
 import { applyFilters, deduplicateByPersonId } from "./filterHelpers";
 import {
   formatTeamDisplayName,
@@ -112,8 +113,7 @@ export const verifyGroupAccess = internalMutation({
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
 
-    const isGroupLeader = groupMembership &&
-      (groupMembership.role === "leader" || groupMembership.role === "admin");
+    const isGroupLeader = groupMembership && isLeaderRole(groupMembership.role);
 
     // Check if user is a community admin
     const isAdmin = await isCommunityAdmin(ctx, group.communityId, userId);
@@ -253,8 +253,7 @@ export const verifyChannelAccess = internalMutation({
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
 
-    const isGroupLeader = groupMembership &&
-      (groupMembership.role === "leader" || groupMembership.role === "admin");
+    const isGroupLeader = groupMembership && isLeaderRole(groupMembership.role);
 
     // Allow sync if user is either a channel member OR a group leader
     if (!channelMembership && !isGroupLeader) {
@@ -981,18 +980,49 @@ export const triggerGroupSync = action({
 
 /**
  * Internal query to get all channels for a group.
- * Used by triggerGroupSync to find channels to sync.
+ * Used by triggerGroupSync and run sheet queries to find channels to sync.
+ *
+ * Returns channels owned by this group AND shared channels where this group
+ * is an accepted secondary participant — so secondary groups in a shared-group
+ * relationship can discover the primary group's PCO configuration.
  */
 export const getChannelsForGroup = internalQuery({
   args: {
     groupId: v.id("groups"),
   },
   handler: async (ctx, args) => {
-    return await ctx.db
+    // 1. Channels owned by this group
+    const ownedChannels = await ctx.db
       .query("chatChannels")
       .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
       .filter((q) => q.eq(q.field("isArchived"), false))
       .collect();
+
+    // 2. Shared channels where this group is an accepted secondary participant
+    const sharedChannels = await ctx.db
+      .query("chatChannels")
+      .withIndex("by_isShared", (q) => q.eq("isShared", true))
+      .filter((q) => q.eq(q.field("isArchived"), false))
+      .collect();
+
+    const acceptedSharedChannels = sharedChannels.filter(
+      (ch) =>
+        ch.sharedGroups?.some(
+          (sg) => sg.groupId === args.groupId && sg.status === "accepted"
+        )
+    );
+
+    // 3. Deduplicate (a channel owned by the group won't also have it in sharedGroups,
+    // but guard against edge cases)
+    const seenIds = new Set(ownedChannels.map((ch) => ch._id));
+    for (const ch of acceptedSharedChannels) {
+      if (!seenIds.has(ch._id)) {
+        ownedChannels.push(ch);
+        seenIds.add(ch._id);
+      }
+    }
+
+    return ownedChannels;
   },
 });
 

@@ -26,6 +26,18 @@ export default defineSchema({
   // These tables are required by Convex Auth for session management.
   // See: https://labs.convex.dev/auth
   ...authTables,
+
+  // =============================================================================
+  // TOKEN REVOCATIONS (signout blacklist)
+  // =============================================================================
+  // Tracks when users sign out so tokens issued before that time are rejected.
+  // Each record means "all tokens for this user issued before revokedBefore are invalid."
+  tokenRevocations: defineTable({
+    userId: v.id("users"),
+    revokedBefore: v.number(), // Unix ms; compared to JWT iat (whole seconds) via floor(revokedBefore/1000)
+    createdAt: v.number(), // Unix timestamp ms
+  }).index("by_userId", ["userId"]),
+
   // =============================================================================
   // COMMUNITIES
   // =============================================================================
@@ -96,6 +108,7 @@ export default defineSchema({
     .index("by_slug", ["slug"])
     .index("by_public", ["isPublic"])
     .index("by_stripeCustomerId", ["stripeCustomerId"])
+    .index("by_stripeSubscriptionId", ["stripeSubscriptionId"])
     .searchIndex("search_communities", {
       searchField: "searchText",
       filterFields: ["isPublic"],
@@ -573,6 +586,10 @@ export default defineSchema({
     // Community-wide event link
     communityWideEventId: v.optional(v.id("communityWideEvents")), // Link to parent
     isOverridden: v.optional(v.boolean()), // Leader customized, stops cascade
+
+    // Search support (denormalized)
+    communityId: v.optional(v.id("communities")), // Denormalized from group for search filtering
+    searchText: v.optional(v.string()), // Denormalized: title + location + group name
   })
     .index("by_legacyId", ["legacyId"])
     .index("by_group", ["groupId"])
@@ -587,7 +604,12 @@ export default defineSchema({
       "attendanceConfirmationAt",
       "attendanceConfirmationSent",
     ])
-    .index("by_communityWideEvent", ["communityWideEventId"]),
+    .index("by_communityWideEvent", ["communityWideEventId"])
+    .index("by_community", ["communityId"])
+    .searchIndex("search_meetings", {
+      searchField: "searchText",
+      filterFields: ["communityId", "status"],
+    }),
 
   // =============================================================================
   // MEETING RSVP
@@ -1193,6 +1215,11 @@ export default defineSchema({
 
   emailVerificationCodes: defineTable({
     email: v.string(), // The email address
+    /** Distinguishes account-claim vs password-reset so OTPs are not interchangeable. */
+    purpose: v.union(
+      v.literal("account_claim"),
+      v.literal("password_reset")
+    ),
     code: v.string(), // The 6-digit verification code
     expiresAt: v.number(), // Unix timestamp ms when the code expires
     usedAt: v.optional(v.number()), // Unix timestamp ms when the code was used
@@ -1200,6 +1227,8 @@ export default defineSchema({
   })
     .index("by_email", ["email"])
     .index("by_email_code", ["email", "code"])
+    .index("by_email_purpose", ["email", "purpose"])
+    .index("by_email_code_purpose", ["email", "code", "purpose"])
     .index("by_expiresAt", ["expiresAt"]),
 
   // =============================================================================

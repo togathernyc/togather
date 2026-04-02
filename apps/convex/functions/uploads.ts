@@ -9,7 +9,11 @@
 
 import { v } from "convex/values";
 import { mutation, query, action } from "../_generated/server";
-import { requireAuth, requireAuthFromToken } from "../lib/auth";
+import { internal } from "../_generated/api";
+import type { Id } from "../_generated/dataModel";
+import { requireAuth, requireAuthFromTokenAction } from "../lib/auth";
+import { now } from "../lib/utils";
+import { requireGroupLeaderOrCommunityAdmin } from "./groups/mutations";
 
 // ============================================================================
 // Constants
@@ -156,7 +160,7 @@ export const confirmUpload = mutation({
     storageId: string;
     url: string;
   }> => {
-    await requireAuth(ctx, args.token);
+    const authUserId = await requireAuth(ctx, args.token);
 
     // Get the file URL
     const url = await ctx.storage.getUrl(args.storageId);
@@ -168,25 +172,47 @@ export const confirmUpload = mutation({
 
     // If entity provided, update the corresponding record
     if (args.entityType && args.entityId) {
-      // TODO: Implement entity updates based on type
-      // This would update user.profilePhoto, group.preview, or meeting.coverImage
-      // For now, just return success with the URL
-      //
-      // Example implementation:
-      // switch (args.entityType) {
-      //   case "user":
-      //     const userId = args.entityId as Id<"users">;
-      //     await ctx.db.patch(userId, { profilePhoto: url });
-      //     break;
-      //   case "group":
-      //     const groupId = args.entityId as Id<"groups">;
-      //     await ctx.db.patch(groupId, { preview: url });
-      //     break;
-      //   case "meeting":
-      //     const meetingId = args.entityId as Id<"meetings">;
-      //     await ctx.db.patch(meetingId, { coverImage: url });
-      //     break;
-      // }
+      switch (args.entityType) {
+        case "user": {
+          const entityId = args.entityId as Id<"users">;
+          if (entityId !== authUserId) {
+            throw new Error("Cannot update another user's profile photo");
+          }
+          await ctx.db.patch(entityId, { profilePhoto: url, updatedAt: now() });
+          await ctx.scheduler.runAfter(0, internal.functions.sync.memberships.syncUserProfileToChannels, {
+            userId: entityId,
+          });
+          break;
+        }
+        case "group": {
+          const entityId = args.entityId as Id<"groups">;
+          await requireGroupLeaderOrCommunityAdmin(
+            ctx,
+            entityId,
+            authUserId,
+            "update this group's preview image"
+          );
+          await ctx.db.patch(entityId, { preview: url, updatedAt: now() });
+          break;
+        }
+        case "meeting": {
+          const entityId = args.entityId as Id<"meetings">;
+          const meeting = await ctx.db.get(entityId);
+          if (!meeting) {
+            throw new Error("Meeting not found");
+          }
+          await requireGroupLeaderOrCommunityAdmin(
+            ctx,
+            meeting.groupId,
+            authUserId,
+            "update this meeting's cover image"
+          );
+          await ctx.db.patch(entityId, { coverImage: url });
+          break;
+        }
+        default:
+          throw new Error(`Unknown entity type: ${args.entityType}`);
+      }
     }
 
     return {
@@ -246,13 +272,13 @@ export const getR2UploadUrl = action({
     contentType: v.string(),
     folder: folderValidator,
   },
-  handler: async (_ctx, args): Promise<{
+  handler: async (ctx, args): Promise<{
     uploadUrl: string;
     key: string;
     publicUrl: string;
     storagePath: string; // Path to store in database (r2:prefix)
   }> => {
-    await requireAuthFromToken(args.token);
+    await requireAuthFromTokenAction(ctx, args.token);
     // Validate file extension
     const ext = "." + args.fileName.split(".").pop()?.toLowerCase();
     if (!ALLOWED_EXTENSIONS.includes(ext)) {
@@ -338,13 +364,13 @@ export const getR2FileUploadUrl = action({
     fileSize: v.number(),
     folder: folderValidator,
   },
-  handler: async (_ctx, args): Promise<{
+  handler: async (ctx, args): Promise<{
     uploadUrl: string;
     key: string;
     publicUrl: string;
     storagePath: string;
   }> => {
-    await requireAuthFromToken(args.token);
+    await requireAuthFromTokenAction(ctx, args.token);
     // Validate file size
     if (args.fileSize > MAX_FILE_SIZE_BYTES) {
       throw new Error(

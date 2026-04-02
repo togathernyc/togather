@@ -103,6 +103,43 @@ async function getLeaderGroupIdsInCommunity(
   return result;
 }
 
+/**
+ * Get the set of userIds that have a leader/admin role in the given group.
+ * Used to flag leader records so non-admin viewers don't see their engagement scores.
+ */
+async function getLeaderUserIdsForGroup(
+  ctx: { db: any },
+  groupId: Id<"groups">,
+): Promise<Set<string>> {
+  const members = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_group", (q: any) => q.eq("groupId", groupId))
+    .collect();
+  const leaderIds = new Set<string>();
+  for (const m of members) {
+    if (isActiveMembership(m) && isLeaderRole(m.role)) {
+      leaderIds.add(m.userId.toString());
+    }
+  }
+  return leaderIds;
+}
+
+/**
+ * Redact engagement scores from leader/admin records for non-admin viewers.
+ * Returns the record with scores nulled out and an `isLeader` flag added.
+ */
+function redactLeaderScores<T extends Record<string, any>>(
+  doc: T,
+): T & { isLeader: boolean } {
+  return {
+    ...doc,
+    score1: undefined,
+    score2: undefined,
+    score3: undefined,
+    isLeader: true,
+  };
+}
+
 // ============================================================================
 // Index Mapping
 // ============================================================================
@@ -171,6 +208,12 @@ export const list = query({
       throw new ConvexError("Group not found");
     }
     await requireCommunityMember(ctx, group.communityId, userId);
+
+    // Non-admins get leader/admin scores redacted to prevent polluted followup data (GH #185)
+    const isAdmin = await isCommunityAdmin(ctx, group.communityId, userId);
+    const leaderUserIds = isAdmin
+      ? null
+      : await getLeaderUserIdsForGroup(ctx, args.groupId);
 
     // Server-enforced self-assignee: override any client-provided assigneeFilter
     const assigneeFilter = args.requireSelfAssignee
@@ -294,13 +337,29 @@ export const list = query({
       });
 
       return {
-        page: filtered,
+        page: leaderUserIds
+          ? filtered.map((doc: any) =>
+              leaderUserIds.has(doc.userId?.toString())
+                ? redactLeaderScores(doc)
+                : { ...doc, isLeader: false },
+            )
+          : filtered.map((doc: any) => ({ ...doc, isLeader: false })),
         isDone: true,
         continueCursor: "",
       };
     }
 
-    return await q.paginate(args.paginationOpts);
+    const result = await q.paginate(args.paginationOpts);
+    return {
+      ...result,
+      page: leaderUserIds
+        ? result.page.map((doc: any) =>
+            leaderUserIds.has(doc.userId?.toString())
+              ? redactLeaderScores(doc)
+              : { ...doc, isLeader: false },
+          )
+        : result.page.map((doc: any) => ({ ...doc, isLeader: false })),
+    };
   },
 });
 
@@ -484,6 +543,12 @@ export const search = query({
     }
     await requireCommunityMember(ctx, group.communityId, userId);
 
+    // Non-admins get leader/admin scores redacted (GH #185)
+    const isAdmin = await isCommunityAdmin(ctx, group.communityId, userId);
+    const leaderUserIds = isAdmin
+      ? null
+      : await getLeaderUserIdsForGroup(ctx, args.groupId);
+
     // Server-enforced self-assignee: override any client-provided assigneeFilter
     const assigneeFilter = args.requireSelfAssignee
       ? userId
@@ -576,7 +641,14 @@ export const search = query({
       );
     }
 
-    return filtered.slice(0, 200);
+    const sliced = filtered.slice(0, 200);
+    return leaderUserIds
+      ? sliced.map((doc: any) =>
+          leaderUserIds.has(doc.userId?.toString())
+            ? redactLeaderScores(doc)
+            : { ...doc, isLeader: false },
+        )
+      : sliced.map((doc: any) => ({ ...doc, isLeader: false }));
   },
 });
 

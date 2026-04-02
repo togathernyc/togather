@@ -89,6 +89,7 @@ type FollowupMember = {
   dateOfBirth?: number;
   latestNote?: string;
   latestNoteAt?: number;
+  isLeader: boolean;
   score1: number;
   score2: number;
   score3?: number;
@@ -1667,6 +1668,11 @@ export function FollowupDesktopTable({
               size={24}
             />
             <Text style={[s.cellText, { color: colors.text }]}>{item.firstName}</Text>
+            {item.isLeader && (
+              <View style={s.leaderBadge}>
+                <Text style={s.leaderBadgeText}>Leader</Text>
+              </View>
+            )}
           </View>
         );
 
@@ -1900,6 +1906,18 @@ export function FollowupDesktopTable({
         if (col.key.startsWith("score")) {
           const slot = col.key as "score1" | "score2" | "score3";
           const value = getSystemScoreValue(item, slot) ?? 0;
+
+          // Leader/admin scores are redacted for non-admin viewers
+          if (item.isLeader) {
+            return (
+              <View style={[s.scoreCell, { backgroundColor: colors.border + "40" }]}>
+                <Text style={[s.scoreCellText, { color: colors.textSecondary, fontSize: 10 }]}>
+                  Leader
+                </Text>
+              </View>
+            );
+          }
+
           return (
             <TouchableOpacity
               activeOpacity={0.7}
@@ -3486,6 +3504,17 @@ const s = StyleSheet.create({
     flexDirection: "row" as const,
     alignItems: "center" as const,
     gap: 6,
+  },
+  leaderBadge: {
+    backgroundColor: "#6366f120",
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  leaderBadgeText: {
+    fontSize: 10,
+    color: "#6366f1",
+    fontWeight: "600" as const,
   },
   cellText: {
     fontSize: 13,

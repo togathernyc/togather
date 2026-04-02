@@ -20,6 +20,7 @@ import { query } from "../../_generated/server";
 import { getMediaUrl } from "../../lib/utils";
 import { getOptionalAuth } from "../../lib/auth";
 import { isCommunityAdmin } from "../../lib/permissions";
+import { isLeaderRole } from "../../lib/helpers";
 
 /**
  * Get group leaders
@@ -147,7 +148,7 @@ export const isLeader = query({
     }
 
     return {
-      isLeader: membership.role === "leader" || membership.role === "admin",
+      isLeader: isLeaderRole(membership.role),
     };
   },
 });

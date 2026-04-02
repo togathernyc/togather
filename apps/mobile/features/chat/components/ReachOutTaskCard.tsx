@@ -11,6 +11,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { usePathname, useRouter } from "expo-router";
 import type { Id } from "@services/api/convex";
 import { api, useAuthenticatedMutation } from "@services/api/convex";
+import { TaskTextWithLinks } from "../../tasks/components/TaskTextWithLinks";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
 
@@ -168,7 +169,11 @@ export function ReachOutTaskCard({ task, variant }: ReachOutTaskCardProps) {
         <Text style={[styles.time, { color: colors.textTertiary }]}>{formatTime(task.createdAt)}</Text>
       </View>
 
-      <Text style={[styles.content, { color: colors.text }]}>{content}</Text>
+      <TaskTextWithLinks
+        text={content}
+        baseStyle={StyleSheet.flatten([styles.content, { color: colors.text }])}
+        linkStyle={{ color: primaryColor, textDecorationLine: "underline" }}
+      />
       {assigneeName ? <Text style={[styles.meta, { color: colors.textSecondary }]}>Assigned to {assigneeName}</Text> : null}
 
       {variant === "member" ? (

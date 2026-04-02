@@ -202,5 +202,6 @@ export function adaptCommunityPerson(cp: any) {
     customBool5: cp.customBool5,
     latestNote: cp.latestNote,
     latestNoteAt: cp.latestNoteAt,
+    isLeader: cp.isLeader ?? false,
   };
 }

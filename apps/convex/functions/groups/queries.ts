@@ -11,6 +11,7 @@ import { normalizePagination, getMediaUrl } from "../../lib/utils";
 import { paginationArgs } from "../../lib/validators";
 import { requireAuth, getOptionalAuth } from "../../lib/auth";
 import { isCommunityAdmin } from "../../lib/permissions";
+import { isLeaderRole } from "../../lib/helpers";
 
 /**
  * Get group by ID
@@ -239,8 +240,8 @@ export const getByShortId = query({
 
     // Sort leaders first, take top 5
     const sortedMembers = activeMembers.sort((a, b) => {
-      const aLeader = a.role === "leader" || a.role === "admin" ? 1 : 0;
-      const bLeader = b.role === "leader" || b.role === "admin" ? 1 : 0;
+      const aLeader = isLeaderRole(a.role) ? 1 : 0;
+      const bLeader = isLeaderRole(b.role) ? 1 : 0;
       return bLeader - aLeader;
     });
 
@@ -253,7 +254,7 @@ export const getByShortId = query({
           first_name: user.firstName || "",
           last_name: user.lastName || "",
           profile_photo: getMediaUrl(user.profilePhoto),
-          isLeader: gm.role === "leader" || gm.role === "admin",
+          isLeader: isLeaderRole(gm.role),
         });
       }
     }

@@ -41,6 +41,19 @@ interface ExploreBottomSheetProps {
   isLoadingGroups?: boolean;
   // Events props
   events: CommunityEvent[];
+  eventSearchResults?: Array<{
+    _id: string;
+    title: string;
+    scheduledAt: number;
+    actualEnd?: number;
+    meetingType: number;
+    locationOverride?: string | null;
+    shortId?: string | null;
+    visibility?: string | null;
+    coverImage?: string | null;
+    group?: { _id: string; name: string; city?: string | null; state?: string | null } | null;
+  }>;
+  isSearchingEvents?: boolean;
   onEventPress?: (event: CommunityEvent) => void;
   isLoadingEvents?: boolean;
   onRefreshEvents?: () => void;
@@ -167,6 +180,8 @@ export const ExploreBottomSheet = forwardRef<ExploreBottomSheetRef, ExploreBotto
       onGroupSelect,
       isLoadingGroups = false,
       events,
+      eventSearchResults,
+      isSearchingEvents = false,
       onEventPress,
       isLoadingEvents = false,
       onRefreshEvents,
@@ -241,8 +256,40 @@ export const ExploreBottomSheet = forwardRef<ExploreBottomSheetRef, ExploreBotto
       });
     }, [groupsWithoutLocation, searchQuery]);
 
-    // Filter events based on search query
+    // Filter events based on search query.
+    // When backend search results are available, map them to CommunityEvent shape.
+    // Otherwise fall back to client-side filtering.
     const filteredEvents = useMemo(() => {
+      if (searchQuery.trim() && isSearchingEvents) {
+        return [];
+      }
+      if (eventSearchResults) {
+        // Map backend search results to CommunityEvent-compatible objects
+        return eventSearchResults.map((result) => ({
+          id: result._id,
+          shortId: result.shortId ?? null,
+          title: result.title,
+          scheduledAt: new Date(result.scheduledAt).toISOString(),
+          status: 'scheduled',
+          visibility: (result.visibility ?? 'group') as 'group' | 'community' | 'public',
+          coverImage: result.coverImage ?? null,
+          locationOverride: result.locationOverride ?? null,
+          meetingType: result.meetingType,
+          rsvpEnabled: false,
+          group: {
+            id: result.group?._id ?? '',
+            name: result.group?.name ?? '',
+            groupTypeName: '',
+            addressLine1: null,
+            addressLine2: null,
+            city: result.group?.city ?? null,
+            state: result.group?.state ?? null,
+            zipCode: null,
+          },
+          rsvpSummary: { totalGoing: 0, topGoingGuests: [] },
+        })) as CommunityEvent[];
+      }
+
       if (!searchQuery.trim()) return events;
 
       const query = searchQuery.toLowerCase();
@@ -252,7 +299,7 @@ export const ExploreBottomSheet = forwardRef<ExploreBottomSheetRef, ExploreBotto
         const location = (event.locationOverride || '').toLowerCase();
         return title.includes(query) || groupName.includes(query) || location.includes(query);
       });
-    }, [events, searchQuery]);
+    }, [events, eventSearchResults, searchQuery, isSearchingEvents]);
 
     // Group events by date sections
     const eventSections = useMemo(() => {
@@ -394,6 +441,15 @@ export const ExploreBottomSheet = forwardRef<ExploreBottomSheetRef, ExploreBotto
 
     // Events empty component
     const EventsEmptyComponent = useCallback(() => {
+      if (isSearchingEvents && searchQuery.trim()) {
+        return (
+          <View>
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+          </View>
+        );
+      }
       if (isLoadingEvents) {
         return (
           <View>
@@ -410,7 +466,7 @@ export const ExploreBottomSheet = forwardRef<ExploreBottomSheetRef, ExploreBotto
           <Text style={[styles.emptyText, { color: colors.textSecondary }]}>Check back later for new events</Text>
         </View>
       );
-    }, [isLoadingEvents, colors]);
+    }, [isLoadingEvents, isSearchingEvents, searchQuery, colors]);
 
     // Shared list content for both web and native
     const groupsListContent = (

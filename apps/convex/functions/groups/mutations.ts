@@ -24,6 +24,7 @@ import {
 import { syncUserChannelMembershipsLogic } from "../sync/memberships";
 import { ensureChannelsForGroupLogic } from "../messaging/channels";
 import { MutationCtx } from "../../_generated/server";
+import { buildMeetingSearchText } from "../../lib/meetingSearchText";
 
 // ============================================================================
 // Shared Helper Functions
@@ -69,6 +70,11 @@ export async function initializeGroupAfterCreation(
   }
 
   // 3. Auto-spawn meetings for upcoming community-wide events
+  const groupDoc = await ctx.db.get(groupId);
+  if (!groupDoc) {
+    throw new Error("Group not found during initialization");
+  }
+
   const upcomingCommunityEvents = await ctx.db
     .query("communityWideEvents")
     .withIndex("by_community_groupType", (q) =>
@@ -98,6 +104,11 @@ export async function initializeGroupAfterCreation(
       status: "scheduled",
       visibility: "community",
       createdAt: timestamp,
+      communityId,
+      searchText: buildMeetingSearchText({
+        title: event.title,
+        groupName: groupDoc.name,
+      }),
       communityWideEventId: event._id,
       isOverridden: false,
       shortId: generateShortId(),
@@ -140,7 +151,7 @@ export async function initializeGroupAfterCreation(
  * @param action - Description of the action for error messages (e.g., "update toolbar settings")
  * @returns The group document if user has permission
  */
-async function requireGroupLeaderOrCommunityAdmin(
+export async function requireGroupLeaderOrCommunityAdmin(
   ctx: MutationCtx,
   groupId: Id<"groups">,
   userId: Id<"users">,

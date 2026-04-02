@@ -324,7 +324,9 @@ function AudioPlayerExpoAudio({ url, name, isOwnMessage = false, waveform, store
   // Reset position when playback finishes
   useEffect(() => {
     if (status.didJustFinish) {
-      player.seekTo(0).catch(() => {});
+      player.seekTo(0).catch((err) => {
+        console.warn('[AudioPlayer] Failed to reset position:', err);
+      });
     }
   }, [status.didJustFinish, player]);
 

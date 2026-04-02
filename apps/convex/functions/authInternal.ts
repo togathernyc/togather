@@ -16,7 +16,11 @@ import {
 } from "../_generated/server";
 import { api, internal } from "../_generated/api";
 import { now, normalizePhone, getMediaUrl, buildSearchText } from "../lib/utils";
-import { requireAuth } from "../auth";
+import { requireAuth, requireAuthIgnoringRevocation } from "../auth";
+import {
+  isRevokedForJwtSubject,
+  REFRESH_TOKEN_MAX_AGE_MS,
+} from "../lib/auth";
 import { COMMUNITY_ROLES, COMMUNITY_ADMIN_THRESHOLD } from "../lib/permissions";
 import { checkRateLimit } from "../lib/rateLimit";
 
@@ -518,7 +522,10 @@ export const createAccountClaimRequestInternal = internalMutation({
  * Used to prevent race conditions when users click "Resend" rapidly.
  */
 export const hasRecentEmailCode = internalQuery({
-  args: { email: v.string() },
+  args: {
+    email: v.string(),
+    purpose: v.union(v.literal("account_claim"), v.literal("password_reset")),
+  },
   handler: async (ctx, args): Promise<boolean> => {
     const normalizedEmail = args.email.toLowerCase();
     const rateLimitWindow = 30 * 1000; // 30 seconds
@@ -526,7 +533,9 @@ export const hasRecentEmailCode = internalQuery({
 
     const recentCode = await ctx.db
       .query("emailVerificationCodes")
-      .withIndex("by_email", (q) => q.eq("email", normalizedEmail))
+      .withIndex("by_email_purpose", (q) =>
+        q.eq("email", normalizedEmail).eq("purpose", args.purpose)
+      )
       .filter((q) =>
         q.and(
           q.gt(q.field("createdAt"), cutoffTime),
@@ -543,21 +552,24 @@ export const hasRecentEmailCode = internalQuery({
  * Internal: Store email verification code
  *
  * Stores a verification code for email-based authentication.
- * Cleans up any existing codes for the email before inserting.
+ * Cleans up any existing codes for the same email and purpose before inserting.
  */
 export const storeEmailVerificationCode = internalMutation({
   args: {
     email: v.string(),
+    purpose: v.union(v.literal("account_claim"), v.literal("password_reset")),
     code: v.string(),
     expiresAt: v.number(),
   },
   handler: async (ctx, args) => {
     const normalizedEmail = args.email.toLowerCase();
 
-    // Delete any existing codes for this email (cleanup)
+    // Delete any existing codes for this email and flow only (other flows keep their OTP)
     const existingCodes = await ctx.db
       .query("emailVerificationCodes")
-      .withIndex("by_email", (q) => q.eq("email", normalizedEmail))
+      .withIndex("by_email_purpose", (q) =>
+        q.eq("email", normalizedEmail).eq("purpose", args.purpose)
+      )
       .collect();
 
     for (const code of existingCodes) {
@@ -567,6 +579,7 @@ export const storeEmailVerificationCode = internalMutation({
     // Insert new verification code
     const codeId = await ctx.db.insert("emailVerificationCodes", {
       email: normalizedEmail,
+      purpose: args.purpose,
       code: args.code,
       expiresAt: args.expiresAt,
       createdAt: now(),
@@ -586,17 +599,21 @@ export const storeEmailVerificationCode = internalMutation({
 export const verifyEmailCode = internalMutation({
   args: {
     email: v.string(),
+    purpose: v.union(v.literal("account_claim"), v.literal("password_reset")),
     code: v.string(),
   },
   handler: async (ctx, args): Promise<{ valid: boolean }> => {
     const normalizedEmail = args.email.toLowerCase();
     const currentTime = Date.now();
 
-    // Query for matching email + code that hasn't expired and hasn't been used
+    // Query for matching email + code + purpose that hasn't expired and hasn't been used
     const verificationCode = await ctx.db
       .query("emailVerificationCodes")
-      .withIndex("by_email_code", (q) =>
-        q.eq("email", normalizedEmail).eq("code", args.code)
+      .withIndex("by_email_code_purpose", (q) =>
+        q
+          .eq("email", normalizedEmail)
+          .eq("code", args.code)
+          .eq("purpose", args.purpose)
       )
       .first();
 
@@ -774,6 +791,45 @@ export const cleanupExpiredPhoneTokens = internalMutation({
   },
 });
 
+/**
+ * Internal: Cleanup stale token revocation records
+ *
+ * Revocations must cover the longest-lived JWT we validate against them (refresh tokens,
+ * ~10 years). Only delete once no refresh token issued before revokedBefore could still be valid.
+ */
+export const cleanupStaleTokenRevocations = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const oneDayMs = 24 * 60 * 60 * 1000;
+    const cutoffRevokedBefore =
+      Date.now() - REFRESH_TOKEN_MAX_AGE_MS - oneDayMs;
+
+    const staleRevocations = await ctx.db
+      .query("tokenRevocations")
+      .filter((q) => q.lt(q.field("revokedBefore"), cutoffRevokedBefore))
+      .collect();
+
+    for (const revocation of staleRevocations) {
+      await ctx.db.delete(revocation._id);
+    }
+
+    return { deletedCount: staleRevocations.length };
+  },
+});
+
+/**
+ * Internal: refresh-token blacklist check (same iat vs revokedBefore as access tokens).
+ */
+export const isJwtSubjectRevokedInternal = internalQuery({
+  args: {
+    jwtUserId: v.string(),
+    issuedAt: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    return await isRevokedForJwtSubject(ctx, args.jwtUserId, args.issuedAt);
+  },
+});
+
 // ============================================================================
 // Public Queries
 // ============================================================================
@@ -808,9 +864,36 @@ export const phoneStatus = query({
  * tRPC equivalent: signout
  */
 export const signout = mutation({
-  args: {},
-  handler: async () => {
-    // TODO: Add token to blacklist if needed
+  args: { token: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    if (!args.token) {
+      // No token provided — client-only logout (clear local storage)
+      return { success: true };
+    }
+
+    const userId = await requireAuthIgnoringRevocation(ctx, args.token);
+
+    // Record revocation: all tokens issued before now are invalid for this user
+    const now = Date.now();
+
+    // Upsert: replace existing revocation record for this user
+    const existing = await ctx.db
+      .query("tokenRevocations")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .first();
+
+    if (existing) {
+      // Never move revokedBefore backward (clock skew / NTP) — would shrink the revocation window
+      const revokedBefore = Math.max(now, existing.revokedBefore);
+      await ctx.db.patch(existing._id, { revokedBefore, createdAt: revokedBefore });
+    } else {
+      await ctx.db.insert("tokenRevocations", {
+        userId,
+        revokedBefore: now,
+        createdAt: now,
+      });
+    }
+
     return { success: true };
   },
 });

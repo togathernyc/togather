@@ -195,12 +195,17 @@ export function useLogout() {
     setIsPending(true);
     setError(null);
     try {
-      await signout({});
+      // Pass the current token so the server can revoke it
+      const token = await storage.getItem('access_token');
+      await signout({ token: token ?? undefined });
       // Clear tokens from storage
       await storage.removeItem('access_token');
       await storage.removeItem('refresh_token');
       return { success: true };
     } catch (err) {
+      // Even if server-side revocation fails, clear local tokens
+      await storage.removeItem('access_token');
+      await storage.removeItem('refresh_token');
       setError(err as Error);
       throw err;
     } finally {
@@ -214,51 +219,6 @@ export function useLogout() {
     isPending,
     isLoading: isPending,
     error,
-  };
-}
-
-/**
- * Legacy email/password login
- *
- * @example
- * const { login, isPending } = useLegacyLogin();
- * await login({
- *   email: 'user@example.com',
- *   password: 'password123'
- * });
- */
-export function useLegacyLogin() {
-  const legacyLogin = useAction(api.functions.auth.login.legacyLogin);
-  const [isPending, setIsPending] = useState(false);
-  const [error, setError] = useState<Error | null>(null);
-  const [data, setData] = useState<Awaited<ReturnType<typeof legacyLogin>> | null>(null);
-  const [isSuccess, setIsSuccess] = useState(false);
-
-  const mutateAsync = useCallback(async (args: { email: string; password: string }) => {
-    setIsPending(true);
-    setError(null);
-    setIsSuccess(false);
-    try {
-      const result = await legacyLogin(args);
-      setData(result);
-      setIsSuccess(true);
-      return result;
-    } catch (err) {
-      setError(err as Error);
-      throw err;
-    } finally {
-      setIsPending(false);
-    }
-  }, [legacyLogin]);
-
-  return {
-    mutateAsync,
-    mutate: mutateAsync,
-    isPending,
-    isLoading: isPending,
-    error,
-    data,
-    isSuccess,
   };
 }
 
@@ -302,25 +262,6 @@ export function useSelectCommunity() {
     isPending,
     isLoading: isPending,
     error,
-  };
-}
-
-/**
- * Get phone verification status for the current user
- *
- * Note: Requires userId to be passed as Convex uses explicit IDs.
- *
- * @example
- * const status = usePhoneStatus(userId);
- * console.log(status?.phone, status?.phoneVerified);
- */
-export function usePhoneStatus(userId?: string) {
-  // TODO: This needs the user ID, which in Convex would typically come from the auth context
-  // For now, this is a placeholder that returns undefined when no userId is provided
-  const data = undefined; // Would use useQuery(api.functions.authInternal.phoneStatus, userId ? { userId } : "skip")
-  return {
-    data,
-    isLoading: false,
   };
 }
 
@@ -372,45 +313,3 @@ export function useRegisterPhone() {
   };
 }
 
-/**
- * Change password for the current user
- *
- * @example
- * const { changePassword, isPending } = useChangePassword();
- * await changePassword({
- *   token: 'jwt_token',
- *   oldPassword: 'old123',
- *   newPassword: 'new456'
- * });
- */
-export function useChangePassword() {
-  const changePassword = useAction(api.functions.auth.registration.changePassword);
-  const [isPending, setIsPending] = useState(false);
-  const [error, setError] = useState<Error | null>(null);
-
-  const mutateAsync = useCallback(async (args: {
-    token: string;
-    oldPassword: string;
-    newPassword: string;
-  }) => {
-    setIsPending(true);
-    setError(null);
-    try {
-      const result = await changePassword(args as any);
-      return result;
-    } catch (err) {
-      setError(err as Error);
-      throw err;
-    } finally {
-      setIsPending(false);
-    }
-  }, [changePassword]);
-
-  return {
-    mutateAsync,
-    mutate: mutateAsync,
-    isPending,
-    isLoading: isPending,
-    error,
-  };
-}

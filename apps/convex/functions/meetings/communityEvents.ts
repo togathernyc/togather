@@ -18,6 +18,7 @@ import {
   DEFAULT_MEETING_DURATION_MS,
   DEFAULT_RSVP_OPTIONS,
 } from "../../lib/meetingConfig";
+import { buildMeetingSearchText } from "../../lib/meetingSearchText";
 
 /**
  * Create a community-wide event that spawns individual meetings for all active groups of a given type.
@@ -135,6 +136,11 @@ export const createCommunityWideEvent = mutation({
         createdAt: timestamp,
         rsvpEnabled: effectiveRsvpEnabled,
         rsvpOptions: effectiveRsvpOptions,
+        communityId: args.communityId,
+        searchText: buildMeetingSearchText({
+          title: args.title,
+          groupName: group.name,
+        }),
         // Link to parent event
         communityWideEventId,
         isOverridden: false,

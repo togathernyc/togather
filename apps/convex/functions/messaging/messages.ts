@@ -132,7 +132,8 @@ export const getMessage = query({
       }
 
       return message;
-    } catch {
+    } catch (error) {
+      console.error("[getMessage] Failed to fetch message:", error);
       return null;
     }
   },
@@ -641,8 +642,7 @@ export const deleteMessage = mutation({
         .filter((q) => q.eq(q.field("leftAt"), undefined))
         .first();
 
-      isGroupLeader =
-        groupMembership?.role === "leader" || groupMembership?.role === "admin";
+      isGroupLeader = isLeaderRole(groupMembership?.role);
 
       // Community admins (ADMIN or PRIMARY_ADMIN) can delete any message in groups within their community
       const group = await ctx.db.get(channel.groupId);

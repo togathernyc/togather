@@ -133,7 +133,9 @@ function DropboxVideoPlayer({ url }: { url: string }) {
     } catch (err) {
       console.error("Failed to open video:", err);
       // Fallback to external browser
-      Linking.openURL(playableUrl).catch(() => {});
+      Linking.openURL(playableUrl).catch((linkErr) => {
+        console.error('[RunSheetScreen] Failed to open video URL:', linkErr);
+      });
     }
   }, [playableUrl]);
 
@@ -566,36 +568,36 @@ export function RunSheetScreen({
     getStaleCachedServiceTypes,
   ]);
 
+  // Filter service types to only those configured in defaultServiceTypeIds (if set)
+  const visibleServiceTypes = useMemo(() => {
+    const groupConfig = groupData as { runSheetConfig?: { defaultServiceTypeIds?: string[] } } | null;
+    const defaultIds = groupConfig?.runSheetConfig?.defaultServiceTypeIds;
+    if (defaultIds && defaultIds.length > 0) {
+      const filtered = serviceTypes.filter((t: ServiceType) => defaultIds.includes(t.id));
+      // Fall back to all types if none of the configured IDs match
+      return filtered.length > 0 ? filtered : serviceTypes;
+    }
+    return serviceTypes;
+  }, [serviceTypes, groupData]);
+
   // Apply default service type once both serviceTypes and groupData are available
   useEffect(() => {
-    if (hasAppliedDefault || serviceTypes.length === 0) return;
+    if (hasAppliedDefault || visibleServiceTypes.length === 0) return;
 
     // Offline-friendly fallback: if group query hasn't resolved yet, still select
     // the first service type so cached run sheet data can load.
     if (groupData === undefined) {
       if (!selectedServiceTypeId) {
-        setSelectedServiceTypeId(serviceTypes[0].id);
+        setSelectedServiceTypeId(visibleServiceTypes[0].id);
       }
       return;
     }
 
-    const groupConfig = groupData as { runSheetConfig?: { defaultServiceTypeIds?: string[] } } | null;
-    const defaultIds = groupConfig?.runSheetConfig?.defaultServiceTypeIds;
-
-    if (defaultIds && defaultIds.length > 0) {
-      const defaultType = serviceTypes.find((t: ServiceType) => defaultIds.includes(t.id));
-      if (defaultType) {
-        setSelectedServiceTypeId(defaultType.id);
-        setHasAppliedDefault(true);
-        return;
-      }
-    }
-
-    if (!selectedServiceTypeId || !serviceTypes.some((t: ServiceType) => t.id === selectedServiceTypeId)) {
-      setSelectedServiceTypeId(serviceTypes[0].id);
+    if (!selectedServiceTypeId || !visibleServiceTypes.some((t: ServiceType) => t.id === selectedServiceTypeId)) {
+      setSelectedServiceTypeId(visibleServiceTypes[0].id);
     }
     setHasAppliedDefault(true);
-  }, [serviceTypes, groupData, hasAppliedDefault, selectedServiceTypeId]);
+  }, [visibleServiceTypes, groupData, hasAppliedDefault, selectedServiceTypeId]);
 
   // Fetch run sheet for selected service type (with offline cache fallback)
   const fetchRunSheet = useCallback(async (options?: { isRefresh?: boolean }) => {
@@ -901,11 +903,11 @@ export function RunSheetScreen({
       {!isExternalMode && <DragHandle />}
 
       {/* Service Type Tabs (hidden in external mode) */}
-      {!isExternalMode && serviceTypes.length > 1 && (
+      {!isExternalMode && visibleServiceTypes.length > 1 && (
         <View style={[styles.serviceTypeTabs, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             <View style={styles.tabsRow}>
-              {serviceTypes.map((type) => (
+              {visibleServiceTypes.map((type) => (
                 <TouchableOpacity
                   key={type.id}
                   style={[

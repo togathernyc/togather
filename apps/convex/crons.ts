@@ -143,6 +143,18 @@ crons.hourly(
 );
 
 // =============================================================================
+// TOKEN REVOCATION CLEANUP
+// =============================================================================
+// Runs daily to delete token revocation records past refresh-token max lifetime (+ buffer).
+// Refresh flows validate revocations, so records must outlive the longest refresh JWT.
+
+crons.daily(
+  "token-revocation-cleanup",
+  { hourUTC: 4, minuteUTC: 0 },
+  internal.functions.authInternal.cleanupStaleTokenRevocations
+);
+
+// =============================================================================
 // FOLLOWUP SCORE REFRESH
 // =============================================================================
 // Runs daily at 7:00 UTC (2:00 AM EST) to refresh time-decay scores.

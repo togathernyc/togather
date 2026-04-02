@@ -144,8 +144,8 @@ export function useExploreFilters() {
       urlParams.mode = merged.mode;
     }
 
-    // View - only include if not default and mode isn't set
-    if (!merged.mode && merged.view !== 'groups') {
+    // View - always include so router.replace explicitly sets it
+    if (!merged.mode) {
       urlParams.view = merged.view;
     }
 
@@ -180,7 +180,7 @@ export function useExploreFilters() {
     const urlParams: Record<string, string> = {};
     if (filters.mode) {
       urlParams.mode = filters.mode;
-    } else if (filters.view !== 'groups') {
+    } else {
       urlParams.view = filters.view;
     }
     router.replace(buildUrl(urlParams));
