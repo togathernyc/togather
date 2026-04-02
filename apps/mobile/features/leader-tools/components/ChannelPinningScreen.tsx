@@ -166,9 +166,13 @@ export function ChannelPinningScreen({
   const handleSave = useCallback(async () => {
     setIsSaving(true);
     try {
+      // Filter out stale slugs (e.g. channel deleted while user had unsaved changes)
+      const currentSlugs = new Set(channels?.map((ch: Channel) => ch.slug) ?? []);
+      const validSlugs = pinnedChannelSlugs.filter((slug) => currentSlugs.has(slug));
+
       await updatePinnedChannelsMutation({
         groupId,
-        pinnedChannelSlugs,
+        pinnedChannelSlugs: validSlugs,
       });
       setHasChanges(false);
       Alert.alert("Success", "Channel pinning updated successfully.");
@@ -182,7 +186,7 @@ export function ChannelPinningScreen({
     } finally {
       setIsSaving(false);
     }
-  }, [groupId, pinnedChannelSlugs, updatePinnedChannelsMutation, onSave]);
+  }, [groupId, pinnedChannelSlugs, channels, updatePinnedChannelsMutation, onSave]);
 
   // Render pinned channel item with up/down buttons
   const renderPinnedItem = useCallback(
