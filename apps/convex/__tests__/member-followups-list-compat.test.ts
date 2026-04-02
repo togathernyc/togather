@@ -5,6 +5,8 @@ import { modules } from "../test.setup";
 import { api } from "../_generated/api";
 import { generateTokens } from "../lib/auth";
 
+process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
+
 async function seedFollowupListFixture(t: ReturnType<typeof convexTest>) {
   const timestamp = Date.now();
 

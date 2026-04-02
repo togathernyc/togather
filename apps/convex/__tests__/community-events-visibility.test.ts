@@ -45,6 +45,8 @@ import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { modules } from "../test.setup";
 
+process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
+
 beforeEach(() => {
   vi.useFakeTimers();
 });

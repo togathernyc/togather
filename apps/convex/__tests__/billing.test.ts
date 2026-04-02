@@ -17,6 +17,8 @@ import { generateTokens } from "../lib/auth";
 
 import type { Id } from "../_generated/dataModel";
 
+process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
+
 // ============================================================================
 // Constants
 // ============================================================================
