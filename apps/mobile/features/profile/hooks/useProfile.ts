@@ -148,24 +148,6 @@ export function useUserById(input: { userId: string }) {
 }
 
 /**
- * Search for users
- *
- * Note: User search is not yet implemented in Convex.
- * This is a placeholder that returns empty results.
- *
- * @example
- * const { data: users } = useSearchUsers({ query: 'John', communityId: 1 });
- */
-export function useSearchUsers(input: { query: string; communityId?: number }) {
-  // TODO: Implement user search in Convex
-  // For now, return empty results
-  return {
-    data: [],
-    isLoading: false,
-  };
-}
-
-/**
  * Get user's communities
  *
  * Returns list of communities the user belongs to (not blocked).
