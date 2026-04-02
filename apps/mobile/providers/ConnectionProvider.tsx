@@ -88,6 +88,10 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({
     null
   );
   const wasDisconnectedRef = useRef(false);
+  // Track latest network state so the grace timer callback can distinguish
+  // "network down" from "WebSocket slow to connect"
+  const isNetworkAvailableRef = useRef(true);
+  const isInternetReachableRef = useRef(true);
 
   const isWebSocketConnected = convexState.isWebSocketConnected;
 
@@ -113,9 +117,14 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({
         // Cold start: use longer grace period before showing red banner
         if (!startupGraceTimerRef.current) {
           startupGraceTimerRef.current = setTimeout(() => {
-            setStatus('disconnected');
-            wasDisconnectedRef.current = true;
             startupGraceTimerRef.current = null;
+            // Only show "No internet" if the network is actually down.
+            // If NetInfo says we have internet but the WebSocket is slow,
+            // stay in 'connecting' (no banner) — not a network issue.
+            if (!isNetworkAvailableRef.current || !isInternetReachableRef.current) {
+              setStatus('disconnected');
+              wasDisconnectedRef.current = true;
+            }
           }, COLD_START_GRACE_MS);
         }
       } else {
@@ -187,8 +196,12 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({
   // Subscribe to NetInfo
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener((state) => {
-      setIsNetworkAvailable(state.isConnected ?? false);
-      setIsInternetReachable(state.isInternetReachable ?? true);
+      const networkAvailable = state.isConnected ?? false;
+      const internetReachable = state.isInternetReachable ?? true;
+      setIsNetworkAvailable(networkAvailable);
+      setIsInternetReachable(internetReachable);
+      isNetworkAvailableRef.current = networkAvailable;
+      isInternetReachableRef.current = internetReachable;
       setConnectionType(state.type ?? 'unknown');
 
       // Extract cellular generation
