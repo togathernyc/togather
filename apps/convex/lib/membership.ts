@@ -88,11 +88,11 @@ export function getMembershipStatus(
 }
 
 /**
- * Check if user is an active member with leader or admin role
+ * Check if user is an active member with leader role
  */
-export function isGroupLeaderOrAdmin(
+export function isGroupLeader(
   membership: GroupMember | null | undefined
 ): boolean {
   if (!isActiveMember(membership)) return false;
-  return membership!.role === "leader" || membership!.role === "admin";
+  return membership!.role === "leader";
 }

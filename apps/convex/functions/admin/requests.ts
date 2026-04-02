@@ -653,7 +653,7 @@ export const reviewGroupCreationRequest = mutation({
       await ctx.db.insert("groupMembers", {
         groupId,
         userId: leaderId,
-        role: leaderId === requesterId ? "admin" : "leader",
+        role: "leader",
         joinedAt: timestamp,
         notificationsEnabled: true,
       });

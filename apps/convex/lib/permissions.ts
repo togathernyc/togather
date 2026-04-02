@@ -54,7 +54,7 @@ export const ADMIN_ROLE_THRESHOLD = COMMUNITY_ADMIN_THRESHOLD;
  * Roles that have leadership privileges in a group.
  * Used for permission checks in group-level operations.
  */
-export const LEADER_ROLES = ["leader", "admin"] as const;
+export const LEADER_ROLES = ["leader"] as const;
 
 // ============================================================================
 // Permission Check Helpers
@@ -157,10 +157,10 @@ export async function requirePrimaryAdmin(
 }
 
 /**
- * Check if a group membership has a leader/admin role.
+ * Check if a group membership has a leader role.
  *
  * @param role - The role string from groupMembers record
- * @returns true if role is "leader" or "admin"
+ * @returns true if role is "leader"
  */
 export function isLeaderRole(role: string | undefined): boolean {
   if (!role) return false;
