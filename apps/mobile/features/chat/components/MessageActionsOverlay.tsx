@@ -34,6 +34,12 @@ const REACTIONS = [
   { type: "wow", emoji: "😮" },
   { type: "sad", emoji: "😢" },
   { type: "pray", emoji: "🙏" },
+  { type: "fire", emoji: "🔥" },
+  { type: "clap", emoji: "👏" },
+  { type: "celebrate", emoji: "🎉" },
+  { type: "hundred", emoji: "💯" },
+  { type: "eyes", emoji: "👀" },
+  { type: "heart_eyes", emoji: "😍" },
 ];
 
 // Action configuration
@@ -427,6 +433,8 @@ const styles = StyleSheet.create({
   // Reactions
   reactionsContainer: {
     flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "center",
     borderRadius: 24,
     paddingHorizontal: 8,
     paddingVertical: 8,
