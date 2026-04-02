@@ -190,9 +190,7 @@ export function PositionSelector({
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
+  container: {},
   loadingContainer: {
     flexDirection: "row",
     alignItems: "center",
@@ -234,9 +232,7 @@ const styles = StyleSheet.create({
   searchBar: {
     marginBottom: 8,
   },
-  list: {
-    flex: 1,
-  },
+  list: {},
   positionItem: {
     flexDirection: "row",
     alignItems: "center",
