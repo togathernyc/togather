@@ -283,6 +283,10 @@ function MessageItemInner({
   const [reactionModalVisible, setReactionModalVisible] = useState(false);
   const [selectedReactionEmoji, setSelectedReactionEmoji] = useState<string | null>(null);
 
+  // Double-tap to react (❤️ like iMessage)
+  const lastTapRef = useRef<number>(0);
+  const heartAnimRef = useRef(new Animated.Value(0)).current;
+
   // Detect event links in message content
   const eventShortIds = useMemo(() => {
     if (message.isDeleted) return [];
@@ -407,6 +411,37 @@ function MessageItemInner({
   const handleReactionsAreaTap = useCallback(() => {
     onReact?.(message._id);
   }, [message._id, onReact]);
+
+  // Handle double-tap to toggle ❤️ reaction (like iMessage)
+  const handlePress = useCallback(() => {
+    const now = Date.now();
+    const DOUBLE_TAP_DELAY = 300;
+    if (now - lastTapRef.current < DOUBLE_TAP_DELAY) {
+      // Double-tap detected — toggle heart reaction
+      lastTapRef.current = 0;
+      toggleReaction('❤️').catch((err: unknown) => {
+        console.error('[MessageItem] Double-tap reaction failed:', err);
+      });
+      // Play heart pop animation
+      heartAnimRef.setValue(0);
+      Animated.sequence([
+        Animated.spring(heartAnimRef, {
+          toValue: 1,
+          tension: 100,
+          friction: 6,
+          useNativeDriver: true,
+        }),
+        Animated.timing(heartAnimRef, {
+          toValue: 0,
+          duration: 400,
+          delay: 300,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    } else {
+      lastTapRef.current = now;
+    }
+  }, [toggleReaction, heartAnimRef]);
 
   // Handle URL tap - open in browser
   const handleUrlTap = useCallback((url: string) => {
@@ -859,7 +894,7 @@ function MessageItemInner({
 
   return (
     <Animated.View style={{ transform: [{ translateY: slideAnim }, { scale: scaleAnim }] }}>
-    <Pressable onLongPress={handleLongPress} delayLongPress={300}>
+    <Pressable onPress={handlePress} onLongPress={handleLongPress} delayLongPress={300}>
       <View
         style={[
           styles.container,
@@ -891,6 +926,27 @@ function MessageItemInner({
           {!isOwnMessage && (
             <Text style={[styles.senderName, { color: themeColors.textSecondary }]}>{message.senderName || 'Unknown'}</Text>
           )}
+
+          {/* Double-tap heart animation overlay */}
+          <Animated.Text
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              alignSelf: 'center',
+              top: '30%',
+              fontSize: 48,
+              zIndex: 10,
+              opacity: heartAnimRef,
+              transform: [{
+                scale: heartAnimRef.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0.5, 1.2],
+                }),
+              }],
+            }}
+          >
+            ❤️
+          </Animated.Text>
 
           {/* Message bubble (hidden for special card messages) */}
           {message.contentType !== "reach_out_request" && message.contentType !== "task_card" && (
