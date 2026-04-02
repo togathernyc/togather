@@ -300,14 +300,14 @@ describe("Leader Channel Visibility in getChannelsByGroup", () => {
     expect(hasLeadersChannel).toBe(false);
   });
 
-  test("admin can see leader channel in getChannelsByGroup", async () => {
+  test("leader can see leader channel in getChannelsByGroup", async () => {
     const t = convexTest(schema, modules);
     const { communityId, groupId } = await seedTestData(t);
 
-    // Create an admin user
+    // Create a leader user
     const adminId = await t.run(async (ctx) => {
       return await ctx.db.insert("users", {
-        firstName: "Admin",
+        firstName: "Leader",
         lastName: "User",
         phone: "+15555550003",
         phoneVerified: true,
@@ -321,7 +321,7 @@ describe("Leader Channel Visibility in getChannelsByGroup", () => {
       await ctx.db.insert("groupMembers", {
         userId: adminId,
         groupId,
-        role: "admin",
+        role: "leader",
         joinedAt: Date.now(),
         notificationsEnabled: true,
       });
@@ -329,7 +329,7 @@ describe("Leader Channel Visibility in getChannelsByGroup", () => {
 
     const { accessToken: adminToken } = await generateTokens(adminId);
 
-    // Create channels (admin can create leaders channel too)
+    // Create channels (leader can create leaders channel too)
     await createBothChannels(t, groupId, adminToken);
 
     const channels = await t.query(api.functions.messaging.channels.getChannelsByGroup, {
@@ -432,14 +432,14 @@ describe("Leader Channel Access After Role Changes", () => {
     expect(channel).toBeNull();
   });
 
-  test("when admin is demoted to member, they lose access to leader channel", async () => {
+  test("when leader is demoted to member, they lose access to leader channel", async () => {
     const t = convexTest(schema, modules);
     const { communityId, groupId } = await seedTestData(t);
 
-    // Create an admin user
+    // Create a leader user
     const adminId = await t.run(async (ctx) => {
       return await ctx.db.insert("users", {
-        firstName: "Admin",
+        firstName: "Leader",
         lastName: "User",
         phone: "+15555550004",
         phoneVerified: true,
@@ -453,7 +453,7 @@ describe("Leader Channel Access After Role Changes", () => {
       await ctx.db.insert("groupMembers", {
         userId: adminId,
         groupId,
-        role: "admin",
+        role: "leader",
         joinedAt: Date.now(),
         notificationsEnabled: true,
       });
@@ -463,14 +463,14 @@ describe("Leader Channel Access After Role Changes", () => {
 
     const { leadersChannelId } = await createBothChannels(t, groupId, adminToken);
 
-    // Initially, admin can see leader channel
+    // Initially, leader can see leader channel
     const channelsBefore = await t.query(api.functions.messaging.channels.getChannelsByGroup, {
       token: adminToken,
       groupId,
     });
     expect(channelsBefore.some((c) => c.channelType === "leaders")).toBe(true);
 
-    // Demote admin to member
+    // Demote leader to member
     await t.run(async (ctx) => {
       const membership = await ctx.db
         .query("groupMembers")

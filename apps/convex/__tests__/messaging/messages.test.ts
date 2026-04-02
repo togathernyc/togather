@@ -688,7 +688,7 @@ describe("Delete Message", () => {
     expect(message?.deletedById).toBe(leaderId);
   });
 
-  test("should allow group admin to delete any message in group chat", async () => {
+  test("should allow group leader to delete any message in group chat", async () => {
     vi.useFakeTimers();
     const t = convexTest(schema, modules);
     const { channelId, communityId, groupId, accessToken } = await seedTestData(t);
@@ -704,10 +704,10 @@ describe("Delete Message", () => {
     vi.runAllTimers();
     await t.finishInProgressScheduledFunctions();
 
-    // Create a group admin (who is only a regular member in the channel, not moderator)
+    // Create a group leader (who is only a regular member in the channel, not moderator)
     const adminId = await t.run(async (ctx) => {
       const uId = await ctx.db.insert("users", {
-        firstName: "Admin",
+        firstName: "Leader",
         lastName: "Person",
         phone: "+15555550011",
         phoneVerified: true,
@@ -715,11 +715,11 @@ describe("Delete Message", () => {
         createdAt: Date.now(),
         updatedAt: Date.now(),
       });
-      // Group admin role
+      // Group leader role
       await ctx.db.insert("groupMembers", {
         userId: uId,
         groupId,
-        role: "admin",
+        role: "leader",
         joinedAt: Date.now(),
         notificationsEnabled: true,
       });
@@ -736,7 +736,7 @@ describe("Delete Message", () => {
 
     const { accessToken: adminToken } = await generateTokens(adminId);
 
-    // Group admin should be able to delete any message
+    // Group leader should be able to delete any message
     await t.mutation(api.functions.messaging.messages.deleteMessage, {
       token: adminToken,
       messageId,

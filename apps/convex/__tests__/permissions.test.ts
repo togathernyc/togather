@@ -154,7 +154,7 @@ async function seedTestData(t: ReturnType<typeof convexTest>): Promise<TestSetup
     const adminMembershipId = await ctx.db.insert("groupMembers", {
       groupId,
       userId: adminId,
-      role: GROUP_ROLES.admin,
+      role: GROUP_ROLES.leader,
       joinedAt: now - 60 * 24 * 60 * 60 * 1000,
       notificationsEnabled: true,
     });
@@ -273,7 +273,7 @@ describe("Group Leader Permissions - meetings.create", () => {
     vi.useRealTimers();
   });
 
-  test("succeeds when admin role in group creates event", async () => {
+  test("succeeds when leader role in group creates event", async () => {
     vi.useFakeTimers();
     const t = convexTest(schema, modules);
     const setup = await seedTestData(t);
@@ -772,7 +772,7 @@ describe("Community Admin Permissions - communities.updateMemberRole", () => {
 
 describe("Permission Edge Cases", () => {
   describe("Role hierarchy in groups", () => {
-    test("admin role in group can perform leader actions", async () => {
+    test("leader role in group can perform leader actions", async () => {
       vi.useFakeTimers();
       const t = convexTest(schema, modules);
       const setup = await seedTestData(t);
