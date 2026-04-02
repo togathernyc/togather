@@ -66,17 +66,17 @@ export interface RoleRecord {
 }
 
 /**
- * Leader/admin roles that grant elevated permissions.
+ * Roles that grant elevated group permissions.
  */
-export const LEADER_ROLES = ["leader", "admin"] as const;
+export const LEADER_ROLES = ["leader"] as const;
 export type LeaderRole = (typeof LEADER_ROLES)[number];
 
 /**
- * Check if a role is a leader or admin role.
+ * Check if a role is a leader role.
  *
  * @example
  * if (isLeaderRole(membership.role)) {
- *   // User has leader/admin permissions
+ *   // User has leader permissions
  * }
  */
 export function isLeaderRole(role: string | undefined | null): role is LeaderRole {
@@ -85,12 +85,12 @@ export function isLeaderRole(role: string | undefined | null): role is LeaderRol
 }
 
 /**
- * Check if an active membership record has leader/admin role.
+ * Check if an active membership record has leader role.
  * Combines the soft-delete check with role check.
  *
  * @example
  * // Instead of:
- * if (membership && !membership.leftAt && ["leader", "admin"].includes(membership.role)) { ... }
+ * if (membership && !membership.leftAt && membership.role === "leader") { ... }
  *
  * // Use:
  * if (isActiveLeader(membership)) { ... }
@@ -209,5 +209,5 @@ export {
   isDeclinedRequest,
   hasLeftGroup,
   getMembershipStatus,
-  isGroupLeaderOrAdmin,
+  isGroupLeader,
 } from "./membership";

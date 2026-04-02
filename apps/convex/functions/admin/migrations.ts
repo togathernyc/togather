@@ -5,7 +5,7 @@
  */
 
 import { v } from "convex/values";
-import { mutation } from "../../_generated/server";
+import { mutation, internalMutation } from "../../_generated/server";
 import { now } from "../../lib/utils";
 import { requireAuth } from "../../lib/auth";
 
@@ -59,5 +59,36 @@ export const upsertGroupTypeFromLegacy = mutation({
     }
 
     return await ctx.db.insert("groupTypes", data);
+  },
+});
+
+// ============================================================================
+// Group Role Migration
+// ============================================================================
+
+/**
+ * Migrate legacy "admin" group members to "leader" role.
+ *
+ * The "admin" role was a stale concept — functionally identical to "leader"
+ * but not in the groupRoleValidator. This migration converts any remaining
+ * admin-role group members to leader.
+ *
+ * Idempotent: safe to run multiple times. Skips already-migrated records.
+ */
+export const migrateAdminGroupMembersToLeader = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const adminMembers = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_role", (q) => q.eq("role", "admin"))
+      .collect();
+
+    let migrated = 0;
+    for (const member of adminMembers) {
+      await ctx.db.patch(member._id, { role: "leader" });
+      migrated++;
+    }
+
+    return { migrated, total: adminMembers.length };
   },
 });

@@ -1512,11 +1512,7 @@ export const history = query({
           q.eq("groupId", group._id).eq("userId", viewerId),
         )
         .first();
-      if (
-        callerMembership &&
-        (callerMembership.role === "leader" ||
-          callerMembership.role === "admin")
-      ) {
+      if (callerMembership && callerMembership.role === "leader") {
         canEdit = true;
       } else if (await isCommunityAdmin(ctx, cpRecord.communityId, viewerId)) {
         canEdit = true;
