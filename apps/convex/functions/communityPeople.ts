@@ -363,6 +363,155 @@ export const list = query({
   },
 });
 
+const MAX_CSV_EXPORT_ROWS = 10_000;
+
+/**
+ * Fetch up to MAX_CSV_EXPORT_ROWS community people for CSV export.
+ * Uses the same filters and sort as `list` but returns all matching rows in one response
+ * (no pagination cursor). When the result is truncated, `truncated` is true.
+ */
+export const listAllForCsvExport = query({
+  args: {
+    groupId: v.id("groups"),
+    token: v.optional(v.string()),
+    sortBy: v.optional(v.string()),
+    sortDirection: v.optional(v.union(v.literal("asc"), v.literal("desc"))),
+    statusFilter: v.optional(v.string()),
+    scoreField: v.optional(v.string()),
+    scoreMin: v.optional(v.number()),
+    scoreMax: v.optional(v.number()),
+    assigneeFilter: v.optional(v.string()),
+    requireSelfAssignee: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token ?? "");
+
+    const group = await ctx.db.get(args.groupId);
+    if (!group) {
+      throw new ConvexError("Group not found");
+    }
+    await requireCommunityMember(ctx, group.communityId, userId);
+
+    const assigneeFilter = args.requireSelfAssignee
+      ? userId.toString()
+      : args.assigneeFilter;
+
+    let assigneeIdSet: Set<string> | null = null;
+    if (assigneeFilter) {
+      const junctionRows = await ctx.db
+        .query("communityPeopleAssignees")
+        .withIndex("by_group_assignee", (q: any) =>
+          q.eq("groupId", args.groupId).eq("assigneeUserId", assigneeFilter),
+        )
+        .collect();
+      assigneeIdSet = new Set(
+        junctionRows.map((r: any) => r.communityPersonId.toString()),
+      );
+    }
+
+    const direction = args.sortDirection === "desc" ? "desc" : "asc";
+    const indexName =
+      INDEX_MAP[args.sortBy ?? "lastName"] ?? "by_group_lastName";
+
+    const scoreFilterField = (args.scoreField ?? "score1") as
+      | "score1"
+      | "score2"
+      | "score3";
+
+    if (assigneeIdSet) {
+      const docs = await Promise.all(
+        [...assigneeIdSet].map((id) => ctx.db.get(id as Id<"communityPeople">)),
+      );
+      const validDocs = docs.filter(
+        (d): d is NonNullable<typeof d> =>
+          d !== null && d.groupId?.toString() === args.groupId.toString(),
+      );
+
+      const filtered = validDocs.filter((d) => {
+        if (args.statusFilter && d.status !== args.statusFilter) return false;
+        if (
+          args.scoreMax !== undefined &&
+          (d[scoreFilterField] ?? 0) >= args.scoreMax
+        )
+          return false;
+        if (
+          args.scoreMin !== undefined &&
+          (d[scoreFilterField] ?? 0) <= args.scoreMin
+        )
+          return false;
+        return true;
+      });
+
+      const sortKey = indexName.replace("by_group_", "");
+      const isScoreSort = sortKey.startsWith("score");
+      const dir = direction === "desc" ? -1 : 1;
+      filtered.sort((a: any, b: any) => {
+        const av = a[sortKey];
+        const bv = b[sortKey];
+        if (av == null && bv == null) {
+          if (isScoreSort) return ((a.addedAtInv ?? 0) - (b.addedAtInv ?? 0)) * dir;
+          return 0;
+        }
+        if (av == null) return -1 * dir;
+        if (bv == null) return 1 * dir;
+        let cmp: number;
+        if (typeof av === "number" && typeof bv === "number") {
+          cmp = (av - bv) * dir;
+        } else {
+          cmp = String(av).localeCompare(String(bv)) * dir;
+        }
+        if (cmp === 0 && isScoreSort) {
+          return ((a.addedAtInv ?? 0) - (b.addedAtInv ?? 0)) * dir;
+        }
+        return cmp;
+      });
+
+      const truncated = filtered.length > MAX_CSV_EXPORT_ROWS;
+      return {
+        people: filtered.slice(0, MAX_CSV_EXPORT_ROWS),
+        truncated,
+      };
+    }
+
+    let q = ctx.db
+      .query("communityPeople")
+      .withIndex(indexName as any, (fq: any) => fq.eq("groupId", args.groupId))
+      .order(direction);
+
+    const hasFilters =
+      args.statusFilter ||
+      assigneeFilter ||
+      args.scoreMax !== undefined ||
+      args.scoreMin !== undefined;
+
+    if (hasFilters) {
+      q = q.filter((fq) => {
+        const conds: any[] = [];
+        if (args.statusFilter) {
+          conds.push(fq.eq(fq.field("status"), args.statusFilter));
+        }
+        if (args.scoreMax !== undefined) {
+          conds.push(fq.lt(fq.field(scoreFilterField), args.scoreMax));
+        }
+        if (args.scoreMin !== undefined) {
+          conds.push(fq.gt(fq.field(scoreFilterField), args.scoreMin));
+        }
+        if (conds.length === 0) return true;
+        return conds.length === 1
+          ? conds[0]
+          : fq.and(...(conds as [any, any, ...any[]]));
+      });
+    }
+
+    const batch = await q.take(MAX_CSV_EXPORT_ROWS + 1);
+    const truncated = batch.length > MAX_CSV_EXPORT_ROWS;
+    return {
+      people: batch.slice(0, MAX_CSV_EXPORT_ROWS),
+      truncated,
+    };
+  },
+});
+
 /**
  * Search community people by name/email/phone using full-text search index.
  * Returns up to 200 results ordered by relevance.

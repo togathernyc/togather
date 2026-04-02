@@ -24,6 +24,8 @@ import {
   useAuthenticatedQuery,
   useAuthenticatedPaginatedQuery,
   useAuthenticatedMutation,
+  useConvex,
+  useStoredAuthToken,
   api,
 } from "@services/api/convex";
 import { Id } from "@services/api/convex";
@@ -64,6 +66,9 @@ import {
 import { useTheme } from "@hooks/useTheme";
 import type { ThemeColors } from "@/theme/colors";
 import { ScoreBreakdownModal, type ScoreBreakdownData } from "./ScoreBreakdownModal";
+import { generateFollowupPeopleCsv } from "./followupCsvExportHelpers";
+import type { FollowupCsvExportMember, FollowupCsvExportTask } from "./followupCsvExportHelpers";
+import { saveAndShareCSV } from "@features/admin/utils/csvExport";
 
 // ============================================================================
 // Types
@@ -244,6 +249,8 @@ export function FollowupDesktopTable({
 }) {
   const { colors } = useTheme();
   const router = useRouter();
+  const convex = useConvex();
+  const authToken = useStoredAuthToken();
   const { user, community } = useAuth();
   const currentUserId = user?.id as Id<"users"> | undefined;
   const communityId = community?.id as Id<"communities"> | undefined;
@@ -308,6 +315,8 @@ export function FollowupDesktopTable({
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
   const [showQuickAddPanel, setShowQuickAddPanel] = useState(false);
   const [showCsvImportModal, setShowCsvImportModal] = useState(false);
+  const [exportingCsv, setExportingCsv] = useState(false);
+  const exportingCsvRef = useRef(false);
 
   // PeopleViewBar state
   const [activeViewId, setActiveViewId] = useState<string | null>(null);
@@ -909,6 +918,102 @@ export function FollowupDesktopTable({
       ),
     [customFields, displayMembers],
   );
+
+  const handleExportCsv = useCallback(async () => {
+    if (!groupId || !authToken || exportingCsvRef.current) return;
+    exportingCsvRef.current = true;
+    setExportingCsv(true);
+    try {
+      let exportMembers: FollowupCsvExportMember[];
+
+      if (hasTextSearch) {
+        exportMembers = displayMembers as FollowupCsvExportMember[];
+      } else {
+        const result = await convex.query(
+          api.functions.communityPeople.listAllForCsvExport,
+          {
+            groupId: groupId as Id<"groups">,
+            token: authToken,
+            sortBy: serverSortBy,
+            sortDirection,
+            ...listFilterArgs,
+          },
+        );
+        if (result.truncated) {
+          Alert.alert(
+            "Export limited",
+            "Only the first 10,000 rows were exported. Narrow filters or sort to export the rest in chunks.",
+          );
+        }
+        exportMembers = applyDevZipCodeSample(
+          (result.people as unknown[]).map((r) =>
+            adaptCommunityPerson(r),
+          ),
+        ) as FollowupCsvExportMember[];
+      }
+
+      const filtered = applyParsedFollowupFilters(exportMembers, parsedQuery);
+
+      const columnKeys = columns.map((c) => c.key);
+      const tasksMap = new Map<string, FollowupCsvExportTask[]>();
+      for (const [uid, tasks] of tasksByMember.entries()) {
+        tasksMap.set(
+          uid,
+          tasks.map((t) => ({
+            title: t.title,
+            assignedToName: t.assignedToName,
+            groupName: t.groupName,
+          })),
+        );
+      }
+
+      const csv = generateFollowupPeopleCsv(
+        filtered,
+        columnKeys,
+        columnLabelMap,
+        leaderMap,
+        tasksMap,
+        customFields,
+      );
+
+      const rawBase = (groupData?.name ?? "people").replace(/[^\w\s-]/g, "").trim();
+      const safeBase = (rawBase || "people").replace(/\s+/g, "_").slice(0, 80);
+      const filename = `${safeBase}_${new Date().toISOString().slice(0, 10)}.csv`;
+
+      if (Platform.OS === "web") {
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = filename;
+        anchor.click();
+        URL.revokeObjectURL(url);
+      } else {
+        await saveAndShareCSV(filename, csv);
+      }
+    } catch {
+      Alert.alert("Export failed", "Could not export CSV. Please try again.");
+    } finally {
+      exportingCsvRef.current = false;
+      setExportingCsv(false);
+    }
+  }, [
+    authToken,
+    columnLabelMap,
+    columns,
+    convex,
+    customFields,
+    displayMembers,
+    groupData?.name,
+    groupId,
+    hasTextSearch,
+    leaderMap,
+    listFilterArgs,
+    parsedQuery,
+    serverSortBy,
+    sortDirection,
+    tasksByMember,
+  ]);
 
   // Clear optimistic overrides once server data catches up
   useEffect(() => {
@@ -2151,6 +2256,25 @@ export function FollowupDesktopTable({
         >
           <Ionicons name="cloud-upload-outline" size={16} color={colors.link} />
           <Text style={[s.importButtonText, { color: colors.link }]}>Import CSV</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            s.importButton,
+            {
+              borderColor: colors.textSecondary,
+              backgroundColor: colors.surfaceSecondary,
+              opacity: exportingCsv || !authToken ? 0.5 : 1,
+            },
+          ]}
+          disabled={exportingCsv || !authToken}
+          onPress={handleExportCsv}
+        >
+          {exportingCsv ? (
+            <ActivityIndicator size="small" color={colors.textSecondary} />
+          ) : (
+            <Ionicons name="download-outline" size={16} color={colors.textSecondary} />
+          )}
+          <Text style={[s.importButtonText, { color: colors.textSecondary }]}>Export CSV</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={s.settingsButton}
