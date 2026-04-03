@@ -113,11 +113,13 @@ export function useMessages(
         };
         setHasMore(result.hasMore || false);
         lastCursorRef.current = result.cursor;
-        isLoadingMoreRef.current = false;
+        // Keep isLoadingMoreRef true until the live subscription resumes —
+        // it gets cleared below when cursor is undefined and result arrives.
         // Reset cursor so useQuery goes back to watching latest messages
         setCursor(undefined);
       } else {
-        // Live subscription result — update hasMore and lastCursor
+        // Live subscription result — clear pagination loading state
+        isLoadingMoreRef.current = false;
         // Only update these from the live query if we haven't paginated yet
         if (olderMessagesRef.current.messages.length === 0) {
           setHasMore(result.hasMore || false);
@@ -207,13 +209,19 @@ export function useMessages(
     // During pagination, keep showing current merged messages
     messages = mergedMessages.length > 0 ? mergedMessages : [];
   } else if (isQueryLoading && channelId) {
-    // Initial load — try cache
-    const cached = getChannelMessages(channelId);
-    if (cached && cached.length > 0) {
-      messages = cached;
-      isStale = true;
+    // Query is loading — prefer existing merged messages over cache to avoid
+    // flickering during cursor reset transitions after pagination.
+    if (mergedMessages.length > 0) {
+      messages = mergedMessages;
     } else {
-      messages = [];
+      // True initial load — try cache
+      const cached = getChannelMessages(channelId);
+      if (cached && cached.length > 0) {
+        messages = cached;
+        isStale = true;
+      } else {
+        messages = [];
+      }
     }
   } else {
     messages = mergedMessages;
