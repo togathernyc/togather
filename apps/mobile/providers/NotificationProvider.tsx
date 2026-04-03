@@ -122,10 +122,16 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
   // Track handled notification IDs to prevent duplicate navigation
   const handledNotificationIds = useRef<Set<string>>(new Set());
 
-  // Keep ref in sync with state
+  // Keep refs in sync with state
   useEffect(() => {
     activeChannelIdRef.current = activeChannelId;
   }, [activeChannelId]);
+
+  // Stable ref for handleNotificationTap to avoid re-triggering the init effect
+  const handleNotificationTapRef = useRef(handleNotificationTap);
+  useEffect(() => {
+    handleNotificationTapRef.current = handleNotificationTap;
+  }, [handleNotificationTap]);
 
   // Load auth token from AsyncStorage — must re-run when auth state changes
   // so that after logout + login the fresh token is picked up for registerToken()
@@ -480,18 +486,22 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
         // Register token
         await registerToken();
       } else if (Platform.OS !== 'web') {
-        // Nag the user to enable notifications if they haven't
-        Alert.alert(
-          'Turn on Notifications',
-          "Don't miss messages from your community! Enable push notifications to stay in the loop.",
-          [
-            { text: 'Not Now', style: 'cancel' },
-            {
-              text: 'Open Settings',
-              onPress: () => Linking.openSettings(),
-            },
-          ],
-        );
+        // Only show the notification prompt once per install — check AsyncStorage flag
+        const dismissed = await AsyncStorage.getItem('notification_prompt_dismissed');
+        if (!dismissed) {
+          await AsyncStorage.setItem('notification_prompt_dismissed', 'true');
+          Alert.alert(
+            'Turn on Notifications',
+            "Don't miss messages from your community! Enable push notifications to stay in the loop.",
+            [
+              { text: 'Not Now', style: 'cancel' },
+              {
+                text: 'Open Settings',
+                onPress: () => Linking.openSettings(),
+              },
+            ],
+          );
+        }
       }
 
       // Get initial unread count
@@ -514,7 +524,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
             handledNotificationIds.current.add(notificationId);
             // Handle navigation after a small delay to ensure the app is fully loaded
             setTimeout(() => {
-              handleNotificationTap(data);
+              handleNotificationTapRef.current(data);
             }, 500);
           }
         }
@@ -565,7 +575,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
         handledNotificationIds.current.add(notificationId);
 
         // Handle navigation based on notification type
-        handleNotificationTap(data);
+        handleNotificationTapRef.current(data);
       });
 
     return () => {
@@ -573,7 +583,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
       notificationListener.current?.remove();
       responseListener.current?.remove();
     };
-  }, [isAuthenticated, requestPermissions, registerToken, refreshUnreadCount, handleNotificationTap]);
+  }, [isAuthenticated, requestPermissions, registerToken, refreshUnreadCount]);
 
   // Refresh unread count when app comes to foreground
   useEffect(() => {
