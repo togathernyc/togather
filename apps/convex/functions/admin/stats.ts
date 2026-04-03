@@ -1275,7 +1275,7 @@ export const getDailySummary = query({
         if (channel?.groupId) {
           const group = await ctx.db.get(channel.groupId);
           groupName = group?.name ?? "";
-          groupPhoto = getMediaUrl((group as any)?.profilePhoto);
+          groupPhoto = getMediaUrl(group?.preview);
         }
         return {
           channelId,
@@ -1284,6 +1284,33 @@ export const getDailySummary = query({
           groupPhoto,
           messages,
           reactions,
+        };
+      })
+    );
+
+    // Top senders — count messages per sender and resolve user info
+    const senderCounts = new Map<string, number>();
+    for (const msg of dayMessages) {
+      if (msg.isDeleted || BOT_TYPES.has(msg.contentType) || !msg.senderId) continue;
+      senderCounts.set(
+        msg.senderId,
+        (senderCounts.get(msg.senderId) ?? 0) + 1
+      );
+    }
+    const sortedSenders = Array.from(senderCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10);
+
+    const topSenders = await Promise.all(
+      sortedSenders.map(async ([senderId, messageCount]) => {
+        const senderUser = await ctx.db.get(senderId as Id<"users">);
+        return {
+          userId: senderId,
+          name: senderUser
+            ? `${senderUser.firstName ?? ""} ${senderUser.lastName ?? ""}`.trim() || "Unknown"
+            : "Unknown",
+          profilePhoto: getMediaUrl(senderUser?.profilePhoto),
+          messageCount,
         };
       })
     );
@@ -1301,6 +1328,7 @@ export const getDailySummary = query({
       totalReactions: dayReactions.length,
       appOpens,
       topChannels,
+      topSenders,
     };
   },
 });

@@ -164,6 +164,44 @@ export function SuperAdminDashboardContent() {
               ))}
             </View>
           )}
+
+          {/* Top Senders */}
+          {data.topSenders && data.topSenders.length > 0 && (
+            <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Top Senders</Text>
+              {data.topSenders.map((sender: any, index: number) => (
+                <View
+                  key={sender.userId}
+                  style={[
+                    styles.channelRow,
+                    index < data.topSenders.length - 1 && {
+                      borderBottomWidth: 1,
+                      borderBottomColor: colors.borderLight,
+                    },
+                  ]}
+                >
+                  {sender.profilePhoto ? (
+                    <Image
+                      source={{ uri: sender.profilePhoto }}
+                      style={styles.groupAvatar}
+                    />
+                  ) : (
+                    <View style={[styles.groupAvatarPlaceholder, { backgroundColor: colors.surfaceSecondary }]}>
+                      <Ionicons name="person" size={14} color={colors.textTertiary} />
+                    </View>
+                  )}
+                  <View style={styles.channelInfo}>
+                    <Text style={[styles.channelName, { color: colors.text }]} numberOfLines={1}>
+                      {sender.name}
+                    </Text>
+                  </View>
+                  <Text style={[styles.messageCount, { color: primaryColor }]}>
+                    {sender.messageCount} msg
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
         </>
       )}
     </ScrollView>
