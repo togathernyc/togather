@@ -386,6 +386,8 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   const [menuVisible, setMenuVisible] = useState(false);
   const [externalChatModalVisible, setExternalChatModalVisible] = useState(false);
   const [overlayVisible, setOverlayVisible] = useState(false);
+  const [overlayReactionsOnly, setOverlayReactionsOnly] = useState(false);
+  const [overlayTapY, setOverlayTapY] = useState<number | undefined>();
   const [membersModalChannel, setMembersModalChannel] = useState<{ channelId: Id<"chatChannels">; name: string; slug: string } | null>(null);
   const [selectedMessageId, setSelectedMessageId] = useState<Id<"chatMessages"> | null>(null);
   const [selectedMessageSenderId, setSelectedMessageSenderId] = useState<Id<"users"> | null>(null);
@@ -765,11 +767,36 @@ const ConvexChatRoomScreenInner: React.FC = () => {
     setSelectedMessageSenderName(message.senderName);
     setSelectedMessageSenderPhoto(message.senderProfilePhoto);
     setSelectedMessageAttachments(message.attachments?.map(a => ({ type: a.type, url: a.url })));
+    setOverlayReactionsOnly(false);
+    setOverlayVisible(true);
+  }, []);
+
+  const handleDoubleTapMessage = useCallback((
+    message: {
+      _id: Id<"chatMessages">;
+      senderId: Id<"users">;
+      content: string;
+      senderName?: string;
+      senderProfilePhoto?: string;
+      attachments?: Array<{ type: string; url: string; name?: string }>;
+    },
+    event: { nativeEvent: { pageX: number; pageY: number } }
+  ) => {
+    setSelectedMessageId(message._id);
+    setSelectedMessageSenderId(message.senderId);
+    setSelectedMessageContent(message.content);
+    setSelectedMessageSenderName(message.senderName);
+    setSelectedMessageSenderPhoto(message.senderProfilePhoto);
+    setSelectedMessageAttachments(message.attachments?.map(a => ({ type: a.type, url: a.url })));
+    setOverlayReactionsOnly(true);
+    setOverlayTapY(event.nativeEvent.pageY);
     setOverlayVisible(true);
   }, []);
 
   const handleOverlayClose = useCallback(() => {
     setOverlayVisible(false);
+    setOverlayReactionsOnly(false);
+    setOverlayTapY(undefined);
     setSelectedMessageId(null);
     setSelectedMessageSenderId(null);
     setSelectedMessageContent("");
@@ -963,6 +990,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
                 onMessageReact={handleMessageReact}
                 onMessageDelete={handleMessageDelete}
                 onMessageLongPress={handleLongPressMessage}
+                onMessageDoubleTap={handleDoubleTapMessage}
                 optimisticMessages={optimisticMessages}
                 onRetryMessage={retryMessage}
                 onDismissMessage={dismissMessage}
@@ -1033,6 +1061,8 @@ const ConvexChatRoomScreenInner: React.FC = () => {
             isOwnMessage={selectedMessageSenderId === currentUserId}
             isUserLeader={isUserLeader}
             isCommunityAdmin={isCommunityAdmin}
+            reactionsOnly={overlayReactionsOnly}
+            tapY={overlayTapY}
           />
         )}
 

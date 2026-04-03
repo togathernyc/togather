@@ -30,7 +30,9 @@ import {
   useAuthenticatedPaginatedQuery,
   useAuthenticatedMutation,
   useAuthenticatedQuery,
+  useConvex,
   useQuery,
+  useStoredAuthToken,
 } from "@services/api/convex";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import {
@@ -65,6 +67,12 @@ import { FollowupMapView, FOLLOWUP_MAP_VIEW_ID } from "./FollowupMapView";
 import { useTheme } from "@hooks/useTheme";
 import type { ThemeColors } from "@/theme/colors";
 import { ScoreBreakdownModal, type ScoreBreakdownData } from "./ScoreBreakdownModal";
+import {
+  generateFollowupPeopleCsv,
+  type FollowupCsvExportMember,
+  type FollowupCsvExportTask,
+} from "./followupCsvExportHelpers";
+import { saveAndShareCSV } from "@features/admin/utils/csvExport";
 
 type SortDirection = "asc" | "desc";
 
@@ -218,6 +226,8 @@ export function FollowupMobileGrid({
   const { colors } = useTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const convex = useConvex();
+  const authToken = useStoredAuthToken();
   const { community, user } = useAuth();
   const communityId = community?.id as Id<"communities"> | undefined;
   const currentUserId = user?.id as Id<"users"> | undefined;
@@ -245,6 +255,8 @@ export function FollowupMobileGrid({
   const [isRemoving, setIsRemoving] = useState(false);
   const [showQuickAddModal, setShowQuickAddModal] = useState(false);
   const [scoreBreakdownSheet, setScoreBreakdownSheet] = useState<ScoreBreakdownData | null>(null);
+  const [exportingCsv, setExportingCsv] = useState(false);
+  const exportingCsvRef = useRef(false);
 
   // PeopleViewBar state (system_scores feature flag)
   const [activeViewId, setActiveViewId] = useState<string | null>(null);
@@ -905,6 +917,75 @@ export function FollowupMobileGrid({
       selectedIds,
     ],
   );
+
+  const columnLabelMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    map["addedAt"] = "Date Added";
+    map["firstName"] = "First Name";
+    map["lastName"] = "Last Name";
+    map["email"] = "Email";
+    map["phone"] = "Phone";
+    map["zipCode"] = "ZIP Code";
+    map["dateOfBirth"] = "Birthday";
+    SYSTEM_SCORE_COLUMNS.forEach((sc) => {
+      map[sc.slot] = sc.name;
+    });
+    map["assignee"] = "Assignees";
+    map["notes"] = "Notes";
+    map["tasks"] = "Tasks";
+    map["status"] = "Status";
+    map["lastAttendedAt"] = "Last Attended";
+    map["lastFollowupAt"] = "Last Contact";
+    map["lastActiveAt"] = "Date Active";
+    map["alerts"] = "Alerts";
+    for (const cf of customFields) {
+      map[cf.slot] = cf.name;
+    }
+    return map;
+  }, [customFields]);
+
+  const handleExportCsv = useCallback(async () => {
+    if (exportingCsvRef.current) return;
+    if (!groupId || !authToken) {
+      Alert.alert("Export unavailable", "Please wait for data to load and try again.");
+      return;
+    }
+    exportingCsvRef.current = true;
+    setExportingCsv(true);
+    try {
+      const result = await convex.action(
+        api.functions.communityPeople.listAllForCsvExport,
+        {
+          groupId: groupId as Id<"groups">,
+          token: authToken,
+          sortBy: serverSortBy,
+          sortDirection,
+          ...listFilterArgs,
+        },
+      );
+      if (result.truncated) {
+        Alert.alert(
+          "Export limited",
+          `Only the first ${result.totalRows.toLocaleString()} rows were exported. Narrow filters or sort to export the rest in chunks.`,
+        );
+      }
+
+      await saveAndShareCSV(result.filename, result.csv);
+    } catch (err) {
+      console.warn("[FollowupMobileGrid] CSV export failed:", err);
+      Alert.alert("Export failed", "Could not export CSV. Please try again.");
+    } finally {
+      exportingCsvRef.current = false;
+      setExportingCsv(false);
+    }
+  }, [
+    authToken,
+    convex,
+    groupId,
+    listFilterArgs,
+    serverSortBy,
+    sortDirection,
+  ]);
 
   const handleSortPress = (field: string) => {
     if (field === sortField) {
@@ -1791,6 +1872,17 @@ export function FollowupMobileGrid({
             onPress={() => setShowQuickAddModal(true)}
           >
             <Ionicons name="person-add-outline" size={20} color={colors.success} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.headerAddButton}
+            onPress={handleExportCsv}
+            disabled={exportingCsv || !authToken}
+          >
+            {exportingCsv ? (
+              <ActivityIndicator size="small" color={colors.textSecondary} />
+            ) : (
+              <Ionicons name="download-outline" size={20} color={colors.textSecondary} style={{ opacity: !authToken ? 0.5 : 1 }} />
+            )}
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.settingsButton}

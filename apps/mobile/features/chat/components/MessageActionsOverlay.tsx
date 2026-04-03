@@ -28,7 +28,7 @@ import { getMediaUrl } from "@/utils/media";
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
 // Reaction types
-const REACTIONS = [
+export const REACTIONS = [
   { type: "like", emoji: "👍" },
   { type: "love", emoji: "❤️" },
   { type: "haha", emoji: "😂" },
@@ -104,6 +104,10 @@ type MessageActionsOverlayProps = {
   isCommunityAdmin?: boolean;
   /** Hide the reply action (useful in thread context where nested replies aren't allowed) */
   hideReplyAction?: boolean;
+  /** Show only the reaction picker (no actions menu, no message preview) */
+  reactionsOnly?: boolean;
+  /** Y position of the tap event — used to position reactions near the message */
+  tapY?: number;
 };
 
 export function MessageActionsOverlay({
@@ -115,6 +119,8 @@ export function MessageActionsOverlay({
   isUserLeader = false,
   isCommunityAdmin = false,
   hideReplyAction = false,
+  reactionsOnly = false,
+  tapY,
 }: MessageActionsOverlayProps) {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
@@ -241,8 +247,17 @@ export function MessageActionsOverlay({
         <Animated.View style={[styles.backdrop, { opacity: fadeAnim, backgroundColor: colors.overlay }]} />
       </TouchableWithoutFeedback>
 
-      {/* Centered Content */}
-      <View style={styles.centeredContainer} pointerEvents="box-none">
+      {/* Content */}
+      <View
+        style={[
+          styles.centeredContainer,
+          reactionsOnly && tapY !== undefined && {
+            justifyContent: 'flex-start',
+            paddingTop: Math.max(tapY - 72, 50),
+          },
+        ]}
+        pointerEvents="box-none"
+      >
         <Animated.View
           style={[
             styles.contentWrapper,
@@ -271,7 +286,8 @@ export function MessageActionsOverlay({
             ))}
           </ScrollView>
 
-          {/* Mini Message Preview */}
+          {/* Mini Message Preview (hidden in reactionsOnly mode) */}
+          {!reactionsOnly && (
           <View
             style={[
               styles.messageBubbleContainer,
@@ -344,8 +360,10 @@ export function MessageActionsOverlay({
               )}
             </View>
           </View>
+          )}
 
-          {/* Actions Menu - Below Message */}
+          {/* Actions Menu - Below Message (hidden in reactionsOnly mode) */}
+          {!reactionsOnly && (
           <View style={[styles.actionsContainer, { backgroundColor: colors.surface }]}>
             {showMoreActions ? (
               <>
@@ -415,6 +433,7 @@ export function MessageActionsOverlay({
               ))
             )}
           </View>
+          )}
         </Animated.View>
       </View>
     </Modal>

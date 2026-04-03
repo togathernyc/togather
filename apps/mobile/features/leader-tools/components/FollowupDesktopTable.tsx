@@ -920,65 +920,32 @@ export function FollowupDesktopTable({
   );
 
   const handleExportCsv = useCallback(async () => {
-    if (!groupId || !authToken || exportingCsvRef.current) return;
+    if (exportingCsvRef.current) return;
+    if (!groupId || !authToken) {
+      Alert.alert("Export unavailable", "Please wait for data to load and try again.");
+      return;
+    }
     exportingCsvRef.current = true;
     setExportingCsv(true);
     try {
-      let exportMembers: FollowupCsvExportMember[];
-
-      if (hasTextSearch) {
-        exportMembers = displayMembers as FollowupCsvExportMember[];
-      } else {
-        const result = await convex.query(
-          api.functions.communityPeople.listAllForCsvExport,
-          {
-            groupId: groupId as Id<"groups">,
-            token: authToken,
-            sortBy: serverSortBy,
-            sortDirection,
-            ...listFilterArgs,
-          },
-        );
-        if (result.truncated) {
-          Alert.alert(
-            "Export limited",
-            "Only the first 10,000 rows were exported. Narrow filters or sort to export the rest in chunks.",
-          );
-        }
-        exportMembers = applyDevZipCodeSample(
-          (result.people as unknown[]).map((r) =>
-            adaptCommunityPerson(r),
-          ),
-        ) as FollowupCsvExportMember[];
-      }
-
-      const filtered = applyParsedFollowupFilters(exportMembers, parsedQuery);
-
-      const columnKeys = columns.map((c) => c.key);
-      const tasksMap = new Map<string, FollowupCsvExportTask[]>();
-      for (const [uid, tasks] of tasksByMember.entries()) {
-        tasksMap.set(
-          uid,
-          tasks.map((t) => ({
-            title: t.title,
-            assignedToName: t.assignedToName,
-            groupName: t.groupName,
-          })),
-        );
-      }
-
-      const csv = generateFollowupPeopleCsv(
-        filtered,
-        columnKeys,
-        columnLabelMap,
-        leaderMap,
-        tasksMap,
-        customFields,
+      const result = await convex.action(
+        api.functions.communityPeople.listAllForCsvExport,
+        {
+          groupId: groupId as Id<"groups">,
+          token: authToken,
+          sortBy: serverSortBy,
+          sortDirection,
+          ...listFilterArgs,
+        },
       );
+      if (result.truncated) {
+        Alert.alert(
+          "Export limited",
+          `Only the first ${result.totalRows.toLocaleString()} rows were exported. Narrow filters or sort to export the rest in chunks.`,
+        );
+      }
 
-      const rawBase = (groupData?.name ?? "people").replace(/[^\w\s-]/g, "").trim();
-      const safeBase = (rawBase || "people").replace(/\s+/g, "_").slice(0, 80);
-      const filename = `${safeBase}_${new Date().toISOString().slice(0, 10)}.csv`;
+      const { csv, filename } = result;
 
       if (Platform.OS === "web") {
         const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -986,12 +953,18 @@ export function FollowupDesktopTable({
         const anchor = document.createElement("a");
         anchor.href = url;
         anchor.download = filename;
+        anchor.style.display = "none";
+        document.body.appendChild(anchor);
         anchor.click();
-        URL.revokeObjectURL(url);
+        setTimeout(() => {
+          document.body.removeChild(anchor);
+          URL.revokeObjectURL(url);
+        }, 100);
       } else {
         await saveAndShareCSV(filename, csv);
       }
-    } catch {
+    } catch (err) {
+      console.warn("[FollowupDesktopTable] CSV export failed:", err);
       Alert.alert("Export failed", "Could not export CSV. Please try again.");
     } finally {
       exportingCsvRef.current = false;

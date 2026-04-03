@@ -90,6 +90,18 @@ interface MessageItemProps {
     },
     event: { nativeEvent: { pageX: number; pageY: number } }
   ) => void;
+  /** Callback when user double-taps a message (reactions only) */
+  onDoubleTap?: (
+    message: {
+      _id: Id<"chatMessages">;
+      senderId: Id<"users">;
+      content: string;
+      senderName?: string;
+      senderProfilePhoto?: string;
+      attachments?: Array<{ type: string; url: string; name?: string; waveform?: number[]; duration?: number }>;
+    },
+    event: { nativeEvent: { pageX: number; pageY: number } }
+  ) => void;
   /** Whether this is an optimistic (unsent) message */
   isOptimistic?: boolean;
   /** Status of optimistic message */
@@ -223,6 +235,7 @@ function MessageItemInner({
   onReact,
   onDelete,
   onLongPress,
+  onDoubleTap,
   isOptimistic,
   optimisticStatus,
   onRetry,
@@ -285,6 +298,7 @@ function MessageItemInner({
 
   // Double-tap to open reaction picker
   const lastTapRef = useRef<number>(0);
+  const bubbleRef = useRef<View>(null);
 
   // Detect event links in message content
   const eventShortIds = useMemo(() => {
@@ -411,15 +425,34 @@ function MessageItemInner({
     onReact?.(message._id);
   }, [message._id, onReact]);
 
-  // Handle double-tap to open reaction picker (like iMessage)
+  // Handle double-tap to open reactions-only overlay
   const handlePress = useCallback((event: GestureResponderEvent) => {
     const now = Date.now();
     const DOUBLE_TAP_DELAY = 300;
     if (now - lastTapRef.current < DOUBLE_TAP_DELAY) {
-      // Double-tap detected — open the reaction overlay
+      // Double-tap detected — measure bubble position and open reactions overlay
       lastTapRef.current = 0;
-      if (onLongPress) {
-        onLongPress(
+      if (onDoubleTap && bubbleRef.current) {
+        bubbleRef.current.measureInWindow((x, y, width, height) => {
+          onDoubleTap(
+            {
+              _id: message._id,
+              senderId: message.senderId,
+              content: message.content,
+              senderName: message.senderName,
+              senderProfilePhoto: message.senderProfilePhoto,
+              attachments: message.attachments,
+            },
+            {
+              nativeEvent: {
+                pageX: event.nativeEvent.pageX,
+                pageY: y, // top of the bubble
+              },
+            }
+          );
+        });
+      } else if (onDoubleTap) {
+        onDoubleTap(
           {
             _id: message._id,
             senderId: message.senderId,
@@ -439,7 +472,7 @@ function MessageItemInner({
     } else {
       lastTapRef.current = now;
     }
-  }, [message._id, message.senderId, message.content, message.senderName, message.senderProfilePhoto, message.attachments, onLongPress]);
+  }, [message._id, message.senderId, message.content, message.senderName, message.senderProfilePhoto, message.attachments, onDoubleTap]);
 
   // Handle URL tap - open in browser
   const handleUrlTap = useCallback((url: string) => {
@@ -765,6 +798,7 @@ function MessageItemInner({
     );
   };
 
+
   // Handle thread press - navigate to thread page
   const handleThreadPress = useCallback(() => {
     if (groupId) {
@@ -927,7 +961,7 @@ function MessageItemInner({
 
           {/* Message bubble (hidden for special card messages) */}
           {message.contentType !== "reach_out_request" && message.contentType !== "task_card" && (
-            <View style={styles.bubbleWrapper}>
+            <View ref={bubbleRef} style={styles.bubbleWrapper}>
               <View
                 style={[
                   styles.messageBubble,
@@ -1029,6 +1063,7 @@ function MessageItemInner({
         messageId={message._id}
         onClose={handleReactionModalClose}
       />
+
     </Pressable>
     </Animated.View>
   );
