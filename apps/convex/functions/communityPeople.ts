@@ -528,6 +528,7 @@ export const listAllForCsvExport = action({
     // Fetch people in pages
     const people: any[] = [];
     let skip = 0;
+    let lastBatchLength = 0;
 
     while (people.length < MAX_CSV_EXPORT_ROWS) {
       const batch: any[] = await runQuery(
@@ -547,6 +548,7 @@ export const listAllForCsvExport = action({
         },
       );
 
+      lastBatchLength = batch.length;
       if (batch.length === 0) break;
       people.push(...batch);
       skip += batch.length;
@@ -554,9 +556,32 @@ export const listAllForCsvExport = action({
       if (batch.length < CSV_BATCH_SIZE) break;
     }
 
-    // Truncated if we collected more than the cap, OR if we hit the cap exactly
-    // and the last batch was full (meaning more rows likely exist).
-    const truncated = people.length >= MAX_CSV_EXPORT_ROWS;
+    // `people.length >= MAX` alone is insufficient: exactly MAX rows in DB would
+    // falsely look truncated. Peek one more page only when we filled the cap with a full batch.
+    let truncated = people.length > MAX_CSV_EXPORT_ROWS;
+    if (
+      !truncated &&
+      people.length === MAX_CSV_EXPORT_ROWS &&
+      lastBatchLength === CSV_BATCH_SIZE
+    ) {
+      const peek: any[] = await runQuery(
+        internal.functions.communityPeople._csvExportPage,
+        {
+          groupId: args.groupId,
+          token: args.token,
+          sortBy: args.sortBy,
+          sortDirection: args.sortDirection,
+          statusFilter: args.statusFilter,
+          scoreField: args.scoreField,
+          scoreMin: args.scoreMin,
+          scoreMax: args.scoreMax,
+          assigneeFilter: resolvedAssignee,
+          userId,
+          skip,
+        },
+      );
+      if (peek.length > 0) truncated = true;
+    }
     const exportPeople = people.slice(0, MAX_CSV_EXPORT_ROWS);
 
     // Fetch supporting data for CSV generation

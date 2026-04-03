@@ -928,24 +928,62 @@ export function FollowupDesktopTable({
     exportingCsvRef.current = true;
     setExportingCsv(true);
     try {
-      const result = await convex.action(
-        api.functions.communityPeople.listAllForCsvExport,
-        {
-          groupId: groupId as Id<"groups">,
-          token: authToken,
-          sortBy: serverSortBy,
-          sortDirection,
-          ...listFilterArgs,
-        },
-      );
-      if (result.truncated) {
-        Alert.alert(
-          "Export limited",
-          `Only the first ${result.totalRows.toLocaleString()} rows were exported. Narrow filters or sort to export the rest in chunks.`,
-        );
-      }
+      let csv: string;
+      let filename: string;
 
-      const { csv, filename } = result;
+      if (hasTextSearch) {
+        // Text search (and other client-only filters) are applied to displayMembers only.
+        // Export exactly what the user sees instead of the unfiltered server list.
+        const exportMembers = applyDevZipCodeSample(
+          displayMembers as unknown as FollowupCsvExportMember[],
+        ) as FollowupCsvExportMember[];
+        const columnKeys = columns.map((c) => c.key);
+        const tasksMap = new Map<string, FollowupCsvExportTask[]>();
+        for (const [uid, tasks] of tasksByMember.entries()) {
+          tasksMap.set(
+            uid,
+            tasks.map((t) => ({
+              title: t.title,
+              assignedToName: t.assignedToName,
+              groupName: t.groupName,
+            })),
+          );
+        }
+        csv = generateFollowupPeopleCsv(
+          exportMembers,
+          columnKeys,
+          columnLabelMap,
+          leaderMap,
+          tasksMap,
+          customFields,
+        );
+        const rawBase = (groupData?.name || "people")
+          .replace(/[^\w\s-]/g, "")
+          .trim();
+        const safeBase = (rawBase || "people")
+          .replace(/\s+/g, "_")
+          .slice(0, 80);
+        filename = `${safeBase}_${new Date().toISOString().slice(0, 10)}.csv`;
+      } else {
+        const result = await convex.action(
+          api.functions.communityPeople.listAllForCsvExport,
+          {
+            groupId: groupId as Id<"groups">,
+            token: authToken,
+            sortBy: serverSortBy,
+            sortDirection,
+            ...listFilterArgs,
+          },
+        );
+        if (result.truncated) {
+          Alert.alert(
+            "Export limited",
+            `Only the first ${result.totalRows.toLocaleString()} rows were exported. Narrow filters or sort to export the rest in chunks.`,
+          );
+        }
+        csv = result.csv;
+        filename = result.filename;
+      }
 
       if (Platform.OS === "web") {
         const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });

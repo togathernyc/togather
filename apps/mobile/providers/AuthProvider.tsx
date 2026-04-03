@@ -985,7 +985,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return authenticated;
   }, [user, token]);
 
-  // Memoize context value
+  // Memoize context value. `token` is a dependency so `useAuth().token` updates
+  // after refresh; Convex hooks that read from storage (`useStoredAuthToken`) remain
+  // valid for code paths that want the latest JWT without coupling to this object identity.
   const contextValue = useMemo(
     () => ({
       user,
