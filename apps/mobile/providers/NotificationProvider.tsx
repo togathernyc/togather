@@ -198,7 +198,9 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
   }, []);
 
   // Register push token with backend using Convex
-  const registerToken = useCallback(async () => {
+  // Retries on failure to handle cases where Firebase hasn't finished
+  // initializing on Android (race condition on some devices/OS versions).
+  const registerToken = useCallback(async (retryCount = 0) => {
     if (!Notifications || !isAuthenticated || !user) return;
 
     // Skip push notifications on web - requires VAPID key configuration
@@ -206,6 +208,9 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
       console.log('Push notifications not supported on web (VAPID not configured)');
       return;
     }
+
+    const MAX_RETRIES = 3;
+    const RETRY_DELAYS = [2000, 4000, 8000]; // exponential backoff
 
     try {
       // Get Expo push token
@@ -247,7 +252,16 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
       });
       console.log('Push token registered with backend');
     } catch (error) {
-      console.error('Failed to register push token:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const isFirebaseNotReady = errorMessage.includes('FirebaseApp is not initialized');
+
+      if (isFirebaseNotReady && retryCount < MAX_RETRIES) {
+        const delay = RETRY_DELAYS[retryCount];
+        console.warn(`Firebase not ready, retrying push token registration in ${delay}ms (attempt ${retryCount + 1}/${MAX_RETRIES})`);
+        setTimeout(() => registerToken(retryCount + 1), delay);
+      } else {
+        console.error('Failed to register push token:', error);
+      }
     }
   }, [isAuthenticated, user, authToken, registerTokenMutation]);
 
@@ -588,15 +602,18 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
     };
   }, [isAuthenticated, requestPermissions, registerToken, refreshUnreadCount]);
 
-  // Refresh unread count when app comes to foreground
+  // Refresh unread count and retry token registration when app comes to foreground
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
       if (
         appState.current.match(/inactive|background/) &&
         nextAppState === 'active'
       ) {
-        // App came to foreground - refresh unread count
         refreshUnreadCount();
+        // Retry token registration if we never got a token (e.g. Firebase wasn't ready at startup)
+        if (!expoPushToken && isAuthenticated) {
+          registerToken();
+        }
       }
       appState.current = nextAppState;
     });
@@ -604,7 +621,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
     return () => {
       subscription.remove();
     };
-  }, [refreshUnreadCount]);
+  }, [refreshUnreadCount, expoPushToken, isAuthenticated, registerToken]);
 
   return (
     <NotificationContext.Provider
