@@ -16,16 +16,12 @@ import {
   TouchableOpacity,
   TouchableWithoutFeedback,
   Animated,
-  Dimensions,
   Image,
   ScrollView,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "@hooks/useTheme";
 import { getMediaUrl } from "@/utils/media";
-
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
 // Reaction types
 export const REACTIONS = [
@@ -122,8 +118,7 @@ export function MessageActionsOverlay({
   reactionsOnly = false,
   tapY,
 }: MessageActionsOverlayProps) {
-  const { colors, isDark } = useTheme();
-  const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(0.9)).current;
   const [showMoreActions, setShowMoreActions] = useState(false);

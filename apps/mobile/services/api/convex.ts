@@ -230,12 +230,14 @@ export function useStoredAuthToken(): string | null {
     });
   }, []); // Empty deps - only run on mount
 
-  // Sync with cache changes via interval (already handled by useTokenSync).
-  // Only update state on auth-state transitions (null↔non-null) to avoid
-  // causing Convex query arg changes and UI flicker on token refreshes.
+  // Sync with cache changes via interval (same cadence as useTokenSync).
+  // When the access token string changes (e.g. foreground refresh), queries must
+  // receive the new JWT — stale tokens can 401 until the user navigates enough
+  // to remount hooks. AuthProvider avoids putting `token` in context deps to
+  // limit broad re-renders; this hook is the narrow place that should update.
   React.useEffect(() => {
     const interval = setInterval(() => {
-      if (cachedToken !== token && (cachedToken === null) !== (token === null)) {
+      if (cachedToken !== token) {
         setToken(cachedToken);
       }
     }, 500);
