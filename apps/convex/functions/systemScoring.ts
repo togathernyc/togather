@@ -221,12 +221,16 @@ export function calculateSystemScore(
       const meetingWeeks = rawValues.meeting_weeks_in_window;
       const attendedWeeks = rawValues.attended_weeks_in_window;
       if (meetingWeeks <= 0) return 0;
-      // If zero attendance across all groups, treat as having missed all meetings
-      const consecutiveMissed = attendedWeeks === 0
-        ? Math.max(rawValues.consecutive_missed, meetingWeeks)
-        : rawValues.consecutive_missed;
-      const attendancePct = Math.max(0, 100 - consecutiveMissed * 15);
-      const attendancePortion = Math.round(70 * (attendancePct / 100));
+      // If zero attendance, attendance portion is 0 — score depends entirely on follow-up.
+      // Consecutive-miss decay only applies when the member has attended at least once.
+      let attendancePortion: number;
+      if (attendedWeeks === 0) {
+        attendancePortion = 0;
+      } else {
+        const consecutiveMissed = rawValues.consecutive_missed;
+        const attendancePct = Math.max(0, 100 - consecutiveMissed * 15);
+        attendancePortion = Math.round(70 * (attendancePct / 100));
+      }
 
       // ── Follow-up portion: fills remaining space (100 - attendancePortion) ──
       // Channel fill rate (decaying over time):
