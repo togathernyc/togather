@@ -554,7 +554,9 @@ export const listAllForCsvExport = action({
       if (batch.length < CSV_BATCH_SIZE) break;
     }
 
-    const truncated = people.length > MAX_CSV_EXPORT_ROWS;
+    // Truncated if we collected more than the cap, OR if we hit the cap exactly
+    // and the last batch was full (meaning more rows likely exist).
+    const truncated = people.length >= MAX_CSV_EXPORT_ROWS;
     const exportPeople = people.slice(0, MAX_CSV_EXPORT_ROWS);
 
     // Fetch supporting data for CSV generation

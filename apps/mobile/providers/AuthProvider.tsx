@@ -985,14 +985,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return authenticated;
   }, [user, token]);
 
-  // Memoize context value.
-  // NOTE: `token` is intentionally excluded from the dependency array.
-  // Token refreshes (non-null → non-null) should NOT re-render every consumer,
-  // as that resets all Convex query subscriptions and causes UI flicker.
-  // Convex `useQuery` / mutations that need a fresh JWT should use
-  // `useStoredAuthToken()` from `@services/api/convex`, not `useAuth().token`,
-  // so the string updates after refresh without depending on this context.
-  // Auth state transitions (login/logout) are covered by `isAuthenticated`.
+  // Memoize context value
   const contextValue = useMemo(
     () => ({
       user,
@@ -1006,13 +999,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       clearCommunity,
       signIn,
     }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       user,
       community,
       isLoading,
       isAuthenticated,
-      // token intentionally omitted — see comment above
+      token,
       logout,
       refreshUser,
       setCommunity,
