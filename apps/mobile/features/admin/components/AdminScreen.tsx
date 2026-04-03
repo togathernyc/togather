@@ -51,12 +51,12 @@ export function AdminScreen() {
 
       if (isInternalDashboardUser) {
         return [
-          { key: "dashboard", label: "Dashboard" },
           { key: "requests", label: "Requests" },
           { key: "people", label: "People" },
           { key: "stats", label: "Stats" },
           { key: "settings", label: "Settings" },
           { key: "landing", label: "Landing" },
+          { key: "dashboard", label: "Dashboard" },
         ];
       }
 
@@ -71,7 +71,7 @@ export function AdminScreen() {
     [hasCommunity, isInternalDashboardUser, isAdmin]
   );
   const [activeTab, setActiveTab] = useState<TabKey>(
-    isInternalDashboardUser ? "dashboard" : "requests"
+    "requests"
   );
 
   useEffect(() => {

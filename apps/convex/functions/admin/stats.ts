@@ -1160,3 +1160,91 @@ export const getExportSetupData = internalQuery({
     return { authorized: true, groups: communityGroups };
   },
 });
+
+// ============================================================================
+// Lightweight Daily Summary
+// ============================================================================
+
+/**
+ * Lightweight daily summary for the admin dashboard.
+ *
+ * Only scans today's chatMessages (via by_createdAt index) and resolves
+ * channel/group names for the top 10 channels. Does NOT touch users,
+ * communities, meetings, or attendance tables.
+ */
+export const getDailySummary = query({
+  args: {
+    token: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const user = await ctx.db.get(userId);
+    if (!user?.isStaff && !user?.isSuperuser) {
+      throw new Error("Togather internal access required");
+    }
+
+    const nowMs = now();
+    const todayStart = utcDayStart(nowMs);
+    const todayEnd = todayStart + DAY_MS;
+
+    // Scan only today's messages using the by_createdAt index
+    const todayMessages = await ctx.db
+      .query("chatMessages")
+      .withIndex("by_createdAt", (q) =>
+        q.gte("createdAt", todayStart).lt("createdAt", todayEnd)
+      )
+      .collect();
+
+    let totalMessages = 0;
+    const uniqueSenders = new Set<string>();
+    const channelCounts = new Map<string, number>();
+
+    for (const msg of todayMessages) {
+      if (msg.isDeleted) continue;
+      totalMessages += 1;
+      if (msg.senderId) {
+        uniqueSenders.add(msg.senderId);
+      }
+      channelCounts.set(
+        msg.channelId,
+        (channelCounts.get(msg.channelId) ?? 0) + 1
+      );
+    }
+
+    // Sort channels by message count descending and take top 10
+    const sortedChannels = Array.from(channelCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10);
+
+    // Resolve channel and group names for top channels
+    const topChannels = await Promise.all(
+      sortedChannels.map(async ([channelId, messageCount]) => {
+        const channel = await ctx.db.get(channelId as Id<"chatChannels">);
+        let groupName = "";
+        if (channel?.groupId) {
+          const group = await ctx.db.get(channel.groupId);
+          groupName = group?.name ?? "";
+        }
+        return {
+          channelId,
+          channelName: channel?.name ?? "",
+          groupName,
+          messageCount,
+        };
+      })
+    );
+
+    // Format date as YYYY-MM-DD in UTC
+    const d = new Date(todayStart);
+    const date = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+
+    return {
+      date,
+      messages: {
+        total: totalMessages,
+        uniqueSenders: uniqueSenders.size,
+      },
+      topChannels,
+    };
+  },
+});
