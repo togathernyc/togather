@@ -195,9 +195,16 @@ export function SuperAdminDashboardContent() {
                       {sender.name}
                     </Text>
                   </View>
-                  <Text style={[styles.messageCount, { color: primaryColor }]}>
-                    {sender.messageCount} msg
-                  </Text>
+                  <View style={styles.channelStats}>
+                    <Text style={[styles.messageCount, { color: primaryColor }]}>
+                      {sender.messages} msg
+                    </Text>
+                    {sender.reactions > 0 && (
+                      <Text style={[styles.reactionCount, { color: colors.textSecondary }]}>
+                        {sender.reactions} rxn
+                      </Text>
+                    )}
+                  </View>
                 </View>
               ))}
             </View>

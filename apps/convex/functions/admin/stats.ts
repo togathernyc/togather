@@ -1288,29 +1288,43 @@ export const getDailySummary = query({
       })
     );
 
-    // Top senders — count messages per sender and resolve user info
-    const senderCounts = new Map<string, number>();
+    // Top users — messages + reactions (2 reactions = 1 message equivalent)
+    const userMessageCounts = new Map<string, number>();
+    const userReactionCounts = new Map<string, number>();
     for (const msg of dayMessages) {
       if (msg.isDeleted || BOT_TYPES.has(msg.contentType) || !msg.senderId) continue;
-      senderCounts.set(
+      userMessageCounts.set(
         msg.senderId,
-        (senderCounts.get(msg.senderId) ?? 0) + 1
+        (userMessageCounts.get(msg.senderId) ?? 0) + 1
       );
     }
-    const sortedSenders = Array.from(senderCounts.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 10);
+    for (const reaction of dayReactions) {
+      userReactionCounts.set(
+        reaction.userId,
+        (userReactionCounts.get(reaction.userId) ?? 0) + 1
+      );
+    }
+
+    const allUserIds = new Set([...userMessageCounts.keys(), ...userReactionCounts.keys()]);
+    const userScores = Array.from(allUserIds).map((uid) => {
+      const msgs = userMessageCounts.get(uid) ?? 0;
+      const rxns = userReactionCounts.get(uid) ?? 0;
+      return { userId: uid, messages: msgs, reactions: rxns, score: msgs + rxns * 0.5 };
+    });
+    userScores.sort((a, b) => b.score - a.score);
+    const topUserScores = userScores.slice(0, 10);
 
     const topSenders = await Promise.all(
-      sortedSenders.map(async ([senderId, messageCount]) => {
-        const senderUser = await ctx.db.get(senderId as Id<"users">);
+      topUserScores.map(async ({ userId: uid, messages: msgs, reactions: rxns }) => {
+        const senderUser = await ctx.db.get(uid as Id<"users">);
         return {
-          userId: senderId,
+          userId: uid,
           name: senderUser
             ? `${senderUser.firstName ?? ""} ${senderUser.lastName ?? ""}`.trim() || "Unknown"
             : "Unknown",
           profilePhoto: getMediaUrl(senderUser?.profilePhoto),
-          messageCount,
+          messages: msgs,
+          reactions: rxns,
         };
       })
     );
