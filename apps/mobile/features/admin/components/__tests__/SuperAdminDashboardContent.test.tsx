@@ -15,17 +15,7 @@ jest.mock("@services/api/convex", () => ({
     functions: {
       admin: {
         stats: {
-          getInternalDashboard: "api.functions.admin.stats.getInternalDashboard",
-        },
-      },
-      ee: {
-        proposals: {
-          list: "api.functions.ee.proposals.list",
-          accept: "api.functions.ee.proposals.accept",
-          reject: "api.functions.ee.proposals.reject",
-        },
-        billing: {
-          getSubscriptionStatus: "api.functions.ee.billing.getSubscriptionStatus",
+          getDailySummary: "api.functions.admin.stats.getDailySummary",
         },
       },
     },
@@ -41,7 +31,7 @@ describe("SuperAdminDashboardContent", () => {
     jest.clearAllMocks();
   });
 
-  test("renders locked state for non-primary admins", () => {
+  test("renders locked state for non-internal users", () => {
     (useAuth as jest.Mock).mockReturnValue({
       user: { is_staff: false, is_superuser: false },
       token: "token",
@@ -53,83 +43,59 @@ describe("SuperAdminDashboardContent", () => {
     expect(getByText("Developers and owners only")).toBeTruthy();
   });
 
-  test("renders dashboard metrics for primary admins", () => {
+  test("renders daily summary metrics for internal users", () => {
     (useAuth as jest.Mock).mockReturnValue({
       user: { is_staff: true, is_superuser: false },
       token: "token",
     });
-    const dashboardData = {
-      overview: {
-        messagesSent: 42,
-        uniqueActiveSenders: 12,
-        newMembers: 5,
-        meetingsHeld: 3,
-        attendanceCheckIns: 19,
-        avgMessagesPerActiveDay: 14,
-      },
-      totals: {
-        totalMembers: 100,
-        activeMembers30d: 80,
-        activeGroups: 8,
-        activeChannels: 16,
-        totalCommunities: 4,
-      },
-      trend: [
-        { bucketStart: 1, label: "Jan 1", messagesSent: 10, dailyActiveUsers: 6, newMembers: 1 },
-        { bucketStart: 2, label: "Jan 2", messagesSent: 32, dailyActiveUsers: 8, newMembers: 4 },
+    (useQuery as jest.Mock).mockReturnValue({
+      date: "2026-04-03",
+      messages: { total: 42, uniqueSenders: 12 },
+      totalReactions: 8,
+      appOpens: 25,
+      topChannels: [
+        { channelId: "ch1", channelName: "General", groupName: "Team", groupPhoto: null, messages: 30, reactions: 5 },
       ],
-      topChannels: [{ channelId: "channel-1", channelName: "General", messagesSent: 25 }],
-    };
-    (useQuery as jest.Mock).mockImplementation((queryFn: string) => {
-      if (queryFn === "api.functions.ee.proposals.list") return [];
-      return dashboardData;
+      topSenders: [
+        { userId: "u1", name: "Test User", profilePhoto: null, messages: 15, reactions: 3 },
+      ],
     });
 
     const { getByText } = render(<SuperAdminDashboardContent />);
 
-    expect(getByText("Togather Dashboard")).toBeTruthy();
-    expect(getByText("Messages sent")).toBeTruthy();
-    expect(getByText("Top channels (30D)")).toBeTruthy();
+    expect(getByText("Today — Apr 3, 2026")).toBeTruthy();
+    expect(getByText("42")).toBeTruthy(); // messages
+    expect(getByText("12")).toBeTruthy(); // senders
+    expect(getByText("8")).toBeTruthy();  // reactions
+    expect(getByText("25")).toBeTruthy(); // app opens
     expect(getByText("General")).toBeTruthy();
+    expect(getByText("Test User")).toBeTruthy();
   });
 
-  test("changes range and re-queries with selected key", () => {
+  test("navigates to previous day", () => {
     (useAuth as jest.Mock).mockReturnValue({
       user: { is_staff: true, is_superuser: false },
       token: "token",
     });
-    const emptyDashboardData = {
-      overview: {
-        messagesSent: 0,
-        uniqueActiveSenders: 0,
-        newMembers: 0,
-        meetingsHeld: 0,
-        attendanceCheckIns: 0,
-        avgMessagesPerActiveDay: 0,
-      },
-      totals: {
-        totalMembers: 0,
-        activeMembers30d: 0,
-        activeGroups: 0,
-        activeChannels: 0,
-        totalCommunities: 0,
-      },
-      trend: [],
+    (useQuery as jest.Mock).mockReturnValue({
+      date: "2026-04-03",
+      messages: { total: 0, uniqueSenders: 0 },
+      totalReactions: 0,
+      appOpens: 0,
       topChannels: [],
-    };
-    (useQuery as jest.Mock).mockImplementation((queryFn: string) => {
-      if (queryFn === "api.functions.ee.proposals.list") return [];
-      return emptyDashboardData;
+      topSenders: [],
     });
 
     const { getByText } = render(<SuperAdminDashboardContent />);
-    fireEvent.press(getByText("7D"));
 
-    const dashboardCalls = (useQuery as jest.Mock).mock.calls.filter(
-      ([fn]: [string]) => fn === "api.functions.admin.stats.getInternalDashboard"
+    // Navigate back one day
+    const backButtons = getByText("Today — Apr 3, 2026");
+    expect(backButtons).toBeTruthy();
+
+    // Check query was called with daysAgo: 0 initially
+    const calls = (useQuery as jest.Mock).mock.calls.filter(
+      ([fn]: [string]) => fn === "api.functions.admin.stats.getDailySummary"
     );
-    const latestArgs = dashboardCalls.at(-1)?.[1];
-    expect(latestArgs.range).toBe("7d");
+    expect(calls[0][1]).toEqual({ token: "token", daysAgo: 0 });
   });
 });
-
