@@ -160,6 +160,23 @@ describe("sys_togather — attendance portion", () => {
     ).toBe(0);
   });
 
+  test("new member, 1 meeting week, zero attendance = 0 (not inflated)", () => {
+    // Bug fix: previously scored 60 because consecutiveMissed=1 only deducted 15%
+    expect(
+      calculateSystemScore(
+        "sys_togather",
+        makeRaw({ meeting_weeks_in_window: 1, attended_weeks_in_window: 0 }),
+      ),
+    ).toBe(0);
+    // Also with 2 meeting weeks
+    expect(
+      calculateSystemScore(
+        "sys_togather",
+        makeRaw({ meeting_weeks_in_window: 2, attended_weeks_in_window: 0 }),
+      ),
+    ).toBe(0);
+  });
+
   test("member who joined recently with only 1 meeting week, attended = 70", () => {
     expect(
       calculateSystemScore(

@@ -22,9 +22,10 @@ You are a PR Review Cycle agent. Your job is to get a PR into a fully mergeable 
 - **Poll interval:** 30 seconds
 - **Max poll attempts:** 30 (about 15 minutes max wait for bot review)
 - **Max total cycles:** 20 (to prevent infinite loops)
-- **Max Bugbot review rounds:** 3 (after 3 rounds of Bugbot review, resolve remaining Low severity threads without fixing)
-- **Bot usernames:** `cursor`, `greptile-apps[bot]`
-- **Autofix bot check name:** `Cursor Bugbot Autofix`
+- **Max bot review rounds:** 3 (after 3 rounds of bot review, resolve remaining Low severity threads without fixing)
+- **Bot reviewers:** `cursor` (Bugbot), `greptile-apps[bot]`, or any other configured code review bot
+- **Autofix check names:** `Cursor Bugbot Autofix` (or equivalent autofix check from other bots)
+- **Review policy:** Every PR must receive at least one bot code review. If reviews aren't triggered automatically, explicitly request one (see Phase 1.3).
 
 ---
 
@@ -80,7 +81,26 @@ gh pr view <PR_NUMBER> --json state --jq '.state'
 - If `MERGED` or `CLOSED`: Exit with success message
 - If `OPEN`: Continue
 
-### 1.3 Sync Local Branch
+### 1.3 Ensure Bot Review is Requested
+
+Check if a bot reviewer has already been requested or has reviewed. If not, request one:
+
+```bash
+# Check existing reviews/requested reviewers
+gh pr view <PR_NUMBER> --json reviews,reviewRequests \
+  --jq '{reviews: [.reviews[].author.login], requested: [.reviewRequests[].login]}'
+```
+
+If no bot reviewer (`cursor`, `greptile-apps[bot]`, etc.) appears in reviews or requests, request one:
+
+```bash
+# Request Cursor Bugbot (primary), fall back to others if unavailable
+gh pr edit <PR_NUMBER> --add-reviewer cursor
+```
+
+Some bots trigger automatically on PR creation — that's fine, skip this step if a review is already pending or complete.
+
+### 1.4 Sync Local Branch
 
 ```bash
 git fetch origin
@@ -156,9 +176,9 @@ gh pr view <PR_NUMBER> --json statusCheckRollup --jq '.statusCheckRollup[] | {na
 - `PENDING` / `QUEUED` / `IN_PROGRESS`: Wait and re-poll
 - `FAILURE` / `ERROR` / `TIMED_OUT`: Needs fixing
 
-**Bugbot-specific statuses:**
-- `Cursor Bugbot`: `NEUTRAL` = found issues (check threads), `SUCCESS` = no issues
-- `Cursor Bugbot Autofix`: `IN_PROGRESS` = actively fixing issues, may push commits at any time. **Do not process review comments (Phase 4) while this is running** — wait for it to finish first. CI fixes (Phase 3.3) may proceed independently since they address different concerns.
+**Bot-specific statuses (e.g. Cursor Bugbot, or equivalent):**
+- Bot review check: `NEUTRAL` = found issues (check threads), `SUCCESS` = no issues
+- Bot autofix check: `IN_PROGRESS` = actively fixing issues, may push commits at any time. **Do not process review comments (Phase 4) while this is running** — wait for it to finish first. CI fixes (Phase 3.3) may proceed independently since they address different concerns.
 
 ### 3.3 Fix CI Failures
 
@@ -223,45 +243,46 @@ For each failing check:
 
 ---
 
-## Phase 3.5: Wait for Bugbot Autofix Before Processing Comments
+## Phase 3.5: Wait for Bot Autofix Before Processing Comments
 
-**CRITICAL:** Cursor Bugbot Autofix runs concurrently and may fix the same issues you're about to fix. Always wait for it to complete before processing review threads. This prevents:
+**CRITICAL:** Bot autofix (e.g. Cursor Bugbot Autofix) runs concurrently and may fix the same issues you're about to fix. Always wait for it to complete before processing review threads. This prevents:
 - Push rejections (Autofix pushed while you were committing)
 - Rebase conflicts (your fix overlaps with Autofix's fix on the same lines)
 - Redundant work (fixing something Autofix already fixed)
 
-### 3.5.1 Wait for Both Bugbot Checks
+### 3.5.1 Wait for Bot Review and Autofix Checks
 
-Poll until both `Cursor Bugbot` AND `Cursor Bugbot Autofix` have completed:
+Poll until bot review AND autofix checks have completed. The exact check names depend on which bot is reviewing (e.g. `Cursor Bugbot` and `Cursor Bugbot Autofix`):
 
 ```bash
-# Poll every 30 seconds until both Bugbot checks are done
+# Poll every 30 seconds until bot checks are done
+# Adjust the name filter for whichever bot is active (Cursor Bugbot, Greptile, Codex, etc.)
 gh pr view <PR_NUMBER> --json statusCheckRollup \
-  --jq '.statusCheckRollup[] | select(.name | test("Cursor Bugbot")) | {name: .name, status: .status, conclusion: .conclusion}'
+  --jq '.statusCheckRollup[] | select(.name | test("Cursor Bugbot|Greptile|Codex"; "i")) | {name: .name, status: .status, conclusion: .conclusion}'
 ```
 
 **Wait until:**
-- `Cursor Bugbot` status is `COMPLETED`
-- `Cursor Bugbot Autofix` status is `COMPLETED` (or doesn't appear, meaning no autofix was triggered)
+- Bot review check status is `COMPLETED`
+- Bot autofix check status is `COMPLETED` (or doesn't appear, meaning no autofix was triggered)
 
-**Do NOT proceed to Phase 4 while either check is `IN_PROGRESS`.**
+**Do NOT proceed to Phase 4 while any bot check is `IN_PROGRESS`.**
 
 ### 3.5.2 Pull Autofix Commits
 
-After Bugbot Autofix completes, it may have pushed commits. Always pull before processing:
+After bot autofix completes, it may have pushed commits. Always pull before processing:
 
 ```bash
 git pull origin $BRANCH
 ```
 
-This ensures your local branch has any Autofix commits, preventing conflicts later.
+This ensures your local branch has any autofix commits, preventing conflicts later.
 
-### 3.5.3 Track Bugbot Review Round
+### 3.5.3 Track Bot Review Round
 
-Increment a `bugbot_review_round` counter each time you enter this phase. After **3 rounds** of Bugbot review:
+Increment a `bot_review_round` counter each time you enter this phase. After **3 rounds** of bot review:
 - Only fix **Medium** or higher severity issues
 - **Resolve Low severity threads without fixing** — these are usually nitpicks about theoretical edge cases
-- This prevents infinite loops where Bugbot keeps finding new low-severity issues after each fix
+- This prevents infinite loops where the bot keeps finding new low-severity issues after each fix
 
 ---
 
@@ -329,13 +350,13 @@ Check for:
 
 For EACH unresolved thread or actionable comment:
 
-1. **Read the comment carefully** — note the severity level (if from Bugbot)
-2. **Check if Bugbot Autofix already fixed it:**
+1. **Read the comment carefully** — note the severity level (if from a bot reviewer)
+2. **Check if bot autofix already fixed it:**
    - Read the file at the mentioned path and line
    - Compare the current code against the issue described in the comment
-   - If the issue is already resolved (Autofix pushed a commit), **skip straight to section 4.5 (resolve thread)** — do not commit
-   - Check git log for recent Autofix commits: `git log --oneline -5 --author="cursor"`
-3. **If bugbot_review_round >= 3 and severity is Low:** **skip straight to section 4.5 (resolve thread without fixing)** — do not commit
+   - If the issue is already resolved (autofix pushed a commit), **skip straight to section 4.5 (resolve thread)** — do not commit
+   - Check git log for recent autofix commits: `git log --oneline -5 --author="cursor"`
+3. **If bot_review_round >= 3 and severity is Low:** **skip straight to section 4.5 (resolve thread without fixing)** — do not commit
 4. **Make the fix** - Edit the file to address the concern
 5. **Verify the fix doesn't break anything:**
    ```bash
@@ -411,9 +432,9 @@ If a comment is a false positive or not actionable:
 
 ## Phase 5: Push and Wait for Re-Review
 
-### 5.1 Pull Before Push (Bugbot Autofix Safety)
+### 5.1 Pull Before Push (Bot Autofix Safety)
 
-**ALWAYS pull before pushing** to pick up any Bugbot Autofix commits that landed while you were working:
+**ALWAYS pull before pushing** to pick up any bot autofix commits that landed while you were working:
 
 ```bash
 # Pull with rebase to put your fixes on top of any Autofix commits
@@ -437,20 +458,20 @@ git pull --rebase origin $BRANCH
 git push origin $BRANCH
 ```
 
-### 5.3 Wait for CI, Bugbot, AND Bugbot Autofix
+### 5.3 Wait for CI and Bot Checks
 
-Poll every 30 seconds. **Wait for ALL THREE checks to complete:**
+Poll every 30 seconds. **Wait for ALL checks to complete:**
 
 ```bash
-# Check ALL statuses including Bugbot Autofix
+# Check ALL statuses including bot review and autofix
 gh pr view <PR_NUMBER> --json statusCheckRollup \
   --jq '.statusCheckRollup[] | {name: .name, status: .status, conclusion: .conclusion}'
 ```
 
 **Do not proceed until:**
 - All CI checks are `COMPLETED`
-- `Cursor Bugbot` is `COMPLETED`
-- `Cursor Bugbot Autofix` is `COMPLETED` (or absent)
+- Bot review check is `COMPLETED`
+- Bot autofix check is `COMPLETED` (or absent)
 
 Also check:
 ```bash
@@ -468,7 +489,7 @@ gh api graphql -f query='query {
 
 ### 5.4 Pull After Autofix Completes
 
-After Bugbot Autofix finishes, always pull to get any new commits it pushed:
+After bot autofix finishes, always pull to get any new commits it pushed:
 
 ```bash
 git pull origin $BRANCH
@@ -476,7 +497,7 @@ git pull origin $BRANCH
 
 ### 5.5 Re-Check Everything
 
-After each push, go back to Phase 1 and re-fetch EVERYTHING. Don't assume previous state. (The `bugbot_review_round` counter is incremented in Phase 3.5.3 when Bugbot completes a new review.)
+After each push, go back to Phase 1 and re-fetch EVERYTHING. Don't assume previous state. (The `bot_review_round` counter is incremented in Phase 3.5.3 when the bot completes a new review.)
 
 ---
 
@@ -650,14 +671,14 @@ The issue persists. Please investigate manually.
 | Merge Conflicts | X | Resolved with main |
 | PR CI Failures | Y | Type errors, test fixes |
 | Review Comments (manual fix) | Z | See list below |
-| Bugbot Autofix commits | A | Issues auto-resolved by Bugbot |
+| Bot autofix commits | A | Issues auto-resolved by bot |
 | Low-severity resolved without fix | L | Resolved after round cap |
 | Main CI Fixes | N | Post-merge fixes via /fix-ci |
 
 ### Comments Addressed
 1. `path/file.ts:42` - [cursor] Fixed type annotation
 2. `path/other.ts:15` - [greptile] Added error handling
-3. `path/file.ts:100` - [cursor/autofix] Fixed automatically by Bugbot
+3. `path/file.ts:100` - [autofix] Fixed automatically by bot
 
 ### Post-Merge CI Fixes (if any)
 1. PR #<fix-pr> - <description of fix>
@@ -712,11 +733,12 @@ If CI fails repeatedly:
 
 If bot review doesn't appear after 15 minutes:
 1. Check if the bot is configured for this repo
-2. Try re-requesting review:
+2. Try requesting review from available bots:
    ```bash
+   # Try Cursor Bugbot first, then others
    gh pr edit <PR_NUMBER> --add-reviewer cursor
    ```
-3. Continue with other checks anyway
+3. If no bot is available, continue with other checks — but flag to the user that no bot review was obtained
 
 ### Merge Still Blocked
 
@@ -737,13 +759,14 @@ Report the specific blocker for manual intervention.
 
 1. **Fetch fresh state EVERY cycle** - Never trust cached data
 2. **Fix merge conflicts FIRST** - Before any other work
-3. **Wait for Bugbot Autofix BEFORE fixing comments** - It may already fix the issue for you
-4. **Always pull before push** - Bugbot Autofix pushes concurrently; `git pull --rebase` prevents rejections
-5. **Check if already fixed before fixing** - Read the code at the thread location; if Autofix already addressed it, just resolve the thread
+3. **Wait for bot autofix BEFORE fixing comments** - It may already fix the issue for you
+4. **Always pull before push** - Bot autofix pushes concurrently; `git pull --rebase` prevents rejections
+5. **Check if already fixed before fixing** - Read the code at the thread location; if autofix already addressed it, just resolve the thread
 6. **Always resolve threads** - Unresolved threads block merge
 7. **Verify fixes compile** - Run type-check before committing
 8. **Don't skip CI** - Wait for it to pass
 9. **Commit atomically** - One fix per commit when possible
 10. **Push after each batch of fixes** - Let CI and bots re-check
-11. **Cap Bugbot rounds at 3** - After 3 rounds, resolve Low severity threads without fixing to prevent infinite loops
+11. **Cap bot review rounds at 3** - After 3 rounds, resolve Low severity threads without fixing to prevent infinite loops
+12. **Always get a bot review** - If reviews aren't triggered automatically, explicitly request one from `cursor` or another available bot
 12. **Log everything** - Track what was fixed for the report
