@@ -144,6 +144,7 @@ export default defineSchema({
     timezone: v.optional(v.string()),
     zipCode: v.optional(v.string()),
     activeCommunityId: v.optional(v.id("communities")),
+    lastActiveAt: v.optional(v.number()), // Unix timestamp ms — updated on app foreground
     pushNotificationsEnabled: v.optional(v.boolean()),
     emailNotificationsEnabled: v.optional(v.boolean()),
     smsNotificationsEnabled: v.optional(v.boolean()),
@@ -158,6 +159,7 @@ export default defineSchema({
     .index("by_username", ["username"])
     .index("by_activeCommunity", ["activeCommunityId"])
     .index("by_lastLogin", ["lastLogin"])
+    .index("by_lastActiveAt", ["lastActiveAt"])
     .searchIndex("search_users", {
       searchField: "searchText",
       filterFields: [],

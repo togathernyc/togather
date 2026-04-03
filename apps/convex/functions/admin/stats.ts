@@ -1257,11 +1257,11 @@ export const getDailySummary = query({
     channelScores.sort((a, b) => b.score - a.score);
     const topScored = channelScores.slice(0, 10);
 
-    // Count users who opened the app that day using the by_lastLogin index
+    // Count users active that day via users.lastActiveAt index
     const activeUsers = await ctx.db
       .query("users")
-      .withIndex("by_lastLogin", (q) =>
-        q.gte("lastLogin", dayStart).lt("lastLogin", dayEnd)
+      .withIndex("by_lastActiveAt", (q) =>
+        q.gte("lastActiveAt", dayStart).lt("lastActiveAt", dayEnd)
       )
       .collect();
     const appOpens = activeUsers.length;

@@ -267,6 +267,30 @@ export const clearActiveCommunity = mutation({
 });
 
 /**
+ * Record that the current user is active (app foregrounded / session start).
+ * Updates lastActiveAt once per day at most to avoid excessive writes.
+ */
+export const recordActivity = mutation({
+  args: { token: v.string() },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const user = await ctx.db.get(userId);
+    if (!user) return;
+
+    // Only update if lastActiveAt is not already today (UTC)
+    const nowMs = Date.now();
+    const todayStart = new Date(nowMs);
+    todayStart.setUTCHours(0, 0, 0, 0);
+
+    if (user.lastActiveAt && user.lastActiveAt >= todayStart.getTime()) {
+      return; // Already recorded today
+    }
+
+    await ctx.db.patch(userId, { lastActiveAt: nowMs });
+  },
+});
+
+/**
  * Get users by IDs (batch lookup)
  *
  * Security: Returns only public fields (firstName, lastName, profilePhoto)
