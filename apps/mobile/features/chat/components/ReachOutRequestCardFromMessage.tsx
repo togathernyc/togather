@@ -9,7 +9,7 @@ import React from "react";
 import { View, ActivityIndicator, StyleSheet } from "react-native";
 import type { Id } from "@services/api/convex";
 import { useQuery, api } from "@services/api/convex";
-import { useAuth } from "@providers/AuthProvider";
+import { useStoredAuthToken } from "@services/api/convex";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { ReachOutRequestCard } from "./ReachOutRequestCard";
 
@@ -19,7 +19,7 @@ interface Props {
 }
 
 export function ReachOutRequestCardFromMessage({ requestId, groupId }: Props) {
-  const { token } = useAuth();
+  const token = useStoredAuthToken();
   const { primaryColor } = useCommunityTheme();
 
   const request = useQuery(

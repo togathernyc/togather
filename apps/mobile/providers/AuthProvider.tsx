@@ -930,6 +930,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               convexApi.functions.auth.tokens.updateLastActivity,
               { token: currentToken }
             );
+            // Record daily activity for dashboard analytics
+            await convexVanilla.mutation(
+              convexApi.functions.users.recordActivity,
+              { token: currentToken }
+            );
             console.log("🔐 AuthProvider: Last activity updated");
           } catch (error) {
             // Silently fail - this is a non-critical operation
@@ -952,6 +957,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }).catch((error) => {
         console.debug("🔐 AuthProvider: Failed to update initial last activity:", error);
       });
+      // Record daily activity for dashboard analytics
+      convexVanilla.mutation(
+        convexApi.functions.users.recordActivity,
+        { token }
+      ).catch(() => {});
     }
 
     return () => {
@@ -975,7 +985,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return authenticated;
   }, [user, token]);
 
-  // Memoize context value
+  // Memoize context value. `token` is a dependency so `useAuth().token` updates
+  // after refresh; Convex hooks that read from storage (`useStoredAuthToken`) remain
+  // valid for code paths that want the latest JWT without coupling to this object identity.
   const contextValue = useMemo(
     () => ({
       user,

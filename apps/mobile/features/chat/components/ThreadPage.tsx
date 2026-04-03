@@ -26,7 +26,7 @@ import type { Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
-import { useMutation, api } from "@services/api/convex";
+import { useMutation, api, useStoredAuthToken } from "@services/api/convex";
 import { useParentMessage } from "../hooks/useParentMessage";
 import { useThreadReplies } from "../hooks/useThreadReplies";
 import { useGroupDetails } from "../../groups/hooks/useGroupDetails";
@@ -48,7 +48,8 @@ export function ThreadPage({
 }: ThreadPageProps) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { user, token } = useAuth();
+  const { user } = useAuth();
+  const token = useStoredAuthToken();
   const { primaryColor } = useCommunityTheme();
   const { colors } = useTheme();
   const currentUserId = user?.id as Id<"users"> | undefined;

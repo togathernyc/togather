@@ -86,6 +86,23 @@ function AudioDownloadFallback({ url, name, isOwnMessage }: AudioPlayerProps) {
 }
 
 // ============================================================================
+// Error Boundary — catches expo-audio constructor crashes
+// ============================================================================
+
+class AudioErrorBoundary extends React.Component<
+  { fallback: React.ReactNode; children: React.ReactNode },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  render() {
+    return this.state.hasError ? this.props.fallback : this.props.children;
+  }
+}
+
+// ============================================================================
 // Main Component
 // ============================================================================
 
@@ -94,15 +111,23 @@ export function AudioPlayer({ url, name, isOwnMessage = false, waveform, duratio
     return <AudioPlayerWeb url={url} name={name} isOwnMessage={isOwnMessage} waveform={waveform} storedDuration={storedDuration} />;
   }
 
+  // Fallback chain for native: expo-audio → expo-av → download link.
+  // expo-audio can crash on certain SDK versions (constructor arg mismatch),
+  // so wrap in an error boundary that falls through to the next option.
+  const downloadFallback = <AudioDownloadFallback url={url} name={name} isOwnMessage={isOwnMessage} />;
+  const avFallback = isAudioVideoSupported()
+    ? <AudioPlayerInner url={url} name={name} isOwnMessage={isOwnMessage} waveform={waveform} storedDuration={storedDuration} />
+    : downloadFallback;
+
   if (isAudioSupported()) {
-    return <AudioPlayerExpoAudio url={url} name={name} isOwnMessage={isOwnMessage} waveform={waveform} storedDuration={storedDuration} />;
+    return (
+      <AudioErrorBoundary fallback={avFallback}>
+        <AudioPlayerExpoAudio url={url} name={name} isOwnMessage={isOwnMessage} waveform={waveform} storedDuration={storedDuration} />
+      </AudioErrorBoundary>
+    );
   }
 
-  if (isAudioVideoSupported()) {
-    return <AudioPlayerInner url={url} name={name} isOwnMessage={isOwnMessage} waveform={waveform} storedDuration={storedDuration} />;
-  }
-
-  return <AudioDownloadFallback url={url} name={name} isOwnMessage={isOwnMessage} />;
+  return avFallback;
 }
 
 // ============================================================================

@@ -1160,3 +1160,189 @@ export const getExportSetupData = internalQuery({
     return { authorized: true, groups: communityGroups };
   },
 });
+
+// ============================================================================
+// Lightweight Daily Summary
+// ============================================================================
+
+/**
+ * Lightweight daily summary for the admin dashboard.
+ *
+ * Only scans today's chatMessages (via by_createdAt index) and resolves
+ * channel/group names for the top 10 channels. Does NOT touch users,
+ * communities, meetings, or attendance tables.
+ */
+export const getDailySummary = query({
+  args: {
+    token: v.string(),
+    /** Days offset from today (0 = today, 1 = yesterday, 2 = day before, etc.) */
+    daysAgo: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const user = await ctx.db.get(userId);
+    if (!user?.isStaff && !user?.isSuperuser) {
+      throw new Error("Togather internal access required");
+    }
+
+    const offset = args.daysAgo ?? 0;
+    const nowMs = now();
+    const dayStart = utcDayStart(nowMs - offset * DAY_MS);
+    const dayEnd = dayStart + DAY_MS;
+
+    // Scan the day's messages using the by_createdAt index
+    const dayMessages = await ctx.db
+      .query("chatMessages")
+      .withIndex("by_createdAt", (q) =>
+        q.gte("createdAt", dayStart).lt("createdAt", dayEnd)
+      )
+      .collect();
+
+    // Exclude bot and system messages
+    const BOT_TYPES = new Set(["bot", "system"]);
+
+    let totalMessages = 0;
+    const uniqueSenders = new Set<string>();
+    const channelMessageCounts = new Map<string, number>();
+
+    for (const msg of dayMessages) {
+      if (msg.isDeleted) continue;
+      if (BOT_TYPES.has(msg.contentType)) continue;
+      totalMessages += 1;
+      if (msg.senderId) {
+        uniqueSenders.add(msg.senderId);
+      }
+      channelMessageCounts.set(
+        msg.channelId,
+        (channelMessageCounts.get(msg.channelId) ?? 0) + 1
+      );
+    }
+
+    // Count reactions for the day using by_createdAt index
+    const dayReactions = await ctx.db
+      .query("chatMessageReactions")
+      .withIndex("by_createdAt", (q) =>
+        q.gte("createdAt", dayStart).lt("createdAt", dayEnd)
+      )
+      .collect();
+
+    // Count reactions per channel (need to look up message → channel)
+    const channelReactionCounts = new Map<string, number>();
+    const messageChannelCache = new Map<string, string>();
+
+    for (const reaction of dayReactions) {
+      let chId = messageChannelCache.get(reaction.messageId);
+      if (!chId) {
+        const msg = await ctx.db.get(reaction.messageId);
+        chId = msg?.channelId ?? "";
+        messageChannelCache.set(reaction.messageId, chId);
+      }
+      if (chId) {
+        channelReactionCounts.set(chId, (channelReactionCounts.get(chId) ?? 0) + 1);
+      }
+    }
+
+    // Engagement score: messages + reactions * 0.5 (2 reactions = 1 message equivalent)
+    const allChannelIds = new Set([
+      ...channelMessageCounts.keys(),
+      ...channelReactionCounts.keys(),
+    ]);
+    const channelScores = Array.from(allChannelIds).map((chId) => {
+      const messages = channelMessageCounts.get(chId) ?? 0;
+      const reactions = channelReactionCounts.get(chId) ?? 0;
+      return { channelId: chId, messages, reactions, score: messages + reactions * 0.5 };
+    });
+
+    // Sort by engagement score descending and take top 10
+    channelScores.sort((a, b) => b.score - a.score);
+    const topScored = channelScores.slice(0, 10);
+
+    // Count users active that day via users.lastActiveAt index
+    const activeUsers = await ctx.db
+      .query("users")
+      .withIndex("by_lastActiveAt", (q) =>
+        q.gte("lastActiveAt", dayStart).lt("lastActiveAt", dayEnd)
+      )
+      .collect();
+    const appOpens = activeUsers.length;
+
+    // Resolve channel and group names + group photo for top channels
+    const topChannels = await Promise.all(
+      topScored.map(async ({ channelId, messages, reactions }) => {
+        const channel = await ctx.db.get(channelId as Id<"chatChannels">);
+        let groupName = "";
+        let groupPhoto: string | undefined;
+        if (channel?.groupId) {
+          const group = await ctx.db.get(channel.groupId);
+          groupName = group?.name ?? "";
+          groupPhoto = getMediaUrl(group?.preview);
+        }
+        return {
+          channelId,
+          channelName: channel?.name ?? "",
+          groupName,
+          groupPhoto,
+          messages,
+          reactions,
+        };
+      })
+    );
+
+    // Top users — messages + reactions (2 reactions = 1 message equivalent)
+    const userMessageCounts = new Map<string, number>();
+    const userReactionCounts = new Map<string, number>();
+    for (const msg of dayMessages) {
+      if (msg.isDeleted || BOT_TYPES.has(msg.contentType) || !msg.senderId) continue;
+      userMessageCounts.set(
+        msg.senderId,
+        (userMessageCounts.get(msg.senderId) ?? 0) + 1
+      );
+    }
+    for (const reaction of dayReactions) {
+      userReactionCounts.set(
+        reaction.userId,
+        (userReactionCounts.get(reaction.userId) ?? 0) + 1
+      );
+    }
+
+    const allUserIds = new Set([...userMessageCounts.keys(), ...userReactionCounts.keys()]);
+    const userScores = Array.from(allUserIds).map((uid) => {
+      const msgs = userMessageCounts.get(uid) ?? 0;
+      const rxns = userReactionCounts.get(uid) ?? 0;
+      return { userId: uid, messages: msgs, reactions: rxns, score: msgs + rxns * 0.5 };
+    });
+    userScores.sort((a, b) => b.score - a.score);
+    const topUserScores = userScores.slice(0, 10);
+
+    const topSenders = await Promise.all(
+      topUserScores.map(async ({ userId: uid, messages: msgs, reactions: rxns }) => {
+        const senderUser = await ctx.db.get(uid as Id<"users">);
+        return {
+          userId: uid,
+          name: senderUser
+            ? `${senderUser.firstName ?? ""} ${senderUser.lastName ?? ""}`.trim() || "Unknown"
+            : "Unknown",
+          profilePhoto: getMediaUrl(senderUser?.profilePhoto),
+          messages: msgs,
+          reactions: rxns,
+        };
+      })
+    );
+
+    // Format date as YYYY-MM-DD in UTC
+    const d = new Date(dayStart);
+    const date = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+
+    return {
+      date,
+      messages: {
+        total: totalMessages,
+        uniqueSenders: uniqueSenders.size,
+      },
+      totalReactions: dayReactions.length,
+      appOpens,
+      topChannels,
+      topSenders,
+    };
+  },
+});

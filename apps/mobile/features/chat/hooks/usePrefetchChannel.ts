@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useRef } from 'react';
 import { useAuth } from '@providers/AuthProvider';
-import { useConvex, api } from '@services/api/convex';
+import { useConvex, api, useStoredAuthToken } from '@services/api/convex';
 import type { Id } from '@services/api/convex';
 import {
   useChatPrefetch,
@@ -31,7 +31,8 @@ import { extractEventShortIds, extractToolShortIds, extractFirstExternalUrl } fr
  * Should be used in a component that wraps the inbox.
  */
 export function usePrefetchExecutor(): void {
-  const { token, user } = useAuth();
+  const { user } = useAuth();
+  const token = useStoredAuthToken();
   const convex = useConvex();
   const prefetchContext = useChatPrefetch();
   const pendingPrefetchesRef = useRef<Set<string>>(new Set());

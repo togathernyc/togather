@@ -39,6 +39,7 @@ jest.mock('@services/api/convex', () => ({
   useQuery: jest.fn(),
   useMutation: jest.fn(() => jest.fn()),
   useAction: jest.fn(() => jest.fn().mockResolvedValue(undefined)),
+  useStoredAuthToken: jest.fn(() => 'mock-token'),
   api: {
     functions: {
       messaging: {
@@ -146,7 +147,6 @@ jest.mock('@providers/AuthProvider', () => ({
   useAuth: jest.fn(() => ({
     user: { id: 'user-123', email: 'test@test.com' },
     isAuthenticated: true,
-    token: 'mock-token',
   })),
 }));
 

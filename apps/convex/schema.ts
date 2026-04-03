@@ -144,6 +144,7 @@ export default defineSchema({
     timezone: v.optional(v.string()),
     zipCode: v.optional(v.string()),
     activeCommunityId: v.optional(v.id("communities")),
+    lastActiveAt: v.optional(v.number()), // Unix timestamp ms — updated on app foreground
     pushNotificationsEnabled: v.optional(v.boolean()),
     emailNotificationsEnabled: v.optional(v.boolean()),
     smsNotificationsEnabled: v.optional(v.boolean()),
@@ -157,6 +158,8 @@ export default defineSchema({
     .index("by_phone", ["phone"])
     .index("by_username", ["username"])
     .index("by_activeCommunity", ["activeCommunityId"])
+    .index("by_lastLogin", ["lastLogin"])
+    .index("by_lastActiveAt", ["lastActiveAt"])
     .searchIndex("search_users", {
       searchField: "searchText",
       filterFields: [],
@@ -1442,7 +1445,8 @@ export default defineSchema({
     .index("by_message", ["messageId"])
     .index("by_message_user", ["messageId", "userId"])
     .index("by_message_emoji", ["messageId", "emoji"])
-    .index("by_user", ["userId"]),
+    .index("by_user", ["userId"])
+    .index("by_createdAt", ["createdAt"]),
 
   /**
    * Chat Read State

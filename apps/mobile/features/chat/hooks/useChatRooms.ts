@@ -1,12 +1,13 @@
 import { useCallback, useMemo } from "react";
-import { useQuery, api } from "@services/api/convex";
+import { useQuery, api, useStoredAuthToken } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { sortChatRooms } from "../utils/sortChatRooms";
 import type { ChatRoom } from "../types";
 import type { Id } from "@services/api/convex";
 
 export function useChatRooms(enabled: boolean = true) {
-  const { user, token } = useAuth();
+  const { user } = useAuth();
+  const token = useStoredAuthToken();
   const userId = user?.id as Id<"users"> | undefined;
 
   // Memoize query args to prevent unnecessary re-renders

@@ -78,6 +78,7 @@ interface MessageListProps {
   onMessageReact?: (messageId: Id<"chatMessages">) => void;
   onMessageDelete?: (messageId: Id<"chatMessages">) => void;
   onMessageLongPress?: (message: Message, event: { nativeEvent: { pageX: number; pageY: number } }) => void;
+  onMessageDoubleTap?: (message: Message, event: { nativeEvent: { pageX: number; pageY: number } }) => void;
   /** Optimistic messages to render inline */
   optimisticMessages?: Array<{
     _id: string;
@@ -141,6 +142,7 @@ export function MessageList({
   onMessageReact,
   onMessageDelete,
   onMessageLongPress,
+  onMessageDoubleTap,
   optimisticMessages,
   onRetryMessage,
   onDismissMessage,
@@ -353,13 +355,18 @@ export function MessageList({
               onMessageLongPress(message, event);
             }
           }}
+          onDoubleTap={(msg, event) => {
+            if (onMessageDoubleTap) {
+              onMessageDoubleTap(message, event);
+            }
+          }}
           isOptimistic={item.isOptimistic}
           optimisticStatus={item.optimisticStatus as any}
           onRetry={item.isOptimistic && onRetryMessage ? () => onRetryMessage(String(message._id)) : undefined}
         />
       );
     },
-    [currentUserId, groupId, channelName, prefetchState, onMessageReply, onMessageReact, onMessageDelete, onMessageLongPress, onRetryMessage]
+    [currentUserId, groupId, channelName, prefetchState, onMessageReply, onMessageReact, onMessageDelete, onMessageLongPress, onMessageDoubleTap, onRetryMessage]
   );
 
   // Key extractor

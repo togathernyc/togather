@@ -13,8 +13,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import type { Id } from "@services/api/convex";
-import { useQuery, useAuthenticatedMutation, api } from "@services/api/convex";
-import { useAuth } from "@providers/AuthProvider";
+import { useQuery, useAuthenticatedMutation, api, useStoredAuthToken } from "@services/api/convex";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { ReachOutTaskCard } from "./ReachOutTaskCard";
 
@@ -24,7 +23,7 @@ interface ReachOutScreenProps {
 }
 
 export function ReachOutScreen({ channelId, groupId }: ReachOutScreenProps) {
-  const { token } = useAuth();
+  const token = useStoredAuthToken();
   const { primaryColor } = useCommunityTheme();
   const [content, setContent] = useState("");
   const [submitting, setSubmitting] = useState(false);

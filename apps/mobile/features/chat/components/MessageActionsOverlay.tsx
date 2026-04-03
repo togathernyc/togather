@@ -16,18 +16,15 @@ import {
   TouchableOpacity,
   TouchableWithoutFeedback,
   Animated,
-  Dimensions,
   Image,
+  ScrollView,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "@hooks/useTheme";
 import { getMediaUrl } from "@/utils/media";
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
-
 // Reaction types
-const REACTIONS = [
+export const REACTIONS = [
   { type: "like", emoji: "👍" },
   { type: "love", emoji: "❤️" },
   { type: "haha", emoji: "😂" },
@@ -103,6 +100,10 @@ type MessageActionsOverlayProps = {
   isCommunityAdmin?: boolean;
   /** Hide the reply action (useful in thread context where nested replies aren't allowed) */
   hideReplyAction?: boolean;
+  /** Show only the reaction picker (no actions menu, no message preview) */
+  reactionsOnly?: boolean;
+  /** Y position of the tap event — used to position reactions near the message */
+  tapY?: number;
 };
 
 export function MessageActionsOverlay({
@@ -114,9 +115,10 @@ export function MessageActionsOverlay({
   isUserLeader = false,
   isCommunityAdmin = false,
   hideReplyAction = false,
+  reactionsOnly = false,
+  tapY,
 }: MessageActionsOverlayProps) {
-  const { colors, isDark } = useTheme();
-  const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(0.9)).current;
   const [showMoreActions, setShowMoreActions] = useState(false);
@@ -240,8 +242,17 @@ export function MessageActionsOverlay({
         <Animated.View style={[styles.backdrop, { opacity: fadeAnim, backgroundColor: colors.overlay }]} />
       </TouchableWithoutFeedback>
 
-      {/* Centered Content */}
-      <View style={styles.centeredContainer} pointerEvents="box-none">
+      {/* Content */}
+      <View
+        style={[
+          styles.centeredContainer,
+          reactionsOnly && tapY !== undefined && {
+            justifyContent: 'flex-start',
+            paddingTop: Math.max(tapY - 72, 50),
+          },
+        ]}
+        pointerEvents="box-none"
+      >
         <Animated.View
           style={[
             styles.contentWrapper,
@@ -252,7 +263,12 @@ export function MessageActionsOverlay({
           ]}
         >
           {/* Reactions Bar - Above Message */}
-          <View style={[styles.reactionsContainer, { backgroundColor: colors.surface }]}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={[styles.reactionsContainer, { backgroundColor: colors.surface }]}
+            contentContainerStyle={styles.reactionsContent}
+          >
             {REACTIONS.map((reaction) => (
               <TouchableOpacity
                 key={reaction.type}
@@ -263,9 +279,10 @@ export function MessageActionsOverlay({
                 <Text style={styles.reactionEmoji}>{reaction.emoji}</Text>
               </TouchableOpacity>
             ))}
-          </View>
+          </ScrollView>
 
-          {/* Mini Message Preview */}
+          {/* Mini Message Preview (hidden in reactionsOnly mode) */}
+          {!reactionsOnly && (
           <View
             style={[
               styles.messageBubbleContainer,
@@ -338,8 +355,10 @@ export function MessageActionsOverlay({
               )}
             </View>
           </View>
+          )}
 
-          {/* Actions Menu - Below Message */}
+          {/* Actions Menu - Below Message (hidden in reactionsOnly mode) */}
+          {!reactionsOnly && (
           <View style={[styles.actionsContainer, { backgroundColor: colors.surface }]}>
             {showMoreActions ? (
               <>
@@ -409,6 +428,7 @@ export function MessageActionsOverlay({
               ))
             )}
           </View>
+          )}
         </Animated.View>
       </View>
     </Modal>
@@ -432,18 +452,20 @@ const styles = StyleSheet.create({
   },
   // Reactions
   reactionsContainer: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "center",
     borderRadius: 24,
-    paddingHorizontal: 8,
     paddingVertical: 8,
     marginBottom: 12,
+    maxWidth: "100%",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.15,
     shadowRadius: 8,
     elevation: 4,
+  },
+  reactionsContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
   },
   reactionButton: {
     width: 44,

@@ -14,6 +14,7 @@ let mockConvexQueryResult: any = undefined;
 // Mock Convex
 jest.mock('@services/api/convex', () => ({
   useQuery: jest.fn(() => mockConvexQueryResult),
+  useStoredAuthToken: jest.fn(() => 'mock-token'),
   api: {
     functions: {
       messaging: {
@@ -39,12 +40,10 @@ jest.mock('expo-router', () => ({
   })),
 }));
 
-// Mock AuthProvider - component needs token for loading state check
 jest.mock('@providers/AuthProvider', () => ({
   useAuth: jest.fn(() => ({
     user: { id: 'user-123', email: 'test@test.com' },
     isAuthenticated: true,
-    token: 'mock-token',
   })),
 }));
 

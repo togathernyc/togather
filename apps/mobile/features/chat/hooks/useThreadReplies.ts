@@ -6,9 +6,8 @@
  * Automatically subscribes to real-time updates.
  */
 
-import { useQuery, api } from '@services/api/convex';
+import { useQuery, api, useStoredAuthToken } from '@services/api/convex';
 import type { Id } from '@services/api/convex';
-import { useAuth } from '@providers/AuthProvider';
 import { useChatPrefetch } from '../context/ChatPrefetchContext';
 
 interface ThreadReply {
@@ -49,7 +48,7 @@ export function useThreadReplies(
   limit: number = 50,
   channelId?: Id<"chatChannels"> | null
 ): UseThreadRepliesResult {
-  const { token } = useAuth();
+  const token = useStoredAuthToken();
 
   // Check prefetch context first for instant render
   const prefetchContext = useChatPrefetch();

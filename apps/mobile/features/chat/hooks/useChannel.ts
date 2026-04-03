@@ -5,9 +5,8 @@
  * Returns channel data that automatically updates when the channel changes.
  */
 
-import { useQuery, api } from '@services/api/convex';
+import { useQuery, api, useStoredAuthToken } from '@services/api/convex';
 import type { Id } from '@services/api/convex';
-import { useAuth } from '@providers/AuthProvider';
 
 /**
  * Subscribe to a channel's data with real-time updates
@@ -23,7 +22,7 @@ import { useAuth } from '@providers/AuthProvider';
  * ```
  */
 export function useChannel(channelId: Id<"chatChannels"> | null) {
-  const { token } = useAuth();
+  const token = useStoredAuthToken();
 
   // Skip query if no channelId or no token
   const shouldSkip = !channelId || !token;

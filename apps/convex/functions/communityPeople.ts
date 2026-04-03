@@ -13,7 +13,7 @@
 
 import { v, ConvexError } from "convex/values";
 import { paginationOptsValidator } from "convex/server";
-import { query, mutation, internalMutation } from "../_generated/server";
+import { query, mutation, action, internalQuery, internalMutation } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
 import { requireAuth } from "../lib/auth";
@@ -363,38 +363,35 @@ export const list = query({
   },
 });
 
-const MAX_CSV_EXPORT_ROWS = 10_000;
+const MAX_CSV_EXPORT_ROWS = 50_000;
+// Convex queries can return at most 8192 array items, so we page internally.
+const CSV_BATCH_SIZE = 5_000;
+
+const csvExportArgs = {
+  groupId: v.id("groups"),
+  token: v.optional(v.string()),
+  sortBy: v.optional(v.string()),
+  sortDirection: v.optional(v.union(v.literal("asc"), v.literal("desc"))),
+  statusFilter: v.optional(v.string()),
+  scoreField: v.optional(v.string()),
+  scoreMin: v.optional(v.number()),
+  scoreMax: v.optional(v.number()),
+  assigneeFilter: v.optional(v.string()),
+  requireSelfAssignee: v.optional(v.boolean()),
+};
 
 /**
- * Fetch up to MAX_CSV_EXPORT_ROWS community people for CSV export.
- * Uses the same filters and sort as `list` but returns all matching rows in one response
- * (no pagination cursor). When the result is truncated, `truncated` is true.
+ * Internal query that fetches a page of community people for CSV export.
+ * Returns at most CSV_BATCH_SIZE rows to stay under Convex's 8192 array limit.
  */
-export const listAllForCsvExport = query({
+export const _csvExportPage = internalQuery({
   args: {
-    groupId: v.id("groups"),
-    token: v.optional(v.string()),
-    sortBy: v.optional(v.string()),
-    sortDirection: v.optional(v.union(v.literal("asc"), v.literal("desc"))),
-    statusFilter: v.optional(v.string()),
-    scoreField: v.optional(v.string()),
-    scoreMin: v.optional(v.number()),
-    scoreMax: v.optional(v.number()),
-    assigneeFilter: v.optional(v.string()),
-    requireSelfAssignee: v.optional(v.boolean()),
+    ...csvExportArgs,
+    userId: v.string(),
+    skip: v.number(),
   },
   handler: async (ctx, args) => {
-    const userId = await requireAuth(ctx, args.token ?? "");
-
-    const group = await ctx.db.get(args.groupId);
-    if (!group) {
-      throw new ConvexError("Group not found");
-    }
-    await requireCommunityMember(ctx, group.communityId, userId);
-
-    const assigneeFilter = args.requireSelfAssignee
-      ? userId.toString()
-      : args.assigneeFilter;
+    const assigneeFilter = args.assigneeFilter;
 
     let assigneeIdSet: Set<string> | null = null;
     if (assigneeFilter) {
@@ -466,11 +463,7 @@ export const listAllForCsvExport = query({
         return cmp;
       });
 
-      const truncated = filtered.length > MAX_CSV_EXPORT_ROWS;
-      return {
-        people: filtered.slice(0, MAX_CSV_EXPORT_ROWS),
-        truncated,
-      };
+      return filtered.slice(args.skip, args.skip + CSV_BATCH_SIZE);
     }
 
     let q = ctx.db
@@ -480,7 +473,6 @@ export const listAllForCsvExport = query({
 
     const hasFilters =
       args.statusFilter ||
-      assigneeFilter ||
       args.scoreMax !== undefined ||
       args.scoreMin !== undefined;
 
@@ -503,12 +495,290 @@ export const listAllForCsvExport = query({
       });
     }
 
-    const batch = await q.take(MAX_CSV_EXPORT_ROWS + 1);
-    const truncated = batch.length > MAX_CSV_EXPORT_ROWS;
-    return {
-      people: batch.slice(0, MAX_CSV_EXPORT_ROWS),
-      truncated,
+    // Skip + take to paginate. For the non-assignee path we take extras to detect truncation.
+    const toTake = args.skip + CSV_BATCH_SIZE + 1;
+    const all = await q.take(toTake);
+    return all.slice(args.skip, args.skip + CSV_BATCH_SIZE);
+  },
+});
+
+/**
+ * Public action that generates a complete CSV server-side.
+ * Pages through _csvExportPage to collect people, fetches leaders/tasks/config,
+ * and returns the CSV string directly. No large arrays in the return value.
+ */
+export const listAllForCsvExport = action({
+  args: csvExportArgs,
+  handler: async (ctx, args) => {
+    const { runQuery } = ctx;
+
+    // Auth check + get group/community info
+    const authResult: any = await runQuery(
+      internal.functions.communityPeople._csvExportAuth,
+      { groupId: args.groupId, token: args.token ?? "" },
+    );
+    const userId = authResult.userId as string;
+    const communityId = authResult.communityId as string;
+    const groupName = authResult.groupName as string;
+
+    const resolvedAssignee = args.requireSelfAssignee
+      ? userId
+      : args.assigneeFilter;
+
+    // Fetch people in pages
+    const people: any[] = [];
+    let skip = 0;
+    let lastBatchLength = 0;
+
+    while (people.length < MAX_CSV_EXPORT_ROWS) {
+      const batch: any[] = await runQuery(
+        internal.functions.communityPeople._csvExportPage,
+        {
+          groupId: args.groupId,
+          token: args.token,
+          sortBy: args.sortBy,
+          sortDirection: args.sortDirection,
+          statusFilter: args.statusFilter,
+          scoreField: args.scoreField,
+          scoreMin: args.scoreMin,
+          scoreMax: args.scoreMax,
+          assigneeFilter: resolvedAssignee,
+          userId,
+          skip,
+        },
+      );
+
+      lastBatchLength = batch.length;
+      if (batch.length === 0) break;
+      people.push(...batch);
+      skip += batch.length;
+
+      if (batch.length < CSV_BATCH_SIZE) break;
+    }
+
+    // `people.length >= MAX` alone is insufficient: exactly MAX rows in DB would
+    // falsely look truncated. Peek one more page only when we filled the cap with a full batch.
+    let truncated = people.length > MAX_CSV_EXPORT_ROWS;
+    if (
+      !truncated &&
+      people.length === MAX_CSV_EXPORT_ROWS &&
+      lastBatchLength === CSV_BATCH_SIZE
+    ) {
+      const peek: any[] = await runQuery(
+        internal.functions.communityPeople._csvExportPage,
+        {
+          groupId: args.groupId,
+          token: args.token,
+          sortBy: args.sortBy,
+          sortDirection: args.sortDirection,
+          statusFilter: args.statusFilter,
+          scoreField: args.scoreField,
+          scoreMin: args.scoreMin,
+          scoreMax: args.scoreMax,
+          assigneeFilter: resolvedAssignee,
+          userId,
+          skip,
+        },
+      );
+      if (peek.length > 0) truncated = true;
+    }
+    const exportPeople = people.slice(0, MAX_CSV_EXPORT_ROWS);
+
+    // Fetch supporting data for CSV generation
+    const csvData: any = await runQuery(
+      internal.functions.communityPeople._csvExportSupplementary,
+      { groupId: args.groupId, communityId: communityId as Id<"communities"> },
+    );
+
+    // Build leader map
+    const leaderMap = new Map<string, { firstName: string; lastName: string }>();
+    for (const l of csvData.leaders) {
+      leaderMap.set(l.userId, { firstName: l.firstName, lastName: l.lastName });
+    }
+
+    // Build tasks map
+    const tasksByMember = new Map<string, Array<{ title: string; assignedToName?: string; groupName?: string }>>();
+    for (const t of csvData.tasks) {
+      if (!tasksByMember.has(t.targetMemberId)) tasksByMember.set(t.targetMemberId, []);
+      tasksByMember.get(t.targetMemberId)!.push({
+        title: t.title,
+        assignedToName: t.assignedToName,
+        groupName: t.groupName,
+      });
+    }
+
+    const customFields = csvData.customFields as Array<{ slot: string; name: string; type: string }>;
+
+    // Build column keys and labels
+    const SCORE_COLUMNS = [
+      { slot: "score1", name: "Service" },
+      { slot: "score2", name: "Attendance" },
+      { slot: "score3", name: "Connection" },
+    ];
+    const columnKeys = [
+      "addedAt", "firstName", "lastName", "email", "phone", "zipCode", "dateOfBirth",
+      ...SCORE_COLUMNS.map((s) => s.slot),
+      "assignee", "notes", "tasks", "status", "lastAttendedAt", "lastFollowupAt", "lastActiveAt", "alerts",
+      ...customFields.map((cf) => cf.slot),
+    ];
+    const columnLabelMap: Record<string, string> = {
+      addedAt: "Date Added", firstName: "First Name", lastName: "Last Name",
+      email: "Email", phone: "Phone", zipCode: "ZIP Code", dateOfBirth: "Birthday",
+      assignee: "Assignees", notes: "Notes", tasks: "Tasks", status: "Status",
+      lastAttendedAt: "Last Attended", lastFollowupAt: "Last Contact",
+      lastActiveAt: "Date Active", alerts: "Alerts",
     };
+    for (const sc of SCORE_COLUMNS) columnLabelMap[sc.slot] = sc.name;
+    for (const cf of customFields) columnLabelMap[cf.slot] = cf.name;
+
+    // Generate CSV
+    const headers = columnKeys.map((k) => columnLabelMap[k] ?? k);
+    const rows = exportPeople.map((m: any) =>
+      columnKeys.map((key) => {
+        switch (key) {
+          case "addedAt": return formatTs(m.addedAt);
+          case "firstName": return m.firstName ?? "";
+          case "lastName": return m.lastName ?? "";
+          case "email": return m.email ?? "";
+          case "phone": return m.phone ?? "";
+          case "zipCode": return m.zipCode ?? "";
+          case "dateOfBirth": return formatTsUtc(m.dateOfBirth);
+          case "score1": return String(m.score1 ?? "");
+          case "score2": return String(m.score2 ?? "");
+          case "score3": return String(m.score3 ?? "");
+          case "assignee": {
+            const ids: string[] = m.assigneeIds?.length ? m.assigneeIds : m.assigneeId ? [m.assigneeId] : [];
+            return [...new Set(ids)]
+              .map((id: string) => {
+                const l = leaderMap.get(id);
+                return l ? `${l.firstName} ${l.lastName}`.trim() : "";
+              })
+              .filter(Boolean)
+              .join("; ");
+          }
+          case "notes": return m.latestNote ?? "";
+          case "tasks": {
+            const tasks = tasksByMember.get(m.userId) ?? [];
+            return tasks
+              .map((t) => `${t.assignedToName ?? "Unassigned"} — ${t.title}${t.groupName ? ` [${t.groupName}]` : ""}`)
+              .join(" | ");
+          }
+          case "status": return m.status ?? "";
+          case "lastAttendedAt": return formatTs(m.lastAttendedAt);
+          case "lastFollowupAt": return formatTs(m.lastFollowupAt);
+          case "lastActiveAt": return formatTs(m.lastActiveAt);
+          case "alerts": return (m.alerts ?? []).join("; ");
+          default: {
+            if (key.startsWith("custom")) {
+              const raw = m[key];
+              if (raw === undefined || raw === null) return "";
+              const cf = customFields.find((f) => f.slot === key);
+              if (cf?.type === "boolean") return raw === true ? "true" : raw === false ? "false" : "";
+              if (cf?.type === "number") return typeof raw === "number" && Number.isFinite(raw) ? String(raw) : "";
+              if (cf?.type === "multiselect") return String(raw).trim().split("|||").filter(Boolean).join("; ");
+              return String(raw).trim();
+            }
+            return "";
+          }
+        }
+      }),
+    );
+
+    const csvLines = [
+      headers.map(escapeField).join(","),
+      ...rows.map((row: string[]) => row.map(escapeField).join(",")),
+    ];
+    const csv = csvLines.join("\n");
+
+    const rawBase = (groupName || "people").replace(/[^\w\s-]/g, "").trim();
+    const safeBase = (rawBase || "people").replace(/\s+/g, "_").slice(0, 80);
+    const filename = `${safeBase}_${new Date().toISOString().slice(0, 10)}.csv`;
+
+    return { csv, filename, truncated, totalRows: exportPeople.length };
+  },
+});
+
+// CSV helpers for the action
+function formatTs(ts: number | undefined): string {
+  if (ts === undefined) return "";
+  return new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+function formatTsUtc(ts: number | undefined): string {
+  if (ts === undefined) return "";
+  return new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+}
+function escapeField(field: string | number | null | undefined): string {
+  if (field === null || field === undefined) return "";
+  const str = String(field);
+  if (str.includes(",") || str.includes('"') || str.includes("\n") || str.includes("\r")) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+/** Internal auth helper for the CSV export action */
+export const _csvExportAuth = internalQuery({
+  args: { groupId: v.id("groups"), token: v.string() },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const group = await ctx.db.get(args.groupId);
+    if (!group) throw new ConvexError("Group not found");
+    await requireCommunityMember(ctx, group.communityId, userId);
+    return {
+      userId: userId.toString(),
+      communityId: group.communityId.toString(),
+      groupName: group.name ?? "",
+    };
+  },
+});
+
+/** Fetch leaders, tasks, and custom fields for CSV export */
+export const _csvExportSupplementary = internalQuery({
+  args: {
+    groupId: v.id("groups"),
+    communityId: v.id("communities"),
+  },
+  handler: async (ctx, args) => {
+    // Leaders for the group (for assignee name resolution)
+    const groupMembers = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group", (q: any) => q.eq("groupId", args.groupId))
+      .collect();
+    const leaderMembers = groupMembers.filter(
+      (m: any) => m.role === "leader" || m.role === "admin",
+    );
+    const leaders = await Promise.all(
+      leaderMembers.map(async (m: any) => {
+        const user = await ctx.db.get(m.userId);
+        return {
+          userId: m.userId.toString(),
+          firstName: (user as any)?.firstName ?? "",
+          lastName: (user as any)?.lastName ?? "",
+        };
+      }),
+    );
+
+    // Open tasks targeting members in this group
+    const allTasks = await ctx.db
+      .query("tasks")
+      .withIndex("by_group", (q: any) => q.eq("groupId", args.groupId))
+      .collect();
+    const tasks = allTasks
+      .filter((t: any) => t.status === "open" && t.targetMemberId)
+      .map((t: any) => ({
+        targetMemberId: t.targetMemberId.toString(),
+        title: t.title ?? "",
+        assignedToName: t.assignedToName,
+        groupName: t.groupName,
+      }));
+
+    // Custom fields from the community
+    const community = await ctx.db.get(args.communityId);
+    const customFields = ((community as any)?.peopleCustomFields ?? []).map(
+      (cf: any) => ({ slot: cf.slot, name: cf.name, type: cf.type }),
+    );
+
+    return { leaders, tasks, customFields };
   },
 });
 

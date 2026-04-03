@@ -10,7 +10,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { useMutation, api } from '@services/api/convex';
+import { useMutation, api, useStoredAuthToken } from '@services/api/convex';
 import type { Id } from '@services/api/convex';
 import { useAuth } from '@providers/AuthProvider';
 import { useConnectionStatus } from '@providers/ConnectionProvider';
@@ -85,7 +85,8 @@ export function useSendMessage(
   channelId: Id<"chatChannels"> | null,
   viewingGroupId?: Id<"groups"> | null
 ): UseSendMessageResult {
-  const { token, user } = useAuth();
+  const { user } = useAuth();
+  const token = useStoredAuthToken();
   const sendMessageMutation = useMutation(api.functions.messaging.messages.sendMessage);
   const { status: connectionStatus, isEffectivelyOffline } = useConnectionStatus();
 

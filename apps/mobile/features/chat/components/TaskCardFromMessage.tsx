@@ -1,8 +1,7 @@
 import React from "react";
 import { ActivityIndicator, StyleSheet, View } from "react-native";
 import type { Id } from "@services/api/convex";
-import { api, useQuery } from "@services/api/convex";
-import { useAuth } from "@providers/AuthProvider";
+import { api, useQuery, useStoredAuthToken } from "@services/api/convex";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { ReachOutTaskCard } from "./ReachOutTaskCard";
 
@@ -11,7 +10,7 @@ interface TaskCardFromMessageProps {
 }
 
 export function TaskCardFromMessage({ taskId }: TaskCardFromMessageProps) {
-  const { token } = useAuth();
+  const token = useStoredAuthToken();
   const { primaryColor } = useCommunityTheme();
 
   const task = useQuery(

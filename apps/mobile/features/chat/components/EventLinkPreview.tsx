@@ -8,8 +8,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, Image, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { format, parseISO } from 'date-fns';
-import { useQuery, api } from '@services/api/convex';
-import { useAuth } from '@providers/AuthProvider';
+import { useQuery, api, useStoredAuthToken } from '@services/api/convex';
 import { AppImage } from '@components/ui/AppImage';
 import { DEFAULT_PRIMARY_COLOR } from '@utils/styles';
 
@@ -20,7 +19,7 @@ interface EventLinkPreviewProps {
 
 export function EventLinkPreview({ shortId, onDismiss }: EventLinkPreviewProps) {
   const [imageHeight, setImageHeight] = useState<number | undefined>(undefined);
-  const { token } = useAuth();
+  const token = useStoredAuthToken();
 
   // Fetch event by short ID using Convex
   const eventData = useQuery(api.functions.meetings.index.getByShortId, token ? { shortId, token } : { shortId });
