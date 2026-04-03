@@ -18,6 +18,7 @@ import {
   Animated,
   Dimensions,
   Image,
+  ScrollView,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -252,7 +253,12 @@ export function MessageActionsOverlay({
           ]}
         >
           {/* Reactions Bar - Above Message */}
-          <View style={[styles.reactionsContainer, { backgroundColor: colors.surface }]}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={[styles.reactionsContainer, { backgroundColor: colors.surface }]}
+            contentContainerStyle={styles.reactionsContent}
+          >
             {REACTIONS.map((reaction) => (
               <TouchableOpacity
                 key={reaction.type}
@@ -263,7 +269,7 @@ export function MessageActionsOverlay({
                 <Text style={styles.reactionEmoji}>{reaction.emoji}</Text>
               </TouchableOpacity>
             ))}
-          </View>
+          </ScrollView>
 
           {/* Mini Message Preview */}
           <View
@@ -432,18 +438,20 @@ const styles = StyleSheet.create({
   },
   // Reactions
   reactionsContainer: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "center",
     borderRadius: 24,
-    paddingHorizontal: 8,
     paddingVertical: 8,
     marginBottom: 12,
+    maxWidth: "100%",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.15,
     shadowRadius: 8,
     elevation: 4,
+  },
+  reactionsContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
   },
   reactionButton: {
     width: 44,
