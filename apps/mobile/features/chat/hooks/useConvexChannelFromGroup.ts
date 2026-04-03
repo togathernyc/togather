@@ -7,15 +7,14 @@
  */
 
 import { useEffect, useRef } from 'react';
-import { useQuery, useAction, api } from '@services/api/convex';
-import { useAuth } from '@providers/AuthProvider';
+import { useQuery, useAction, api, useStoredAuthToken } from '@services/api/convex';
 import type { Id } from '@services/api/convex';
 
 export function useConvexChannelFromGroup(
   groupId: Id<"groups"> | null | undefined,
   channelType: "main" | "leaders"
 ): Id<"chatChannels"> | null | undefined {
-  const { token } = useAuth();
+  const token = useStoredAuthToken();
 
   // Skip query if no groupId or no token
   const shouldSkip = !groupId || !token;

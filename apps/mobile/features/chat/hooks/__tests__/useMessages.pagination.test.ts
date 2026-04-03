@@ -25,6 +25,7 @@ jest.mock('@services/api/convex', () => ({
     }
     return mockLivePage;
   }),
+  useStoredAuthToken: jest.fn(() => 'test-token'),
   api: {
     functions: {
       messaging: {
@@ -34,12 +35,6 @@ jest.mock('@services/api/convex', () => ({
       },
     },
   },
-}));
-
-jest.mock('@providers/AuthProvider', () => ({
-  useAuth: () => ({
-    token: 'test-token',
-  }),
 }));
 
 jest.mock('../../../../stores/messageCache', () => ({

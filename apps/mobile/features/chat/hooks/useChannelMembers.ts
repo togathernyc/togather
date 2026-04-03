@@ -4,9 +4,8 @@
  * Fetch channel members for @mention autocomplete and member lists.
  */
 
-import { useQuery, api } from '@services/api/convex';
+import { useQuery, api, useStoredAuthToken } from '@services/api/convex';
 import type { Id } from '@services/api/convex';
-import { useAuth } from '@providers/AuthProvider';
 
 interface ChannelMember {
   userId: Id<"users">;
@@ -37,7 +36,7 @@ interface UseChannelMembersResult {
  * ```
  */
 export function useChannelMembers(channelId: Id<"chatChannels"> | null): UseChannelMembersResult {
-  const { token } = useAuth();
+  const token = useStoredAuthToken();
 
   // Skip query if no channelId or no token
   const shouldSkip = !channelId || !token;

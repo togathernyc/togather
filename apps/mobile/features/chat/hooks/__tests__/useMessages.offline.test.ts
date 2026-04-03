@@ -7,6 +7,7 @@ import { renderHook, waitFor } from '@testing-library/react-native';
 let mockQueryResult: any = undefined;
 jest.mock('@services/api/convex', () => ({
   useQuery: jest.fn(() => mockQueryResult),
+  useStoredAuthToken: jest.fn(() => 'test-token'),
   api: {
     functions: {
       messaging: {
@@ -16,13 +17,6 @@ jest.mock('@services/api/convex', () => ({
       },
     },
   },
-}));
-
-// Mock auth
-jest.mock('@providers/AuthProvider', () => ({
-  useAuth: () => ({
-    token: 'test-token',
-  }),
 }));
 
 // Mock connection status

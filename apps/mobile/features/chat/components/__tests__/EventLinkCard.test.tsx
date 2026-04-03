@@ -10,6 +10,7 @@ const mockPush = jest.fn();
 jest.mock('@services/api/convex', () => ({
   useQuery: (...args: unknown[]) => mockUseQuery(...args),
   useMutation: jest.fn(() => mockSubmitRsvp),
+  useStoredAuthToken: jest.fn(() => 'mock-token'),
   api: {
     functions: {
       meetings: {
@@ -24,10 +25,6 @@ jest.mock('@services/api/convex', () => ({
       },
     },
   },
-}));
-
-jest.mock('@providers/AuthProvider', () => ({
-  useAuth: () => ({ token: 'mock-token' }),
 }));
 
 jest.mock('expo-router', () => ({

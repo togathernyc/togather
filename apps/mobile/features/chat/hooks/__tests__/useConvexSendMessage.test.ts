@@ -9,6 +9,7 @@ import { useSendMessage } from '../useConvexSendMessage';
 const mockSendMutation = jest.fn(() => Promise.resolve('msg-id'));
 jest.mock('@services/api/convex', () => ({
   useMutation: jest.fn(() => mockSendMutation),
+  useStoredAuthToken: jest.fn(() => 'test-token'),
   api: {
     functions: {
       messaging: {
@@ -23,7 +24,6 @@ jest.mock('@services/api/convex', () => ({
 // Mock auth
 jest.mock('@providers/AuthProvider', () => ({
   useAuth: () => ({
-    token: 'test-token',
     user: {
       id: 'user-1',
       first_name: 'Test',

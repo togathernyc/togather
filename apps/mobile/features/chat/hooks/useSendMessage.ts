@@ -5,8 +5,7 @@
  * is being sent to the Convex backend.
  */
 import { useState, useCallback } from "react";
-import { useAuth } from "@providers/AuthProvider";
-import { useMutation, api } from "@services/api/convex";
+import { useMutation, api, useStoredAuthToken } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import type { Message } from "../types";
 
@@ -55,7 +54,7 @@ export function useSendMessage({
   const [isPending, setIsPending] = useState(false);
   const [isError, setIsError] = useState(false);
   const [error, setError] = useState<Error | null>(null);
-  const { token } = useAuth();
+  const token = useStoredAuthToken();
 
   const userId = user?.id as Id<"users"> | undefined;
   const sendMessageMutation = useMutation(api.functions.messaging.messages.sendMessage);

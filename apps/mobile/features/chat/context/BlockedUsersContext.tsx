@@ -9,8 +9,7 @@
  * Uses Convex messaging blocking functions instead of StreamChat.
  */
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react';
-import { useAuth } from '@providers/AuthProvider';
-import { useQuery, api } from '@services/api/convex';
+import { useQuery, api, useStoredAuthToken } from '@services/api/convex';
 import type { Id } from '@services/api/convex';
 
 interface BlockedUsersContextValue {
@@ -25,7 +24,7 @@ interface BlockedUsersContextValue {
 const BlockedUsersContext = createContext<BlockedUsersContextValue | null>(null);
 
 export function BlockedUsersProvider({ children }: { children: ReactNode }) {
-  const { token } = useAuth();
+  const token = useStoredAuthToken();
   const [blockedUserIds, setBlockedUserIds] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState(true);
 

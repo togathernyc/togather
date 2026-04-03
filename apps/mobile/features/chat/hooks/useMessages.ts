@@ -14,9 +14,8 @@
  */
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { useQuery, api } from '@services/api/convex';
+import { useQuery, api, useStoredAuthToken } from '@services/api/convex';
 import type { Id } from '@services/api/convex';
-import { useAuth } from '@providers/AuthProvider';
 import { useMessageCache } from '../../../stores/messageCache';
 
 interface UseMessagesResult {
@@ -40,7 +39,7 @@ export function useMessages(
   limit: number = 20,
   viewingGroupId?: Id<"groups"> | null
 ): UseMessagesResult {
-  const { token } = useAuth();
+  const token = useStoredAuthToken();
   const { getChannelMessages, setChannelMessages } = useMessageCache();
 
   // Pagination cursor — set temporarily during pagination, then reset to undefined

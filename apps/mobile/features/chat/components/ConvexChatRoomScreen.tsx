@@ -33,7 +33,7 @@ import { useTheme } from "@hooks/useTheme";
 import { parseStreamChannelId } from "@togather/shared";
 import { DOMAIN_CONFIG } from "@togather/shared";
 import type { Id } from "@services/api/convex";
-import { useQuery, api } from "@services/api/convex";
+import { useQuery, api, useStoredAuthToken } from "@services/api/convex";
 
 // Local components
 import { ChatHeader, ChatHeaderPlaceholder } from "./ChatHeader";
@@ -89,7 +89,8 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   const params = useLocalSearchParams() as ChatRoomParams;
   const router = useRouter();
   const pathname = usePathname();
-  const { user, token } = useAuth();
+  const { user } = useAuth();
+  const token = useStoredAuthToken();
   const { primaryColor } = useCommunityTheme();
   const { colors } = useTheme();
   const { addBlockedUser } = useBlockedUsersContext();

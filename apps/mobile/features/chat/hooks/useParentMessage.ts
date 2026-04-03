@@ -5,9 +5,8 @@
  * Used to display the parent message at the top of thread pages.
  */
 
-import { useQuery, api } from '@services/api/convex';
+import { useQuery, api, useStoredAuthToken } from '@services/api/convex';
 import type { Id } from '@services/api/convex';
-import { useAuth } from '@providers/AuthProvider';
 
 interface ParentMessage {
   _id: Id<"chatMessages">;
@@ -43,7 +42,7 @@ interface UseParentMessageResult {
 export function useParentMessage(
   messageId: Id<"chatMessages"> | null
 ): UseParentMessageResult {
-  const { token } = useAuth();
+  const token = useStoredAuthToken();
 
   const shouldSkip = !messageId || !token;
 

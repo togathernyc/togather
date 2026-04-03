@@ -12,9 +12,8 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useQuery, api } from "@services/api/convex";
+import { useQuery, api, useStoredAuthToken } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
-import { useAuth } from "@providers/AuthProvider";
 import { getExternalChatInfo } from "../utils/externalChat";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
@@ -168,7 +167,7 @@ export const ChatToolbar = memo(function ChatToolbar({
   onToolPress,
 }: ChatToolbarProps) {
   const router = useRouter();
-  const { token } = useAuth();
+  const token = useStoredAuthToken();
   const { colors: themeColors } = useTheme();
 
   // Check if user is a leader/admin

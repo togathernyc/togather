@@ -19,7 +19,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter, usePathname } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@providers/AuthProvider";
-import { useQuery, api } from "@services/api/convex";
+import { useQuery, api, useStoredAuthToken } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
@@ -66,7 +66,8 @@ export function ChatInboxScreen({
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const pathname = usePathname();
-  const { user, community, token } = useAuth();
+  const { user, community } = useAuth();
+  const token = useStoredAuthToken();
   const { primaryColor } = useCommunityTheme();
   const { colors } = useTheme();
   const hasCommunity = !!community?.id;

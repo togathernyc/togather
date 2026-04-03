@@ -8,10 +8,9 @@ import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, Pressable, StyleSheet, ActivityIndicator, Platform, Dimensions, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { format, parseISO, isPast } from 'date-fns';
-import { useAuth } from '@providers/AuthProvider';
 import { Avatar } from '@components/ui/Avatar';
 import { AppImage } from '@components/ui/AppImage';
-import { useQuery, useMutation, api } from '@services/api/convex';
+import { useQuery, useMutation, api, useStoredAuthToken } from '@services/api/convex';
 import type { Id } from '@services/api/convex';
 import { useRouter } from 'expo-router';
 import { ImageViewerManager } from '@/providers/ImageViewerProvider';
@@ -49,7 +48,7 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
   const router = useRouter();
   const { colors, isDark } = useTheme();
   const [loadingOptionId, setLoadingOptionId] = useState<number | null>(null);
-  const { token } = useAuth();
+  const token = useStoredAuthToken();
 
   // Skip network fetch only when prefetched data includes RSVP options.
   // This protects against partial prefetched payloads that would hide RSVP rows.
