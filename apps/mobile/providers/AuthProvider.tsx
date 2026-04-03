@@ -975,7 +975,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return authenticated;
   }, [user, token]);
 
-  // Memoize context value
+  // Memoize context value.
+  // NOTE: `token` is intentionally excluded from the dependency array.
+  // Token refreshes (non-null → non-null) should NOT re-render every consumer,
+  // as that resets all Convex query subscriptions and causes UI flicker.
+  // The context still provides the latest token via closure — consumers just
+  // won't re-render when only the token string changes.
+  // Auth state transitions (login/logout) are covered by `isAuthenticated`.
   const contextValue = useMemo(
     () => ({
       user,
@@ -989,12 +995,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       clearCommunity,
       signIn,
     }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       user,
       community,
       isLoading,
       isAuthenticated,
-      token,
+      // token intentionally omitted — see comment above
       logout,
       refreshUser,
       setCommunity,

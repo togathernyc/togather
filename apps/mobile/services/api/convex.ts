@@ -230,11 +230,12 @@ export function useStoredAuthToken(): string | null {
     });
   }, []); // Empty deps - only run on mount
 
-  // Sync with cache changes via interval (already handled by useTokenSync)
-  // This effect just ensures we pick up any changes from the cache
+  // Sync with cache changes via interval (already handled by useTokenSync).
+  // Only update state on auth-state transitions (null↔non-null) to avoid
+  // causing Convex query arg changes and UI flicker on token refreshes.
   React.useEffect(() => {
     const interval = setInterval(() => {
-      if (cachedToken !== null && cachedToken !== token) {
+      if (cachedToken !== token && (cachedToken === null) !== (token === null)) {
         setToken(cachedToken);
       }
     }, 500);
