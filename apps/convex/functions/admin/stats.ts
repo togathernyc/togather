@@ -1175,6 +1175,8 @@ export const getExportSetupData = internalQuery({
 export const getDailySummary = query({
   args: {
     token: v.string(),
+    /** Days offset from today (0 = today, 1 = yesterday, 2 = day before, etc.) */
+    daysAgo: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -1183,15 +1185,16 @@ export const getDailySummary = query({
       throw new Error("Togather internal access required");
     }
 
+    const offset = args.daysAgo ?? 0;
     const nowMs = now();
-    const todayStart = utcDayStart(nowMs);
-    const todayEnd = todayStart + DAY_MS;
+    const dayStart = utcDayStart(nowMs - offset * DAY_MS);
+    const dayEnd = dayStart + DAY_MS;
 
-    // Scan only today's messages using the by_createdAt index
-    const todayMessages = await ctx.db
+    // Scan the day's messages using the by_createdAt index
+    const dayMessages = await ctx.db
       .query("chatMessages")
       .withIndex("by_createdAt", (q) =>
-        q.gte("createdAt", todayStart).lt("createdAt", todayEnd)
+        q.gte("createdAt", dayStart).lt("createdAt", dayEnd)
       )
       .collect();
 
@@ -1199,7 +1202,7 @@ export const getDailySummary = query({
     const uniqueSenders = new Set<string>();
     const channelCounts = new Map<string, number>();
 
-    for (const msg of todayMessages) {
+    for (const msg of dayMessages) {
       if (msg.isDeleted) continue;
       totalMessages += 1;
       if (msg.senderId) {
@@ -1211,31 +1214,43 @@ export const getDailySummary = query({
       );
     }
 
+    // Count users who opened the app that day using the by_lastLogin index
+    const activeUsers = await ctx.db
+      .query("users")
+      .withIndex("by_lastLogin", (q) =>
+        q.gte("lastLogin", dayStart).lt("lastLogin", dayEnd)
+      )
+      .collect();
+    const appOpens = activeUsers.length;
+
     // Sort channels by message count descending and take top 10
     const sortedChannels = Array.from(channelCounts.entries())
       .sort((a, b) => b[1] - a[1])
       .slice(0, 10);
 
-    // Resolve channel and group names for top channels
+    // Resolve channel and group names + group photo for top channels
     const topChannels = await Promise.all(
       sortedChannels.map(async ([channelId, messageCount]) => {
         const channel = await ctx.db.get(channelId as Id<"chatChannels">);
         let groupName = "";
+        let groupPhoto: string | undefined;
         if (channel?.groupId) {
           const group = await ctx.db.get(channel.groupId);
           groupName = group?.name ?? "";
+          groupPhoto = getMediaUrl((group as any)?.profilePhoto);
         }
         return {
           channelId,
           channelName: channel?.name ?? "",
           groupName,
+          groupPhoto,
           messageCount,
         };
       })
     );
 
     // Format date as YYYY-MM-DD in UTC
-    const d = new Date(todayStart);
+    const d = new Date(dayStart);
     const date = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
 
     return {
@@ -1244,6 +1259,7 @@ export const getDailySummary = query({
         total: totalMessages,
         uniqueSenders: uniqueSenders.size,
       },
+      appOpens,
       topChannels,
     };
   },

@@ -157,6 +157,7 @@ export default defineSchema({
     .index("by_phone", ["phone"])
     .index("by_username", ["username"])
     .index("by_activeCommunity", ["activeCommunityId"])
+    .index("by_lastLogin", ["lastLogin"])
     .searchIndex("search_users", {
       searchField: "searchText",
       filterFields: [],
