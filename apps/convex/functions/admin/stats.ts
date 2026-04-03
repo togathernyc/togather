@@ -1198,21 +1198,64 @@ export const getDailySummary = query({
       )
       .collect();
 
+    // Exclude bot and system messages
+    const BOT_TYPES = new Set(["bot", "system"]);
+
     let totalMessages = 0;
     const uniqueSenders = new Set<string>();
-    const channelCounts = new Map<string, number>();
+    const channelMessageCounts = new Map<string, number>();
 
     for (const msg of dayMessages) {
       if (msg.isDeleted) continue;
+      if (BOT_TYPES.has(msg.contentType)) continue;
       totalMessages += 1;
       if (msg.senderId) {
         uniqueSenders.add(msg.senderId);
       }
-      channelCounts.set(
+      channelMessageCounts.set(
         msg.channelId,
-        (channelCounts.get(msg.channelId) ?? 0) + 1
+        (channelMessageCounts.get(msg.channelId) ?? 0) + 1
       );
     }
+
+    // Count reactions for the day using by_createdAt index
+    const dayReactions = await ctx.db
+      .query("chatMessageReactions")
+      .withIndex("by_createdAt", (q) =>
+        q.gte("createdAt", dayStart).lt("createdAt", dayEnd)
+      )
+      .collect();
+
+    // Count reactions per channel (need to look up message → channel)
+    const channelReactionCounts = new Map<string, number>();
+    const messageChannelCache = new Map<string, string>();
+
+    for (const reaction of dayReactions) {
+      let chId = messageChannelCache.get(reaction.messageId);
+      if (!chId) {
+        const msg = await ctx.db.get(reaction.messageId);
+        chId = msg?.channelId ?? "";
+        messageChannelCache.set(reaction.messageId, chId);
+      }
+      if (chId) {
+        channelReactionCounts.set(chId, (channelReactionCounts.get(chId) ?? 0) + 1);
+      }
+    }
+
+    // Engagement score: messages + reactions * 0.5 (2 reactions = 1 message equivalent)
+    const allChannelIds = new Set([
+      ...channelMessageCounts.keys(),
+      ...channelReactionCounts.keys(),
+    ]);
+    const channelScores = Array.from(allChannelIds).map((chId) => {
+      const messages = channelMessageCounts.get(chId) ?? 0;
+      const reactions = channelReactionCounts.get(chId) ?? 0;
+      return { channelId: chId, messages, reactions, score: messages + reactions * 0.5 };
+    });
+
+    // Sort by engagement score descending and take top 10
+    channelScores.sort((a, b) => b.score - a.score);
+    const topScored = channelScores.slice(0, 10);
 
     // Count users who opened the app that day using the by_lastLogin index
     const activeUsers = await ctx.db
@@ -1223,14 +1266,9 @@ export const getDailySummary = query({
       .collect();
     const appOpens = activeUsers.length;
 
-    // Sort channels by message count descending and take top 10
-    const sortedChannels = Array.from(channelCounts.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 10);
-
     // Resolve channel and group names + group photo for top channels
     const topChannels = await Promise.all(
-      sortedChannels.map(async ([channelId, messageCount]) => {
+      topScored.map(async ({ channelId, messages, reactions }) => {
         const channel = await ctx.db.get(channelId as Id<"chatChannels">);
         let groupName = "";
         let groupPhoto: string | undefined;
@@ -1244,7 +1282,8 @@ export const getDailySummary = query({
           channelName: channel?.name ?? "",
           groupName,
           groupPhoto,
-          messageCount,
+          messages,
+          reactions,
         };
       })
     );
@@ -1259,6 +1298,7 @@ export const getDailySummary = query({
         total: totalMessages,
         uniqueSenders: uniqueSenders.size,
       },
+      totalReactions: dayReactions.length,
       appOpens,
       topChannels,
     };

@@ -88,18 +88,25 @@ export function SuperAdminDashboardContent() {
           <ActivityIndicator size="small" color={primaryColor} />
           <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading...</Text>
         </View>
-      ) : data.messages.total === 0 && data.appOpens === 0 ? (
+      ) : data.messages.total === 0 && data.appOpens === 0 && data.totalReactions === 0 ? (
         <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <Text style={[styles.noActivity, { color: colors.textTertiary }]}>No activity this day</Text>
         </View>
       ) : (
         <>
-          {/* Metric cards */}
+          {/* Metric cards - row 1 */}
           <View style={styles.metricsRow}>
             <View style={[styles.metricCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
               <Text style={[styles.metricLabel, { color: colors.textSecondary }]}>Messages</Text>
               <Text style={[styles.metricValue, { color: colors.text }]}>{data.messages.total.toLocaleString()}</Text>
             </View>
+            <View style={[styles.metricCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <Text style={[styles.metricLabel, { color: colors.textSecondary }]}>Reactions</Text>
+              <Text style={[styles.metricValue, { color: colors.text }]}>{data.totalReactions}</Text>
+            </View>
+          </View>
+          {/* Metric cards - row 2 */}
+          <View style={styles.metricsRow}>
             <View style={[styles.metricCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
               <Text style={[styles.metricLabel, { color: colors.textSecondary }]}>Senders</Text>
               <Text style={[styles.metricValue, { color: colors.text }]}>{data.messages.uniqueSenders}</Text>
@@ -143,9 +150,16 @@ export function SuperAdminDashboardContent() {
                       {channel.groupName}
                     </Text>
                   </View>
-                  <Text style={[styles.messageCount, { color: primaryColor }]}>
-                    {channel.messageCount}
-                  </Text>
+                  <View style={styles.channelStats}>
+                    <Text style={[styles.messageCount, { color: primaryColor }]}>
+                      {channel.messages} msg
+                    </Text>
+                    {channel.reactions > 0 && (
+                      <Text style={[styles.reactionCount, { color: colors.textSecondary }]}>
+                        {channel.reactions} rxn
+                      </Text>
+                    )}
+                  </View>
                 </View>
               ))}
             </View>
@@ -267,9 +281,16 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 2,
   },
+  channelStats: {
+    alignItems: "flex-end",
+  },
   messageCount: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: "700",
+  },
+  reactionCount: {
+    fontSize: 12,
+    marginTop: 2,
   },
   noActivity: {
     fontSize: 14,

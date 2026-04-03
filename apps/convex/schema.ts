@@ -1443,7 +1443,8 @@ export default defineSchema({
     .index("by_message", ["messageId"])
     .index("by_message_user", ["messageId", "userId"])
     .index("by_message_emoji", ["messageId", "emoji"])
-    .index("by_user", ["userId"]),
+    .index("by_user", ["userId"])
+    .index("by_createdAt", ["createdAt"]),
 
   /**
    * Chat Read State
