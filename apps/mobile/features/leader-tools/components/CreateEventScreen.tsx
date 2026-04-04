@@ -264,6 +264,7 @@ export function CreateEventScreen() {
   const createMeetingMutation = useAuthenticatedMutation(api.functions.meetings.index.create);
   const updateMeetingMutation = useAuthenticatedMutation(api.functions.meetings.index.update);
   const cancelMeetingMutation = useAuthenticatedMutation(api.functions.meetings.index.cancel);
+  const cancelCommunityWideEventMutation = useAuthenticatedMutation(api.functions.communityWideEvents.cancel);
   const createCommunityWideEventMutation = useAuthenticatedMutation(api.functions.meetings.communityEvents.createCommunityWideEvent);
   const createSeriesEventsMutation = useAuthenticatedMutation(api.functions.meetings.index.createSeriesEvents);
   const createCommunityWideSeriesMutation = useAuthenticatedMutation(api.functions.communityWideEvents.createSeries);
@@ -452,10 +453,18 @@ export function CreateEventScreen() {
               onPress: async () => {
                 setIsCancelling(true);
                 try {
-                  await cancelMeetingMutation({
-                    meetingId: meetingId as Id<"meetings">,
-                    scope: scope === "this_date_all_groups" ? undefined : scope,
-                  });
+                  if (isCommunityWide && (scope === "this_date_all_groups" || scope === "all_in_series") && meeting?.communityWideEventId) {
+                    // Use community-wide cancel API for cross-group scopes
+                    await cancelCommunityWideEventMutation({
+                      communityWideEventId: meeting.communityWideEventId as Id<"communityWideEvents">,
+                      scope,
+                    });
+                  } else {
+                    await cancelMeetingMutation({
+                      meetingId: meetingId as Id<"meetings">,
+                      scope: scope === "all_in_series" ? "all_in_series" : undefined,
+                    });
+                  }
                   Alert.alert("Cancelled", "Event(s) cancelled.", [
                     { text: "OK", onPress: () => router.back() },
                   ]);
@@ -623,7 +632,7 @@ export function CreateEventScreen() {
           const locationChanged = newLocation !== originalLocation;
 
           if (timeChanged || locationChanged) {
-            promptToNotifyGuestsBeforeUpdate(meetingId, data, timeChanged, locationChanged);
+            promptToNotifyGuestsBeforeUpdate(meetingId, updateData, timeChanged, locationChanged);
           } else {
             updateMeeting.mutate(updateData);
           }
@@ -760,7 +769,7 @@ export function CreateEventScreen() {
   // Prompt user about notifying guests BEFORE making the update
   const promptToNotifyGuestsBeforeUpdate = async (
     eventMeetingId: string,
-    data: CreateMeetingInput,
+    data: CreateMeetingInput & { scope?: EditScope; meetingId?: string },
     timeChanged: boolean,
     locationChanged: boolean
   ) => {
