@@ -134,7 +134,7 @@ describe('useExploreFilters', () => {
       const { result } = renderHook(() => useExploreFilters());
 
       act(() => {
-        result.current.setFilters({ dateFilter: 'this_week' });
+        result.current.setFilters({ dateFilter: 'today' });
       });
 
       expect(mockReplace).toHaveBeenCalledTimes(1);

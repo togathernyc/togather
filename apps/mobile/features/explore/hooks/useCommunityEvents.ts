@@ -78,9 +78,12 @@ export function useCommunityEvents(filters: ExploreFilters, options?: { enabled?
       ? filters.hostingGroups as unknown as Id<"groups">[]
       : undefined;
 
+    // 'all' means no date filtering; map to undefined for the backend
+    const datePreset = filters.dateFilter === 'all' ? undefined : (filters.dateFilter ?? undefined);
+
     const baseArgs = {
       communityId,
-      datePreset: filters.dateFilter ?? undefined,
+      datePreset,
       startDate: filters.startDate ?? undefined,
       endDate: filters.endDate ?? undefined,
       hostingGroupIds,

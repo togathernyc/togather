@@ -131,7 +131,7 @@ export default function GroupEventsModal() {
       ? {
           communityId: community.id as Id<"communities">,
           hostingGroupIds,
-          datePreset: dateFilter ?? undefined,
+          datePreset: dateFilter === 'all' ? undefined : (dateFilter ?? undefined),
           token: token ?? undefined,
         }
       : "skip"

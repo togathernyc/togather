@@ -510,6 +510,24 @@ export default defineSchema({
     ]),
 
   // =============================================================================
+  // EVENT SERIES
+  // =============================================================================
+  // Group-scoped series that link multiple meetings together (e.g., "Weekly Dinner Party").
+  // For community-wide series, each group gets its own eventSeries record;
+  // the series name serves as the implicit cross-group link.
+
+  eventSeries: defineTable({
+    groupId: v.id("groups"),
+    createdById: v.id("users"),
+    name: v.string(), // e.g., "Weekly Dinner Party"
+    status: v.string(), // 'active' | 'cancelled'
+    createdAt: v.number(), // Unix timestamp ms
+  })
+    .index("by_group", ["groupId"])
+    .index("by_group_name", ["groupId", "name"])
+    .index("by_group_status", ["groupId", "status"]),
+
+  // =============================================================================
   // COMMUNITY-WIDE EVENTS
   // =============================================================================
   // Parent events that spawn individual meetings for all groups of a type.
@@ -590,6 +608,9 @@ export default defineSchema({
     communityWideEventId: v.optional(v.id("communityWideEvents")), // Link to parent
     isOverridden: v.optional(v.boolean()), // Leader customized, stops cascade
 
+    // Event series link
+    seriesId: v.optional(v.id("eventSeries")),
+
     // Search support (denormalized)
     communityId: v.optional(v.id("communities")), // Denormalized from group for search filtering
     searchText: v.optional(v.string()), // Denormalized: title + location + group name
@@ -608,6 +629,7 @@ export default defineSchema({
       "attendanceConfirmationSent",
     ])
     .index("by_communityWideEvent", ["communityWideEventId"])
+    .index("by_series", ["seriesId"])
     .index("by_community", ["communityId"])
     .searchIndex("search_meetings", {
       searchField: "searchText",

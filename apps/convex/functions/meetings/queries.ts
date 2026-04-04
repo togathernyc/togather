@@ -9,6 +9,7 @@ import { query } from "../../_generated/server";
 import { now, normalizePagination, getMediaUrl } from "../../lib/utils";
 import { paginationArgs, meetingStatusValidator } from "../../lib/validators";
 import { getOptionalAuth } from "../../lib/auth";
+import { getSeriesNumber } from "../eventSeries";
 
 /**
  * Get meeting by short ID (for public sharing URLs)
@@ -175,6 +176,30 @@ export const getWithDetails = query({
       parentEventTitle = parentEvent?.title;
     }
 
+    // Get series info if meeting is part of a series
+    let seriesInfo: {
+      seriesId: string;
+      seriesName: string;
+      seriesNumber: number;
+      seriesTotalCount: number;
+    } | null = null;
+    if (meeting.seriesId) {
+      const series = await ctx.db.get(meeting.seriesId);
+      if (series) {
+        const { seriesNumber, seriesTotalCount } = await getSeriesNumber(ctx, {
+          _id: meeting._id,
+          seriesId: meeting.seriesId,
+          scheduledAt: meeting.scheduledAt,
+        });
+        seriesInfo = {
+          seriesId: series._id,
+          seriesName: series.name,
+          seriesNumber,
+          seriesTotalCount,
+        };
+      }
+    }
+
     return {
       ...meeting,
       coverImage: getMediaUrl(meeting.coverImage),
@@ -190,6 +215,8 @@ export const getWithDetails = query({
       communityWideEventId: meeting.communityWideEventId,
       isOverridden: meeting.isOverridden ?? false,
       parentEventTitle,
+      // Series info
+      seriesInfo,
     };
   },
 });
@@ -304,12 +331,22 @@ export const listByGroup = query({
       guestsByMeeting.set(meetingId, allGuests[index].length);
     });
 
-    // Map meetings with counts from the pre-fetched data
-    const withCounts = filtered.map((meeting) => ({
-      ...meeting,
-      attendanceCount: attendanceByMeeting.get(meeting._id) ?? 0,
-      guestCount: guestsByMeeting.get(meeting._id) ?? 0,
-    }));
+    // Map meetings with counts and series info from pre-fetched data
+    const withCounts = await Promise.all(
+      filtered.map(async (meeting) => {
+        let seriesName: string | null = null;
+        if (meeting.seriesId) {
+          const series = await ctx.db.get(meeting.seriesId);
+          seriesName = series?.name ?? null;
+        }
+        return {
+          ...meeting,
+          attendanceCount: attendanceByMeeting.get(meeting._id) ?? 0,
+          guestCount: guestsByMeeting.get(meeting._id) ?? 0,
+          seriesName,
+        };
+      })
+    );
 
     return withCounts;
   },

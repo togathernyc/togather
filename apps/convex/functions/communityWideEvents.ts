@@ -25,6 +25,7 @@ import {
   DEFAULT_RSVP_OPTIONS,
 } from "../lib/meetingConfig";
 import { buildMeetingSearchText } from "../lib/meetingSearchText";
+import { findSeriesByGroupAndName } from "./eventSeries";
 
 // ============================================================================
 // Mutations
@@ -49,6 +50,7 @@ export const create = mutation({
     meetingLink: v.optional(v.string()),
     note: v.optional(v.string()),
     coverImage: v.optional(v.string()),
+    seriesName: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -108,6 +110,23 @@ export const create = mutation({
     for (const group of groups) {
       const shortId = generateShortId();
 
+      // If seriesName provided, find or create a series for this group
+      let seriesId: Id<"eventSeries"> | undefined = undefined;
+      if (args.seriesName) {
+        const existingSeries = await findSeriesByGroupAndName(ctx, group._id, args.seriesName);
+        if (existingSeries && existingSeries.status === "active") {
+          seriesId = existingSeries._id;
+        } else {
+          seriesId = await ctx.db.insert("eventSeries", {
+            groupId: group._id,
+            createdById: userId,
+            name: args.seriesName,
+            status: "active",
+            createdAt: timestamp,
+          });
+        }
+      }
+
       const meetingId = await ctx.db.insert("meetings", {
         groupId: group._id,
         title: args.title,
@@ -131,6 +150,7 @@ export const create = mutation({
         // Community-wide event link
         communityWideEventId,
         isOverridden: false,
+        seriesId,
         // Scheduled job fields
         reminderAt,
         reminderSent: false,
@@ -193,6 +213,7 @@ export const update = mutation({
     meetingType: v.optional(v.number()),
     meetingLink: v.optional(v.string()),
     note: v.optional(v.string()),
+    scope: v.optional(v.union(v.literal("this_date_all_groups"), v.literal("all_in_series"))),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -224,14 +245,53 @@ export const update = mutation({
     // Update the parent event
     await ctx.db.patch(args.communityWideEventId, parentUpdates);
 
-    // Query all child meetings that are NOT overridden
-    const childMeetings = await ctx.db
-      .query("meetings")
-      .withIndex("by_communityWideEvent", (q) =>
-        q.eq("communityWideEventId", args.communityWideEventId)
-      )
-      .filter((q) => q.neq(q.field("isOverridden"), true))
-      .collect();
+    // Determine which meetings to update based on scope
+    let childMeetings;
+    if (args.scope === "all_in_series") {
+      // Find all seriesIds from child meetings of this communityWideEvent,
+      // then gather all meetings across those series
+      const directChildren = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", args.communityWideEventId)
+        )
+        .collect();
+
+      const seriesIds = new Set(
+        directChildren.map((m) => m.seriesId).filter((id): id is Id<"eventSeries"> => !!id)
+      );
+
+      if (seriesIds.size > 0) {
+        // Gather all meetings from all discovered series
+        const allSeriesMeetings = [];
+        for (const sid of seriesIds) {
+          const seriesMeetings = await ctx.db
+            .query("meetings")
+            .withIndex("by_series", (q) => q.eq("seriesId", sid))
+            .collect();
+          allSeriesMeetings.push(...seriesMeetings);
+        }
+        // Deduplicate and filter to non-overridden, non-cancelled
+        const seen = new Set<string>();
+        childMeetings = allSeriesMeetings.filter((m) => {
+          if (seen.has(m._id)) return false;
+          seen.add(m._id);
+          return m.isOverridden !== true && m.status !== "cancelled";
+        });
+      } else {
+        // No series — fall back to direct children only
+        childMeetings = directChildren.filter((m) => m.isOverridden !== true);
+      }
+    } else {
+      // Default: this_date_all_groups — existing behavior
+      childMeetings = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", args.communityWideEventId)
+        )
+        .filter((q) => q.neq(q.field("isOverridden"), true))
+        .collect();
+    }
 
     // Build update object for child meetings
     const childUpdates: Record<string, unknown> = {};
@@ -339,6 +399,7 @@ export const cancel = mutation({
     token: v.string(),
     communityWideEventId: v.id("communityWideEvents"),
     cancellationReason: v.optional(v.string()),
+    scope: v.optional(v.union(v.literal("this_date_all_groups"), v.literal("all_in_series"))),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -365,7 +426,89 @@ export const cancel = mutation({
       updatedAt: timestamp,
     });
 
-    // Query ALL child meetings (including overridden ones)
+    if (args.scope === "all_in_series") {
+      // Cancel all meetings across all series linked to this communityWideEvent
+      const directChildren = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", args.communityWideEventId)
+        )
+        .collect();
+
+      const seriesIds = new Set(
+        directChildren.map((m) => m.seriesId).filter((id): id is Id<"eventSeries"> => !!id)
+      );
+
+      let meetingsCancelled = 0;
+
+      // Cancel all meetings in each series
+      for (const sid of seriesIds) {
+        const seriesMeetings = await ctx.db
+          .query("meetings")
+          .withIndex("by_series", (q) => q.eq("seriesId", sid))
+          .collect();
+
+        for (const meeting of seriesMeetings) {
+          if (meeting.status === "cancelled") continue;
+
+          // Cancel scheduled jobs
+          if (meeting.reminderJobId) {
+            try { await ctx.scheduler.cancel(meeting.reminderJobId); } catch { /* already run */ }
+          }
+          if (meeting.attendanceConfirmationJobId) {
+            try { await ctx.scheduler.cancel(meeting.attendanceConfirmationJobId); } catch { /* already run */ }
+          }
+
+          await ctx.db.patch(meeting._id, {
+            status: "cancelled",
+            cancellationReason: args.cancellationReason,
+          });
+          meetingsCancelled++;
+        }
+
+        // Cancel the series record itself
+        await ctx.db.patch(sid, { status: "cancelled" });
+      }
+
+      // Also cancel any direct children that weren't in a series
+      for (const meeting of directChildren) {
+        if (meeting.status === "cancelled" || meeting.seriesId) continue;
+        await ctx.db.patch(meeting._id, {
+          status: "cancelled",
+          cancellationReason: args.cancellationReason,
+        });
+        meetingsCancelled++;
+      }
+
+      // Also cancel all communityWideEvents that share series with this one
+      // (other dates in the series)
+      const allCommunityWideEventIds = new Set<string>();
+      for (const sid of seriesIds) {
+        const seriesMeetings = await ctx.db
+          .query("meetings")
+          .withIndex("by_series", (q) => q.eq("seriesId", sid))
+          .collect();
+        for (const m of seriesMeetings) {
+          if (m.communityWideEventId) {
+            allCommunityWideEventIds.add(m.communityWideEventId);
+          }
+        }
+      }
+      for (const cweId of allCommunityWideEventIds) {
+        if (cweId === args.communityWideEventId) continue; // Already cancelled above
+        const cwe = await ctx.db.get(cweId as Id<"communityWideEvents">);
+        if (cwe && cwe.status !== "cancelled") {
+          await ctx.db.patch(cweId as Id<"communityWideEvents">, {
+            status: "cancelled",
+            updatedAt: timestamp,
+          });
+        }
+      }
+
+      return { meetingsCancelled };
+    }
+
+    // Default: this_date_all_groups — cancel only this date's meetings
     const childMeetings = await ctx.db
       .query("meetings")
       .withIndex("by_communityWideEvent", (q) =>
@@ -373,9 +516,18 @@ export const cancel = mutation({
       )
       .collect();
 
-    // Cancel all child meetings
     let meetingsCancelled = 0;
     for (const meeting of childMeetings) {
+      if (meeting.status === "cancelled") continue;
+
+      // Cancel scheduled jobs
+      if (meeting.reminderJobId) {
+        try { await ctx.scheduler.cancel(meeting.reminderJobId); } catch { /* already run */ }
+      }
+      if (meeting.attendanceConfirmationJobId) {
+        try { await ctx.scheduler.cancel(meeting.attendanceConfirmationJobId); } catch { /* already run */ }
+      }
+
       await ctx.db.patch(meeting._id, {
         status: "cancelled",
         cancellationReason: args.cancellationReason,
@@ -384,6 +536,170 @@ export const cancel = mutation({
     }
 
     return { meetingsCancelled };
+  },
+});
+
+/**
+ * Create a community-wide event series (multiple dates across all groups of a type).
+ *
+ * For each date: creates a communityWideEvent record.
+ * For each group: finds or creates an eventSeries record.
+ * For each group x date: creates a meeting linked to both.
+ */
+export const createSeries = mutation({
+  args: {
+    token: v.string(),
+    communityId: v.id("communities"),
+    groupTypeId: v.id("groupTypes"),
+    seriesName: v.string(),
+    dates: v.array(v.number()), // Array of scheduledAt timestamps
+    title: v.string(),
+    meetingType: v.number(),
+    meetingLink: v.optional(v.string()),
+    note: v.optional(v.string()),
+    coverImage: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await requireCommunityAdmin(ctx, args.communityId, userId);
+
+    if (args.dates.length < 1) {
+      throw new Error("Series must have at least 1 date");
+    }
+
+    const timestamp = now();
+
+    // Verify the group type belongs to this community
+    const groupType = await ctx.db.get(args.groupTypeId);
+    if (!groupType || groupType.communityId !== args.communityId) {
+      throw new Error("Group type not found in this community");
+    }
+
+    // Query all active groups of this type
+    const groups = await ctx.db
+      .query("groups")
+      .withIndex("by_community_type_archived", (q) =>
+        q
+          .eq("communityId", args.communityId)
+          .eq("groupTypeId", args.groupTypeId)
+          .eq("isArchived", false)
+      )
+      .collect();
+
+    if (groups.length === 0) {
+      throw new Error("No active groups of this type exist.");
+    }
+
+    // Find or create an eventSeries for each group
+    const groupSeriesMap = new Map<string, Id<"eventSeries">>();
+    for (const group of groups) {
+      const existingSeries = await findSeriesByGroupAndName(ctx, group._id, args.seriesName);
+      if (existingSeries && existingSeries.status === "active") {
+        groupSeriesMap.set(group._id, existingSeries._id);
+      } else {
+        const seriesId = await ctx.db.insert("eventSeries", {
+          groupId: group._id,
+          createdById: userId,
+          name: args.seriesName,
+          status: "active",
+          createdAt: timestamp,
+        });
+        groupSeriesMap.set(group._id, seriesId);
+      }
+    }
+
+    // Create a communityWideEvent for each date, then meetings for each group
+    const communityWideEventIds: Id<"communityWideEvents">[] = [];
+    let totalMeetingsCreated = 0;
+
+    for (const scheduledAt of args.dates) {
+      const communityWideEventId = await ctx.db.insert("communityWideEvents", {
+        communityId: args.communityId,
+        groupTypeId: args.groupTypeId,
+        createdById: userId,
+        title: args.title,
+        scheduledAt,
+        meetingType: args.meetingType,
+        meetingLink: args.meetingLink,
+        note: args.note,
+        status: "scheduled",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      communityWideEventIds.push(communityWideEventId);
+
+      const reminderAt = scheduledAt - DEFAULT_REMINDER_OFFSET_MS;
+      const meetingEndTime = scheduledAt + DEFAULT_MEETING_DURATION_MS;
+      const attendanceConfirmationAt = meetingEndTime + DEFAULT_ATTENDANCE_CONFIRMATION_OFFSET_MS;
+
+      for (const group of groups) {
+        const shortId = generateShortId();
+        const seriesId = groupSeriesMap.get(group._id)!;
+
+        const meetingId = await ctx.db.insert("meetings", {
+          groupId: group._id,
+          title: args.title,
+          shortId,
+          scheduledAt,
+          meetingType: args.meetingType,
+          meetingLink: args.meetingLink,
+          note: args.note,
+          coverImage: args.coverImage,
+          status: "scheduled",
+          createdById: userId,
+          createdAt: timestamp,
+          visibility: "community",
+          rsvpEnabled: true,
+          rsvpOptions: DEFAULT_RSVP_OPTIONS,
+          communityId: args.communityId,
+          searchText: buildMeetingSearchText({
+            title: args.title,
+            groupName: group.name,
+          }),
+          communityWideEventId,
+          isOverridden: false,
+          seriesId,
+          reminderAt,
+          reminderSent: false,
+          attendanceConfirmationAt,
+          attendanceConfirmationSent: false,
+        });
+
+        // Schedule reminder
+        let reminderJobId = undefined;
+        if (reminderAt > timestamp) {
+          reminderJobId = await ctx.scheduler.runAt(
+            reminderAt,
+            internal.functions.scheduledJobs.sendMeetingReminder,
+            { meetingId }
+          );
+        }
+
+        // Schedule attendance confirmation
+        let attendanceConfirmationJobId = undefined;
+        if (attendanceConfirmationAt > timestamp) {
+          attendanceConfirmationJobId = await ctx.scheduler.runAt(
+            attendanceConfirmationAt,
+            internal.functions.scheduledJobs.sendAttendanceConfirmation,
+            { meetingId }
+          );
+        }
+
+        if (reminderJobId || attendanceConfirmationJobId) {
+          await ctx.db.patch(meetingId, {
+            reminderJobId,
+            attendanceConfirmationJobId,
+          });
+        }
+
+        totalMeetingsCreated++;
+      }
+    }
+
+    return {
+      communityWideEventIds,
+      totalMeetingsCreated,
+    };
   },
 });
 
