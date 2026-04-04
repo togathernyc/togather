@@ -2,7 +2,7 @@
  * EventsFilterModal Component
  *
  * Filter modal for events view with:
- * - Date presets (Today, This Week, This Month)
+ * - Date presets (Today, Upcoming Week, This Month)
  * - Custom date range
  * - Hosting groups multi-select with async search
  */
@@ -24,10 +24,10 @@ import { useCommunityTheme } from '@hooks/useCommunityTheme';
 import type { ExploreFilters, DateFilterPreset } from '../hooks/useExploreFilters';
 
 // Date preset options
-const DATE_PRESETS: Array<{ label: string; value: DateFilterPreset | null }> = [
-  { label: 'All', value: null },
+const DATE_PRESETS: Array<{ label: string; value: DateFilterPreset }> = [
+  { label: 'All', value: 'all' },
   { label: 'Today', value: 'today' },
-  { label: 'This Week', value: 'this_week' },
+  { label: 'Upcoming Week', value: 'this_week' },
   { label: 'This Month', value: 'this_month' },
 ];
 
@@ -98,7 +98,7 @@ export function EventsFilterModal({
 
   if (!visible) return null;
 
-  const handleDatePresetSelect = (value: DateFilterPreset | null) => {
+  const handleDatePresetSelect = (value: DateFilterPreset) => {
     onFilterChange({
       dateFilter: value,
       // Clear custom dates when selecting a preset
@@ -124,7 +124,7 @@ export function EventsFilterModal({
 
   const handleReset = () => {
     onFilterChange({
-      dateFilter: null,
+      dateFilter: 'this_week',
       startDate: null,
       endDate: null,
       hostingGroups: [],
@@ -133,7 +133,7 @@ export function EventsFilterModal({
   };
 
   const hasActiveFilters =
-    filters.dateFilter !== null ||
+    (filters.dateFilter !== 'this_week') ||
     filters.startDate !== null ||
     filters.endDate !== null ||
     filters.hostingGroups.length > 0;

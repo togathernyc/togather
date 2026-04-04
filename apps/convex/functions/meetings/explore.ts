@@ -103,11 +103,11 @@ export const communityEvents = query({
         break;
       }
       case "this_week": {
-        const endOfWeek = new Date(startOfDay);
-        const daysUntilSunday = 7 - startOfDay.getDay();
-        endOfWeek.setDate(endOfWeek.getDate() + daysUntilSunday);
+        // Rolling 7-day window from today (not hard cutoff at end of calendar week)
+        const nextWeek = new Date(startOfDay);
+        nextWeek.setDate(nextWeek.getDate() + 7);
         dateStart = startOfDayMs;
-        dateEnd = endOfWeek.getTime();
+        dateEnd = nextWeek.getTime();
         break;
       }
       case "this_month": {

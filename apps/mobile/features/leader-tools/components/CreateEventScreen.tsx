@@ -20,6 +20,7 @@ import { useQuery as useConvexQuery, useMutation as useConvexMutation, api, conv
 import type { Id } from "@services/api/convex";
 import { useGroupDetails } from "../../groups/hooks/useGroupDetails";
 import { DatePicker } from "@components/ui/DatePicker";
+import { MultiDateCalendarPicker } from "@components/ui/MultiDateCalendarPicker";
 import { ImagePickerComponent } from "@components/ui/ImagePicker";
 import {
   RsvpOptionsEditor,
@@ -37,6 +38,8 @@ import { formatError } from "@/utils/error-handling";
 import { useGroupTypes } from "../../admin/hooks/useGroupTypes";
 import { DragHandle } from "@components/ui/DragHandle";
 import { useTheme } from "@hooks/useTheme";
+import { showEditScopePrompt, type EditScope } from "@components/ui/EditScopeModal";
+import { SeriesBadge } from "@components/ui/SeriesBadge";
 
 interface CreateMeetingInput {
   scheduledAt: string;
@@ -121,6 +124,31 @@ export function CreateEventScreen() {
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(hostingGroupId || null);
   const [isGroupDropdownOpen, setIsGroupDropdownOpen] = useState(false);
 
+  // Series state
+  const [isSeriesMode, setIsSeriesMode] = useState(false);
+  const [seriesName, setSeriesName] = useState("");
+  const [selectedDates, setSelectedDates] = useState<Date[]>([]);
+  const [timeOfDay, setTimeOfDay] = useState<Date | null>(null);
+  const [existingSeriesName, setExistingSeriesName] = useState<string | null>(null);
+  const [isSeriesNameDropdownOpen, setIsSeriesNameDropdownOpen] = useState(false);
+
+  // Query existing series names for community-wide series
+  const existingSeriesNames = useConvexQuery(
+    api.functions.eventSeries.listSeriesNamesByGroupType,
+    isCommunityWideEnabled && isSeriesMode && selectedGroupTypeId && community?.id
+      ? {
+          communityId: community.id as Id<"communities">,
+          groupTypeId: selectedGroupTypeId as Id<"groupTypes">,
+        }
+      : "skip"
+  );
+
+  // Series linking state (edit mode)
+  const [newSeriesNameInput, setNewSeriesNameInput] = useState("");
+  const [isCreatingNewSeries, setIsCreatingNewSeries] = useState(false);
+  const [isSeriesDropdownOpen, setIsSeriesDropdownOpen] = useState(false);
+  const [isSeriesLinking, setIsSeriesLinking] = useState(false);
+
   // Share to chat modal state
   const [showShareModal, setShowShareModal] = useState(false);
   const [pendingMeetingId, setPendingMeetingId] = useState<string | null>(null);
@@ -164,6 +192,15 @@ export function CreateEventScreen() {
   );
   const meeting = meetingData ?? undefined;
   const isLoadingMeeting = isEditMode && !!meetingId && meetingData === undefined;
+
+  // Query existing series for the group (edit mode series linking)
+  const editGroupId = effectiveGroupId || (meeting as any)?.groupId;
+  const groupSeriesList = useConvexQuery(
+    api.functions.eventSeries.listByGroup,
+    isEditMode && editGroupId
+      ? { groupId: editGroupId as Id<"groups">, status: "active" }
+      : "skip"
+  );
 
   // Initialize form from meeting data when editing
   useEffect(() => {
@@ -227,7 +264,13 @@ export function CreateEventScreen() {
   const createMeetingMutation = useAuthenticatedMutation(api.functions.meetings.index.create);
   const updateMeetingMutation = useAuthenticatedMutation(api.functions.meetings.index.update);
   const cancelMeetingMutation = useAuthenticatedMutation(api.functions.meetings.index.cancel);
+  const cancelCommunityWideEventMutation = useAuthenticatedMutation(api.functions.communityWideEvents.cancel);
   const createCommunityWideEventMutation = useAuthenticatedMutation(api.functions.meetings.communityEvents.createCommunityWideEvent);
+  const createSeriesEventsMutation = useAuthenticatedMutation(api.functions.meetings.index.createSeriesEvents);
+  const createCommunityWideSeriesMutation = useAuthenticatedMutation(api.functions.communityWideEvents.createSeries);
+  const addMeetingToSeriesMutation = useAuthenticatedMutation(api.functions.eventSeries.addMeetingToSeries);
+  const removeMeetingFromSeriesMutation = useAuthenticatedMutation(api.functions.eventSeries.removeMeetingFromSeries);
+  const createSeriesFromMeetingsMutation = useAuthenticatedMutation(api.functions.eventSeries.createSeriesFromMeetings);
 
   // Mutation state tracking
   const [isCreating, setIsCreating] = useState(false);
@@ -364,35 +407,101 @@ export function CreateEventScreen() {
   };
 
   const handleCancelEvent = () => {
-    Alert.alert(
-      "Cancel Event",
-      "Are you sure you want to cancel this event? This action cannot be undone and all attendees will be notified.",
-      [
-        {
-          text: "Keep Event",
-          style: "cancel",
-        },
-        {
-          text: "Cancel Event",
-          style: "destructive",
-          onPress: () => {
-            if (meetingId) {
-              cancelMeeting.mutate({ meetingId });
-            }
+    if (!meetingId) return;
+
+    const hasSeries = !!meeting?.seriesId;
+    const isCommunityWide = !!meeting?.communityWideEventId;
+
+    if (!hasSeries && !isCommunityWide) {
+      // Simple case: no series, no community-wide
+      Alert.alert(
+        "Cancel Event",
+        "Are you sure you want to cancel this event? This action cannot be undone and all attendees will be notified.",
+        [
+          { text: "Keep Event", style: "cancel" },
+          {
+            text: "Cancel Event",
+            style: "destructive",
+            onPress: () => cancelMeeting.mutate({ meetingId }),
           },
-        },
-      ]
-    );
+        ]
+      );
+      return;
+    }
+
+    // Show scope selection for series/community-wide events
+    showEditScopePrompt({
+      isCommunityWide,
+      isInSeries: hasSeries,
+      actionLabel: "Cancel",
+      onSelect: (scope: EditScope) => {
+        const scopeLabel =
+          scope === "all_in_series"
+            ? "all events in this series"
+            : scope === "this_date_all_groups"
+              ? "this event for all groups"
+              : "this event";
+
+        Alert.alert(
+          "Cancel Event",
+          `Are you sure you want to cancel ${scopeLabel}? This cannot be undone.`,
+          [
+            { text: "Keep", style: "cancel" },
+            {
+              text: "Cancel Event",
+              style: "destructive",
+              onPress: async () => {
+                setIsCancelling(true);
+                try {
+                  if (isCommunityWide && (scope === "this_date_all_groups" || scope === "all_in_series") && meeting?.communityWideEventId) {
+                    // Use community-wide cancel API for cross-group scopes
+                    await cancelCommunityWideEventMutation({
+                      communityWideEventId: meeting.communityWideEventId as Id<"communityWideEvents">,
+                      scope,
+                    });
+                  } else {
+                    await cancelMeetingMutation({
+                      meetingId: meetingId as Id<"meetings">,
+                      scope: scope === "all_in_series" ? "all_in_series" : undefined,
+                    });
+                  }
+                  Alert.alert("Cancelled", "Event(s) cancelled.", [
+                    { text: "OK", onPress: () => router.back() },
+                  ]);
+                } catch (error: any) {
+                  Alert.alert("Error", formatError(error, "Failed to cancel"));
+                } finally {
+                  setIsCancelling(false);
+                }
+              },
+            },
+          ]
+        );
+      },
+    });
   };
 
   const validateForm = (): boolean => {
-    const newErrors: { scheduledAt?: string; hostingGroup?: string; groupType?: string } = {};
+    const newErrors: { scheduledAt?: string; hostingGroup?: string; groupType?: string; seriesName?: string } = {};
 
-    if (!scheduledAt) {
-      newErrors.scheduledAt = "Date and time is required";
-    } else if (scheduledAt < new Date() && !isAdmin) {
-      // Non-admins cannot create events in the past
-      newErrors.scheduledAt = "Event date cannot be in the past";
+    if (isSeriesMode) {
+      // Series mode validation
+      if (selectedDates.length < 1) {
+        newErrors.scheduledAt = "Select at least 1 date";
+      }
+      if (!timeOfDay) {
+        newErrors.scheduledAt = "Time is required";
+      }
+      if (!seriesName.trim() && !existingSeriesName) {
+        newErrors.seriesName = "Series name is required";
+      }
+    } else {
+      if (!scheduledAt) {
+        newErrors.scheduledAt = "Date and time is required";
+      } else if (scheduledAt < new Date() && !isAdmin) {
+        // Non-admins cannot create events in the past
+        newErrors.scheduledAt = "Event date cannot be in the past";
+      }
     }
     // Note: Admins can create past events but will see a confirmation modal
 
@@ -487,7 +596,9 @@ export function CreateEventScreen() {
       }
 
       const data: CreateMeetingInput = {
-        scheduledAt: scheduledAt!.toISOString(),
+        scheduledAt: isSeriesMode
+          ? new Date().toISOString() // Placeholder — series paths use selectedDates + timeOfDay directly
+          : scheduledAt!.toISOString(),
         title: title.trim() || undefined,
         meetingType: isOnline ? 2 : 1, // 1 = In-Person, 2 = Online
         meetingLink:
@@ -502,21 +613,106 @@ export function CreateEventScreen() {
       };
 
       if (isEditMode && meetingId) {
-        // Check if time or location changed
-        const originalScheduledAt = meeting?.scheduledAt ? new Date(meeting.scheduledAt).toISOString() : null;
-        const newScheduledAt = data.scheduledAt;
-        const originalLocation = meeting?.locationOverride || '';
-        const newLocation = data.locationOverride || '';
+        const hasSeries = !!meeting?.seriesId;
+        const isCommunityWide = !!meeting?.communityWideEventId;
 
-        const timeChanged = originalScheduledAt !== newScheduledAt;
-        const locationChanged = newLocation !== originalLocation;
+        // Determine edit scope
+        const performUpdate = (scope?: EditScope) => {
+          const updateData = scope && scope !== "this_only"
+            ? { meetingId, ...data, scope }
+            : { meetingId, ...data };
 
-        if (timeChanged || locationChanged) {
-          // Check for "Going" RSVPs and prompt user before updating
-          promptToNotifyGuestsBeforeUpdate(meetingId, data, timeChanged, locationChanged);
+          // Check if time or location changed
+          const originalScheduledAt = meeting?.scheduledAt ? new Date(meeting.scheduledAt).toISOString() : null;
+          const newScheduledAt = data.scheduledAt;
+          const originalLocation = meeting?.locationOverride || '';
+          const newLocation = data.locationOverride || '';
+
+          const timeChanged = originalScheduledAt !== newScheduledAt;
+          const locationChanged = newLocation !== originalLocation;
+
+          if (timeChanged || locationChanged) {
+            promptToNotifyGuestsBeforeUpdate(meetingId, updateData, timeChanged, locationChanged);
+          } else {
+            updateMeeting.mutate(updateData);
+          }
+        };
+
+        if (hasSeries || isCommunityWide) {
+          showEditScopePrompt({
+            isCommunityWide,
+            isInSeries: hasSeries,
+            actionLabel: "Edit",
+            onSelect: performUpdate,
+          });
         } else {
-          // No time/location change, just update without notification
-          updateMeeting.mutate({ meetingId, ...data });
+          performUpdate();
+        }
+      } else if (isSeriesMode && isCommunityWideEnabled && selectedGroupTypeId && community?.id) {
+        // Create community-wide series (multiple dates across all groups of a type)
+        setIsCreatingCommunityWide(true);
+        try {
+          const dates = selectedDates.map((date) => {
+            const combined = new Date(date);
+            combined.setHours(timeOfDay!.getHours(), timeOfDay!.getMinutes(), 0, 0);
+            return combined.getTime();
+          });
+
+          const effectiveSeriesName = existingSeriesName || seriesName.trim();
+          const result = await createCommunityWideSeriesMutation({
+            communityId: community.id as Id<"communities">,
+            groupTypeId: selectedGroupTypeId as Id<"groupTypes">,
+            seriesName: effectiveSeriesName,
+            dates,
+            title: title.trim() || selectedGroupType?.name || "Event",
+            meetingType: data.meetingType ?? 1,
+            meetingLink: data.meetingLink,
+            note: data.note,
+            coverImage: finalCoverImage,
+          });
+          Alert.alert(
+            "Series Created",
+            `Created ${result.totalMeetingsCreated} events across ${selectedDates.length} dates`,
+            [{ text: "OK", onPress: () => router.back() }]
+          );
+        } catch (error: any) {
+          Alert.alert("Error", formatError(error, "Failed to create community-wide series"));
+        } finally {
+          setIsCreatingCommunityWide(false);
+        }
+      } else if (isSeriesMode && effectiveGroupId) {
+        // Create series for a single group
+        setIsCreating(true);
+        try {
+          const dates = selectedDates.map((date) => {
+            const combined = new Date(date);
+            combined.setHours(timeOfDay!.getHours(), timeOfDay!.getMinutes(), 0, 0);
+            return combined.getTime();
+          });
+
+          const result = await createSeriesEventsMutation({
+            groupId: effectiveGroupId as Id<"groups">,
+            seriesName: seriesName.trim(),
+            dates,
+            title: title.trim() || undefined,
+            meetingType: data.meetingType ?? 1,
+            meetingLink: data.meetingLink,
+            locationOverride: data.locationOverride,
+            note: data.note,
+            coverImage: finalCoverImage,
+            rsvpEnabled: data.rsvpEnabled,
+            rsvpOptions: data.rsvpOptions,
+            visibility: data.visibility,
+          });
+          Alert.alert(
+            "Series Created",
+            `Created ${result.meetingIds.length} events in "${seriesName.trim()}" series`,
+            [{ text: "OK", onPress: () => router.back() }]
+          );
+        } catch (error: any) {
+          Alert.alert("Error", formatError(error, "Failed to create event series"));
+        } finally {
+          setIsCreating(false);
         }
       } else if (isCommunityWideEnabled && selectedGroupTypeId && community?.id) {
         // Create community-wide event
@@ -573,7 +769,7 @@ export function CreateEventScreen() {
   // Prompt user about notifying guests BEFORE making the update
   const promptToNotifyGuestsBeforeUpdate = async (
     eventMeetingId: string,
-    data: CreateMeetingInput,
+    data: CreateMeetingInput & { scope?: EditScope; meetingId?: string },
     timeChanged: boolean,
     locationChanged: boolean
   ) => {
@@ -963,16 +1159,175 @@ export function CreateEventScreen() {
             </View>
           )}
 
+          {/* Series Toggle - shown when not editing */}
+          {!isEditMode && (
+            <View style={styles.fieldContainer}>
+              <View style={styles.toggleRow}>
+                <Text style={[styles.label, { color: colors.text }]}>Create / Add to Series</Text>
+                <Switch
+                  value={isSeriesMode}
+                  onValueChange={(value) => {
+                    setIsSeriesMode(value);
+                    if (!value) {
+                      setSelectedDates([]);
+                      setTimeOfDay(null);
+                      setSeriesName("");
+                      setExistingSeriesName(null);
+                    }
+                    setErrors({});
+                  }}
+                  trackColor={{ false: colors.border, true: primaryColor }}
+                  thumbColor={colors.textInverse}
+                  disabled={isSubmitting}
+                />
+              </View>
+              {isSeriesMode && (
+                <Text style={[styles.helperText, { color: colors.textTertiary }]}>
+                  Select multiple dates to create linked events
+                </Text>
+              )}
+            </View>
+          )}
+
           {/* Date & Time */}
-          <DatePicker
-            label="Date & Time"
-            value={scheduledAt}
-            onChange={setScheduledAt}
-            mode="datetime"
-            placeholder="Select date and time"
-            error={errors.scheduledAt}
-            required
-          />
+          {isSeriesMode && !isEditMode ? (
+            <>
+              {/* Multi-date calendar picker */}
+              <View style={styles.fieldContainer}>
+                <Text style={[styles.label, { color: colors.text }]}>Dates *</Text>
+                <MultiDateCalendarPicker
+                  selectedDates={selectedDates}
+                  onDatesChange={setSelectedDates}
+                  minimumDate={isAdmin ? undefined : new Date()}
+                  disabled={isSubmitting}
+                />
+                {errors.scheduledAt && (
+                  <Text style={styles.fieldErrorText}>{errors.scheduledAt}</Text>
+                )}
+              </View>
+
+              {/* Shared time picker */}
+              <DatePicker
+                label="Time"
+                value={timeOfDay}
+                onChange={setTimeOfDay}
+                mode="time"
+                placeholder="Select time for all dates"
+                required
+              />
+
+              {/* Series Name */}
+              <View style={styles.fieldContainer}>
+                <Text style={[styles.label, { color: colors.text }]}>Series Name *</Text>
+                {/* Existing series dropdown for community-wide */}
+                {isCommunityWideEnabled && existingSeriesNames && existingSeriesNames.length > 0 && (
+                  <View style={{ marginBottom: 8 }}>
+                    <TouchableOpacity
+                      style={[
+                        styles.dropdownButton,
+                        { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground },
+                      ]}
+                      onPress={() => setIsSeriesNameDropdownOpen(!isSeriesNameDropdownOpen)}
+                      disabled={isSubmitting}
+                    >
+                      <Text style={[
+                        existingSeriesName ? styles.selectedGroupName : styles.dropdownPlaceholder,
+                        { color: existingSeriesName ? colors.text : colors.inputPlaceholder },
+                      ]}>
+                        {existingSeriesName || "Add to existing series..."}
+                      </Text>
+                      <Ionicons
+                        name={isSeriesNameDropdownOpen ? "chevron-up" : "chevron-down"}
+                        size={20}
+                        color={colors.textSecondary}
+                      />
+                    </TouchableOpacity>
+                    {isSeriesNameDropdownOpen && (
+                      <View style={[styles.dropdownList, { borderColor: colors.inputBorder, backgroundColor: colors.surface }]}>
+                        <TouchableOpacity
+                          style={[
+                            styles.dropdownItem,
+                            { borderBottomColor: colors.borderLight },
+                            !existingSeriesName && [styles.dropdownItemSelected, { backgroundColor: colors.selectedBackground }],
+                          ]}
+                          onPress={() => {
+                            setExistingSeriesName(null);
+                            setSeriesName("");
+                            setIsSeriesNameDropdownOpen(false);
+                          }}
+                        >
+                          <Text style={[styles.dropdownItemText, { color: colors.text, fontStyle: "italic" }]}>
+                            + Create new series
+                          </Text>
+                        </TouchableOpacity>
+                        {existingSeriesNames.map((name) => (
+                          <TouchableOpacity
+                            key={name}
+                            style={[
+                              styles.dropdownItem,
+                              { borderBottomColor: colors.borderLight },
+                              existingSeriesName === name && [styles.dropdownItemSelected, { backgroundColor: colors.selectedBackground }],
+                            ]}
+                            onPress={() => {
+                              setExistingSeriesName(name);
+                              setSeriesName(name);
+                              setIsSeriesNameDropdownOpen(false);
+                            }}
+                          >
+                            <Text style={[
+                              styles.dropdownItemText,
+                              { color: colors.text },
+                              existingSeriesName === name && [styles.dropdownItemTextSelected, { color: primaryColor }],
+                            ]}>
+                              {name}
+                            </Text>
+                            {existingSeriesName === name && (
+                              <Ionicons name="checkmark" size={18} color={primaryColor} />
+                            )}
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    )}
+                  </View>
+                )}
+                {/* Series name text input (shown when creating new or for non-community-wide) */}
+                {!existingSeriesName && (
+                  <TextInput
+                    style={[styles.input, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground, color: colors.text }]}
+                    placeholder="e.g., Weekly Dinner Party"
+                    value={seriesName}
+                    onChangeText={setSeriesName}
+                    editable={!isSubmitting}
+                  />
+                )}
+                {(errors as any).seriesName && (
+                  <Text style={styles.fieldErrorText}>{(errors as any).seriesName}</Text>
+                )}
+              </View>
+
+              {/* Summary */}
+              {selectedDates.length > 0 && (
+                <View style={styles.groupCountInfo}>
+                  <Ionicons name="information-circle" size={16} color={colors.link} />
+                  <Text style={styles.groupCountText}>
+                    {isCommunityWideEnabled && groupCountForType
+                      ? `${selectedDates.length} dates \u00b7 ${groupCountForType} groups \u00b7 ${selectedDates.length * groupCountForType} events total`
+                      : `${selectedDates.length} events will be created`}
+                  </Text>
+                </View>
+              )}
+            </>
+          ) : (
+            <DatePicker
+              label="Date & Time"
+              value={scheduledAt}
+              onChange={setScheduledAt}
+              mode="datetime"
+              placeholder="Select date and time"
+              error={errors.scheduledAt}
+              required
+            />
+          )}
 
           {/* Title */}
           <View style={styles.fieldContainer}>
@@ -1110,6 +1465,161 @@ export function CreateEventScreen() {
             <Text style={[styles.sectionTitle, { color: colors.text }]}>Event Visibility</Text>
             <VisibilitySelector value={visibility} onChange={setVisibility} />
           </View>
+
+          {/* Event Series - only in edit mode */}
+          {isEditMode && meeting && (
+            <View style={styles.fieldContainer}>
+              <Text style={[styles.label, { color: colors.text }]}>Event Series</Text>
+              {meeting.seriesInfo ? (
+                // Currently in a series — show badge and remove option
+                <View>
+                  <SeriesBadge
+                    seriesName={meeting.seriesInfo.seriesName}
+                    seriesNumber={meeting.seriesInfo.seriesNumber}
+                    seriesTotalCount={meeting.seriesInfo.seriesTotalCount}
+                    size="medium"
+                  />
+                  <TouchableOpacity
+                    style={[styles.removeSeriesButton, { borderColor: colors.destructive }]}
+                    onPress={async () => {
+                      Alert.alert(
+                        "Remove from Series",
+                        `Remove this event from "${meeting.seriesInfo!.seriesName}"? The event won't be deleted.`,
+                        [
+                          { text: "Cancel", style: "cancel" },
+                          {
+                            text: "Remove",
+                            style: "destructive",
+                            onPress: async () => {
+                              setIsSeriesLinking(true);
+                              try {
+                                await removeMeetingFromSeriesMutation({
+                                  meetingId: meetingId as Id<"meetings">,
+                                });
+                              } catch (error: any) {
+                                Alert.alert("Error", formatError(error, "Failed to remove from series"));
+                              } finally {
+                                setIsSeriesLinking(false);
+                              }
+                            },
+                          },
+                        ]
+                      );
+                    }}
+                    disabled={isSeriesLinking}
+                  >
+                    <Text style={[styles.removeSeriesButtonText, { color: colors.destructive }]}>Remove from Series</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                // Not in a series — show options to add
+                <View>
+                  {isCreatingNewSeries ? (
+                    <View style={{ gap: 8 }}>
+                      <TextInput
+                        style={[styles.input, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground, color: colors.text }]}
+                        placeholder="Series name (e.g., Movie Night)"
+                        placeholderTextColor={colors.inputPlaceholder}
+                        value={newSeriesNameInput}
+                        onChangeText={setNewSeriesNameInput}
+                        autoFocus
+                      />
+                      <View style={{ flexDirection: "row", gap: 8 }}>
+                        <TouchableOpacity
+                          style={[styles.seriesActionButton, { borderColor: colors.border, flex: 1 }]}
+                          onPress={() => { setIsCreatingNewSeries(false); setNewSeriesNameInput(""); }}
+                        >
+                          <Text style={[styles.seriesActionButtonText, { color: colors.textSecondary }]}>Cancel</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.seriesActionButton, { backgroundColor: primaryColor, borderColor: primaryColor, flex: 1, opacity: newSeriesNameInput.trim() ? 1 : 0.5 }]}
+                          onPress={async () => {
+                            if (!newSeriesNameInput.trim() || !meetingId || !editGroupId) return;
+                            setIsSeriesLinking(true);
+                            try {
+                              await createSeriesFromMeetingsMutation({
+                                groupId: editGroupId as Id<"groups">,
+                                name: newSeriesNameInput.trim(),
+                                meetingIds: [meetingId as Id<"meetings">],
+                              });
+                              setNewSeriesNameInput("");
+                              setIsCreatingNewSeries(false);
+                            } catch (error: any) {
+                              Alert.alert("Error", formatError(error, "Failed to create series"));
+                            } finally {
+                              setIsSeriesLinking(false);
+                            }
+                          }}
+                          disabled={!newSeriesNameInput.trim() || isSeriesLinking}
+                        >
+                          {isSeriesLinking ? (
+                            <ActivityIndicator size="small" color={colors.textInverse} />
+                          ) : (
+                            <Text style={[styles.seriesActionButtonText, { color: colors.textInverse }]}>Create</Text>
+                          )}
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ) : (
+                    <View style={{ gap: 8 }}>
+                      {/* Existing series dropdown */}
+                      {groupSeriesList && groupSeriesList.length > 0 && (
+                        <>
+                          <TouchableOpacity
+                            style={[styles.dropdownButton, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground }]}
+                            onPress={() => setIsSeriesDropdownOpen(!isSeriesDropdownOpen)}
+                          >
+                            <Text style={[styles.dropdownPlaceholder, { color: colors.inputPlaceholder }]}>Add to existing series...</Text>
+                            <Ionicons name={isSeriesDropdownOpen ? "chevron-up" : "chevron-down"} size={20} color={colors.textSecondary} />
+                          </TouchableOpacity>
+                          {isSeriesDropdownOpen && (
+                            <View style={[styles.dropdownList, { borderColor: colors.inputBorder, backgroundColor: colors.surface }]}>
+                              {groupSeriesList.map((s) => (
+                                <TouchableOpacity
+                                  key={s._id}
+                                  style={[styles.dropdownItem, { borderBottomColor: colors.borderLight }]}
+                                  onPress={async () => {
+                                    setIsSeriesDropdownOpen(false);
+                                    setIsSeriesLinking(true);
+                                    try {
+                                      await addMeetingToSeriesMutation({
+                                        meetingId: meetingId as Id<"meetings">,
+                                        seriesId: s._id as Id<"eventSeries">,
+                                      });
+                                    } catch (error: any) {
+                                      Alert.alert("Error", formatError(error, "Failed to add to series"));
+                                    } finally {
+                                      setIsSeriesLinking(false);
+                                    }
+                                  }}
+                                >
+                                  <Text style={[styles.dropdownItemText, { color: colors.text }]}>{s.name}</Text>
+                                  <Text style={[styles.dropdownItemSubtext, { color: colors.textSecondary }]}>
+                                    {s.meetingCount} event{s.meetingCount !== 1 ? "s" : ""}
+                                  </Text>
+                                </TouchableOpacity>
+                              ))}
+                            </View>
+                          )}
+                        </>
+                      )}
+                      {/* Create new series button */}
+                      <TouchableOpacity
+                        style={[styles.seriesActionButton, { borderColor: colors.border }]}
+                        onPress={() => setIsCreatingNewSeries(true)}
+                      >
+                        <Ionicons name="add" size={16} color={colors.text} />
+                        <Text style={[styles.seriesActionButtonText, { color: colors.text }]}>New Series</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                  <Text style={[styles.helperText, { color: colors.textTertiary }]}>
+                    Link this event to a series to manage them together
+                  </Text>
+                </View>
+              )}
+            </View>
+          )}
 
           {/* Submit Button */}
           <TouchableOpacity
@@ -1389,6 +1899,32 @@ const styles = StyleSheet.create({
   cancelEventButtonText: {
     color: "#DC2626",
     fontSize: 16,
+    fontWeight: "600",
+  },
+  removeSeriesButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginTop: 10,
+  },
+  removeSeriesButtonText: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  seriesActionButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 6,
+  },
+  seriesActionButtonText: {
+    fontSize: 14,
     fontWeight: "600",
   },
   // Location geocoding status styles

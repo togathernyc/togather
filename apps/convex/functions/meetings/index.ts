@@ -17,6 +17,7 @@ import {
   DEFAULT_RSVP_OPTIONS,
 } from "../../lib/meetingConfig";
 import { buildMeetingSearchText } from "../../lib/meetingSearchText";
+import { findSeriesByGroupAndName } from "../eventSeries";
 
 // Re-export meeting config for consumers that import from this module
 export {
@@ -113,6 +114,7 @@ export const create = mutation({
       )
     ),
     visibility: v.optional(v.string()),
+    seriesId: v.optional(v.id("eventSeries")),
   },
   handler: async (ctx, args) => {
     const createdById = await requireAuth(ctx, args.token);
@@ -169,6 +171,7 @@ export const create = mutation({
       rsvpEnabled: effectiveRsvpEnabled,
       rsvpOptions: effectiveRsvpOptions,
       visibility: args.visibility,
+      seriesId: args.seriesId,
       // Scheduled job fields
       reminderAt,
       reminderSent: false,
@@ -242,10 +245,11 @@ export const update = mutation({
       )
     ),
     visibility: v.optional(v.string()),
+    scope: v.optional(v.union(v.literal("this_only"), v.literal("all_in_series"))),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
-    const { meetingId, token: _token, ...updates } = args;
+    const { meetingId, token: _token, scope: _scope, ...updates } = args;
     const timestamp = now();
 
     // Get the current meeting to detect changes
@@ -419,18 +423,60 @@ export const update = mutation({
       );
     }
 
+    // If scope is "all_in_series", apply non-temporal updates to all meetings in the series
+    if (args.scope === "all_in_series" && meeting.seriesId) {
+      const seriesMeetings = await ctx.db
+        .query("meetings")
+        .withIndex("by_series", (q) => q.eq("seriesId", meeting.seriesId!))
+        .collect();
+
+      // Non-temporal fields that cascade to series siblings
+      const seriesUpdates: Record<string, unknown> = {};
+      if (updates.title !== undefined) seriesUpdates.title = updates.title;
+      if (updates.meetingType !== undefined) seriesUpdates.meetingType = updates.meetingType;
+      if (updates.meetingLink !== undefined) seriesUpdates.meetingLink = updates.meetingLink;
+      if (updates.note !== undefined) seriesUpdates.note = updates.note;
+      if (updates.coverImage !== undefined) seriesUpdates.coverImage = updates.coverImage;
+      if (updates.rsvpEnabled !== undefined) seriesUpdates.rsvpEnabled = updates.rsvpEnabled;
+      if (updates.rsvpOptions !== undefined) seriesUpdates.rsvpOptions = updates.rsvpOptions;
+      if (updates.visibility !== undefined) seriesUpdates.visibility = updates.visibility;
+      if (updates.locationOverride !== undefined) seriesUpdates.locationOverride = updates.locationOverride;
+
+      if (Object.keys(seriesUpdates).length > 0) {
+        for (const sibling of seriesMeetings) {
+          // Skip the meeting we already updated, cancelled meetings, and overridden meetings
+          if (sibling._id === meetingId) continue;
+          if (sibling.status === "cancelled") continue;
+          if (sibling.isOverridden) continue;
+
+          // Rebuild searchText if title or location changed
+          if (updates.title !== undefined || updates.locationOverride !== undefined) {
+            const siblingGroup = await ctx.db.get(sibling.groupId);
+            seriesUpdates.searchText = buildMeetingSearchText({
+              title: (updates.title ?? sibling.title) as string | undefined,
+              locationOverride: (updates.locationOverride ?? sibling.locationOverride) as string | undefined,
+              groupName: siblingGroup?.name,
+            });
+          }
+
+          await ctx.db.patch(sibling._id, seriesUpdates);
+        }
+      }
+    }
+
     return await ctx.db.get(meetingId);
   },
 });
 
 /**
- * Cancel a meeting
+ * Cancel a meeting (or all meetings in a series)
  */
 export const cancel = mutation({
   args: {
     token: v.string(),
     meetingId: v.id("meetings"),
     cancellationReason: v.optional(v.string()),
+    scope: v.optional(v.union(v.literal("this_only"), v.literal("all_in_series"))),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -453,11 +499,186 @@ export const cancel = mutation({
       throw new Error("Only group leaders can cancel meetings");
     }
 
+    if (args.scope === "all_in_series" && meeting.seriesId) {
+      // Cancel all meetings in the series
+      const seriesMeetings = await ctx.db
+        .query("meetings")
+        .withIndex("by_series", (q) => q.eq("seriesId", meeting.seriesId!))
+        .collect();
+
+      let meetingsCancelled = 0;
+      for (const m of seriesMeetings) {
+        if (m.status === "cancelled") continue;
+
+        // Cancel scheduled jobs
+        if (m.reminderJobId) {
+          try { await ctx.scheduler.cancel(m.reminderJobId); } catch { /* already run */ }
+        }
+        if (m.attendanceConfirmationJobId) {
+          try { await ctx.scheduler.cancel(m.attendanceConfirmationJobId); } catch { /* already run */ }
+        }
+
+        await ctx.db.patch(m._id, {
+          status: "cancelled",
+          cancellationReason: args.cancellationReason,
+        });
+        meetingsCancelled++;
+      }
+
+      // Also cancel the series record
+      await ctx.db.patch(meeting.seriesId, { status: "cancelled" });
+
+      return { meetingsCancelled };
+    }
+
+    // Default: cancel just this meeting
     await ctx.db.patch(args.meetingId, {
       status: "cancelled",
       cancellationReason: args.cancellationReason,
     });
 
     return true;
+  },
+});
+
+/**
+ * Create multiple meetings as a series for a single group.
+ */
+export const createSeriesEvents = mutation({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+    seriesName: v.string(),
+    dates: v.array(v.number()), // Array of scheduledAt timestamps
+    title: v.optional(v.string()),
+    meetingType: v.number(),
+    meetingLink: v.optional(v.string()),
+    locationOverride: v.optional(v.string()),
+    note: v.optional(v.string()),
+    coverImage: v.optional(v.string()),
+    rsvpEnabled: v.optional(v.boolean()),
+    rsvpOptions: v.optional(
+      v.array(
+        v.object({
+          id: v.number(),
+          label: v.string(),
+          enabled: v.boolean(),
+        })
+      )
+    ),
+    visibility: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const createdById = await requireAuth(ctx, args.token);
+
+    // Verify user is a leader of this group
+    const membership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", args.groupId).eq("userId", createdById)
+      )
+      .first();
+
+    if (!isActiveLeader(membership)) {
+      throw new Error("Only group leaders can create events");
+    }
+
+    if (args.dates.length < 1) {
+      throw new Error("Series must have at least 1 date");
+    }
+
+    const timestamp = now();
+
+    const group = await ctx.db.get(args.groupId);
+    if (!group) {
+      throw new Error("Group not found");
+    }
+
+    // Find or create the series for this group
+    let series = await findSeriesByGroupAndName(ctx, args.groupId, args.seriesName);
+    let seriesId;
+    if (series && series.status === "active") {
+      seriesId = series._id;
+    } else {
+      seriesId = await ctx.db.insert("eventSeries", {
+        groupId: args.groupId,
+        createdById,
+        name: args.seriesName,
+        status: "active",
+        createdAt: timestamp,
+      });
+    }
+
+    const effectiveRsvpEnabled = args.rsvpEnabled ?? true;
+    const effectiveRsvpOptions = args.rsvpOptions ?? (effectiveRsvpEnabled ? DEFAULT_RSVP_OPTIONS : undefined);
+
+    const meetingIds: string[] = [];
+
+    for (const scheduledAt of args.dates) {
+      const shortId = generateShortId();
+      const reminderAt = scheduledAt - DEFAULT_REMINDER_OFFSET_MS;
+      const meetingEndTime = scheduledAt + DEFAULT_MEETING_DURATION_MS;
+      const attendanceConfirmationAt = meetingEndTime + DEFAULT_ATTENDANCE_CONFIRMATION_OFFSET_MS;
+
+      const meetingId = await ctx.db.insert("meetings", {
+        groupId: args.groupId,
+        title: args.title,
+        shortId,
+        scheduledAt,
+        meetingType: args.meetingType,
+        meetingLink: args.meetingLink,
+        locationOverride: args.locationOverride,
+        note: args.note,
+        coverImage: args.coverImage,
+        status: "scheduled",
+        createdById,
+        createdAt: timestamp,
+        rsvpEnabled: effectiveRsvpEnabled,
+        rsvpOptions: effectiveRsvpOptions,
+        visibility: args.visibility,
+        seriesId,
+        reminderAt,
+        reminderSent: false,
+        attendanceConfirmationAt,
+        attendanceConfirmationSent: false,
+        communityId: group.communityId,
+        searchText: buildMeetingSearchText({
+          title: args.title,
+          locationOverride: args.locationOverride,
+          groupName: group.name,
+        }),
+      });
+
+      // Schedule reminder
+      let reminderJobId = undefined;
+      if (reminderAt > timestamp) {
+        reminderJobId = await ctx.scheduler.runAt(
+          reminderAt,
+          internal.functions.scheduledJobs.sendMeetingReminder,
+          { meetingId }
+        );
+      }
+
+      // Schedule attendance confirmation
+      let attendanceConfirmationJobId = undefined;
+      if (attendanceConfirmationAt > timestamp) {
+        attendanceConfirmationJobId = await ctx.scheduler.runAt(
+          attendanceConfirmationAt,
+          internal.functions.scheduledJobs.sendAttendanceConfirmation,
+          { meetingId }
+        );
+      }
+
+      if (reminderJobId || attendanceConfirmationJobId) {
+        await ctx.db.patch(meetingId, {
+          reminderJobId,
+          attendanceConfirmationJobId,
+        });
+      }
+
+      meetingIds.push(meetingId);
+    }
+
+    return { seriesId, meetingIds };
   },
 });

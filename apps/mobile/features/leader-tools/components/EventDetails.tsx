@@ -23,6 +23,7 @@ import type { Id } from "@services/api/convex";
 import { Avatar } from "@components/ui/Avatar";
 import { AppImage } from "@components/ui/AppImage";
 import { CommunityWideBadge } from "@components/ui/CommunityWideBadge";
+import { SeriesBadge } from "@components/ui/SeriesBadge";
 import { FloatingRsvpButtons } from "./FloatingRsvpButtons";
 import { FloatingRsvpCard } from "./FloatingRsvpCard";
 import { GuestListSection } from "./GuestListSection";
@@ -387,6 +388,18 @@ export function EventDetails({
               </View>
             )}
 
+            {/* Series Badge */}
+            {meeting?.seriesInfo && (
+              <View style={styles.communityWideBadgeContainer}>
+                <SeriesBadge
+                  seriesName={meeting.seriesInfo.seriesName}
+                  seriesNumber={meeting.seriesInfo.seriesNumber}
+                  seriesTotalCount={meeting.seriesInfo.seriesTotalCount}
+                  size="medium"
+                />
+              </View>
+            )}
+
             {/* Event Details Section */}
             <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>EVENT DETAILS</Text>
 
@@ -660,6 +673,7 @@ export function EventDetails({
           </View>
         </TouchableOpacity>
       </Modal>
+
     </View>
   );
 }

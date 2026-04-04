@@ -8,7 +8,7 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMemo, useCallback, useRef } from 'react';
 
-export type DateFilterPreset = 'today' | 'this_week' | 'this_month' | 'custom';
+export type DateFilterPreset = 'all' | 'today' | 'this_week' | 'this_month' | 'custom';
 export type ExploreView = 'groups' | 'events';
 export type ExploreMode = 'groups' | 'events' | undefined;
 
@@ -31,7 +31,7 @@ const defaultFilters: ExploreFilters = {
   mode: undefined,
   groupType: null,
   meetingType: null,
-  dateFilter: null,
+  dateFilter: 'this_week',
   startDate: null,
   endDate: null,
   hostingGroups: [],
@@ -70,7 +70,7 @@ export function useExploreFilters() {
       mode,
       groupType,
       meetingType: stableMeetingType ? Number(stableMeetingType) : null,
-      dateFilter: (stableDateFilter as DateFilterPreset) || null,
+      dateFilter: (stableDateFilter as DateFilterPreset) || 'this_week',
       startDate: stableStartDate || null,
       endDate: stableEndDate || null,
       hostingGroups: stableHostingGroups?.split(',').filter(Boolean) || [],
@@ -157,8 +157,8 @@ export function useExploreFilters() {
       urlParams.meetingType = String(merged.meetingType);
     }
 
-    // Events filters
-    if (merged.dateFilter !== null) {
+    // Events filters (always include dateFilter since 'this_week' is the default)
+    if (merged.dateFilter !== null && merged.dateFilter !== 'this_week') {
       urlParams.dateFilter = merged.dateFilter;
     }
     if (merged.startDate !== null) {
@@ -197,7 +197,7 @@ export function useExploreFilters() {
   // Reset only event filters
   const resetEventFilters = useCallback(() => {
     setFilters({
-      dateFilter: null,
+      dateFilter: 'this_week',
       startDate: null,
       endDate: null,
       hostingGroups: [],
@@ -207,7 +207,7 @@ export function useExploreFilters() {
   // Check if any filters are active
   const hasActiveGroupFilters = filters.groupType !== null || filters.meetingType !== null;
   const hasActiveEventFilters =
-    filters.dateFilter !== null ||
+    (filters.dateFilter !== null && filters.dateFilter !== 'this_week') ||
     filters.startDate !== null ||
     filters.endDate !== null ||
     filters.hostingGroups.length > 0;
@@ -218,7 +218,7 @@ export function useExploreFilters() {
     (filters.groupType !== null ? 1 : 0) +
     (filters.meetingType !== null ? 1 : 0);
   const activeEventFilterCount =
-    (filters.dateFilter !== null ? 1 : 0) +
+    (filters.dateFilter !== null && filters.dateFilter !== 'this_week' ? 1 : 0) +
     (filters.hostingGroups.length > 0 ? 1 : 0);
 
   // Mode is locked when navigating from a specific context (e.g., group → events)
