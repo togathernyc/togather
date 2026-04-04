@@ -175,6 +175,7 @@ export default {
         backgroundColor: "#ffffff"
       },
       package: getBundleIdentifier(),
+      googleServicesFile: "./google-services.json",
       edgeToEdgeEnabled: true,
       predictiveBackGestureEnabled: false,
       intentFilters: getAndroidIntentFilters(),
