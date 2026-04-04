@@ -108,6 +108,7 @@ jest.mock("@services/api/convex", () => ({
           create: "api.functions.meetings.index.create",
           update: "api.functions.meetings.index.update",
           cancel: "api.functions.meetings.index.cancel",
+          createSeriesEvents: "api.functions.meetings.index.createSeriesEvents",
         },
         queries: {
           getWithDetails: "api.functions.meetings.queries.getWithDetails",
@@ -116,6 +117,16 @@ jest.mock("@services/api/convex", () => ({
           countGroupsByType: "api.functions.meetings.communityEvents.countGroupsByType",
           createCommunityWideEvent: "api.functions.meetings.communityEvents.createCommunityWideEvent",
         },
+      },
+      communityWideEvents: {
+        createSeries: "api.functions.communityWideEvents.createSeries",
+      },
+      eventSeries: {
+        listSeriesNamesByGroupType: "api.functions.eventSeries.listSeriesNamesByGroupType",
+        listByGroup: "api.functions.eventSeries.listByGroup",
+        addMeetingToSeries: "api.functions.eventSeries.addMeetingToSeries",
+        removeMeetingFromSeries: "api.functions.eventSeries.removeMeetingFromSeries",
+        createSeriesFromMeetings: "api.functions.eventSeries.createSeriesFromMeetings",
       },
       uploads: {
         getR2UploadUrl: "api.functions.uploads.getR2UploadUrl",
