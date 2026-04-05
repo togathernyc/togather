@@ -89,6 +89,9 @@ export interface Group {
   // Join request tracking (from /api/community/{id})
   user_request_status?: string | null; // 'pending', 'accepted', 'declined', or null
   user_role?: string | null; // 'member', 'leader', or 'admin'
+  // Membership status from explore search (from groupSearch.searchGroupsWithMembership)
+  is_member?: boolean | null;
+  has_pending_request?: boolean | null;
   // Announcement group flag
   is_announcement_group?: boolean | null;
 }
