@@ -337,6 +337,21 @@ export function SettingsContent() {
             </View>
             <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
           </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.quickLinkItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
+            onPress={() => router.push("/(user)/admin/landing")}
+          >
+            <View style={[styles.quickLinkIcon, { backgroundColor: colors.surface }]}>
+              <Ionicons name="globe-outline" size={20} color={themePrimaryColor} />
+            </View>
+            <View style={styles.quickLinkInfo}>
+              <Text style={[styles.quickLinkName, { color: colors.text }]}>Landing Page</Text>
+              <Text style={[styles.quickLinkDescription, { color: colors.textSecondary }]}>
+                Customize your community landing page
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
+          </TouchableOpacity>
         </View>
 
         {/* Basic Info Section */}

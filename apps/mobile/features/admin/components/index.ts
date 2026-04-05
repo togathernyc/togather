@@ -14,5 +14,6 @@ export { SettingsContent } from "./SettingsContent";
 export { SlackBotActivityScreen } from "./SlackBotActivityScreen";
 export { SlackBotConfigScreen } from "./SlackBotConfigScreen";
 export { StatsContent } from "./StatsContent";
+export { LandingPageContent } from "./LandingPageContent";
 export { SuperAdminDashboardContent } from "./SuperAdminDashboardContent";
 
