@@ -147,8 +147,10 @@ export function CommunityWideEventsScreen() {
         Alert.alert("Error", "No child meetings found for this event.");
         return;
       }
+      const dateStr = format(new Date(event.scheduledAt), "EEE, MMM d, yyyy 'at' h:mm a");
+      const eventIdentifier = `id-${event.firstChildMeetingId}|${encodeURIComponent(dateStr)}`;
       router.push(
-        `/(user)/leader-tools/${event.firstChildGroupId}/events/${event.firstChildMeetingId}/edit`
+        `/(user)/leader-tools/${event.firstChildGroupId}/events/${eventIdentifier}/edit`
       );
     },
     [router]
