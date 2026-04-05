@@ -15,9 +15,34 @@ import type { QueryCtx } from "../_generated/server";
 import { now } from "../lib/utils";
 import { requireAuth } from "../lib/auth";
 import { isActiveLeader } from "../lib/helpers";
+import { isCommunityAdmin } from "../lib/permissions";
 
 // ============================================================================
 // Helpers
+
+/**
+ * Check if user can manage series for a group (leader of group OR community admin)
+ */
+async function canManageSeries(
+  ctx: { db: any },
+  userId: Id<"users">,
+  groupId: Id<"groups">
+): Promise<boolean> {
+  // Check group leader first
+  const membership = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_group_user", (q: any) =>
+      q.eq("groupId", groupId).eq("userId", userId)
+    )
+    .first();
+
+  if (isActiveLeader(membership)) return true;
+
+  // Fall back to community admin check
+  const group = await ctx.db.get(groupId);
+  if (!group) return false;
+  return isCommunityAdmin(ctx, group.communityId, userId);
+}
 // ============================================================================
 
 /**
@@ -79,16 +104,8 @@ export const create = mutation({
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
 
-    // Verify user is a leader of this group
-    const membership = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group_user", (q) =>
-        q.eq("groupId", args.groupId).eq("userId", userId)
-      )
-      .first();
-
-    if (!isActiveLeader(membership)) {
-      throw new Error("Only group leaders can create event series");
+    if (!(await canManageSeries(ctx, userId, args.groupId))) {
+      throw new Error("Only group leaders or community admins can create event series");
     }
 
     const seriesId = await ctx.db.insert("eventSeries", {
@@ -126,16 +143,8 @@ export const addMeetingToSeries = mutation({
       throw new Error("Meeting and series must belong to the same group");
     }
 
-    // Verify user is a leader of the group
-    const membership = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group_user", (q) =>
-        q.eq("groupId", meeting.groupId).eq("userId", userId)
-      )
-      .first();
-
-    if (!isActiveLeader(membership)) {
-      throw new Error("Only group leaders can manage event series");
+    if (!(await canManageSeries(ctx, userId, meeting.groupId))) {
+      throw new Error("Only group leaders or community admins can manage event series");
     }
 
     await ctx.db.patch(args.meetingId, { seriesId: args.seriesId });
@@ -159,16 +168,8 @@ export const removeMeetingFromSeries = mutation({
     if (!meeting) throw new Error("Meeting not found");
     if (!meeting.seriesId) throw new Error("Meeting is not part of a series");
 
-    // Verify user is a leader of the group
-    const membership = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group_user", (q) =>
-        q.eq("groupId", meeting.groupId).eq("userId", userId)
-      )
-      .first();
-
-    if (!isActiveLeader(membership)) {
-      throw new Error("Only group leaders can manage event series");
+    if (!(await canManageSeries(ctx, userId, meeting.groupId))) {
+      throw new Error("Only group leaders or community admins can manage event series");
     }
 
     const seriesId = meeting.seriesId;
@@ -207,16 +208,8 @@ export const createSeriesFromMeetings = mutation({
       throw new Error("At least 1 meeting is required");
     }
 
-    // Verify user is a leader of the group
-    const membership = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group_user", (q) =>
-        q.eq("groupId", args.groupId).eq("userId", userId)
-      )
-      .first();
-
-    if (!isActiveLeader(membership)) {
-      throw new Error("Only group leaders can create event series");
+    if (!(await canManageSeries(ctx, userId, args.groupId))) {
+      throw new Error("Only group leaders or community admins can create event series");
     }
 
     // Validate all meetings belong to this group
@@ -269,16 +262,8 @@ export const cancelSeries = mutation({
       throw new Error("Series not found");
     }
 
-    // Verify user is a leader of the series' group
-    const membership = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group_user", (q) =>
-        q.eq("groupId", series.groupId).eq("userId", userId)
-      )
-      .first();
-
-    if (!isActiveLeader(membership)) {
-      throw new Error("Only group leaders can cancel event series");
+    if (!(await canManageSeries(ctx, userId, series.groupId))) {
+      throw new Error("Only group leaders or community admins can cancel event series");
     }
 
     // Cancel the series record
