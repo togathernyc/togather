@@ -1007,6 +1007,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     padding: 12,
     borderWidth: 1,
+    marginBottom: 10,
   },
   quickLinkIcon: {
     width: 40,
