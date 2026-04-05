@@ -754,6 +754,9 @@ export const list = query({
         const totalMeetings = childMeetings.length;
         const overriddenMeetings = childMeetings.filter((m) => m.isOverridden === true).length;
 
+        // Pick the first non-overridden child meeting for edit navigation
+        const firstChild = childMeetings.find((m) => !m.isOverridden) || childMeetings[0];
+
         return {
           id: event._id,
           communityId: event.communityId,
@@ -771,6 +774,9 @@ export const list = query({
           // Stats
           totalMeetings,
           overriddenMeetings,
+          // For edit navigation — first non-overridden child meeting
+          firstChildMeetingId: firstChild?._id || null,
+          firstChildGroupId: firstChild?.groupId || null,
         };
       })
     );

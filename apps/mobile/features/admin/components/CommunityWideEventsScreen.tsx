@@ -44,6 +44,8 @@ interface CommunityWideEvent {
   updatedAt: number | null;
   totalMeetings: number;
   overriddenMeetings: number;
+  firstChildMeetingId: Id<"meetings"> | null;
+  firstChildGroupId: Id<"groups"> | null;
 }
 
 /**
@@ -141,15 +143,15 @@ export function CommunityWideEventsScreen() {
 
   const handleEdit = useCallback(
     (event: CommunityWideEvent) => {
-      // Navigate to edit screen (placeholder for now)
-      Alert.alert(
-        "Edit Event",
-        "Edit functionality will be available soon.",
-        [{ text: "OK" }]
+      if (!event.firstChildMeetingId || !event.firstChildGroupId) {
+        Alert.alert("Error", "No child meetings found for this event.");
+        return;
+      }
+      router.push(
+        `/(user)/leader-tools/${event.firstChildGroupId}/events/${event.firstChildMeetingId}/edit`
       );
-      // Future: router.push(`/admin/community-wide-events/${event.id}/edit`);
     },
-    []
+    [router]
   );
 
   const formatDateTime = (timestamp: number) => {
@@ -263,7 +265,8 @@ function EventCard({
   const { colors } = useTheme();
   const isCancelled = event.status === "cancelled";
   const isPastEvent = isPast(new Date(event.scheduledAt));
-  const canTakeAction = !isCancelled && !isPastEvent;
+  const canEdit = !isCancelled;
+  const canCancel = !isCancelled && !isPastEvent;
 
   return (
     <View style={[styles.eventCard, { backgroundColor: colors.surface }, isCancelled && styles.eventCardCancelled]}>
@@ -305,24 +308,28 @@ function EventCard({
         )}
       </View>
 
-      {/* Actions */}
-      {canTakeAction && (
+      {/* Actions — Edit always available (except cancelled), Cancel only for upcoming */}
+      {(canEdit || canCancel) && (
         <View style={[styles.eventActions, { borderTopColor: colors.borderLight }]}>
-          <TouchableOpacity
-            style={[styles.actionButton, { borderColor: primaryColor }]}
-            onPress={() => onEdit(event)}
-          >
-            <Ionicons name="pencil-outline" size={16} color={primaryColor} />
-            <Text style={[styles.actionButtonText, { color: primaryColor }]}>Edit</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.actionButton, styles.cancelActionButton]}
-            onPress={() => onCancel(event)}
-            disabled={isCancelling}
-          >
-            <Ionicons name="close-circle-outline" size={16} color="#FF6B6B" />
-            <Text style={styles.cancelActionButtonText}>Cancel</Text>
-          </TouchableOpacity>
+          {canEdit && (
+            <TouchableOpacity
+              style={[styles.actionButton, { borderColor: primaryColor }]}
+              onPress={() => onEdit(event)}
+            >
+              <Ionicons name="pencil-outline" size={16} color={primaryColor} />
+              <Text style={[styles.actionButtonText, { color: primaryColor }]}>Edit</Text>
+            </TouchableOpacity>
+          )}
+          {canCancel && (
+            <TouchableOpacity
+              style={[styles.actionButton, styles.cancelActionButton]}
+              onPress={() => onCancel(event)}
+              disabled={isCancelling}
+            >
+              <Ionicons name="close-circle-outline" size={16} color="#FF6B6B" />
+              <Text style={styles.cancelActionButtonText}>Cancel</Text>
+            </TouchableOpacity>
+          )}
         </View>
       )}
     </View>
