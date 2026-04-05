@@ -19,6 +19,7 @@ import {
   TouchableOpacity,
   Image,
   Alert,
+  KeyboardAvoidingView,
 } from "react-native";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -311,7 +312,10 @@ export function CreateGroupScreen() {
   };
 
   return (
-    <>
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      style={{ flex: 1 }}
+    >
       <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.backgroundSecondary }]}>
         {/* Header */}
         <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
@@ -681,7 +685,7 @@ export function CreateGroupScreen() {
           </View>
         </ScrollView>
       </View>
-    </>
+    </KeyboardAvoidingView>
   );
 }
 

@@ -18,6 +18,7 @@ import {
   ScrollView,
   Pressable,
   ActivityIndicator,
+  KeyboardAvoidingView,
   Platform,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -714,18 +715,23 @@ function PageContainer({
   insets: ReturnType<typeof useSafeAreaInsets>;
 }) {
   return (
-    <View
-      style={[
-        styles.page,
-        {
-          backgroundColor: colors.backgroundSecondary,
-          paddingTop: insets.top,
-          paddingBottom: insets.bottom,
-        },
-      ]}
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      style={{ flex: 1 }}
     >
-      {children}
-    </View>
+      <View
+        style={[
+          styles.page,
+          {
+            backgroundColor: colors.backgroundSecondary,
+            paddingTop: insets.top,
+            paddingBottom: insets.bottom,
+          },
+        ]}
+      >
+        {children}
+      </View>
+    </KeyboardAvoidingView>
   );
 }
 

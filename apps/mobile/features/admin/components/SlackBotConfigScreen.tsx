@@ -17,6 +17,7 @@ import {
   TextInput,
   Modal,
   FlatList,
+  KeyboardAvoidingView,
   Platform,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -725,9 +726,14 @@ export function SlackBotConfigScreen() {
   }
 
   return (
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      style={{ flex: 1 }}
+    >
     <ScrollView
       style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}
       contentContainerStyle={{ paddingBottom: insets.bottom + 20 }}
+      keyboardShouldPersistTaps="handled"
     >
       {/* Status Section */}
       <View style={styles.section}>
@@ -2073,6 +2079,7 @@ export function SlackBotConfigScreen() {
         </View>
       </Modal>
     </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 

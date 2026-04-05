@@ -21,10 +21,9 @@ import { PendingRequestsContent } from "./PendingRequestsContent";
 import { StatsContent } from "./StatsContent";
 import { PeopleContent } from "./PeopleContent";
 import { SettingsContent } from "./SettingsContent";
-import { LandingPageContent } from "./LandingPageContent";
 import { SuperAdminDashboardContent } from "./SuperAdminDashboardContent";
 
-type TabKey = "dashboard" | "requests" | "people" | "stats" | "settings" | "landing";
+type TabKey = "dashboard" | "requests" | "people" | "stats" | "settings";
 
 interface Tab {
   key: TabKey;
@@ -55,7 +54,6 @@ export function AdminScreen() {
           { key: "people", label: "People" },
           { key: "stats", label: "Stats" },
           { key: "settings", label: "Settings" },
-          { key: "landing", label: "Landing" },
           { key: "dashboard", label: "Dashboard" },
         ];
       }
@@ -65,7 +63,6 @@ export function AdminScreen() {
         { key: "people", label: "People" },
         { key: "stats", label: "Stats" },
         { key: "settings", label: "Settings" },
-        { key: "landing", label: "Landing" },
       ];
     },
     [hasCommunity, isInternalDashboardUser, isAdmin]
@@ -140,10 +137,8 @@ export function AdminScreen() {
           <PeopleContent />
         ) : activeTab === "stats" ? (
           <StatsContent />
-        ) : activeTab === "settings" ? (
-          <SettingsContent />
         ) : (
-          <LandingPageContent />
+          <SettingsContent />
         )}
       </View>
     </View>

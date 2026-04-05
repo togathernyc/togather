@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Keyboard,
   InputAccessoryView,
+  KeyboardAvoidingView,
   Platform,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -169,6 +170,10 @@ export function CompleteProfileScreen({
   };
 
   return (
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      style={{ flex: 1 }}
+    >
     <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
       <ScrollView
         style={[styles.scrollView, { backgroundColor: colors.surface }]}
@@ -288,6 +293,7 @@ export function CompleteProfileScreen({
       )}
     </ScrollView>
     </TouchableWithoutFeedback>
+    </KeyboardAvoidingView>
   );
 }
 
