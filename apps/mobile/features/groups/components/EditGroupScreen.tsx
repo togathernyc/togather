@@ -16,6 +16,7 @@ import {
   Platform,
   TouchableOpacity,
   Alert,
+  KeyboardAvoidingView,
 } from "react-native";
 import { useForm, Controller, type SubmitHandler } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -405,7 +406,10 @@ export function EditGroupScreen() {
 
   return (
     <>
-      <View style={[styles.container, { paddingTop: insets.top }]}>
+      <KeyboardAvoidingView
+        style={[styles.container, { paddingTop: insets.top }]}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+      >
         {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity
@@ -422,6 +426,7 @@ export function EditGroupScreen() {
           style={styles.scrollView}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
         >
           {/* Basic Information Section */}
           <View style={styles.section}>
@@ -715,7 +720,7 @@ export function EditGroupScreen() {
             </Button>
           </View>
         </ScrollView>
-      </View>
+      </KeyboardAvoidingView>
     </>
   );
 }

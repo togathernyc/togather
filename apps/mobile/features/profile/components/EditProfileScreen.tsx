@@ -6,6 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 
@@ -20,7 +21,10 @@ export function EditProfileScreen() {
   const { colors } = useTheme();
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
+    <KeyboardAvoidingView
+      style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
       <View style={[styles.header, { paddingTop: insets.top + 12, backgroundColor: colors.surface }]}>
         <TouchableOpacity
           onPress={() => router.back()}
@@ -35,10 +39,11 @@ export function EditProfileScreen() {
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
       >
         <EditProfileForm />
       </ScrollView>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
