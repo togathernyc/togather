@@ -217,7 +217,7 @@ describe("eventSeries.create", () => {
         groupId: ids.groupId,
         name: "Weekly Dinner Party",
       })
-    ).rejects.toThrow("Only group leaders can create event series");
+    ).rejects.toThrow("Only group leaders or community admins can create event series");
   });
 
   test("non-member cannot create a series", async () => {
@@ -230,7 +230,7 @@ describe("eventSeries.create", () => {
         groupId: ids.groupId,
         name: "Weekly Dinner Party",
       })
-    ).rejects.toThrow("Only group leaders can create event series");
+    ).rejects.toThrow("Only group leaders or community admins can create event series");
   });
 });
 
@@ -322,7 +322,7 @@ describe("eventSeries.addMeetingToSeries", () => {
         meetingId: ids.meeting1Id,
         seriesId,
       })
-    ).rejects.toThrow("Only group leaders can manage event series");
+    ).rejects.toThrow("Only group leaders or community admins can manage event series");
   });
 });
 
@@ -435,7 +435,7 @@ describe("eventSeries.removeMeetingFromSeries", () => {
         token: ids.memberToken,
         meetingId: ids.meeting1Id,
       })
-    ).rejects.toThrow("Only group leaders can manage event series");
+    ).rejects.toThrow("Only group leaders or community admins can manage event series");
   });
 });
 
@@ -520,7 +520,7 @@ describe("eventSeries.createSeriesFromMeetings", () => {
         name: "New Dinner Series",
         meetingIds: [ids.meeting1Id, ids.meeting2Id],
       })
-    ).rejects.toThrow("Only group leaders can create event series");
+    ).rejects.toThrow("Only group leaders or community admins can create event series");
   });
 });
 
