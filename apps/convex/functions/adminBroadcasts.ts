@@ -428,7 +428,9 @@ export const getUserPhones = internalQuery({
   args: { userIds: v.array(v.id("users")) },
   handler: async (ctx, args) => {
     const users = await Promise.all(args.userIds.map((id) => ctx.db.get(id)));
-    return users.map((u) => ({ userId: u?._id, phone: u?.phone || null }));
+    return users
+      .filter((u) => u !== null)
+      .map((u) => ({ userId: u._id, phone: u.phone || null }));
   },
 });
 
