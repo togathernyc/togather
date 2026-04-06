@@ -385,6 +385,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
           await navigateToGroup(groupId);
         }
         break;
+      case 'event_blast':
       case 'event_updated':
       case 'meeting_reminder': {
         // Navigate to event detail screen
