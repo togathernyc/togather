@@ -4,7 +4,7 @@
  * Flow: Select target → Preview count → Write content → Test on self → Submit for approval
  */
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import {
   View,
   Text,
@@ -17,7 +17,7 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useQuery, useAuthenticatedMutation, api } from "@services/api/convex";
+import { useAuthenticatedQuery, useAuthenticatedMutation, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { useTheme } from "@hooks/useTheme";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
@@ -68,7 +68,7 @@ export function BroadcastComposer({
   };
 
   // Preview targeting count
-  const preview = useQuery(
+  const preview = useAuthenticatedQuery(
     api.functions.adminBroadcasts.previewTargeting,
     { communityId, targetCriteria }
   );

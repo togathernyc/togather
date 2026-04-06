@@ -1,17 +1,16 @@
 /**
- * Admin Broadcast functions
+ * Admin Broadcast functions — targeted notifications with 2-party approval
  *
- * Targeted notifications with 2-party approval for community admins.
  * Supports targeting by criteria (no profile pic, new users, etc.),
  * multiple channels (push/email/SMS), and deep linking.
  */
 
 import { v } from "convex/values";
-import { query, mutation, internalQuery, internalAction } from "../_generated/server";
+import { query, mutation, internalQuery, internalAction, internalMutation } from "../_generated/server";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { requireAuth } from "../lib/auth";
-import { requireCommunityAdmin, COMMUNITY_ADMIN_THRESHOLD } from "../lib/permissions";
+import { requireCommunityAdmin } from "../lib/permissions";
 import { now } from "../lib/utils";
 
 // ============================================================================
@@ -40,11 +39,14 @@ export const DEEP_LINK_PRESETS = [
  */
 export const list = query({
   args: {
-    token: v.optional(v.string()),
+    token: v.string(),
     communityId: v.id("communities"),
     statusFilter: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await requireCommunityAdmin(ctx, args.communityId, userId);
+
     let q = ctx.db
       .query("adminBroadcasts")
       .withIndex("by_community", (q) => q.eq("communityId", args.communityId));
@@ -85,11 +87,14 @@ export const list = query({
  */
 export const previewTargeting = query({
   args: {
-    token: v.optional(v.string()),
+    token: v.string(),
     communityId: v.id("communities"),
     targetCriteria: targetCriteriaValidator,
   },
   handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await requireCommunityAdmin(ctx, args.communityId, userId);
+
     const userIds = await resolveTargetUsers(ctx, args.communityId, args.targetCriteria);
     return { count: userIds.length };
   },
@@ -429,8 +434,8 @@ export const getUserPhones = internalQuery({
   handler: async (ctx, args) => {
     const users = await Promise.all(args.userIds.map((id) => ctx.db.get(id)));
     return users
-      .filter((u) => u !== null)
-      .map((u) => ({ userId: u._id, phone: u.phone || null }));
+      .filter((u): u is NonNullable<typeof u> => u !== null)
+      .map((u) => ({ userId: u._id as string, phone: u.phone || null }));
   },
 });
 
@@ -441,8 +446,6 @@ export const getUserEmails = internalQuery({
     return users.map((u) => ({ email: u?.email || null }));
   },
 });
-
-import { internalMutation } from "../_generated/server";
 
 export const updateResults = internalMutation({
   args: {
@@ -516,7 +519,7 @@ async function resolveTargetUsers(
       const targetType = groupTypes.find((gt: any) => gt.slug === criteria.groupTypeSlug);
       if (!targetType) return [];
 
-      const typeGroups = groups.filter((g: any) => g.groupType === targetType._id);
+      const typeGroups = groups.filter((g: any) => g.groupTypeId === targetType._id);
       const typeGroupIds = new Set(typeGroups.map((g: any) => g._id.toString()));
 
       // Find users who are NOT in any group of this type
