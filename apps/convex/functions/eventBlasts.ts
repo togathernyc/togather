@@ -1,8 +1,8 @@
 /**
  * Event Blast functions
  *
- * Allows leaders to send message blasts (SMS/push) to attendees
- * who RSVPed to an event. Records are kept for history.
+ * Allows leaders to send message blasts (SMS/push) to attendees who
+ * RSVPed "Going" to an event. Blasts are recorded for history.
  */
 
 import { v } from "convex/values";
