@@ -405,6 +405,117 @@ describe("Admin Broadcasts", () => {
       // 5 users: admin1, admin2, regularUser, newUser, userWithoutPic
       expect(result.count).toBe(5);
     });
+
+    test("leaders_no_group_image includes every leader of imageless groups (no membership-set mismatch)", async () => {
+      const t = convexTest(schema, modules);
+      const data = await setupTestData(t);
+
+      await t.run(async (ctx) => {
+        const ts = Date.now();
+        const groupTypeId = await ctx.db.insert("groupTypes", {
+          communityId: data.communityId,
+          name: "Small Group",
+          slug: "small-group",
+          description: "Test",
+          isActive: true,
+          createdAt: ts,
+          displayOrder: 0,
+        });
+
+        const g1 = await ctx.db.insert("groups", {
+          communityId: data.communityId,
+          groupTypeId,
+          name: "Group A",
+          createdAt: ts,
+          updatedAt: ts,
+          isArchived: false,
+          preview: "",
+        });
+        const g2 = await ctx.db.insert("groups", {
+          communityId: data.communityId,
+          groupTypeId,
+          name: "Group B",
+          createdAt: ts,
+          updatedAt: ts,
+          isArchived: false,
+        });
+
+        await ctx.db.insert("groupMembers", {
+          groupId: g1,
+          userId: data.admin1Id,
+          role: "leader",
+          joinedAt: ts,
+          notificationsEnabled: true,
+        });
+        await ctx.db.insert("groupMembers", {
+          groupId: g2,
+          userId: data.admin2Id,
+          role: "leader",
+          joinedAt: ts,
+          notificationsEnabled: true,
+        });
+      });
+
+      const result = await t.action(
+        // @ts-expect-error - test token auth
+        "functions/adminBroadcasts:previewTargeting" as any,
+        {
+          token: data.admin1Token,
+          communityId: data.communityId,
+          targetCriteria: { type: "leaders_no_group_image" },
+        }
+      );
+
+      expect(result.count).toBe(2);
+    });
+
+    test("leaders_no_group_image skips groups with a non-empty preview image", async () => {
+      const t = convexTest(schema, modules);
+      const data = await setupTestData(t);
+
+      await t.run(async (ctx) => {
+        const ts = Date.now();
+        const groupTypeId = await ctx.db.insert("groupTypes", {
+          communityId: data.communityId,
+          name: "Small Group",
+          slug: "small-group-2",
+          description: "Test",
+          isActive: true,
+          createdAt: ts,
+          displayOrder: 0,
+        });
+
+        const g = await ctx.db.insert("groups", {
+          communityId: data.communityId,
+          groupTypeId,
+          name: "Group With Pic",
+          createdAt: ts,
+          updatedAt: ts,
+          isArchived: false,
+          preview: "r2://bucket/key.jpg",
+        });
+
+        await ctx.db.insert("groupMembers", {
+          groupId: g,
+          userId: data.regularUserId,
+          role: "leader",
+          joinedAt: ts,
+          notificationsEnabled: true,
+        });
+      });
+
+      const result = await t.action(
+        // @ts-expect-error - test token auth
+        "functions/adminBroadcasts:previewTargeting" as any,
+        {
+          token: data.admin1Token,
+          communityId: data.communityId,
+          targetCriteria: { type: "leaders_no_group_image" },
+        }
+      );
+
+      expect(result.count).toBe(0);
+    });
   });
 
   describe("request approval flow", () => {
