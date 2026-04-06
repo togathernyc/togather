@@ -164,7 +164,7 @@ export const send = internalAction({
         message: args.message,
         channels: args.channels,
         recipientCount: 0,
-        status: "sent",
+        status: "failed",
         results: { pushSucceeded: 0, pushFailed: 0, smsSucceeded: 0, smsFailed: 0 },
       });
       return { success: true, recipientCount: 0 };
