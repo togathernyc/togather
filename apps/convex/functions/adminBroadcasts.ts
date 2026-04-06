@@ -7,11 +7,11 @@
  */
 
 import { v } from "convex/values";
-import { query, mutation, internalQuery, internalAction } from "../_generated/server";
+import { query, mutation, internalQuery, internalAction, internalMutation } from "../_generated/server";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { requireAuth } from "../lib/auth";
-import { requireCommunityAdmin, COMMUNITY_ADMIN_THRESHOLD } from "../lib/permissions";
+import { requireCommunityAdmin } from "../lib/permissions";
 import { now } from "../lib/utils";
 
 // ============================================================================
@@ -40,11 +40,14 @@ export const DEEP_LINK_PRESETS = [
  */
 export const list = query({
   args: {
-    token: v.optional(v.string()),
+    token: v.string(),
     communityId: v.id("communities"),
     statusFilter: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await requireCommunityAdmin(ctx, args.communityId, userId);
+
     let q = ctx.db
       .query("adminBroadcasts")
       .withIndex("by_community", (q) => q.eq("communityId", args.communityId));
@@ -85,11 +88,14 @@ export const list = query({
  */
 export const previewTargeting = query({
   args: {
-    token: v.optional(v.string()),
+    token: v.string(),
     communityId: v.id("communities"),
     targetCriteria: targetCriteriaValidator,
   },
   handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await requireCommunityAdmin(ctx, args.communityId, userId);
+
     const userIds = await resolveTargetUsers(ctx, args.communityId, args.targetCriteria);
     return { count: userIds.length };
   },
@@ -440,8 +446,6 @@ export const getUserEmails = internalQuery({
   },
 });
 
-import { internalMutation } from "../_generated/server";
-
 export const updateResults = internalMutation({
   args: {
     broadcastId: v.id("adminBroadcasts"),
@@ -514,7 +518,7 @@ async function resolveTargetUsers(
       const targetType = groupTypes.find((gt: any) => gt.slug === criteria.groupTypeSlug);
       if (!targetType) return [];
 
-      const typeGroups = groups.filter((g: any) => g.groupType === targetType._id);
+      const typeGroups = groups.filter((g: any) => g.groupTypeId === targetType._id);
       const typeGroupIds = new Set(typeGroups.map((g: any) => g._id.toString()));
 
       // Find users who are NOT in any group of this type

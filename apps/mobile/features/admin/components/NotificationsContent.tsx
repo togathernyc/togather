@@ -13,29 +13,32 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
+  Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@providers/AuthProvider";
-import { useQuery, api } from "@services/api/convex";
+import { useAuthenticatedQuery, useAuthenticatedMutation, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { useTheme } from "@hooks/useTheme";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { BroadcastComposer } from "./BroadcastComposer";
 import { BroadcastApprovalList } from "./BroadcastApprovalList";
 
-type View = "list" | "compose";
+type ViewMode = "list" | "compose";
 
 export function NotificationsContent() {
   const { community, user } = useAuth();
   const { colors } = useTheme();
-  const [currentView, setCurrentView] = useState<View>("list");
+  const [currentView, setCurrentView] = useState<ViewMode>("list");
 
   const communityId = community?.id as Id<"communities"> | undefined;
 
-  const broadcasts = useQuery(
+  const broadcasts = useAuthenticatedQuery(
     api.functions.adminBroadcasts.list,
     communityId ? { communityId } : "skip"
   );
+
+  const sendMutation = useAuthenticatedMutation(api.functions.adminBroadcasts.sendBroadcast);
 
   const pendingCount = broadcasts?.filter((b) => b.status === "pending_approval").length || 0;
 
@@ -128,6 +131,37 @@ export function NotificationsContent() {
                 </Text>
               )}
             </View>
+
+            {broadcast.status === "approved" && (
+              <TouchableOpacity
+                style={[styles.sendButton, { backgroundColor: DEFAULT_PRIMARY_COLOR }]}
+                onPress={() => {
+                  Alert.alert(
+                    "Send Broadcast",
+                    `Send "${broadcast.title}" to ${broadcast.targetUserCount} users?`,
+                    [
+                      { text: "Cancel", style: "cancel" },
+                      {
+                        text: "Send Now",
+                        onPress: async () => {
+                          try {
+                            await sendMutation({
+                              broadcastId: broadcast._id as Id<"adminBroadcasts">,
+                            });
+                            Alert.alert("Sent", "Broadcast is being delivered.");
+                          } catch (error: any) {
+                            Alert.alert("Error", error.message || "Failed to send.");
+                          }
+                        },
+                      },
+                    ]
+                  );
+                }}
+              >
+                <Ionicons name="send" size={16} color="#fff" />
+                <Text style={styles.sendButtonText}>Send Now</Text>
+              </TouchableOpacity>
+            )}
           </View>
         ))
       )}
@@ -251,5 +285,19 @@ const styles = StyleSheet.create({
   },
   metaText: {
     fontSize: 12,
+  },
+  sendButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    borderRadius: 10,
+    paddingVertical: 10,
+    marginTop: 10,
+  },
+  sendButtonText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "600",
   },
 });
