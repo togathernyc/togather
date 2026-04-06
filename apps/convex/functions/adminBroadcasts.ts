@@ -1,7 +1,6 @@
 /**
- * Admin Broadcast functions
+ * Admin Broadcast functions — targeted notifications with 2-party approval
  *
- * Targeted notifications with 2-party approval for community admins.
  * Supports targeting by criteria (no profile pic, new users, etc.),
  * multiple channels (push/email/SMS), and deep linking.
  */
