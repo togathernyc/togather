@@ -279,7 +279,7 @@ describe("Event Blasts", () => {
       const blasts = await t.query(
         // @ts-expect-error - test token auth
         "functions/eventBlasts:list" as any,
-        { meetingId: data.meetingId }
+        { token: data.leaderToken, meetingId: data.meetingId }
       );
 
       expect(blasts).toHaveLength(1);
