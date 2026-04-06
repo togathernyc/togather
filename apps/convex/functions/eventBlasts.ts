@@ -1,8 +1,8 @@
 /**
  * Event Blast functions
  *
- * Allows leaders to send message blasts (SMS/push) to attendees
- * who RSVPed to an event. Records are kept for history.
+ * Allows leaders to send message blasts (SMS/push) to attendees who
+ * RSVPed "Going" to an event. Blasts are recorded for history.
  */
 
 import { v } from "convex/values";
@@ -22,10 +22,25 @@ import { now } from "../lib/utils";
  */
 export const list = query({
   args: {
-    token: v.optional(v.string()),
+    token: v.string(),
     meetingId: v.id("meetings"),
   },
   handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    // Verify the user is a leader of the meeting's group
+    const meeting = await ctx.db.get(args.meetingId);
+    if (!meeting) return [];
+
+    const membership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", meeting.groupId).eq("userId", userId),
+      )
+      .first();
+
+    if (!isActiveLeader(membership)) return [];
+
     const blasts = await ctx.db
       .query("eventBlasts")
       .withIndex("by_meeting", (q) => q.eq("meetingId", args.meetingId))
@@ -149,7 +164,7 @@ export const send = internalAction({
         message: args.message,
         channels: args.channels,
         recipientCount: 0,
-        status: "sent",
+        status: "failed",
         results: { pushSucceeded: 0, pushFailed: 0, smsSucceeded: 0, smsFailed: 0 },
       });
       return { success: true, recipientCount: 0 };
@@ -227,7 +242,13 @@ export const send = internalAction({
     const totalSucceeded = results.pushSucceeded + results.smsSucceeded;
     const totalFailed = results.pushFailed + results.smsFailed;
     const status =
-      totalFailed === 0 ? "sent" : totalSucceeded === 0 ? "failed" : "partial";
+      totalSucceeded === 0 && totalFailed === 0
+        ? "failed"
+        : totalFailed === 0
+          ? "sent"
+          : totalSucceeded === 0
+            ? "failed"
+            : "partial";
 
     await ctx.runMutation(internal.functions.eventBlasts.recordBlast, {
       meetingId: args.meetingId,
