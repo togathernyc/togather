@@ -319,10 +319,7 @@ export function BroadcastComposer({
         <Text style={[styles.channelLabel, { color: colors.text }]}>Email</Text>
         <Switch value={emailEnabled} onValueChange={setEmailEnabled} trackColor={{ false: colors.border, true: DEFAULT_PRIMARY_COLOR }} />
       </View>
-      <View style={[styles.channelRow, { backgroundColor: colors.surface }]}>
-        <Text style={[styles.channelLabel, { color: colors.text }]}>SMS</Text>
-        <Switch value={smsEnabled} onValueChange={setSmsEnabled} trackColor={{ false: colors.border, true: DEFAULT_PRIMARY_COLOR }} />
-      </View>
+      {/* SMS is only available for event blasts, not admin broadcasts */}
 
       {/* Deep Link */}
       <Text style={[styles.label, { color: colors.textSecondary, marginTop: 20 }]}>TAP ACTION</Text>

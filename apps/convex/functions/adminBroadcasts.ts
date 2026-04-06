@@ -397,12 +397,26 @@ export const sendToUsers = internalAction({
         internal.functions.adminBroadcasts.getUserPhones,
         { userIds: args.userIds }
       );
+
+      // Build SMS with context prefix and character limit
+      const community = await ctx.runQuery(internal.functions.adminBroadcasts.getCommunity, {
+        communityId: broadcast.communityId as Id<"communities">,
+      });
+      const communityName = community?.name || "Your community";
+      const smsPrefix = `${communityName} sent a new message:\n\n`;
+      const rawBody = `${broadcast.title}\n\n${broadcast.body}`;
+      const maxBodyLen = 1600 - smsPrefix.length;
+      const truncatedBody = rawBody.length > maxBodyLen
+        ? rawBody.slice(0, maxBodyLen - 1) + "…"
+        : rawBody;
+      const smsMessage = smsPrefix + truncatedBody;
+
       for (const { phone } of userPhones as Array<{ phone: string | null }>) {
         if (!phone) continue;
         try {
           await ctx.runAction(internal.functions.auth.phoneOtp.sendSMS, {
             phone,
-            message: `${broadcast.title}\n\n${broadcast.body}`,
+            message: smsMessage,
           });
           results.smsSucceeded++;
         } catch {
@@ -463,6 +477,11 @@ export const checkAdminAuth = internalQuery({
 export const getBroadcast = internalQuery({
   args: { broadcastId: v.id("adminBroadcasts") },
   handler: async (ctx, args) => ctx.db.get(args.broadcastId),
+});
+
+export const getCommunity = internalQuery({
+  args: { communityId: v.id("communities") },
+  handler: async (ctx, args) => ctx.db.get(args.communityId),
 });
 
 export const getUserPhones = internalQuery({

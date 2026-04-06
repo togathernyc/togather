@@ -553,7 +553,7 @@ export const sendSMS = internalAction({
         body: new URLSearchParams({
           To: normalizedPhone,
           From: fromNumber,
-          Body: args.message,
+          Body: args.message.slice(0, 1600),
         }),
       }
     );

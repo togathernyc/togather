@@ -137,6 +137,7 @@ export const getByShortId = query({
       hasAccess,
       accessPrompt,
       userRole,
+      rsvpNotifyLeaders: meeting.rsvpNotifyLeaders,
     };
   },
 });

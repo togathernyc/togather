@@ -5,6 +5,7 @@ import { useQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { useTheme } from "@hooks/useTheme";
 import { useAuth } from "@providers/AuthProvider";
+import { AppImage } from "@components/ui";
 
 interface EventBlastHistoryProps {
   meetingId: string;
@@ -43,6 +44,14 @@ export function EventBlastHistory({ meetingId }: EventBlastHistoryProps) {
           style={[styles.blastCard, { backgroundColor: colors.surface }]}
         >
           <View style={styles.blastHeader}>
+            <AppImage
+              source={blast.sentByPhoto}
+              style={styles.avatar}
+              placeholder={{
+                type: 'initials',
+                name: blast.sentByName,
+              }}
+            />
             <Text style={[styles.sentBy, { color: colors.textSecondary }]}>
               {blast.sentByName} &middot; {formatTimeAgo(blast.createdAt)}
             </Text>
@@ -95,9 +104,14 @@ const styles = StyleSheet.create({
   },
   blastHeader: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 8,
+    gap: 8,
+  },
+  avatar: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
   },
   sentBy: {
     fontSize: 12,
