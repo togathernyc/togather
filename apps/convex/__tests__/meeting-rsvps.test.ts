@@ -5,7 +5,7 @@
  */
 
 import { convexTest } from "convex-test";
-import { expect, test, describe } from "vitest";
+import { vi, expect, test, describe } from "vitest";
 import schema from "../schema";
 import { modules } from "../test.setup";
 import { api } from "../_generated/api";
@@ -23,6 +23,17 @@ const DEFAULT_RSVP_OPTIONS = [
   { id: 2, label: "Maybe", enabled: true },
   { id: 3, label: "Not Going", enabled: true },
 ];
+
+/**
+ * Drain scheduled functions so convex-test global state is clean.
+ */
+async function drainScheduledFunctions(t: ReturnType<typeof convexTest>) {
+  try {
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  } catch {
+    // Expected - notification actions may fail in test environment
+  }
+}
 
 async function seedCommunityWithGroup(t: ReturnType<typeof convexTest>) {
   const communityId = await t.run(async (ctx) => {
@@ -149,6 +160,7 @@ describe("meetingRsvps.submit", () => {
       meetingId,
       optionId: 1,
     });
+    await drainScheduledFunctions(t);
 
     expect(result.success).toBe(true);
     expect(result.optionId).toBe(1);
@@ -165,6 +177,7 @@ describe("meetingRsvps.submit", () => {
       meetingId,
       optionId: 1,
     });
+    await drainScheduledFunctions(t);
 
     const result = await t.mutation(api.functions.meetingRsvps.submit, {
       token: accessToken,
@@ -332,6 +345,7 @@ describe("meetingRsvps.submit", () => {
       meetingId,
       optionId: 1,
     });
+    await drainScheduledFunctions(t);
 
     expect(result.success).toBe(true);
   });
@@ -353,6 +367,7 @@ describe("meetingRsvps.remove", () => {
       meetingId,
       optionId: 1,
     });
+    await drainScheduledFunctions(t);
 
     const result = await t.mutation(api.functions.meetingRsvps.remove, {
       token: accessToken,
@@ -400,6 +415,7 @@ describe("meetingRsvps.myRsvp", () => {
       meetingId,
       optionId: 2,
     });
+    await drainScheduledFunctions(t);
 
     const result = await t.query(api.functions.meetingRsvps.myRsvp, {
       token: accessToken,
@@ -439,6 +455,7 @@ describe("meetingRsvps.getCounts", () => {
     await t.mutation(api.functions.meetingRsvps.submit, { token: token1, meetingId, optionId: 1 });
     await t.mutation(api.functions.meetingRsvps.submit, { token: token2, meetingId, optionId: 1 });
     await t.mutation(api.functions.meetingRsvps.submit, { token: token3, meetingId, optionId: 2 });
+    await drainScheduledFunctions(t);
 
     const result = await t.query(api.functions.meetingRsvps.getCounts, { meetingId });
 
@@ -475,6 +492,7 @@ describe("meetingRsvps.list", () => {
       meetingId,
       optionId: 1,
     });
+    await drainScheduledFunctions(t);
 
     const result = await t.query(api.functions.meetingRsvps.list, { meetingId });
 
@@ -493,6 +511,7 @@ describe("meetingRsvps.list", () => {
       meetingId,
       optionId: 1,
     });
+    await drainScheduledFunctions(t);
 
     const result = await t.query(api.functions.meetingRsvps.list, {
       token: accessToken,
@@ -517,6 +536,7 @@ describe("meetingRsvps.list", () => {
       meetingId,
       optionId: 1,
     });
+    await drainScheduledFunctions(t);
 
     const result = await t.query(api.functions.meetingRsvps.list, {
       token: viewerToken,

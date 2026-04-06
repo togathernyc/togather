@@ -13,7 +13,15 @@
  */
 
 import { convexTest } from "convex-test";
-import { expect, test, describe, beforeEach } from "vitest";
+import { vi, expect, test, describe, beforeEach } from "vitest";
+
+async function drainScheduledFunctions(t: ReturnType<typeof convexTest>) {
+  try {
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  } catch {
+    // Expected - notification actions may fail in test environment
+  }
+}
 import schema from "../schema";
 import { api } from "../_generated/api";
 import { modules } from "../test.setup";
@@ -260,7 +268,7 @@ describe("RSVP Permission Tests", () => {
         meetingId,
         optionId: 1,
       });
-
+      await drainScheduledFunctions(t);
       expect(result).toEqual({
         success: true,
         optionId: 1,
@@ -322,7 +330,7 @@ describe("RSVP Permission Tests", () => {
         meetingId,
         optionId: 1,
       });
-
+      await drainScheduledFunctions(t);
       expect(result).toEqual({
         success: true,
         optionId: 1,
@@ -345,7 +353,7 @@ describe("RSVP Permission Tests", () => {
         meetingId,
         optionId: 1,
       });
-
+      await drainScheduledFunctions(t);
       expect(result).toEqual({
         success: true,
         optionId: 1,
@@ -522,7 +530,7 @@ describe("RSVP List Visibility Tests", () => {
         meetingId,
         optionId: 1,
       });
-
+      await drainScheduledFunctions(t);
       // No token = unauthenticated
       const result = await t.query(api.functions.meetingRsvps.list, {
         meetingId,
@@ -553,7 +561,7 @@ describe("RSVP List Visibility Tests", () => {
         meetingId,
         optionId: 1,
       });
-
+      await drainScheduledFunctions(t);
       // Member (who has NOT RSVPed) views the list
       const result = await t.query(api.functions.meetingRsvps.list, {
         meetingId,
@@ -580,13 +588,13 @@ describe("RSVP List Visibility Tests", () => {
         meetingId,
         optionId: 1,
       });
-
+      await drainScheduledFunctions(t);
       await t.mutation(api.functions.meetingRsvps.submit, {
         token: setup.memberToken,
         meetingId,
         optionId: 1,
       });
-
+      await drainScheduledFunctions(t);
       // Member (who HAS RSVPed) views the list
       const result = await t.query(api.functions.meetingRsvps.list, {
         meetingId,
