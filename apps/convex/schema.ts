@@ -659,6 +659,25 @@ export default defineSchema({
     .index("by_meeting_user", ["meetingId", "userId"]),
 
   // =============================================================================
+  // EVENT BLASTS (message blasts to RSVPed attendees)
+  // =============================================================================
+
+  eventBlasts: defineTable({
+    meetingId: v.id("meetings"),
+    groupId: v.id("groups"),
+    communityId: v.id("communities"),
+    sentById: v.id("users"),
+    message: v.string(),
+    channels: v.array(v.string()), // ["sms", "push"]
+    recipientCount: v.number(),
+    status: v.string(), // "sent" | "failed" | "partial"
+    results: v.optional(v.any()), // { smsSucceeded, smsFailed, pushSucceeded, pushFailed }
+    createdAt: v.number(),
+  })
+    .index("by_meeting", ["meetingId"])
+    .index("by_group", ["groupId"]),
+
+  // =============================================================================
   // MEETING ATTENDANCE
   // =============================================================================
 

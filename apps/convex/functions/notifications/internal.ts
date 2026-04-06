@@ -227,8 +227,8 @@ export const getGroupMemberInfo = internalQuery({
 });
 
 /**
- * Get meeting info for RSVP notifications
- * Used by notifyRsvpReceived sender action
+ * Get meeting info for notification actions
+ * Used by notifyRsvpReceived, event blasts, etc.
  */
 export const getMeetingInfo = internalQuery({
   args: {

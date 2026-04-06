@@ -68,6 +68,10 @@ jest.mock("@services/api/convex", () => ({
         myRsvp: "api.functions.meetingRsvps.myRsvp",
         submit: "api.functions.meetingRsvps.submit",
       },
+      eventBlasts: {
+        list: "api.functions.eventBlasts.list",
+        initiate: "api.functions.eventBlasts.initiate",
+      },
     },
   },
   useQuery: (...args: any[]) => mockUseQuery(...args),
