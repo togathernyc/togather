@@ -413,6 +413,16 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
         }
         break;
       }
+      case 'admin_broadcast': {
+        // Navigate to the deep link specified in the broadcast, or admin tab
+        const deepLinkUrl = data.url as string;
+        if (deepLinkUrl) {
+          router.push(deepLinkUrl as any);
+        } else {
+          router.push('/(tabs)/admin' as any);
+        }
+        break;
+      }
       default:
         // Default: do nothing or navigate to home
         console.log('Unknown notification type:', type);

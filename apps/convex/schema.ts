@@ -656,6 +656,40 @@ export default defineSchema({
     .index("by_meeting_user", ["meetingId", "userId"]),
 
   // =============================================================================
+  // ADMIN BROADCASTS (targeted notifications with 2-party approval)
+  // =============================================================================
+
+  adminBroadcasts: defineTable({
+    communityId: v.id("communities"),
+    createdById: v.id("users"),
+    approvedById: v.optional(v.id("users")),
+
+    // Targeting
+    targetCriteria: v.object({
+      type: v.string(), // "no_group_of_type", "leaders_no_group_image", "no_profile_pic", "new_users", "all_users"
+      groupTypeSlug: v.optional(v.string()),
+      daysThreshold: v.optional(v.number()),
+    }),
+    targetUserCount: v.number(),
+
+    // Content
+    title: v.string(),
+    body: v.string(),
+    channels: v.array(v.string()), // ["push", "email", "sms"]
+    deepLink: v.optional(v.string()),
+
+    // Status
+    status: v.string(), // "draft" | "pending_approval" | "approved" | "sent" | "rejected"
+    sentAt: v.optional(v.number()),
+    results: v.optional(v.any()),
+
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_community", ["communityId"])
+    .index("by_community_status", ["communityId", "status"]),
+
+  // =============================================================================
   // MEETING ATTENDANCE
   // =============================================================================
 
