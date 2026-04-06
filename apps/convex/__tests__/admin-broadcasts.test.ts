@@ -378,6 +378,7 @@ describe("Admin Broadcasts", () => {
         // @ts-expect-error - test token auth
         "functions/adminBroadcasts:previewTargeting" as any,
         {
+          token: data.admin1Token,
           communityId: data.communityId,
           targetCriteria: { type: "no_profile_pic" },
         }
@@ -395,6 +396,7 @@ describe("Admin Broadcasts", () => {
         // @ts-expect-error - test token auth
         "functions/adminBroadcasts:previewTargeting" as any,
         {
+          token: data.admin1Token,
           communityId: data.communityId,
           targetCriteria: { type: "all_users" },
         }

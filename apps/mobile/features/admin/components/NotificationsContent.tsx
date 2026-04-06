@@ -37,6 +37,8 @@ export function NotificationsContent() {
     communityId ? { communityId } : "skip"
   );
 
+  const sendMutation = useAuthenticatedMutation(api.functions.adminBroadcasts.sendBroadcast);
+
   const pendingCount = broadcasts?.filter((b) => b.status === "pending_approval").length || 0;
 
   if (!communityId) {
@@ -128,6 +130,37 @@ export function NotificationsContent() {
                 </Text>
               )}
             </View>
+
+            {broadcast.status === "approved" && (
+              <TouchableOpacity
+                style={[styles.sendButton, { backgroundColor: DEFAULT_PRIMARY_COLOR }]}
+                onPress={() => {
+                  Alert.alert(
+                    "Send Broadcast",
+                    `Send "${broadcast.title}" to ${broadcast.targetUserCount} users?`,
+                    [
+                      { text: "Cancel", style: "cancel" },
+                      {
+                        text: "Send Now",
+                        onPress: async () => {
+                          try {
+                            await sendMutation({
+                              broadcastId: broadcast._id as Id<"adminBroadcasts">,
+                            });
+                            Alert.alert("Sent", "Broadcast is being delivered.");
+                          } catch (error: any) {
+                            Alert.alert("Error", error.message || "Failed to send.");
+                          }
+                        },
+                      },
+                    ]
+                  );
+                }}
+              >
+                <Ionicons name="send" size={16} color="#fff" />
+                <Text style={styles.sendButtonText}>Send Now</Text>
+              </TouchableOpacity>
+            )}
           </View>
         ))
       )}
@@ -251,5 +284,19 @@ const styles = StyleSheet.create({
   },
   metaText: {
     fontSize: 12,
+  },
+  sendButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    borderRadius: 10,
+    paddingVertical: 10,
+    marginTop: 10,
+  },
+  sendButtonText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "600",
   },
 });

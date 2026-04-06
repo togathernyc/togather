@@ -12,6 +12,7 @@ import { api } from "../_generated/api";
 import { generateTokens } from "../lib/auth";
 import type { Id } from "../_generated/dataModel";
 
+// Drain scheduled functions after submit calls to avoid convex-test open transaction errors
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
 
 // ============================================================================
@@ -526,3 +527,4 @@ describe("meetingRsvps.list", () => {
     expect(result.limitedAccess).toBe(true);
   });
 });
+
