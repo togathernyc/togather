@@ -7,7 +7,7 @@
  * Run with: cd apps/convex && pnpm test __tests__/event-blasts.test.ts
  */
 
-import { vi, expect, test, describe, beforeEach, afterEach } from "vitest";
+import { vi, expect, test, describe } from "vitest";
 
 vi.mock("jose", () => ({
   jwtVerify: vi.fn(async (token: string) => {
@@ -34,9 +34,6 @@ import type { Id } from "../_generated/dataModel";
 import { modules } from "../test.setup";
 
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
-
-beforeEach(() => { vi.useFakeTimers(); });
-afterEach(() => { vi.useRealTimers(); });
 
 // ============================================================================
 // Helpers
