@@ -22,6 +22,17 @@ import { generateTokens } from "../lib/auth";
 
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
 
+/**
+ * Drain scheduled functions so convex-test global state is clean.
+ */
+async function drainScheduledFunctions(t: ReturnType<typeof convexTest>) {
+  try {
+    await t.finishInProgressScheduledFunctions();
+  } catch {
+    // Expected - notification actions may fail in test environment
+  }
+}
+
 // ============================================================================
 // Test Helper Functions
 // ============================================================================
@@ -260,6 +271,7 @@ describe("RSVP Permission Tests", () => {
         meetingId,
         optionId: 1,
       });
+      await drainScheduledFunctions(t);
 
       expect(result).toEqual({
         success: true,
@@ -322,6 +334,7 @@ describe("RSVP Permission Tests", () => {
         meetingId,
         optionId: 1,
       });
+      await drainScheduledFunctions(t);
 
       expect(result).toEqual({
         success: true,
@@ -345,6 +358,7 @@ describe("RSVP Permission Tests", () => {
         meetingId,
         optionId: 1,
       });
+      await drainScheduledFunctions(t);
 
       expect(result).toEqual({
         success: true,
@@ -522,6 +536,7 @@ describe("RSVP List Visibility Tests", () => {
         meetingId,
         optionId: 1,
       });
+      await drainScheduledFunctions(t);
 
       // No token = unauthenticated
       const result = await t.query(api.functions.meetingRsvps.list, {
@@ -553,6 +568,7 @@ describe("RSVP List Visibility Tests", () => {
         meetingId,
         optionId: 1,
       });
+      await drainScheduledFunctions(t);
 
       // Member (who has NOT RSVPed) views the list
       const result = await t.query(api.functions.meetingRsvps.list, {
@@ -580,12 +596,14 @@ describe("RSVP List Visibility Tests", () => {
         meetingId,
         optionId: 1,
       });
+      await drainScheduledFunctions(t);
 
       await t.mutation(api.functions.meetingRsvps.submit, {
         token: setup.memberToken,
         meetingId,
         optionId: 1,
       });
+      await drainScheduledFunctions(t);
 
       // Member (who HAS RSVPed) views the list
       const result = await t.query(api.functions.meetingRsvps.list, {
