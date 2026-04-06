@@ -611,6 +611,9 @@ export default defineSchema({
     // Event series link
     seriesId: v.optional(v.id("eventSeries")),
 
+    // RSVP leader notification toggle (defaults to true)
+    rsvpNotifyLeaders: v.optional(v.boolean()),
+
     // Search support (denormalized)
     communityId: v.optional(v.id("communities")), // Denormalized from group for search filtering
     searchText: v.optional(v.string()), // Denormalized: title + location + group name

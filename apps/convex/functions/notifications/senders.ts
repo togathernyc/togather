@@ -368,6 +368,134 @@ export const notifyGroupCreationApproved = internalAction({
 });
 
 // ============================================================================
+// Notification Action for RSVP Leader Notifications
+// ============================================================================
+
+/**
+ * Notify group leaders when someone RSVPs to an event
+ * Called from meetingRsvps.submit mutation (only for new RSVPs, not updates)
+ */
+export const notifyRsvpReceived = internalAction({
+  args: {
+    meetingId: v.id("meetings"),
+    userId: v.id("users"),
+    rsvpOptionLabel: v.string(),
+  },
+  handler: async (ctx, args): Promise<{ success: boolean; error?: string; sent?: number }> => {
+    try {
+      // Get meeting info
+      const meeting: { title?: string; groupId: Id<"groups">; shortId?: string; rsvpNotifyLeaders?: boolean } | null = await ctx.runQuery(internal.functions.notifications.internal.getMeetingInfo, {
+        meetingId: args.meetingId,
+      });
+      if (!meeting) {
+        console.log("[NotifyRsvpReceived] Meeting not found, skipping notification");
+        return { success: false, error: "Meeting not found" };
+      }
+
+      // Check if leader notifications are enabled (defaults to true)
+      if (meeting.rsvpNotifyLeaders === false) {
+        console.log("[NotifyRsvpReceived] RSVP leader notifications disabled for this event");
+        return { success: true, sent: 0 };
+      }
+
+      // Get group info
+      const groupInfo: NotificationGroupInfo | null = await ctx.runQuery(internal.functions.notifications.internal.getGroupInfo, {
+        groupId: meeting.groupId,
+      });
+      if (!groupInfo) {
+        console.log("[NotifyRsvpReceived] Group not found, skipping notification");
+        return { success: false, error: "Group not found" };
+      }
+
+      // Get RSVPer name
+      const rsvperName: string = await ctx.runQuery(internal.functions.notifications.internal.getUserDisplayName, {
+        userId: args.userId,
+      });
+
+      // Get leader user IDs (excluding the RSVPing user if they're a leader)
+      const leaderIds: Id<"users">[] = await ctx.runQuery(internal.functions.notifications.internal.getGroupMembersForNotification, {
+        groupId: meeting.groupId,
+        filter: "leaders",
+      });
+
+      // Exclude the RSVPing user from recipients
+      const recipientIds = leaderIds.filter((id) => id !== args.userId);
+
+      if (recipientIds.length === 0) {
+        console.log("[NotifyRsvpReceived] No leader recipients found");
+        return { success: true, sent: 0 };
+      }
+
+      // Get push tokens for all leaders
+      const tokenResults: Array<{ userId: string; tokens: string[] }> = await ctx.runQuery(internal.functions.notifications.tokens.getActiveTokensForUsers, {
+        userIds: recipientIds,
+      });
+
+      const meetingTitle = meeting.title || "Event";
+      const title = "New RSVP";
+      const body = `${rsvperName} is ${args.rsvpOptionLabel.toLowerCase()} to ${meetingTitle}`;
+
+      // Build notifications
+      const notificationImageUrl = getSenderNotificationImage(groupInfo);
+      const notifications = tokenResults.flatMap((result: { userId: string; tokens: string[] }) =>
+        result.tokens.map((token: string) => ({
+          token,
+          title,
+          body,
+          data: {
+            type: "event_rsvp_received",
+            groupId: meeting.groupId,
+            communityId: groupInfo.communityId,
+            shortId: meeting.shortId,
+            url: meeting.shortId ? `/e/${meeting.shortId}?source=app` : undefined,
+            groupAvatarUrl: notificationImageUrl,
+          },
+          imageUrl: notificationImageUrl,
+        }))
+      );
+
+      if (notifications.length === 0) {
+        console.log("[NotifyRsvpReceived] No push tokens found for leaders");
+        return { success: true, sent: 0 };
+      }
+
+      // Send batch push notifications
+      const result = await ctx.runAction(internal.functions.notifications.internal.sendBatchPushNotifications, {
+        notifications,
+      });
+
+      // Create notification records for all leaders
+      const notificationRecords = recipientIds.map((leaderId) => ({
+        userId: leaderId,
+        communityId: groupInfo.communityId as Id<"communities">,
+        groupId: meeting.groupId,
+        notificationType: "event_rsvp_received",
+        title,
+        body,
+        data: {
+          groupId: meeting.groupId,
+          communityId: groupInfo.communityId,
+          shortId: meeting.shortId,
+          url: meeting.shortId ? `/e/${meeting.shortId}?source=app` : undefined,
+          groupAvatarUrl: notificationImageUrl,
+        },
+        status: result.success ? "sent" : "failed",
+      }));
+
+      await ctx.runMutation(internal.functions.notifications.mutations.createNotificationsBatch, {
+        notifications: notificationRecords,
+      });
+
+      console.log(`[NotifyRsvpReceived] Sent ${notifications.length} notifications for ${meetingTitle}`);
+      return { success: result.success, sent: notifications.length };
+    } catch (error) {
+      console.error("[NotifyRsvpReceived] Error:", error);
+      return { success: false, error: String(error) };
+    }
+  },
+});
+
+// ============================================================================
 // Notification Action for Leader Promotion
 // ============================================================================
 

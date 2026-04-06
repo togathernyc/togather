@@ -227,6 +227,27 @@ export const getGroupMemberInfo = internalQuery({
 });
 
 /**
+ * Get meeting info for RSVP notifications
+ * Used by notifyRsvpReceived sender action
+ */
+export const getMeetingInfo = internalQuery({
+  args: {
+    meetingId: v.id("meetings"),
+  },
+  handler: async (ctx, args) => {
+    const meeting = await ctx.db.get(args.meetingId);
+    if (!meeting) return null;
+
+    return {
+      title: meeting.title,
+      groupId: meeting.groupId,
+      shortId: meeting.shortId,
+      rsvpNotifyLeaders: meeting.rsvpNotifyLeaders,
+    };
+  },
+});
+
+/**
  * Get a chat channel for test notifications
  * Used by the dev notification tester
  */
