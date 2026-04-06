@@ -658,22 +658,24 @@ export const getLeaderIdsWithoutGroupImage = internalQuery({
       .collect();
 
     // Map userId → first groupId they lead that has no image
-    const leaderToGroup = new Map<string, string>();
+    const seen = new Set<Id<"users">>();
+    const results: Array<{ userId: Id<"users">; groupId: Id<"groups"> }> = [];
     for (const group of groups) {
-      if (group.preview) continue;
+      if (group.preview && group.preview.trim() !== "") continue;
       const members = await ctx.db
         .query("groupMembers")
         .withIndex("by_group", (q) => q.eq("groupId", group._id))
         .filter((q) => q.eq(q.field("leftAt"), undefined))
         .collect();
       for (const m of members) {
-        if (m.role === "leader" && !leaderToGroup.has(m.userId.toString())) {
-          leaderToGroup.set(m.userId.toString(), group._id.toString());
+        if (m.role === "leader" && !seen.has(m.userId)) {
+          seen.add(m.userId);
+          results.push({ userId: m.userId, groupId: group._id });
         }
       }
     }
 
-    return [...leaderToGroup.entries()].map(([userId, groupId]) => ({ userId, groupId }));
+    return results;
   },
 });
 
@@ -759,23 +761,18 @@ async function resolveTargetUsersAction(
     }
 
     case "leaders_no_group_image": {
-      const leaderGroups: Array<{ userId: string; groupId: string }> = await ctx.runQuery(
-        internal.functions.adminBroadcasts.getLeaderIdsWithoutGroupImage,
-        { communityId }
-      );
-      const leaderMap = new Map<string, string>();
-      for (const { userId, groupId } of leaderGroups) {
-        leaderMap.set(userId, groupId);
-      }
+      const leaderGroups: Array<{ userId: Id<"users">; groupId: Id<"groups"> }> =
+        await ctx.runQuery(internal.functions.adminBroadcasts.getLeaderIdsWithoutGroupImage, {
+          communityId,
+        });
+      // Use leader list directly — don't filter through allUserIds
+      // since leaders ARE community members by virtue of being in groups
       const perUserDeepLinks = new Map<string, string>();
-      const targetUserIds = allUserIds.filter((id) => {
-        if (leaderMap.has(id.toString())) {
-          const groupId = leaderMap.get(id.toString())!;
-          perUserDeepLinks.set(id.toString(), `/groups/${groupId}/edit`);
-          return true;
-        }
-        return false;
-      });
+      const targetUserIds: Id<"users">[] = [];
+      for (const { userId, groupId } of leaderGroups) {
+        targetUserIds.push(userId);
+        perUserDeepLinks.set(userId, `/groups/${groupId}/edit`);
+      }
       return { userIds: targetUserIds, perUserDeepLinks };
     }
 
