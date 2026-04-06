@@ -1,8 +1,9 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Avatar, Card } from '@components/ui';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@hooks/useTheme';
+import { useRouter } from 'expo-router';
 import { Profile } from '../types';
 
 interface ProfileHeaderProps {
@@ -11,12 +12,17 @@ interface ProfileHeaderProps {
 
 export function ProfileHeader({ user }: ProfileHeaderProps) {
   const { colors } = useTheme();
+  const router = useRouter();
   // Filter associated emails to remove the current email
   const linkedEmails = user?.associated_emails?.filter(
     (email) => email !== user?.email
   ) || [];
 
   return (
+    <TouchableOpacity
+      activeOpacity={0.7}
+      onPress={() => router.push('/(user)/edit-profile')}
+    >
     <Card style={styles.profileCard}>
       <View style={styles.profileHeader}>
         <Avatar
@@ -39,6 +45,7 @@ export function ProfileHeader({ user }: ProfileHeaderProps) {
             </View>
           )}
         </View>
+        <Ionicons name="create-outline" size={20} color={colors.iconSecondary} />
       </View>
 
       {/* Previously Linked Emails Section */}
@@ -56,6 +63,7 @@ export function ProfileHeader({ user }: ProfileHeaderProps) {
         </View>
       )}
     </Card>
+    </TouchableOpacity>
   );
 }
 

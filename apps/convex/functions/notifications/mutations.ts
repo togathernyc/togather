@@ -109,6 +109,7 @@ export const createNotification = internalMutation({
     body: v.string(),
     data: v.optional(v.any()),
     status: v.string(),
+    trackingId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const timestamp = now();
@@ -125,6 +126,7 @@ export const createNotification = internalMutation({
       isRead: false,
       createdAt: timestamp,
       sentAt: args.status === "sent" ? timestamp : undefined,
+      trackingId: args.trackingId,
     });
   },
 });
@@ -146,6 +148,7 @@ export const createNotificationsBatch = internalMutation({
         body: v.string(),
         data: v.optional(v.any()),
         status: v.string(),
+        trackingId: v.optional(v.string()),
       })
     ),
   },
@@ -166,10 +169,47 @@ export const createNotificationsBatch = internalMutation({
         isRead: false,
         createdAt: timestamp,
         sentAt: notification.status === "sent" ? timestamp : undefined,
+        trackingId: notification.trackingId,
       });
       insertedIds.push(id);
     }
 
     return insertedIds;
+  },
+});
+
+/**
+ * Record that a notification was displayed on the user's device
+ */
+export const recordImpression = mutation({
+  args: { token: v.string(), trackingId: v.string() },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const notification = await ctx.db
+      .query("notifications")
+      .withIndex("by_trackingId", (q) => q.eq("trackingId", args.trackingId))
+      .first();
+    if (!notification || notification.userId !== userId) return;
+    if (!notification.impressedAt) {
+      await ctx.db.patch(notification._id, { impressedAt: now() });
+    }
+  },
+});
+
+/**
+ * Record that a user tapped on a notification
+ */
+export const recordClick = mutation({
+  args: { token: v.string(), trackingId: v.string() },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const notification = await ctx.db
+      .query("notifications")
+      .withIndex("by_trackingId", (q) => q.eq("trackingId", args.trackingId))
+      .first();
+    if (!notification || notification.userId !== userId) return;
+    const updates: Record<string, number> = { clickedAt: now() };
+    if (!notification.impressedAt) updates.impressedAt = now();
+    await ctx.db.patch(notification._id, updates);
   },
 });

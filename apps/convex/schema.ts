@@ -776,6 +776,11 @@ export default defineSchema({
     createdAt: v.number(), // Unix timestamp ms
     sentAt: v.optional(v.number()), // Unix timestamp ms
     errorMessage: v.optional(v.string()),
+
+    // Tracking fields for impression/click analytics
+    trackingId: v.optional(v.string()),
+    impressedAt: v.optional(v.number()), // Unix timestamp ms when displayed on device
+    clickedAt: v.optional(v.number()), // Unix timestamp ms when user tapped
   })
     .index("by_legacyId", ["legacyId"])
     .index("by_user", ["userId"])
@@ -784,7 +789,8 @@ export default defineSchema({
     .index("by_user_read_created", ["userId", "isRead", "createdAt"])
     .index("by_user_type", ["userId", "notificationType"])
     .index("by_type", ["notificationType"])
-    .index("by_createdAt", ["createdAt"]),
+    .index("by_createdAt", ["createdAt"])
+    .index("by_trackingId", ["trackingId"]),
 
   // =============================================================================
   // PUSH TOKENS

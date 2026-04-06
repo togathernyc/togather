@@ -33,24 +33,22 @@ const TARGET_OPTIONS = [
 const DEEP_LINK_PRESETS: Record<string, Array<{ value: string; label: string }>> = {
   default: [
     { value: "", label: "None" },
-    { value: "/profile/edit", label: "Edit Profile" },
-    { value: "/(tabs)/search?view=groups", label: "Browse Groups" },
-    { value: "/(tabs)/search?view=events", label: "Browse Events" },
+    { value: "/(user)/edit-profile", label: "Edit Profile" },
+    { value: "/(tabs)/search", label: "Browse Groups" },
   ],
   no_profile_pic: [
-    { value: "/profile/edit", label: "Edit Profile (recommended)" },
+    { value: "/(user)/edit-profile", label: "Edit Profile (recommended)" },
     { value: "", label: "None" },
-    { value: "/(tabs)/search?view=groups", label: "Browse Groups" },
+    { value: "/(tabs)/search", label: "Browse Groups" },
   ],
   no_group_of_type: [
-    { value: "/(tabs)/search?view=groups", label: "Browse Groups (recommended)" },
+    { value: "/(tabs)/search", label: "Browse Groups (recommended)" },
     { value: "", label: "None" },
-    { value: "/(tabs)/search?view=events", label: "Browse Events" },
   ],
   leaders_no_group_image: [
     { value: "per_user_group", label: "Open Their Group (auto-resolved)" },
     { value: "", label: "None" },
-    { value: "/(tabs)/search?view=groups", label: "Browse Groups" },
+    { value: "/(tabs)/search", label: "Browse Groups" },
   ],
 };
 

@@ -565,6 +565,13 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
         };
         setLastNotification(data);
 
+        // Record impression for analytics
+        const trackingId = (notification.request.content.data as Record<string, unknown>)?.trackingId as string | undefined;
+        if (trackingId) {
+          convexVanilla.mutation(api.functions.notifications.mutations.recordImpression, { trackingId })
+            .catch((err: unknown) => console.warn('Failed to record notification impression:', err));
+        }
+
         // Refresh unread count
         refreshUnreadCount();
       });
@@ -588,6 +595,13 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
 
         // Mark as handled before processing
         handledNotificationIds.current.add(notificationId);
+
+        // Record click for analytics
+        const trackingId = data?.trackingId as string | undefined;
+        if (trackingId) {
+          convexVanilla.mutation(api.functions.notifications.mutations.recordClick, { trackingId })
+            .catch((err: unknown) => console.warn('Failed to record notification click:', err));
+        }
 
         // Handle navigation based on notification type
         handleNotificationTapRef.current(data);

@@ -34,11 +34,13 @@ interface Broadcast {
 interface BroadcastApprovalListProps {
   communityId: Id<"communities">;
   broadcasts: Broadcast[];
+  onSelect?: (broadcast: Broadcast) => void;
 }
 
 export function BroadcastApprovalList({
   communityId,
   broadcasts,
+  onSelect,
 }: BroadcastApprovalListProps) {
   const { user } = useAuth();
   const { colors } = useTheme();
@@ -103,9 +105,11 @@ export function BroadcastApprovalList({
         const isCreator = broadcast.createdById === user?.id;
 
         return (
-          <View
+          <TouchableOpacity
             key={broadcast._id}
             style={[styles.card, { backgroundColor: colors.surface }]}
+            onPress={() => onSelect?.(broadcast)}
+            activeOpacity={0.7}
           >
             <Text style={[styles.title, { color: colors.text }]}>{broadcast.title}</Text>
             <Text style={[styles.body, { color: colors.textSecondary }]} numberOfLines={2}>
@@ -137,7 +141,7 @@ export function BroadcastApprovalList({
                 </TouchableOpacity>
               </View>
             )}
-          </View>
+          </TouchableOpacity>
         );
       })}
     </View>

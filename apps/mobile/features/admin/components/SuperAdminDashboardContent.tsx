@@ -14,6 +14,14 @@ import { useQuery, api } from "@services/api/convex";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
 
+/** Convert snake_case notification type to Title Case (e.g. "new_message" -> "New Message") */
+function formatNotificationType(type: string): string {
+  return type
+    .split("_")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
 function formatDate(dateStr: string): string {
   const date = new Date(dateStr + "T00:00:00");
   return date.toLocaleDateString("en-US", {
@@ -34,6 +42,11 @@ export function SuperAdminDashboardContent() {
 
   const data = useQuery(
     api.functions.admin.stats.getDailySummary,
+    token && isInternalUser ? { token, daysAgo } : "skip"
+  );
+
+  const notifStats = useQuery(
+    api.functions.admin.stats.getNotificationStats,
     token && isInternalUser ? { token, daysAgo } : "skip"
   );
 
@@ -211,6 +224,54 @@ export function SuperAdminDashboardContent() {
           )}
         </>
       )}
+
+      {/* Notification Stats */}
+      {notifStats && notifStats.totalSent > 0 && (
+        <>
+          <Text style={[styles.sectionTitle, { color: colors.text, marginTop: 8 }]}>
+            Notifications
+          </Text>
+          <View style={styles.metricsRow}>
+            <View style={[styles.metricCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <Text style={[styles.metricLabel, { color: colors.textSecondary }]}>Sent</Text>
+              <Text style={[styles.metricValue, { color: colors.text }]}>{notifStats.totalSent}</Text>
+            </View>
+            <View style={[styles.metricCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <Text style={[styles.metricLabel, { color: colors.textSecondary }]}>Impressed</Text>
+              <Text style={[styles.metricValue, { color: colors.text }]}>{notifStats.totalImpressed}</Text>
+            </View>
+            <View style={[styles.metricCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <Text style={[styles.metricLabel, { color: colors.textSecondary }]}>Clicked</Text>
+              <Text style={[styles.metricValue, { color: colors.text }]}>{notifStats.totalClicked}</Text>
+            </View>
+          </View>
+
+          {notifStats.byType.length > 0 && (
+            <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>By Type</Text>
+              {notifStats.byType.map((entry: { type: string; sent: number; impressed: number; clicked: number }, index: number) => (
+                <View
+                  key={entry.type}
+                  style={[
+                    styles.notifTypeRow,
+                    index < notifStats.byType.length - 1 && {
+                      borderBottomWidth: 1,
+                      borderBottomColor: colors.borderLight,
+                    },
+                  ]}
+                >
+                  <Text style={[styles.notifTypeName, { color: colors.text }]} numberOfLines={1}>
+                    {formatNotificationType(entry.type)}
+                  </Text>
+                  <Text style={[styles.notifTypeStats, { color: colors.textSecondary }]}>
+                    {entry.sent} sent · {entry.impressed} imp · {entry.clicked} click
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </>
+      )}
     </ScrollView>
   );
 }
@@ -341,5 +402,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: "center",
     paddingVertical: 20,
+  },
+  notifTypeRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 10,
+  },
+  notifTypeName: {
+    fontSize: 14,
+    fontWeight: "500",
+    flex: 1,
+    marginRight: 8,
+  },
+  notifTypeStats: {
+    fontSize: 12,
   },
 });

@@ -1346,3 +1346,70 @@ export const getDailySummary = query({
     };
   },
 });
+
+// ============================================================================
+// Notification Stats
+// ============================================================================
+
+/**
+ * Get notification impression and click statistics for a community on a given day
+ */
+export const getNotificationStats = query({
+  args: {
+    token: v.string(),
+    daysAgo: v.number(),
+  },
+  handler: async (ctx, args) => {
+    await requireAuth(ctx, args.token);
+
+    // Calculate day boundaries
+    const targetDate = new Date();
+    targetDate.setDate(targetDate.getDate() - args.daysAgo);
+    targetDate.setHours(0, 0, 0, 0);
+    const dayStart = targetDate.getTime();
+    const dayEnd = dayStart + DAY_MS;
+
+    // Get all notifications for this day
+    const notifications = await ctx.db
+      .query("notifications")
+      .withIndex("by_createdAt")
+      .filter((q) =>
+        q.and(
+          q.gte(q.field("createdAt"), dayStart),
+          q.lt(q.field("createdAt"), dayEnd)
+        )
+      )
+      .collect();
+
+    // Aggregate by type
+    const byType: Record<string, { sent: number; impressed: number; clicked: number }> = {};
+    let totalSent = 0;
+    let totalImpressed = 0;
+    let totalClicked = 0;
+
+    for (const n of notifications) {
+      const type = n.notificationType;
+      if (!byType[type]) byType[type] = { sent: 0, impressed: 0, clicked: 0 };
+      if (n.status === "sent") {
+        byType[type].sent++;
+        totalSent++;
+      }
+      if (n.impressedAt) {
+        byType[type].impressed++;
+        totalImpressed++;
+      }
+      if (n.clickedAt) {
+        byType[type].clicked++;
+        totalClicked++;
+      }
+    }
+
+    return {
+      totals: { sent: totalSent, impressed: totalImpressed, clicked: totalClicked },
+      byType: Object.entries(byType)
+        .map(([type, stats]) => ({ type, ...stats }))
+        .sort((a, b) => b.sent - a.sent),
+    };
+  },
+});
+
