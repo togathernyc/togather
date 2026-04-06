@@ -10,6 +10,7 @@
 
 import { v } from "convex/values";
 import { query, mutation } from "../_generated/server";
+import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { now, getMediaUrl } from "../lib/utils";
 import { requireAuth, getOptionalAuth } from "../lib/auth";
@@ -455,6 +456,13 @@ export const submit = mutation({
       rsvpOptionId: args.optionId,
       createdAt: timestamp,
       updatedAt: timestamp,
+    });
+
+    // Notify group leaders of the new RSVP
+    await ctx.scheduler.runAfter(0, internal.functions.notifications.senders.notifyRsvpReceived, {
+      meetingId: args.meetingId,
+      userId,
+      rsvpOptionLabel: selectedOption.label,
     });
 
     return {

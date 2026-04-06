@@ -385,6 +385,8 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
           await navigateToGroup(groupId);
         }
         break;
+      case 'event_rsvp_received':
+      case 'event_blast':
       case 'event_updated':
       case 'meeting_reminder': {
         // Navigate to event detail screen
@@ -410,6 +412,16 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
         const groupMemberId = (data.groupMemberId || nestedData?.groupMemberId) as string;
         if (groupId && groupMemberId) {
           router.push(`/followup/${groupId}/${groupMemberId}` as any);
+        }
+        break;
+      }
+      case 'admin_broadcast': {
+        // Navigate to the deep link specified in the broadcast, or admin tab
+        const deepLinkUrl = data.url as string;
+        if (deepLinkUrl) {
+          router.push(deepLinkUrl as any);
+        } else {
+          router.push('/(tabs)/admin' as any);
         }
         break;
       }

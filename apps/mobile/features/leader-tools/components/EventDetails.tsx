@@ -13,6 +13,7 @@ import {
   Share,
   Pressable,
   Modal,
+  Switch,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { format, toZonedTime } from "date-fns-tz";
@@ -32,6 +33,8 @@ import { DOMAIN_CONFIG } from "@togather/shared";
 import * as Clipboard from "expo-clipboard";
 import { DragHandle } from "@components/ui/DragHandle";
 import { useTheme } from "@hooks/useTheme";
+import { EventBlastSheet } from "./EventBlastSheet";
+import { EventBlastHistory } from "./EventBlastHistory";
 
 interface RsvpOption {
   id: number;
@@ -67,6 +70,7 @@ export function EventDetails({
   const [loadingOptionId, setLoadingOptionId] = useState<number | null>(null);
   const [showRsvpSheet, setShowRsvpSheet] = useState(false);
   const [isSubmittingRsvp, setIsSubmittingRsvp] = useState(false);
+  const [showBlastSheet, setShowBlastSheet] = useState(false);
 
   // Fetch meeting details if meetingId is available (using Convex)
   // NOTE: This must be called before any conditional returns (Rules of Hooks)
@@ -112,6 +116,9 @@ export function EventDetails({
 
   // Submit RSVP mutation (using Convex, auto-injects token)
   const submitRsvpMutation = useAuthenticatedMutation(api.functions.meetingRsvps.submit);
+
+  // Toggle RSVP leader notifications mutation
+  const toggleRsvpNotifyMutation = useAuthenticatedMutation(api.functions.meetings.index.toggleRsvpLeaderNotifications);
 
   // Wrapper for submitRsvp mutation
   const submitRsvp = {
@@ -184,6 +191,19 @@ export function EventDetails({
   const rsvpEnabled = meeting?.rsvpEnabled ?? false;
   const rsvpOptions = (meeting?.rsvpOptions as RsvpOption[] | null) || [];
   const isLoading = isLoadingMeeting;
+  const rsvpNotifyLeaders = (meeting as any)?.rsvpNotifyLeaders !== false; // defaults to true
+
+  // Handle RSVP notification toggle
+  const handleToggleRsvpNotify = async (enabled: boolean) => {
+    try {
+      await toggleRsvpNotifyMutation({
+        meetingId: meetingId as Id<"meetings">,
+        enabled,
+      });
+    } catch (error) {
+      console.error("Failed to toggle RSVP notifications:", error);
+    }
+  };
 
   // Handle RSVP selection
   const handleRsvpSelect = (optionId: number) => {
@@ -479,6 +499,25 @@ export function EventDetails({
               </View>
             )}
 
+            {/* Leader: RSVP Notification Toggle */}
+            {isLeader && rsvpEnabled && !isPastEvent && (
+              <View style={[styles.detailCard, { backgroundColor: colors.surface }]}>
+                <View style={styles.detailRow}>
+                  <Ionicons name="notifications-outline" size={20} color={colors.textSecondary} />
+                  <View style={[styles.detailContent, styles.toggleRow]}>
+                    <Text style={[styles.detailValue, { color: colors.text, flex: 1 }]}>
+                      Notify on new RSVPs
+                    </Text>
+                    <Switch
+                      value={rsvpNotifyLeaders}
+                      onValueChange={handleToggleRsvpNotify}
+                      trackColor={{ false: colors.border, true: DEFAULT_PRIMARY_COLOR }}
+                    />
+                  </View>
+                </View>
+              </View>
+            )}
+
             {/* Guest List Section */}
             {rsvpEnabled && !isPastEvent && meeting?.rsvpCounts && (
               <GuestListSection
@@ -572,6 +611,24 @@ export function EventDetails({
                   </Text>
                 )}
               </>
+            )}
+
+            {/* Leader: Message Attendees */}
+            {isLeader && rsvpEnabled && !isPastEvent && (
+              <TouchableOpacity
+                style={[styles.messageAttendeesButton, { backgroundColor: colors.surface }]}
+                onPress={() => setShowBlastSheet(true)}
+              >
+                <Ionicons name="megaphone-outline" size={20} color={DEFAULT_PRIMARY_COLOR} />
+                <Text style={[styles.messageAttendeesText, { color: DEFAULT_PRIMARY_COLOR }]}>
+                  Message Attendees
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {/* Leader: Blast History */}
+            {isLeader && meetingId && (
+              <EventBlastHistory meetingId={meetingId} />
             )}
 
             {/* Event Status */}
@@ -673,6 +730,17 @@ export function EventDetails({
           </View>
         </TouchableOpacity>
       </Modal>
+
+      {/* Event Blast Sheet */}
+      {isLeader && (
+        <EventBlastSheet
+          visible={showBlastSheet}
+          meetingId={meetingId}
+          eventTitle={displayTitle}
+          onClose={() => setShowBlastSheet(false)}
+          onSent={() => {}}
+        />
+      )}
 
     </View>
   );
@@ -826,6 +894,23 @@ const styles = StyleSheet.create({
   },
   linkText: {
     color: DEFAULT_PRIMARY_COLOR,
+    fontWeight: "600",
+  },
+  toggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  messageAttendeesButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    borderRadius: 12,
+    padding: 16,
+    marginTop: 16,
+  },
+  messageAttendeesText: {
+    fontSize: 16,
     fontWeight: "600",
   },
   // RSVP styles
