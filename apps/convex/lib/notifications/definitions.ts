@@ -513,8 +513,8 @@ export const eventRsvpReceived: NotificationDefinition<EventRsvpReceivedData> = 
   description: 'Sent to group leaders when someone RSVPs to an event',
   formatters: {
     push: (ctx) => ({
-      title: 'New RSVP',
-      body: `${ctx.data.rsvperName} is ${ctx.data.rsvpOptionLabel.toLowerCase()} to ${ctx.data.meetingTitle}`,
+      title: 'RSVP Update',
+      body: `${ctx.data.rsvperName} — ${ctx.data.rsvpOptionLabel} for ${ctx.data.meetingTitle}`,
       data: {
         type: 'event_rsvp_received',
         groupId: ctx.data.groupId,

@@ -4,7 +4,7 @@
  * Flow: Select target → Preview count → Write content → Test on self → Submit for approval
  */
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -17,7 +17,7 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useAuthenticatedQuery, useAuthenticatedMutation, api } from "@services/api/convex";
+import { useAuthenticatedQuery, useAuthenticatedMutation, useAuthenticatedAction, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { useTheme } from "@hooks/useTheme";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
@@ -30,12 +30,29 @@ const TARGET_OPTIONS = [
   { value: "leaders_no_group_image", label: "Leaders Without Group Image" },
 ];
 
-const DEEP_LINK_PRESETS = [
-  { value: "", label: "None" },
-  { value: "/profile/edit", label: "Edit Profile" },
-  { value: "/(tabs)/search?view=groups", label: "Browse Groups" },
-  { value: "/(tabs)/search?view=events", label: "Browse Events" },
-];
+const DEEP_LINK_PRESETS: Record<string, Array<{ value: string; label: string }>> = {
+  default: [
+    { value: "", label: "None" },
+    { value: "/profile/edit", label: "Edit Profile" },
+    { value: "/(tabs)/search?view=groups", label: "Browse Groups" },
+    { value: "/(tabs)/search?view=events", label: "Browse Events" },
+  ],
+  no_profile_pic: [
+    { value: "/profile/edit", label: "Edit Profile (recommended)" },
+    { value: "", label: "None" },
+    { value: "/(tabs)/search?view=groups", label: "Browse Groups" },
+  ],
+  no_group_of_type: [
+    { value: "/(tabs)/search?view=groups", label: "Browse Groups (recommended)" },
+    { value: "", label: "None" },
+    { value: "/(tabs)/search?view=events", label: "Browse Events" },
+  ],
+  leaders_no_group_image: [
+    { value: "per_user_group", label: "Open Their Group (auto-resolved)" },
+    { value: "", label: "None" },
+    { value: "/(tabs)/search?view=groups", label: "Browse Groups" },
+  ],
+};
 
 interface BroadcastComposerProps {
   communityId: Id<"communities">;
@@ -60,6 +77,8 @@ export function BroadcastComposer({
   const [isCreating, setIsCreating] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [createdBroadcastId, setCreatedBroadcastId] = useState<string | null>(null);
+  const [previewCount, setPreviewCount] = useState<number | null>(null);
+  const [isLoadingPreview, setIsLoadingPreview] = useState(false);
 
   const targetCriteria = {
     type: targetType,
@@ -67,15 +86,48 @@ export function BroadcastComposer({
     ...(targetType === "new_users" ? { daysThreshold: 30 } : {}),
   };
 
-  // Preview targeting count
-  const preview = useAuthenticatedQuery(
-    api.functions.adminBroadcasts.previewTargeting,
-    { communityId, targetCriteria }
+  // Fetch group types for dropdown
+  const groupTypes = useAuthenticatedQuery(
+    api.functions.adminBroadcasts.listGroupTypes,
+    { communityId }
   );
+
+  // Preview targeting — action (not reactive query)
+  const previewTargetingAction = useAuthenticatedAction(api.functions.adminBroadcasts.previewTargeting);
 
   const createBroadcast = useAuthenticatedMutation(api.functions.adminBroadcasts.create);
   const sendTestToSelf = useAuthenticatedMutation(api.functions.adminBroadcasts.sendTestToSelf);
   const requestApproval = useAuthenticatedMutation(api.functions.adminBroadcasts.requestApproval);
+
+  // Refresh preview when criteria changes
+  useEffect(() => {
+    let cancelled = false;
+    setIsLoadingPreview(true);
+    setPreviewCount(null);
+
+    // Don't preview if no_group_of_type is selected but no slug chosen
+    if (targetType === "no_group_of_type" && !groupTypeSlug) {
+      setIsLoadingPreview(false);
+      setPreviewCount(0);
+      return;
+    }
+
+    previewTargetingAction({ communityId, targetCriteria })
+      .then((result) => {
+        if (!cancelled) {
+          setPreviewCount(result.count);
+          setIsLoadingPreview(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPreviewCount(null);
+          setIsLoadingPreview(false);
+        }
+      });
+
+    return () => { cancelled = true; };
+  }, [targetType, groupTypeSlug]);
 
   const channels = [
     ...(pushEnabled ? ["push"] : []),
@@ -106,7 +158,7 @@ export function BroadcastComposer({
       setCreatedBroadcastId(result.id);
       Alert.alert(
         "Broadcast Created",
-        `Will target ${result.targetUserCount} users. Send a test to yourself or submit for approval.`
+        "Target count is being calculated. Send a test to yourself or submit for approval."
       );
     } catch (error) {
       Alert.alert("Error", "Failed to create broadcast.");
@@ -136,7 +188,7 @@ export function BroadcastComposer({
     if (!createdBroadcastId) return;
     Alert.alert(
       "Submit for Approval",
-      `This will notify other admins. ${preview?.count || 0} users will be targeted.`,
+      `This will notify other admins. ${previewCount ?? "?"} users will be targeted.`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -182,7 +234,13 @@ export function BroadcastComposer({
             { backgroundColor: colors.surface, borderColor: targetType === opt.value ? DEFAULT_PRIMARY_COLOR : colors.border },
             targetType === opt.value && styles.optionRowSelected,
           ]}
-          onPress={() => setTargetType(opt.value)}
+          onPress={() => {
+            setTargetType(opt.value);
+            if (opt.value !== "no_group_of_type") setGroupTypeSlug("");
+            // Auto-select recommended deep link for this target
+            const presets = DEEP_LINK_PRESETS[opt.value] || DEEP_LINK_PRESETS.default;
+            setDeepLink(presets[0].value);
+          }}
         >
           <Text style={[styles.optionLabel, { color: colors.text }]}>{opt.label}</Text>
           {targetType === opt.value && (
@@ -191,21 +249,42 @@ export function BroadcastComposer({
         </TouchableOpacity>
       ))}
 
+      {/* Group type picker (dropdown style) */}
       {targetType === "no_group_of_type" && (
-        <TextInput
-          style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
-          placeholder="Group type slug (e.g. dinner-party)"
-          placeholderTextColor={colors.textSecondary}
-          value={groupTypeSlug}
-          onChangeText={setGroupTypeSlug}
-        />
+        <View style={styles.subOptions}>
+          <Text style={[styles.subLabel, { color: colors.textSecondary }]}>Select group type:</Text>
+          {groupTypes ? (
+            groupTypes.map((gt) => (
+              <TouchableOpacity
+                key={gt.slug}
+                style={[
+                  styles.optionRow,
+                  { backgroundColor: colors.surface, borderColor: groupTypeSlug === gt.slug ? DEFAULT_PRIMARY_COLOR : colors.border },
+                  groupTypeSlug === gt.slug && styles.optionRowSelected,
+                ]}
+                onPress={() => setGroupTypeSlug(gt.slug)}
+              >
+                <Text style={[styles.optionLabel, { color: colors.text }]}>{gt.name}</Text>
+                {groupTypeSlug === gt.slug && (
+                  <Ionicons name="checkmark-circle" size={20} color={DEFAULT_PRIMARY_COLOR} />
+                )}
+              </TouchableOpacity>
+            ))
+          ) : (
+            <ActivityIndicator size="small" color={colors.textSecondary} />
+          )}
+        </View>
       )}
 
       {/* Preview Count */}
       <View style={[styles.previewCard, { backgroundColor: colors.surface }]}>
         <Ionicons name="people-outline" size={20} color={colors.textSecondary} />
         <Text style={[styles.previewText, { color: colors.text }]}>
-          {preview === undefined ? "Loading..." : `${preview.count} users will receive this`}
+          {isLoadingPreview
+            ? "Calculating..."
+            : previewCount !== null
+              ? `${previewCount} users will receive this`
+              : "Select a target to preview"}
         </Text>
       </View>
 
@@ -247,7 +326,7 @@ export function BroadcastComposer({
 
       {/* Deep Link */}
       <Text style={[styles.label, { color: colors.textSecondary, marginTop: 20 }]}>TAP ACTION</Text>
-      {DEEP_LINK_PRESETS.map((preset) => (
+      {(DEEP_LINK_PRESETS[targetType] || DEEP_LINK_PRESETS.default).map((preset) => (
         <TouchableOpacity
           key={preset.value}
           style={[
@@ -331,6 +410,14 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     textTransform: "uppercase",
     marginBottom: 8,
+  },
+  subLabel: {
+    fontSize: 13,
+    marginBottom: 6,
+  },
+  subOptions: {
+    marginLeft: 12,
+    marginBottom: 4,
   },
   optionRow: {
     flexDirection: "row",

@@ -16,23 +16,23 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@providers/AuthProvider";
-import { useQuery, api } from "@services/api/convex";
+import { useAuthenticatedQuery, useAuthenticatedMutation, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { useTheme } from "@hooks/useTheme";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { BroadcastComposer } from "./BroadcastComposer";
 import { BroadcastApprovalList } from "./BroadcastApprovalList";
 
-type View = "list" | "compose";
+type ViewMode = "list" | "compose";
 
 export function NotificationsContent() {
   const { community, user } = useAuth();
   const { colors } = useTheme();
-  const [currentView, setCurrentView] = useState<View>("list");
+  const [currentView, setCurrentView] = useState<ViewMode>("list");
 
   const communityId = community?.id as Id<"communities"> | undefined;
 
-  const broadcasts = useQuery(
+  const broadcasts = useAuthenticatedQuery(
     api.functions.adminBroadcasts.list,
     communityId ? { communityId } : "skip"
   );

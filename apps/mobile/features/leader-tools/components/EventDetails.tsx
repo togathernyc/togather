@@ -500,7 +500,7 @@ export function EventDetails({
             )}
 
             {/* Leader: RSVP Notification Toggle */}
-            {isLeader && rsvpEnabled && !isPastEvent && (
+            {isLeader && rsvpEnabled && (
               <View style={[styles.detailCard, { backgroundColor: colors.surface }]}>
                 <View style={styles.detailRow}>
                   <Ionicons name="notifications-outline" size={20} color={colors.textSecondary} />
@@ -614,7 +614,7 @@ export function EventDetails({
             )}
 
             {/* Leader: Message Attendees */}
-            {isLeader && rsvpEnabled && !isPastEvent && (
+            {isLeader && (
               <TouchableOpacity
                 style={[styles.messageAttendeesButton, { backgroundColor: colors.surface }]}
                 onPress={() => setShowBlastSheet(true)}

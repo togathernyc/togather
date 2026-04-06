@@ -437,11 +437,21 @@ export const submit = mutation({
       .first();
 
     if (existing) {
+      const previousOptionId = existing.rsvpOptionId;
       // Update existing RSVP
       await ctx.db.patch(existing._id, {
         rsvpOptionId: args.optionId,
         updatedAt: timestamp,
       });
+
+      // Notify leaders when RSVP changes (different option)
+      if (previousOptionId !== args.optionId) {
+        await ctx.scheduler.runAfter(0, internal.functions.notifications.senders.notifyRsvpReceived, {
+          meetingId: args.meetingId,
+          userId,
+          rsvpOptionLabel: selectedOption.label,
+        });
+      }
 
       return {
         success: true,
