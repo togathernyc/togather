@@ -13,6 +13,7 @@ import {
   Platform,
   Alert,
   Share,
+  Switch,
 } from "react-native";
 import { useLocalSearchParams, useRouter, useSegments } from "expo-router";
 import { useQuery, useAuthenticatedMutation, api, Id } from "@services/api/convex";
@@ -77,6 +78,8 @@ import { SharedPageTabBar } from "@/features/events/components/SharedPageTabBar"
 import { AttendanceConfirmationModal } from "@/features/events/components/AttendanceConfirmationModal";
 import { DOMAIN_CONFIG } from "@togather/shared";
 import * as Clipboard from "expo-clipboard";
+import { EventBlastSheet } from "@/features/leader-tools/components/EventBlastSheet";
+import { EventBlastHistory } from "@/features/leader-tools/components/EventBlastHistory";
 
 /**
  * Initial event data passed from Server Component
@@ -144,6 +147,7 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
   const [showRsvpSheet, setShowRsvpSheet] = useState(false);
   const [isJoiningCommunity, setIsJoiningCommunity] = useState(false);
   const [showAttendanceModal, setShowAttendanceModal] = useState(false);
+  const [showBlastSheet, setShowBlastSheet] = useState(false);
   const [authToken, setAuthToken] = useState<string | null>(null);
 
   // Load auth token from AsyncStorage for RSVP mutations
@@ -214,6 +218,21 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
 
   // Convex mutations automatically update reactive queries, so no manual cache invalidation needed
   const submitRsvpMutation = useAuthenticatedMutation(api.functions.meetingRsvps.submit);
+
+  // Toggle RSVP leader notifications mutation
+  const toggleRsvpNotifyMutation = useAuthenticatedMutation(api.functions.meetings.index.toggleRsvpLeaderNotifications);
+  const rsvpNotifyLeaders = (eventData as any)?.rsvpNotifyLeaders !== false; // defaults to true
+
+  const handleToggleRsvpNotify = async (enabled: boolean) => {
+    try {
+      await toggleRsvpNotifyMutation({
+        meetingId: eventData!.id as Id<"meetings">,
+        enabled,
+      });
+    } catch (error) {
+      console.error("Failed to toggle RSVP notifications:", error);
+    }
+  };
 
   const isLeader = leaderStatus?.isLeader ?? false;
 
@@ -658,6 +677,41 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
               onViewAll={handleViewGuestList}
             />
           )}
+
+          {/* Leader: RSVP Notification Toggle */}
+          {isLeader && eventData.rsvpEnabled && (
+            <View style={[styles.leaderCard, { backgroundColor: colors.surfaceSecondary }]}>
+              <View style={styles.leaderCardRow}>
+                <Ionicons name="notifications-outline" size={20} color={colors.textSecondary} />
+                <Text style={[styles.leaderCardText, { color: colors.text }]}>
+                  Notify on new RSVPs
+                </Text>
+                <Switch
+                  value={rsvpNotifyLeaders}
+                  onValueChange={handleToggleRsvpNotify}
+                  trackColor={{ false: colors.border, true: DEFAULT_PRIMARY_COLOR }}
+                />
+              </View>
+            </View>
+          )}
+
+          {/* Leader: Message Attendees */}
+          {isLeader && (
+            <TouchableOpacity
+              style={[styles.messageAttendeesButton, { backgroundColor: colors.surfaceSecondary }]}
+              onPress={() => setShowBlastSheet(true)}
+            >
+              <Ionicons name="megaphone-outline" size={20} color={DEFAULT_PRIMARY_COLOR} />
+              <Text style={[styles.messageAttendeesText, { color: DEFAULT_PRIMARY_COLOR }]}>
+                Message Attendees
+              </Text>
+            </TouchableOpacity>
+          )}
+
+          {/* Leader: Blast History */}
+          {isLeader && eventData.id && (
+            <EventBlastHistory meetingId={eventData.id as string} />
+          )}
         </View>
       </ScrollView>
 
@@ -734,6 +788,17 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
         groupName={eventData?.groupName}
       />
 
+      {/* Event Blast Sheet */}
+      {isLeader && (
+        <EventBlastSheet
+          visible={showBlastSheet}
+          meetingId={eventData.id as string}
+          eventTitle={eventData.title || "Event"}
+          onClose={() => setShowBlastSheet(false)}
+          onSent={() => setShowBlastSheet(false)}
+        />
+      )}
+
       {/* Bottom Tab Bar - shown for authenticated users on shared links */}
       {shouldShowTabBar && (
         <SharedPageTabBar
@@ -757,7 +822,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   scroll: { flex: 1 },
-  scrollContent: { paddingBottom: 140 },
+  scrollContent: { paddingBottom: 200 },
 
   // Header
   header: {
@@ -890,6 +955,36 @@ const styles = StyleSheet.create({
   },
   signInButtonText: {
     color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+
+  // Leader controls
+  leaderCard: {
+    borderRadius: 12,
+    padding: 16,
+    marginTop: 16,
+  },
+  leaderCardRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  leaderCardText: {
+    fontSize: 15,
+    fontWeight: "500",
+    flex: 1,
+  },
+  messageAttendeesButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    borderRadius: 12,
+    padding: 16,
+    marginTop: 12,
+  },
+  messageAttendeesText: {
     fontSize: 16,
     fontWeight: "600",
   },

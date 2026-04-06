@@ -14,17 +14,15 @@ import { v } from "convex/values";
 import { mutation, query } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import { requireAuth } from "../../lib/auth";
-
-// Reserved slugs/subdomains that cannot be used as community slugs.
-// These are used as app routes, infrastructure subdomains, or reserved for future use.
-const RESERVED_SLUGS = new Set([
-  // Infrastructure subdomains
+// Reserved slugs inlined to avoid importing @togather/shared (which pulls in react-native via storage.ts)
+const RESERVED_COMMUNITY_SLUGS = new Set([
   "api", "www", "app", "staging", "dev",
-  // App routes that could conflict
   "admin", "billing", "onboarding", "help", "support", "blog",
-  // Reserved for future use
   "docs", "status", "mail", "auth", "login", "signup",
 ]);
+function isReservedCommunitySlug(slug: string): boolean {
+  return RESERVED_COMMUNITY_SLUGS.has(slug);
+}
 
 // ============================================================================
 // Submit a Proposal
@@ -384,7 +382,7 @@ export const completeSetup = mutation({
     }
 
     // Check against reserved slugs/subdomains
-    if (RESERVED_SLUGS.has(args.slug)) {
+    if (isReservedCommunitySlug(args.slug)) {
       throw new Error(
         `"${args.slug}" is reserved and cannot be used as a community URL`
       );

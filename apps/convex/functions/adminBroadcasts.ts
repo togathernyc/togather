@@ -1,12 +1,13 @@
 /**
  * Admin Broadcast functions — targeted notifications with 2-party approval
  *
- * Supports targeting by criteria (no profile pic, new users, etc.),
- * multiple channels (push/email/SMS), and deep linking.
+ * Targeting runs in internalActions (server-side) to avoid Convex read limits.
+ * Each targeting type has its own bounded internalQuery so the system scales
+ * to tens of thousands of users.
  */
 
 import { v } from "convex/values";
-import { query, mutation, internalQuery, internalAction, internalMutation } from "../_generated/server";
+import { action, query, mutation, internalQuery, internalAction, internalMutation } from "../_generated/server";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { requireAuth } from "../lib/auth";
@@ -22,13 +23,6 @@ const targetCriteriaValidator = v.object({
   groupTypeSlug: v.optional(v.string()),
   daysThreshold: v.optional(v.number()),
 });
-
-// Preset deep link options (for frontend dropdown)
-export const DEEP_LINK_PRESETS = [
-  { value: "/profile/edit", label: "Edit Profile" },
-  { value: "/(tabs)/search?view=groups", label: "Browse Groups" },
-  { value: "/(tabs)/search?view=events", label: "Browse Events" },
-] as const;
 
 // ============================================================================
 // Queries
@@ -47,21 +41,17 @@ export const list = query({
     const userId = await requireAuth(ctx, args.token);
     await requireCommunityAdmin(ctx, args.communityId, userId);
 
-    let q = ctx.db
+    const broadcasts = await ctx.db
       .query("adminBroadcasts")
-      .withIndex("by_community", (q) => q.eq("communityId", args.communityId));
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .collect();
 
-    const broadcasts = await q.collect();
-
-    // Filter by status if provided
     const filtered = args.statusFilter
       ? broadcasts.filter((b) => b.status === args.statusFilter)
       : broadcasts;
 
-    // Sort by createdAt desc
     filtered.sort((a, b) => b.createdAt - a.createdAt);
 
-    // Fetch creator/approver names
     const userIds = new Set<Id<"users">>();
     for (const b of filtered) {
       userIds.add(b.createdById);
@@ -83,19 +73,51 @@ export const list = query({
 });
 
 /**
- * Preview targeting — returns count of matched users (no PII)
+ * List group types for the community (used by targeting dropdown)
  */
-export const previewTargeting = query({
+export const listGroupTypes = query({
+  args: {
+    token: v.string(),
+    communityId: v.id("communities"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await requireCommunityAdmin(ctx, args.communityId, userId);
+
+    const groupTypes = await ctx.db
+      .query("groupTypes")
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .collect();
+
+    return groupTypes
+      .filter((gt) => gt.isActive)
+      .map((gt) => ({ id: gt._id, name: gt.name, slug: gt.slug }));
+  },
+});
+
+// ============================================================================
+// Preview targeting (action — runs server-side, no read limit per call)
+// ============================================================================
+
+/**
+ * Preview targeting count. Runs as an action so each targeting type
+ * gets its own internal query with a fresh read budget.
+ */
+export const previewTargeting = action({
   args: {
     token: v.string(),
     communityId: v.id("communities"),
     targetCriteria: targetCriteriaValidator,
   },
   handler: async (ctx, args) => {
-    const userId = await requireAuth(ctx, args.token);
-    await requireCommunityAdmin(ctx, args.communityId, userId);
+    // Auth check via internal query
+    const authResult = await ctx.runQuery(
+      internal.functions.adminBroadcasts.checkAdminAuth,
+      { token: args.token, communityId: args.communityId }
+    );
+    if (!authResult.authorized) throw new Error("Not authorized");
 
-    const userIds = await resolveTargetUsers(ctx, args.communityId, args.targetCriteria);
+    const { userIds } = await resolveTargetUsersAction(ctx, args.communityId, args.targetCriteria);
     return { count: userIds.length };
   },
 });
@@ -105,7 +127,7 @@ export const previewTargeting = query({
 // ============================================================================
 
 /**
- * Create a broadcast draft
+ * Create a broadcast draft — resolves targeting via action for count
  */
 export const create = mutation({
   args: {
@@ -121,15 +143,12 @@ export const create = mutation({
     const userId = await requireAuth(ctx, args.token);
     await requireCommunityAdmin(ctx, args.communityId, userId);
 
-    // Preview count
-    const targetUsers = await resolveTargetUsers(ctx, args.communityId, args.targetCriteria);
-
     const timestamp = now();
     const id = await ctx.db.insert("adminBroadcasts", {
       communityId: args.communityId,
       createdById: userId,
       targetCriteria: args.targetCriteria,
-      targetUserCount: targetUsers.length,
+      targetUserCount: 0, // Will be updated by resolveAndUpdateCount action
       title: args.title,
       body: args.body,
       channels: args.channels,
@@ -139,13 +158,15 @@ export const create = mutation({
       updatedAt: timestamp,
     });
 
-    return { id, targetUserCount: targetUsers.length };
+    // Resolve count async
+    await ctx.scheduler.runAfter(0, internal.functions.adminBroadcasts.resolveAndUpdateCount, {
+      broadcastId: id,
+    });
+
+    return { id, targetUserCount: 0 };
   },
 });
 
-/**
- * Send a test notification to the requesting admin only
- */
 export const sendTestToSelf = mutation({
   args: {
     token: v.string(),
@@ -153,30 +174,19 @@ export const sendTestToSelf = mutation({
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
-
     const broadcast = await ctx.db.get(args.broadcastId);
     if (!broadcast) throw new Error("Broadcast not found");
-
     await requireCommunityAdmin(ctx, broadcast.communityId, userId);
 
-    // Schedule the test send
-    await ctx.scheduler.runAfter(
-      0,
-      internal.functions.adminBroadcasts.sendToUsers,
-      {
-        broadcastId: args.broadcastId,
-        userIds: [userId],
-        isTest: true,
-      }
-    );
-
+    await ctx.scheduler.runAfter(0, internal.functions.adminBroadcasts.sendToUsers, {
+      broadcastId: args.broadcastId,
+      userIds: [userId],
+      isTest: true,
+    });
     return { success: true };
   },
 });
 
-/**
- * Request approval from another admin
- */
 export const requestApproval = mutation({
   args: {
     token: v.string(),
@@ -184,29 +194,25 @@ export const requestApproval = mutation({
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
-
     const broadcast = await ctx.db.get(args.broadcastId);
     if (!broadcast) throw new Error("Broadcast not found");
     if (broadcast.status !== "draft") throw new Error("Broadcast must be in draft status");
-
     await requireCommunityAdmin(ctx, broadcast.communityId, userId);
-
-    // Refresh target count
-    const targetUsers = await resolveTargetUsers(ctx, broadcast.communityId, broadcast.targetCriteria);
 
     await ctx.db.patch(args.broadcastId, {
       status: "pending_approval",
-      targetUserCount: targetUsers.length,
       updatedAt: now(),
+    });
+
+    // Refresh count async
+    await ctx.scheduler.runAfter(0, internal.functions.adminBroadcasts.resolveAndUpdateCount, {
+      broadcastId: args.broadcastId,
     });
 
     return { success: true };
   },
 });
 
-/**
- * Approve a broadcast (must be different admin from creator)
- */
 export const approve = mutation({
   args: {
     token: v.string(),
@@ -214,14 +220,10 @@ export const approve = mutation({
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
-
     const broadcast = await ctx.db.get(args.broadcastId);
     if (!broadcast) throw new Error("Broadcast not found");
     if (broadcast.status !== "pending_approval") throw new Error("Broadcast is not pending approval");
-
     await requireCommunityAdmin(ctx, broadcast.communityId, userId);
-
-    // 2-party control: approver must be different from creator
     if (broadcast.createdById === userId) {
       throw new Error("You cannot approve your own broadcast. Another admin must approve it.");
     }
@@ -231,14 +233,10 @@ export const approve = mutation({
       approvedById: userId,
       updatedAt: now(),
     });
-
     return { success: true };
   },
 });
 
-/**
- * Reject a broadcast
- */
 export const reject = mutation({
   args: {
     token: v.string(),
@@ -246,28 +244,21 @@ export const reject = mutation({
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
-
     const broadcast = await ctx.db.get(args.broadcastId);
     if (!broadcast) throw new Error("Broadcast not found");
     if (broadcast.status !== "pending_approval") throw new Error("Broadcast is not pending approval");
-
     await requireCommunityAdmin(ctx, broadcast.communityId, userId);
-
     if (broadcast.createdById === userId) {
       throw new Error("You cannot reject your own broadcast");
     }
 
-    await ctx.db.patch(args.broadcastId, {
-      status: "rejected",
-      updatedAt: now(),
-    });
-
+    await ctx.db.patch(args.broadcastId, { status: "rejected", updatedAt: now() });
     return { success: true };
   },
 });
 
 /**
- * Send an approved broadcast
+ * Send an approved broadcast — resolves targets via action for scale
  */
 export const sendBroadcast = mutation({
   args: {
@@ -276,59 +267,99 @@ export const sendBroadcast = mutation({
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
-
     const broadcast = await ctx.db.get(args.broadcastId);
     if (!broadcast) throw new Error("Broadcast not found");
     if (broadcast.status !== "approved") throw new Error("Broadcast must be approved before sending");
-
     await requireCommunityAdmin(ctx, broadcast.communityId, userId);
 
-    // Resolve target users
-    const targetUsers = await resolveTargetUsers(ctx, broadcast.communityId, broadcast.targetCriteria);
-
-    // Update status to sending
     await ctx.db.patch(args.broadcastId, {
       status: "sent",
       sentAt: now(),
-      targetUserCount: targetUsers.length,
       updatedAt: now(),
     });
 
-    // Schedule the actual send
-    await ctx.scheduler.runAfter(
-      0,
-      internal.functions.adminBroadcasts.sendToUsers,
-      {
-        broadcastId: args.broadcastId,
-        userIds: targetUsers,
-        isTest: false,
-      }
-    );
+    // Resolve targets + send via action (no read limit)
+    await ctx.scheduler.runAfter(0, internal.functions.adminBroadcasts.resolveAndSend, {
+      broadcastId: args.broadcastId,
+    });
 
-    return { success: true, targetUserCount: targetUsers.length };
+    return { success: true };
   },
 });
 
 // ============================================================================
-// Internal action (does the actual sending)
+// Internal actions (server-side, no read limits)
 // ============================================================================
+
+/**
+ * Resolve target users and update the broadcast count
+ */
+export const resolveAndUpdateCount = internalAction({
+  args: { broadcastId: v.id("adminBroadcasts") },
+  handler: async (ctx, args) => {
+    const broadcast = await ctx.runQuery(internal.functions.adminBroadcasts.getBroadcast, {
+      broadcastId: args.broadcastId,
+    });
+    if (!broadcast) return;
+
+    const { userIds } = await resolveTargetUsersAction(ctx, broadcast.communityId as Id<"communities">, broadcast.targetCriteria);
+    await ctx.runMutation(internal.functions.adminBroadcasts.updateTargetCount, {
+      broadcastId: args.broadcastId,
+      count: userIds.length,
+    });
+  },
+});
+
+/**
+ * Resolve target users and send the broadcast
+ */
+export const resolveAndSend = internalAction({
+  args: { broadcastId: v.id("adminBroadcasts") },
+  handler: async (ctx, args) => {
+    const broadcast = await ctx.runQuery(internal.functions.adminBroadcasts.getBroadcast, {
+      broadcastId: args.broadcastId,
+    });
+    if (!broadcast) return;
+
+    const { userIds, perUserDeepLinks } = await resolveTargetUsersAction(ctx, broadcast.communityId as Id<"communities">, broadcast.targetCriteria);
+
+    await ctx.runMutation(internal.functions.adminBroadcasts.updateTargetCount, {
+      broadcastId: args.broadcastId,
+      count: userIds.length,
+    });
+
+    // Convert Map to plain object for serialization
+    const deepLinksObj: Record<string, string> = {};
+    if (perUserDeepLinks) {
+      for (const [k, v] of perUserDeepLinks) deepLinksObj[k] = v;
+    }
+
+    // Delegate to sendToUsers
+    await ctx.runAction(internal.functions.adminBroadcasts.sendToUsers, {
+      broadcastId: args.broadcastId,
+      userIds,
+      isTest: false,
+      perUserDeepLinks: Object.keys(deepLinksObj).length > 0 ? deepLinksObj : undefined,
+    });
+  },
+});
 
 export const sendToUsers = internalAction({
   args: {
     broadcastId: v.id("adminBroadcasts"),
     userIds: v.array(v.id("users")),
     isTest: v.boolean(),
+    perUserDeepLinks: v.optional(v.any()), // Record<string, string> — userId → deep link URL
   },
   handler: async (ctx, args) => {
-    const broadcast = await ctx.runQuery(
-      internal.functions.adminBroadcasts.getBroadcast,
-      { broadcastId: args.broadcastId }
-    );
+    const broadcast = await ctx.runQuery(internal.functions.adminBroadcasts.getBroadcast, {
+      broadcastId: args.broadcastId,
+    });
     if (!broadcast) return;
 
+    const perUserLinks = (args.perUserDeepLinks || {}) as Record<string, string>;
     const results = { pushSucceeded: 0, pushFailed: 0, emailSucceeded: 0, emailFailed: 0, smsSucceeded: 0, smsFailed: 0 };
 
-    // Send push notifications
     if (broadcast.channels.includes("push")) {
       const tokenResults: Array<{ userId: string; tokens: string[] }> =
         await ctx.runQuery(
@@ -345,7 +376,8 @@ export const sendToUsers = internalAction({
             data: {
               type: "admin_broadcast",
               communityId: broadcast.communityId,
-              url: broadcast.deepLink || undefined,
+              // Per-user deep link if available, otherwise broadcast default
+              url: perUserLinks[result.userId] || broadcast.deepLink || undefined,
             },
           }))
       );
@@ -360,21 +392,32 @@ export const sendToUsers = internalAction({
       }
     }
 
-    // Send SMS
     if (broadcast.channels.includes("sms")) {
-      const userPhones: Array<{ userId: string; phone: string | null }> =
-        await ctx.runQuery(
-          internal.functions.adminBroadcasts.getUserPhones,
-          { userIds: args.userIds }
-        );
+      const userPhones = await ctx.runQuery(
+        internal.functions.adminBroadcasts.getUserPhones,
+        { userIds: args.userIds }
+      );
 
-      for (const { phone } of userPhones) {
+      // Build SMS with context prefix and character limit
+      const community = await ctx.runQuery(internal.functions.adminBroadcasts.getCommunity, {
+        communityId: broadcast.communityId as Id<"communities">,
+      });
+      const communityName = community?.name || "Your community";
+      const smsPrefix = `${communityName} sent a new message:\n\n`;
+      const rawBody = `${broadcast.title}\n\n${broadcast.body}`;
+      const maxBodyLen = 1600 - smsPrefix.length;
+      const truncatedBody = rawBody.length > maxBodyLen
+        ? rawBody.slice(0, maxBodyLen - 1) + "…"
+        : rawBody;
+      const smsMessage = smsPrefix + truncatedBody;
+
+      for (const { phone } of userPhones as Array<{ phone: string | null }>) {
         if (!phone) continue;
         try {
-          await ctx.runAction(
-            internal.functions.auth.phoneOtp.sendSMS,
-            { phone, message: `${broadcast.title}\n\n${broadcast.body}` }
-          );
+          await ctx.runAction(internal.functions.auth.phoneOtp.sendSMS, {
+            phone,
+            message: smsMessage,
+          });
           results.smsSucceeded++;
         } catch {
           results.smsFailed++;
@@ -382,15 +425,12 @@ export const sendToUsers = internalAction({
       }
     }
 
-    // Send email
     if (broadcast.channels.includes("email")) {
-      const userEmails: Array<{ email: string | null }> =
-        await ctx.runQuery(
-          internal.functions.adminBroadcasts.getUserEmails,
-          { userIds: args.userIds }
-        );
-
-      const emails = userEmails
+      const userEmails = await ctx.runQuery(
+        internal.functions.adminBroadcasts.getUserEmails,
+        { userIds: args.userIds }
+      );
+      const emails = (userEmails as Array<{ email: string | null }>)
         .filter((u): u is { email: string } => !!u.email)
         .map((u) => ({
           to: u.email,
@@ -408,25 +448,40 @@ export const sendToUsers = internalAction({
       }
     }
 
-    // Update broadcast with results (only for non-test sends)
     if (!args.isTest) {
-      await ctx.runMutation(
-        internal.functions.adminBroadcasts.updateResults,
-        { broadcastId: args.broadcastId, results }
-      );
+      await ctx.runMutation(internal.functions.adminBroadcasts.updateResults, {
+        broadcastId: args.broadcastId,
+        results,
+      });
     }
   },
 });
 
 // ============================================================================
-// Internal helpers
+// Internal queries (each with its own read budget)
 // ============================================================================
+
+export const checkAdminAuth = internalQuery({
+  args: { token: v.string(), communityId: v.id("communities") },
+  handler: async (ctx, args) => {
+    try {
+      const userId = await requireAuth(ctx, args.token);
+      await requireCommunityAdmin(ctx, args.communityId, userId);
+      return { authorized: true, userId };
+    } catch {
+      return { authorized: false, userId: null };
+    }
+  },
+});
 
 export const getBroadcast = internalQuery({
   args: { broadcastId: v.id("adminBroadcasts") },
-  handler: async (ctx, args) => {
-    return await ctx.db.get(args.broadcastId);
-  },
+  handler: async (ctx, args) => ctx.db.get(args.broadcastId),
+});
+
+export const getCommunity = internalQuery({
+  args: { communityId: v.id("communities") },
+  handler: async (ctx, args) => ctx.db.get(args.communityId),
 });
 
 export const getUserPhones = internalQuery({
@@ -448,122 +503,235 @@ export const getUserEmails = internalQuery({
 });
 
 export const updateResults = internalMutation({
-  args: {
-    broadcastId: v.id("adminBroadcasts"),
-    results: v.any(),
-  },
+  args: { broadcastId: v.id("adminBroadcasts"), results: v.any() },
   handler: async (ctx, args) => {
-    await ctx.db.patch(args.broadcastId, {
-      results: args.results,
-      updatedAt: now(),
-    });
+    await ctx.db.patch(args.broadcastId, { results: args.results, updatedAt: now() });
+  },
+});
+
+export const updateTargetCount = internalMutation({
+  args: { broadcastId: v.id("adminBroadcasts"), count: v.number() },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.broadcastId, { targetUserCount: args.count, updatedAt: now() });
   },
 });
 
 // ============================================================================
-// Targeting logic
+// Targeting internal queries — each runs with its own 4096 read budget
 // ============================================================================
 
 /**
- * Resolve target user IDs based on criteria.
- * Used by both preview and send flows.
+ * Get community member IDs in pages to stay under Convex's 8192 return limit.
+ * Returns { userIds, createdAts, hasMore, cursor }.
  */
-async function resolveTargetUsers(
-  ctx: { db: any },
+export const getCommunityMemberPage = internalQuery({
+  args: {
+    communityId: v.id("communities"),
+    cursor: v.optional(v.string()),
+    pageSize: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const limit = args.pageSize || 4000;
+    let query = ctx.db
+      .query("userCommunities")
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .filter((q) => q.eq(q.field("status"), 1));
+
+    const result = await query.paginate({ numItems: limit, cursor: args.cursor || null });
+
+    return {
+      members: result.page.map((m) => ({ userId: m.userId, createdAt: m.createdAt })),
+      cursor: result.continueCursor,
+      isDone: result.isDone,
+    };
+  },
+});
+
+/**
+ * Get IDs of users without profile pic from a small batch (max ~500 IDs).
+ */
+export const getUsersWithoutProfilePicPage = internalQuery({
+  args: { userIds: v.array(v.id("users")) },
+  handler: async (ctx, args) => {
+    const users = await Promise.all(args.userIds.map((id) => ctx.db.get(id)));
+    const result: Id<"users">[] = [];
+    for (let j = 0; j < args.userIds.length; j++) {
+      if (users[j] && !users[j]!.profilePhoto) result.push(args.userIds[j]);
+    }
+    return result;
+  },
+});
+
+/**
+ * Count/resolve users NOT in a group of a specific type.
+ * Fetches group members internally — no large array args needed.
+ */
+export const countUsersNotInGroupType = internalQuery({
+  args: { communityId: v.id("communities"), groupTypeSlug: v.string() },
+  handler: async (ctx, args) => {
+    const groupTypes = await ctx.db
+      .query("groupTypes")
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .collect();
+    const targetType = groupTypes.find((gt) => gt.slug === args.groupTypeSlug);
+    if (!targetType) return { count: 0, usersInType: [] as string[] };
+
+    const groups = await ctx.db
+      .query("groups")
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .filter((q) => q.eq(q.field("groupTypeId"), targetType._id))
+      .collect();
+
+    const usersInType = new Set<string>();
+    for (const group of groups) {
+      const members = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group", (q) => q.eq("groupId", group._id))
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .collect();
+      for (const m of members) usersInType.add(m.userId.toString());
+    }
+
+    return { usersInTypeSet: [...usersInType] };
+  },
+});
+
+/**
+ * Get leaders of groups without images.
+ * Returns map of userId → first groupId without image (for per-user deep links).
+ */
+export const getLeaderIdsWithoutGroupImage = internalQuery({
+  args: { communityId: v.id("communities") },
+  handler: async (ctx, args) => {
+    const groups = await ctx.db
+      .query("groups")
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .filter((q) => q.eq(q.field("isArchived"), false))
+      .collect();
+
+    // Map userId → first groupId they lead that has no image
+    const leaderToGroup = new Map<string, string>();
+    for (const group of groups) {
+      if (group.preview) continue;
+      const members = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group", (q) => q.eq("groupId", group._id))
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .collect();
+      for (const m of members) {
+        if (m.role === "leader" && !leaderToGroup.has(m.userId.toString())) {
+          leaderToGroup.set(m.userId.toString(), group._id.toString());
+        }
+      }
+    }
+
+    return [...leaderToGroup.entries()].map(([userId, groupId]) => ({ userId, groupId }));
+  },
+});
+
+// ============================================================================
+// Targeting resolver (used by actions — calls internal queries)
+// ============================================================================
+
+/**
+ * Fetch all community member IDs by paginating the internal query.
+ * Handles communities with 10k+ members.
+ */
+async function getAllCommunityMembers(
+  ctx: { runQuery: any },
+  communityId: Id<"communities">
+): Promise<Array<{ userId: Id<"users">; createdAt?: number }>> {
+  const allMembers: Array<{ userId: Id<"users">; createdAt?: number }> = [];
+  let cursor: string | undefined = undefined;
+
+  while (true) {
+    const page: { members: Array<{ userId: Id<"users">; createdAt?: number }>; cursor: string; isDone: boolean } =
+      await ctx.runQuery(internal.functions.adminBroadcasts.getCommunityMemberPage, {
+        communityId,
+        cursor,
+        pageSize: 4000,
+      });
+    allMembers.push(...page.members);
+    if (page.isDone) break;
+    cursor = page.cursor;
+  }
+
+  return allMembers;
+}
+
+interface TargetResult {
+  userIds: Id<"users">[];
+  /** Per-user deep links (userId string → URL). If set, overrides broadcast.deepLink for that user. */
+  perUserDeepLinks?: Map<string, string>;
+}
+
+async function resolveTargetUsersAction(
+  ctx: { runQuery: any },
   communityId: Id<"communities">,
   criteria: { type: string; groupTypeSlug?: string; daysThreshold?: number }
-): Promise<Id<"users">[]> {
-  // Get all active community members
-  const allMembers = await ctx.db
-    .query("userCommunities")
-    .withIndex("by_community", (q: any) => q.eq("communityId", communityId))
-    .filter((q: any) => q.eq(q.field("status"), 1))
-    .collect();
-
-  const allUserIds: Id<"users">[] = allMembers.map((m: any) => m.userId);
+): Promise<TargetResult> {
+  const members = await getAllCommunityMembers(ctx, communityId);
+  const allUserIds = members.map((m) => m.userId);
 
   switch (criteria.type) {
     case "all_users":
-      return allUserIds;
+      return { userIds: allUserIds };
 
     case "new_users": {
       const threshold = criteria.daysThreshold || 30;
-      const cutoff = now() - threshold * 24 * 60 * 60 * 1000;
-      return allMembers
-        .filter((m: any) => m.createdAt && m.createdAt >= cutoff)
-        .map((m: any) => m.userId);
+      const cutoff = Date.now() - threshold * 24 * 60 * 60 * 1000;
+      return {
+        userIds: members
+          .filter((m) => m.createdAt && m.createdAt >= cutoff)
+          .map((m) => m.userId),
+      };
     }
 
     case "no_profile_pic": {
-      const users = await Promise.all(allUserIds.map((id: Id<"users">) => ctx.db.get(id)));
-      return allUserIds.filter((_: any, i: number) => {
-        const user = users[i];
-        return user && !user.profilePhoto;
-      });
+      const result: Id<"users">[] = [];
+      for (let i = 0; i < allUserIds.length; i += 500) {
+        const batch = allUserIds.slice(i, i + 500);
+        const batchResult: Id<"users">[] = await ctx.runQuery(
+          internal.functions.adminBroadcasts.getUsersWithoutProfilePicPage,
+          { userIds: batch }
+        );
+        result.push(...batchResult);
+      }
+      return { userIds: result };
     }
 
     case "no_group_of_type": {
-      if (!criteria.groupTypeSlug) return [];
-      // Find groups of this type in the community
-      const groups = await ctx.db
-        .query("groups")
-        .withIndex("by_community", (q: any) => q.eq("communityId", communityId))
-        .collect();
-
-      // Get the group type ID from slug
-      const groupTypes = await ctx.db
-        .query("groupTypes")
-        .withIndex("by_community", (q: any) => q.eq("communityId", communityId))
-        .collect();
-
-      const targetType = groupTypes.find((gt: any) => gt.slug === criteria.groupTypeSlug);
-      if (!targetType) return [];
-
-      const typeGroups = groups.filter((g: any) => g.groupTypeId === targetType._id);
-      const typeGroupIds = new Set(typeGroups.map((g: any) => g._id.toString()));
-
-      // Find users who are NOT in any group of this type
-      const usersInType = new Set<string>();
-      for (const group of typeGroups) {
-        const members = await ctx.db
-          .query("groupMembers")
-          .withIndex("by_group", (q: any) => q.eq("groupId", group._id))
-          .filter((q: any) => q.eq(q.field("leftAt"), undefined))
-          .collect();
-        for (const m of members) {
-          usersInType.add(m.userId.toString());
-        }
-      }
-
-      return allUserIds.filter((id: Id<"users">) => !usersInType.has(id.toString()));
+      if (!criteria.groupTypeSlug) return { userIds: [] };
+      const { usersInTypeSet }: { usersInTypeSet: string[] } = await ctx.runQuery(
+        internal.functions.adminBroadcasts.countUsersNotInGroupType,
+        { communityId, groupTypeSlug: criteria.groupTypeSlug }
+      );
+      const inTypeSet = new Set(usersInTypeSet);
+      return { userIds: allUserIds.filter((id) => !inTypeSet.has(id.toString())) };
     }
 
     case "leaders_no_group_image": {
-      // Find leaders whose groups have no preview image
-      const groups = await ctx.db
-        .query("groups")
-        .withIndex("by_community", (q: any) => q.eq("communityId", communityId))
-        .collect();
-
-      const leaderIds = new Set<string>();
-      for (const group of groups) {
-        if (group.preview) continue; // Has image, skip
-        const members = await ctx.db
-          .query("groupMembers")
-          .withIndex("by_group", (q: any) => q.eq("groupId", group._id))
-          .filter((q: any) => q.eq(q.field("leftAt"), undefined))
-          .collect();
-        for (const m of members) {
-          if (m.role === "leader") {
-            leaderIds.add(m.userId.toString());
-          }
-        }
+      const leaderGroups: Array<{ userId: string; groupId: string }> = await ctx.runQuery(
+        internal.functions.adminBroadcasts.getLeaderIdsWithoutGroupImage,
+        { communityId }
+      );
+      const leaderMap = new Map<string, string>();
+      for (const { userId, groupId } of leaderGroups) {
+        leaderMap.set(userId, groupId);
       }
-
-      return allUserIds.filter((id: Id<"users">) => leaderIds.has(id.toString()));
+      const perUserDeepLinks = new Map<string, string>();
+      const targetUserIds = allUserIds.filter((id) => {
+        if (leaderMap.has(id.toString())) {
+          const groupId = leaderMap.get(id.toString())!;
+          perUserDeepLinks.set(id.toString(), `/(user)/leader-tools/${groupId}`);
+          return true;
+        }
+        return false;
+      });
+      return { userIds: targetUserIds, perUserDeepLinks };
     }
 
     default:
-      return [];
+      return { userIds: [] };
   }
 }

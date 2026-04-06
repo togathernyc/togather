@@ -10,6 +10,8 @@ import { internalAction } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import { Id } from "../../_generated/dataModel";
 import { joinRequestApprovedEmail } from "../../lib/notifications/emailTemplates";
+import { eventRsvpReceived } from "../../lib/notifications/definitions";
+import type { ExtractNotificationData, FormatterContext } from "../../lib/notifications/types";
 
 type NotificationGroupInfo = {
   id: string;
@@ -373,7 +375,7 @@ export const notifyGroupCreationApproved = internalAction({
 
 /**
  * Notify group leaders when someone RSVPs to an event
- * Called from meetingRsvps.submit mutation (only for new RSVPs, not updates)
+ * Called from meetingRsvps.submit for new RSVPs and when an existing RSVP option changes
  */
 export const notifyRsvpReceived = internalAction({
   args: {
@@ -432,8 +434,25 @@ export const notifyRsvpReceived = internalAction({
       });
 
       const meetingTitle = meeting.title || "Event";
-      const title = "New RSVP";
-      const body = `${rsvperName} is ${args.rsvpOptionLabel.toLowerCase()} to ${meetingTitle}`;
+      const pushFormatter = eventRsvpReceived.formatters.push;
+      if (!pushFormatter) {
+        console.error("[NotifyRsvpReceived] Missing push formatter for event_rsvp_received");
+        return { success: false, error: "Missing push formatter" };
+      }
+      type RsvpPushData = ExtractNotificationData<typeof eventRsvpReceived>;
+      const formatterCtx: FormatterContext<RsvpPushData> = {
+        data: {
+          rsvperName,
+          meetingTitle,
+          groupName: groupInfo.name,
+          groupId: meeting.groupId,
+          communityId: groupInfo.communityId,
+          shortId: meeting.shortId,
+          rsvpOptionLabel: args.rsvpOptionLabel,
+        },
+        userId: args.userId,
+      };
+      const { title, body, data: pushData } = pushFormatter(formatterCtx);
 
       // Build notifications
       const notificationImageUrl = getSenderNotificationImage(groupInfo);
@@ -443,11 +462,7 @@ export const notifyRsvpReceived = internalAction({
           title,
           body,
           data: {
-            type: "event_rsvp_received",
-            groupId: meeting.groupId,
-            communityId: groupInfo.communityId,
-            shortId: meeting.shortId,
-            url: meeting.shortId ? `/e/${meeting.shortId}?source=app` : undefined,
+            ...pushData,
             groupAvatarUrl: notificationImageUrl,
           },
           imageUrl: notificationImageUrl,

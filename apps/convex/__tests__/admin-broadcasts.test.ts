@@ -203,7 +203,7 @@ describe("Admin Broadcasts", () => {
       );
 
       expect(result.id).toBeDefined();
-      expect(result.targetUserCount).toBeGreaterThan(0);
+      expect(result.targetUserCount).toBe(0); // count resolves async via scheduled function
     });
 
     test("non-admin cannot create a broadcast", async () => {
@@ -374,7 +374,7 @@ describe("Admin Broadcasts", () => {
       const t = convexTest(schema, modules);
       const data = await setupTestData(t);
 
-      const result = await t.query(
+      const result = await t.action(
         // @ts-expect-error - test token auth
         "functions/adminBroadcasts:previewTargeting" as any,
         {
@@ -392,7 +392,7 @@ describe("Admin Broadcasts", () => {
       const t = convexTest(schema, modules);
       const data = await setupTestData(t);
 
-      const result = await t.query(
+      const result = await t.action(
         // @ts-expect-error - test token auth
         "functions/adminBroadcasts:previewTargeting" as any,
         {

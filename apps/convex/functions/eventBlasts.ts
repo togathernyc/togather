@@ -11,7 +11,8 @@ import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { requireAuth } from "../lib/auth";
 import { isActiveLeader } from "../lib/helpers";
-import { now } from "../lib/utils";
+import { now, getMediaUrl } from "../lib/utils";
+import { DOMAIN_CONFIG } from "@togather/shared/config";
 
 // ============================================================================
 // Queries
@@ -49,27 +50,31 @@ export const list = query({
     // Sort by createdAt desc
     blasts.sort((a, b) => b.createdAt - a.createdAt);
 
-    // Batch fetch sender names
+    // Batch fetch sender info
     const senderIds = [...new Set(blasts.map((b) => b.sentById))];
     const senders = await Promise.all(senderIds.map((id) => ctx.db.get(id)));
-    const senderMap = new Map<string, string>();
+    const senderMap = new Map<string, { name: string; profilePhoto: string | undefined }>();
     senders.forEach((sender, i) => {
       if (sender) {
         const name = `${sender.firstName || ""} ${sender.lastName || ""}`.trim() || "Someone";
-        senderMap.set(senderIds[i], name);
+        senderMap.set(senderIds[i], { name, profilePhoto: getMediaUrl(sender.profilePhoto) });
       }
     });
 
-    return blasts.map((blast) => ({
-      _id: blast._id,
-      message: blast.message,
-      channels: blast.channels,
-      recipientCount: blast.recipientCount,
-      status: blast.status,
-      results: blast.results,
-      createdAt: blast.createdAt,
-      sentByName: senderMap.get(blast.sentById) || "Unknown",
-    }));
+    return blasts.map((blast) => {
+      const sender = senderMap.get(blast.sentById);
+      return {
+        _id: blast._id,
+        message: blast.message,
+        channels: blast.channels,
+        recipientCount: blast.recipientCount,
+        status: blast.status,
+        results: blast.results,
+        createdAt: blast.createdAt,
+        sentByName: sender?.name || "Unknown",
+        sentByPhoto: sender?.profilePhoto ?? null,
+      };
+    });
   },
 });
 
@@ -147,6 +152,12 @@ export const send = internalAction({
       { groupId: args.groupId }
     );
 
+    // Get sender info for notification image
+    const senderInfo = await ctx.runQuery(
+      internal.functions.eventBlasts.getSenderInfo,
+      { userId: args.userId }
+    );
+
     // Get all RSVPs for this meeting (optionId 1 = "Going")
     const rsvpUserIds: Id<"users">[] = await ctx.runQuery(
       internal.functions.eventBlasts.getRsvpUserIds,
@@ -190,7 +201,7 @@ export const send = internalAction({
         (result: { userId: string; tokens: string[] }) =>
           result.tokens.map((token: string) => ({
             token,
-            title: meetingTitle,
+            title: `Message from ${meetingTitle} host`,
             body: args.message,
             data: {
               type: "event_blast",
@@ -202,6 +213,7 @@ export const send = internalAction({
                 : undefined,
             },
             imageUrl:
+              senderInfo?.profilePhoto ||
               groupInfo?.groupPhotoUrl ||
               groupInfo?.communityLogoUrl ||
               groupInfo?.groupAvatarUrl,
@@ -225,12 +237,23 @@ export const send = internalAction({
           userIds: rsvpUserIds,
         });
 
+      const eventTitle = meeting.title || "Event";
+      const eventUrl = meeting.shortId ? DOMAIN_CONFIG.eventShareUrl(meeting.shortId) : "";
+      const smsPrefix = `The host of ${eventTitle} sent a new message:\n\n`;
+      const smsSuffix = eventUrl ? `\n\n${eventUrl}` : "";
+      // Twilio SMS limit is 1600 chars; truncate the user message to fit
+      const maxBodyLen = 1600 - smsPrefix.length - smsSuffix.length;
+      const truncatedMessage = args.message.length > maxBodyLen
+        ? args.message.slice(0, maxBodyLen - 1) + "…"
+        : args.message;
+      const smsBody = smsPrefix + truncatedMessage + smsSuffix;
+
       for (const { phone } of userPhones) {
         if (!phone) continue;
         try {
           await ctx.runAction(
             internal.functions.auth.phoneOtp.sendSMS,
-            { phone, message: args.message }
+            { phone, message: smsBody }
           );
           results.smsSucceeded++;
         } catch {
@@ -286,6 +309,21 @@ export const getRsvpUserIds = internalQuery({
       .collect();
 
     return rsvps.map((r) => r.userId);
+  },
+});
+
+/**
+ * Get sender info (name, profile photo) for blast notifications
+ */
+export const getSenderInfo = internalQuery({
+  args: { userId: v.id("users") },
+  handler: async (ctx, args) => {
+    const user = await ctx.db.get(args.userId);
+    if (!user) return null;
+    return {
+      name: `${user.firstName || ""} ${user.lastName || ""}`.trim() || "Someone",
+      profilePhoto: getMediaUrl(user.profilePhoto) ?? null,
+    };
   },
 });
 
