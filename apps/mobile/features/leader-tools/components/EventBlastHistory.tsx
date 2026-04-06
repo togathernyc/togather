@@ -4,6 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { useTheme } from "@hooks/useTheme";
+import { useAuth } from "@providers/AuthProvider";
 
 interface EventBlastHistoryProps {
   meetingId: string;
@@ -22,10 +23,11 @@ function formatTimeAgo(timestamp: number): string {
 
 export function EventBlastHistory({ meetingId }: EventBlastHistoryProps) {
   const { colors } = useTheme();
+  const { token } = useAuth();
 
   const blasts = useQuery(
     api.functions.eventBlasts.list,
-    { meetingId: meetingId as Id<"meetings"> }
+    token ? { token, meetingId: meetingId as Id<"meetings"> } : "skip",
   );
 
   if (!blasts || blasts.length === 0) return null;
