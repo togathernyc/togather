@@ -199,7 +199,7 @@ export const update = mutation({
 
     if (args.firstName !== undefined) updates.firstName = args.firstName;
     if (args.lastName !== undefined) updates.lastName = args.lastName;
-    if (args.profilePhoto !== undefined) updates.profilePhoto = args.profilePhoto;
+    if (args.profilePhoto !== undefined) updates.profilePhoto = args.profilePhoto || undefined;
     if (args.timezone !== undefined) updates.timezone = args.timezone;
     if (args.dateOfBirth !== undefined) {
       // Convert YYYY-MM-DD string to timestamp for storage

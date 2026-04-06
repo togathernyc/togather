@@ -537,6 +537,20 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
             console.log('Initial notification data:', JSON.stringify(data, null, 2));
             // Mark as handled before processing
             handledNotificationIds.current.add(notificationId);
+            const trackingId = data?.trackingId as string | undefined;
+            if (trackingId) {
+              const jwt = await AsyncStorage.getItem('auth_token');
+              if (jwt) {
+                convexVanilla
+                  .mutation(api.functions.notifications.mutations.recordClick, {
+                    token: jwt,
+                    trackingId,
+                  })
+                  .catch((err: unknown) =>
+                    console.warn('Failed to record notification click (cold start):', err)
+                  );
+              }
+            }
             // Handle navigation after a small delay to ensure the app is fully loaded
             setTimeout(() => {
               handleNotificationTapRef.current?.(data);
@@ -565,6 +579,17 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
         };
         setLastNotification(data);
 
+        // Record impression for analytics
+        const trackingId = (notification.request.content.data as Record<string, unknown>)?.trackingId as string | undefined;
+        if (trackingId) {
+          void AsyncStorage.getItem('auth_token').then((jwt) => {
+            if (!jwt) return;
+            convexVanilla
+              .mutation(api.functions.notifications.mutations.recordImpression, { token: jwt, trackingId })
+              .catch((err: unknown) => console.warn('Failed to record notification impression:', err));
+          });
+        }
+
         // Refresh unread count
         refreshUnreadCount();
       });
@@ -588,6 +613,17 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
 
         // Mark as handled before processing
         handledNotificationIds.current.add(notificationId);
+
+        // Record click for analytics
+        const trackingId = data?.trackingId as string | undefined;
+        if (trackingId) {
+          void AsyncStorage.getItem('auth_token').then((jwt) => {
+            if (!jwt) return;
+            convexVanilla
+              .mutation(api.functions.notifications.mutations.recordClick, { token: jwt, trackingId })
+              .catch((err: unknown) => console.warn('Failed to record notification click:', err));
+          });
+        }
 
         // Handle navigation based on notification type
         handleNotificationTapRef.current(data);

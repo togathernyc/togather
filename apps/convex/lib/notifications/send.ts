@@ -312,9 +312,13 @@ async function sendPushChannel<TData extends Record<string, unknown>>(
     return { success: false, error };
   }
 
+  // Generate a tracking ID for impression/click analytics
+  const trackingId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+
   // Send push notifications using existing batch action
   const notificationData = {
     type: notificationType,
+    trackingId,
     ...output.data,
     ...(senderAvatarFromPayload ? { senderAvatarUrl: senderAvatarFromPayload } : {}),
     ...(groupNotificationImageUrl ? { groupAvatarUrl: groupNotificationImageUrl } : {}),
@@ -347,6 +351,7 @@ async function sendPushChannel<TData extends Record<string, unknown>>(
       ...(groupNotificationImageUrl ? { groupAvatarUrl: groupNotificationImageUrl } : {}),
     },
     status: result.success ? "sent" : "failed",
+    trackingId,
   });
 
   if (result.success) {

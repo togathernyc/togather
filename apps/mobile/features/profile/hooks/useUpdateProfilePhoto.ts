@@ -116,9 +116,9 @@ export function useRemoveProfilePhoto() {
     }
 
     try {
-      // Set profilePhoto to undefined to remove it
+      // Set profilePhoto to empty string to clear it
       await updateMutation({
-        profilePhoto: undefined,
+        profilePhoto: "",
       });
 
       await refreshUser();

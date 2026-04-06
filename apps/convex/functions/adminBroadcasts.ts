@@ -178,10 +178,10 @@ export const sendTestToSelf = mutation({
     if (!broadcast) throw new Error("Broadcast not found");
     await requireCommunityAdmin(ctx, broadcast.communityId, userId);
 
-    await ctx.scheduler.runAfter(0, internal.functions.adminBroadcasts.sendToUsers, {
+    // Resolve per-user deep link for the test user so special links (e.g. per_user_group) work
+    await ctx.scheduler.runAfter(0, internal.functions.adminBroadcasts.resolveAndTestSelf, {
       broadcastId: args.broadcastId,
-      userIds: [userId],
-      isTest: true,
+      userId,
     });
     return { success: true };
   },
@@ -287,9 +287,57 @@ export const sendBroadcast = mutation({
   },
 });
 
+/**
+ * Delete a draft or rejected broadcast
+ */
+export const deleteBroadcast = mutation({
+  args: {
+    token: v.string(),
+    broadcastId: v.id("adminBroadcasts"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const broadcast = await ctx.db.get(args.broadcastId);
+    if (!broadcast) throw new Error("Broadcast not found");
+    if (broadcast.status !== "draft" && broadcast.status !== "rejected") {
+      throw new Error("Only draft or rejected broadcasts can be deleted");
+    }
+    await requireCommunityAdmin(ctx, broadcast.communityId, userId);
+    await ctx.db.delete(args.broadcastId);
+    return { success: true };
+  },
+});
+
 // ============================================================================
 // Internal actions (server-side, no read limits)
 // ============================================================================
+
+/**
+ * Resolve per-user deep links and send test to self
+ */
+export const resolveAndTestSelf = internalAction({
+  args: { broadcastId: v.id("adminBroadcasts"), userId: v.id("users") },
+  handler: async (ctx, args) => {
+    const broadcast = await ctx.runQuery(internal.functions.adminBroadcasts.getBroadcast, {
+      broadcastId: args.broadcastId,
+    });
+    if (!broadcast) return;
+
+    const { perUserDeepLinks } = await resolveTargetUsersAction(ctx, broadcast.communityId as Id<"communities">, broadcast.targetCriteria);
+
+    const deepLinksObj: Record<string, string> = {};
+    if (perUserDeepLinks) {
+      for (const [k, v] of perUserDeepLinks) deepLinksObj[k] = v;
+    }
+
+    await ctx.runAction(internal.functions.adminBroadcasts.sendToUsers, {
+      broadcastId: args.broadcastId,
+      userIds: [args.userId],
+      isTest: true,
+      perUserDeepLinks: Object.keys(deepLinksObj).length > 0 ? deepLinksObj : undefined,
+    });
+  },
+});
 
 /**
  * Resolve target users and update the broadcast count
@@ -376,8 +424,8 @@ export const sendToUsers = internalAction({
             data: {
               type: "admin_broadcast",
               communityId: broadcast.communityId,
-              // Per-user deep link if available, otherwise broadcast default
-              url: perUserLinks[result.userId] || broadcast.deepLink || undefined,
+              // Per-user deep link if available, otherwise broadcast default (skip non-URL markers)
+              url: perUserLinks[result.userId] || (broadcast.deepLink?.startsWith("/") ? broadcast.deepLink : undefined),
             },
           }))
       );
@@ -723,7 +771,7 @@ async function resolveTargetUsersAction(
       const targetUserIds = allUserIds.filter((id) => {
         if (leaderMap.has(id.toString())) {
           const groupId = leaderMap.get(id.toString())!;
-          perUserDeepLinks.set(id.toString(), `/(user)/leader-tools/${groupId}`);
+          perUserDeepLinks.set(id.toString(), `/groups/${groupId}/edit`);
           return true;
         }
         return false;
