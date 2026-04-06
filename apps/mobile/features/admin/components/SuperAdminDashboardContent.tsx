@@ -226,7 +226,7 @@ export function SuperAdminDashboardContent() {
       )}
 
       {/* Notification Stats */}
-      {notifStats && notifStats.totalSent > 0 && (
+      {notifStats && notifStats.totals.sent > 0 && (
         <>
           <Text style={[styles.sectionTitle, { color: colors.text, marginTop: 8 }]}>
             Notifications
@@ -234,15 +234,15 @@ export function SuperAdminDashboardContent() {
           <View style={styles.metricsRow}>
             <View style={[styles.metricCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
               <Text style={[styles.metricLabel, { color: colors.textSecondary }]}>Sent</Text>
-              <Text style={[styles.metricValue, { color: colors.text }]}>{notifStats.totalSent}</Text>
+              <Text style={[styles.metricValue, { color: colors.text }]}>{notifStats.totals.sent}</Text>
             </View>
             <View style={[styles.metricCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
               <Text style={[styles.metricLabel, { color: colors.textSecondary }]}>Impressed</Text>
-              <Text style={[styles.metricValue, { color: colors.text }]}>{notifStats.totalImpressed}</Text>
+              <Text style={[styles.metricValue, { color: colors.text }]}>{notifStats.totals.impressed}</Text>
             </View>
             <View style={[styles.metricCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
               <Text style={[styles.metricLabel, { color: colors.textSecondary }]}>Clicked</Text>
-              <Text style={[styles.metricValue, { color: colors.text }]}>{notifStats.totalClicked}</Text>
+              <Text style={[styles.metricValue, { color: colors.text }]}>{notifStats.totals.clicked}</Text>
             </View>
           </View>
 

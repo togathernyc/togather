@@ -1360,7 +1360,11 @@ export const getNotificationStats = query({
     daysAgo: v.number(),
   },
   handler: async (ctx, args) => {
-    await requireAuth(ctx, args.token);
+    const userId = await requireAuth(ctx, args.token);
+    const user = await ctx.db.get(userId);
+    if (!user?.isStaff && !user?.isSuperuser) {
+      throw new Error("Togather internal access required");
+    }
 
     // Calculate day boundaries
     const targetDate = new Date();

@@ -16,6 +16,7 @@ jest.mock("@services/api/convex", () => ({
       admin: {
         stats: {
           getDailySummary: "api.functions.admin.stats.getDailySummary",
+          getNotificationStats: "api.functions.admin.stats.getNotificationStats",
         },
       },
     },
@@ -48,17 +49,28 @@ describe("SuperAdminDashboardContent", () => {
       user: { is_staff: true, is_superuser: false },
       token: "token",
     });
-    (useQuery as jest.Mock).mockReturnValue({
-      date: "2026-04-03",
-      messages: { total: 42, uniqueSenders: 12 },
-      totalReactions: 8,
-      appOpens: 25,
-      topChannels: [
-        { channelId: "ch1", channelName: "General", groupName: "Team", groupPhoto: null, messages: 30, reactions: 5 },
-      ],
-      topSenders: [
-        { userId: "u1", name: "Test User", profilePhoto: null, messages: 15, reactions: 3 },
-      ],
+    (useQuery as jest.Mock).mockImplementation((fn: string) => {
+      if (fn === "api.functions.admin.stats.getDailySummary") {
+        return {
+          date: "2026-04-03",
+          messages: { total: 42, uniqueSenders: 12 },
+          totalReactions: 8,
+          appOpens: 25,
+          topChannels: [
+            { channelId: "ch1", channelName: "General", groupName: "Team", groupPhoto: null, messages: 30, reactions: 5 },
+          ],
+          topSenders: [
+            { userId: "u1", name: "Test User", profilePhoto: null, messages: 15, reactions: 3 },
+          ],
+        };
+      }
+      if (fn === "api.functions.admin.stats.getNotificationStats") {
+        return {
+          totals: { sent: 0, impressed: 0, clicked: 0 },
+          byType: [],
+        };
+      }
+      return undefined;
     });
 
     const { getByText, queryByText } = render(<SuperAdminDashboardContent />);
@@ -72,18 +84,60 @@ describe("SuperAdminDashboardContent", () => {
     expect(getByText("Test User")).toBeTruthy();
   });
 
+  test("renders notification stats when totals.sent > 0", () => {
+    (useAuth as jest.Mock).mockReturnValue({
+      user: { is_staff: true, is_superuser: false },
+      token: "token",
+    });
+    (useQuery as jest.Mock).mockImplementation((fn: string) => {
+      if (fn === "api.functions.admin.stats.getDailySummary") {
+        return {
+          date: "2026-04-03",
+          messages: { total: 0, uniqueSenders: 0 },
+          totalReactions: 0,
+          appOpens: 0,
+          topChannels: [],
+          topSenders: [],
+        };
+      }
+      if (fn === "api.functions.admin.stats.getNotificationStats") {
+        return {
+          totals: { sent: 10, impressed: 7, clicked: 3 },
+          byType: [{ type: "new_message", sent: 10, impressed: 7, clicked: 3 }],
+        };
+      }
+      return undefined;
+    });
+
+    const { getByText } = render(<SuperAdminDashboardContent />);
+
+    expect(getByText("Notifications")).toBeTruthy();
+    expect(getByText("10")).toBeTruthy();
+    expect(getByText("7")).toBeTruthy();
+    expect(getByText("3")).toBeTruthy();
+    expect(getByText("New Message")).toBeTruthy();
+  });
+
   test("navigates to previous day", () => {
     (useAuth as jest.Mock).mockReturnValue({
       user: { is_staff: true, is_superuser: false },
       token: "token",
     });
-    (useQuery as jest.Mock).mockReturnValue({
-      date: "2026-04-03",
-      messages: { total: 0, uniqueSenders: 0 },
-      totalReactions: 0,
-      appOpens: 0,
-      topChannels: [],
-      topSenders: [],
+    (useQuery as jest.Mock).mockImplementation((fn: string) => {
+      if (fn === "api.functions.admin.stats.getDailySummary") {
+        return {
+          date: "2026-04-03",
+          messages: { total: 0, uniqueSenders: 0 },
+          totalReactions: 0,
+          appOpens: 0,
+          topChannels: [],
+          topSenders: [],
+        };
+      }
+      if (fn === "api.functions.admin.stats.getNotificationStats") {
+        return { totals: { sent: 0, impressed: 0, clicked: 0 }, byType: [] };
+      }
+      return undefined;
     });
 
     const { queryByText } = render(<SuperAdminDashboardContent />);
