@@ -23,6 +23,7 @@ import type * as functions_admin_migrations from "../functions/admin/migrations.
 import type * as functions_admin_requests from "../functions/admin/requests.js";
 import type * as functions_admin_settings from "../functions/admin/settings.js";
 import type * as functions_admin_stats from "../functions/admin/stats.js";
+import type * as functions_adminBroadcasts from "../functions/adminBroadcasts.js";
 import type * as functions_auth_accountClaim from "../functions/auth/accountClaim.js";
 import type * as functions_auth_emailOtp from "../functions/auth/emailOtp.js";
 import type * as functions_auth_helpers from "../functions/auth/helpers.js";
@@ -183,6 +184,7 @@ declare const fullApi: ApiFromModules<{
   "functions/admin/requests": typeof functions_admin_requests;
   "functions/admin/settings": typeof functions_admin_settings;
   "functions/admin/stats": typeof functions_admin_stats;
+  "functions/adminBroadcasts": typeof functions_adminBroadcasts;
   "functions/auth/accountClaim": typeof functions_auth_accountClaim;
   "functions/auth/emailOtp": typeof functions_auth_emailOtp;
   "functions/auth/helpers": typeof functions_auth_helpers;

@@ -535,7 +535,7 @@ export const sendSMS = internalAction({
 
     const twilioAuth = getTwilioAuthCredentials();
     const accountSid = process.env.TWILIO_ACCOUNT_SID;
-    const fromNumber = process.env.TWILIO_PHONE_NUMBER;
+    const fromNumber = process.env.TWILIO_SMS_NUMBER || process.env.TWILIO_PHONE_NUMBER;
 
     if (!twilioAuth || !accountSid || !fromNumber) {
       console.warn("Twilio not configured for SMS");

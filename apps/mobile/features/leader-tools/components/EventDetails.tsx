@@ -13,6 +13,7 @@ import {
   Share,
   Pressable,
   Modal,
+  Switch,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { format, toZonedTime } from "date-fns-tz";
@@ -116,6 +117,9 @@ export function EventDetails({
   // Submit RSVP mutation (using Convex, auto-injects token)
   const submitRsvpMutation = useAuthenticatedMutation(api.functions.meetingRsvps.submit);
 
+  // Toggle RSVP leader notifications mutation
+  const toggleRsvpNotifyMutation = useAuthenticatedMutation(api.functions.meetings.index.toggleRsvpLeaderNotifications);
+
   // Wrapper for submitRsvp mutation
   const submitRsvp = {
     mutate: async (data: { meetingId: string; optionId: number }) => {
@@ -187,6 +191,19 @@ export function EventDetails({
   const rsvpEnabled = meeting?.rsvpEnabled ?? false;
   const rsvpOptions = (meeting?.rsvpOptions as RsvpOption[] | null) || [];
   const isLoading = isLoadingMeeting;
+  const rsvpNotifyLeaders = (meeting as any)?.rsvpNotifyLeaders !== false; // defaults to true
+
+  // Handle RSVP notification toggle
+  const handleToggleRsvpNotify = async (enabled: boolean) => {
+    try {
+      await toggleRsvpNotifyMutation({
+        meetingId: meetingId as Id<"meetings">,
+        enabled,
+      });
+    } catch (error) {
+      console.error("Failed to toggle RSVP notifications:", error);
+    }
+  };
 
   // Handle RSVP selection
   const handleRsvpSelect = (optionId: number) => {
@@ -477,6 +494,25 @@ export function EventDetails({
                   <View style={styles.detailContent}>
                     <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Description</Text>
                     <Text style={[styles.detailValue, { color: colors.text }]}>{displayNote}</Text>
+                  </View>
+                </View>
+              </View>
+            )}
+
+            {/* Leader: RSVP Notification Toggle */}
+            {isLeader && rsvpEnabled && !isPastEvent && (
+              <View style={[styles.detailCard, { backgroundColor: colors.surface }]}>
+                <View style={styles.detailRow}>
+                  <Ionicons name="notifications-outline" size={20} color={colors.textSecondary} />
+                  <View style={[styles.detailContent, styles.toggleRow]}>
+                    <Text style={[styles.detailValue, { color: colors.text, flex: 1 }]}>
+                      Notify on new RSVPs
+                    </Text>
+                    <Switch
+                      value={rsvpNotifyLeaders}
+                      onValueChange={handleToggleRsvpNotify}
+                      trackColor={{ false: colors.border, true: DEFAULT_PRIMARY_COLOR }}
+                    />
                   </View>
                 </View>
               </View>
@@ -859,6 +895,10 @@ const styles = StyleSheet.create({
   linkText: {
     color: DEFAULT_PRIMARY_COLOR,
     fontWeight: "600",
+  },
+  toggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
   },
   messageAttendeesButton: {
     flexDirection: "row",

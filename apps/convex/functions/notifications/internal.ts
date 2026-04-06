@@ -228,6 +228,7 @@ export const getGroupMemberInfo = internalQuery({
 
 /**
  * Get meeting info for notification actions
+ * Used by notifyRsvpReceived, event blasts, etc.
  */
 export const getMeetingInfo = internalQuery({
   args: {
@@ -241,6 +242,7 @@ export const getMeetingInfo = internalQuery({
       title: meeting.title,
       groupId: meeting.groupId,
       shortId: meeting.shortId,
+      rsvpNotifyLeaders: meeting.rsvpNotifyLeaders,
     };
   },
 });

@@ -495,6 +495,39 @@ export const attendanceConfirmation: NotificationDefinition<AttendanceConfirmati
   };
 
 // ============================================================================
+// RSVP Notification Definitions
+// ============================================================================
+
+interface EventRsvpReceivedData {
+  rsvperName: string;
+  meetingTitle: string;
+  groupName: string;
+  groupId: string;
+  communityId?: string;
+  shortId?: string;
+  rsvpOptionLabel: string;
+}
+
+export const eventRsvpReceived: NotificationDefinition<EventRsvpReceivedData> = {
+  type: 'event_rsvp_received',
+  description: 'Sent to group leaders when someone RSVPs to an event',
+  formatters: {
+    push: (ctx) => ({
+      title: 'New RSVP',
+      body: `${ctx.data.rsvperName} is ${ctx.data.rsvpOptionLabel.toLowerCase()} to ${ctx.data.meetingTitle}`,
+      data: {
+        type: 'event_rsvp_received',
+        groupId: ctx.data.groupId,
+        communityId: ctx.data.communityId,
+        shortId: ctx.data.shortId,
+        url: ctx.data.shortId ? `/e/${ctx.data.shortId}?source=app` : undefined,
+      },
+    }),
+  },
+  defaultChannels: ['push'],
+};
+
+// ============================================================================
 // Admin Definitions
 // ============================================================================
 

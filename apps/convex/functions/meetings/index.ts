@@ -542,6 +542,43 @@ export const cancel = mutation({
 });
 
 /**
+ * Toggle RSVP leader notifications for a meeting
+ * Leaders can enable/disable getting notified when someone RSVPs
+ */
+export const toggleRsvpLeaderNotifications = mutation({
+  args: {
+    token: v.string(),
+    meetingId: v.id("meetings"),
+    enabled: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const meeting = await ctx.db.get(args.meetingId);
+    if (!meeting) {
+      throw new Error("Meeting not found");
+    }
+
+    // Verify user is a leader of the group
+    const membership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", meeting.groupId).eq("userId", userId)
+      )
+      .first();
+    if (!isActiveLeader(membership)) {
+      throw new Error("Only group leaders can change notification settings");
+    }
+
+    await ctx.db.patch(args.meetingId, {
+      rsvpNotifyLeaders: args.enabled,
+    });
+
+    return { success: true };
+  },
+});
+
+/**
  * Create multiple meetings as a series for a single group.
  */
 export const createSeriesEvents = mutation({
