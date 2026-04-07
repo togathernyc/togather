@@ -79,6 +79,20 @@ This section applies **only** to Cursor Cloud Agents and similar CI agents run b
 - Use `pnpm dev:backend --backend=<choice>` only.
 - Each concurrent agent **must** use a different backend to avoid data conflicts.
 
+### Multi-Agent Development Isolation (Paperclip)
+
+When running as a Paperclip agent (e.g. Feature Engineer, QA Engineer), your development environment is isolated using git worktrees to prevent conflicts.
+
+1. **Worktrees**: Agents operate in `worktrees/agent-{slot}` instead of the main repository. 
+2. **Setup**: If your worktree doesn't exist or needs resetting, run `scripts/setup-worktrees.sh` from the repo root.
+3. **Dev Server**: Always ensure your dev server is running before working: `node scripts/agent-dev.js`
+4. **Screenshots/Evidence**: Always take screenshots of visual changes using the provided Playwright script:
+   ```bash
+   node scripts/agent-screenshot.js --port=19002 --path=/some/path --output=/tmp/screenshot.png
+   node scripts/agent-attach.js --issue=TOG-XX --file=/tmp/screenshot.png --comment="Implemented XYZ"
+   ```
+5. **Git Branches**: When working on tasks, pull `main` and create a feature branch (`git checkout -b fix-xyz`). QA Engineer should test against the Feature Engineer's branch.
+
 ### Test-Driven Development
 
 - **Write tests first** - Create failing tests before implementing features
