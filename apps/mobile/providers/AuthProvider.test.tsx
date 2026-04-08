@@ -460,3 +460,49 @@ describe("AuthProvider - SignIn functionality", () => {
     });
   });
 });
+
+describe("AuthProvider - Token refresh must NOT cause app-wide re-renders", () => {
+  /**
+   * Regression test: token must NOT be in the contextValue useMemo dependency array.
+   *
+   * When token is a useMemo dep, every JWT refresh (foreground resume, periodic
+   * refresh) causes ALL ~80 useAuth() consumers to re-render and every Convex
+   * query to re-fire — making the entire app feel janky.
+   *
+   * This was fixed, reverted (P1 review comment about stale JWT), and fixed again.
+   * The stale concern is safe because:
+   * - Login/logout still re-renders via isAuthenticated changing
+   * - Token refresh (same user, new JWT) — old JWT is still valid;
+   *   useStoredAuthToken() picks up the new one via polling
+   *
+   * If this test fails, you are about to reintroduce a critical performance bug.
+   * See: https://github.com/togathernyc/togather/pull/281
+   */
+  it("should NOT include 'token' in contextValue useMemo dependency array", () => {
+    const fs = require("fs");
+    const path = require("path");
+    const source = fs.readFileSync(
+      path.resolve(__dirname, "./AuthProvider.tsx"),
+      "utf-8"
+    );
+
+    // Find the contextValue useMemo block — look for the deps array after the
+    // factory function. The pattern is: useMemo(\n    () => ({...}),\n    [...deps...]\n  );
+    // We need to extract just the dependency array, not the value object.
+    const contextValueMatch = source.match(
+      /const\s+contextValue\s*=\s*useMemo\s*\(\s*\(\)\s*=>\s*\(\{[\s\S]*?\}\)\s*,\s*[\s\S]*?\[([\s\S]*?)\]\s*\)/
+    );
+
+    expect(contextValueMatch).not.toBeNull();
+
+    const depsContent = contextValueMatch![1];
+
+    // Split deps by comma and trim whitespace to get individual dep names
+    const deps = depsContent
+      .split(",")
+      .map((d: string) => d.trim())
+      .filter((d: string) => d.length > 0);
+
+    expect(deps).not.toContain("token");
+  });
+});
