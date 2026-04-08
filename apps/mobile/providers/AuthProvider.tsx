@@ -276,9 +276,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Refs to prevent stale closures and infinite loops
   const userRef = useRef<User | null>(null);
+  const tokenRef = useRef<string | null>(null);
   const isRefreshingUserRef = useRef(false);
   const isRefreshingTokensRef = useRef(false);
   const hasInitializedRef = useRef(false);
+
+  // Keep tokenRef in sync so effects can read the latest token without
+  // adding `token` to dependency arrays (which would cause cascading re-renders).
+  useEffect(() => {
+    tokenRef.current = token;
+  }, [token]);
 
   /**
    * Fetch user profile from Convex and derive community from the response.
@@ -948,10 +955,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     // Update last activity on initial mount if already active and authenticated
     // This tracks users who open the app fresh (not from background)
-    if (AppState.currentState === "active" && token && community?.id) {
+    const currentTokenValue = tokenRef.current;
+    if (AppState.currentState === "active" && currentTokenValue && community?.id) {
       convexVanilla.action(
         convexApi.functions.auth.tokens.updateLastActivity,
-        { token }
+        { token: currentTokenValue }
       ).then(() => {
         console.log("🔐 AuthProvider: Initial last activity updated");
       }).catch((error) => {
@@ -960,14 +968,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Record daily activity for dashboard analytics
       convexVanilla.mutation(
         convexApi.functions.users.recordActivity,
-        { token }
+        { token: currentTokenValue }
       ).catch(() => {});
     }
 
     return () => {
       subscription.remove();
     };
-  }, [refreshAuthTokens, fetchUserProfile, logout, community?.id, token]);
+  }, [refreshAuthTokens, fetchUserProfile, logout, community?.id]);
 
   // Memoize isAuthenticated
   // A user is considered authenticated if we have their profile OR a valid token.
@@ -985,9 +993,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return authenticated;
   }, [user, token]);
 
-  // Memoize context value. `token` is a dependency so `useAuth().token` updates
-  // after refresh; Convex hooks that read from storage (`useStoredAuthToken`) remain
-  // valid for code paths that want the latest JWT without coupling to this object identity.
+  // Memoize context value. `token` is included in the value for backward compat
+  // but intentionally NOT in the dependency array — token refreshes (same user,
+  // new JWT) must not cascade re-renders to every useAuth() consumer. The token
+  // value will update when the context recomputes for other reasons (login/logout).
+  // Components needing the freshest token should use useStoredAuthToken() from convex.ts.
   const contextValue = useMemo(
     () => ({
       user,
@@ -1001,12 +1011,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       clearCommunity,
       signIn,
     }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- token excluded to prevent app-wide re-renders on JWT refresh
     [
       user,
       community,
       isLoading,
       isAuthenticated,
-      token,
       logout,
       refreshUser,
       setCommunity,
