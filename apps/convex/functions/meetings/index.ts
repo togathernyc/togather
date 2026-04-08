@@ -7,9 +7,10 @@
 import { v } from "convex/values";
 import { query, mutation } from "../../_generated/server";
 import { internal } from "../../_generated/api";
-import { now, generateShortId } from "../../lib/utils";
+import { now, generateShortId, getDisplayName, getMediaUrl } from "../../lib/utils";
 import { requireAuth } from "../../lib/auth";
 import { isActiveLeader } from "../../lib/helpers";
+import { DOMAIN_CONFIG } from "@togather/shared/config";
 import {
   DEFAULT_REMINDER_OFFSET_MS,
   DEFAULT_ATTENDANCE_CONFIRMATION_OFFSET_MS,
@@ -717,5 +718,116 @@ export const createSeriesEvents = mutation({
     }
 
     return { seriesId, meetingIds };
+  },
+});
+
+// ============================================================================
+// Post Event to Chat
+// ============================================================================
+
+/**
+ * Post an event link to the group's main chat channel.
+ * Called from the "Send to Chat" modal after creating an event.
+ */
+export const postToChat = mutation({
+  args: {
+    token: v.string(),
+    meetingId: v.id("meetings"),
+    message: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const meeting = await ctx.db.get(args.meetingId);
+    if (!meeting) {
+      throw new Error("Event not found");
+    }
+
+    // Verify user is a leader of this group
+    const membership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", meeting.groupId).eq("userId", userId)
+      )
+      .first();
+
+    if (!isActiveLeader(membership)) {
+      throw new Error("Only group leaders can share events to chat");
+    }
+
+    // Find the group's main channel
+    const mainChannel = await ctx.db
+      .query("chatChannels")
+      .withIndex("by_group_type", (q) =>
+        q.eq("groupId", meeting.groupId).eq("channelType", "main")
+      )
+      .first();
+
+    if (!mainChannel) {
+      throw new Error("Group chat channel not found");
+    }
+
+    // Check user is a member of the channel
+    const channelMembership = await ctx.db
+      .query("chatChannelMembers")
+      .withIndex("by_channel_user", (q) =>
+        q.eq("channelId", mainChannel._id).eq("userId", userId)
+      )
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .first();
+
+    if (!channelMembership) {
+      throw new Error("Not a member of the group chat");
+    }
+
+    // Build message content with event link
+    const eventUrl = meeting.shortId
+      ? DOMAIN_CONFIG.eventShareUrl(meeting.shortId)
+      : "";
+    const content = eventUrl
+      ? `${args.message}\n\n${eventUrl}`
+      : args.message;
+
+    // Get sender info
+    const user = await ctx.db.get(userId);
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    const senderName = getDisplayName(user.firstName, user.lastName);
+    const senderProfilePhoto = getMediaUrl(user.profilePhoto);
+    const timestamp = now();
+
+    // Insert the chat message
+    const messageId = await ctx.db.insert("chatMessages", {
+      channelId: mainChannel._id,
+      senderId: userId,
+      content,
+      contentType: "text",
+      createdAt: timestamp,
+      isDeleted: false,
+      senderName,
+      senderProfilePhoto,
+      lastActivityAt: timestamp,
+    });
+
+    // Update channel with last message info
+    const preview = content.slice(0, 100);
+    await ctx.db.patch(mainChannel._id, {
+      lastMessageAt: timestamp,
+      lastMessagePreview: preview,
+      lastMessageSenderId: userId,
+      lastMessageSenderName: senderName,
+      updatedAt: timestamp,
+    });
+
+    // Trigger notification logic
+    await ctx.scheduler.runAfter(0, internal.functions.messaging.events.onMessageSent, {
+      messageId,
+      channelId: mainChannel._id,
+      senderId: userId,
+    });
+
+    return messageId;
   },
 });
