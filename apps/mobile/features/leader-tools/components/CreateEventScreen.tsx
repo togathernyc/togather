@@ -271,6 +271,7 @@ export function CreateEventScreen() {
   const addMeetingToSeriesMutation = useAuthenticatedMutation(api.functions.eventSeries.addMeetingToSeries);
   const removeMeetingFromSeriesMutation = useAuthenticatedMutation(api.functions.eventSeries.removeMeetingFromSeries);
   const createSeriesFromMeetingsMutation = useAuthenticatedMutation(api.functions.eventSeries.createSeriesFromMeetings);
+  const postToChatMutationFn = useAuthenticatedMutation(api.functions.meetings.index.postToChat);
 
   // Mutation state tracking
   const [isCreating, setIsCreating] = useState(false);
@@ -286,15 +287,13 @@ export function CreateEventScreen() {
   };
 
   // Handle sending the event to chat with a message
-  // Note: useAuthenticatedMutation auto-injects the token
   const handleSendToChat = async (message: string) => {
     if (!pendingMeetingId) return;
     setIsPostingToChat(true);
     try {
-      await updateMeetingMutation({
+      await postToChatMutationFn({
         meetingId: pendingMeetingId as Id<"meetings">,
-        // Note: postToChat functionality may need to be handled separately
-        // For now, just close the modal after update
+        message,
       });
       setShowShareModal(false);
       setPendingMeetingId(null);
