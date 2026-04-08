@@ -26,6 +26,7 @@ import {
 import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
 import { now, getMediaUrl, safeSliceForJson, getWeekStart } from "../lib/utils";
+import { communityPeopleAggregate } from "../lib/aggregates";
 import {
   extractSystemRawValues,
   calculateAllSystemScores,
@@ -482,6 +483,8 @@ export const upsertCommunityPeopleBatch = internalMutation({
           customBool5: siblingRecord?.customBool5,
           createdAt: nowTs,
         });
+        const newDoc = await ctx.db.get(cpId);
+        await communityPeopleAggregate.insert(ctx, newDoc!);
 
         // Sync junction table for assignee filtering
         if (siblingRecord?.assigneeIds?.length) {
@@ -531,7 +534,7 @@ export const pruneStaleRows = internalMutation({
         for (const row of legacyJunctionRows) {
           await ctx.db.delete(row._id);
         }
-        // Legacy record without groupId — prune it
+        // Legacy record without groupId — prune it (skip aggregate since these were never indexed)
         await ctx.db.delete(doc._id);
         deleted++;
         continue;
@@ -559,6 +562,7 @@ export const pruneStaleRows = internalMutation({
         for (const row of junctionRows) {
           await ctx.db.delete(row._id);
         }
+        await communityPeopleAggregate.delete(ctx, doc);
         await ctx.db.delete(doc._id);
         deleted++;
       }

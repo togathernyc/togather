@@ -18,3 +18,18 @@ export const modules = import.meta.glob([
   "!./*.config.ts",
   "!./*.setup.ts",
 ]);
+
+import { convexTest } from "convex-test";
+import { register as registerAggregate } from "@convex-dev/aggregate/test";
+import schema from "./schema";
+
+/**
+ * Create a convex-test instance with aggregate components registered.
+ * Use this instead of `convexTest(schema, modules)` in tests that touch
+ * mutations which use the communityPeople aggregate.
+ */
+export function convexTestWithAggregates() {
+  const t = convexTest(schema, modules);
+  registerAggregate(t, "communityPeopleAggregate");
+  return t;
+}

@@ -22,6 +22,7 @@ import {
 import { internal } from "../../_generated/api";
 import { Doc, Id } from "../../_generated/dataModel";
 import { getMediaUrl } from "../../lib/utils";
+import { communityPeopleAggregate } from "../../lib/aggregates";
 
 // ============================================================================
 // Constants
@@ -356,10 +357,12 @@ export const upsertMigratedBatch = internalMutation({
         if (existing) {
           await ctx.db.patch(existing._id, doc);
         } else {
-          await ctx.db.insert("communityPeople", {
+          const cpId = await ctx.db.insert("communityPeople", {
             ...doc,
             createdAt: nowTs,
           });
+          const newDoc = await ctx.db.get(cpId);
+          await communityPeopleAggregate.insert(ctx, newDoc!);
         }
       } catch (e) {
         console.error(

@@ -18,6 +18,7 @@ import { now, normalizePhone, getMediaUrl, buildSearchText } from "../lib/utils"
 import { requireAuth, getOptionalAuth } from "../lib/auth";
 import { parseDate } from "../lib/validation";
 import { COMMUNITY_ROLES, COMMUNITY_ADMIN_THRESHOLD } from "../lib/permissions";
+import { communityPeopleAggregate } from "../lib/aggregates";
 
 /**
  * Get current user profile
@@ -721,6 +722,7 @@ export const deleteAccountInternal = internalMutation({
       for (const assignee of assigneeRecords) {
         await ctx.db.delete(assignee._id);
       }
+      await communityPeopleAggregate.delete(ctx, record);
       await ctx.db.delete(record._id);
     }
 
