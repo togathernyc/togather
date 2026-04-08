@@ -8,8 +8,9 @@
 import { convexTest } from "convex-test";
 import { expect, test, describe } from "vitest";
 import schema from "../schema";
-import { modules } from "../test.setup";
+import { modules, convexTestWithAggregates } from "../test.setup";
 import { internal } from "../_generated/api";
+import { communityPeopleAggregate } from "../lib/aggregates";
 import type { Id } from "../_generated/dataModel";
 
 // ============================================================================
@@ -300,13 +301,13 @@ describe("deleteAccountInternal", () => {
   });
 
   test("removes communityPeople records and associated assignees", async () => {
-    const t = convexTest(schema, modules);
+    const t = convexTestWithAggregates();
 
     const { userId, communityId, groupId } = await seedFullUser(t);
 
-    // Create a communityPeople record
+    // Create a communityPeople record and register it in the aggregate
     const cpId = await t.run(async (ctx) => {
-      return await ctx.db.insert("communityPeople", {
+      const id = await ctx.db.insert("communityPeople", {
         communityId,
         groupId,
         userId,
@@ -315,6 +316,9 @@ describe("deleteAccountInternal", () => {
         createdAt: Date.now(),
         updatedAt: Date.now(),
       });
+      const doc = await ctx.db.get(id);
+      await communityPeopleAggregate.insert(ctx, doc!);
+      return id;
     });
 
     // Create an assignee junction record

@@ -22,6 +22,7 @@ import { isActiveMembership, isLeaderRole } from "../lib/helpers";
 import { VALID_CUSTOM_SLOTS } from "../lib/followupConstants";
 import { SYSTEM_SCORES, SYSTEM_VARIABLE_IDS } from "./systemScoring";
 import { getMediaUrl, safeSliceForJson } from "../lib/utils";
+import { communityPeopleAggregate } from "../lib/aggregates";
 
 // ============================================================================
 // Auth Helpers
@@ -1593,7 +1594,7 @@ export const setAssignees = mutation({
 
 /**
  * Count community people for a given group.
- * Uses the by_group index for a direct count — no joins needed.
+ * Uses the aggregate component for O(log n) counting instead of scanning rows.
  */
 export const count = query({
   args: {
@@ -1608,13 +1609,9 @@ export const count = query({
 
     await requireCommunityMember(ctx, group.communityId, userId);
 
-    let count = 0;
-    for await (const _cp of ctx.db
-      .query("communityPeople")
-      .withIndex("by_group", (q: any) => q.eq("groupId", args.groupId))) {
-      count++;
-    }
-    return count;
+    return await communityPeopleAggregate.count(ctx, {
+      namespace: args.groupId,
+    });
   },
 });
 
@@ -2437,6 +2434,8 @@ export const upsertFromSubmission = internalMutation({
           groupId,
           createdAt: nowTs,
         });
+        const newDoc = await ctx.db.get(cpId);
+        await communityPeopleAggregate.insert(ctx, newDoc!);
       }
 
       // Keep junction table in sync

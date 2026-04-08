@@ -9,6 +9,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@convex-dev/aggregate": "^0.2.1",
     "@react-email/components": "^1.0.3",
     "@react-email/render": "^1.0.0",
     "@togather/shared": "workspace:*",

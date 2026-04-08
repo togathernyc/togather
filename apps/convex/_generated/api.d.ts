@@ -132,6 +132,7 @@ import type * as functions_toolShortLinks_index from "../functions/toolShortLink
 import type * as functions_uploads from "../functions/uploads.js";
 import type * as functions_users from "../functions/users.js";
 import type * as http from "../http.js";
+import type * as lib_aggregates from "../lib/aggregates.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_ee_emailTemplates from "../lib/ee/emailTemplates.js";
 import type * as lib_email_templates_BaseLayout from "../lib/email/templates/BaseLayout.js";
@@ -160,6 +161,7 @@ import type * as lib_utils from "../lib/utils.js";
 import type * as lib_validation from "../lib/validation.js";
 import type * as lib_validators from "../lib/validators.js";
 import type * as migrations_addChannelSlugs from "../migrations/addChannelSlugs.js";
+import type * as migrations_backfillCommunityPeopleAggregate from "../migrations/backfillCommunityPeopleAggregate.js";
 import type * as migrations_backfillLastActivityAt from "../migrations/backfillLastActivityAt.js";
 
 import type {
@@ -293,6 +295,7 @@ declare const fullApi: ApiFromModules<{
   "functions/uploads": typeof functions_uploads;
   "functions/users": typeof functions_users;
   http: typeof http;
+  "lib/aggregates": typeof lib_aggregates;
   "lib/auth": typeof lib_auth;
   "lib/ee/emailTemplates": typeof lib_ee_emailTemplates;
   "lib/email/templates/BaseLayout": typeof lib_email_templates_BaseLayout;
@@ -321,6 +324,7 @@ declare const fullApi: ApiFromModules<{
   "lib/validation": typeof lib_validation;
   "lib/validators": typeof lib_validators;
   "migrations/addChannelSlugs": typeof migrations_addChannelSlugs;
+  "migrations/backfillCommunityPeopleAggregate": typeof migrations_backfillCommunityPeopleAggregate;
   "migrations/backfillLastActivityAt": typeof migrations_backfillLastActivityAt;
 }>;
 
@@ -350,4 +354,191 @@ export declare const internal: FilterApi<
   FunctionReference<any, "internal">
 >;
 
-export declare const components: {};
+export declare const components: {
+  communityPeopleAggregate: {
+    btree: {
+      aggregateBetween: FunctionReference<
+        "query",
+        "internal",
+        { k1?: any; k2?: any; namespace?: any },
+        { count: number; sum: number }
+      >;
+      aggregateBetweenBatch: FunctionReference<
+        "query",
+        "internal",
+        { queries: Array<{ k1?: any; k2?: any; namespace?: any }> },
+        Array<{ count: number; sum: number }>
+      >;
+      atNegativeOffset: FunctionReference<
+        "query",
+        "internal",
+        { k1?: any; k2?: any; namespace?: any; offset: number },
+        { k: any; s: number; v: any }
+      >;
+      atOffset: FunctionReference<
+        "query",
+        "internal",
+        { k1?: any; k2?: any; namespace?: any; offset: number },
+        { k: any; s: number; v: any }
+      >;
+      atOffsetBatch: FunctionReference<
+        "query",
+        "internal",
+        {
+          queries: Array<{
+            k1?: any;
+            k2?: any;
+            namespace?: any;
+            offset: number;
+          }>;
+        },
+        Array<{ k: any; s: number; v: any }>
+      >;
+      get: FunctionReference<
+        "query",
+        "internal",
+        { key: any; namespace?: any },
+        null | { k: any; s: number; v: any }
+      >;
+      offset: FunctionReference<
+        "query",
+        "internal",
+        { k1?: any; key: any; namespace?: any },
+        number
+      >;
+      offsetUntil: FunctionReference<
+        "query",
+        "internal",
+        { k2?: any; key: any; namespace?: any },
+        number
+      >;
+      paginate: FunctionReference<
+        "query",
+        "internal",
+        {
+          cursor?: string;
+          k1?: any;
+          k2?: any;
+          limit: number;
+          namespace?: any;
+          order: "asc" | "desc";
+        },
+        {
+          cursor: string;
+          isDone: boolean;
+          page: Array<{ k: any; s: number; v: any }>;
+        }
+      >;
+      paginateNamespaces: FunctionReference<
+        "query",
+        "internal",
+        { cursor?: string; limit: number },
+        { cursor: string; isDone: boolean; page: Array<any> }
+      >;
+      validate: FunctionReference<
+        "query",
+        "internal",
+        { namespace?: any },
+        any
+      >;
+    };
+    inspect: {
+      display: FunctionReference<"query", "internal", { namespace?: any }, any>;
+      dump: FunctionReference<"query", "internal", { namespace?: any }, string>;
+      inspectNode: FunctionReference<
+        "query",
+        "internal",
+        { namespace?: any; node?: string },
+        null
+      >;
+      listTreeNodes: FunctionReference<
+        "query",
+        "internal",
+        { take?: number },
+        Array<{
+          _creationTime: number;
+          _id: string;
+          aggregate?: { count: number; sum: number };
+          items: Array<{ k: any; s: number; v: any }>;
+          subtrees: Array<string>;
+        }>
+      >;
+      listTrees: FunctionReference<
+        "query",
+        "internal",
+        { take?: number },
+        Array<{
+          _creationTime: number;
+          _id: string;
+          maxNodeSize: number;
+          namespace?: any;
+          root: string;
+        }>
+      >;
+    };
+    public: {
+      clear: FunctionReference<
+        "mutation",
+        "internal",
+        { maxNodeSize?: number; namespace?: any; rootLazy?: boolean },
+        null
+      >;
+      delete_: FunctionReference<
+        "mutation",
+        "internal",
+        { key: any; namespace?: any },
+        null
+      >;
+      deleteIfExists: FunctionReference<
+        "mutation",
+        "internal",
+        { key: any; namespace?: any },
+        any
+      >;
+      init: FunctionReference<
+        "mutation",
+        "internal",
+        { maxNodeSize?: number; namespace?: any; rootLazy?: boolean },
+        null
+      >;
+      insert: FunctionReference<
+        "mutation",
+        "internal",
+        { key: any; namespace?: any; summand?: number; value: any },
+        null
+      >;
+      makeRootLazy: FunctionReference<
+        "mutation",
+        "internal",
+        { namespace?: any },
+        null
+      >;
+      replace: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          currentKey: any;
+          namespace?: any;
+          newKey: any;
+          newNamespace?: any;
+          summand?: number;
+          value: any;
+        },
+        null
+      >;
+      replaceOrInsert: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          currentKey: any;
+          namespace?: any;
+          newKey: any;
+          newNamespace?: any;
+          summand?: number;
+          value: any;
+        },
+        any
+      >;
+    };
+  };
+};
