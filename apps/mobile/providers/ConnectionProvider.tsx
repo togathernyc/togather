@@ -89,10 +89,11 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({
     null
   );
   const wasDisconnectedRef = useRef(false);
+  /** True if the disconnect happened during cold start (grace timer), not mid-session */
+  const coldStartDisconnectRef = useRef(false);
   // Track latest network state so the grace timer callback can distinguish
   // "network down" from "WebSocket slow to connect"
   const isNetworkAvailableRef = useRef(true);
-  const isInternetReachableRef = useRef(true);
 
   const isWebSocketConnected = convexState.isWebSocketConnected;
 
@@ -130,12 +131,15 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({
         if (!startupGraceTimerRef.current) {
           startupGraceTimerRef.current = setTimeout(() => {
             startupGraceTimerRef.current = null;
-            // Only show "No internet" if the network is actually down.
-            // If NetInfo says we have internet but the WebSocket is slow,
-            // stay in 'connecting' (no banner) — not a network issue.
-            if (!isNetworkAvailableRef.current || !isInternetReachableRef.current) {
+            // Only show "No internet" if the device has no network at all.
+            // Do NOT check isInternetReachable here — on Android it does an
+            // HTTP probe that can report false for several seconds during cold
+            // start, causing a false "No internet" banner that flips to
+            // "Connected" once the probe completes.
+            if (!isNetworkAvailableRef.current) {
               setStatus('disconnected');
               wasDisconnectedRef.current = true;
+              coldStartDisconnectRef.current = true;
             }
           }, COLD_START_GRACE_MS);
         }
@@ -168,10 +172,18 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({
       if (currentStatus === 'connecting') {
         // Cold start succeeded within grace period - connect silently, no banner
         setStatus(isSlowConnection ? 'slow' : 'connected');
+      } else if (wasDisconnectedRef.current && coldStartDisconnectRef.current) {
+        // Disconnect happened during cold start (grace timer), not a real
+        // mid-session drop. Skip the "reconnected" banner — go straight to
+        // connected so the user doesn't see a misleading green banner.
+        wasDisconnectedRef.current = false;
+        coldStartDisconnectRef.current = false;
+        setStatus(isSlowConnection ? 'slow' : 'connected');
       } else if (wasDisconnectedRef.current) {
-        // Was disconnected - show reconnected
+        // Real mid-session disconnect recovered - show reconnected banner
         setStatus('reconnected');
         wasDisconnectedRef.current = false;
+        coldStartDisconnectRef.current = false;
 
         // Auto-dismiss after 3 seconds
         reconnectedTimerRef.current = setTimeout(() => {
@@ -207,7 +219,6 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({
       setIsNetworkAvailable(networkAvailable);
       setIsInternetReachable(internetReachable);
       isNetworkAvailableRef.current = networkAvailable;
-      isInternetReachableRef.current = internetReachable;
       setConnectionType(state.type ?? 'unknown');
 
       // Extract cellular generation
