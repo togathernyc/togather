@@ -105,7 +105,18 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({
   const isSlowConnection = connectionType === 'cellular' &&
     (cellularGeneration === '2g' || cellularGeneration === '3g');
 
+  // Use a ref to read current status inside the effect without including it
+  // in the dependency array. Including `status` as a dep caused the effect to
+  // re-run on every status change, creating a self-triggering cycle
+  // (setStatus → re-render → effect re-runs → setStatus again). React's
+  // same-value bail-out prevents true infinite loops, but the extra effect
+  // re-runs are wasteful and fragile if inputs flicker.
+  const statusRef = useRef(status);
+  statusRef.current = status;
+
   useEffect(() => {
+    const currentStatus = statusRef.current;
+
     if (!isConnected) {
       // Clear reconnected timer if running
       if (reconnectedTimerRef.current) {
@@ -113,7 +124,7 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({
         reconnectedTimerRef.current = null;
       }
 
-      if (status === 'connecting') {
+      if (currentStatus === 'connecting') {
         // Cold start: use longer grace period before showing red banner
         if (!startupGraceTimerRef.current) {
           startupGraceTimerRef.current = setTimeout(() => {
@@ -153,7 +164,7 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({
         startupGraceTimerRef.current = null;
       }
 
-      if (status === 'connecting') {
+      if (currentStatus === 'connecting') {
         // Cold start succeeded within grace period - connect silently, no banner
         setStatus(isSlowConnection ? 'slow' : 'connected');
       } else if (wasDisconnectedRef.current) {
@@ -166,13 +177,9 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({
           setStatus(isSlowConnection ? 'slow' : 'connected');
           reconnectedTimerRef.current = null;
         }, 3000);
-      } else if (status === 'reconnected') {
-        // Already showing reconnected - effect re-ran due to status in deps; don't overwrite
-        // The reconnected timer will transition to connected/slow
-      } else if (isSlowConnection) {
-        setStatus('slow');
-      } else {
-        setStatus('connected');
+      } else if (currentStatus !== 'reconnected') {
+        // Not in reconnected state (which has its own timer) — sync with connection quality
+        setStatus(isSlowConnection ? 'slow' : 'connected');
       }
     }
 
@@ -180,10 +187,8 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({
       if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
       if (startupGraceTimerRef.current)
         clearTimeout(startupGraceTimerRef.current);
-      // Don't clear reconnectedTimerRef here - effect re-runs when status changes to
-      // 'reconnected', and we need that timer to fire. It's cleared when going offline.
     };
-  }, [isConnected, isSlowConnection, status]);
+  }, [isConnected, isSlowConnection]);
 
   // Clear reconnected timer on unmount
   useEffect(() => {
