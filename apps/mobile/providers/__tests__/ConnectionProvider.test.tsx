@@ -3,6 +3,7 @@
  * Tests the state machine: connected -> disconnected -> reconnected -> connected
  */
 import React from 'react';
+import { AppState } from 'react-native';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
 import { ConnectionProvider, useConnectionStatus } from '../ConnectionProvider';
 
@@ -313,5 +314,70 @@ describe('ConnectionProvider', () => {
     await waitFor(() => expect(result.current.status).toBe('connected'));
     // Should be connected, not reconnected (no green banner flash)
     expect(result.current.status).toBe('connected');
+  });
+
+  it('resets to connecting on foreground and avoids mid-session disconnect debounce while WebSocket reconnects', async () => {
+    let mockCurrentState = 'active';
+    const currentStateDescriptor = Object.getOwnPropertyDescriptor(
+      AppState,
+      'currentState'
+    );
+    Object.defineProperty(AppState, 'currentState', {
+      configurable: true,
+      enumerable: currentStateDescriptor?.enumerable ?? true,
+      get: () => mockCurrentState,
+    });
+
+    const listeners: Array<(state: string) => void> = [];
+    const addListenerSpy = jest
+      .spyOn(AppState, 'addEventListener')
+      .mockImplementation((event, listener) => {
+        if (event === 'change') {
+          listeners.push(listener as (state: string) => void);
+        }
+        return { remove: jest.fn() };
+      });
+
+    try {
+      const { result, rerender } = renderHook(() => useConnectionStatus(), {
+        wrapper,
+      });
+      await waitFor(() => expect(result.current.status).toBe('connected'));
+
+      // Mid-session WebSocket drop: would normally show disconnected after 2s debounce
+      act(() => {
+        mockIsWebSocketConnected = false;
+        rerender({});
+      });
+
+      act(() => {
+        jest.advanceTimersByTime(500);
+      });
+      expect(result.current.status).toBe('connected');
+
+      // iOS-style resume: foreground resets to cold-start path (6s grace, no red banner)
+      const emitAppState = listeners[listeners.length - 1];
+      act(() => {
+        mockCurrentState = 'active';
+        emitAppState('background');
+        mockCurrentState = 'background';
+        emitAppState('active');
+      });
+
+      await waitFor(() => expect(result.current.status).toBe('connecting'));
+
+      // 2s debounce would have fired without the foreground reset — should still be connecting
+      act(() => {
+        jest.advanceTimersByTime(2000);
+      });
+      expect(result.current.status).toBe('connecting');
+    } finally {
+      addListenerSpy.mockRestore();
+      if (currentStateDescriptor) {
+        Object.defineProperty(AppState, 'currentState', currentStateDescriptor);
+      } else {
+        delete (AppState as { currentState?: string }).currentState;
+      }
+    }
   });
 });

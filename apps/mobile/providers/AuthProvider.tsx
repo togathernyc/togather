@@ -144,8 +144,12 @@ function decodeJwtPayload(token: string): { exp?: number; [key: string]: unknown
   try {
     const parts = token.split(".");
     if (parts.length !== 3) return null;
-    // Base64url → Base64 → decode
-    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    // Base64url → Base64 → decode (pad to multiple of 4 — required for atob on some runtimes)
+    let base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const pad = base64.length % 4;
+    if (pad === 2) base64 += "==";
+    else if (pad === 3) base64 += "=";
+    else if (pad === 1) return null;
     const json = atob(base64);
     return JSON.parse(json);
   } catch {
