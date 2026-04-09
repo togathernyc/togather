@@ -235,15 +235,22 @@ export function useStoredAuthToken(): string | null {
   // receive the new JWT — stale tokens can 401 until the user navigates enough
   // to remount hooks. AuthProvider avoids putting `token` in context deps to
   // limit broad re-renders; this hook is the narrow place that should update.
+  //
+  // Use a ref to compare against the current token so `token` doesn't need
+  // to be a dependency. Including it would recreate the interval on every
+  // token change, which is wasteful and can cascade re-renders.
+  const tokenRef = React.useRef(token);
+  tokenRef.current = token;
+
   React.useEffect(() => {
     const interval = setInterval(() => {
-      if (cachedToken !== token) {
+      if (cachedToken !== tokenRef.current) {
         setToken(cachedToken);
       }
     }, 500);
 
     return () => clearInterval(interval);
-  }, [token]);
+  }, []); // Stable interval — reads token via ref
 
   return token;
 }
@@ -280,10 +287,19 @@ export function useAuthenticatedQuery<
   // If args is 'skip' or no token, skip the query
   const shouldSkip = args === 'skip' || !token;
 
-  // Compute args once - always call the hook unconditionally to satisfy rules of hooks
-  const queryArgs = shouldSkip
-    ? 'skip' as const
-    : ({ ...(args as Omit<FunctionArgs<Query>, 'token'>), token } as FunctionArgs<Query>);
+  // Memoize query args to avoid creating a new object on every render.
+  // Convex does deep comparison internally, but spreading { ...args, token }
+  // inline creates a new reference each render which still causes unnecessary
+  // work in Convex's comparison logic across 50+ call sites.
+  const argsKey = shouldSkip ? 'skip' : JSON.stringify(args);
+  const queryArgs = React.useMemo(
+    () =>
+      shouldSkip
+        ? ('skip' as const)
+        : ({ ...(args as Omit<FunctionArgs<Query>, 'token'>), token } as FunctionArgs<Query>),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- argsKey is the serialized form of args
+    [shouldSkip, argsKey, token]
+  );
 
   return useConvexQuery(queryFn, queryArgs);
 }
@@ -394,10 +410,16 @@ export function useAuthenticatedPaginatedQuery<
   // If args is 'skip' or no token, skip the query
   const shouldSkip = args === 'skip' || !token;
 
-  // Compute args once - always call the hook unconditionally to satisfy rules of hooks
-  const queryArgs = shouldSkip
-    ? ('skip' as const)
-    : { ...(args as object), token };
+  // Memoize query args (same pattern as useAuthenticatedQuery)
+  const argsKey = shouldSkip ? 'skip' : JSON.stringify(args);
+  const queryArgs = React.useMemo(
+    () =>
+      shouldSkip
+        ? ('skip' as const)
+        : { ...(args as object), token },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- argsKey is the serialized form of args
+    [shouldSkip, argsKey, token]
+  );
 
   return useConvexPaginatedQuery(queryFn, queryArgs as any, options);
 }
