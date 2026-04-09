@@ -31,6 +31,7 @@ import React, {
   useRef,
   useCallback,
 } from 'react';
+import { AppState, AppStateStatus } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
 import { useConvexConnectionState } from '@services/api/convex';
 
@@ -209,6 +210,38 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({
       if (reconnectedTimerRef.current)
         clearTimeout(reconnectedTimerRef.current);
     };
+  }, []);
+
+  // When the app returns from background, iOS will have killed the WebSocket.
+  // Reset to 'connecting' so we use the cold-start grace period (6s, no banner)
+  // instead of the mid-session debounce (2s → red banner). The WebSocket
+  // typically reconnects in 1-3s, well within the grace window.
+  useEffect(() => {
+    let previousState = AppState.currentState;
+
+    const subscription = AppState.addEventListener(
+      'change',
+      (nextState: AppStateStatus) => {
+        if (
+          previousState.match(/inactive|background/) &&
+          nextState === 'active'
+        ) {
+          // Clear any pending disconnect timer from the backgrounding
+          if (disconnectTimerRef.current) {
+            clearTimeout(disconnectTimerRef.current);
+            disconnectTimerRef.current = null;
+          }
+          // Reset to connecting — the main effect will re-evaluate and
+          // either connect silently or start the grace timer
+          setStatus('connecting');
+          wasDisconnectedRef.current = false;
+          coldStartDisconnectRef.current = false;
+        }
+        previousState = nextState;
+      }
+    );
+
+    return () => subscription.remove();
   }, []);
 
   // Subscribe to NetInfo
