@@ -27,6 +27,7 @@ import React, {
   useContext,
   useState,
   useEffect,
+  useMemo,
   useRef,
   useCallback,
 } from 'react';
@@ -242,19 +243,31 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({
     };
   }, [simulateOffline]);
 
+  const contextValue = useMemo(
+    () => ({
+      status,
+      isNetworkAvailable,
+      isWebSocketConnected,
+      isInternetReachable,
+      connectionType,
+      cellularGeneration,
+      isEffectivelyOffline,
+      ...(__DEV__ ? { simulateOffline } : {}),
+    }),
+    [
+      status,
+      isNetworkAvailable,
+      isWebSocketConnected,
+      isInternetReachable,
+      connectionType,
+      cellularGeneration,
+      isEffectivelyOffline,
+      simulateOffline,
+    ]
+  );
+
   return (
-    <ConnectionContext.Provider
-      value={{
-        status,
-        isNetworkAvailable,
-        isWebSocketConnected,
-        isInternetReachable,
-        connectionType,
-        cellularGeneration,
-        isEffectivelyOffline,
-        ...(__DEV__ ? { simulateOffline } : {}),
-      }}
-    >
+    <ConnectionContext.Provider value={contextValue}>
       {children}
     </ConnectionContext.Provider>
   );

@@ -5,7 +5,7 @@
  * Environment is determined at build time - no runtime switching.
  */
 
-import React, { createContext, useContext } from "react";
+import React, { createContext, useContext, useMemo } from "react";
 import { Environment, EnvironmentConfig } from "@services/environment";
 
 interface EnvironmentContextValue {
@@ -21,12 +21,16 @@ interface EnvironmentProviderProps {
 }
 
 export function EnvironmentProvider({ children }: EnvironmentProviderProps) {
-  // Environment is determined at build time - no async loading needed
-  const value: EnvironmentContextValue = {
-    config: Environment.current,
-    isStaging: Environment.isStaging(),
-    isProduction: Environment.isProduction(),
-  };
+  // Environment is determined at build time — memoize to prevent cascading
+  // re-renders to all useEnvironment() consumers when a parent re-renders.
+  const value = useMemo<EnvironmentContextValue>(
+    () => ({
+      config: Environment.current,
+      isStaging: Environment.isStaging(),
+      isProduction: Environment.isProduction(),
+    }),
+    []
+  );
 
   return (
     <EnvironmentContext.Provider value={value}>
