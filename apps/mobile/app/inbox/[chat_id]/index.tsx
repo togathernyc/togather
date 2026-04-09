@@ -16,7 +16,7 @@
  * - If channel lookup fails and the ID can't be validated as a group, redirects to inbox
  * - Prevents perpetual loading states for deleted/inaccessible channels
  */
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { View, ActivityIndicator, Text, StyleSheet, Pressable } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useQuery, api } from "@services/api/convex";
@@ -45,10 +45,15 @@ export default function LegacyChatIdRoute() {
     !chat_id.includes("_") && // Stream IDs have underscores
     chat_id.length > 10; // Convex IDs are longer
 
-  // Try to parse as Stream channel ID
-  const parsedChannel = !isConvexChannelId && chat_id
-    ? parseStreamChannelId(chat_id)
-    : null;
+  // Memoize parsed Stream channel ID to prevent new object references on every render.
+  // Without this, the useEffect below would re-fire on every render due to referential inequality.
+  const parsedChannel = useMemo(
+    () => (!isConvexChannelId && chat_id ? parseStreamChannelId(chat_id) : null),
+    [isConvexChannelId, chat_id]
+  );
+
+  // Guard to prevent multiple redirect attempts which can cause infinite loops
+  const hasRedirected = useRef(false);
 
   // Query channel data if we have a Convex channel ID
   const channelData = useQuery(
@@ -70,10 +75,15 @@ export default function LegacyChatIdRoute() {
   );
 
   useEffect(() => {
+    // Prevent multiple redirects — once we've navigated, stop re-running.
+    // This prevents infinite loops when navigation state changes trigger re-renders.
+    if (hasRedirected.current) return;
+
     // If we have parsed Stream channel ID with groupId (can determine type locally)
     if (parsedChannel?.groupId) {
       // Map channel type to slug: "main" -> "general", "leaders" -> "leaders"
       const channelSlug = parsedChannel.type === "leaders" ? "leaders" : "general";
+      hasRedirected.current = true;
       router.replace(`/inbox/${parsedChannel.groupId}/${channelSlug}`);
       return;
     }
@@ -82,6 +92,7 @@ export default function LegacyChatIdRoute() {
     if (channelData?.groupId) {
       // Use slug from channel data, fallback to mapping channelType to slug
       const channelSlug = channelData.slug ?? (channelData.channelType === "leaders" ? "leaders" : "general");
+      hasRedirected.current = true;
       router.replace(`/inbox/${channelData.groupId}/${channelSlug}`);
       return;
     }
@@ -101,6 +112,7 @@ export default function LegacyChatIdRoute() {
       }
       // Stream channel IDs are already handled by parsedChannel above
       // Fall back to general for non-channel IDs or when channel lookup failed
+      hasRedirected.current = true;
       router.replace(`/inbox/${groupIdParam}/general`);
       return;
     }
@@ -116,6 +128,7 @@ export default function LegacyChatIdRoute() {
       }
       if (groupValidation !== null) {
         // Group exists - redirect to it
+        hasRedirected.current = true;
         router.replace(`/inbox/${chat_id}/general`);
         return;
       }
@@ -127,6 +140,7 @@ export default function LegacyChatIdRoute() {
     // If chat_id looks like a group ID (not a channel ID), redirect to general
     // This handles the case where navigation passes a group ID as chat_id
     if (chat_id && !isConvexChannelId && !parsedChannel) {
+      hasRedirected.current = true;
       router.replace(`/inbox/${chat_id}/general`);
       return;
     }

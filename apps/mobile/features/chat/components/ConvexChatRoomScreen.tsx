@@ -435,7 +435,9 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   // 1. User is on leaders slug
   // 2. Leaders channel lookup has COMPLETED (null, not undefined/loading) and channel not found
   // 3. Main channel exists (we have somewhere to redirect to)
+  const hasRedirectedFromLeaders = useRef(false);
   useEffect(() => {
+    if (hasRedirectedFromLeaders.current) return;
     if (
       activeSlug === "leaders" &&
       leadersChannelId === null && // null = query completed, channel not found (not undefined = still loading)
@@ -443,6 +445,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
       resolvedGroupId
     ) {
       // Leaders channel doesn't exist - redirect to general with preserved params
+      hasRedirectedFromLeaders.current = true;
       router.replace({
         pathname: `/inbox/${resolvedGroupId}/general` as any,
         params: {
