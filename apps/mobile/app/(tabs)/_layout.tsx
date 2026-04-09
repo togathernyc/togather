@@ -1,4 +1,3 @@
-import { useMemo, useRef } from 'react';
 import { View } from 'react-native';
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -16,22 +15,10 @@ export default function TabsLayout() {
   const isAdmin = user?.is_admin === true;
   const isInternalUser = user?.is_staff === true || user?.is_superuser === true;
 
-  // Derive tab visibility from community ID using a ref to avoid
-  // setState during render which can cause infinite loops when Expo Router
-  // rehydrates navigation state (getRehydratedState → setState → re-render).
-  // Using useMemo instead of useState+useEffect avoids the extra render frame
-  // where stale state could cause the navigation config to oscillate.
-  const prevCommunityIdRef = useRef(community?.id);
-  const prevHasCommunityRef = useRef(!!community?.id);
-
-  const hasCommunity = useMemo(() => {
-    const currentCommunityId = community?.id;
-    if (prevCommunityIdRef.current !== currentCommunityId) {
-      prevCommunityIdRef.current = currentCommunityId;
-      prevHasCommunityRef.current = !!currentCommunityId;
-    }
-    return prevHasCommunityRef.current;
-  }, [community?.id]);
+  // community?.id is a primitive string — direct derivation is stable and
+  // won't cause tab config oscillation. The old useState+useEffect pattern
+  // was over-engineered and introduced a stale render frame.
+  const hasCommunity = !!community?.id;
 
   const tabs = (
     <Tabs

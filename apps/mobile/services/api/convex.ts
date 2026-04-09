@@ -17,6 +17,17 @@ import React from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Environment } from '@services/environment';
 
+/**
+ * Stable JSON serialization with sorted keys for use as memoization keys.
+ * Guarantees identical output regardless of property insertion order.
+ */
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return '[' + value.map(stableStringify).join(',') + ']';
+  const sorted = Object.keys(value as Record<string, unknown>).sort();
+  return '{' + sorted.map(k => JSON.stringify(k) + ':' + stableStringify((value as Record<string, unknown>)[k])).join(',') + '}';
+}
+
 // Re-export the API type for use in components
 export { api } from '../../../convex/_generated/api';
 
@@ -291,7 +302,7 @@ export function useAuthenticatedQuery<
   // Convex does deep comparison internally, but spreading { ...args, token }
   // inline creates a new reference each render which still causes unnecessary
   // work in Convex's comparison logic across 50+ call sites.
-  const argsKey = shouldSkip ? 'skip' : JSON.stringify(args);
+  const argsKey = shouldSkip ? 'skip' : stableStringify(args);
   const queryArgs = React.useMemo(
     () =>
       shouldSkip
@@ -411,7 +422,7 @@ export function useAuthenticatedPaginatedQuery<
   const shouldSkip = args === 'skip' || !token;
 
   // Memoize query args (same pattern as useAuthenticatedQuery)
-  const argsKey = shouldSkip ? 'skip' : JSON.stringify(args);
+  const argsKey = shouldSkip ? 'skip' : stableStringify(args);
   const queryArgs = React.useMemo(
     () =>
       shouldSkip

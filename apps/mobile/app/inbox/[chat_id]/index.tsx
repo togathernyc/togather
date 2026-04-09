@@ -52,8 +52,14 @@ export default function LegacyChatIdRoute() {
     [isConvexChannelId, chat_id]
   );
 
-  // Guard to prevent multiple redirect attempts which can cause infinite loops
+  // Guard to prevent multiple redirect attempts which can cause infinite loops.
+  // Reset when chat_id changes in case Expo Router reuses the component instance.
   const hasRedirected = useRef(false);
+  const prevChatId = useRef(chat_id);
+  if (prevChatId.current !== chat_id) {
+    prevChatId.current = chat_id;
+    hasRedirected.current = false;
+  }
 
   // Query channel data if we have a Convex channel ID
   const channelData = useQuery(
