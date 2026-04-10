@@ -198,6 +198,100 @@ describe("meetingRsvps.submit", () => {
     expect(result.optionId).toBe(2);
   });
 
+  test("preserves guestCount on same-option re-submit when caller omits guestCount (legacy callers)", async () => {
+    // Regression: old call sites like rsvp/confirm.tsx, rsvp/verify.tsx
+    // and leader-tools EventDetails call submit without the new
+    // guestCount arg. Re-submitting from those flows must not silently
+    // wipe plus-ones that were set via the newer stepper UIs.
+    const t = convexTest(schema, modules);
+    const { communityId, groupId } = await seedCommunityWithGroup(t);
+    const { accessToken } = await createUser(t, communityId, groupId);
+    const meetingId = await createMeeting(t, groupId);
+
+    // First, submit Going with 2 guests (new-style caller)
+    await t.mutation(api.functions.meetingRsvps.submit, {
+      token: accessToken,
+      meetingId,
+      optionId: 1,
+      guestCount: 2,
+    });
+    await drainScheduledFunctions(t);
+
+    // Re-submit Going WITHOUT guestCount (legacy caller)
+    await t.mutation(api.functions.meetingRsvps.submit, {
+      token: accessToken,
+      meetingId,
+      optionId: 1,
+    });
+    await drainScheduledFunctions(t);
+
+    const myRsvp = await t.query(api.functions.meetingRsvps.myRsvp, {
+      token: accessToken,
+      meetingId,
+    });
+    expect(myRsvp.optionId).toBe(1);
+    expect(myRsvp.guestCount).toBe(2);
+  });
+
+  test("clears guestCount when switching to a non-Going option even without explicit guestCount", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId } = await seedCommunityWithGroup(t);
+    const { accessToken } = await createUser(t, communityId, groupId);
+    const meetingId = await createMeeting(t, groupId);
+
+    await t.mutation(api.functions.meetingRsvps.submit, {
+      token: accessToken,
+      meetingId,
+      optionId: 1,
+      guestCount: 2,
+    });
+    await drainScheduledFunctions(t);
+
+    // Legacy-style submit switching to Maybe — guests should clear
+    await t.mutation(api.functions.meetingRsvps.submit, {
+      token: accessToken,
+      meetingId,
+      optionId: 2,
+    });
+    await drainScheduledFunctions(t);
+
+    const myRsvp = await t.query(api.functions.meetingRsvps.myRsvp, {
+      token: accessToken,
+      meetingId,
+    });
+    expect(myRsvp.optionId).toBe(2);
+    expect(myRsvp.guestCount).toBe(0);
+  });
+
+  test("allows explicit guestCount=0 to clear previously-set guests", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId } = await seedCommunityWithGroup(t);
+    const { accessToken } = await createUser(t, communityId, groupId);
+    const meetingId = await createMeeting(t, groupId);
+
+    await t.mutation(api.functions.meetingRsvps.submit, {
+      token: accessToken,
+      meetingId,
+      optionId: 1,
+      guestCount: 2,
+    });
+    await drainScheduledFunctions(t);
+
+    await t.mutation(api.functions.meetingRsvps.submit, {
+      token: accessToken,
+      meetingId,
+      optionId: 1,
+      guestCount: 0,
+    });
+    await drainScheduledFunctions(t);
+
+    const myRsvp = await t.query(api.functions.meetingRsvps.myRsvp, {
+      token: accessToken,
+      meetingId,
+    });
+    expect(myRsvp.guestCount).toBe(0);
+  });
+
   test("rejects RSVP when disabled on meeting", async () => {
     const t = convexTest(schema, modules);
     const { communityId, groupId } = await seedCommunityWithGroup(t);

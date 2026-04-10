@@ -458,10 +458,7 @@ export const submit = mutation({
       throw new Error("RSVP option is disabled");
     }
 
-    // Normalize and validate guest count against the meeting's cap.
-    // Guests are only allowed on the "Going" option.
     const maxGuests = getMaxGuestsForMeeting(meeting);
-    const guestCount = normalizeGuestCount(args.guestCount, selectedOption, maxGuests);
 
     // Check for existing RSVP
     const existing = await ctx.db
@@ -470,6 +467,32 @@ export const submit = mutation({
         q.eq("meetingId", args.meetingId).eq("userId", userId)
       )
       .first();
+
+    // Resolve the guestCount to persist, preserving plus-ones for
+    // legacy callers that don't pass guestCount at all.
+    //
+    // Rules:
+    // - Explicit guestCount (any value, including 0): normalize + use it.
+    //   This covers the new plus-one flows in EventPageClient and
+    //   EventLinkCard, and explicit clears.
+    // - Undefined guestCount + same option as before + Going:
+    //   preserve the existing guestCount so older call sites (e.g.
+    //   rsvp/confirm.tsx, rsvp/verify.tsx, leader-tools EventDetails)
+    //   don't silently wipe the user's plus-ones when they re-submit.
+    // - Undefined guestCount + different option (or not Going):
+    //   clear to 0, since guests are only valid on the Going option.
+    let guestCount: number;
+    if (args.guestCount !== undefined) {
+      guestCount = normalizeGuestCount(args.guestCount, selectedOption, maxGuests);
+    } else if (
+      existing &&
+      existing.rsvpOptionId === args.optionId &&
+      isGoingOption(selectedOption)
+    ) {
+      guestCount = existing.guestCount ?? 0;
+    } else {
+      guestCount = 0;
+    }
 
     if (existing) {
       const previousOptionId = existing.rsvpOptionId;
