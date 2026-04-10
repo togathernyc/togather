@@ -759,6 +759,69 @@ export const createJoinRequest = mutation({
 });
 
 /**
+ * List the current user's pending join requests within a single community.
+ *
+ * Powers the frontend "pending join request limit" feature: the client uses
+ * this to (a) count pending requests before allowing a new one, and (b) render
+ * a "My Requests" section on the profile page where users can see and
+ * withdraw what they have outstanding.
+ *
+ * Returns only requests with `requestStatus === "pending"` whose group lives
+ * in the requested community. Active memberships, declined requests, and
+ * accepted requests are excluded.
+ */
+export const listMyPendingJoinRequests = query({
+  args: {
+    token: v.string(),
+    communityId: v.id("communities"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const memberships = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+
+    const pending = memberships.filter((m) => m.requestStatus === "pending");
+    if (pending.length === 0) {
+      return [];
+    }
+
+    // Resolve groups + filter by community in a single pass.
+    const results: Array<{
+      id: Id<"groupMembers">;
+      groupId: Id<"groups">;
+      groupName: string;
+      groupTypeName: string;
+      requestedAt: number;
+    }> = [];
+
+    for (const membership of pending) {
+      const group = await ctx.db.get(membership.groupId);
+      if (!group || group.communityId !== args.communityId) {
+        continue;
+      }
+
+      const groupType = await ctx.db.get(group.groupTypeId);
+
+      results.push({
+        id: membership._id,
+        groupId: membership.groupId,
+        groupName: group.name,
+        groupTypeName: groupType?.name ?? "",
+        requestedAt: membership.requestedAt ?? membership.joinedAt,
+      });
+    }
+
+    // Newest first — matches typical "my requests" UI ordering.
+    results.sort((a, b) => b.requestedAt - a.requestedAt);
+
+    return results;
+  },
+});
+
+/**
  * Cancel own pending join request
  */
 export const cancelJoinRequest = mutation({
