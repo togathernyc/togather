@@ -80,30 +80,30 @@ export const markAttendance = mutation({
       throw new Error("Meeting not found");
     }
 
-    // If marking attendance for someone else, verify leader/admin role
-    if (args.userId !== recordedById) {
-      const recorderMembership = await ctx.db
-        .query("groupMembers")
-        .withIndex("by_group_user", (q) =>
-          q.eq("groupId", meeting.groupId).eq("userId", recordedById)
-        )
-        .first();
+    // Look up the recorder's group membership once — we may need it for
+    // both the "marking someone else" check and the guest-count check.
+    const recorderMembership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", meeting.groupId).eq("userId", recordedById)
+      )
+      .first();
 
-      // Must be an active leader or admin to mark others' attendance
-      if (
-        !recorderMembership ||
-        recorderMembership.leftAt ||
-        !["leader", "admin"].includes(recorderMembership.role)
-      ) {
-        throw new Error("Only leaders can mark attendance for others");
-      }
+    const recorderIsLeader =
+      !!recorderMembership &&
+      !recorderMembership.leftAt &&
+      ["leader", "admin"].includes(recorderMembership.role);
+
+    // If marking attendance for someone else, verify leader/admin role
+    if (args.userId !== recordedById && !recorderIsLeader) {
+      throw new Error("Only leaders can mark attendance for others");
     }
 
-    // Validate guestAttendedCount (leader-only, and capped at meeting's max).
-    // Only leaders can set this — members self-reporting never touch guest counts.
+    // Validate guestAttendedCount (leader-only, capped at the meeting's max).
+    // Members self-reporting (e.g. via email links) never touch guest counts.
     let guestAttendedCount: number | undefined;
     if (args.guestAttendedCount !== undefined) {
-      if (args.userId === recordedById) {
+      if (!recorderIsLeader) {
         throw new Error("Only leaders can record guest attendance");
       }
       if (!Number.isInteger(args.guestAttendedCount) || args.guestAttendedCount < 0) {
