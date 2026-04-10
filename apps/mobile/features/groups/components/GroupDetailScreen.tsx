@@ -22,6 +22,8 @@ import {
   useArchiveGroup,
 } from "../hooks";
 import { useWithdrawJoinRequest } from "../hooks/useWithdrawJoinRequest";
+import { useMyPendingJoinRequests } from "../hooks/useMyPendingJoinRequests";
+import { PendingRequestLimitModal } from "./PendingRequestLimitModal";
 import { isGroupMember } from "../utils";
 import { useUserData } from "@features/profile/hooks/useUserData";
 import { RSVPModal } from "./RSVPModal";
@@ -47,6 +49,12 @@ export function GroupDetailScreen() {
   const [showRSVPModal, setShowRSVPModal] = useState(false);
   const [showOptionsModal, setShowOptionsModal] = useState(false);
   const [showJoinSuccessModal, setShowJoinSuccessModal] = useState(false);
+  const [showPendingLimitModal, setShowPendingLimitModal] = useState(false);
+
+  // Pending join request cap (frontend stopgap — backend allows unlimited).
+  // When the user already has 2 pending requests in the active community we
+  // surface a friction modal instead of submitting another request.
+  const { isAtLimit: isAtPendingLimit } = useMyPendingJoinRequests();
 
   const { data: group, isLoading, error, refetch, isRefetching } = useGroupDetails(group_id);
   const { data: userData } = useUserData(!!user);
@@ -151,6 +159,15 @@ export function GroupDetailScreen() {
       return;
     }
 
+    // Frontend stopgap: if the user already has the maximum number of pending
+    // join requests in this community, show the limit modal instead of
+    // submitting another request. The cap exists to keep leaders from getting
+    // overwhelmed with requests from people who join 3+ groups and ghost.
+    if (isAtPendingLimit) {
+      setShowPendingLimitModal(true);
+      return;
+    }
+
     try {
       await joinGroupMutation.mutateAsync();
       setShowJoinSuccessModal(true);
@@ -245,6 +262,17 @@ export function GroupDetailScreen() {
           onWithdrawPress={handleWithdrawRequest}
           isJoining={joinGroupMutation.isPending}
           isWithdrawing={withdrawMutation.isPending}
+        />
+
+        {/* Pending request limit modal — fires when the user is already at
+            the cap and tries to request to join another group. */}
+        <PendingRequestLimitModal
+          visible={showPendingLimitModal}
+          onDismiss={() => setShowPendingLimitModal(false)}
+          onViewRequests={() => {
+            setShowPendingLimitModal(false);
+            router.push("/(tabs)/profile");
+          }}
         />
 
         {/* Join Success Modal */}
