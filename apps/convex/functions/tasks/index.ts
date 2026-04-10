@@ -973,6 +973,49 @@ export const searchRelevantMembers = query({
   },
 });
 
+/**
+ * Groups in the template's community that the caller actively leads.
+ * Used by the apply-workflow modal to scope the group-target picker to
+ * the right community (important for multi-community leaders viewing
+ * `taskTemplates.listAll`, which spans communities).
+ */
+export const listGroupTargetCandidates = query({
+  args: {
+    token: v.string(),
+    templateId: v.id("taskTemplates"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const template = await ctx.db.get(args.templateId);
+    if (!template) {
+      throw new ConvexError("Template not found");
+    }
+    const templateGroup = await ctx.db.get(template.groupId);
+    if (!templateGroup) {
+      throw new ConvexError("Template group not found");
+    }
+
+    const leaderGroupIds = await getActiveLeaderGroupIds(ctx, userId);
+    if (leaderGroupIds.length === 0) return [];
+
+    const groups = await Promise.all(
+      leaderGroupIds.map((id) => ctx.db.get(id)),
+    );
+    return groups
+      .filter(
+        (g): g is NonNullable<typeof g> =>
+          !!g &&
+          "communityId" in g &&
+          g.communityId === templateGroup.communityId,
+      )
+      .map((g) => ({
+        _id: g._id,
+        name: ("name" in g && g.name) || "Group",
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  },
+});
+
 export const getTaskCard = query({
   args: {
     token: v.string(),

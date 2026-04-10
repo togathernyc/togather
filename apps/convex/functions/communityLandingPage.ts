@@ -327,6 +327,14 @@ export const joinCommunityInternal = internalMutation({
       });
       await syncUserChannelMembershipsLogic(ctx, args.userId, announcementGroup!._id);
     }
+
+    // Link any placeholder workflow tasks addressed to this user (by phone
+    // or email). Covers landing-page signup flow which bypasses communities.join.
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.tasks.index.linkPlaceholderTasksForUser,
+      { userId: args.userId },
+    );
   },
 });
 

@@ -504,6 +504,16 @@ export function TasksTabScreen() {
       : "skip",
   ) as LeaderSearchResult[] | undefined;
 
+  // Groups in the template's community the user leads — scoped to the
+  // template (not the currently-active community) so multi-community
+  // leaders viewing listAll get the right candidates.
+  const applyGroupTargetCandidates = useAuthenticatedQuery(
+    api.functions.tasks.index.listGroupTargetCandidates,
+    applyTarget
+      ? { templateId: applyTarget.templateId as Id<"taskTemplates"> }
+      : "skip",
+  ) as Array<{ _id: string; name: string }> | undefined;
+
   const templatesByGroup = useMemo(() => {
     const list = workflowTemplates;
     if (!list?.length) {
@@ -2264,7 +2274,7 @@ export function TasksTabScreen() {
                 nestedScrollEnabled
                 keyboardShouldPersistTaps="handled"
               >
-                {leaderGroups.map((g) => {
+                {(applyGroupTargetCandidates ?? []).map((g) => {
                   const selected = applyTargetGroupId === g._id;
                   return (
                     <Pressable
@@ -2290,9 +2300,10 @@ export function TasksTabScreen() {
                     </Pressable>
                   );
                 })}
-                {leaderGroups.length === 0 ? (
+                {applyGroupTargetCandidates !== undefined &&
+                applyGroupTargetCandidates.length === 0 ? (
                   <Text style={[styles.searchHelperText, { color: colors.textSecondary, padding: 12 }]}>
-                    No groups available.
+                    No groups available in this community.
                   </Text>
                 ) : null}
               </ScrollView>
