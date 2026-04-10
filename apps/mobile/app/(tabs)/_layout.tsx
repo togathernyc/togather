@@ -1,4 +1,3 @@
-import { useEffect, useRef, useState } from 'react';
 import { View } from 'react-native';
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -16,20 +15,10 @@ export default function TabsLayout() {
   const isAdmin = user?.is_admin === true;
   const isInternalUser = user?.is_staff === true || user?.is_superuser === true;
 
-  // Use stable state for tab visibility to prevent infinite loops
-  // Only update when community actually changes (not on every render)
-  const [hasCommunity, setHasCommunity] = useState(!!community?.id);
-  const prevCommunityIdRef = useRef(community?.id);
-
-  // Update hasCommunity state only when community.id actually changes
-  // This prevents infinite loops from Expo Router tab reconfiguration
-  useEffect(() => {
-    const currentCommunityId = community?.id;
-    if (prevCommunityIdRef.current !== currentCommunityId) {
-      prevCommunityIdRef.current = currentCommunityId;
-      setHasCommunity(!!currentCommunityId);
-    }
-  }, [community?.id]);
+  // community?.id is a primitive string — direct derivation is stable and
+  // won't cause tab config oscillation. The old useState+useEffect pattern
+  // was over-engineered and introduced a stale render frame.
+  const hasCommunity = !!community?.id;
 
   const tabs = (
     <Tabs

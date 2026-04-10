@@ -19,6 +19,7 @@ import React, {
   createContext,
   useContext,
   useEffect,
+  useMemo,
   useState,
   useCallback,
   useRef,
@@ -654,21 +655,35 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
     };
   }, [refreshUnreadCount]);
 
+  const contextValue = useMemo(
+    () => ({
+      expoPushToken,
+      isEnabled,
+      unreadCount,
+      isReady,
+      requestPermissions,
+      refreshUnreadCount,
+      lastNotification,
+      handleNotificationTap,
+      setActiveChannelId,
+      activeChannelId,
+    }),
+    [
+      expoPushToken,
+      isEnabled,
+      unreadCount,
+      isReady,
+      requestPermissions,
+      refreshUnreadCount,
+      lastNotification,
+      handleNotificationTap,
+      setActiveChannelId,
+      activeChannelId,
+    ]
+  );
+
   return (
-    <NotificationContext.Provider
-      value={{
-        expoPushToken,
-        isEnabled,
-        unreadCount,
-        isReady,
-        requestPermissions,
-        refreshUnreadCount,
-        lastNotification,
-        handleNotificationTap,
-        setActiveChannelId,
-        activeChannelId,
-      }}
-    >
+    <NotificationContext.Provider value={contextValue}>
       {children}
     </NotificationContext.Provider>
   );

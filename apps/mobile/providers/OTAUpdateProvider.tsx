@@ -10,7 +10,7 @@
  * When an update is ready and the app is backgrounded for 30+ seconds,
  * it will auto-apply the update on next foreground via Updates.reloadAsync().
  */
-import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { AppState } from 'react-native';
 import * as Updates from 'expo-updates';
 
@@ -148,8 +148,13 @@ export const OTAUpdateProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
   }, []);
 
+  const contextValue = useMemo(
+    () => ({ status, errorMessage }),
+    [status, errorMessage]
+  );
+
   return (
-    <OTAUpdateContext.Provider value={{ status, errorMessage }}>
+    <OTAUpdateContext.Provider value={contextValue}>
       {children}
     </OTAUpdateContext.Provider>
   );
