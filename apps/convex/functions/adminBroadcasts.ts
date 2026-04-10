@@ -202,6 +202,14 @@ export const sendTestToSelf = mutation({
     if (!broadcast) throw new Error("Broadcast not found");
     await requireCommunityAdmin(ctx, broadcast.communityId, userId);
 
+    for (const channel of broadcast.channels) {
+      if (channel !== "push" && channel !== "email") {
+        throw new Error(
+          `Broadcast has unsupported channel "${channel}". Admin broadcasts support push and email only.`,
+        );
+      }
+    }
+
     // Resolve per-user deep link for the test user so special links (e.g. per_user_group) work
     await ctx.scheduler.runAfter(0, internal.functions.adminBroadcasts.resolveAndTestSelf, {
       broadcastId: args.broadcastId,
@@ -295,6 +303,17 @@ export const sendBroadcast = mutation({
     if (!broadcast) throw new Error("Broadcast not found");
     if (broadcast.status !== "approved") throw new Error("Broadcast must be approved before sending");
     await requireCommunityAdmin(ctx, broadcast.communityId, userId);
+
+    // Reject legacy broadcasts that still carry unsupported channels (e.g. "sms"
+    // from before SMS was removed). Without this, sendToUsers would silently
+    // no-op for SMS-only broadcasts and flip the status to "sent".
+    for (const channel of broadcast.channels) {
+      if (channel !== "push" && channel !== "email") {
+        throw new Error(
+          `Broadcast has unsupported channel "${channel}". Admin broadcasts support push and email only.`,
+        );
+      }
+    }
 
     await ctx.db.patch(args.broadcastId, {
       status: "sent",
