@@ -13,6 +13,7 @@ import { Card } from "@components/ui";
 import { Ionicons } from "@expo/vector-icons";
 import { ProfileHeader } from "./ProfileHeader";
 import { ProfileMenu } from "./ProfileMenu";
+import { MyRequestsSection } from "./MyRequestsSection";
 import { Environment } from "@/services/environment";
 import { isDevToolsEscapeHatchEnabled } from "@hooks/useDevToolsEscapeHatch";
 import { useTheme } from "@hooks/useTheme";
@@ -51,6 +52,7 @@ export function ProfileScreen() {
 
         <ProfileHeader user={user} />
         <ProfileMenu />
+        <MyRequestsSection />
 
         {/* Dev Tools Section - only visible in dev/staging */}
         {showDevTools && (
