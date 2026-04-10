@@ -404,6 +404,102 @@ describe("Attendance Permission Tests", () => {
 
       expect(result).toBeDefined();
     });
+
+    test("leader cannot record more attended guests than the member RSVP'd with", async () => {
+      const t = convexTest(schema, modules);
+
+      const setup = await createTestSetup(t);
+      // Meeting with canonical "Going" label so guestCount is accepted
+      const meetingId = await t.run(async (ctx) => {
+        return await ctx.db.insert("meetings", {
+          groupId: setup.groupId,
+          scheduledAt: Date.now() + 86400000,
+          status: "scheduled",
+          meetingType: 1,
+          visibility: "group",
+          rsvpEnabled: true,
+          rsvpOptions: [
+            { id: 1, label: "Going", enabled: true },
+            { id: 2, label: "Maybe", enabled: true },
+            { id: 3, label: "Can't Go", enabled: true },
+          ],
+          createdAt: Date.now(),
+        });
+      });
+
+      // Member RSVPs Going with exactly 1 guest
+      await t.mutation(api.functions.meetingRsvps.submit, {
+        token: setup.memberToken,
+        meetingId,
+        optionId: 1,
+        guestCount: 1,
+      });
+
+      // Leader attempts to record 2 attended guests — exceeds the member's RSVP
+      await expect(
+        t.mutation(api.functions.meetings.index.markAttendance, {
+          token: setup.leaderToken,
+          meetingId,
+          userId: setup.memberId,
+          status: 1,
+          guestAttendedCount: 2,
+        })
+      ).rejects.toThrow(
+        "Attended guest count cannot exceed the 1 guest the attendee RSVP'd with"
+      );
+
+      // Recording exactly what was RSVP'd succeeds
+      const ok = await t.mutation(api.functions.meetings.index.markAttendance, {
+        token: setup.leaderToken,
+        meetingId,
+        userId: setup.memberId,
+        status: 1,
+        guestAttendedCount: 1,
+      });
+      expect(ok).toBeDefined();
+    });
+
+    test("leader cannot record guests for a member who RSVP'd without any", async () => {
+      const t = convexTest(schema, modules);
+
+      const setup = await createTestSetup(t);
+      const meetingId = await t.run(async (ctx) => {
+        return await ctx.db.insert("meetings", {
+          groupId: setup.groupId,
+          scheduledAt: Date.now() + 86400000,
+          status: "scheduled",
+          meetingType: 1,
+          visibility: "group",
+          rsvpEnabled: true,
+          rsvpOptions: [
+            { id: 1, label: "Going", enabled: true },
+            { id: 2, label: "Maybe", enabled: true },
+            { id: 3, label: "Can't Go", enabled: true },
+          ],
+          createdAt: Date.now(),
+        });
+      });
+
+      // Member RSVPs Going with no guests (explicit 0)
+      await t.mutation(api.functions.meetingRsvps.submit, {
+        token: setup.memberToken,
+        meetingId,
+        optionId: 1,
+        guestCount: 0,
+      });
+
+      await expect(
+        t.mutation(api.functions.meetings.index.markAttendance, {
+          token: setup.leaderToken,
+          meetingId,
+          userId: setup.memberId,
+          status: 1,
+          guestAttendedCount: 1,
+        })
+      ).rejects.toThrow(
+        "Attended guest count cannot exceed the 0 guests the attendee RSVP'd with"
+      );
+    });
   });
 
   describe("Non-Leader Attendance Restrictions", () => {

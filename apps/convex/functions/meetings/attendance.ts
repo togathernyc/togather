@@ -99,8 +99,11 @@ export const markAttendance = mutation({
       throw new Error("Only leaders can mark attendance for others");
     }
 
-    // Validate guestAttendedCount (leader-only, capped at the meeting's max).
-    // Members self-reporting (e.g. via email links) never touch guest counts.
+    // Validate guestAttendedCount (leader-only). Must not exceed the
+    // attendee's own RSVP guestCount — a leader can't claim more guests
+    // showed up than were actually RSVP'd. Falls back to the meeting
+    // max if the attendee has no RSVP row (shouldn't happen in practice,
+    // but guards against data drift).
     let guestAttendedCount: number | undefined;
     if (args.guestAttendedCount !== undefined) {
       if (!recorderIsLeader) {
@@ -109,9 +112,19 @@ export const markAttendance = mutation({
       if (!Number.isInteger(args.guestAttendedCount) || args.guestAttendedCount < 0) {
         throw new Error("Guest attended count must be a non-negative integer");
       }
-      const maxGuests = getMaxGuestsForMeeting(meeting);
-      if (args.guestAttendedCount > maxGuests) {
-        throw new Error(`Guest attended count cannot exceed ${maxGuests}`);
+      const attendeeRsvp = await ctx.db
+        .query("meetingRsvps")
+        .withIndex("by_meeting_user", (q) =>
+          q.eq("meetingId", args.meetingId).eq("userId", args.userId)
+        )
+        .first();
+      const rsvpGuestCount = attendeeRsvp?.guestCount ?? 0;
+      if (args.guestAttendedCount > rsvpGuestCount) {
+        throw new Error(
+          `Attended guest count cannot exceed the ${rsvpGuestCount} guest${
+            rsvpGuestCount === 1 ? "" : "s"
+          } the attendee RSVP'd with`
+        );
       }
       guestAttendedCount = args.guestAttendedCount;
     }
