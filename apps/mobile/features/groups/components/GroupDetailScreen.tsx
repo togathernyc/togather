@@ -54,7 +54,14 @@ export function GroupDetailScreen() {
   // Pending join request cap (frontend stopgap — backend allows unlimited).
   // When the user already has 2 pending requests in the active community we
   // surface a friction modal instead of submitting another request.
-  const { isAtLimit: isAtPendingLimit } = useMyPendingJoinRequests();
+  // We also track loading: until the query has resolved, isAtLimit is false
+  // by default (empty list), which would let an at-cap user slip through.
+  // The Join button is disabled and handleJoinGroup returns early until the
+  // count is known.
+  const {
+    isAtLimit: isAtPendingLimit,
+    isLoading: isPendingLimitLoading,
+  } = useMyPendingJoinRequests();
 
   const { data: group, isLoading, error, refetch, isRefetching } = useGroupDetails(group_id);
   const { data: userData } = useUserData(!!user);
@@ -163,6 +170,15 @@ export function GroupDetailScreen() {
     // join requests in this community, show the limit modal instead of
     // submitting another request. The cap exists to keep leaders from getting
     // overwhelmed with requests from people who join 3+ groups and ghost.
+    //
+    // Defensive guard: if the pending-requests query hasn't resolved yet,
+    // refuse the submission. Without this an at-cap user could slip through
+    // during the loading window (isAtLimit defaults to false on empty data).
+    // The Join button is also disabled below while loading, but we double
+    // gate here in case anything else triggers handleJoinGroup.
+    if (isPendingLimitLoading) {
+      return;
+    }
     if (isAtPendingLimit) {
       setShowPendingLimitModal(true);
       return;
@@ -260,7 +276,7 @@ export function GroupDetailScreen() {
           group={group}
           onJoinPress={handleJoinGroup}
           onWithdrawPress={handleWithdrawRequest}
-          isJoining={joinGroupMutation.isPending}
+          isJoining={joinGroupMutation.isPending || isPendingLimitLoading}
           isWithdrawing={withdrawMutation.isPending}
         />
 

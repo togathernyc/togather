@@ -453,6 +453,45 @@ describe("GroupDetailScreen", () => {
       });
     });
 
+    it("blocks the join mutation while the pending-requests query is still loading", async () => {
+      // The hook returns isAtLimit=false on empty data while loading, which
+      // would otherwise let an at-cap user slip through this brief window.
+      const mockMutateAsync = jest.fn().mockResolvedValue({});
+      (useGroupDetails as jest.Mock).mockReturnValue({
+        data: mockGroup,
+        isLoading: false,
+        error: null,
+      });
+      (useAuth as jest.Mock).mockReturnValue({ user: { id: 999 } });
+      (useUserData as jest.Mock).mockReturnValue({
+        data: { group_memberships: [] },
+        isLoading: false,
+      });
+      (isGroupMember as jest.Mock).mockReturnValue(false);
+      (useJoinGroup as jest.Mock).mockReturnValue({
+        mutate: jest.fn(),
+        mutateAsync: mockMutateAsync,
+        isPending: false,
+      });
+      mockUseMyPendingJoinRequests.mockReturnValue({
+        requests: [],
+        count: 0,
+        isAtLimit: false,
+        isLoading: true,
+      });
+
+      render(<GroupDetailScreen />, { wrapper: createWrapper() });
+
+      fireEvent.press(screen.getByTestId("join-button"));
+
+      // Defensive guard: mutation must NOT fire while loading.
+      await waitFor(() => {
+        expect(mockMutateAsync).not.toHaveBeenCalled();
+      });
+      // And the limit modal must not appear (we don't know yet whether they're at cap).
+      expect(screen.queryByTestId("pending-limit-modal")).toBeNull();
+    });
+
     it("does NOT show the limit modal when the user is below the cap", async () => {
       const mockMutateAsync = jest.fn().mockResolvedValue({});
       (useGroupDetails as jest.Mock).mockReturnValue({
