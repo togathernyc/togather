@@ -16,13 +16,27 @@ interface RsvpOptionLike {
 
 /**
  * Heuristic: is this RSVP option the "Going" option?
- * Matches on the label since the RSVP options schema doesn't
- * include an explicit flag. Mirrors GuestListPreview's detection.
+ *
+ * Matches on the label since the RSVP options schema doesn't include an
+ * explicit flag. Must reject common decline variants before falling back
+ * to a "going" substring check — otherwise labels like "Not Going" and
+ * "Can't Go" would match as affirmative. Keep this in sync with
+ * isGoingOptionLabel in EventRsvpSection.tsx.
  */
 export function isGoingOption(option: RsvpOptionLike | null | undefined): boolean {
   if (!option) return false;
-  const label = option.label.toLowerCase();
-  return label.includes("going") && !label.includes("can't");
+  const label = option.label.toLowerCase().trim();
+  // Explicit decline variants: reject first
+  if (
+    label.includes("can't") ||
+    label.includes("cannot") ||
+    label.includes("not going") ||
+    label.includes("not attending") ||
+    label === "no"
+  ) {
+    return false;
+  }
+  return label.includes("going");
 }
 
 export function getMaxGuestsForMeeting(meeting: {

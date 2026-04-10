@@ -19,12 +19,24 @@ export const DEFAULT_MAX_GUESTS_PER_RSVP = 3;
 
 /**
  * Heuristic — is this RSVP option the "Going" option?
- * Mirrors backend isGoingOption and GuestListPreview.
+ *
+ * Must reject decline variants ("Not Going", "Can't Go") before falling
+ * back to a "going" substring check. Keep in sync with isGoingOption in
+ * apps/convex/lib/rsvpGuests.ts.
  */
 export function isGoingOptionLabel(label: string | undefined | null): boolean {
   if (!label) return false;
-  const lower = label.toLowerCase();
-  return lower.includes("going") && !lower.includes("can't");
+  const lower = label.toLowerCase().trim();
+  if (
+    lower.includes("can't") ||
+    lower.includes("cannot") ||
+    lower.includes("not going") ||
+    lower.includes("not attending") ||
+    lower === "no"
+  ) {
+    return false;
+  }
+  return lower.includes("going");
 }
 
 // ============================================================================

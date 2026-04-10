@@ -242,10 +242,22 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
     const isLoading = loadingOptionId === option.id;
     const emoji = EMOJI_MAP[option.label] || '';
 
+    // Re-tapping the currently selected option must preserve the user's
+    // existing guestCount. Only clear guests when switching to a
+    // different option. Without this, tapping Going while already Going
+    // silently wipes any plus-ones they'd set via the stepper.
+    const handlePress = () => {
+      if (isSelected) {
+        handleRsvp(option.id, myGuestCount);
+      } else {
+        handleRsvp(option.id, 0);
+      }
+    };
+
     return (
       <TouchableOpacity
         style={styles.rsvpRow}
-        onPress={() => handleRsvp(option.id)}
+        onPress={handlePress}
         disabled={false}
       >
         <View style={styles.rsvpHeader}>

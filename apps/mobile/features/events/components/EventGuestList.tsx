@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { Avatar } from "@components/ui/Avatar";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useTheme } from "@hooks/useTheme";
+import { isGoingOptionLabel } from "./EventRsvpSection";
 
 // ============================================================================
 // Types
@@ -55,12 +56,10 @@ export function GuestListPreview({
   onViewAll,
 }: GuestListPreviewProps) {
   const { colors } = useTheme();
-  // Find the "Going" option to show those guests
-  const goingOption = rsvpOptions.find(
-    (opt) =>
-      opt.label.toLowerCase().includes("going") &&
-      !opt.label.toLowerCase().includes("can't")
-  );
+  // Find the "Going" option to show those guests. Uses the same heuristic
+  // as isGoingOption in apps/convex/lib/rsvpGuests.ts so decline variants
+  // ("Not Going") aren't mistakenly treated as Going.
+  const goingOption = rsvpOptions.find((opt) => isGoingOptionLabel(opt.label));
   const goingRsvp = rsvpData.rsvps.find((r) => r.option.id === goingOption?.id);
   const goingCount = goingRsvp?.count || 0;
   const goingGuestCount = goingRsvp?.guestCount || 0;
