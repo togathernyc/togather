@@ -190,6 +190,11 @@ jest.mock('@services/api/convex', () => ({
       groups: {
         list: 'api.functions.groups.list',
       },
+      groupMembers: {
+        listMyPendingJoinRequests:
+          'api.functions.groupMembers.listMyPendingJoinRequests',
+        cancelJoinRequest: 'api.functions.groupMembers.cancelJoinRequest',
+      },
       meetings: {
         list: 'api.functions.meetings.list',
       },
@@ -201,6 +206,7 @@ jest.mock('@services/api/convex', () => ({
     },
   },
   useAuthenticatedQuery: jest.fn(() => []),
+  useAuthenticatedMutation: jest.fn(() => jest.fn()),
   useQuery: jest.fn(() => undefined),
   useMutation: jest.fn(() => jest.fn()),
   useAction: jest.fn(() => jest.fn()),

@@ -59,6 +59,33 @@ jest.mock("../../hooks", () => ({
   useWithdrawJoinRequest: jest.fn(),
 }));
 
+const mockUseMyPendingJoinRequests = jest.fn();
+jest.mock("../../hooks/useMyPendingJoinRequests", () => ({
+  useMyPendingJoinRequests: () => mockUseMyPendingJoinRequests(),
+  PENDING_JOIN_REQUEST_LIMIT: 2,
+}));
+
+jest.mock("../PendingRequestLimitModal", () => {
+  const { View, Text, Pressable } = require("react-native");
+  return {
+    PendingRequestLimitModal: ({ visible, onDismiss, onViewRequests }: any) =>
+      visible ? (
+        <View testID="pending-limit-modal">
+          <Text>You have pending requests</Text>
+          <Pressable testID="pending-limit-dismiss" onPress={onDismiss}>
+            <Text>Dismiss</Text>
+          </Pressable>
+          <Pressable
+            testID="pending-limit-view-requests"
+            onPress={onViewRequests}
+          >
+            <Text>View my requests</Text>
+          </Pressable>
+        </View>
+      ) : null,
+  };
+});
+
 jest.mock("@providers/AuthProvider", () => ({
   useAuth: jest.fn(),
 }));
@@ -219,6 +246,12 @@ describe("GroupDetailScreen", () => {
       mutate: jest.fn(),
       isPending: false,
     });
+    mockUseMyPendingJoinRequests.mockReturnValue({
+      requests: [],
+      count: 0,
+      isAtLimit: false,
+      isLoading: false,
+    });
     // useRSVP has been deleted
   });
 
@@ -337,6 +370,163 @@ describe("GroupDetailScreen", () => {
     await waitFor(() => {
       // useJoinGroup mutation now uses mutateAsync
       expect(mockMutateAsync).toHaveBeenCalled();
+    });
+  });
+
+  describe("pending join request limit", () => {
+    it("shows the limit modal instead of joining when the user is at the cap", async () => {
+      const mockMutateAsync = jest.fn().mockResolvedValue({});
+      (useGroupDetails as jest.Mock).mockReturnValue({
+        data: mockGroup,
+        isLoading: false,
+        error: null,
+      });
+      (useAuth as jest.Mock).mockReturnValue({ user: { id: 999 } });
+      (useUserData as jest.Mock).mockReturnValue({
+        data: { group_memberships: [] },
+        isLoading: false,
+      });
+      (isGroupMember as jest.Mock).mockReturnValue(false);
+      (useJoinGroup as jest.Mock).mockReturnValue({
+        mutate: jest.fn(),
+        mutateAsync: mockMutateAsync,
+        isPending: false,
+      });
+      mockUseMyPendingJoinRequests.mockReturnValue({
+        requests: [
+          { id: "1", groupId: "g1", groupName: "A", groupTypeName: "DP", requestedAt: 1 },
+          { id: "2", groupId: "g2", groupName: "B", groupTypeName: "DP", requestedAt: 2 },
+        ],
+        count: 2,
+        isAtLimit: true,
+        isLoading: false,
+      });
+
+      render(<GroupDetailScreen />, { wrapper: createWrapper() });
+
+      expect(screen.queryByTestId("pending-limit-modal")).toBeNull();
+
+      fireEvent.press(screen.getByTestId("join-button"));
+
+      // Modal appears, mutation is NOT called.
+      await waitFor(() => {
+        expect(screen.getByTestId("pending-limit-modal")).toBeTruthy();
+      });
+      expect(mockMutateAsync).not.toHaveBeenCalled();
+    });
+
+    it("dismisses the limit modal when Dismiss is pressed", async () => {
+      (useGroupDetails as jest.Mock).mockReturnValue({
+        data: mockGroup,
+        isLoading: false,
+        error: null,
+      });
+      (useAuth as jest.Mock).mockReturnValue({ user: { id: 999 } });
+      (useUserData as jest.Mock).mockReturnValue({
+        data: { group_memberships: [] },
+        isLoading: false,
+      });
+      (isGroupMember as jest.Mock).mockReturnValue(false);
+      (useJoinGroup as jest.Mock).mockReturnValue({
+        mutate: jest.fn(),
+        mutateAsync: jest.fn().mockResolvedValue({}),
+        isPending: false,
+      });
+      mockUseMyPendingJoinRequests.mockReturnValue({
+        requests: [],
+        count: 2,
+        isAtLimit: true,
+        isLoading: false,
+      });
+
+      render(<GroupDetailScreen />, { wrapper: createWrapper() });
+
+      fireEvent.press(screen.getByTestId("join-button"));
+      await waitFor(() => {
+        expect(screen.getByTestId("pending-limit-modal")).toBeTruthy();
+      });
+
+      fireEvent.press(screen.getByTestId("pending-limit-dismiss"));
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("pending-limit-modal")).toBeNull();
+      });
+    });
+
+    it("blocks the join mutation while the pending-requests query is still loading", async () => {
+      // The hook returns isAtLimit=false on empty data while loading, which
+      // would otherwise let an at-cap user slip through this brief window.
+      const mockMutateAsync = jest.fn().mockResolvedValue({});
+      (useGroupDetails as jest.Mock).mockReturnValue({
+        data: mockGroup,
+        isLoading: false,
+        error: null,
+      });
+      (useAuth as jest.Mock).mockReturnValue({ user: { id: 999 } });
+      (useUserData as jest.Mock).mockReturnValue({
+        data: { group_memberships: [] },
+        isLoading: false,
+      });
+      (isGroupMember as jest.Mock).mockReturnValue(false);
+      (useJoinGroup as jest.Mock).mockReturnValue({
+        mutate: jest.fn(),
+        mutateAsync: mockMutateAsync,
+        isPending: false,
+      });
+      mockUseMyPendingJoinRequests.mockReturnValue({
+        requests: [],
+        count: 0,
+        isAtLimit: false,
+        isLoading: true,
+      });
+
+      render(<GroupDetailScreen />, { wrapper: createWrapper() });
+
+      fireEvent.press(screen.getByTestId("join-button"));
+
+      // Defensive guard: mutation must NOT fire while loading.
+      await waitFor(() => {
+        expect(mockMutateAsync).not.toHaveBeenCalled();
+      });
+      // And the limit modal must not appear (we don't know yet whether they're at cap).
+      expect(screen.queryByTestId("pending-limit-modal")).toBeNull();
+    });
+
+    it("does NOT show the limit modal when the user is below the cap", async () => {
+      const mockMutateAsync = jest.fn().mockResolvedValue({});
+      (useGroupDetails as jest.Mock).mockReturnValue({
+        data: mockGroup,
+        isLoading: false,
+        error: null,
+      });
+      (useAuth as jest.Mock).mockReturnValue({ user: { id: 999 } });
+      (useUserData as jest.Mock).mockReturnValue({
+        data: { group_memberships: [] },
+        isLoading: false,
+      });
+      (isGroupMember as jest.Mock).mockReturnValue(false);
+      (useJoinGroup as jest.Mock).mockReturnValue({
+        mutate: jest.fn(),
+        mutateAsync: mockMutateAsync,
+        isPending: false,
+      });
+      mockUseMyPendingJoinRequests.mockReturnValue({
+        requests: [
+          { id: "1", groupId: "g1", groupName: "A", groupTypeName: "DP", requestedAt: 1 },
+        ],
+        count: 1,
+        isAtLimit: false,
+        isLoading: false,
+      });
+
+      render(<GroupDetailScreen />, { wrapper: createWrapper() });
+
+      fireEvent.press(screen.getByTestId("join-button"));
+
+      await waitFor(() => {
+        expect(mockMutateAsync).toHaveBeenCalled();
+      });
+      expect(screen.queryByTestId("pending-limit-modal")).toBeNull();
     });
   });
 
