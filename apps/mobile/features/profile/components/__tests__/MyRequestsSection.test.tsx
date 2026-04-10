@@ -1,5 +1,4 @@
 import React from "react";
-import { Alert } from "react-native";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react-native";
 import { MyRequestsSection } from "../MyRequestsSection";
 
@@ -23,6 +22,12 @@ jest.mock("@hooks/useTheme", () => ({
       border: "#ccc",
       icon: "#333",
       surface: "#fff",
+      surfaceSecondary: "#eee",
+      textInverse: "#fff",
+      link: "#0066ff",
+      destructive: "#cc0000",
+      overlay: "rgba(0,0,0,0.5)",
+      modalCloseBackground: "#eee",
     },
   }),
 }));
@@ -90,7 +95,7 @@ describe("MyRequestsSection", () => {
     expect(screen.getByText("Teams")).toBeTruthy();
   });
 
-  it("calls cancelJoinRequest when withdraw is confirmed", async () => {
+  it("opens the confirm modal when withdraw is pressed", () => {
     mockUseMyPendingJoinRequests.mockReturnValue({
       requests: [
         {
@@ -106,30 +111,56 @@ describe("MyRequestsSection", () => {
       isLoading: false,
     });
 
-    // Auto-confirm the Alert by invoking the destructive button.
-    const alertSpy = jest
-      .spyOn(Alert, "alert")
-      .mockImplementation((_title, _msg, buttons) => {
-        const withdrawButton = buttons?.find(
-          (b: any) => b.text === "Withdraw"
-        );
-        withdrawButton?.onPress?.();
-      });
+    render(<MyRequestsSection />);
+
+    expect(
+      screen.queryByText("Withdraw your request to join Smith Family Dinner?")
+    ).toBeNull();
+
+    fireEvent.press(
+      screen.getByLabelText("Withdraw request to join Smith Family Dinner")
+    );
+
+    expect(
+      screen.getByText("Withdraw your request to join Smith Family Dinner?")
+    ).toBeTruthy();
+  });
+
+  it("calls cancelJoinRequest when the confirm modal's Withdraw is pressed", async () => {
+    mockCancelJoinRequest.mockResolvedValue({ success: true });
+    mockUseMyPendingJoinRequests.mockReturnValue({
+      requests: [
+        {
+          id: "req-1",
+          groupId: "g-1",
+          groupName: "Smith Family Dinner",
+          groupTypeName: "Dinner Parties",
+          requestedAt: 1000,
+        },
+      ],
+      count: 1,
+      isAtLimit: false,
+      isLoading: false,
+    });
 
     render(<MyRequestsSection />);
 
     fireEvent.press(
       screen.getByLabelText("Withdraw request to join Smith Family Dinner")
     );
+
+    // The Withdraw button inside the ConfirmModal — distinguish from the row's
+    // Withdraw button (which has an accessibility label).
+    const confirmButtons = screen.getAllByText("Withdraw");
+    const modalConfirm = confirmButtons[confirmButtons.length - 1];
+    fireEvent.press(modalConfirm);
 
     await waitFor(() => {
       expect(mockCancelJoinRequest).toHaveBeenCalledWith({ groupId: "g-1" });
     });
-
-    alertSpy.mockRestore();
   });
 
-  it("does not call cancelJoinRequest when withdraw is canceled", () => {
+  it("does not call cancelJoinRequest when the confirm modal's Cancel is pressed", () => {
     mockUseMyPendingJoinRequests.mockReturnValue({
       requests: [
         {
@@ -145,21 +176,17 @@ describe("MyRequestsSection", () => {
       isLoading: false,
     });
 
-    const alertSpy = jest
-      .spyOn(Alert, "alert")
-      .mockImplementation((_title, _msg, buttons) => {
-        const cancelButton = buttons?.find((b: any) => b.text === "Cancel");
-        cancelButton?.onPress?.();
-      });
-
     render(<MyRequestsSection />);
 
     fireEvent.press(
       screen.getByLabelText("Withdraw request to join Smith Family Dinner")
     );
 
-    expect(mockCancelJoinRequest).not.toHaveBeenCalled();
+    fireEvent.press(screen.getByText("Cancel"));
 
-    alertSpy.mockRestore();
+    expect(mockCancelJoinRequest).not.toHaveBeenCalled();
+    expect(
+      screen.queryByText("Withdraw your request to join Smith Family Dinner?")
+    ).toBeNull();
   });
 });

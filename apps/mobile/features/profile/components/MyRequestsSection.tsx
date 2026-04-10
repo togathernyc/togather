@@ -8,6 +8,7 @@ import {
   Alert,
 } from "react-native";
 import { Card } from "@components/ui";
+import { ConfirmModal } from "@components/ui/ConfirmModal";
 import { useTheme } from "@hooks/useTheme";
 import {
   useMyPendingJoinRequests,
@@ -31,32 +32,32 @@ export function MyRequestsSection() {
   const { requests, isLoading } = useMyPendingJoinRequests();
   const cancelJoinRequest = useCancelJoinRequest();
   const [withdrawingId, setWithdrawingId] = useState<string | null>(null);
+  const [pendingConfirm, setPendingConfirm] =
+    useState<PendingJoinRequest | null>(null);
 
+  // We use ConfirmModal (built on the cross-platform CustomModal) instead of
+  // Alert.alert here because react-native-web's Alert is a no-op — multi-button
+  // alerts silently do nothing on web, which would make the Withdraw button
+  // appear broken when the profile page is rendered in a browser.
   const handleWithdraw = (request: PendingJoinRequest) => {
-    Alert.alert(
-      "Withdraw request",
-      `Withdraw your request to join ${request.groupName}?`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Withdraw",
-          style: "destructive",
-          onPress: async () => {
-            setWithdrawingId(request.id);
-            try {
-              await cancelJoinRequest({ groupId: request.groupId });
-            } catch (error) {
-              Alert.alert(
-                "Error",
-                formatError(error, "Failed to withdraw request. Please try again.")
-              );
-            } finally {
-              setWithdrawingId(null);
-            }
-          },
-        },
-      ]
-    );
+    setPendingConfirm(request);
+  };
+
+  const confirmWithdraw = async () => {
+    const request = pendingConfirm;
+    if (!request) return;
+    setPendingConfirm(null);
+    setWithdrawingId(request.id);
+    try {
+      await cancelJoinRequest({ groupId: request.groupId });
+    } catch (error) {
+      Alert.alert(
+        "Error",
+        formatError(error, "Failed to withdraw request. Please try again.")
+      );
+    } finally {
+      setWithdrawingId(null);
+    }
   };
 
   // Hide the entire section when the user has no pending requests AND we're
@@ -129,6 +130,21 @@ export function MyRequestsSection() {
           })
         )}
       </Card>
+
+      <ConfirmModal
+        visible={pendingConfirm !== null}
+        title="Withdraw request"
+        message={
+          pendingConfirm
+            ? `Withdraw your request to join ${pendingConfirm.groupName}?`
+            : ""
+        }
+        confirmText="Withdraw"
+        cancelText="Cancel"
+        destructive
+        onConfirm={confirmWithdraw}
+        onCancel={() => setPendingConfirm(null)}
+      />
     </View>
   );
 }
