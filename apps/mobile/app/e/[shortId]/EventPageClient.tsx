@@ -70,7 +70,6 @@ import {
   RsvpEditModal,
   RsvpOption,
 } from "@/features/events/components/EventRsvpSection";
-import { LeaderAttendancePanel } from "@/features/events/components/LeaderAttendancePanel";
 import {
   GuestListPreview,
   RsvpData,
@@ -716,9 +715,23 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
             />
           )}
 
-          {/* Leader-only attendance panel for past events */}
-          {isLeader && isPastEvent && eventData.id && (
-            <LeaderAttendancePanel meetingId={eventData.id as string} />
+          {/* Leader: jump into the attendance recorder for past events */}
+          {isLeader && isPastEvent && eventData.id && eventData.groupId && eventData.scheduledAt && (
+            <TouchableOpacity
+              style={[styles.messageAttendeesButton, { backgroundColor: colors.surfaceSecondary }]}
+              onPress={() => {
+                const encodedDate = encodeURIComponent(eventData.scheduledAt!);
+                const meetingIdParam = encodeURIComponent(eventData.id as string);
+                router.push(
+                  `/(user)/leader-tools/${eventData.groupId}/attendance/edit?eventDate=${encodedDate}&meetingId=${meetingIdParam}`
+                );
+              }}
+            >
+              <Ionicons name="checkmark-done-outline" size={20} color={DEFAULT_PRIMARY_COLOR} />
+              <Text style={[styles.messageAttendeesText, { color: DEFAULT_PRIMARY_COLOR }]}>
+                Record Attendance
+              </Text>
+            </TouchableOpacity>
           )}
 
           {/* Leader: RSVP Notification Toggle */}

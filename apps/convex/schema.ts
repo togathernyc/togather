@@ -726,7 +726,6 @@ export default defineSchema({
     meetingId: v.id("meetings"),
     userId: v.id("users"),
     status: v.number(), // Attendance status code
-    guestAttendedCount: v.optional(v.number()), // How many of this user's plus-ones actually attended
     recordedAt: v.number(), // Unix timestamp ms
     recordedById: v.optional(v.id("users")),
   })
