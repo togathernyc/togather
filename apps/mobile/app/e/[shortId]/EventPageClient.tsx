@@ -64,11 +64,13 @@ import { AppImage } from "@components/ui";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useTheme } from "@hooks/useTheme";
 import {
+  DEFAULT_MAX_GUESTS_PER_RSVP,
   FloatingRsvpButtons,
   FloatingRsvpCard,
   RsvpEditModal,
   RsvpOption,
 } from "@/features/events/components/EventRsvpSection";
+import { LeaderAttendancePanel } from "@/features/events/components/LeaderAttendancePanel";
 import {
   GuestListPreview,
   RsvpData,
@@ -282,7 +284,11 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
     if (!eventData?.id) return;
     setLoadingOptionId(optionId);
     try {
-      await submitRsvpMutation({ meetingId: eventData.id as Id<"meetings">, optionId });
+      await submitRsvpMutation({
+        meetingId: eventData.id as Id<"meetings">,
+        optionId,
+        guestCount: 0,
+      });
       // Navigate to success screen with animation (use replace to avoid duplicate event screens in stack)
       const selectedOption = rsvpOptions.find((o) => o.id === optionId);
       router.replace({
@@ -294,22 +300,40 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
     }
   };
 
-  const handleRsvpEdit = async (optionId: number) => {
+  const handleRsvpEdit = async (optionId: number, guestCount: number) => {
     if (!eventData?.id) return;
     setLoadingOptionId(optionId);
     try {
-      await submitRsvpMutation({ meetingId: eventData.id as Id<"meetings">, optionId });
+      await submitRsvpMutation({
+        meetingId: eventData.id as Id<"meetings">,
+        optionId,
+        guestCount,
+      });
       // Close the modal first
       setShowRsvpSheet(false);
-      // Navigate to success screen with animation (use replace to avoid duplicate event screens in stack)
-      const selectedOption = rsvpOptions.find((o) => o.id === optionId);
-      router.replace({
-        pathname: `/e/${shortId}/rsvp/success`,
-        params: { optionLabel: selectedOption?.label || "Going" },
-      });
+      // Only navigate to success screen if the option actually changed.
+      // Guest-count-only edits should stay on the event page.
+      if (optionId !== myRsvp?.optionId) {
+        const selectedOption = rsvpOptions.find((o) => o.id === optionId);
+        router.replace({
+          pathname: `/e/${shortId}/rsvp/success`,
+          params: { optionLabel: selectedOption?.label || "Going" },
+        });
+      }
     } finally {
       setLoadingOptionId(null);
     }
+  };
+
+  // Inline update of guest count from the FloatingRsvpCard stepper —
+  // keeps the current option and only changes the plus-one count.
+  const handleGuestCountChange = async (guestCount: number) => {
+    if (!eventData?.id || myRsvp?.optionId == null) return;
+    await submitRsvpMutation({
+      meetingId: eventData.id as Id<"meetings">,
+      optionId: myRsvp.optionId,
+      guestCount,
+    });
   };
 
   const handleEdit = () => {
@@ -405,14 +429,28 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
   const rsvpOptions = (eventData.rsvpOptions as unknown as RsvpOption[]) ?? [];
   const eventDate = eventData.scheduledAt ? parseISO(eventData.scheduledAt) : null;
   const isPastEvent = eventDate ? eventDate < new Date() : false;
+  const maxGuestsPerRsvp =
+    ((eventData as any)?.maxGuestsPerRsvp as number | undefined) ??
+    DEFAULT_MAX_GUESTS_PER_RSVP;
 
-  // Check RSVP eligibility based on multiple conditions
+  // Does the user have access to RSVP data (guest list, counts, etc.) at all?
+  const hasEventAccess =
+    eventData.status !== 'cancelled' &&
+    (eventData.visibility === 'public' || eventData.hasAccess);
+
+  // Can the user actively submit/change an RSVP?
+  // Split out from visibility so past events keep showing the guest list.
   const canRSVP =
     eventData.rsvpEnabled &&
     rsvpOptions.length > 0 &&
     !isPastEvent &&
-    eventData.status !== 'cancelled' &&
-    (eventData.visibility === 'public' || eventData.hasAccess);
+    hasEventAccess;
+
+  // Show the read-only guest list preview even after the event has passed —
+  // leaders need to see who RSVP'd to mark attendance, and members like
+  // looking back at who came.
+  const showGuestListPreview =
+    eventData.rsvpEnabled && rsvpOptions.length > 0 && hasEventAccess;
 
   // Check if user is a member of the event's host community
   // Convex returns communityId as Id<"communities"> (string), while userData has numeric IDs
@@ -669,13 +707,18 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
             />
           )}
 
-          {/* Guest List Preview */}
-          {canRSVP && !isLoadingRsvp && rsvpData && (
+          {/* Guest List Preview — shown for all visible states (including past events) */}
+          {showGuestListPreview && !isLoadingRsvp && rsvpData && (
             <GuestListPreview
               rsvpData={rsvpData as RsvpData}
               rsvpOptions={rsvpOptions}
               onViewAll={handleViewGuestList}
             />
+          )}
+
+          {/* Leader-only attendance panel for past events */}
+          {isLeader && isPastEvent && eventData.id && (
+            <LeaderAttendancePanel meetingId={eventData.id as string} />
           )}
 
           {/* Leader: RSVP Notification Toggle */}
@@ -749,9 +792,11 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
             </View>
           ) : myRsvp?.optionId != null ? (
             <FloatingRsvpCard
-              response={{ optionId: myRsvp.optionId }}
+              response={{ optionId: myRsvp.optionId, guestCount: myRsvp.guestCount ?? 0 }}
               options={rsvpOptions}
               onEdit={() => setShowRsvpSheet(true)}
+              onGuestCountChange={handleGuestCountChange}
+              maxGuests={maxGuestsPerRsvp}
               insets={insets}
               tabBarOffset={shouldShowTabBar ? 64 : 0}
             />
@@ -773,8 +818,10 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
         onClose={() => setShowRsvpSheet(false)}
         options={rsvpOptions}
         currentOptionId={myRsvp?.optionId ?? null}
+        currentGuestCount={myRsvp?.guestCount ?? 0}
         loadingOptionId={loadingOptionId}
         onSelect={handleRsvpEdit}
+        maxGuests={maxGuestsPerRsvp}
       />
 
       {/* Attendance Confirmation Modal */}

@@ -117,20 +117,33 @@ export default function GuestListScreen() {
               <Text style={styles.groupCount}>{rsvpGroup.count}</Text>
             </View>
             <View style={styles.guestList}>
-              {rsvpGroup.users.map((user) => (
-                <View key={user.id} style={styles.guestRow}>
-                  <Avatar
-                    name={`${user.firstName} ${user.lastName}`}
-                    imageUrl={user.profileImage || undefined}
-                    size={44}
-                  />
-                  <View style={styles.guestInfo}>
-                    <Text style={styles.guestName}>
-                      {user.firstName} {user.lastName}
-                    </Text>
+              {rsvpGroup.users.map((user) => {
+                const guestCount = (user as { guestCount?: number }).guestCount ?? 0;
+                return (
+                  <View key={user.id} style={styles.guestRow}>
+                    <Avatar
+                      name={`${user.firstName} ${user.lastName}`}
+                      imageUrl={user.profileImage || undefined}
+                      size={44}
+                    />
+                    <View style={styles.guestInfo}>
+                      <Text style={styles.guestName}>
+                        {user.firstName} {user.lastName}
+                      </Text>
+                      {guestCount > 0 && (
+                        <Text style={styles.guestSubtitle}>
+                          +{guestCount} guest{guestCount === 1 ? "" : "s"}
+                        </Text>
+                      )}
+                    </View>
+                    {guestCount > 0 && (
+                      <View style={styles.guestBadge}>
+                        <Text style={styles.guestBadgeText}>+{guestCount}</Text>
+                      </View>
+                    )}
                   </View>
-                </View>
-              ))}
+                );
+              })}
             </View>
           </View>
         );
@@ -316,6 +329,22 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "500",
     color: "#333",
+  },
+  guestSubtitle: {
+    fontSize: 12,
+    color: "#666",
+    marginTop: 2,
+  },
+  guestBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 10,
+    backgroundColor: DEFAULT_PRIMARY_COLOR,
+  },
+  guestBadgeText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "600",
   },
 
   // Empty State

@@ -13,17 +13,20 @@ export interface RsvpUser {
   firstName: string;
   lastName: string;
   profileImage: string | null;
+  guestCount?: number;
 }
 
 export interface RsvpOptionResponse {
   option: { id: number; label: string };
   count: number;
+  guestCount?: number;
   users: RsvpUser[];
 }
 
 export interface RsvpData {
   rsvps: RsvpOptionResponse[];
   total: number;
+  totalWithGuests?: number;
 }
 
 export interface RsvpOption {
@@ -60,6 +63,7 @@ export function GuestListPreview({
   );
   const goingRsvp = rsvpData.rsvps.find((r) => r.option.id === goingOption?.id);
   const goingCount = goingRsvp?.count || 0;
+  const goingGuestCount = goingRsvp?.guestCount || 0;
   const goingUsers = goingRsvp?.users || [];
 
   // Find the "Maybe" option to also show those guests
@@ -78,9 +82,15 @@ export function GuestListPreview({
   const displayUsers = allUsers.slice(0, 6);
   const overflowCount = totalCount > 6 ? totalCount - 6 : 0;
 
-  // Build subtitle text
+  // Build subtitle text. Plus-ones (guestCount) only apply to Going.
   const subtitleParts: string[] = [];
-  if (goingCount > 0) subtitleParts.push(`${goingCount} Going`);
+  if (goingCount > 0) {
+    const goingLabel =
+      goingGuestCount > 0
+        ? `${goingCount} Going (+${goingGuestCount} guest${goingGuestCount === 1 ? "" : "s"})`
+        : `${goingCount} Going`;
+    subtitleParts.push(goingLabel);
+  }
   if (maybeCount > 0) subtitleParts.push(`${maybeCount} Maybe`);
   const subtitleText = subtitleParts.join(", ");
 

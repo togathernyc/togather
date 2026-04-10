@@ -20,6 +20,11 @@ import { getRsvpStatsForOption, hasPrefetchedRsvpOptions } from '../utils/rsvpSt
 import { DEFAULT_PRIMARY_COLOR } from '@utils/styles';
 import { useTheme } from '@hooks/useTheme';
 import type { PrefetchedEventData } from '../context/ChatPrefetchContext';
+import {
+  DEFAULT_MAX_GUESTS_PER_RSVP,
+  GuestStepper,
+  isGoingOptionLabel,
+} from '@/features/events/components/EventRsvpSection';
 
 interface EventLinkCardProps {
   shortId: string;
@@ -117,15 +122,31 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
   // Previously we calculated the actual image ratio, but this caused content to jump
   // when the image loaded. Using a consistent aspect ratio is better UX.
 
-  const handleRsvp = async (optionId: number) => {
+  const handleRsvp = async (optionId: number, guestCount: number = 0) => {
     if (event?.id && token) {
       setLoadingOptionId(optionId);
       try {
-        await submitRsvpMutation({ token, meetingId: event.id as Id<"meetings">, optionId });
+        await submitRsvpMutation({
+          token,
+          meetingId: event.id as Id<"meetings">,
+          optionId,
+          guestCount,
+        });
       } finally {
         setLoadingOptionId(null);
       }
     }
+  };
+
+  // Inline update of guest count when the user is already "Going".
+  const handleGuestCountChange = async (guestCount: number) => {
+    if (!event?.id || !token || myRsvp?.optionId == null) return;
+    await submitRsvpMutation({
+      token,
+      meetingId: event.id as Id<"meetings">,
+      optionId: myRsvp.optionId,
+      guestCount,
+    });
   };
 
   const handleViewDetails = () => {
@@ -343,6 +364,17 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
   // Full access - show complete event card
   const rsvpOptions = event.rsvpOptions || [];
 
+  // Identify the currently-selected option (if any) to conditionally show
+  // the plus-ones stepper underneath the RSVP list.
+  const selectedOption = rsvpOptions.find((o) => o.id === myRsvp?.optionId) ?? null;
+  const selectedIsGoing = selectedOption
+    ? isGoingOptionLabel(selectedOption.label)
+    : false;
+  const maxGuests =
+    ((eventData as any)?.maxGuestsPerRsvp as number | undefined) ??
+    DEFAULT_MAX_GUESTS_PER_RSVP;
+  const myGuestCount = (myRsvp as { guestCount?: number } | null | undefined)?.guestCount ?? 0;
+
   // Cancelled Overlay Component
   const CancelledOverlay = () => (
     <View style={[styles.cancelledOverlay, { backgroundColor: isDark ? 'rgba(0, 0, 0, 0.75)' : 'rgba(255, 255, 255, 0.85)' }]}>
@@ -410,9 +442,26 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
                 <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading RSVPs...</Text>
               </View>
             ) : (
-              rsvpOptions.map((option) => (
-                <RsvpOptionRow key={option.id} option={option} />
-              ))
+              <>
+                {rsvpOptions.map((option) => (
+                  <RsvpOptionRow key={option.id} option={option} />
+                ))}
+                {selectedIsGoing && (
+                  <View style={[styles.guestStepperRow, { borderTopColor: colors.borderLight }]}>
+                    <GuestStepper
+                      value={myGuestCount}
+                      onChange={(next) => {
+                        handleGuestCountChange(next).catch(() => {
+                          /* optimistic UI handled upstream via reactive query */
+                        });
+                      }}
+                      max={maxGuests}
+                      label={myGuestCount === 0 ? "Bringing guests?" : "Guests"}
+                      compact
+                    />
+                  </View>
+                )}
+              </>
             )}
           </View>
         )}
@@ -522,6 +571,10 @@ const styles = StyleSheet.create({
   rsvpSection: {
     padding: 16,
     gap: 12,
+  },
+  guestStepperRow: {
+    paddingTop: 12,
+    borderTopWidth: 1,
   },
   loadingContainer: {
     flexDirection: 'row',
