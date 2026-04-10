@@ -379,7 +379,7 @@ export const sendBatchPushNotifications = internalAction({
   },
   handler: async (_ctx, args) => {
     if (args.notifications.length === 0) {
-      return { success: true, ticketIds: [], errors: [] };
+      return { success: true, ticketIds: [], errors: [], tickets: [] };
     }
 
     try {
@@ -424,17 +424,27 @@ export const sendBatchPushNotifications = internalAction({
       }
 
       const result: { data?: PushTicket[] } = await response.json();
-      const ticketIds = result.data
-        ?.filter((t: PushTicket) => t.id)
-        .map((t: PushTicket) => t.id as string) || [];
-      const errors = result.data
-        ?.filter((t: PushTicket) => t.status === "error")
-        .map((t: PushTicket) => t.message || "Unknown error") || [];
+      const data = result.data || [];
+      const ticketIds = data
+        .filter((t: PushTicket) => t.id)
+        .map((t: PushTicket) => t.id as string);
+      const errors = data
+        .filter((t: PushTicket) => t.status === "error")
+        .map((t: PushTicket) => t.message || "Unknown error");
+      // Per-notification outcome, aligned 1:1 with args.notifications so callers
+      // can map ticket results back to the originating user/token.
+      const tickets = args.notifications.map((_, i) => {
+        const t = data[i];
+        if (!t) return { ok: false, error: "No ticket returned" };
+        if (t.status === "ok") return { ok: true, id: t.id };
+        return { ok: false, error: t.message || "Unknown error" };
+      });
 
       return {
         success: response.ok,
         ticketIds,
         errors,
+        tickets,
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -442,6 +452,7 @@ export const sendBatchPushNotifications = internalAction({
         success: false,
         ticketIds: [],
         errors: [errorMessage],
+        tickets: args.notifications.map(() => ({ ok: false, error: errorMessage })),
       };
     }
   },

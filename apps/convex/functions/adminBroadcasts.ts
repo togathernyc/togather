@@ -460,20 +460,30 @@ export const sendToUsers = internalAction({
           }))
       );
 
-      let pushBatchOk = false;
-      if (notifications.length > 0) {
-        const pushResult = await ctx.runAction(
-          internal.functions.notifications.internal.sendBatchPushNotifications,
-          { notifications }
-        );
-        pushBatchOk = pushResult.success;
-        results.pushSucceeded = pushBatchOk ? notifications.length : 0;
-        results.pushFailed = pushBatchOk ? 0 : notifications.length;
+      const tickets: Array<{ ok: boolean; id?: string; error?: string }> =
+        notifications.length === 0
+          ? []
+          : (
+              await ctx.runAction(
+                internal.functions.notifications.internal.sendBatchPushNotifications,
+                { notifications }
+              )
+            ).tickets ?? [];
+
+      // Map per-ticket outcomes back to users. Each user may own multiple
+      // tokens; mark the user "sent" if at least one token delivered ok.
+      let ticketIdx = 0;
+      for (const { userId, tokens } of tokenResults) {
+        let anyOk = false;
+        for (let i = 0; i < tokens.length; i++) {
+          if (tickets[ticketIdx]?.ok) anyOk = true;
+          ticketIdx++;
+        }
+        pushOutcome.set(userId as Id<"users">, anyOk ? "sent" : "failed");
       }
 
-      for (const { userId } of tokenResults) {
-        pushOutcome.set(userId as Id<"users">, pushBatchOk ? "sent" : "failed");
-      }
+      results.pushSucceeded = tickets.filter((t) => t.ok).length;
+      results.pushFailed = tickets.length - results.pushSucceeded;
     }
 
     if (broadcast.channels.includes("email")) {
@@ -582,7 +592,12 @@ export const getUserEmails = internalQuery({
     const users = await Promise.all(args.userIds.map((id) => ctx.db.get(id)));
     return users
       .filter((u): u is NonNullable<typeof u> => u !== null)
-      .map((u) => ({ userId: u._id, email: u.email || null }));
+      .map((u) => ({
+        userId: u._id,
+        // Opted-out users (emailNotificationsEnabled === false) are excluded
+        // here so the send path and previewTargeting agree on reachability.
+        email: u.email && u.emailNotificationsEnabled !== false ? u.email : null,
+      }));
   },
 });
 
