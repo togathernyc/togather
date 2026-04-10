@@ -1616,6 +1616,11 @@ export const createFromTemplate = mutation({
       ) {
         throw new ConvexError("Target group must be in the same community");
       }
+      // Require the caller to lead the target group too, not just the
+      // template's own group. Prevents a leader of one group from
+      // applying workflows to another group in the same community they
+      // do not lead.
+      await getLeaderMembership(ctx, args.targetGroupId!, userId);
       targetLabel = targetGroup.name ?? "Group";
     } else {
       // placeholder
