@@ -500,6 +500,14 @@ export const join = mutation({
     // Add user to announcement group
     await addUserToAnnouncementGroup(ctx, args.communityId, userId, 1); // roles=1 is MEMBER
 
+    // Link any placeholder workflow tasks addressed to this user's phone in
+    // groups that belong to this community.
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.tasks.index.linkPlaceholderTasksForUser,
+      { userId },
+    );
+
     return membershipId;
   },
 });

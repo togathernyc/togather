@@ -594,7 +594,7 @@ describe("tasks functions", () => {
         targetMemberId: memberId,
       }),
     ).rejects.toThrow(
-      "targetMemberId and targetGroupId must be omitted when targetType=none",
+      "targetMemberId, targetGroupId, and placeholder fields must be omitted when targetType=none",
     );
 
     await expect(
