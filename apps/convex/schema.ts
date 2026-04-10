@@ -614,6 +614,9 @@ export default defineSchema({
     // RSVP leader notification toggle (defaults to true)
     rsvpNotifyLeaders: v.optional(v.boolean()),
 
+    // Max guests (plus-ones) allowed per RSVP. Falls back to MAX_GUESTS_PER_RSVP constant.
+    maxGuestsPerRsvp: v.optional(v.number()),
+
     // Search support (denormalized)
     communityId: v.optional(v.id("communities")), // Denormalized from group for search filtering
     searchText: v.optional(v.string()), // Denormalized: title + location + group name
@@ -650,6 +653,7 @@ export default defineSchema({
     meetingId: v.id("meetings"),
     userId: v.id("users"),
     rsvpOptionId: v.number(), // References rsvpOptions.id in meeting
+    guestCount: v.optional(v.number()), // Plus-ones brought (0-N). Only valid on "Going" option.
     createdAt: v.number(), // Unix timestamp ms
     updatedAt: v.number(), // Unix timestamp ms
   })
@@ -722,6 +726,7 @@ export default defineSchema({
     meetingId: v.id("meetings"),
     userId: v.id("users"),
     status: v.number(), // Attendance status code
+    guestAttendedCount: v.optional(v.number()), // How many of this user's plus-ones actually attended
     recordedAt: v.number(), // Unix timestamp ms
     recordedById: v.optional(v.id("users")),
   })

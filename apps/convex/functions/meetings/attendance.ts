@@ -8,8 +8,9 @@ import { v } from "convex/values";
 import { query, mutation } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import { Id, Doc } from "../../_generated/dataModel";
-import { now } from "../../lib/utils";
+import { now, getMediaUrl } from "../../lib/utils";
 import { requireAuth, getOptionalAuth } from "../../lib/auth";
+import { getMaxGuestsForMeeting, isGoingOption } from "../../lib/rsvpGuests";
 
 // ============================================================================
 // Attendance Management
@@ -67,6 +68,7 @@ export const markAttendance = mutation({
     meetingId: v.id("meetings"),
     userId: v.id("users"), // The user whose attendance is being recorded
     status: v.number(), // Attendance status code
+    guestAttendedCount: v.optional(v.number()), // Plus-ones that actually showed up (leaders only)
   },
   handler: async (ctx, args) => {
     const recordedById = await requireAuth(ctx, args.token);
@@ -97,6 +99,23 @@ export const markAttendance = mutation({
       }
     }
 
+    // Validate guestAttendedCount (leader-only, and capped at meeting's max).
+    // Only leaders can set this — members self-reporting never touch guest counts.
+    let guestAttendedCount: number | undefined;
+    if (args.guestAttendedCount !== undefined) {
+      if (args.userId === recordedById) {
+        throw new Error("Only leaders can record guest attendance");
+      }
+      if (!Number.isInteger(args.guestAttendedCount) || args.guestAttendedCount < 0) {
+        throw new Error("Guest attended count must be a non-negative integer");
+      }
+      const maxGuests = getMaxGuestsForMeeting(meeting);
+      if (args.guestAttendedCount > maxGuests) {
+        throw new Error(`Guest attended count cannot exceed ${maxGuests}`);
+      }
+      guestAttendedCount = args.guestAttendedCount;
+    }
+
     // Check for existing record
     const existing = await ctx.db
       .query("meetingAttendances")
@@ -111,6 +130,7 @@ export const markAttendance = mutation({
         status: args.status,
         recordedById,
         recordedAt: timestamp,
+        ...(guestAttendedCount !== undefined ? { guestAttendedCount } : {}),
       });
       resultId = existing._id;
     } else {
@@ -120,6 +140,7 @@ export const markAttendance = mutation({
         status: args.status,
         recordedById,
         recordedAt: timestamp,
+        ...(guestAttendedCount !== undefined ? { guestAttendedCount } : {}),
       });
     }
 
@@ -146,6 +167,118 @@ export const markAttendance = mutation({
     );
 
     return resultId;
+  },
+});
+
+/**
+ * Leader view: list RSVPs joined with attendance + guest counts.
+ *
+ * Returns one row per RSVP with the user's details, their RSVP option,
+ * how many plus-ones they said they'd bring, and (if recorded) their
+ * attendance status and how many of their guests actually showed up.
+ *
+ * Access: leader or admin of the event's group only.
+ */
+export const listAttendanceForLeader = query({
+  args: {
+    token: v.string(),
+    meetingId: v.id("meetings"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const meeting = await ctx.db.get(args.meetingId);
+    if (!meeting) {
+      throw new Error("Meeting not found");
+    }
+
+    const membership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", meeting.groupId).eq("userId", userId)
+      )
+      .first();
+
+    if (
+      !membership ||
+      membership.leftAt ||
+      !["leader", "admin"].includes(membership.role)
+    ) {
+      throw new Error("Only leaders can view attendance");
+    }
+
+    const rsvps = await ctx.db
+      .query("meetingRsvps")
+      .withIndex("by_meeting", (q) => q.eq("meetingId", args.meetingId))
+      .take(500);
+
+    const attendanceRecords = await ctx.db
+      .query("meetingAttendances")
+      .withIndex("by_meeting", (q) => q.eq("meetingId", args.meetingId))
+      .collect();
+
+    const attendanceByUser = new Map<string, Doc<"meetingAttendances">>();
+    for (const record of attendanceRecords) {
+      attendanceByUser.set(record.userId, record);
+    }
+
+    // Batch fetch users
+    const userIds = rsvps.map((r) => r.userId);
+    const users = await Promise.all(userIds.map((id) => ctx.db.get(id)));
+    const userMap = new Map<string, Doc<"users">>();
+    users.forEach((u, i) => {
+      if (u) userMap.set(userIds[i], u);
+    });
+
+    const rsvpOptions =
+      (meeting.rsvpOptions as Array<{ id: number; label: string; enabled: boolean }> | null) ||
+      [];
+
+    const rows = rsvps.map((rsvp) => {
+      const user = userMap.get(rsvp.userId);
+      const attendance = attendanceByUser.get(rsvp.userId) ?? null;
+      const option = rsvpOptions.find((opt) => opt.id === rsvp.rsvpOptionId) ?? null;
+      return {
+        rsvpId: rsvp._id,
+        userId: rsvp.userId,
+        user: user
+          ? {
+              id: user._id,
+              firstName: user.firstName || "",
+              lastName: user.lastName || "",
+              profileImage: getMediaUrl(user.profilePhoto),
+            }
+          : null,
+        rsvpOptionId: rsvp.rsvpOptionId,
+        rsvpOptionLabel: option?.label ?? null,
+        isGoing: isGoingOption(option),
+        guestCount: rsvp.guestCount ?? 0,
+        attendanceStatus: attendance?.status ?? null,
+        guestAttendedCount: attendance?.guestAttendedCount ?? null,
+        attendanceRecordedAt: attendance?.recordedAt ?? null,
+      };
+    });
+
+    const totalGuests = rsvps.reduce((sum, r) => sum + (r.guestCount ?? 0), 0);
+    const attendedRows = rows.filter((r) => r.attendanceStatus === 1);
+    const attendedGuests = attendedRows.reduce(
+      (sum, r) => sum + (r.guestAttendedCount ?? 0),
+      0
+    );
+    const noShowCount = rows.filter((r) => r.attendanceStatus === 0).length;
+
+    return {
+      rows,
+      maxGuestsPerRsvp: getMaxGuestsForMeeting(meeting),
+      summary: {
+        rsvpCount: rsvps.length,
+        rsvpGuestCount: totalGuests,
+        attendedCount: attendedRows.length,
+        attendedGuestCount: attendedGuests,
+        noShowCount,
+        unmarkedCount: rows.length - attendedRows.length - noShowCount,
+      },
+    };
   },
 });
 
