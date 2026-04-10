@@ -46,9 +46,14 @@ type TaskDetail = {
   tags?: string[];
   assignedToId?: Id<"users">;
   assignedToName?: string;
-  targetType: "none" | "member" | "group";
+  targetType: "none" | "member" | "group" | "placeholder";
   targetMemberId?: Id<"users">;
   targetMemberName?: string;
+  targetGroupId?: Id<"groups">;
+  targetGroupName?: string;
+  targetPlaceholderName?: string;
+  targetPlaceholderPhone?: string;
+  targetPlaceholderEmail?: string;
   parentTaskId?: Id<"tasks">;
   parentTaskTitle?: string;
   createdByName?: string;
@@ -390,6 +395,36 @@ export function TaskDetailScreen({ groupIdProp, taskIdProp, embedded }: TaskDeta
         >
           <View style={[styles.metaCard, { borderColor: colors.borderLight, backgroundColor: colors.surfaceSecondary }]}>
             <Text style={[styles.metaRow, { color: colors.text }]}>Group: {task.groupName ?? "Group"}</Text>
+            {task.targetType === "member" && task.targetMemberName ? (
+              <Text style={[styles.metaRow, { color: colors.text }]}>
+                Target member: {task.targetMemberName}
+              </Text>
+            ) : null}
+            {task.targetType === "group" && task.targetGroupName ? (
+              <Text style={[styles.metaRow, { color: colors.text }]}>
+                Target group: {task.targetGroupName}
+              </Text>
+            ) : null}
+            {task.targetType === "placeholder" ? (
+              <>
+                <Text style={[styles.metaRow, { color: colors.text }]}>
+                  Target (pending signup): {task.targetPlaceholderName ?? "—"}
+                </Text>
+                {task.targetPlaceholderPhone ? (
+                  <Text style={[styles.metaRow, { color: colors.textSecondary }]}>
+                    Phone: {task.targetPlaceholderPhone}
+                  </Text>
+                ) : null}
+                {task.targetPlaceholderEmail ? (
+                  <Text style={[styles.metaRow, { color: colors.textSecondary }]}>
+                    Email: {task.targetPlaceholderEmail}
+                  </Text>
+                ) : null}
+                <Text style={[styles.metaRow, { color: colors.textSecondary, fontStyle: "italic" }]}>
+                  Will auto-link when they sign up with this phone.
+                </Text>
+              </>
+            ) : null}
             <Text style={[styles.metaRow, { color: colors.text }]}>
               Created by: {task.createdByName ?? "System"}
             </Text>
@@ -454,46 +489,50 @@ export function TaskDetailScreen({ groupIdProp, taskIdProp, embedded }: TaskDeta
             placeholderTextColor={colors.inputPlaceholder}
           />
 
-          <Text style={[styles.helperText, { color: colors.textSecondary }]}>
-            Target defaults to group. Pick anyone in the community, including people not in this group yet.
-          </Text>
-          <Text style={[styles.inputLabel, { color: colors.text }]}>Associated member</Text>
-          <TextInput
-            value={relevantSearch}
-            onChangeText={setRelevantSearch}
-            style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
-            placeholder="Search community members"
-            placeholderTextColor={colors.inputPlaceholder}
-          />
-          {relevantMemberId && relevantMemberName ? (
-            <Pressable
-              onPress={() => {
-                setRelevantMemberId(null);
-                setRelevantMemberName(null);
-              }}
-              style={[styles.selectionPill, { borderColor: colors.link, backgroundColor: colors.selectedBackground }]}
-            >
-              <Text style={[styles.selectionPillText, { color: colors.link }]}>
-                {relevantMemberName} • Tap to clear
+          {task.targetType !== "placeholder" ? (
+            <>
+              <Text style={[styles.helperText, { color: colors.textSecondary }]}>
+                Target defaults to group. Pick anyone in the community, including people not in this group yet.
               </Text>
-            </Pressable>
-          ) : null}
-          {relevantSearch.trim().length >= 2 ? (
-            <ScrollView style={[styles.searchResultsList, { borderColor: colors.borderLight, backgroundColor: colors.surface }]} nestedScrollEnabled>
-              {(relevantMemberResults ?? []).map((member) => (
+              <Text style={[styles.inputLabel, { color: colors.text }]}>Associated member</Text>
+              <TextInput
+                value={relevantSearch}
+                onChangeText={setRelevantSearch}
+                style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
+                placeholder="Search community members"
+                placeholderTextColor={colors.inputPlaceholder}
+              />
+              {relevantMemberId && relevantMemberName ? (
                 <Pressable
-                  key={member.userId}
                   onPress={() => {
-                    setRelevantMemberId(member.userId);
-                    setRelevantMemberName(member.name);
-                    setRelevantSearch("");
+                    setRelevantMemberId(null);
+                    setRelevantMemberName(null);
                   }}
-                  style={[styles.searchResultRow, { borderBottomColor: colors.borderLight }]}
+                  style={[styles.selectionPill, { borderColor: colors.link, backgroundColor: colors.selectedBackground }]}
                 >
-                  <Text style={[styles.searchResultText, { color: colors.text }]}>{member.name}</Text>
+                  <Text style={[styles.selectionPillText, { color: colors.link }]}>
+                    {relevantMemberName} • Tap to clear
+                  </Text>
                 </Pressable>
-              ))}
-            </ScrollView>
+              ) : null}
+              {relevantSearch.trim().length >= 2 ? (
+                <ScrollView style={[styles.searchResultsList, { borderColor: colors.borderLight, backgroundColor: colors.surface }]} nestedScrollEnabled>
+                  {(relevantMemberResults ?? []).map((member) => (
+                    <Pressable
+                      key={member.userId}
+                      onPress={() => {
+                        setRelevantMemberId(member.userId);
+                        setRelevantMemberName(member.name);
+                        setRelevantSearch("");
+                      }}
+                      style={[styles.searchResultRow, { borderBottomColor: colors.borderLight }]}
+                    >
+                      <Text style={[styles.searchResultText, { color: colors.text }]}>{member.name}</Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              ) : null}
+            </>
           ) : null}
 
           <Text style={[styles.inputLabel, { color: colors.text }]}>Assigned to</Text>

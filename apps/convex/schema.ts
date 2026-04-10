@@ -933,9 +933,15 @@ export default defineSchema({
     sourceType: v.string(), // "manual" | "bot_task_reminder" | "reach_out" | "followup" | "workflow_template"
     sourceRef: v.optional(v.string()),
     sourceKey: v.optional(v.string()), // idempotency key for generated tasks
-    targetType: v.string(), // "none" | "member" | "group"
+    targetType: v.string(), // "none" | "member" | "group" | "placeholder"
     targetMemberId: v.optional(v.id("users")),
     targetGroupId: v.optional(v.id("groups")),
+    // Placeholder contact used when a workflow is applied to a person who has not
+    // signed up yet. On registration we auto-match by normalized phone and rewrite
+    // targetMemberId / targetType. See functions/tasks.linkPlaceholderTasksForUser.
+    targetPlaceholderName: v.optional(v.string()),
+    targetPlaceholderPhone: v.optional(v.string()), // E.164, normalized
+    targetPlaceholderEmail: v.optional(v.string()),
     tags: v.optional(v.array(v.string())),
     parentTaskId: v.optional(v.id("tasks")),
     orderKey: v.optional(v.number()),
@@ -954,7 +960,9 @@ export default defineSchema({
     .index("by_parent", ["parentTaskId"])
     .index("by_sourceKey", ["sourceKey"])
     .index("by_target_member", ["targetMemberId"])
-    .index("by_target_group", ["targetGroupId"]),
+    .index("by_target_group", ["targetGroupId"])
+    .index("by_target_placeholder_phone", ["targetPlaceholderPhone"])
+    .index("by_target_placeholder_email", ["targetPlaceholderEmail"]),
 
   // =============================================================================
   // TASK EVENTS

@@ -4,6 +4,7 @@ import type { Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { isActiveMembership, isLeaderRole } from "../../lib/helpers";
 import { searchCommunityMembersInternal } from "../../lib/memberSearch";
+import { normalizePhone } from "../../lib/phoneNormalize";
 import { now } from "../../lib/utils";
 
 const openStatuses = new Set(["open", "snoozed"]);
@@ -25,6 +26,7 @@ const targetTypeValidator = v.union(
   v.literal("none"),
   v.literal("member"),
   v.literal("group"),
+  v.literal("placeholder"),
 );
 
 const snoozePresetValidator = v.union(
@@ -140,30 +142,80 @@ async function requireTargetUserInGroupCommunity(
   }
 }
 
+type PlaceholderFields = {
+  name?: string;
+  phone?: string;
+  email?: string;
+};
+
 function assertTargetArgs(
-  targetType: "none" | "member" | "group",
+  targetType: "none" | "member" | "group" | "placeholder",
   targetMemberId: Id<"users"> | undefined,
   targetGroupId: Id<"groups"> | undefined,
+  placeholder?: PlaceholderFields,
 ) {
-  if (targetType === "none" && (targetMemberId || targetGroupId)) {
+  const hasPlaceholder =
+    (placeholder?.name ?? placeholder?.phone ?? placeholder?.email) !==
+    undefined;
+
+  if (targetType === "none") {
+    if (targetMemberId || targetGroupId || hasPlaceholder) {
+      throw new ConvexError(
+        "targetMemberId, targetGroupId, and placeholder fields must be omitted when targetType=none",
+      );
+    }
+    return;
+  }
+  if (targetType === "member") {
+    if (!targetMemberId) {
+      throw new ConvexError(
+        "targetMemberId is required when targetType=member",
+      );
+    }
+    if (targetGroupId) {
+      throw new ConvexError(
+        "targetGroupId is not allowed when targetType=member",
+      );
+    }
+    if (hasPlaceholder) {
+      throw new ConvexError(
+        "placeholder fields are not allowed when targetType=member",
+      );
+    }
+    return;
+  }
+  if (targetType === "group") {
+    if (!targetGroupId) {
+      throw new ConvexError("targetGroupId is required when targetType=group");
+    }
+    if (targetMemberId) {
+      throw new ConvexError(
+        "targetMemberId is not allowed when targetType=group",
+      );
+    }
+    if (hasPlaceholder) {
+      throw new ConvexError(
+        "placeholder fields are not allowed when targetType=group",
+      );
+    }
+    return;
+  }
+  // targetType === "placeholder"
+  if (targetMemberId || targetGroupId) {
     throw new ConvexError(
-      "targetMemberId and targetGroupId must be omitted when targetType=none",
+      "targetMemberId and targetGroupId must be omitted when targetType=placeholder",
     );
   }
-  if (targetType === "member" && !targetMemberId) {
-    throw new ConvexError("targetMemberId is required when targetType=member");
-  }
-  if (targetType === "member" && targetGroupId) {
+  const name = placeholder?.name?.trim();
+  if (!name) {
     throw new ConvexError(
-      "targetGroupId is not allowed when targetType=member",
+      "targetPlaceholderName is required when targetType=placeholder",
     );
   }
-  if (targetType === "group" && !targetGroupId) {
-    throw new ConvexError("targetGroupId is required when targetType=group");
-  }
-  if (targetType === "group" && targetMemberId) {
+  // Require phone OR email so later association has something to match on.
+  if (!placeholder?.phone?.trim() && !placeholder?.email?.trim()) {
     throw new ConvexError(
-      "targetMemberId is not allowed when targetType=group",
+      "targetPlaceholderPhone or targetPlaceholderEmail is required when targetType=placeholder",
     );
   }
 }
@@ -186,6 +238,7 @@ type FilterableTask = {
   groupName?: string;
   targetMemberName?: string;
   targetGroupName?: string;
+  targetPlaceholderName?: string;
 };
 
 function applyTaskFilters<T extends FilterableTask>(
@@ -209,6 +262,7 @@ function applyTaskFilters<T extends FilterableTask>(
         task.groupName,
         task.targetMemberName,
         task.targetGroupName,
+        task.targetPlaceholderName,
         ...(task.tags ?? []),
       ]
         .filter((value): value is string => Boolean(value))
@@ -919,6 +973,49 @@ export const searchRelevantMembers = query({
   },
 });
 
+/**
+ * Groups in the template's community that the caller actively leads.
+ * Used by the apply-workflow modal to scope the group-target picker to
+ * the right community (important for multi-community leaders viewing
+ * `taskTemplates.listAll`, which spans communities).
+ */
+export const listGroupTargetCandidates = query({
+  args: {
+    token: v.string(),
+    templateId: v.id("taskTemplates"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const template = await ctx.db.get(args.templateId);
+    if (!template) {
+      throw new ConvexError("Template not found");
+    }
+    const templateGroup = await ctx.db.get(template.groupId);
+    if (!templateGroup) {
+      throw new ConvexError("Template group not found");
+    }
+
+    const leaderGroupIds = await getActiveLeaderGroupIds(ctx, userId);
+    if (leaderGroupIds.length === 0) return [];
+
+    const groups = await Promise.all(
+      leaderGroupIds.map((id) => ctx.db.get(id)),
+    );
+    return groups
+      .filter(
+        (g): g is NonNullable<typeof g> =>
+          !!g &&
+          "communityId" in g &&
+          g.communityId === templateGroup.communityId,
+      )
+      .map((g) => ({
+        _id: g._id,
+        name: ("name" in g && g.name) || "Group",
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  },
+});
+
 export const getTaskCard = query({
   args: {
     token: v.string(),
@@ -959,10 +1056,14 @@ export const getTaskCard = query({
       responsibilityType: task.responsibilityType,
       assignedToId: task.assignedToId,
       assignedToName: assigneeUser ? formatUserName(assigneeUser) : undefined,
+      targetType: task.targetType,
       targetMemberId: task.targetMemberId,
       targetMemberName: targetMemberUser
         ? formatUserName(targetMemberUser)
         : undefined,
+      targetPlaceholderName: task.targetPlaceholderName,
+      targetPlaceholderPhone: task.targetPlaceholderPhone,
+      targetPlaceholderEmail: task.targetPlaceholderEmail,
       createdAt: task.createdAt,
       updatedAt: task.updatedAt,
       viewerCanManage: isLeader,
@@ -1452,7 +1553,15 @@ export const createFromTemplate = mutation({
   args: {
     token: v.string(),
     templateId: v.id("taskTemplates"),
-    targetMemberId: v.id("users"),
+    // Target is now a discriminated union across member / group / placeholder.
+    // targetType defaults to "member" for back-compat with older clients that
+    // still only send targetMemberId.
+    targetType: v.optional(targetTypeValidator),
+    targetMemberId: v.optional(v.id("users")),
+    targetGroupId: v.optional(v.id("groups")),
+    targetPlaceholderName: v.optional(v.string()),
+    targetPlaceholderPhone: v.optional(v.string()),
+    targetPlaceholderEmail: v.optional(v.string()),
     assignedToId: v.optional(v.id("users")),
   },
   handler: async (ctx, args) => {
@@ -1463,25 +1572,84 @@ export const createFromTemplate = mutation({
     }
     await getLeaderMembership(ctx, template.groupId, userId);
 
-    await requireTargetUserInGroupCommunity(
-      ctx,
-      template.groupId,
-      args.targetMemberId,
-    );
+    const targetType = args.targetType ?? "member";
+    if (targetType === "none") {
+      throw new ConvexError(
+        "Workflow templates must target a member, group, or placeholder",
+      );
+    }
+
+    const placeholderName = args.targetPlaceholderName?.trim();
+    const placeholderPhoneRaw = args.targetPlaceholderPhone?.trim();
+    const placeholderEmailRaw = args.targetPlaceholderEmail?.trim();
+    const placeholderPhone = placeholderPhoneRaw
+      ? normalizePhone(placeholderPhoneRaw)
+      : undefined;
+    const placeholderEmail = placeholderEmailRaw
+      ? placeholderEmailRaw.toLowerCase()
+      : undefined;
+
+    assertTargetArgs(targetType, args.targetMemberId, args.targetGroupId, {
+      name: placeholderName,
+      phone: placeholderPhone,
+      email: placeholderEmail,
+    });
+
+    let targetLabel: string;
+    if (targetType === "member") {
+      await requireTargetUserInGroupCommunity(
+        ctx,
+        template.groupId,
+        args.targetMemberId!,
+      );
+      const targetUser = await ctx.db.get(args.targetMemberId!);
+      targetLabel = targetUser ? formatUserName(targetUser) : "Member";
+    } else if (targetType === "group") {
+      const targetGroup = await ctx.db.get(args.targetGroupId!);
+      if (!targetGroup) {
+        throw new ConvexError("Target group not found");
+      }
+      const currentGroup = await ctx.db.get(template.groupId);
+      if (
+        !currentGroup ||
+        targetGroup.communityId !== currentGroup.communityId
+      ) {
+        throw new ConvexError("Target group must be in the same community");
+      }
+      // Require the caller to lead the target group too, not just the
+      // template's own group. Prevents a leader of one group from
+      // applying workflows to another group in the same community they
+      // do not lead.
+      await getLeaderMembership(ctx, args.targetGroupId!, userId);
+      targetLabel = targetGroup.name ?? "Group";
+    } else {
+      // placeholder
+      targetLabel = placeholderName!;
+    }
 
     if (args.assignedToId) {
       await getLeaderMembership(ctx, template.groupId, args.assignedToId);
     }
 
-    const targetUser = await ctx.db.get(args.targetMemberId);
-    const memberName = targetUser ? formatUserName(targetUser) : "Member";
-    const parentTitle = `${template.title}: ${memberName}`;
-
+    const parentTitle = `${template.title}: ${targetLabel}`;
     const responsibilityType = args.assignedToId ? "person" : "group";
     const timestamp = now();
     const sourceRef = args.templateId.toString();
     const templateTags = normalizeTags(template.tags);
     const tagsValue = templateTags.length > 0 ? templateTags : undefined;
+
+    const sharedTargetFields = {
+      targetType,
+      targetMemberId:
+        targetType === "member" ? args.targetMemberId : undefined,
+      targetGroupId: targetType === "group" ? args.targetGroupId : undefined,
+      targetPlaceholderName:
+        targetType === "placeholder" ? placeholderName : undefined,
+      targetPlaceholderPhone:
+        targetType === "placeholder" ? placeholderPhone : undefined,
+      targetPlaceholderEmail:
+        targetType === "placeholder" ? placeholderEmail : undefined,
+    };
 
     const parentTaskId = await ctx.db.insert("tasks", {
       groupId: template.groupId,
@@ -1494,9 +1662,7 @@ export const createFromTemplate = mutation({
       sourceType: "workflow_template",
       sourceRef,
       sourceKey: undefined,
-      targetType: "member",
-      targetMemberId: args.targetMemberId,
-      targetGroupId: undefined,
+      ...sharedTargetFields,
       tags: tagsValue,
       parentTaskId: undefined,
       orderKey: undefined,
@@ -1532,9 +1698,7 @@ export const createFromTemplate = mutation({
         sourceType: "workflow_template",
         sourceRef,
         sourceKey: undefined,
-        targetType: "member",
-        targetMemberId: args.targetMemberId,
-        targetGroupId: undefined,
+        ...sharedTargetFields,
         tags: tagsValue,
         parentTaskId,
         orderKey: step.orderIndex,
@@ -1931,5 +2095,105 @@ export const createFromBotReminder = internalMutation({
     });
 
     return taskId;
+  },
+});
+
+/**
+ * Auto-link placeholder workflow tasks to a newly-registered user.
+ *
+ * Scheduled from signup and community-join flows. Scans `tasks` by the
+ * placeholder-phone and placeholder-email indexes, and for each placeholder
+ * task whose group belongs to a community the user has joined, rewrites
+ * the target to point at the real user. We update both parent and child
+ * tasks (they share the same placeholder fields).
+ */
+export const linkPlaceholderTasksForUser = internalMutation({
+  args: {
+    userId: v.id("users"),
+  },
+  handler: async (ctx, args) => {
+    const user = await ctx.db.get(args.userId);
+    if (!user) return { linked: 0 };
+
+    const normalizedPhone = user.phone ? normalizePhone(user.phone) : undefined;
+    const normalizedEmail = user.email ? user.email.toLowerCase() : undefined;
+    if (!normalizedPhone && !normalizedEmail) return { linked: 0 };
+
+    // Collect candidates from both indexes and dedupe by task id.
+    const byId = new Map<string, any>();
+    if (normalizedPhone) {
+      const phoneHits = await ctx.db
+        .query("tasks")
+        .withIndex("by_target_placeholder_phone", (q) =>
+          q.eq("targetPlaceholderPhone", normalizedPhone),
+        )
+        .collect();
+      for (const task of phoneHits) byId.set(task._id.toString(), task);
+    }
+    if (normalizedEmail) {
+      const emailHits = await ctx.db
+        .query("tasks")
+        .withIndex("by_target_placeholder_email", (q) =>
+          q.eq("targetPlaceholderEmail", normalizedEmail),
+        )
+        .collect();
+      for (const task of emailHits) byId.set(task._id.toString(), task);
+    }
+    const candidates = [...byId.values()];
+    if (candidates.length === 0) return { linked: 0 };
+
+    // Load groups once to resolve communityId per task.
+    const groupIds = [
+      ...new Set(candidates.map((task) => task.groupId.toString())),
+    ];
+    const groups = await Promise.all(
+      groupIds.map((id) => ctx.db.get(id as Id<"groups">)),
+    );
+    const groupById = new Map<string, any>();
+    groups.forEach((group, index) => {
+      if (group) groupById.set(groupIds[index], group);
+    });
+
+    // Find the user's active communities.
+    const userCommunities = await ctx.db
+      .query("userCommunities")
+      .withIndex("by_user", (q: any) => q.eq("userId", args.userId))
+      .collect();
+    const activeCommunityIds = new Set(
+      userCommunities
+        .filter((uc: any) => uc.status === 1)
+        .map((uc: any) => uc.communityId.toString()),
+    );
+    if (activeCommunityIds.size === 0) return { linked: 0 };
+
+    const timestamp = now();
+    let linked = 0;
+    for (const task of candidates) {
+      if (task.targetType !== "placeholder") continue;
+      const group = groupById.get(task.groupId.toString());
+      if (!group) continue;
+      if (!activeCommunityIds.has(group.communityId.toString())) continue;
+
+      await ctx.db.patch(task._id, {
+        targetType: "member",
+        targetMemberId: args.userId,
+        targetPlaceholderName: undefined,
+        targetPlaceholderPhone: undefined,
+        targetPlaceholderEmail: undefined,
+        updatedAt: timestamp,
+      });
+      await appendTaskEvent(ctx, {
+        taskId: task._id,
+        groupId: task.groupId,
+        type: "updated",
+        payload: {
+          placeholderLinked: true,
+          linkedUserId: args.userId,
+        },
+      });
+      linked += 1;
+    }
+
+    return { linked };
   },
 });
