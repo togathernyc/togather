@@ -390,6 +390,6 @@ describe("TasksTabScreen", () => {
     const { getByText } = render(<TasksTabScreen />);
     fireEvent.press(getByText("Workflows"));
     expect(getByText("Demo workflow")).toBeTruthy();
-    expect(getByText("Apply to Person")).toBeTruthy();
+    expect(getByText("Apply Workflow")).toBeTruthy();
   });
 });
