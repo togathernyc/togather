@@ -7,6 +7,7 @@ export * from "./useGroupChannels";
 export * from "./useGroupRefresh";
 export * from "./useGroupSearch";
 export * from "./useWithdrawJoinRequest";
+export * from "./useMyPendingJoinRequests";
 export * from "./useCreateGroup";
 export * from "./useUpdateGroup";
 export * from "./useArchiveGroup";
