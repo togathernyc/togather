@@ -27,9 +27,11 @@ import React, {
   useContext,
   useState,
   useEffect,
+  useMemo,
   useRef,
   useCallback,
 } from 'react';
+import { AppState, AppStateStatus } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
 import { useConvexConnectionState } from '@services/api/convex';
 
@@ -88,10 +90,11 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({
     null
   );
   const wasDisconnectedRef = useRef(false);
+  /** True if the disconnect happened during cold start (grace timer), not mid-session */
+  const coldStartDisconnectRef = useRef(false);
   // Track latest network state so the grace timer callback can distinguish
   // "network down" from "WebSocket slow to connect"
   const isNetworkAvailableRef = useRef(true);
-  const isInternetReachableRef = useRef(true);
 
   const isWebSocketConnected = convexState.isWebSocketConnected;
 
@@ -105,7 +108,18 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({
   const isSlowConnection = connectionType === 'cellular' &&
     (cellularGeneration === '2g' || cellularGeneration === '3g');
 
+  // Use a ref to read current status inside the effect without including it
+  // in the dependency array. Including `status` as a dep caused the effect to
+  // re-run on every status change, creating a self-triggering cycle
+  // (setStatus → re-render → effect re-runs → setStatus again). React's
+  // same-value bail-out prevents true infinite loops, but the extra effect
+  // re-runs are wasteful and fragile if inputs flicker.
+  const statusRef = useRef(status);
+  statusRef.current = status;
+
   useEffect(() => {
+    const currentStatus = statusRef.current;
+
     if (!isConnected) {
       // Clear reconnected timer if running
       if (reconnectedTimerRef.current) {
@@ -113,17 +127,20 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({
         reconnectedTimerRef.current = null;
       }
 
-      if (status === 'connecting') {
+      if (currentStatus === 'connecting') {
         // Cold start: use longer grace period before showing red banner
         if (!startupGraceTimerRef.current) {
           startupGraceTimerRef.current = setTimeout(() => {
             startupGraceTimerRef.current = null;
-            // Only show "No internet" if the network is actually down.
-            // If NetInfo says we have internet but the WebSocket is slow,
-            // stay in 'connecting' (no banner) — not a network issue.
-            if (!isNetworkAvailableRef.current || !isInternetReachableRef.current) {
+            // Only show "No internet" if the device has no network at all.
+            // Do NOT check isInternetReachable here — on Android it does an
+            // HTTP probe that can report false for several seconds during cold
+            // start, causing a false "No internet" banner that flips to
+            // "Connected" once the probe completes.
+            if (!isNetworkAvailableRef.current) {
               setStatus('disconnected');
               wasDisconnectedRef.current = true;
+              coldStartDisconnectRef.current = true;
             }
           }, COLD_START_GRACE_MS);
         }
@@ -153,26 +170,30 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({
         startupGraceTimerRef.current = null;
       }
 
-      if (status === 'connecting') {
+      if (currentStatus === 'connecting') {
         // Cold start succeeded within grace period - connect silently, no banner
         setStatus(isSlowConnection ? 'slow' : 'connected');
+      } else if (wasDisconnectedRef.current && coldStartDisconnectRef.current) {
+        // Disconnect happened during cold start (grace timer), not a real
+        // mid-session drop. Skip the "reconnected" banner — go straight to
+        // connected so the user doesn't see a misleading green banner.
+        wasDisconnectedRef.current = false;
+        coldStartDisconnectRef.current = false;
+        setStatus(isSlowConnection ? 'slow' : 'connected');
       } else if (wasDisconnectedRef.current) {
-        // Was disconnected - show reconnected
+        // Real mid-session disconnect recovered - show reconnected banner
         setStatus('reconnected');
         wasDisconnectedRef.current = false;
+        coldStartDisconnectRef.current = false;
 
         // Auto-dismiss after 3 seconds
         reconnectedTimerRef.current = setTimeout(() => {
           setStatus(isSlowConnection ? 'slow' : 'connected');
           reconnectedTimerRef.current = null;
         }, 3000);
-      } else if (status === 'reconnected') {
-        // Already showing reconnected - effect re-ran due to status in deps; don't overwrite
-        // The reconnected timer will transition to connected/slow
-      } else if (isSlowConnection) {
-        setStatus('slow');
-      } else {
-        setStatus('connected');
+      } else if (currentStatus !== 'reconnected') {
+        // Not in reconnected state (which has its own timer) — sync with connection quality
+        setStatus(isSlowConnection ? 'slow' : 'connected');
       }
     }
 
@@ -180,10 +201,8 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({
       if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
       if (startupGraceTimerRef.current)
         clearTimeout(startupGraceTimerRef.current);
-      // Don't clear reconnectedTimerRef here - effect re-runs when status changes to
-      // 'reconnected', and we need that timer to fire. It's cleared when going offline.
     };
-  }, [isConnected, isSlowConnection, status]);
+  }, [isConnected, isSlowConnection]);
 
   // Clear reconnected timer on unmount
   useEffect(() => {
@@ -191,6 +210,38 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({
       if (reconnectedTimerRef.current)
         clearTimeout(reconnectedTimerRef.current);
     };
+  }, []);
+
+  // When the app returns from background, iOS will have killed the WebSocket.
+  // Reset to 'connecting' so we use the cold-start grace period (6s, no banner)
+  // instead of the mid-session debounce (2s → red banner). The WebSocket
+  // typically reconnects in 1-3s, well within the grace window.
+  useEffect(() => {
+    let previousState = AppState.currentState;
+
+    const subscription = AppState.addEventListener(
+      'change',
+      (nextState: AppStateStatus) => {
+        if (
+          previousState.match(/inactive|background/) &&
+          nextState === 'active'
+        ) {
+          // Clear any pending disconnect timer from the backgrounding
+          if (disconnectTimerRef.current) {
+            clearTimeout(disconnectTimerRef.current);
+            disconnectTimerRef.current = null;
+          }
+          // Reset to connecting — the main effect will re-evaluate and
+          // either connect silently or start the grace timer
+          setStatus('connecting');
+          wasDisconnectedRef.current = false;
+          coldStartDisconnectRef.current = false;
+        }
+        previousState = nextState;
+      }
+    );
+
+    return () => subscription.remove();
   }, []);
 
   // Subscribe to NetInfo
@@ -201,7 +252,6 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({
       setIsNetworkAvailable(networkAvailable);
       setIsInternetReachable(internetReachable);
       isNetworkAvailableRef.current = networkAvailable;
-      isInternetReachableRef.current = internetReachable;
       setConnectionType(state.type ?? 'unknown');
 
       // Extract cellular generation
@@ -237,19 +287,31 @@ export const ConnectionProvider: React.FC<{ children: React.ReactNode }> = ({
     };
   }, [simulateOffline]);
 
+  const contextValue = useMemo(
+    () => ({
+      status,
+      isNetworkAvailable,
+      isWebSocketConnected,
+      isInternetReachable,
+      connectionType,
+      cellularGeneration,
+      isEffectivelyOffline,
+      ...(__DEV__ ? { simulateOffline } : {}),
+    }),
+    [
+      status,
+      isNetworkAvailable,
+      isWebSocketConnected,
+      isInternetReachable,
+      connectionType,
+      cellularGeneration,
+      isEffectivelyOffline,
+      simulateOffline,
+    ]
+  );
+
   return (
-    <ConnectionContext.Provider
-      value={{
-        status,
-        isNetworkAvailable,
-        isWebSocketConnected,
-        isInternetReachable,
-        connectionType,
-        cellularGeneration,
-        isEffectivelyOffline,
-        ...(__DEV__ ? { simulateOffline } : {}),
-      }}
-    >
+    <ConnectionContext.Provider value={contextValue}>
       {children}
     </ConnectionContext.Provider>
   );

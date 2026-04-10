@@ -17,6 +17,17 @@ import React from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Environment } from '@services/environment';
 
+/**
+ * Stable JSON serialization with sorted keys for use as memoization keys.
+ * Guarantees identical output regardless of property insertion order.
+ */
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return '[' + value.map(stableStringify).join(',') + ']';
+  const sorted = Object.keys(value as Record<string, unknown>).sort();
+  return '{' + sorted.map(k => JSON.stringify(k) + ':' + stableStringify((value as Record<string, unknown>)[k])).join(',') + '}';
+}
+
 // Re-export the API type for use in components
 export { api } from '../../../convex/_generated/api';
 
@@ -235,15 +246,22 @@ export function useStoredAuthToken(): string | null {
   // receive the new JWT — stale tokens can 401 until the user navigates enough
   // to remount hooks. AuthProvider avoids putting `token` in context deps to
   // limit broad re-renders; this hook is the narrow place that should update.
+  //
+  // Use a ref to compare against the current token so `token` doesn't need
+  // to be a dependency. Including it would recreate the interval on every
+  // token change, which is wasteful and can cascade re-renders.
+  const tokenRef = React.useRef(token);
+  tokenRef.current = token;
+
   React.useEffect(() => {
     const interval = setInterval(() => {
-      if (cachedToken !== token) {
+      if (cachedToken !== tokenRef.current) {
         setToken(cachedToken);
       }
     }, 500);
 
     return () => clearInterval(interval);
-  }, [token]);
+  }, []); // Stable interval — reads token via ref
 
   return token;
 }
@@ -280,10 +298,19 @@ export function useAuthenticatedQuery<
   // If args is 'skip' or no token, skip the query
   const shouldSkip = args === 'skip' || !token;
 
-  // Compute args once - always call the hook unconditionally to satisfy rules of hooks
-  const queryArgs = shouldSkip
-    ? 'skip' as const
-    : ({ ...(args as Omit<FunctionArgs<Query>, 'token'>), token } as FunctionArgs<Query>);
+  // Memoize query args to avoid creating a new object on every render.
+  // Convex does deep comparison internally, but spreading { ...args, token }
+  // inline creates a new reference each render which still causes unnecessary
+  // work in Convex's comparison logic across 50+ call sites.
+  const argsKey = shouldSkip ? 'skip' : stableStringify(args);
+  const queryArgs = React.useMemo(
+    () =>
+      shouldSkip
+        ? ('skip' as const)
+        : ({ ...(args as Omit<FunctionArgs<Query>, 'token'>), token } as FunctionArgs<Query>),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- argsKey is the serialized form of args
+    [shouldSkip, argsKey, token]
+  );
 
   return useConvexQuery(queryFn, queryArgs);
 }
@@ -394,10 +421,16 @@ export function useAuthenticatedPaginatedQuery<
   // If args is 'skip' or no token, skip the query
   const shouldSkip = args === 'skip' || !token;
 
-  // Compute args once - always call the hook unconditionally to satisfy rules of hooks
-  const queryArgs = shouldSkip
-    ? ('skip' as const)
-    : { ...(args as object), token };
+  // Memoize query args (same pattern as useAuthenticatedQuery)
+  const argsKey = shouldSkip ? 'skip' : stableStringify(args);
+  const queryArgs = React.useMemo(
+    () =>
+      shouldSkip
+        ? ('skip' as const)
+        : { ...(args as object), token },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- argsKey is the serialized form of args
+    [shouldSkip, argsKey, token]
+  );
 
   return useConvexPaginatedQuery(queryFn, queryArgs as any, options);
 }

@@ -133,6 +133,55 @@ export function classifyProfileFetchError(
 // Helper Functions
 // ============================================================================
 
+/** Refresh threshold — only refresh if token expires within this window */
+const TOKEN_REFRESH_THRESHOLD_SECONDS = 7 * 24 * 60 * 60; // 7 days
+
+/**
+ * Decode a JWT payload without verification (we only need the `exp` claim).
+ * Returns null if the token is malformed.
+ */
+function decodeJwtPayload(token: string): { exp?: number; [key: string]: unknown } | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    // Base64url → Base64 → decode (pad to multiple of 4 — required for atob on some runtimes)
+    let base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const pad = base64.length % 4;
+    if (pad === 2) base64 += "==";
+    else if (pad === 3) base64 += "=";
+    else if (pad === 1) return null;
+    const json = atob(base64);
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check whether an access token needs refreshing.
+ * Returns true if the token is expired, near expiry, or unparseable.
+ */
+function shouldRefreshToken(accessToken: string): boolean {
+  const payload = decodeJwtPayload(accessToken);
+  if (!payload?.exp) return true; // Can't read expiry — refresh to be safe
+
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const remainingSeconds = payload.exp - nowSeconds;
+
+  if (remainingSeconds <= 0) {
+    console.log("🔐 Token expired, needs refresh");
+    return true;
+  }
+
+  if (remainingSeconds < TOKEN_REFRESH_THRESHOLD_SECONDS) {
+    console.log(`🔐 Token expires in ${Math.floor(remainingSeconds / 86400)}d, refreshing`);
+    return true;
+  }
+
+  console.log(`🔐 Token still valid for ${Math.floor(remainingSeconds / 86400)}d, skipping refresh`);
+  return false;
+}
+
 /**
  * Store auth tokens in AsyncStorage
  */
@@ -762,9 +811,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         let result = await fetchUserProfile(tokens.userId, tokens.accessToken);
         const communityId = result.status === "success" ? result.community?.id : undefined;
 
-        // If we have a refresh token, refresh the tokens with community ID
-        if (tokens.refreshToken) {
-          console.log("🔐 AuthProvider: Refreshing tokens with communityId:", communityId);
+        // If we have a refresh token, refresh only if the access token is near expiry.
+        // Tokens last 30 days — skip refresh if plenty of time remains.
+        if (tokens.refreshToken && shouldRefreshToken(tokens.accessToken)) {
+          console.log("🔐 AuthProvider: Token near expiry, refreshing with communityId:", communityId);
           const refreshed = await refreshAuthTokens(communityId);
 
           if (refreshed) {
@@ -910,23 +960,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        console.log("🔐 AuthProvider: App foregrounded, refreshing tokens...");
+        // Only refresh if the token is expired or near expiry (< 7 days).
+        // Tokens last 30 days so most foreground events skip the refresh entirely,
+        // avoiding unnecessary re-renders across 50+ query consumers.
+        const needsRefresh = shouldRefreshToken(tokens.accessToken);
+        if (needsRefresh) {
+          console.log("🔐 AuthProvider: App foregrounded, token needs refresh");
+          const refreshed = await refreshAuthTokens(community?.id);
 
-        // Refresh tokens first, passing community ID to preserve it in the new token
-        const refreshed = await refreshAuthTokens(community?.id);
-
-        if (!refreshed) {
-          // Refresh failed - this could be due to network issues or expired refresh token
-          // Don't immediately logout as this could be a transient network error
-          // The user can continue with their existing session; if their token is truly
-          // expired, they'll encounter auth errors on their next action
-          console.log("🔐 AuthProvider: Token refresh failed on foreground, continuing with existing session");
-          SentryUtils.captureMessage(
-            "Token refresh failed on foreground - may be network or token issue",
-            "info",
-            { operation: "foreground_refresh" }
-          );
-          // Continue to try updating activity - this will fail gracefully if token is invalid
+          if (!refreshed) {
+            // Refresh failed - this could be due to network issues or expired refresh token
+            // Don't immediately logout as this could be a transient network error
+            // The user can continue with their existing session; if their token is truly
+            // expired, they'll encounter auth errors on their next action
+            console.log("🔐 AuthProvider: Token refresh failed on foreground, continuing with existing session");
+            SentryUtils.captureMessage(
+              "Token refresh failed on foreground - may be network or token issue",
+              "info",
+              { operation: "foreground_refresh" }
+            );
+          }
         }
 
         // Update last activity with the (potentially new) token
