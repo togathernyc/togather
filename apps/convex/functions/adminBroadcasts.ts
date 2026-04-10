@@ -120,10 +120,18 @@ export const previewTargeting = action({
 
     const { userIds } = await resolveTargetUsersAction(ctx, args.communityId, args.targetCriteria);
 
-    const reachable: { push: number; email: number } = await ctx.runQuery(
-      internal.functions.adminBroadcasts.getChannelReachability,
-      { userIds }
-    );
+    // Page the reachability query to stay under the per-query read budget
+    // (2 reads per user — user doc + pushTokens).
+    const reachable = { push: 0, email: 0 };
+    for (let i = 0; i < userIds.length; i += 500) {
+      const batch = userIds.slice(i, i + 500);
+      const batchReach: { push: number; email: number } = await ctx.runQuery(
+        internal.functions.adminBroadcasts.getChannelReachability,
+        { userIds: batch }
+      );
+      reachable.push += batchReach.push;
+      reachable.email += batchReach.email;
+    }
 
     return { count: userIds.length, reachable };
   },
@@ -424,7 +432,10 @@ export const sendToUsers = internalAction({
     const perUserLinks = (args.perUserDeepLinks || {}) as Record<string, string>;
     const results = { pushSucceeded: 0, pushFailed: 0, emailSucceeded: 0, emailFailed: 0 };
 
-    const reachedUserIds = new Set<Id<"users">>();
+    // Track per-user delivery outcome for each channel so notification rows
+    // reflect actual success rather than blanket "sent".
+    const pushOutcome = new Map<Id<"users">, "sent" | "failed">();
+    const emailOutcome = new Map<Id<"users">, "sent" | "failed">();
 
     if (broadcast.channels.includes("push")) {
       const tokenResults: Array<{ userId: string; tokens: string[] }> =
@@ -449,17 +460,19 @@ export const sendToUsers = internalAction({
           }))
       );
 
+      let pushBatchOk = false;
       if (notifications.length > 0) {
         const pushResult = await ctx.runAction(
           internal.functions.notifications.internal.sendBatchPushNotifications,
           { notifications }
         );
-        results.pushSucceeded = pushResult.success ? notifications.length : 0;
-        results.pushFailed = pushResult.success ? 0 : notifications.length;
+        pushBatchOk = pushResult.success;
+        results.pushSucceeded = pushBatchOk ? notifications.length : 0;
+        results.pushFailed = pushBatchOk ? 0 : notifications.length;
       }
 
       for (const { userId } of tokenResults) {
-        reachedUserIds.add(userId as Id<"users">);
+        pushOutcome.set(userId as Id<"users">, pushBatchOk ? "sent" : "failed");
       }
     }
 
@@ -468,42 +481,54 @@ export const sendToUsers = internalAction({
         internal.functions.adminBroadcasts.getUserEmails,
         { userIds: args.userIds }
       );
-      const emails = userEmails
-        .filter((u): u is { userId: Id<"users">; email: string } => !!u.email)
-        .map((u) => ({
-          to: u.email,
-          subject: broadcast.title,
-          htmlBody: `<h1>${broadcast.title}</h1><p>${broadcast.body}</p>`,
-        }));
+      const eligible = userEmails.filter(
+        (u): u is { userId: Id<"users">; email: string } => !!u.email,
+      );
+      const emails = eligible.map((u) => ({
+        to: u.email,
+        subject: broadcast.title,
+        htmlBody: `<h1>${broadcast.title}</h1><p>${broadcast.body}</p>`,
+      }));
 
       if (emails.length > 0) {
-        const emailResults = await ctx.runAction(
+        const emailResults: Array<{ success: boolean }> = await ctx.runAction(
           internal.functions.notifications.internal.sendEmails,
           { emails }
         );
-        results.emailSucceeded = emailResults.filter((r: { success: boolean }) => r.success).length;
-        results.emailFailed = emailResults.filter((r: { success: boolean }) => !r.success).length;
-      }
+        results.emailSucceeded = emailResults.filter((r) => r.success).length;
+        results.emailFailed = emailResults.filter((r) => !r.success).length;
 
-      for (const u of userEmails) {
-        if (u.email) reachedUserIds.add(u.userId);
+        eligible.forEach((u, i) => {
+          emailOutcome.set(u.userId, emailResults[i]?.success ? "sent" : "failed");
+        });
       }
     }
 
-    if (!args.isTest && reachedUserIds.size > 0) {
-      const notificationRecords = Array.from(reachedUserIds).map((userId) => ({
-        userId,
-        communityId: broadcast.communityId as Id<"communities">,
-        notificationType: "admin_broadcast",
-        title: broadcast.title,
-        body: broadcast.body,
-        data: {
-          broadcastId: args.broadcastId,
-          channels: broadcast.channels,
-          url: perUserLinks[userId] || (broadcast.deepLink?.startsWith("/") ? broadcast.deepLink : undefined),
-        },
-        status: "sent",
-      }));
+    const allReachedUserIds = new Set<Id<"users">>([
+      ...pushOutcome.keys(),
+      ...emailOutcome.keys(),
+    ]);
+
+    if (!args.isTest && allReachedUserIds.size > 0) {
+      const notificationRecords = Array.from(allReachedUserIds).map((userId) => {
+        const pushOk = pushOutcome.get(userId) === "sent";
+        const emailOk = emailOutcome.get(userId) === "sent";
+        // Row is "sent" if at least one selected channel succeeded for this user.
+        const status = pushOk || emailOk ? "sent" : "failed";
+        return {
+          userId,
+          communityId: broadcast.communityId as Id<"communities">,
+          notificationType: "admin_broadcast",
+          title: broadcast.title,
+          body: broadcast.body,
+          data: {
+            broadcastId: args.broadcastId,
+            channels: broadcast.channels,
+            url: perUserLinks[userId] || (broadcast.deepLink?.startsWith("/") ? broadcast.deepLink : undefined),
+          },
+          status,
+        };
+      });
 
       // Chunk to keep each mutation well under Convex write limits
       const CHUNK = 200;
