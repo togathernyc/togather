@@ -13,6 +13,7 @@ import type { Id } from "../_generated/dataModel";
 import { requireAuth } from "../lib/auth";
 import { requireCommunityAdmin } from "../lib/permissions";
 import { now } from "../lib/utils";
+import { getCurrentEnvironment } from "../lib/notifications/send";
 
 // ============================================================================
 // Target criteria type
@@ -109,7 +110,7 @@ export const previewTargeting = action({
     communityId: v.id("communities"),
     targetCriteria: targetCriteriaValidator,
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<{ count: number; reachable: { push: number; email: number } }> => {
     // Auth check via internal query
     const authResult = await ctx.runQuery(
       internal.functions.adminBroadcasts.checkAdminAuth,
@@ -118,7 +119,13 @@ export const previewTargeting = action({
     if (!authResult.authorized) throw new Error("Not authorized");
 
     const { userIds } = await resolveTargetUsersAction(ctx, args.communityId, args.targetCriteria);
-    return { count: userIds.length };
+
+    const reachable: { push: number; email: number } = await ctx.runQuery(
+      internal.functions.adminBroadcasts.getChannelReachability,
+      { userIds }
+    );
+
+    return { count: userIds.length, reachable };
   },
 });
 
@@ -142,6 +149,15 @@ export const create = mutation({
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
     await requireCommunityAdmin(ctx, args.communityId, userId);
+
+    if (args.channels.length === 0) {
+      throw new Error("At least one channel must be selected");
+    }
+    for (const channel of args.channels) {
+      if (channel !== "push" && channel !== "email") {
+        throw new Error(`Unsupported channel: ${channel}. Admin broadcasts support push and email only.`);
+      }
+    }
 
     const timestamp = now();
     const id = await ctx.db.insert("adminBroadcasts", {
@@ -406,7 +422,9 @@ export const sendToUsers = internalAction({
     if (!broadcast) return;
 
     const perUserLinks = (args.perUserDeepLinks || {}) as Record<string, string>;
-    const results = { pushSucceeded: 0, pushFailed: 0, emailSucceeded: 0, emailFailed: 0, smsSucceeded: 0, smsFailed: 0 };
+    const results = { pushSucceeded: 0, pushFailed: 0, emailSucceeded: 0, emailFailed: 0 };
+
+    const reachedUserIds = new Set<Id<"users">>();
 
     if (broadcast.channels.includes("push")) {
       const tokenResults: Array<{ userId: string; tokens: string[] }> =
@@ -424,6 +442,7 @@ export const sendToUsers = internalAction({
             data: {
               type: "admin_broadcast",
               communityId: broadcast.communityId,
+              broadcastId: args.broadcastId,
               // Per-user deep link if available, otherwise broadcast default (skip non-URL markers)
               url: perUserLinks[result.userId] || (broadcast.deepLink?.startsWith("/") ? broadcast.deepLink : undefined),
             },
@@ -438,48 +457,19 @@ export const sendToUsers = internalAction({
         results.pushSucceeded = pushResult.success ? notifications.length : 0;
         results.pushFailed = pushResult.success ? 0 : notifications.length;
       }
-    }
 
-    if (broadcast.channels.includes("sms")) {
-      const userPhones = await ctx.runQuery(
-        internal.functions.adminBroadcasts.getUserPhones,
-        { userIds: args.userIds }
-      );
-
-      // Build SMS with context prefix and character limit
-      const community = await ctx.runQuery(internal.functions.adminBroadcasts.getCommunity, {
-        communityId: broadcast.communityId as Id<"communities">,
-      });
-      const communityName = community?.name || "Your community";
-      const smsPrefix = `${communityName} sent a new message:\n\n`;
-      const rawBody = `${broadcast.title}\n\n${broadcast.body}`;
-      const maxBodyLen = 1600 - smsPrefix.length;
-      const truncatedBody = rawBody.length > maxBodyLen
-        ? rawBody.slice(0, maxBodyLen - 1) + "…"
-        : rawBody;
-      const smsMessage = smsPrefix + truncatedBody;
-
-      for (const { phone } of userPhones as Array<{ phone: string | null }>) {
-        if (!phone) continue;
-        try {
-          await ctx.runAction(internal.functions.auth.phoneOtp.sendSMS, {
-            phone,
-            message: smsMessage,
-          });
-          results.smsSucceeded++;
-        } catch {
-          results.smsFailed++;
-        }
+      for (const { userId } of tokenResults) {
+        reachedUserIds.add(userId as Id<"users">);
       }
     }
 
     if (broadcast.channels.includes("email")) {
-      const userEmails = await ctx.runQuery(
+      const userEmails: Array<{ userId: Id<"users">; email: string | null }> = await ctx.runQuery(
         internal.functions.adminBroadcasts.getUserEmails,
         { userIds: args.userIds }
       );
-      const emails = (userEmails as Array<{ email: string | null }>)
-        .filter((u): u is { email: string } => !!u.email)
+      const emails = userEmails
+        .filter((u): u is { userId: Id<"users">; email: string } => !!u.email)
         .map((u) => ({
           to: u.email,
           subject: broadcast.title,
@@ -493,6 +483,35 @@ export const sendToUsers = internalAction({
         );
         results.emailSucceeded = emailResults.filter((r: { success: boolean }) => r.success).length;
         results.emailFailed = emailResults.filter((r: { success: boolean }) => !r.success).length;
+      }
+
+      for (const u of userEmails) {
+        if (u.email) reachedUserIds.add(u.userId);
+      }
+    }
+
+    if (!args.isTest && reachedUserIds.size > 0) {
+      const notificationRecords = Array.from(reachedUserIds).map((userId) => ({
+        userId,
+        communityId: broadcast.communityId as Id<"communities">,
+        notificationType: "admin_broadcast",
+        title: broadcast.title,
+        body: broadcast.body,
+        data: {
+          broadcastId: args.broadcastId,
+          channels: broadcast.channels,
+          url: perUserLinks[userId] || (broadcast.deepLink?.startsWith("/") ? broadcast.deepLink : undefined),
+        },
+        status: "sent",
+      }));
+
+      // Chunk to keep each mutation well under Convex write limits
+      const CHUNK = 200;
+      for (let i = 0; i < notificationRecords.length; i += CHUNK) {
+        await ctx.runMutation(
+          internal.functions.notifications.mutations.createNotificationsBatch,
+          { notifications: notificationRecords.slice(i, i + CHUNK) }
+        );
       }
     }
 
@@ -532,21 +551,44 @@ export const getCommunity = internalQuery({
   handler: async (ctx, args) => ctx.db.get(args.communityId),
 });
 
-export const getUserPhones = internalQuery({
+export const getUserEmails = internalQuery({
   args: { userIds: v.array(v.id("users")) },
   handler: async (ctx, args) => {
     const users = await Promise.all(args.userIds.map((id) => ctx.db.get(id)));
     return users
       .filter((u): u is NonNullable<typeof u> => u !== null)
-      .map((u) => ({ userId: u._id as string, phone: u.phone || null }));
+      .map((u) => ({ userId: u._id, email: u.email || null }));
   },
 });
 
-export const getUserEmails = internalQuery({
+/**
+ * Count how many of the given users are reachable via each channel.
+ * Push: user has an active push token in the current environment.
+ * Email: user has a non-empty email and hasn't opted out (emailNotificationsEnabled !== false).
+ */
+export const getChannelReachability = internalQuery({
   args: { userIds: v.array(v.id("users")) },
   handler: async (ctx, args) => {
-    const users = await Promise.all(args.userIds.map((id) => ctx.db.get(id)));
-    return users.map((u) => ({ email: u?.email || null }));
+    const environment = getCurrentEnvironment();
+
+    let push = 0;
+    let email = 0;
+
+    for (const userId of args.userIds) {
+      const [user, tokens] = await Promise.all([
+        ctx.db.get(userId),
+        ctx.db
+          .query("pushTokens")
+          .withIndex("by_user", (q) => q.eq("userId", userId))
+          .filter((q) => q.eq(q.field("environment"), environment))
+          .collect(),
+      ]);
+
+      if (tokens.length > 0) push++;
+      if (user?.email && user.emailNotificationsEnabled !== false) email++;
+    }
+
+    return { push, email };
   },
 });
 

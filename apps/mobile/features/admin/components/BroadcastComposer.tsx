@@ -58,6 +58,22 @@ interface BroadcastComposerProps {
   onCreated: () => void;
 }
 
+function formatReachable(
+  reachable: { push: number; email: number },
+  enabled: { push: boolean; email: boolean },
+): string {
+  const enabledChannels: Array<{ key: "push" | "email"; label: string }> = [];
+  if (enabled.push) enabledChannels.push({ key: "push", label: "push" });
+  if (enabled.email) enabledChannels.push({ key: "email", label: "email" });
+
+  if (enabledChannels.length === 0) return "No channels selected";
+  if (enabledChannels.length === 1) {
+    const only = enabledChannels[0];
+    return `${reachable[only.key]} reachable via ${only.label}`;
+  }
+  return enabledChannels.map((c) => `${reachable[c.key]} via ${c.label}`).join(" · ");
+}
+
 export function BroadcastComposer({
   communityId,
   onBack,
@@ -70,12 +86,12 @@ export function BroadcastComposer({
   const [body, setBody] = useState("");
   const [pushEnabled, setPushEnabled] = useState(true);
   const [emailEnabled, setEmailEnabled] = useState(false);
-  const [smsEnabled, setSmsEnabled] = useState(false);
   const [deepLink, setDeepLink] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [createdBroadcastId, setCreatedBroadcastId] = useState<string | null>(null);
   const [previewCount, setPreviewCount] = useState<number | null>(null);
+  const [reachable, setReachable] = useState<{ push: number; email: number } | null>(null);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
 
   const targetCriteria = {
@@ -102,11 +118,13 @@ export function BroadcastComposer({
     let cancelled = false;
     setIsLoadingPreview(true);
     setPreviewCount(null);
+    setReachable(null);
 
     // Don't preview if no_group_of_type is selected but no slug chosen
     if (targetType === "no_group_of_type" && !groupTypeSlug) {
       setIsLoadingPreview(false);
       setPreviewCount(0);
+      setReachable({ push: 0, email: 0 });
       return;
     }
 
@@ -114,12 +132,14 @@ export function BroadcastComposer({
       .then((result) => {
         if (!cancelled) {
           setPreviewCount(result.count);
+          setReachable(result.reachable);
           setIsLoadingPreview(false);
         }
       })
       .catch(() => {
         if (!cancelled) {
           setPreviewCount(null);
+          setReachable(null);
           setIsLoadingPreview(false);
         }
       });
@@ -130,7 +150,6 @@ export function BroadcastComposer({
   const channels = [
     ...(pushEnabled ? ["push"] : []),
     ...(emailEnabled ? ["email"] : []),
-    ...(smsEnabled ? ["sms"] : []),
   ];
 
   const handleCreate = async () => {
@@ -277,13 +296,20 @@ export function BroadcastComposer({
       {/* Preview Count */}
       <View style={[styles.previewCard, { backgroundColor: colors.surface }]}>
         <Ionicons name="people-outline" size={20} color={colors.textSecondary} />
-        <Text style={[styles.previewText, { color: colors.text }]}>
-          {isLoadingPreview
-            ? "Calculating..."
-            : previewCount !== null
-              ? `${previewCount} users will receive this`
-              : "Select a target to preview"}
-        </Text>
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.previewText, { color: colors.text }]}>
+            {isLoadingPreview
+              ? "Calculating..."
+              : previewCount !== null
+                ? `${previewCount} users targeted`
+                : "Select a target to preview"}
+          </Text>
+          {!isLoadingPreview && previewCount !== null && reachable !== null && (
+            <Text style={[styles.previewSubtext, { color: colors.textSecondary }]}>
+              {formatReachable(reachable, { push: pushEnabled, email: emailEnabled })}
+            </Text>
+          )}
+        </View>
       </View>
 
       {/* Content */}
@@ -450,6 +476,10 @@ const styles = StyleSheet.create({
   previewText: {
     fontSize: 15,
     fontWeight: "500",
+  },
+  previewSubtext: {
+    fontSize: 13,
+    marginTop: 2,
   },
   channelRow: {
     flexDirection: "row",
