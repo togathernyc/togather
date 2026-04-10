@@ -2053,11 +2053,11 @@ export const createFromBotReminder = internalMutation({
 /**
  * Auto-link placeholder workflow tasks to a newly-registered user.
  *
- * Scheduled from signup flows after a user row is created. Scans
- * `tasks` by the placeholder-phone index, and for each placeholder
- * task whose group belongs to a community the new user has joined,
- * rewrites the target to point at the real user. We update both
- * parent and child tasks (they share the same placeholder fields).
+ * Scheduled from signup and community-join flows. Scans `tasks` by the
+ * placeholder-phone and placeholder-email indexes, and for each placeholder
+ * task whose group belongs to a community the user has joined, rewrites
+ * the target to point at the real user. We update both parent and child
+ * tasks (they share the same placeholder fields).
  */
 export const linkPlaceholderTasksForUser = internalMutation({
   args: {
@@ -2065,17 +2065,33 @@ export const linkPlaceholderTasksForUser = internalMutation({
   },
   handler: async (ctx, args) => {
     const user = await ctx.db.get(args.userId);
-    if (!user?.phone) return { linked: 0 };
+    if (!user) return { linked: 0 };
 
-    const normalizedPhone = normalizePhone(user.phone);
-    if (!normalizedPhone) return { linked: 0 };
+    const normalizedPhone = user.phone ? normalizePhone(user.phone) : undefined;
+    const normalizedEmail = user.email ? user.email.toLowerCase() : undefined;
+    if (!normalizedPhone && !normalizedEmail) return { linked: 0 };
 
-    const candidates = await ctx.db
-      .query("tasks")
-      .withIndex("by_target_placeholder_phone", (q) =>
-        q.eq("targetPlaceholderPhone", normalizedPhone),
-      )
-      .collect();
+    // Collect candidates from both indexes and dedupe by task id.
+    const byId = new Map<string, any>();
+    if (normalizedPhone) {
+      const phoneHits = await ctx.db
+        .query("tasks")
+        .withIndex("by_target_placeholder_phone", (q) =>
+          q.eq("targetPlaceholderPhone", normalizedPhone),
+        )
+        .collect();
+      for (const task of phoneHits) byId.set(task._id.toString(), task);
+    }
+    if (normalizedEmail) {
+      const emailHits = await ctx.db
+        .query("tasks")
+        .withIndex("by_target_placeholder_email", (q) =>
+          q.eq("targetPlaceholderEmail", normalizedEmail),
+        )
+        .collect();
+      for (const task of emailHits) byId.set(task._id.toString(), task);
+    }
+    const candidates = [...byId.values()];
     if (candidates.length === 0) return { linked: 0 };
 
     // Load groups once to resolve communityId per task.

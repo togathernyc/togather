@@ -961,7 +961,8 @@ export default defineSchema({
     .index("by_sourceKey", ["sourceKey"])
     .index("by_target_member", ["targetMemberId"])
     .index("by_target_group", ["targetGroupId"])
-    .index("by_target_placeholder_phone", ["targetPlaceholderPhone"]),
+    .index("by_target_placeholder_phone", ["targetPlaceholderPhone"])
+    .index("by_target_placeholder_email", ["targetPlaceholderEmail"]),
 
   // =============================================================================
   // TASK EVENTS
