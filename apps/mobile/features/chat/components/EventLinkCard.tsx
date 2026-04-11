@@ -4,7 +4,7 @@
  * Displays event details with RSVP functionality.
  * Fetches live event data using the shortId.
  */
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { View, Text, TouchableOpacity, Pressable, StyleSheet, ActivityIndicator, Platform, Dimensions, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { format, parseISO, isPast } from 'date-fns';
@@ -139,14 +139,50 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
   };
 
   // Inline update of guest count when the user is already "Going".
-  const handleGuestCountChange = async (guestCount: number) => {
+  // Serialized the same way as FloatingRsvpCard: at most one submit
+  // in flight, newer taps stash the latest value and drain when the
+  // current request settles. Prevents rapid taps from producing
+  // out-of-order writes where an earlier request lands last and
+  // overwrites the user's actual intent.
+  const guestCountInFlightRef = useRef(false);
+  const guestCountQueuedRef = useRef<number | null>(null);
+
+  const handleGuestCountChange = (guestCount: number) => {
     if (!event?.id || !token || myRsvp?.optionId == null) return;
-    await submitRsvpMutation({
-      token,
-      meetingId: event.id as Id<"meetings">,
-      optionId: myRsvp.optionId,
-      guestCount,
-    });
+
+    if (guestCountInFlightRef.current) {
+      guestCountQueuedRef.current = guestCount;
+      return;
+    }
+
+    const run = (value: number) => {
+      guestCountInFlightRef.current = true;
+      const optionId = myRsvp?.optionId;
+      if (optionId == null || !event?.id || !token) {
+        guestCountInFlightRef.current = false;
+        return;
+      }
+      submitRsvpMutation({
+        token,
+        meetingId: event.id as Id<"meetings">,
+        optionId,
+        guestCount: value,
+      })
+        .then(() => {
+          guestCountInFlightRef.current = false;
+          const queued = guestCountQueuedRef.current;
+          guestCountQueuedRef.current = null;
+          if (queued !== null && queued !== value) {
+            run(queued);
+          }
+        })
+        .catch(() => {
+          guestCountInFlightRef.current = false;
+          guestCountQueuedRef.current = null;
+        });
+    };
+
+    run(guestCount);
   };
 
   const handleViewDetails = () => {
@@ -468,11 +504,7 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
                   <View style={[styles.guestStepperRow, { borderTopColor: colors.borderLight }]}>
                     <GuestStepper
                       value={myGuestCount}
-                      onChange={(next) => {
-                        handleGuestCountChange(next).catch(() => {
-                          /* optimistic UI handled upstream via reactive query */
-                        });
-                      }}
+                      onChange={handleGuestCountChange}
                       max={maxGuests}
                       label={myGuestCount === 0 ? "Bringing guests?" : "Guests"}
                       compact
