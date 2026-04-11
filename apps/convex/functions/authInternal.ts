@@ -228,6 +228,14 @@ export const createUserInternal = internalMutation({
       updatedAt: timestamp,
     });
 
+    // Link any placeholder workflow tasks that were addressed to this phone
+    // before the user signed up. Runs after commit; failures do not block signup.
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.tasks.index.linkPlaceholderTasksForUser,
+      { userId },
+    );
+
     return userId;
   },
 });
@@ -305,6 +313,13 @@ export const createUserWithPasswordInternal = internalMutation({
       createdAt: timestamp,
       updatedAt: timestamp,
     });
+
+    // Link any placeholder workflow tasks addressed to this phone.
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.tasks.index.linkPlaceholderTasksForUser,
+      { userId },
+    );
 
     return userId;
   },

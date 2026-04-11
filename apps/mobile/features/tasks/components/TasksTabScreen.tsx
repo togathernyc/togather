@@ -172,10 +172,22 @@ export function TasksTabScreen() {
     templateId: string;
     groupId: string;
   } | null>(null);
+  const [applyTargetType, setApplyTargetType] = useState<
+    "member" | "group" | "placeholder"
+  >("member");
   const [applyMemberSearch, setApplyMemberSearch] = useState("");
   const [debouncedApplyMemberSearch, setDebouncedApplyMemberSearch] = useState("");
   const [applyMemberId, setApplyMemberId] = useState<string | null>(null);
   const [applyMemberName, setApplyMemberName] = useState<string | null>(null);
+  const [applyTargetGroupId, setApplyTargetGroupId] = useState<string | null>(
+    null,
+  );
+  const [applyTargetGroupName, setApplyTargetGroupName] = useState<
+    string | null
+  >(null);
+  const [applyPlaceholderName, setApplyPlaceholderName] = useState("");
+  const [applyPlaceholderPhone, setApplyPlaceholderPhone] = useState("");
+  const [applyPlaceholderEmail, setApplyPlaceholderEmail] = useState("");
   const [applyAssignSearch, setApplyAssignSearch] = useState("");
   const [debouncedApplyAssignSearch, setDebouncedApplyAssignSearch] = useState("");
   const [applyAssigneeId, setApplyAssigneeId] = useState<string | null>(null);
@@ -492,6 +504,16 @@ export function TasksTabScreen() {
       : "skip",
   ) as LeaderSearchResult[] | undefined;
 
+  // Groups in the template's community the user leads — scoped to the
+  // template (not the currently-active community) so multi-community
+  // leaders viewing listAll get the right candidates.
+  const applyGroupTargetCandidates = useAuthenticatedQuery(
+    api.functions.tasks.index.listGroupTargetCandidates,
+    applyTarget
+      ? { templateId: applyTarget.templateId as Id<"taskTemplates"> }
+      : "skip",
+  ) as Array<{ _id: string; name: string }> | undefined;
+
   const templatesByGroup = useMemo(() => {
     const list = workflowTemplates;
     if (!list?.length) {
@@ -635,21 +657,48 @@ export function TasksTabScreen() {
   }
 
   async function handleApplyTemplate() {
-    if (!applyTarget || !applyMemberId) {
+    if (!applyTarget) return;
+    if (applyTargetType === "member" && !applyMemberId) {
       setApplyError("Select an associated member");
       return;
+    }
+    if (applyTargetType === "group" && !applyTargetGroupId) {
+      setApplyError("Select a group");
+      return;
+    }
+    if (applyTargetType === "placeholder") {
+      if (!applyPlaceholderName.trim()) {
+        setApplyError("Enter the person's name");
+        return;
+      }
+      if (!applyPlaceholderPhone.trim() && !applyPlaceholderEmail.trim()) {
+        setApplyError("Enter a phone number or email so we can link them later");
+        return;
+      }
     }
     const groupId = applyTarget.groupId;
     setApplyBusy(true);
     setApplyError(null);
     try {
-      const parentId = await createFromTemplateMutation({
+      const mutationArgs: Parameters<typeof createFromTemplateMutation>[0] = {
         templateId: applyTarget.templateId as Id<"taskTemplates">,
-        targetMemberId: applyMemberId as Id<"users">,
+        targetType: applyTargetType,
         assignedToId: applyAssigneeId
           ? (applyAssigneeId as Id<"users">)
           : undefined,
-      });
+      };
+      if (applyTargetType === "member") {
+        mutationArgs.targetMemberId = applyMemberId as Id<"users">;
+      } else if (applyTargetType === "group") {
+        mutationArgs.targetGroupId = applyTargetGroupId as Id<"groups">;
+      } else {
+        mutationArgs.targetPlaceholderName = applyPlaceholderName.trim();
+        const phone = applyPlaceholderPhone.trim();
+        const email = applyPlaceholderEmail.trim();
+        if (phone) mutationArgs.targetPlaceholderPhone = phone;
+        if (email) mutationArgs.targetPlaceholderEmail = email;
+      }
+      const parentId = await createFromTemplateMutation(mutationArgs);
       setApplyTarget(null);
       setActionSuccess("Workflow applied");
       router.push(
@@ -1003,7 +1052,9 @@ export function TasksTabScreen() {
               <Text style={[styles.targetPillText, { color: colors.link }]}>
                 {task.targetType === "member"
                   ? `Member: ${task.targetMemberName ?? "Unknown"}`
-                  : `Group: ${task.targetGroupName ?? "Group"}`}
+                  : task.targetType === "group"
+                    ? `Group: ${task.targetGroupName ?? "Group"}`
+                    : `Pending: ${task.targetPlaceholderName ?? "Unknown"}`}
               </Text>
             </View>
           ) : null}
@@ -1468,19 +1519,25 @@ export function TasksTabScreen() {
                           templateId: t._id.toString(),
                           groupId: t.groupId.toString(),
                         });
+                        setApplyTargetType("member");
                         setApplyMemberSearch("");
                         setDebouncedApplyMemberSearch("");
                         setApplyMemberId(null);
-                      setApplyMemberName(null);
-                      setApplyAssignSearch("");
-                      setDebouncedApplyAssignSearch("");
-                      setApplyAssigneeId(null);
-                      setApplyAssigneeName(null);
-                      setApplyError(null);
-                    }}
+                        setApplyMemberName(null);
+                        setApplyTargetGroupId(null);
+                        setApplyTargetGroupName(null);
+                        setApplyPlaceholderName("");
+                        setApplyPlaceholderPhone("");
+                        setApplyPlaceholderEmail("");
+                        setApplyAssignSearch("");
+                        setDebouncedApplyAssignSearch("");
+                        setApplyAssigneeId(null);
+                        setApplyAssigneeName(null);
+                        setApplyError(null);
+                      }}
                     >
                       <Text style={[styles.primaryActionText, { color: colors.textInverse }]}>
-                        Apply to Person
+                        Apply Workflow
                       </Text>
                     </Pressable>
                   </View>
@@ -2118,55 +2175,175 @@ export function TasksTabScreen() {
             </Pressable>
           </View>
 
-          <Text style={[styles.inputLabel, { color: colors.text }]}>Associated member *</Text>
-          <Text style={[styles.searchHelperText, { color: colors.textSecondary, marginBottom: 6 }]}>
-            Anyone in this community counts, even if they are not in this group yet.
-          </Text>
-          <TextInput
-            value={applyMemberSearch}
-            onChangeText={setApplyMemberSearch}
-            placeholder="Search community members"
-            placeholderTextColor={colors.inputPlaceholder}
-            style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
-          />
-          {applyMemberId && applyMemberName ? (
-            <Pressable
-              onPress={() => {
-                setApplyMemberId(null);
-                setApplyMemberName(null);
-              }}
-              style={[styles.selectionPill, { borderColor: colors.link, backgroundColor: colors.selectedBackground }]}
-            >
-              <Text style={[styles.selectionPillText, { color: colors.link }]}>
-                {applyMemberName} • Tap to clear
-              </Text>
-            </Pressable>
-          ) : null}
-          {applyMemberSearch.trim().length >= 2 ? (
-            <ScrollView
-              style={[styles.searchResultsList, { borderColor: colors.borderLight, backgroundColor: colors.surface }]}
-              nestedScrollEnabled
-              keyboardShouldPersistTaps="handled"
-            >
-              {(applyMemberResults ?? []).map((member) => (
-                <Pressable
-                  key={member.userId}
-                  onPress={() => {
-                    setApplyMemberId(member.userId);
-                    setApplyMemberName(member.name);
-                    setApplyMemberSearch("");
-                  }}
-                  style={[styles.searchResultRow, { borderBottomColor: colors.borderLight }]}
+          <Text style={[styles.inputLabel, { color: colors.text }]}>Apply to *</Text>
+          <View style={[styles.segmentRow, { gap: 6, marginBottom: 10 }]}>
+            {(
+              [
+                { key: "member", label: "Member" },
+                { key: "group", label: "Group" },
+                { key: "placeholder", label: "Not yet on app" },
+              ] as const
+            ).map((opt) => (
+              <Pressable
+                key={opt.key}
+                onPress={() => {
+                  setApplyTargetType(opt.key);
+                  setApplyError(null);
+                }}
+                style={[
+                  styles.segmentButton,
+                  { backgroundColor: colors.surfaceSecondary },
+                  applyTargetType === opt.key && { backgroundColor: primaryColor },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.segmentText,
+                    { color: colors.text },
+                    applyTargetType === opt.key && { color: colors.textInverse },
+                  ]}
                 >
-                  <Text style={[styles.searchResultText, { color: colors.text }]}>{member.name}</Text>
+                  {opt.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
+          {applyTargetType === "member" ? (
+            <>
+              <Text style={[styles.inputLabel, { color: colors.text }]}>Associated member *</Text>
+              <Text style={[styles.searchHelperText, { color: colors.textSecondary, marginBottom: 6 }]}>
+                Anyone in this community counts, even if they are not in this group yet.
+              </Text>
+              <TextInput
+                value={applyMemberSearch}
+                onChangeText={setApplyMemberSearch}
+                placeholder="Search community members"
+                placeholderTextColor={colors.inputPlaceholder}
+                style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
+              />
+              {applyMemberId && applyMemberName ? (
+                <Pressable
+                  onPress={() => {
+                    setApplyMemberId(null);
+                    setApplyMemberName(null);
+                  }}
+                  style={[styles.selectionPill, { borderColor: colors.link, backgroundColor: colors.selectedBackground }]}
+                >
+                  <Text style={[styles.selectionPillText, { color: colors.link }]}>
+                    {applyMemberName} • Tap to clear
+                  </Text>
                 </Pressable>
-              ))}
-            </ScrollView>
-          ) : (
-            <Text style={[styles.searchHelperText, { color: colors.textSecondary }]}>
-              Type at least 2 characters.
-            </Text>
-          )}
+              ) : null}
+              {applyMemberSearch.trim().length >= 2 ? (
+                <ScrollView
+                  style={[styles.searchResultsList, { borderColor: colors.borderLight, backgroundColor: colors.surface }]}
+                  nestedScrollEnabled
+                  keyboardShouldPersistTaps="handled"
+                >
+                  {(applyMemberResults ?? []).map((member) => (
+                    <Pressable
+                      key={member.userId}
+                      onPress={() => {
+                        setApplyMemberId(member.userId);
+                        setApplyMemberName(member.name);
+                        setApplyMemberSearch("");
+                      }}
+                      style={[styles.searchResultRow, { borderBottomColor: colors.borderLight }]}
+                    >
+                      <Text style={[styles.searchResultText, { color: colors.text }]}>{member.name}</Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              ) : (
+                <Text style={[styles.searchHelperText, { color: colors.textSecondary }]}>
+                  Type at least 2 characters.
+                </Text>
+              )}
+            </>
+          ) : null}
+
+          {applyTargetType === "group" ? (
+            <>
+              <Text style={[styles.inputLabel, { color: colors.text }]}>Target group *</Text>
+              <Text style={[styles.searchHelperText, { color: colors.textSecondary, marginBottom: 6 }]}>
+                Pick a group in this community for workflows that apply to the whole group.
+              </Text>
+              <ScrollView
+                style={[styles.searchResultsList, { borderColor: colors.borderLight, backgroundColor: colors.surface }]}
+                nestedScrollEnabled
+                keyboardShouldPersistTaps="handled"
+              >
+                {(applyGroupTargetCandidates ?? []).map((g) => {
+                  const selected = applyTargetGroupId === g._id;
+                  return (
+                    <Pressable
+                      key={g._id}
+                      onPress={() => {
+                        setApplyTargetGroupId(g._id);
+                        setApplyTargetGroupName(g.name);
+                      }}
+                      style={[
+                        styles.searchResultRow,
+                        { borderBottomColor: colors.borderLight },
+                        selected && { backgroundColor: colors.selectedBackground },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.searchResultText,
+                          { color: selected ? colors.link : colors.text },
+                        ]}
+                      >
+                        {g.name}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+                {applyGroupTargetCandidates !== undefined &&
+                applyGroupTargetCandidates.length === 0 ? (
+                  <Text style={[styles.searchHelperText, { color: colors.textSecondary, padding: 12 }]}>
+                    No groups available in this community.
+                  </Text>
+                ) : null}
+              </ScrollView>
+            </>
+          ) : null}
+
+          {applyTargetType === "placeholder" ? (
+            <>
+              <Text style={[styles.inputLabel, { color: colors.text }]}>Person's name *</Text>
+              <TextInput
+                value={applyPlaceholderName}
+                onChangeText={setApplyPlaceholderName}
+                placeholder="First Last"
+                placeholderTextColor={colors.inputPlaceholder}
+                style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
+              />
+              <Text style={[styles.inputLabel, { color: colors.text }]}>Phone</Text>
+              <Text style={[styles.searchHelperText, { color: colors.textSecondary, marginBottom: 6 }]}>
+                If they sign up with this phone later, we'll link the workflow to their account automatically.
+              </Text>
+              <TextInput
+                value={applyPlaceholderPhone}
+                onChangeText={setApplyPlaceholderPhone}
+                placeholder="(555) 123-4567"
+                placeholderTextColor={colors.inputPlaceholder}
+                keyboardType="phone-pad"
+                style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
+              />
+              <Text style={[styles.inputLabel, { color: colors.text }]}>Email (optional)</Text>
+              <TextInput
+                value={applyPlaceholderEmail}
+                onChangeText={setApplyPlaceholderEmail}
+                placeholder="person@example.com"
+                placeholderTextColor={colors.inputPlaceholder}
+                autoCapitalize="none"
+                keyboardType="email-address"
+                style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
+              />
+            </>
+          ) : null}
 
           <Text style={[styles.inputLabel, { color: colors.text }]}>Assigned to (optional)</Text>
           <TextInput

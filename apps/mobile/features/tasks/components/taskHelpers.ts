@@ -6,7 +6,7 @@ export type TaskSourceType =
   | "reach_out"
   | "followup"
   | "workflow_template";
-export type TargetType = "none" | "member" | "group";
+export type TargetType = "none" | "member" | "group" | "placeholder";
 
 export type SubtaskItem = {
   _id: string;
@@ -30,6 +30,9 @@ export type TaskListItem = {
   targetMemberName?: string;
   targetGroupId?: Id<"groups">;
   targetGroupName?: string;
+  targetPlaceholderName?: string;
+  targetPlaceholderPhone?: string;
+  targetPlaceholderEmail?: string;
   tags?: string[];
   parentTaskId?: Id<"tasks">;
   subtaskProgress?: { total: number; completed: number } | null;

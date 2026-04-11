@@ -466,6 +466,13 @@ export const join = mutation({
 
         // Re-add user to announcement group
         await addUserToAnnouncementGroup(ctx, args.communityId, userId, existing.roles ?? 1);
+
+        // Link any placeholder workflow tasks addressed to this user.
+        await ctx.scheduler.runAfter(
+          0,
+          internal.functions.tasks.index.linkPlaceholderTasksForUser,
+          { userId },
+        );
       } else {
         console.log("[communities.join] User already active member, skipping sync", {
           userId,
@@ -499,6 +506,14 @@ export const join = mutation({
 
     // Add user to announcement group
     await addUserToAnnouncementGroup(ctx, args.communityId, userId, 1); // roles=1 is MEMBER
+
+    // Link any placeholder workflow tasks addressed to this user's phone in
+    // groups that belong to this community.
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.tasks.index.linkPlaceholderTasksForUser,
+      { userId },
+    );
 
     return membershipId;
   },
