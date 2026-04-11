@@ -56,6 +56,12 @@ export function normalizeGuestCount(
   selectedOption: RsvpOptionLike,
   maxGuests: number,
 ): number {
+  // Reject NaN explicitly — Convex's v.number() accepts any IEEE-754 number,
+  // so a malformed client could send NaN and silently coerce to 0 via the
+  // falsy check below. Treat it as invalid input instead.
+  if (typeof rawGuestCount === "number" && Number.isNaN(rawGuestCount)) {
+    throw new Error("Guest count must be a non-negative integer");
+  }
   if (!rawGuestCount) return 0;
   if (!Number.isInteger(rawGuestCount) || rawGuestCount < 0) {
     throw new Error("Guest count must be a non-negative integer");

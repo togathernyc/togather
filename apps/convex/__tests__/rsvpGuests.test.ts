@@ -75,6 +75,12 @@ describe("normalizeGuestCount", () => {
     );
   });
 
+  test("rejects NaN instead of silently coercing to 0", () => {
+    expect(() => normalizeGuestCount(Number.NaN, going, 3)).toThrow(
+      "Guest count must be a non-negative integer"
+    );
+  });
+
   test("rejects counts over the meeting cap", () => {
     expect(() => normalizeGuestCount(4, going, 3)).toThrow(
       "You can bring at most 3 guests"
