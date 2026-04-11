@@ -726,6 +726,9 @@ export default defineSchema({
     meetingId: v.id("meetings"),
     userId: v.id("users"),
     status: v.number(), // Attendance status code
+    // Legacy field from the inline leader-attendance panel (feat/event-attendance-and-plus-ones).
+    // No longer written by any mutation, but kept optional so pre-existing prod docs validate.
+    guestAttendedCount: v.optional(v.number()),
     recordedAt: v.number(), // Unix timestamp ms
     recordedById: v.optional(v.id("users")),
   })
