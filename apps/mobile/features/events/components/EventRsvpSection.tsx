@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -322,13 +322,42 @@ export function FloatingRsvpCard({
 
   const displayedGuestCount = pendingGuestCount ?? guestCount;
 
+  // Serialize stepper writes. Rapid taps used to fire concurrent mutations
+  // and, because the backend applies last-write-by-arrival, an earlier
+  // request that finished later could overwrite the user's latest intent.
+  // Instead: at most one request in flight; newer taps stash the latest
+  // value in `queuedRef` and are drained once the current write settles.
+  const inFlightRef = useRef(false);
+  const queuedRef = useRef<number | null>(null);
+
   const handleGuestChange = (next: number) => {
     if (!onGuestCountChange) return;
     setPendingGuestCount(next);
-    Promise.resolve(onGuestCountChange(next)).catch(() => {
-      // Roll back optimistic change on failure
-      setPendingGuestCount(null);
-    });
+
+    if (inFlightRef.current) {
+      queuedRef.current = next;
+      return;
+    }
+
+    const run = (value: number) => {
+      inFlightRef.current = true;
+      Promise.resolve(onGuestCountChange(value))
+        .then(() => {
+          inFlightRef.current = false;
+          const queued = queuedRef.current;
+          queuedRef.current = null;
+          if (queued !== null && queued !== value) {
+            run(queued);
+          }
+        })
+        .catch(() => {
+          inFlightRef.current = false;
+          queuedRef.current = null;
+          setPendingGuestCount(null);
+        });
+    };
+
+    run(next);
   };
 
   return (

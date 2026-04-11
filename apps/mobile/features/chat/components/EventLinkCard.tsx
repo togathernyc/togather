@@ -247,6 +247,12 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
     // different option. Without this, tapping Going while already Going
     // silently wipes any plus-ones they'd set via the stepper.
     const handlePress = () => {
+      // Ignore taps while myRsvp is still hydrating — during that window
+      // `isSelected` is false for every option, so any tap would take the
+      // "clear guests" branch and silently erase plus-ones on an existing
+      // Going RSVP. `myRsvp === undefined` means the query hasn't
+      // resolved; `null` means "loaded, no RSVP yet".
+      if (myRsvp === undefined) return;
       if (isSelected) {
         handleRsvp(option.id, myGuestCount);
       } else {

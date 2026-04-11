@@ -281,6 +281,11 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
       return;
     }
     if (!eventData?.id) return;
+    // Guard against the hydration window where FloatingRsvpButtons renders
+    // because myRsvp is still `undefined` (not yet loaded). Submitting with
+    // guestCount: 0 during that window would silently erase plus-ones on an
+    // existing Going RSVP.
+    if (myRsvp === undefined) return;
     setLoadingOptionId(optionId);
     try {
       await submitRsvpMutation({
