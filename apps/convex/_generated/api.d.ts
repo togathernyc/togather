@@ -153,6 +153,7 @@ import type * as lib_permissions from "../lib/permissions.js";
 import type * as lib_phoneNormalize from "../lib/phoneNormalize.js";
 import type * as lib_posthog from "../lib/posthog.js";
 import type * as lib_rateLimit from "../lib/rateLimit.js";
+import type * as lib_rsvpGuests from "../lib/rsvpGuests.js";
 import type * as lib_scheduling from "../lib/scheduling.js";
 import type * as lib_slugs from "../lib/slugs.js";
 import type * as lib_twilio from "../lib/twilio.js";
@@ -314,6 +315,7 @@ declare const fullApi: ApiFromModules<{
   "lib/phoneNormalize": typeof lib_phoneNormalize;
   "lib/posthog": typeof lib_posthog;
   "lib/rateLimit": typeof lib_rateLimit;
+  "lib/rsvpGuests": typeof lib_rsvpGuests;
   "lib/scheduling": typeof lib_scheduling;
   "lib/slugs": typeof lib_slugs;
   "lib/twilio": typeof lib_twilio;

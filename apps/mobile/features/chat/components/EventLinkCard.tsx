@@ -4,7 +4,7 @@
  * Displays event details with RSVP functionality.
  * Fetches live event data using the shortId.
  */
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, TouchableOpacity, Pressable, StyleSheet, ActivityIndicator, Platform, Dimensions, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { format, parseISO, isPast } from 'date-fns';
@@ -20,6 +20,11 @@ import { getRsvpStatsForOption, hasPrefetchedRsvpOptions } from '../utils/rsvpSt
 import { DEFAULT_PRIMARY_COLOR } from '@utils/styles';
 import { useTheme } from '@hooks/useTheme';
 import type { PrefetchedEventData } from '../context/ChatPrefetchContext';
+import {
+  DEFAULT_MAX_GUESTS_PER_RSVP,
+  GuestStepper,
+  isGoingOptionLabel,
+} from '@/features/events/components/EventRsvpSection';
 
 interface EventLinkCardProps {
   shortId: string;
@@ -117,15 +122,95 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
   // Previously we calculated the actual image ratio, but this caused content to jump
   // when the image loaded. Using a consistent aspect ratio is better UX.
 
-  const handleRsvp = async (optionId: number) => {
-    if (event?.id && token) {
-      setLoadingOptionId(optionId);
-      try {
-        await submitRsvpMutation({ token, meetingId: event.id as Id<"meetings">, optionId });
-      } finally {
-        setLoadingOptionId(null);
-      }
+  // Unified submit queue shared by BOTH the option-change handler and the
+  // guest-stepper handler. Previously each handler had its own in-flight
+  // ref, which meant a stepper write in flight could race an option change
+  // (or vice versa): whichever response landed last would overwrite the
+  // other, potentially flipping a user back to Going after they picked
+  // Maybe. One queue fixes the cross-handler race — at most one
+  // meetingRsvps.submit request is in flight, and newer intents (of any
+  // kind) replace whatever's queued.
+  const submitInFlightRef = useRef(false);
+  const submitQueuedRef = useRef<{ optionId: number; guestCount: number } | null>(null);
+  // Local optimistic guest count so the stepper advances immediately on
+  // tap, even while writes are in flight. Without this, GuestStepper reads
+  // `myGuestCount` from the query, which is stale until the request lands
+  // — rapid taps would compute 0→1 twice instead of 0→1→2, and the queue's
+  // dedupe would then drop the second tap.
+  const [pendingGuestCount, setPendingGuestCount] = useState<number | null>(null);
+
+  // Clear optimistic pending value once the reactive query has caught up.
+  // Must run unconditionally (before any early returns) to satisfy
+  // react-hooks/rules-of-hooks.
+  const myRsvpGuestCount =
+    (myRsvp as { guestCount?: number } | null | undefined)?.guestCount ?? 0;
+  useEffect(() => {
+    if (pendingGuestCount !== null && pendingGuestCount === myRsvpGuestCount) {
+      setPendingGuestCount(null);
     }
+  }, [myRsvpGuestCount, pendingGuestCount]);
+
+  const submitRsvp = (optionId: number, guestCount: number): Promise<void> => {
+    if (!event?.id || !token) return Promise.resolve();
+
+    if (submitInFlightRef.current) {
+      submitQueuedRef.current = { optionId, guestCount };
+      return Promise.resolve();
+    }
+
+    const run = (value: { optionId: number; guestCount: number }): Promise<void> => {
+      submitInFlightRef.current = true;
+      if (!event?.id || !token) {
+        submitInFlightRef.current = false;
+        return Promise.resolve();
+      }
+      return submitRsvpMutation({
+        token,
+        meetingId: event.id as Id<"meetings">,
+        optionId: value.optionId,
+        guestCount: value.guestCount,
+      })
+        .then(() => {
+          submitInFlightRef.current = false;
+          const queued = submitQueuedRef.current;
+          submitQueuedRef.current = null;
+          if (
+            queued &&
+            (queued.optionId !== value.optionId ||
+              queued.guestCount !== value.guestCount)
+          ) {
+            return run(queued);
+          }
+          return undefined;
+        })
+        .catch(() => {
+          submitInFlightRef.current = false;
+          submitQueuedRef.current = null;
+          setPendingGuestCount(null);
+        });
+    };
+
+    return run({ optionId, guestCount });
+  };
+
+  const handleRsvp = async (optionId: number, guestCount: number = 0) => {
+    if (!event?.id || !token) return;
+    setLoadingOptionId(optionId);
+    // Switching option invalidates any optimistic stepper state — reset
+    // so the UI snaps to the fresh query result instead of showing a
+    // stale pending value.
+    setPendingGuestCount(null);
+    try {
+      await submitRsvp(optionId, guestCount);
+    } finally {
+      setLoadingOptionId(null);
+    }
+  };
+
+  const handleGuestCountChange = (guestCount: number) => {
+    if (!event?.id || !token || myRsvp?.optionId == null) return;
+    setPendingGuestCount(guestCount);
+    void submitRsvp(myRsvp.optionId, guestCount);
   };
 
   const handleViewDetails = () => {
@@ -221,10 +306,28 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
     const isLoading = loadingOptionId === option.id;
     const emoji = EMOJI_MAP[option.label] || '';
 
+    // Re-tapping the currently selected option must preserve the user's
+    // existing guestCount. Only clear guests when switching to a
+    // different option. Without this, tapping Going while already Going
+    // silently wipes any plus-ones they'd set via the stepper.
+    const handlePress = () => {
+      // Ignore taps while myRsvp is still hydrating — during that window
+      // `isSelected` is false for every option, so any tap would take the
+      // "clear guests" branch and silently erase plus-ones on an existing
+      // Going RSVP. `myRsvp === undefined` means the query hasn't
+      // resolved; `null` means "loaded, no RSVP yet".
+      if (myRsvp === undefined) return;
+      if (isSelected) {
+        handleRsvp(option.id, displayedGuestCount);
+      } else {
+        handleRsvp(option.id, 0);
+      }
+    };
+
     return (
       <TouchableOpacity
         style={styles.rsvpRow}
-        onPress={() => handleRsvp(option.id)}
+        onPress={handlePress}
         disabled={false}
       >
         <View style={styles.rsvpHeader}>
@@ -343,6 +446,18 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
   // Full access - show complete event card
   const rsvpOptions = event.rsvpOptions || [];
 
+  // Identify the currently-selected option (if any) to conditionally show
+  // the plus-ones stepper underneath the RSVP list.
+  const selectedOption = rsvpOptions.find((o) => o.id === myRsvp?.optionId) ?? null;
+  const selectedIsGoing = selectedOption
+    ? isGoingOptionLabel(selectedOption.label)
+    : false;
+  const maxGuests =
+    ((eventData as any)?.maxGuestsPerRsvp as number | undefined) ??
+    DEFAULT_MAX_GUESTS_PER_RSVP;
+  const myGuestCount = myRsvpGuestCount;
+  const displayedGuestCount = pendingGuestCount ?? myGuestCount;
+
   // Cancelled Overlay Component
   const CancelledOverlay = () => (
     <View style={[styles.cancelledOverlay, { backgroundColor: isDark ? 'rgba(0, 0, 0, 0.75)' : 'rgba(255, 255, 255, 0.85)' }]}>
@@ -410,9 +525,22 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
                 <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading RSVPs...</Text>
               </View>
             ) : (
-              rsvpOptions.map((option) => (
-                <RsvpOptionRow key={option.id} option={option} />
-              ))
+              <>
+                {rsvpOptions.map((option) => (
+                  <RsvpOptionRow key={option.id} option={option} />
+                ))}
+                {selectedIsGoing && (
+                  <View style={[styles.guestStepperRow, { borderTopColor: colors.borderLight }]}>
+                    <GuestStepper
+                      value={displayedGuestCount}
+                      onChange={handleGuestCountChange}
+                      max={maxGuests}
+                      label={displayedGuestCount === 0 ? "Bringing guests?" : "Guests"}
+                      compact
+                    />
+                  </View>
+                )}
+              </>
             )}
           </View>
         )}
@@ -522,6 +650,10 @@ const styles = StyleSheet.create({
   rsvpSection: {
     padding: 16,
     gap: 12,
+  },
+  guestStepperRow: {
+    paddingTop: 12,
+    borderTopWidth: 1,
   },
   loadingContainer: {
     flexDirection: 'row',

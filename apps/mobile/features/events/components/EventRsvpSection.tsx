@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -11,6 +11,33 @@ import { Ionicons } from "@expo/vector-icons";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
+
+// Global default plus-ones cap. Mirrors MAX_GUESTS_PER_RSVP on the backend
+// (apps/convex/lib/rsvpGuests.ts). Keep these in sync until we surface a
+// per-event override in settings.
+export const DEFAULT_MAX_GUESTS_PER_RSVP = 3;
+
+/**
+ * Heuristic — is this RSVP option the "Going" option?
+ *
+ * Must reject decline variants ("Not Going", "Can't Go") before falling
+ * back to a "going" substring check. Keep in sync with isGoingOption in
+ * apps/convex/lib/rsvpGuests.ts.
+ */
+export function isGoingOptionLabel(label: string | undefined | null): boolean {
+  if (!label) return false;
+  const lower = label.toLowerCase().trim();
+  if (
+    lower.includes("can't") ||
+    lower.includes("cannot") ||
+    lower.includes("not going") ||
+    lower.includes("not attending") ||
+    lower === "no"
+  ) {
+    return false;
+  }
+  return lower.includes("going");
+}
 
 // ============================================================================
 // Types
@@ -31,9 +58,15 @@ interface FloatingRsvpButtonsProps {
 }
 
 interface FloatingRsvpCardProps {
-  response: { optionId: number };
+  response: { optionId: number; guestCount?: number };
   options: RsvpOption[];
   onEdit: () => void;
+  /**
+   * Called when the user bumps the inline guest stepper on the card.
+   * Submits the same optionId with an updated guestCount.
+   */
+  onGuestCountChange?: (guestCount: number) => Promise<void> | void;
+  maxGuests?: number;
   insets: { bottom: number };
   tabBarOffset?: number;
 }
@@ -43,8 +76,10 @@ interface RsvpEditModalProps {
   onClose: () => void;
   options: RsvpOption[];
   currentOptionId: number | null;
+  currentGuestCount?: number;
   loadingOptionId: number | null;
-  onSelect: (optionId: number) => Promise<void>;
+  onSelect: (optionId: number, guestCount: number) => Promise<void>;
+  maxGuests?: number;
 }
 
 // ============================================================================
@@ -89,6 +124,124 @@ export function getCleanLabel(label: string): string {
   // Remove trailing emoji if present (e.g., "Going 👍" -> "Going")
   return label.replace(/\s*(\p{Emoji_Presentation}|\p{Emoji}\uFE0F)+\s*$/u, "").trim();
 }
+
+// ============================================================================
+// Guest Stepper
+// ============================================================================
+
+interface GuestStepperProps {
+  value: number;
+  onChange: (next: number) => void;
+  max: number;
+  disabled?: boolean;
+  /** Shown as the leading label, e.g. "Bringing guests" */
+  label?: string;
+  compact?: boolean;
+}
+
+/**
+ * Reusable +/- stepper for choosing how many plus-ones to bring.
+ * Clamped to [0, max]. Visual only — parent owns the value.
+ */
+export function GuestStepper({
+  value,
+  onChange,
+  max,
+  disabled = false,
+  label = "Bringing guests",
+  compact = false,
+}: GuestStepperProps) {
+  const { colors } = useTheme();
+  const canDec = !disabled && value > 0;
+  const canInc = !disabled && value < max;
+
+  return (
+    <View style={[stepperStyles.row, compact && stepperStyles.rowCompact]}>
+      <Text
+        style={[
+          stepperStyles.label,
+          { color: colors.textSecondary },
+          compact && stepperStyles.labelCompact,
+        ]}
+        numberOfLines={1}
+      >
+        {label}
+      </Text>
+      <View style={[stepperStyles.controls, { borderColor: colors.border }]}>
+        <TouchableOpacity
+          testID="guest-stepper-decrement"
+          onPress={() => canDec && onChange(value - 1)}
+          disabled={!canDec}
+          style={[stepperStyles.button, !canDec && stepperStyles.buttonDisabled]}
+          hitSlop={8}
+        >
+          <Ionicons
+            name="remove"
+            size={18}
+            color={canDec ? DEFAULT_PRIMARY_COLOR : colors.iconSecondary}
+          />
+        </TouchableOpacity>
+        <Text style={[stepperStyles.value, { color: colors.text }]}>{value}</Text>
+        <TouchableOpacity
+          testID="guest-stepper-increment"
+          onPress={() => canInc && onChange(value + 1)}
+          disabled={!canInc}
+          style={[stepperStyles.button, !canInc && stepperStyles.buttonDisabled]}
+          hitSlop={8}
+        >
+          <Ionicons
+            name="add"
+            size={18}
+            color={canInc ? DEFAULT_PRIMARY_COLOR : colors.iconSecondary}
+          />
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+const stepperStyles = StyleSheet.create({
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    paddingVertical: 8,
+  },
+  rowCompact: {
+    paddingVertical: 4,
+  },
+  label: {
+    fontSize: 14,
+    fontWeight: "500",
+    flexShrink: 1,
+  },
+  labelCompact: {
+    fontSize: 13,
+  },
+  controls: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderRadius: 999,
+    overflow: "hidden",
+  },
+  button: {
+    width: 32,
+    height: 32,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  buttonDisabled: {
+    opacity: 0.4,
+  },
+  value: {
+    minWidth: 24,
+    textAlign: "center",
+    fontSize: 15,
+    fontWeight: "600",
+  },
+});
 
 // ============================================================================
 // Components
@@ -147,6 +300,8 @@ export function FloatingRsvpCard({
   response,
   options,
   onEdit,
+  onGuestCountChange,
+  maxGuests = DEFAULT_MAX_GUESTS_PER_RSVP,
   insets,
   tabBarOffset = 0,
 }: FloatingRsvpCardProps) {
@@ -154,24 +309,90 @@ export function FloatingRsvpCard({
   const selectedOption = options.find((opt) => opt.id === response.optionId);
   const emoji = selectedOption ? getEmojiForLabel(selectedOption.label) : "👍";
   const label = selectedOption ? getCleanLabel(selectedOption.label) : "Going";
+  const isGoing = selectedOption ? isGoingOptionLabel(selectedOption.label) : false;
+  const guestCount = response.guestCount ?? 0;
+  const [pendingGuestCount, setPendingGuestCount] = useState<number | null>(null);
+
+  // Clear local pending state once the query result catches up.
+  useEffect(() => {
+    if (pendingGuestCount !== null && pendingGuestCount === guestCount) {
+      setPendingGuestCount(null);
+    }
+  }, [guestCount, pendingGuestCount]);
+
+  const displayedGuestCount = pendingGuestCount ?? guestCount;
+
+  // Serialize stepper writes. Rapid taps used to fire concurrent mutations
+  // and, because the backend applies last-write-by-arrival, an earlier
+  // request that finished later could overwrite the user's latest intent.
+  // Instead: at most one request in flight; newer taps stash the latest
+  // value in `queuedRef` and are drained once the current write settles.
+  const inFlightRef = useRef(false);
+  const queuedRef = useRef<number | null>(null);
+
+  const handleGuestChange = (next: number) => {
+    if (!onGuestCountChange) return;
+    setPendingGuestCount(next);
+
+    if (inFlightRef.current) {
+      queuedRef.current = next;
+      return;
+    }
+
+    const run = (value: number) => {
+      inFlightRef.current = true;
+      Promise.resolve(onGuestCountChange(value))
+        .then(() => {
+          inFlightRef.current = false;
+          const queued = queuedRef.current;
+          queuedRef.current = null;
+          if (queued !== null && queued !== value) {
+            run(queued);
+          }
+        })
+        .catch(() => {
+          inFlightRef.current = false;
+          queuedRef.current = null;
+          setPendingGuestCount(null);
+        });
+    };
+
+    run(next);
+  };
 
   return (
     <View style={[styles.cardContainer, { paddingBottom: insets.bottom + 20, bottom: tabBarOffset, backgroundColor: colors.surface, borderTopColor: colors.border }]}>
-      <TouchableOpacity
-        testID="floating-rsvp-card"
-        style={styles.card}
-        onPress={onEdit}
-        activeOpacity={0.7}
-      >
-        <View style={styles.cardContent}>
+      <View style={styles.card}>
+        <TouchableOpacity
+          testID="floating-rsvp-card"
+          style={styles.cardContent}
+          onPress={onEdit}
+          activeOpacity={0.7}
+        >
           <Text style={styles.cardEmoji}>{emoji}</Text>
           <View style={styles.cardTextContent}>
-            <Text style={styles.statusLabel}>{label}</Text>
+            <Text style={styles.statusLabel}>
+              {label}
+              {isGoing && displayedGuestCount > 0
+                ? ` · +${displayedGuestCount} guest${displayedGuestCount === 1 ? "" : "s"}`
+                : ""}
+            </Text>
             <Text style={[styles.editPrompt, { color: colors.textSecondary }]}>Edit your RSVP</Text>
           </View>
           <Ionicons name="create-outline" size={20} color={DEFAULT_PRIMARY_COLOR} />
-        </View>
-      </TouchableOpacity>
+        </TouchableOpacity>
+        {isGoing && onGuestCountChange && (
+          <View style={styles.cardStepperRow}>
+            <GuestStepper
+              value={displayedGuestCount}
+              onChange={handleGuestChange}
+              max={maxGuests}
+              label={displayedGuestCount === 0 ? "Bringing guests?" : "Guests"}
+              compact
+            />
+          </View>
+        )}
+      </View>
     </View>
   );
 }
@@ -184,13 +405,55 @@ export function RsvpEditModal({
   onClose,
   options,
   currentOptionId,
+  currentGuestCount = 0,
   loadingOptionId,
   onSelect,
+  maxGuests = DEFAULT_MAX_GUESTS_PER_RSVP,
 }: RsvpEditModalProps) {
   const { colors } = useTheme();
-  const handleSelect = async (optionId: number) => {
-    await onSelect(optionId);
-    onClose();
+  // Staged selection — lets the user pick Going and adjust guest count
+  // before committing.
+  const [stagedOptionId, setStagedOptionId] = useState<number | null>(currentOptionId);
+  const [stagedGuestCount, setStagedGuestCount] = useState<number>(currentGuestCount);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (visible) {
+      setStagedOptionId(currentOptionId);
+      setStagedGuestCount(currentGuestCount);
+      setSubmitting(false);
+    }
+  }, [visible, currentOptionId, currentGuestCount]);
+
+  const stagedOption = options.find((o) => o.id === stagedOptionId) ?? null;
+  const stagedIsGoing = stagedOption ? isGoingOptionLabel(stagedOption.label) : false;
+
+  const handleStageOption = (optionId: number) => {
+    if (loadingOptionId !== null || submitting) return;
+    setStagedOptionId(optionId);
+    // Reset guest count when switching away from Going
+    const next = options.find((o) => o.id === optionId);
+    if (!next || !isGoingOptionLabel(next.label)) {
+      setStagedGuestCount(0);
+    }
+  };
+
+  const hasChanges =
+    stagedOptionId !== currentOptionId ||
+    (stagedIsGoing && stagedGuestCount !== currentGuestCount);
+
+  const handleConfirm = async () => {
+    if (stagedOptionId === null || !hasChanges) {
+      onClose();
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await onSelect(stagedOptionId, stagedIsGoing ? stagedGuestCount : 0);
+      onClose();
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -217,7 +480,7 @@ export function RsvpEditModal({
               {options
                 .filter((option) => option.enabled)
                 .map((option) => {
-                  const isSelected = currentOptionId === option.id;
+                  const isSelected = stagedOptionId === option.id;
                   const isLoading = loadingOptionId === option.id;
 
                   return (
@@ -228,8 +491,8 @@ export function RsvpEditModal({
                         styles.modalOption,
                         isSelected && styles.modalOptionSelected,
                       ]}
-                      onPress={() => handleSelect(option.id)}
-                      disabled={loadingOptionId !== null}
+                      onPress={() => handleStageOption(option.id)}
+                      disabled={loadingOptionId !== null || submitting}
                     >
                       <Text
                         style={[
@@ -254,6 +517,39 @@ export function RsvpEditModal({
                   );
                 })}
             </View>
+
+            {stagedIsGoing && (
+              <View style={styles.modalStepperWrapper}>
+                <GuestStepper
+                  value={stagedGuestCount}
+                  onChange={setStagedGuestCount}
+                  max={maxGuests}
+                  disabled={submitting}
+                  label="Bringing guests"
+                />
+                <Text style={[styles.modalStepperHint, { color: colors.textSecondary }]}>
+                  Add plus-ones so the host has an accurate headcount (up to {maxGuests}).
+                </Text>
+              </View>
+            )}
+
+            <TouchableOpacity
+              testID="modal-rsvp-confirm"
+              style={[
+                styles.modalConfirmButton,
+                (!hasChanges || submitting) && styles.modalConfirmButtonDisabled,
+              ]}
+              onPress={handleConfirm}
+              disabled={!hasChanges || submitting || stagedOptionId === null}
+            >
+              {submitting ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.modalConfirmText}>
+                  {hasChanges ? "Save RSVP" : "Close"}
+                </Text>
+              )}
+            </TouchableOpacity>
           </TouchableOpacity>
         </View>
       </TouchableOpacity>
@@ -392,5 +688,37 @@ const styles = StyleSheet.create({
   modalOptionLabelSelected: {
     color: DEFAULT_PRIMARY_COLOR,
     fontWeight: "600",
+  },
+  modalStepperWrapper: {
+    marginTop: 16,
+    paddingHorizontal: 4,
+  },
+  modalStepperHint: {
+    fontSize: 12,
+    marginTop: 4,
+  },
+  modalConfirmButton: {
+    marginTop: 20,
+    backgroundColor: DEFAULT_PRIMARY_COLOR,
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  modalConfirmButtonDisabled: {
+    opacity: 0.5,
+  },
+  modalConfirmText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+
+  // Card stepper row
+  cardStepperRow: {
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(0, 0, 0, 0.06)",
+    marginTop: -4,
   },
 });

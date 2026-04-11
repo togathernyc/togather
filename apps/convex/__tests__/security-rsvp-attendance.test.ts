@@ -285,6 +285,7 @@ describe("RSVP Permission Tests", () => {
       expect(result).toEqual({
         success: true,
         optionId: 1,
+        guestCount: 0,
       });
     });
   });
@@ -348,6 +349,7 @@ describe("RSVP Permission Tests", () => {
       expect(result).toEqual({
         success: true,
         optionId: 1,
+        guestCount: 0,
       });
     });
   });
@@ -372,6 +374,7 @@ describe("RSVP Permission Tests", () => {
       expect(result).toEqual({
         success: true,
         optionId: 1,
+        guestCount: 0,
       });
     });
   });

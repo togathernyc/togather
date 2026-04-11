@@ -14,6 +14,11 @@ import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { now, getMediaUrl } from "../lib/utils";
 import { requireAuth, getOptionalAuth } from "../lib/auth";
+import {
+  getMaxGuestsForMeeting,
+  isGoingOption,
+  normalizeGuestCount,
+} from "../lib/rsvpGuests";
 
 /**
  * RSVP option type (stored in meeting.rsvpOptions field)
@@ -49,6 +54,7 @@ export const myRsvp = query({
 
     return {
       optionId: rsvp ? rsvp.rsvpOptionId : null,
+      guestCount: rsvp?.guestCount ?? 0,
     };
   },
 });
@@ -133,6 +139,10 @@ export const list = query({
           (rsvp) => rsvp.rsvpOptionId === option.id
         );
         const allOptionRsvps = rsvps.filter((rsvp) => rsvp.rsvpOptionId === option.id);
+        const guestCount = allOptionRsvps.reduce(
+          (sum, r) => sum + (r.guestCount ?? 0),
+          0
+        );
 
         return {
           option: {
@@ -141,16 +151,23 @@ export const list = query({
             enabled: option.enabled,
           },
           count: allOptionRsvps.length,
+          guestCount,
           users: optionRsvps
             .slice(0, 10) // First 10 users per option for preview
             .filter((r) => r.user !== null)
-            .map((rsvp) => rsvp.user!),
+            .map((rsvp) => ({
+              ...rsvp.user!,
+              guestCount: rsvp.guestCount ?? 0,
+            })),
         };
       });
+
+      const totalGuests = rsvps.reduce((sum, r) => sum + (r.guestCount ?? 0), 0);
 
       return {
         rsvps: groupedRsvps,
         total: rsvps.length,
+        totalWithGuests: rsvps.length + totalGuests,
         limitedAccess: true,
       };
     }
@@ -192,6 +209,10 @@ export const list = query({
       const optionRsvps = rsvpsWithUsers.filter(
         (rsvp) => rsvp.rsvpOptionId === option.id
       );
+      const guestCount = optionRsvps.reduce(
+        (sum, r) => sum + (r.guestCount ?? 0),
+        0
+      );
 
       return {
         option: {
@@ -200,15 +221,22 @@ export const list = query({
           enabled: option.enabled,
         },
         count: optionRsvps.length,
+        guestCount,
         users: optionRsvps
           .filter((r) => r.user !== null)
-          .map((rsvp) => rsvp.user!),
+          .map((rsvp) => ({
+            ...rsvp.user!,
+            guestCount: rsvp.guestCount ?? 0,
+          })),
       };
     });
+
+    const totalGuests = rsvps.reduce((sum, r) => sum + (r.guestCount ?? 0), 0);
 
     return {
       rsvps: groupedRsvps,
       total: rsvps.length,
+      totalWithGuests: rsvps.length + totalGuests,
     };
   },
 });
@@ -291,6 +319,7 @@ export const myRsvpEvents = query({
         group,
         myRsvp: {
           optionId: r.rsvpOptionId,
+          guestCount: r.guestCount ?? 0,
           createdAt: r.createdAt,
           updatedAt: r.updatedAt,
         },
@@ -350,6 +379,7 @@ export const submit = mutation({
     token: v.string(),
     meetingId: v.id("meetings"),
     optionId: v.number(),
+    guestCount: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -428,6 +458,8 @@ export const submit = mutation({
       throw new Error("RSVP option is disabled");
     }
 
+    const maxGuests = getMaxGuestsForMeeting(meeting);
+
     // Check for existing RSVP
     const existing = await ctx.db
       .query("meetingRsvps")
@@ -436,15 +468,43 @@ export const submit = mutation({
       )
       .first();
 
+    // Resolve the guestCount to persist, preserving plus-ones for
+    // legacy callers that don't pass guestCount at all.
+    //
+    // Rules:
+    // - Explicit guestCount (any value, including 0): normalize + use it.
+    //   This covers the new plus-one flows in EventPageClient and
+    //   EventLinkCard, and explicit clears.
+    // - Undefined guestCount + same option as before + Going:
+    //   preserve the existing guestCount so older call sites (e.g.
+    //   rsvp/confirm.tsx, rsvp/verify.tsx, leader-tools EventDetails)
+    //   don't silently wipe the user's plus-ones when they re-submit.
+    // - Undefined guestCount + different option (or not Going):
+    //   clear to 0, since guests are only valid on the Going option.
+    let guestCount: number;
+    if (args.guestCount !== undefined) {
+      guestCount = normalizeGuestCount(args.guestCount, selectedOption, maxGuests);
+    } else if (
+      existing &&
+      existing.rsvpOptionId === args.optionId &&
+      isGoingOption(selectedOption)
+    ) {
+      guestCount = existing.guestCount ?? 0;
+    } else {
+      guestCount = 0;
+    }
+
     if (existing) {
       const previousOptionId = existing.rsvpOptionId;
       // Update existing RSVP
       await ctx.db.patch(existing._id, {
         rsvpOptionId: args.optionId,
+        guestCount,
         updatedAt: timestamp,
       });
 
-      // Notify leaders when RSVP changes (different option)
+      // Notify leaders when RSVP changes (different option).
+      // We intentionally don't re-notify on guestCount-only changes.
       if (previousOptionId !== args.optionId) {
         await ctx.scheduler.runAfter(0, internal.functions.notifications.senders.notifyRsvpReceived, {
           meetingId: args.meetingId,
@@ -456,6 +516,7 @@ export const submit = mutation({
       return {
         success: true,
         optionId: args.optionId,
+        guestCount,
       };
     }
 
@@ -464,6 +525,7 @@ export const submit = mutation({
       meetingId: args.meetingId,
       userId,
       rsvpOptionId: args.optionId,
+      guestCount,
       createdAt: timestamp,
       updatedAt: timestamp,
     });
@@ -478,6 +540,7 @@ export const submit = mutation({
     return {
       success: true,
       optionId: args.optionId,
+      guestCount,
     };
   },
 });
