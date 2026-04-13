@@ -7,13 +7,14 @@
  * - Location (address fields)
  * - Meeting schedule (day, start/end times, meeting type, online link)
  */
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   Platform,
+  Switch,
   TouchableOpacity,
   Alert,
   KeyboardAvoidingView,
@@ -38,7 +39,11 @@ import { useGroupDetails, useUpdateGroup } from "../hooks";
 import { GroupUpdateData } from "../types";
 import type { components } from "@/types/api";
 import { validateZipCode, normalizeZipCode } from "../utils/geocodeLocation";
-import { useAuthenticatedAction, api } from "@services/api/convex";
+import {
+  useAuthenticatedAction,
+  useAuthenticatedMutation,
+  api,
+} from "@services/api/convex";
 import { formatError } from "@/utils/error-handling";
 
 // Validation schema for group edit form
@@ -120,8 +125,24 @@ export function EditGroupScreen() {
 
   const { data: group, isLoading } = useGroupDetails(group_id);
   const updateGroupMutation = useUpdateGroup();
+  const setHiddenFromDiscovery = useAuthenticatedMutation(
+    api.functions.groups.index.setHiddenFromDiscovery,
+  );
   const [selectedImageUri, setSelectedImageUri] = useState<string | null>(null);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
+
+  // Local optimistic state for the admin-only "hide from discovery" toggle.
+  // Synced from the fetched group whenever it changes.
+  const [hiddenFromDiscovery, setHiddenFromDiscoveryState] = useState(false);
+  const [isSavingHidden, setIsSavingHidden] = useState(false);
+
+  useEffect(() => {
+    if (group) {
+      setHiddenFromDiscoveryState(
+        Boolean((group as any).hidden_from_discovery),
+      );
+    }
+  }, [group]);
 
   // Convex action for R2 upload
   const getR2UploadUrl = useAuthenticatedAction(api.functions.uploads.getR2UploadUrl);
@@ -310,11 +331,9 @@ export function EditGroupScreen() {
 
   // Check if current user is a leader or community admin
   // Community admins (user.is_admin === true) can edit any group in their community
+  const isCommunityAdmin = user?.is_admin === true;
   const canEditGroup = React.useMemo(() => {
     if (!group || !user?.id) return false;
-
-    // Check if user is a community admin
-    const isCommunityAdmin = user.is_admin === true;
 
     // Check if user is a group leader
     // Compare as strings since user.id is now a Convex ID string
@@ -322,7 +341,27 @@ export function EditGroupScreen() {
       group.leaders?.some((leader) => String(leader.id) === String(user.id)) || false;
 
     return isCommunityAdmin || isGroupLeader;
-  }, [group, user?.id, user?.is_admin]);
+  }, [group, user?.id, isCommunityAdmin]);
+
+  const handleToggleHiddenFromDiscovery = async (next: boolean) => {
+    const previous = hiddenFromDiscovery;
+    setHiddenFromDiscoveryState(next); // optimistic
+    setIsSavingHidden(true);
+    try {
+      await setHiddenFromDiscovery({
+        groupId: group_id as any,
+        hidden: next,
+      });
+    } catch (error) {
+      setHiddenFromDiscoveryState(previous); // revert
+      Alert.alert(
+        "Couldn't update visibility",
+        formatError(error, "Failed to update discovery visibility"),
+      );
+    } finally {
+      setIsSavingHidden(false);
+    }
+  };
 
   const onSubmit: SubmitHandler<GroupEditFormData> = async (data) => {
     // Clear selectedImageUri so ImagePicker uses group.preview from refetched data
@@ -699,6 +738,28 @@ export function EditGroupScreen() {
             />
           </View>
 
+          {/* Visibility Section — community admins only */}
+          {isCommunityAdmin && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Visibility</Text>
+              <View style={styles.toggleRow}>
+                <View style={styles.toggleTextWrap}>
+                  <Text style={styles.toggleLabel}>Hide from discovery</Text>
+                  <Text style={styles.toggleDescription}>
+                    When on, this group won't appear on the map, near-me page,
+                    or community group browse. People with a direct share link
+                    can still view and request to join.
+                  </Text>
+                </View>
+                <Switch
+                  value={hiddenFromDiscovery}
+                  onValueChange={handleToggleHiddenFromDiscovery}
+                  disabled={isSavingHidden}
+                />
+              </View>
+            </View>
+          )}
+
           {/* Action Buttons */}
           <View style={styles.buttonContainer}>
             <Button
@@ -838,5 +899,24 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     color: "#92400E",
+  },
+  toggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 16,
+  },
+  toggleTextWrap: {
+    flex: 1,
+  },
+  toggleLabel: {
+    fontSize: 16,
+    fontWeight: "500",
+    color: "#333",
+    marginBottom: 4,
+  },
+  toggleDescription: {
+    fontSize: 13,
+    color: "#666",
+    lineHeight: 18,
   },
 });

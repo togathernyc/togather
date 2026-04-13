@@ -13,6 +13,7 @@ import { query } from "../_generated/server";
 import { normalizePagination, getMediaUrl } from "../lib/utils";
 import { paginationArgs } from "../lib/validators";
 import { requireAuth } from "../auth";
+import { isCommunityAdmin } from "../lib/permissions";
 import { searchCommunityMembersInternal, type MemberSearchResult } from "../lib/memberSearch";
 
 // ============================================================================
@@ -135,6 +136,7 @@ export const searchGroups = query({
     state: string | undefined;
     zipCode: string | undefined;
     defaultMeetingType: number | undefined;
+    hiddenFromDiscovery: boolean;
   }>> => {
     const { limit } = normalizePagination(args);
     const searchTerm = args.query?.toLowerCase();
@@ -145,6 +147,9 @@ export const searchGroups = query({
       .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
       .filter((q) => q.eq(q.field("isArchived"), false))
       .take(200);
+
+    // Exclude groups hidden from discovery (admin-only toggle)
+    groups = groups.filter((g) => !g.hiddenFromDiscovery);
 
     // Filter by search query
     if (searchTerm) {
@@ -213,6 +218,7 @@ export const searchGroups = query({
         state: group.state,
         zipCode: group.zipCode,
         defaultMeetingType: group.defaultMeetingType,
+        hiddenFromDiscovery: group.hiddenFromDiscovery ?? false,
       };
     });
 
@@ -249,6 +255,7 @@ export const searchGroupsWithMembership = query({
     state: string | undefined;
     zipCode: string | undefined;
     defaultMeetingType: number | undefined;
+    hiddenFromDiscovery: boolean;
     isMember: boolean;
     hasPendingRequest: boolean;
     userRole: string | null;
@@ -263,6 +270,36 @@ export const searchGroupsWithMembership = query({
       .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
       .filter((q) => q.eq(q.field("isArchived"), false))
       .take(200);
+
+    // Build membership lookup up front so we can exempt the user's own
+    // hidden groups from discovery filtering below.
+    const userMemberships = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+
+    const membershipMap = new Map(
+      userMemberships.map((m) => [m.groupId, m])
+    );
+
+    // Community admins bypass the hidden filter entirely — they're the only
+    // role that can un-hide a group, so they must be able to find hidden
+    // groups via search even when they're not members.
+    const callerIsCommunityAdmin = await isCommunityAdmin(
+      ctx,
+      args.communityId,
+      userId,
+    );
+
+    // Exclude groups hidden from discovery unless the caller is already a
+    // member (so members can find their own groups) or a community admin.
+    if (!callerIsCommunityAdmin) {
+      groups = groups.filter((g) => {
+        if (!g.hiddenFromDiscovery) return true;
+        const membership = membershipMap.get(g._id);
+        return !!(membership && !membership.leftAt);
+      });
+    }
 
     // Filter by search query
     if (searchTerm) {
@@ -284,15 +321,7 @@ export const searchGroupsWithMembership = query({
     // Apply limit
     groups = groups.slice(0, limit);
 
-    // Get user's memberships
-    const userMemberships = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
-      .collect();
-
-    const membershipMap = new Map(
-      userMemberships.map((m) => [m.groupId, m])
-    );
+    // (memberships fetched above before hiddenFromDiscovery filter)
 
     // Pre-fetch all group types for this community (single query instead of N+1)
     const allGroupTypes = await ctx.db
@@ -345,6 +374,7 @@ export const searchGroupsWithMembership = query({
         state: group.state,
         zipCode: group.zipCode,
         defaultMeetingType: group.defaultMeetingType,
+        hiddenFromDiscovery: group.hiddenFromDiscovery ?? false,
         // User status
         isMember,
         hasPendingRequest,
@@ -456,6 +486,9 @@ export const publicSearchNearLocation = query({
       .withIndex("by_community", (q) => q.eq("communityId", community._id))
       .filter((q) => q.eq(q.field("isArchived"), false))
       .take(200);
+
+    // Exclude groups hidden from discovery (admin-only toggle) from the map
+    groups = groups.filter((g) => !g.hiddenFromDiscovery);
 
     // Filter groups with valid coordinates
     groups = groups.filter(

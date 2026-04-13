@@ -221,6 +221,7 @@ export function ExploreScreen() {
         city: g.city,
         state: g.state,
         zip_code: g.zipCode,
+        hiddenFromDiscovery: g.hiddenFromDiscovery,
       }));
     }
     return EMPTY_GROUPS;

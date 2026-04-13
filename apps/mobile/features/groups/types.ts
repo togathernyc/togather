@@ -91,6 +91,10 @@ export interface Group {
   user_role?: string | null; // 'member', 'leader', or 'admin'
   // Announcement group flag
   is_announcement_group?: boolean | null;
+  // When true, this group is hidden from discovery (map, browse, search)
+  // but still reachable via direct share link. Community admins can still
+  // see it in browse with a lock badge.
+  hiddenFromDiscovery?: boolean | null;
 }
 
 export interface GroupMember {

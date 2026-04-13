@@ -130,6 +130,7 @@ export const getById = query({
         state: group.state,
         zipCode: group.zipCode,
         externalChatLink: group.externalChatLink,
+        hiddenFromDiscovery: group.hiddenFromDiscovery ?? false,
         leaderToolbarTools: group.leaderToolbarTools,
         showToolbarToMembers: group.showToolbarToMembers,
         toolVisibility: group.toolVisibility,
@@ -375,24 +376,28 @@ export const listByCommunity = query({
   handler: async (ctx, args) => {
     const { limit } = normalizePagination(args);
 
-    let groups;
+    // `includePrivate` is used by internal/management flows (e.g. the inbox
+    // channel-sharing modal) that must see every non-archived group in the
+    // community. The hidden-from-discovery filter is a *discovery* concern,
+    // so it's only applied to the public browse branch below.
     if (args.includePrivate) {
-      groups = await ctx.db
+      return await ctx.db
         .query("groups")
         .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
         .filter((q) => q.eq(q.field("isArchived"), false))
         .take(limit);
-    } else {
-      groups = await ctx.db
-        .query("groups")
-        .withIndex("by_community_public", (q) =>
-          q.eq("communityId", args.communityId).eq("isPublic", true)
-        )
-        .filter((q) => q.eq(q.field("isArchived"), false))
-        .take(limit);
     }
 
-    return groups;
+    const groups = await ctx.db
+      .query("groups")
+      .withIndex("by_community_public", (q) =>
+        q.eq("communityId", args.communityId).eq("isPublic", true)
+      )
+      .filter((q) => q.eq(q.field("isArchived"), false))
+      .take(limit);
+
+    // Public browse path: hide groups the community admins have flagged.
+    return groups.filter((g) => !g.hiddenFromDiscovery);
   },
 });
 
@@ -540,7 +545,7 @@ export const search = query({
       .filter((q) => q.eq(q.field("isArchived"), false))
       .take(limit);
 
-    return groups;
+    return groups.filter((g) => !g.hiddenFromDiscovery);
   },
 });
 

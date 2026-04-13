@@ -163,6 +163,8 @@ export function useGroupDetails(groupId: string | null | undefined) {
         is_on_break: effectiveGroup?.isOnBreak || null,
         break_until: effectiveGroup?.breakUntil || null,
         externalChatLink: (effectiveGroup as any)?.externalChatLink || null,
+        hidden_from_discovery:
+          (effectiveGroup as any)?.hiddenFromDiscovery ?? false,
         // Member preview for non-members (shows avatars without full access)
         member_preview: effectiveMemberPreview?.members?.map((m: any) => ({
           id: m.id || "",
