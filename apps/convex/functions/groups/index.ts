@@ -34,6 +34,7 @@ export {
   backfillShortIds,
   updateLeaderToolbarTools,
   updateToolbarVisibility,
+  setHiddenFromDiscovery,
 } from "./mutations";
 
 // Member queries

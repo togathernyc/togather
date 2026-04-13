@@ -130,6 +130,7 @@ export const getById = query({
         state: group.state,
         zipCode: group.zipCode,
         externalChatLink: group.externalChatLink,
+        hiddenFromDiscovery: group.hiddenFromDiscovery ?? false,
         leaderToolbarTools: group.leaderToolbarTools,
         showToolbarToMembers: group.showToolbarToMembers,
         toolVisibility: group.toolVisibility,
@@ -392,7 +393,8 @@ export const listByCommunity = query({
         .take(limit);
     }
 
-    return groups;
+    // Hide groups that community admins have flagged as hidden from discovery
+    return groups.filter((g) => !g.hiddenFromDiscovery);
   },
 });
 
@@ -540,7 +542,7 @@ export const search = query({
       .filter((q) => q.eq(q.field("isArchived"), false))
       .take(limit);
 
-    return groups;
+    return groups.filter((g) => !g.hiddenFromDiscovery);
   },
 });
 

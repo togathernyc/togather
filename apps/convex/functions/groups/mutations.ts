@@ -1053,6 +1053,39 @@ export const saveFollowupColumnConfig = mutation({
 });
 
 /**
+ * Toggle whether a group is hidden from discovery surfaces
+ * (near-me map, community landing page list, search/browse).
+ *
+ * Community admins only — intentionally excludes group leaders so they cannot
+ * unlist (or relist) a group created by the community for a specific purpose.
+ */
+export const setHiddenFromDiscovery = mutation({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+    hidden: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const group = await ctx.db.get(args.groupId);
+    if (!group) {
+      throw new Error("Group not found");
+    }
+
+    // Community-admin-only gate
+    await requireCommunityAdmin(ctx, group.communityId, userId);
+
+    await ctx.db.patch(args.groupId, {
+      hiddenFromDiscovery: args.hidden,
+      updatedAt: now(),
+    });
+
+    return { success: true, hiddenFromDiscovery: args.hidden };
+  },
+});
+
+/**
  * Update a custom display name for a built-in tool.
  * Pass an empty string or undefined to reset to the default label.
  */

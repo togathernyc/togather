@@ -263,6 +263,10 @@ export default defineSchema({
     externalChatLink: v.optional(v.string()),
     isAnnouncementGroup: v.optional(v.boolean()),
     isPublic: v.optional(v.boolean()), // Whether group is publicly visible
+    // When true, the group is hidden from discovery surfaces (near-me map,
+    // community landing page list, search/browse). Direct share links still
+    // work and existing members retain access. Community-admin toggle only.
+    hiddenFromDiscovery: v.optional(v.boolean()),
     shortId: v.optional(v.string()), // For shareable links (/g/[shortId])
     coordinates: v.optional(
       v.object({
