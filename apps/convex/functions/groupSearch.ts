@@ -13,6 +13,7 @@ import { query } from "../_generated/server";
 import { normalizePagination, getMediaUrl } from "../lib/utils";
 import { paginationArgs } from "../lib/validators";
 import { requireAuth } from "../auth";
+import { isCommunityAdmin } from "../lib/permissions";
 import { searchCommunityMembersInternal, type MemberSearchResult } from "../lib/memberSearch";
 
 // ============================================================================
@@ -278,13 +279,24 @@ export const searchGroupsWithMembership = query({
       userMemberships.map((m) => [m.groupId, m])
     );
 
+    // Community admins bypass the hidden filter entirely — they're the only
+    // role that can un-hide a group, so they must be able to find hidden
+    // groups via search even when they're not members.
+    const callerIsCommunityAdmin = await isCommunityAdmin(
+      ctx,
+      args.communityId,
+      userId,
+    );
+
     // Exclude groups hidden from discovery unless the caller is already a
-    // member — members should still find their own groups via search.
-    groups = groups.filter((g) => {
-      if (!g.hiddenFromDiscovery) return true;
-      const membership = membershipMap.get(g._id);
-      return !!(membership && !membership.leftAt);
-    });
+    // member (so members can find their own groups) or a community admin.
+    if (!callerIsCommunityAdmin) {
+      groups = groups.filter((g) => {
+        if (!g.hiddenFromDiscovery) return true;
+        const membership = membershipMap.get(g._id);
+        return !!(membership && !membership.leftAt);
+      });
+    }
 
     // Filter by search query
     if (searchTerm) {
