@@ -1,5 +1,6 @@
 import React from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Platform } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useAuth } from "@providers/AuthProvider";
 import { Avatar, AppImage } from "@components/ui";
@@ -82,10 +83,26 @@ export function GroupSearchItem({ group }: GroupSearchItemProps) {
             <Text style={[styles.categoryLabel, { color: colors.textTertiary }]}>{typeLabel}</Text>
           )}
 
-          {/* Group name */}
-          <Text style={[styles.groupName, { color: colors.text }]} numberOfLines={1}>
-            {groupName}
-          </Text>
+          {/* Group name (with lock badge if hidden from discovery —
+              only community admins receive hidden groups from the server,
+              so non-admins never see this icon) */}
+          <View style={styles.nameRow}>
+            <Text
+              style={[styles.groupName, { color: colors.text }]}
+              numberOfLines={1}
+            >
+              {groupName}
+            </Text>
+            {group.hiddenFromDiscovery && (
+              <Ionicons
+                name="lock-closed"
+                size={14}
+                color={colors.textTertiary}
+                style={styles.hiddenLockIcon}
+                accessibilityLabel="Hidden from discovery"
+              />
+            )}
+          </View>
 
           {/* Schedule */}
           {schedule && (
@@ -176,10 +193,18 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     letterSpacing: 0.5,
   },
+  nameRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 4,
+  },
   groupName: {
     fontSize: 16,
     fontWeight: "600",
-    marginBottom: 4,
+    flexShrink: 1,
+  },
+  hiddenLockIcon: {
+    marginLeft: 6,
   },
   schedule: {
     fontSize: 12,

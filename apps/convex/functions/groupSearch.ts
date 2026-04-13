@@ -136,6 +136,7 @@ export const searchGroups = query({
     state: string | undefined;
     zipCode: string | undefined;
     defaultMeetingType: number | undefined;
+    hiddenFromDiscovery: boolean;
   }>> => {
     const { limit } = normalizePagination(args);
     const searchTerm = args.query?.toLowerCase();
@@ -217,6 +218,7 @@ export const searchGroups = query({
         state: group.state,
         zipCode: group.zipCode,
         defaultMeetingType: group.defaultMeetingType,
+        hiddenFromDiscovery: group.hiddenFromDiscovery ?? false,
       };
     });
 
@@ -253,6 +255,7 @@ export const searchGroupsWithMembership = query({
     state: string | undefined;
     zipCode: string | undefined;
     defaultMeetingType: number | undefined;
+    hiddenFromDiscovery: boolean;
     isMember: boolean;
     hasPendingRequest: boolean;
     userRole: string | null;
@@ -371,6 +374,7 @@ export const searchGroupsWithMembership = query({
         state: group.state,
         zipCode: group.zipCode,
         defaultMeetingType: group.defaultMeetingType,
+        hiddenFromDiscovery: group.hiddenFromDiscovery ?? false,
         // User status
         isMember,
         hasPendingRequest,
