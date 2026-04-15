@@ -93,7 +93,6 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   const token = useStoredAuthToken();
   const { primaryColor } = useCommunityTheme();
   const { colors } = useTheme();
-  const { addBlockedUser } = useBlockedUsersContext();
 
   // Mutations
   const flagMessageMutation = useMutation(api.functions.messaging.flagging.flagMessage);
@@ -862,7 +861,6 @@ const ConvexChatRoomScreenInner: React.FC = () => {
                 token,
                 blockedId: targetUserId,
               });
-              addBlockedUser(targetUserId);
               Alert.alert(
                 "User Blocked",
                 `${targetUserName} has been blocked. You can unblock them from your settings.`,
@@ -881,7 +879,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
         },
       ]
     );
-  }, [selectedMessageSenderId, token, blockUserMutation, addBlockedUser]);
+  }, [selectedMessageSenderId, token, blockUserMutation]);
 
   const handleCancelReply = useCallback(() => {
     setReplyToMessageId(null);
