@@ -177,10 +177,9 @@ jest.mock('@features/groups/hooks/useLeaveGroup', () => ({
 jest.mock('../../context/BlockedUsersContext', () => ({
   BlockedUsersProvider: ({ children }: { children: React.ReactNode }) => children,
   useBlockedUsersContext: () => ({
-    blockedUsers: new Set(),
-    addBlockedUser: jest.fn(),
-    removeBlockedUser: jest.fn(),
-    isBlocked: jest.fn(() => false),
+    blockedUserIds: new Set(),
+    isLoading: false,
+    isUserBlocked: jest.fn(() => false),
   }),
 }));
 
