@@ -543,7 +543,7 @@ const styles = StyleSheet.create({
   },
   floatingToggle: {
     position: 'absolute',
-    left: 16,
+    right: 16,
     zIndex: 20,
   },
   floatingCreateContainer: {

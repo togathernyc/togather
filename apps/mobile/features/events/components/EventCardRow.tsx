@@ -19,9 +19,9 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { AppImage } from '@components/ui';
 import { useAuth } from '@providers/AuthProvider';
+import { useTheme } from '@hooks/useTheme';
 import { formatTimeWithTimezone } from '@togather/shared';
 import { format, toZonedTime } from 'date-fns-tz';
-import { COLORS } from '@features/explore/constants';
 import type { CommunityEvent } from '../hooks/useCommunityEvents';
 
 interface EventCardRowProps {
@@ -32,6 +32,7 @@ interface EventCardRowProps {
 export function EventCardRow({ event, onPress }: EventCardRowProps) {
   const router = useRouter();
   const { user } = useAuth();
+  const { colors } = useTheme();
 
   const userTimezone = user?.timezone || 'America/New_York';
 
@@ -53,11 +54,11 @@ export function EventCardRow({ event, onPress }: EventCardRowProps) {
 
   return (
     <TouchableOpacity
-      style={styles.container}
+      style={[styles.container, { backgroundColor: colors.surface }]}
       onPress={handlePress}
       activeOpacity={0.7}
     >
-      <View style={styles.thumb}>
+      <View style={[styles.thumb, { backgroundColor: colors.backgroundSecondary }]}>
         <AppImage
           source={event.coverImage || event.group.image}
           style={styles.thumbImage}
@@ -71,17 +72,20 @@ export function EventCardRow({ event, onPress }: EventCardRowProps) {
       </View>
 
       <View style={styles.content}>
-        <Text style={styles.title} numberOfLines={2}>
+        <Text style={[styles.title, { color: colors.text }]} numberOfLines={2}>
           {eventTitle}
         </Text>
-        <Text style={styles.subtitle} numberOfLines={2}>
+        <Text
+          style={[styles.subtitle, { color: colors.textSecondary }]}
+          numberOfLines={2}
+        >
           {event.communityWideEventId ? 'Community-wide · ' : ''}
           {formattedDate} at {formattedTime} · {event.group.name}
         </Text>
       </View>
 
       <View style={styles.trailing}>
-        <Ionicons name="chevron-forward" size={18} color={COLORS.textMuted} />
+        <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
       </View>
     </TouchableOpacity>
   );
@@ -91,7 +95,6 @@ const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
     borderRadius: 12,
     paddingVertical: 10,
     paddingHorizontal: 10,
@@ -102,7 +105,6 @@ const styles = StyleSheet.create({
     height: 64,
     borderRadius: 10,
     overflow: 'hidden',
-    backgroundColor: '#f5f5f5',
   },
   thumbImage: {
     width: '100%',
@@ -116,13 +118,11 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 17,
     fontWeight: '700',
-    color: COLORS.text,
     lineHeight: 22,
   },
   subtitle: {
     fontSize: 13,
     fontWeight: '400',
-    color: COLORS.textMuted,
     lineHeight: 18,
   },
   trailing: {

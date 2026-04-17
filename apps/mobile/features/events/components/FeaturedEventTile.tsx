@@ -20,8 +20,8 @@ import {
 import { useRouter } from 'expo-router';
 import { AppImage } from '@components/ui';
 import { useAuth } from '@providers/AuthProvider';
+import { useTheme } from '@hooks/useTheme';
 import { format, toZonedTime } from 'date-fns-tz';
-import { COLORS } from '@features/explore/constants';
 import type { CommunityEvent } from '../hooks/useCommunityEvents';
 
 interface FeaturedEventTileProps {
@@ -31,6 +31,7 @@ interface FeaturedEventTileProps {
 export function FeaturedEventTile({ event }: FeaturedEventTileProps) {
   const router = useRouter();
   const { user } = useAuth();
+  const { colors } = useTheme();
 
   const userTimezone = user?.timezone || 'America/New_York';
   const eventDate = new Date(event.scheduledAt);
@@ -76,7 +77,7 @@ export function FeaturedEventTile({ event }: FeaturedEventTileProps) {
           </Text>
         </View>
       </View>
-      <Text style={styles.title} numberOfLines={2}>
+      <Text style={[styles.title, { color: colors.text }]} numberOfLines={2}>
         {eventTitle}
       </Text>
     </TouchableOpacity>
@@ -125,13 +126,12 @@ const styles = StyleSheet.create({
   datePillText: {
     fontSize: 11,
     fontWeight: '600',
-    color: COLORS.text,
+    color: '#1a1a1a', // date pill bg is white-ish regardless of theme
   },
   title: {
     marginTop: 8,
     fontSize: 15,
     fontWeight: '600',
-    color: COLORS.text,
     lineHeight: 19,
   },
 });
