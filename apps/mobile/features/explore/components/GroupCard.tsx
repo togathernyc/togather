@@ -12,6 +12,7 @@ import { Group, GroupMember } from '@features/groups/types';
 import { getGroupTypeLabel } from '@features/groups/utils';
 import { useAuth } from '@providers/AuthProvider';
 import { Avatar, AppImage } from '@components/ui';
+import { useTheme } from '@hooks/useTheme';
 import { COLORS, getGroupTypeColor } from '../constants';
 
 interface GroupCardProps {
@@ -25,6 +26,7 @@ const { width: screenWidth } = Dimensions.get('window');
 export function GroupCard({ group, onPress, variant = 'large' }: GroupCardProps) {
   const router = useRouter();
   const { user } = useAuth();
+  const { colors } = useTheme();
 
   // Prefer group_type_name from API, fallback to ID lookup
   const typeLabel = getGroupTypeLabel(group.group_type_name ?? group.group_type ?? group.type ?? 1, user);
@@ -87,11 +89,20 @@ export function GroupCard({ group, onPress, variant = 'large' }: GroupCardProps)
   if (variant === 'compact') {
     return (
       <Pressable
-        style={({ pressed }) => [styles.compactContainer, pressed && styles.containerPressed]}
+        style={({ pressed }) => [
+          styles.compactContainer,
+          { backgroundColor: colors.surface },
+          pressed && styles.containerPressed,
+        ]}
         onPress={handlePress}
       >
         {/* Image */}
-        <View style={styles.compactImageContainer}>
+        <View
+          style={[
+            styles.compactImageContainer,
+            { backgroundColor: colors.backgroundSecondary },
+          ]}
+        >
           <AppImage
             source={previewUrl}
             style={styles.compactImage}
@@ -107,11 +118,14 @@ export function GroupCard({ group, onPress, variant = 'large' }: GroupCardProps)
 
         {/* Info */}
         <View style={styles.compactInfo}>
-          <Text style={styles.compactName} numberOfLines={1}>
+          <Text style={[styles.compactName, { color: colors.text }]} numberOfLines={1}>
             {groupName}
           </Text>
           {locationString && (
-            <Text style={styles.compactLocation} numberOfLines={1}>
+            <Text
+              style={[styles.compactLocation, { color: colors.textSecondary }]}
+              numberOfLines={1}
+            >
               {locationString}
             </Text>
           )}
@@ -123,11 +137,17 @@ export function GroupCard({ group, onPress, variant = 'large' }: GroupCardProps)
   // Large variant (Airbnb-style card)
   return (
     <Pressable
-      style={({ pressed }) => [styles.container, pressed && styles.containerPressed]}
+      style={({ pressed }) => [
+        styles.container,
+        { backgroundColor: colors.surface },
+        pressed && styles.containerPressed,
+      ]}
       onPress={handlePress}
     >
       {/* Full-width Image */}
-      <View style={styles.imageContainer}>
+      <View
+        style={[styles.imageContainer, { backgroundColor: colors.backgroundSecondary }]}
+      >
         <AppImage
           source={previewUrl}
           style={styles.image}
@@ -150,12 +170,15 @@ export function GroupCard({ group, onPress, variant = 'large' }: GroupCardProps)
 
       {/* Info Section */}
       <View style={styles.infoSection}>
-        <Text style={styles.groupName} numberOfLines={2}>
+        <Text style={[styles.groupName, { color: colors.text }]} numberOfLines={2}>
           {groupName}
         </Text>
 
         {locationString && (
-          <Text style={styles.locationText} numberOfLines={1}>
+          <Text
+            style={[styles.locationText, { color: colors.textSecondary }]}
+            numberOfLines={1}
+          >
             {locationString}
           </Text>
         )}
@@ -180,7 +203,9 @@ export function GroupCard({ group, onPress, variant = 'large' }: GroupCardProps)
                 </View>
               ))}
               {remainingCount > 0 && (
-                <Text style={styles.membersCountText}>+{remainingCount}</Text>
+                <Text style={[styles.membersCountText, { color: colors.textSecondary }]}>
+                  +{remainingCount}
+                </Text>
               )}
             </View>
           </View>
