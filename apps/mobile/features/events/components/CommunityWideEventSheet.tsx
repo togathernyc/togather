@@ -101,11 +101,14 @@ export function CommunityWideEventSheet({
   const parent = result?.parent ?? null;
   const children = result?.children ?? [];
 
-  // Open/close the sheet when parentId flips.
+  // Open/close the sheet when parentId flips. `snapToIndex(0)` opens at
+  // the SMALLER snap point so there's visible space above the sheet for
+  // the user to see context / drag the sheet down. `expand()` would go
+  // to the largest snap point (90%) and read as near-fullscreen.
   useEffect(() => {
     if (isWeb) return;
     if (parentId) {
-      bottomSheetRef.current?.expand();
+      bottomSheetRef.current?.snapToIndex(0);
     } else {
       bottomSheetRef.current?.close();
     }
