@@ -87,7 +87,9 @@ export function CommunityWideEventSheet({
   const { colors } = useTheme();
   const bottomSheetRef = useRef<BottomSheet>(null);
 
-  const snapPoints = useMemo(() => ['60%', '90%'], []);
+  // Single snap point: sheet opens at 90% and can't be dragged higher.
+  // Dragging down still closes it (enablePanDownToClose).
+  const snapPoints = useMemo(() => ['90%'], []);
 
   const userTimezone = user?.timezone || 'America/New_York';
 
