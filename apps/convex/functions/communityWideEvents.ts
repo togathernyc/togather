@@ -213,9 +213,10 @@ export const update = mutation({
     meetingType: v.optional(v.number()),
     meetingLink: v.optional(v.string()),
     note: v.optional(v.string()),
-    // Parent-only. Children fall back to this via the card/detail render
-    // paths instead of being individually patched — updating the shared
-    // cover shouldn't mark every child as `isOverridden`.
+    // Cascades to parent + every non-overridden child. Children store their
+    // own `coverImage` at creation, so the read-path parent fallback alone
+    // isn't enough — the update has to write through. `isOverridden` is
+    // untouched; that flag is set only by per-meeting edits.
     coverImage: v.optional(v.string()),
     // Community-wide fields that still make sense cross-group. These DO
     // cascade to every non-overridden child so edits from the CreateEvent
@@ -261,7 +262,6 @@ export const update = mutation({
     if (args.meetingType !== undefined) parentUpdates.meetingType = args.meetingType;
     if (args.meetingLink !== undefined) parentUpdates.meetingLink = args.meetingLink;
     if (args.note !== undefined) parentUpdates.note = args.note;
-    // coverImage is parent-only — intentionally NOT added to childUpdates below.
     if (args.coverImage !== undefined) parentUpdates.coverImage = args.coverImage;
 
     // Update the parent event
@@ -331,7 +331,13 @@ export const update = mutation({
     if (args.meetingType !== undefined) childUpdates.meetingType = args.meetingType;
     if (args.meetingLink !== undefined) childUpdates.meetingLink = args.meetingLink;
     if (args.note !== undefined) childUpdates.note = args.note;
-    // Cascade rsvp + visibility. Not `coverImage` — the parent holds that.
+    // Cover is stored on BOTH parent and every child (createCommunityWideEvent
+    // writes it to each row). The read-path parent fallback only triggers when
+    // the child cover is empty, which it rarely is — so updating the parent
+    // alone leaves children showing the old art. Cascade to non-overridden
+    // children. Cascading does not touch `isOverridden`; that flag is set
+    // only by per-meeting edits via `meetings.update`.
+    if (args.coverImage !== undefined) childUpdates.coverImage = args.coverImage;
     if (args.rsvpEnabled !== undefined) childUpdates.rsvpEnabled = args.rsvpEnabled;
     if (args.rsvpOptions !== undefined) childUpdates.rsvpOptions = args.rsvpOptions;
     if (args.visibility !== undefined) childUpdates.visibility = args.visibility;

@@ -341,23 +341,31 @@ export const update = mutation({
       }
     }
 
-    // Location mode validation runs on every write path, with one exception:
-    // CWE children that haven't been overridden yet inherit their location
-    // from the hosting group, so their meeting-level `locationOverride` is
-    // intentionally blank. Once a leader has overridden a child (edited it
-    // individually), it owns its own location and the invariant applies.
+    // Location mode validation runs on every write path. One narrow exception:
+    // a non-overridden CWE child in `address` mode with an empty override
+    // inherits its physical location from the hosting group, so the usual
+    // "address mode requires a non-empty override" invariant would reject a
+    // no-op edit of an inherited event. Other modes (online/tbd) and any
+    // case where the user actually typed an override still validate — e.g.
+    // switching an inherited child to online must still require a link.
     const effectiveLocationMode = args.locationMode ?? meeting.locationMode;
+    const effectiveLocationOverride =
+      args.locationOverride !== undefined
+        ? args.locationOverride
+        : meeting.locationOverride;
+    const effectiveMeetingLink =
+      args.meetingLink !== undefined ? args.meetingLink : meeting.meetingLink;
     const isInheritedCweChild =
       !!meeting.communityWideEventId && meeting.isOverridden !== true;
-    if (effectiveLocationMode !== undefined && !isInheritedCweChild) {
+    const isInheritedAddressNoop =
+      isInheritedCweChild &&
+      effectiveLocationMode === "address" &&
+      !effectiveLocationOverride?.trim();
+    if (effectiveLocationMode !== undefined && !isInheritedAddressNoop) {
       validateLocationMode({
         locationMode: effectiveLocationMode,
-        locationOverride:
-          args.locationOverride !== undefined
-            ? args.locationOverride
-            : meeting.locationOverride,
-        meetingLink:
-          args.meetingLink !== undefined ? args.meetingLink : meeting.meetingLink,
+        locationOverride: effectiveLocationOverride,
+        meetingLink: effectiveMeetingLink,
       });
     }
 

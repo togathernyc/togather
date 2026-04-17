@@ -716,9 +716,8 @@ export function CreateEventScreen() {
                 meetingType: data.meetingType,
                 meetingLink: data.meetingLink,
                 note: data.note,
-                // Parent-only — updating the shared cover doesn't mark
-                // every child as `isOverridden`. Children fall back to
-                // parent.coverImage on render.
+                // Cascades to parent + non-overridden children. `isOverridden`
+                // is untouched; only per-meeting edits flip that flag.
                 coverImage: data.coverImage,
                 // Cascade rsvp + visibility so scope-wide edits don't
                 // silently drop these fields. Per-group `locationOverride`
