@@ -276,6 +276,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
     overflow: 'hidden',
+    flexDirection: 'column',
     ...Platform.select({
       web: {
         boxShadow: '0px -4px 16px rgba(0, 0, 0, 0.1)',
@@ -289,6 +290,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: 10,
     position: 'relative',
+    zIndex: 10,
   },
   webHandle: {
     width: 40,
@@ -300,8 +302,14 @@ const styles = StyleSheet.create({
     right: 12,
     top: 6,
     padding: 6,
+    zIndex: 11,
   },
   webScrollWrapper: {
-    maxHeight: '100%',
+    flex: 1,
+    minHeight: 0,
+    ...Platform.select({
+      web: { overflowY: 'auto' as any },
+      default: {},
+    }),
   },
 });
