@@ -49,32 +49,33 @@ export function ShareToChatModal({
       withoutCloseBtn={isLoading}
     >
       <View style={styles.container}>
-        <Text style={styles.description}>
+        <Text style={[styles.description, { color: colors.textSecondary }]}>
           Add a personal message to share this event with your group. A personalized message helps engage your members!
         </Text>
 
         <View style={styles.inputContainer}>
           <TextInput
-            style={styles.input}
+            style={[styles.input, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground, color: colors.text }]}
             value={message}
             onChangeText={setMessage}
             placeholder="Write a message..."
+            placeholderTextColor={colors.inputPlaceholder}
             multiline
             numberOfLines={3}
             textAlignVertical="top"
             editable={!isLoading}
             maxLength={500}
           />
-          <Text style={styles.charCount}>{message.length}/500</Text>
+          <Text style={[styles.charCount, { color: colors.textTertiary }]}>{message.length}/500</Text>
         </View>
 
         <View style={styles.buttonContainer}>
           <TouchableOpacity
-            style={styles.skipButton}
+            style={[styles.skipButton, { borderColor: colors.border }]}
             onPress={handleSkip}
             disabled={isLoading}
           >
-            <Text style={styles.skipButtonText}>Skip</Text>
+            <Text style={[styles.skipButtonText, { color: colors.textSecondary }]}>Skip</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -85,12 +86,12 @@ export function ShareToChatModal({
             {isLoading ? (
               <ActivityIndicator color={colors.textInverse} size="small" />
             ) : (
-              <Text style={styles.sendButtonText}>Send to Chat</Text>
+              <Text style={[styles.sendButtonText, { color: '#fff' }]}>Send to Chat</Text>
             )}
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.hint}>
+        <Text style={[styles.hint, { color: colors.textTertiary }]}>
           You can always share the event later by pasting the link in the chat.
         </Text>
       </View>
