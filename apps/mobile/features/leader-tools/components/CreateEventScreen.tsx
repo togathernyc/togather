@@ -1175,7 +1175,7 @@ export function CreateEventScreen() {
                       <View style={styles.selectedGroupRow}>
                         <Text style={[styles.selectedGroupName, { color: colors.text }]}>
                           {(selectedGroup as any).isAnnouncementGroup
-                            ? "Community"
+                            ? community?.name ?? selectedGroup.name
                             : selectedGroup.name}
                         </Text>
                         <Text style={[styles.selectedGroupType, { color: colors.textSecondary }]}>
@@ -1217,10 +1217,14 @@ export function CreateEventScreen() {
                             ]}
                           >
                             {(group as any).isAnnouncementGroup
-                              ? "Community"
+                              ? community?.name ?? group!.name
                               : group!.name}
                           </Text>
-                          <Text style={[styles.dropdownItemSubtext, { color: colors.textSecondary }]}>{group!.groupTypeName}</Text>
+                          <Text style={[styles.dropdownItemSubtext, { color: colors.textSecondary }]}>
+                            {(group as any).isAnnouncementGroup
+                              ? "Community"
+                              : group!.groupTypeName}
+                          </Text>
                           {selectedGroupId === group!.id && (
                             <Ionicons name="checkmark" size={18} color={primaryColor} />
                           )}
