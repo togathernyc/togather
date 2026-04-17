@@ -130,8 +130,8 @@ const styles = StyleSheet.create({
   },
   title: {
     marginTop: 8,
-    fontSize: 15,
-    fontWeight: '600',
-    lineHeight: 19,
+    fontSize: 14,
+    fontWeight: '500',
+    lineHeight: 18,
   },
 });

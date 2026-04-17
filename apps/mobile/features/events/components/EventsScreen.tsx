@@ -128,11 +128,28 @@ interface NextUpProps {
   colors: ReturnType<typeof useTheme>['colors'];
 }
 
-function NextUpRow({ events, colors }: NextUpProps) {
+interface NextUpPropsWithAction extends NextUpProps {
+  onViewAll?: () => void;
+}
+
+function NextUpRow({ events, colors, onViewAll }: NextUpPropsWithAction) {
   if (events.length < 1) return null;
   return (
     <View style={styles.nextUpSection}>
-      <Text style={[styles.sectionTitle, { color: colors.text }]}>Next Up</Text>
+      <View style={styles.nextUpHeader}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Next Up</Text>
+        {onViewAll && (
+          <TouchableOpacity
+            onPress={onViewAll}
+            activeOpacity={0.6}
+            style={[styles.viewAllButton, { borderColor: colors.borderLight }]}
+          >
+            <Text style={[styles.viewAllText, { color: colors.textSecondary }]}>
+              View all
+            </Text>
+          </TouchableOpacity>
+        )}
+      </View>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -146,10 +163,36 @@ function NextUpRow({ events, colors }: NextUpProps) {
   );
 }
 
+interface GreetingProps {
+  firstName: string | null;
+  colors: ReturnType<typeof useTheme>['colors'];
+  primaryColor: string;
+  onMakePlans: () => void;
+}
+
+function Greeting({ firstName, colors, primaryColor, onMakePlans }: GreetingProps) {
+  const dayOfWeek = new Date().toLocaleDateString('en-US', { weekday: 'long' });
+  const hello = firstName ? `Hey ${firstName}` : 'Hey there';
+  return (
+    <View style={styles.greeting}>
+      <Text style={[styles.greetingTitle, { color: colors.text }]}>{hello}</Text>
+      <Text style={[styles.greetingSubtitle, { color: colors.textSecondary }]}>
+        It's {dayOfWeek}!{' '}
+        <Text
+          style={[styles.greetingAction, { color: primaryColor }]}
+          onPress={onMakePlans}
+        >
+          Make plans
+        </Text>
+      </Text>
+    </View>
+  );
+}
+
 export function EventsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { community } = useAuth();
+  const { community, user } = useAuth();
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const hasCommunityContext = !!community?.id;
@@ -438,6 +481,12 @@ export function EventsScreen() {
             </View>
           )}
 
+          <Greeting
+            firstName={user?.first_name ?? null}
+            colors={colors}
+            primaryColor={primaryColor}
+            onMakePlans={handleCreateEvent}
+          />
           <NextUpRow events={featuredEvents} colors={colors} />
 
           <Section
@@ -585,9 +634,42 @@ const styles = StyleSheet.create({
   sectionBody: {
     gap: 8,
   },
+  greeting: {
+    paddingTop: 48, // clear the floating toggle visually
+    paddingBottom: 20,
+    gap: 4,
+  },
+  greetingTitle: {
+    fontSize: 26,
+    fontWeight: '700',
+    lineHeight: 32,
+  },
+  greetingSubtitle: {
+    fontSize: 15,
+    lineHeight: 20,
+  },
+  greetingAction: {
+    fontWeight: '600',
+    textDecorationLine: 'underline',
+  },
   nextUpSection: {
     marginBottom: 20,
     gap: 10,
+  },
+  nextUpHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  viewAllButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 100,
+    borderWidth: 1,
+  },
+  viewAllText: {
+    fontSize: 13,
+    fontWeight: '500',
   },
   nextUpScrollContent: {
     flexDirection: 'row',
