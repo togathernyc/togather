@@ -156,6 +156,9 @@ jest.mock("@services/api/convex", () => ({
       uploads: {
         getR2UploadUrl: "api.functions.uploads.getR2UploadUrl",
       },
+      posters: {
+        search: "api.functions.posters.search",
+      },
     },
   },
   useQuery: (...args: any[]) => mockUseQuery(...args),
