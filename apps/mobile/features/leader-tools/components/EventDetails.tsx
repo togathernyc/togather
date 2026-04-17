@@ -681,8 +681,9 @@ export function EventDetails({
               </>
             )}
 
-            {/* Leader: Message Attendees */}
-            {isLeader && (
+            {/* Host actions: Message Attendees + Blast History. Available to
+                creators too (ADR-022) — backend enforces. */}
+            {(isLeader || isCreator) && (
               <TouchableOpacity
                 style={[styles.messageAttendeesButton, { backgroundColor: colors.surface }]}
                 onPress={() => setShowBlastSheet(true)}
@@ -694,8 +695,7 @@ export function EventDetails({
               </TouchableOpacity>
             )}
 
-            {/* Leader: Blast History */}
-            {isLeader && meetingId && (
+            {(isLeader || isCreator) && meetingId && (
               <EventBlastHistory meetingId={meetingId} />
             )}
 

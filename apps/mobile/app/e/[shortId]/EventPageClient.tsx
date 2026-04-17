@@ -795,8 +795,10 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
             </View>
           )}
 
-          {/* Leader: Message Attendees */}
-          {isLeader && (
+          {/* Host actions: Message Attendees + Blast History. ADR-022 extends
+              this surface to creators — they're the host, so they should be
+              able to reach out to RSVPed guests. Backend is authoritative. */}
+          {canEdit && (
             <TouchableOpacity
               style={[styles.messageAttendeesButton, { backgroundColor: colors.surfaceSecondary }]}
               onPress={() => setShowBlastSheet(true)}
@@ -808,8 +810,7 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
             </TouchableOpacity>
           )}
 
-          {/* Leader: Blast History */}
-          {isLeader && eventData.id && (
+          {canEdit && eventData.id && (
             <EventBlastHistory meetingId={eventData.id as string} />
           )}
         </View>
