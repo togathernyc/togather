@@ -87,6 +87,24 @@ export const getById = query({
       ? await ctx.db.get(group.groupTypeId)
       : null;
 
+    // Count active members (same filter as getByShortId: no leftAt, and
+    // either no requestStatus or "accepted"). Used by the chat header to
+    // surface "N members" as a tappable link to the members page.
+    const activeMemberRows = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("leftAt"), undefined),
+          q.or(
+            q.eq(q.field("requestStatus"), undefined),
+            q.eq(q.field("requestStatus"), "accepted"),
+          ),
+        ),
+      )
+      .collect();
+    const memberCount = activeMemberRows.length;
+
     // SECURITY: Only include sensitive fields for members or community admins
     const canSeeSensitiveData = isActiveMember || isCommAdmin;
 
@@ -118,6 +136,7 @@ export const getById = query({
       userRequestStatus,
       groupTypeName: groupType?.name,
       groupTypeSlug: groupType?.slug,
+      memberCount,
     };
 
     // Add sensitive fields only for authorized users

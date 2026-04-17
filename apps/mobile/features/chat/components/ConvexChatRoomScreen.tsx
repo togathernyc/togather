@@ -939,9 +939,11 @@ const ConvexChatRoomScreenInner: React.FC = () => {
           displayType={displayType}
           displayImage={displayImage}
           groupTypeId={groupTypeId}
+          memberCount={groupDetails?.memberCount}
           onBack={handleBack}
           onMenuPress={() => setMenuVisible(true)}
           onGroupPagePress={handleGoToGroupPage}
+          onMembersPress={handleGoToMembers}
         />
         <ChatNavigation
           activeSlug={activeSlug}
