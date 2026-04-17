@@ -6,3 +6,4 @@ export {
   type EventsFilters,
 } from "./useCommunityEvents";
 export * from "./useEventSearch";
+export { useEventsByTimeWindow } from "./useEventsByTimeWindow";
