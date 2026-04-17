@@ -64,12 +64,37 @@ jest.mock("../../../groups/hooks/useGroupDetails", () => ({
   }),
 }));
 
-// Mock useLeaderGroups hook
+// Mock useCreatableGroups hook (used by CreateEventScreen post ADR-022).
 jest.mock("@features/events/hooks/useCommunityEvents", () => ({
   useLeaderGroups: () => ({
     data: [
       { id: "group-123", name: "Test Group", groupTypeName: "Small Group" },
     ],
+    isLoading: false,
+  }),
+  useCreatableGroups: () => ({
+    data: [
+      {
+        id: "group-123",
+        name: "Test Group",
+        groupTypeName: "Small Group",
+        isLeader: true,
+        isAnnouncementGroup: false,
+      },
+    ],
+    isLoading: false,
+  }),
+}));
+
+// Mock my-events hook — the cap gate query is disabled for leaders in this
+// test path, but the import must still resolve.
+jest.mock("@features/events/hooks/useMyEvents", () => ({
+  useMyHostedEvents: () => ({
+    data: { upcoming: [], past: [] },
+    isLoading: false,
+  }),
+  useMyAttendedEvents: () => ({
+    data: { upcoming: [], past: [] },
     isLoading: false,
   }),
 }));

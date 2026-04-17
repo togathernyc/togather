@@ -389,6 +389,15 @@ jest.mock('expo-secure-store', () => ({
   deleteItemAsync: jest.fn().mockResolvedValue(undefined),
 }));
 
+// Mock posthog-react-native — the real module touches native platform
+// constants at import time, which blows up under Jest. `useAnalytics`
+// already treats an uninitialised PostHog as a no-op, so a null stand-in
+// is faithful.
+jest.mock('posthog-react-native', () => ({
+  usePostHog: () => null,
+  PostHogProvider: ({ children }) => children,
+}));
+
 // Mock react-native-reanimated to support components that use it
 jest.mock('react-native-reanimated', () => require('react-native-reanimated/mock'));
 
