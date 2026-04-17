@@ -30,6 +30,7 @@ import {
 import { VisibilitySelector, VisibilityLevel } from "./VisibilitySelector";
 import { useCreatableGroups } from "@features/events/hooks/useCommunityEvents";
 import { useMyHostedEvents } from "@features/events/hooks/useMyEvents";
+import { useAnalytics } from "@services/analytics";
 import { ShareToChatModal } from "./ShareToChatModal";
 import { ConfirmModal } from "@components/ui/ConfirmModal";
 import { getGroupCoordinates, geocodeAddressAsync } from "../../groups/utils/geocodeLocation";
@@ -68,6 +69,7 @@ export function CreateEventScreen() {
   const insets = useSafeAreaInsets();
   const { primaryColor } = useCommunityTheme();
   const { token, user, community } = useAuth();
+  const analytics = useAnalytics();
 
   // Check if user is a community admin
   const isAdmin = user?.is_admin === true;
@@ -374,6 +376,15 @@ export function CreateEventScreen() {
           rsvpOptions: data.rsvpOptions,
           visibility: data.visibility,
         });
+        // ADR-022 analytics: only fire for non-leader creators so the funnel
+        // is clean (leaders creating events is the baseline, not the signal).
+        if (!isLeaderOfSelectedGroup) {
+          analytics.capture("event_created_by_member", {
+            group_id: data.groupId,
+            is_announcement_group: selectedGroup?.isAnnouncementGroup === true,
+            location_type: data.locationMode ?? null,
+          });
+        }
         // Convex automatically updates queries, so no need to invalidate
         // Show the share to chat modal
         showShareToChatModal(newMeetingId);
@@ -425,6 +436,11 @@ export function CreateEventScreen() {
       try {
         await cancelMeetingMutation({
           meetingId: data.meetingId as Id<"meetings">,
+        });
+        // ADR-022 analytics.
+        analytics.capture("event_deleted_by_leader", {
+          event_id: data.meetingId,
+          deleter_role: isAdmin ? "admin" : "leader",
         });
         // Convex automatically updates queries
         Alert.alert(

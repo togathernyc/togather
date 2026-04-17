@@ -24,6 +24,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@hooks/useTheme';
 import { api, useAuthenticatedMutation } from '@services/api/convex';
 import type { Id } from '@services/api/convex';
+import { useAnalytics } from '@services/analytics';
 
 type Reason = 'spam' | 'inappropriate' | 'other';
 
@@ -47,6 +48,7 @@ export function ReportEventSheet({
   onReported,
 }: ReportEventSheetProps) {
   const { colors } = useTheme();
+  const analytics = useAnalytics();
   const [reason, setReason] = useState<Reason>('spam');
   const [details, setDetails] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -68,6 +70,13 @@ export function ReportEventSheet({
         meetingId,
         reason,
         details: details.trim() || undefined,
+      });
+      // ADR-022 analytics. `reporter_role` is left coarse here — we don't
+      // know the user's per-group role at sheet open time, and the sheet
+      // fires across contexts. Consumers should enrich from event properties.
+      analytics.capture('event_reported', {
+        event_id: meetingId,
+        reason,
       });
       reset();
       onClose();

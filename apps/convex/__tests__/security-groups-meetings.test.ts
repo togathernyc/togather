@@ -369,7 +369,7 @@ describe("SECURITY: Meeting Cancel requires leadership", () => {
         meetingId: setup.meetingId,
         cancellationReason: "Malicious cancellation",
       })
-    ).rejects.toThrow("Only group leaders can cancel meetings");
+    ).rejects.toThrow("You do not have permission to cancel this event");
   });
 
   test("Non-member cannot cancel meeting", async () => {
@@ -382,7 +382,7 @@ describe("SECURITY: Meeting Cancel requires leadership", () => {
         meetingId: setup.meetingId,
         cancellationReason: "External attack",
       })
-    ).rejects.toThrow("Only group leaders can cancel meetings");
+    ).rejects.toThrow("You do not have permission to cancel this event");
   });
 
   test("Leader can cancel meeting", async () => {
@@ -415,7 +415,7 @@ describe("SECURITY: Meeting Update requires leadership", () => {
         title: "Hijacked Meeting Title",
         note: "Meeting hijacked by attacker",
       })
-    ).rejects.toThrow("Only group leaders can update meetings");
+    ).rejects.toThrow("You do not have permission to update this event");
   });
 
   test("Non-member cannot update meeting", async () => {
@@ -428,7 +428,7 @@ describe("SECURITY: Meeting Update requires leadership", () => {
         meetingId: setup.meetingId,
         title: "External Attack",
       })
-    ).rejects.toThrow("Only group leaders can update meetings");
+    ).rejects.toThrow("You do not have permission to update this event");
   });
 
   test("Leader can update meeting", async () => {
