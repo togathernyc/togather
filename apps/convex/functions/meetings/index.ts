@@ -16,7 +16,6 @@ import {
   canEditSeriesWide,
   countFutureEventsCreatedBy,
   NON_LEADER_FUTURE_EVENT_CAP,
-  validateLocationMode,
 } from "../../lib/meetingPermissions";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
 import {
@@ -169,13 +168,6 @@ export const create = mutation({
         );
       }
     }
-
-    // Location mode validation applies uniformly to members AND leaders.
-    validateLocationMode({
-      locationMode: args.locationMode,
-      locationOverride: args.locationOverride,
-      meetingLink: args.meetingLink,
-    });
 
     const timestamp = now();
 
@@ -341,34 +333,6 @@ export const update = mutation({
       }
     }
 
-    // Location mode validation runs on every write path. One narrow exception:
-    // a non-overridden CWE child in `address` mode with an empty override
-    // inherits its physical location from the hosting group, so the usual
-    // "address mode requires a non-empty override" invariant would reject a
-    // no-op edit of an inherited event. Other modes (online/tbd) and any
-    // case where the user actually typed an override still validate — e.g.
-    // switching an inherited child to online must still require a link.
-    const effectiveLocationMode = args.locationMode ?? meeting.locationMode;
-    const effectiveLocationOverride =
-      args.locationOverride !== undefined
-        ? args.locationOverride
-        : meeting.locationOverride;
-    const effectiveMeetingLink =
-      args.meetingLink !== undefined ? args.meetingLink : meeting.meetingLink;
-    const isInheritedCweChild =
-      !!meeting.communityWideEventId && meeting.isOverridden !== true;
-    const isInheritedAddressNoop =
-      isInheritedCweChild &&
-      effectiveLocationMode === "address" &&
-      !effectiveLocationOverride?.trim();
-    if (effectiveLocationMode !== undefined && !isInheritedAddressNoop) {
-      validateLocationMode({
-        locationMode: effectiveLocationMode,
-        locationOverride: effectiveLocationOverride,
-        meetingLink: effectiveMeetingLink,
-      });
-    }
-
     // Track what changed for notification
     const changes: string[] = [];
 
@@ -405,6 +369,12 @@ export const update = mutation({
     // remove `posterId` from the document.
     if (cleanedUpdates.posterId === null) {
       cleanedUpdates.posterId = undefined;
+    }
+    // `coverImage: ""` is the client's explicit-remove sentinel. Translate
+    // to undefined so the patch unsets the field (instead of storing an
+    // empty string that every read path would have to treat as falsy).
+    if (cleanedUpdates.coverImage === "") {
+      cleanedUpdates.coverImage = undefined;
     }
 
     // If this meeting is linked to a community-wide event and hasn't been overridden yet,

@@ -213,10 +213,10 @@ export const update = mutation({
     meetingType: v.optional(v.number()),
     meetingLink: v.optional(v.string()),
     note: v.optional(v.string()),
-    // Cascades to parent + every non-overridden child. Children store their
-    // own `coverImage` at creation, so the read-path parent fallback alone
-    // isn't enough — the update has to write through. `isOverridden` is
-    // untouched; that flag is set only by per-meeting edits.
+    // Parent-only. Children inherit via read-path fallback — they never
+    // store `coverImage` at creation anymore. Leaders can still set a
+    // per-group override via `meetings.update`, and those overrides take
+    // precedence in the child detail views.
     coverImage: v.optional(v.string()),
     // Community-wide fields that still make sense cross-group. These DO
     // cascade to every non-overridden child so edits from the CreateEvent
@@ -262,7 +262,12 @@ export const update = mutation({
     if (args.meetingType !== undefined) parentUpdates.meetingType = args.meetingType;
     if (args.meetingLink !== undefined) parentUpdates.meetingLink = args.meetingLink;
     if (args.note !== undefined) parentUpdates.note = args.note;
-    if (args.coverImage !== undefined) parentUpdates.coverImage = args.coverImage;
+    if (args.coverImage !== undefined) {
+      // `""` is the client's explicit-remove sentinel. Convex patches drop
+      // fields set to `undefined`, so translate it here to fully unset the
+      // shared cover instead of persisting an empty string.
+      parentUpdates.coverImage = args.coverImage === "" ? undefined : args.coverImage;
+    }
 
     // Update the parent event
     await ctx.db.patch(args.communityWideEventId, parentUpdates);
@@ -331,13 +336,10 @@ export const update = mutation({
     if (args.meetingType !== undefined) childUpdates.meetingType = args.meetingType;
     if (args.meetingLink !== undefined) childUpdates.meetingLink = args.meetingLink;
     if (args.note !== undefined) childUpdates.note = args.note;
-    // Cover is stored on BOTH parent and every child (createCommunityWideEvent
-    // writes it to each row). The read-path parent fallback only triggers when
-    // the child cover is empty, which it rarely is — so updating the parent
-    // alone leaves children showing the old art. Cascade to non-overridden
-    // children. Cascading does not touch `isOverridden`; that flag is set
-    // only by per-meeting edits via `meetings.update`.
-    if (args.coverImage !== undefined) childUpdates.coverImage = args.coverImage;
+    // coverImage is intentionally NOT cascaded — it's parent-only so that
+    // admin-level cover edits don't clobber per-group leader overrides. The
+    // read paths already fall back from child → parent when the child has no
+    // cover of its own.
     if (args.rsvpEnabled !== undefined) childUpdates.rsvpEnabled = args.rsvpEnabled;
     if (args.rsvpOptions !== undefined) childUpdates.rsvpOptions = args.rsvpOptions;
     if (args.visibility !== undefined) childUpdates.visibility = args.visibility;
@@ -654,6 +656,7 @@ export const createSeries = mutation({
         meetingType: args.meetingType,
         meetingLink: args.meetingLink,
         note: args.note,
+        coverImage: args.coverImage,
         status: "scheduled",
         createdAt: timestamp,
         updatedAt: timestamp,
@@ -676,7 +679,7 @@ export const createSeries = mutation({
           meetingType: args.meetingType,
           meetingLink: args.meetingLink,
           note: args.note,
-          coverImage: args.coverImage,
+          // coverImage lives on the parent CWE only — children fall back.
           status: "scheduled",
           createdById: userId,
           createdAt: timestamp,
@@ -889,6 +892,7 @@ export const get = query({
       meetingType: event.meetingType,
       meetingLink: event.meetingLink || null,
       note: event.note || null,
+      coverImage: event.coverImage ?? null,
       status: event.status,
       createdAt: event.createdAt,
       updatedAt: event.updatedAt || null,

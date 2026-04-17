@@ -277,40 +277,10 @@ describe("meetings.create — member flow", () => {
 });
 
 // ============================================================================
-// locationMode validation
+// CWE children + cover inheritance
 // ============================================================================
 
-describe("meetings.create — locationMode validation", () => {
-  test("address mode requires non-empty locationOverride — member", async () => {
-    const t = convexTest(schema, modules);
-    const s = await seed(t);
-
-    await expect(
-      t.mutation(api.functions.meetings.index.create, {
-        token: s.memberToken,
-        groupId: s.groupId,
-        scheduledAt: FUTURE(),
-        meetingType: 1,
-        locationMode: "address",
-      })
-    ).rejects.toThrow(/location address/i);
-  });
-
-  test("online mode requires non-empty meetingLink — applies to leaders", async () => {
-    const t = convexTest(schema, modules);
-    const s = await seed(t);
-
-    await expect(
-      t.mutation(api.functions.meetings.index.create, {
-        token: s.leaderToken,
-        groupId: s.groupId,
-        scheduledAt: FUTURE(),
-        meetingType: 2,
-        locationMode: "online",
-      })
-    ).rejects.toThrow(/meeting link/i);
-  });
-
+describe("meetings — CWE children + cover", () => {
   test("CWE child inherits parent coverImage on getByShortId when its own is empty", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
@@ -360,7 +330,7 @@ describe("meetings.create — locationMode validation", () => {
     expect(result?.coverImage).toContain("parent-cover.png");
   });
 
-  test("update on a CWE child skips locationMode validation — location is inherited", async () => {
+  test("update on a CWE child with empty location succeeds — location is inherited", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
 
@@ -403,9 +373,7 @@ describe("meetings.create — locationMode validation", () => {
 
     // The CreateEventScreen always sends `locationMode: "address"` + empty
     // `locationOverride` when the form hasn't explicitly chosen online/tbd.
-    // Before the fix this would throw "Location address is required"; now it
-    // should pass because non-overridden CWE children in address mode inherit
-    // their location from the hosting group.
+    // Backend no longer enforces location invariants, so this just saves.
     await t.mutation(api.functions.meetings.index.update, {
       token: s.adminToken,
       meetingId,
@@ -416,21 +384,9 @@ describe("meetings.create — locationMode validation", () => {
 
     const after = await t.run(async (ctx) => ctx.db.get(meetingId));
     expect(after?.title).toBe("Updated title");
-
-    // But switching the same inherited child to online with no link must
-    // still reject — the skip is narrow to address+inherited, not a blanket
-    // CWE exemption.
-    await expect(
-      t.mutation(api.functions.meetings.index.update, {
-        token: s.adminToken,
-        meetingId,
-        locationMode: "online",
-        meetingLink: "",
-      })
-    ).rejects.toThrow(/meeting link/i);
   });
 
-  test("CWE update cascades coverImage to non-overridden children", async () => {
+  test("CWE update writes coverImage to parent only, leaving leader overrides intact", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
 
@@ -457,9 +413,7 @@ describe("meetings.create — locationMode validation", () => {
         coverImage: "https://images.togather.nyc/old-cover.png",
       })
     );
-    // Two children: both start with the old cover (mirrors how
-    // `createCommunityWideEvent` writes the cover to every child). One is
-    // later overridden and should be skipped by the cascade.
+    // Inherited child: no cover of its own, relies on parent fallback at read time.
     const inheritedChildId = await t.run(async (ctx) =>
       ctx.db.insert("meetings", {
         groupId: s.groupId,
@@ -471,10 +425,11 @@ describe("meetings.create — locationMode validation", () => {
         communityWideEventId: cweId,
         createdAt: Date.now(),
         shortId: "cweshort2",
-        coverImage: "https://images.togather.nyc/old-cover.png",
         isOverridden: false,
       })
     );
+    // Leader-overridden child: has its own cover that must not be touched by
+    // admin CWE edits.
     const overriddenChildId = await t.run(async (ctx) =>
       ctx.db.insert("meetings", {
         groupId: s.groupId,
@@ -486,7 +441,7 @@ describe("meetings.create — locationMode validation", () => {
         communityWideEventId: cweId,
         createdAt: Date.now(),
         shortId: "cweshort3",
-        coverImage: "https://images.togather.nyc/custom-override.png",
+        coverImage: "https://images.togather.nyc/leader-override.png",
         isOverridden: true,
       })
     );
@@ -501,17 +456,80 @@ describe("meetings.create — locationMode validation", () => {
     const inherited = await t.run(async (ctx) => ctx.db.get(inheritedChildId));
     const overridden = await t.run(async (ctx) => ctx.db.get(overriddenChildId));
     expect(parent?.coverImage).toContain("new-cover.png");
-    expect(inherited?.coverImage).toContain("new-cover.png");
-    // Cascading must not flip the flag.
-    expect(inherited?.isOverridden).toBe(false);
-    // Overridden child keeps its custom art.
-    expect(overridden?.coverImage).toContain("custom-override.png");
+    // Parent-only: inherited child's cover stays empty; read path will fall
+    // back to the new parent cover.
+    expect(inherited?.coverImage).toBeUndefined();
+    // Leader-set override is untouched.
+    expect(overridden?.coverImage).toContain("leader-override.png");
   });
 
-  test("update enforces location invariants even when caller omits locationMode", async () => {
+  test("createCommunityWideEvent does not stamp coverImage on children", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
 
+    const groupTypeId = await t.run(async (ctx) =>
+      ctx.db.insert("groupTypes", {
+        communityId: s.communityId,
+        name: "Dinner Parties",
+        slug: "dinner-parties",
+        isActive: true,
+        displayOrder: 1,
+        createdAt: Date.now(),
+      })
+    );
+    // Attach the existing seed group to this group type so the CWE find a
+    // child to create against.
+    await t.run(async (ctx) => ctx.db.patch(s.groupId, { groupTypeId }));
+
+    const result = await t.mutation(
+      api.functions.meetings.communityEvents.createCommunityWideEvent,
+      {
+        token: s.adminToken,
+        communityId: s.communityId,
+        groupTypeId,
+        title: "Dinner",
+        scheduledAt: FUTURE(),
+        meetingType: 1,
+        coverImage: "https://images.togather.nyc/shared.png",
+      }
+    );
+
+    const parent = await t.run(async (ctx) =>
+      ctx.db.get(result.communityWideEventId as Id<"communityWideEvents">)
+    );
+    const children = await t.run(async (ctx) =>
+      ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", result.communityWideEventId as Id<"communityWideEvents">)
+        )
+        .collect()
+    );
+    expect(parent?.coverImage).toContain("shared.png");
+    expect(children.length).toBeGreaterThan(0);
+    for (const child of children) {
+      expect(child.coverImage).toBeUndefined();
+    }
+
+    // List/search queries used to read `meeting.coverImage` directly. Now
+    // that children don't store a cover, those surfaces have to resolve
+    // the parent fallback or the artwork disappears from the Events tab,
+    // My RSVPs, and search.
+    const communityEventsResult = await t.query(
+      api.functions.meetings.index.communityEvents,
+      { token: s.adminToken, communityId: s.communityId }
+    );
+    const cweInList = communityEventsResult.events.find(
+      (e: any) => e.communityWideEventId === result.communityWideEventId
+    );
+    expect(cweInList?.coverImage).toContain("shared.png");
+  });
+
+  test("coverImage: \"\" clears the cover (both meetings.update and communityWideEvents.update)", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    // Standalone meeting — leader clears their own cover.
     const meetingId = await t.mutation(api.functions.meetings.index.create, {
       token: s.memberToken,
       groupId: s.groupId,
@@ -519,17 +537,52 @@ describe("meetings.create — locationMode validation", () => {
       meetingType: 1,
       locationMode: "address",
       locationOverride: "123 Main St, Dallas, TX 75201",
+      coverImage: "https://images.togather.nyc/original.png",
     });
+    const beforeClear = await t.run(async (ctx) => ctx.db.get(meetingId));
+    expect(beforeClear?.coverImage).toContain("original.png");
 
-    // Partial payload that would break the invariant if the gate was
-    // `args.locationMode !== undefined`.
-    await expect(
-      t.mutation(api.functions.meetings.index.update, {
-        token: s.memberToken,
-        meetingId,
-        locationOverride: "",
+    await t.mutation(api.functions.meetings.index.update, {
+      token: s.memberToken,
+      meetingId,
+      coverImage: "",
+    });
+    const afterClear = await t.run(async (ctx) => ctx.db.get(meetingId));
+    // "" is translated to undefined in the patch so the field is fully
+    // unset — read paths see no cover without having to special-case "".
+    expect(afterClear?.coverImage).toBeUndefined();
+
+    // CWE parent — admin clears the shared cover.
+    const groupTypeId = await t.run(async (ctx) =>
+      ctx.db.insert("groupTypes", {
+        communityId: s.communityId,
+        name: "Dinner Parties 2",
+        slug: "dinner-parties-2",
+        isActive: true,
+        displayOrder: 1,
+        createdAt: Date.now(),
       })
-    ).rejects.toThrow(/location address/i);
+    );
+    const cweId = await t.run(async (ctx) =>
+      ctx.db.insert("communityWideEvents", {
+        communityId: s.communityId,
+        groupTypeId,
+        title: "Dinner Party",
+        scheduledAt: FUTURE(),
+        status: "scheduled",
+        meetingType: 1,
+        createdById: s.adminId,
+        createdAt: Date.now(),
+        coverImage: "https://images.togather.nyc/shared.png",
+      })
+    );
+    await t.mutation(api.functions.communityWideEvents.update, {
+      token: s.adminToken,
+      communityWideEventId: cweId,
+      coverImage: "",
+    });
+    const parent = await t.run(async (ctx) => ctx.db.get(cweId));
+    expect(parent?.coverImage).toBeUndefined();
   });
 
   test("tbd accepts empty location + link", async () => {
@@ -544,6 +597,86 @@ describe("meetings.create — locationMode validation", () => {
       locationMode: "tbd",
     });
     expect(id).toBeDefined();
+  });
+
+  test("getByShortId surfaces creator only for member-led events", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    // Member-led: non-leader member creates an event.
+    const memberMeetingId = await t.mutation(api.functions.meetings.index.create, {
+      token: s.memberToken,
+      groupId: s.groupId,
+      scheduledAt: FUTURE(),
+      meetingType: 1,
+      locationMode: "tbd",
+    });
+    const memberShortId = await t.run(
+      async (ctx) => (await ctx.db.get(memberMeetingId))?.shortId
+    );
+    const memberResult = await t.query(api.functions.meetings.index.getByShortId, {
+      shortId: memberShortId!,
+      token: s.memberToken,
+    });
+    expect(memberResult?.creatorName).toBeTruthy();
+
+    // Leader-led: a group leader creates an event. No host attribution.
+    const leaderMeetingId = await t.mutation(api.functions.meetings.index.create, {
+      token: s.leaderToken,
+      groupId: s.groupId,
+      scheduledAt: FUTURE() + 1000,
+      meetingType: 1,
+      locationMode: "tbd",
+    });
+    const leaderShortId = await t.run(
+      async (ctx) => (await ctx.db.get(leaderMeetingId))?.shortId
+    );
+    const leaderResult = await t.query(api.functions.meetings.index.getByShortId, {
+      shortId: leaderShortId!,
+      token: s.leaderToken,
+    });
+    expect(leaderResult?.creatorName).toBeNull();
+
+    // CWE child: admin-created, shared across groups. Even though the admin
+    // is also a group leader, the CWE shortcut fires first.
+    const cweId = await t.run(async (ctx) =>
+      ctx.db.insert("communityWideEvents", {
+        communityId: s.communityId,
+        groupTypeId: await ctx.db.insert("groupTypes", {
+          communityId: s.communityId,
+          name: "Dinner",
+          slug: "dinner",
+          isActive: true,
+          displayOrder: 1,
+          createdAt: Date.now(),
+        }),
+        title: "Community Dinner",
+        scheduledAt: FUTURE() + 2000,
+        status: "scheduled",
+        meetingType: 1,
+        createdById: s.adminId,
+        createdAt: Date.now(),
+      })
+    );
+    const cweChildId = await t.run(async (ctx) =>
+      ctx.db.insert("meetings", {
+        groupId: s.groupId,
+        createdById: s.adminId,
+        scheduledAt: FUTURE() + 2000,
+        status: "scheduled",
+        meetingType: 1,
+        communityId: s.communityId,
+        communityWideEventId: cweId,
+        createdAt: Date.now(),
+        shortId: "cwehostcheck",
+      })
+    );
+    void cweChildId;
+    const cweResult = await t.query(api.functions.meetings.index.getByShortId, {
+      shortId: "cwehostcheck",
+      token: s.adminToken,
+    });
+    expect(cweResult?.creatorName).toBeNull();
   });
 });
 

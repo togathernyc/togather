@@ -67,11 +67,18 @@ interface CreateMeetingInput {
 export function CreateEventScreen() {
   const { colors } = useTheme();
   // All hooks must be called at the top level, before any early returns
-  const { group_id, event_id: eventIdParam, hostingGroupId } = useLocalSearchParams<{
+  const { group_id, event_id: eventIdParam, hostingGroupId, cweAdmin } = useLocalSearchParams<{
     group_id?: string;
     event_id?: string;
     hostingGroupId?: string;
+    cweAdmin?: string;
   }>();
+  // Entering from admin > community-wide events > Edit. That surface treats
+  // the CWE as a single entity, so on save we skip the per-meeting scope
+  // picker and route every field through `communityWideEvents.update` — the
+  // parent-only cover edit lands on the shared record, cascading fields
+  // propagate to every non-overridden child automatically.
+  const isCweAdminEdit = cweAdmin === "1";
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { primaryColor } = useCommunityTheme();
@@ -125,6 +132,11 @@ export function CreateEventScreen() {
   const [meetingLink, setMeetingLink] = useState("");
   const [note, setNote] = useState("");
   const [coverImage, setCoverImage] = useState<string | undefined>();
+  // True when the user tapped "Remove" on an existing cover. On save we
+  // send `coverImage: ""` so the backend patches through the removal;
+  // without this flag, an undefined `coverImage` would be interpreted as
+  // "no change" and the old cover would stick.
+  const [coverImageRemoved, setCoverImageRemoved] = useState(false);
   // null = user explicitly cleared (picked a custom upload after having a
   // curated poster). undefined = no change. Keeping this tri-state matters
   // for edits: sending undefined means "don't touch" the existing posterId,
@@ -248,6 +260,23 @@ export function CreateEventScreen() {
   const meeting = meetingData ?? undefined;
   const isLoadingMeeting = isEditMode && !!meetingId && meetingData === undefined;
 
+  // Admin CWE edit: prefill from the parent CWE, not the opened child. The
+  // admin screen has to pick *some* child to route through because the edit
+  // form lives under the leader-tools meeting route — but if that child has
+  // been overridden individually its title/time/cover can diverge from the
+  // parent. Saving through `communityWideEvents.update` patches every
+  // non-undefined field onto the parent, so without this override an
+  // overridden child's divergent values would silently become the parent's.
+  const parentCweData = useConvexQuery(
+    api.functions.communityWideEvents.get,
+    isCweAdminEdit && meeting?.communityWideEventId && token
+      ? {
+          token,
+          communityWideEventId: meeting.communityWideEventId as Id<"communityWideEvents">,
+        }
+      : "skip"
+  );
+
   // Query existing series for the group (edit mode series linking)
   const editGroupId = effectiveGroupId || (meeting as any)?.groupId;
   const groupSeriesList = useConvexQuery(
@@ -260,17 +289,26 @@ export function CreateEventScreen() {
   // Initialize form from meeting data when editing
   useEffect(() => {
     if (meeting && isEditMode) {
-      if (meeting.scheduledAt) {
+      // Admin CWE edit: parent CWE owns title/time/meetingType/link/note
+      // and the shared cover. Source those from the parent so overridden
+      // child divergence can't bleed into the parent on save. rsvp/
+      // visibility/posterId still come from the child because they aren't
+      // stored on the parent — cascading those from whichever child the
+      // admin screen picked is an acceptable tradeoff.
+      const source =
+        isCweAdminEdit && parentCweData ? parentCweData : meeting;
+
+      if (source.scheduledAt) {
         // Convex stores scheduledAt as a timestamp number
-        setScheduledAt(new Date(meeting.scheduledAt));
+        setScheduledAt(new Date(source.scheduledAt));
       }
-      setTitle(meeting.title || "");
-      setLocation(meeting.locationOverride || "");
-      setIsOnline(meeting.meetingType === 2); // 2 = online
+      setTitle(source.title || "");
+      setLocation((meeting as any).locationOverride || "");
+      setIsOnline(source.meetingType === 2); // 2 = online
       setLocationTbd((meeting as any).locationMode === "tbd");
-      setMeetingLink(meeting.meetingLink || "");
-      setNote(meeting.note || "");
-      setCoverImage(meeting.coverImage || undefined);
+      setMeetingLink(source.meetingLink || "");
+      setNote(source.note || "");
+      setCoverImage((source as any).coverImage || undefined);
       setPosterId((meeting as any).posterId || undefined);
 
       // Initialize RSVP fields
@@ -284,7 +322,7 @@ export function CreateEventScreen() {
         setVisibility(meeting.visibility as VisibilityLevel);
       }
     }
-  }, [meeting, isEditMode]);
+  }, [meeting, isEditMode, isCweAdminEdit, parentCweData]);
 
   // Debounced geocoding check for location field
   useEffect(() => {
@@ -684,7 +722,12 @@ export function CreateEventScreen() {
             : undefined,
         locationMode: resolvedLocationMode,
         note: note.trim() || undefined,
-        coverImage: finalCoverImage || undefined,
+        // "" signals an explicit removal on edit — the backend stores the
+        // empty string and read paths fall back to the parent cover (for
+        // CWE children) or render no cover (for standalone events).
+        // `undefined` means "no change" so we don't clobber an existing
+        // cover on an edit that didn't touch the picker.
+        coverImage: finalCoverImage || (coverImageRemoved ? "" : undefined),
         posterId: posterId,
         rsvpEnabled: rsvpEnabled,
         rsvpOptions: rsvpOptions.filter((opt) => opt.enabled),
@@ -716,8 +759,9 @@ export function CreateEventScreen() {
                 meetingType: data.meetingType,
                 meetingLink: data.meetingLink,
                 note: data.note,
-                // Cascades to parent + non-overridden children. `isOverridden`
-                // is untouched; only per-meeting edits flip that flag.
+                // Parent-only. Child detail pages fall back to this when the
+                // child has no cover of its own, so admin cover edits show up
+                // everywhere without touching leader-set per-group overrides.
                 coverImage: data.coverImage,
                 // Cascade rsvp + visibility so scope-wide edits don't
                 // silently drop these fields. Per-group `locationOverride`
@@ -757,7 +801,12 @@ export function CreateEventScreen() {
           }
         };
 
-        if (hasSeries || isCommunityWide) {
+        // Admin CWE settings edit: treat the CWE as a single entity and skip
+        // the per-meeting scope picker. Every field routes through
+        // `communityWideEvents.update` with the cross-group scope.
+        if (isCweAdminEdit && isCommunityWide) {
+          performUpdate("this_date_all_groups");
+        } else if (hasSeries || isCommunityWide) {
           showEditScopePrompt({
             isCommunityWide,
             isInSeries: hasSeries,
@@ -1499,6 +1548,20 @@ export function CreateEventScreen() {
                     style={styles.posterSlotImage}
                     imageStyle={styles.posterSlotImageInner}
                   />
+                  <TouchableOpacity
+                    onPress={() => {
+                      if (isSubmitting) return;
+                      setCoverImage(undefined);
+                      setCoverImageRemoved(true);
+                      setPosterId(null);
+                    }}
+                    activeOpacity={0.7}
+                    accessibilityLabel="Remove cover image"
+                    style={styles.posterSlotRemoveBadge}
+                  >
+                    <Ionicons name="trash-outline" size={14} color="#fff" />
+                    <Text style={styles.posterSlotEditBadgeText}>Remove</Text>
+                  </TouchableOpacity>
                   <View style={styles.posterSlotEditBadge}>
                     <Ionicons name="pencil" size={14} color="#fff" />
                     <Text style={styles.posterSlotEditBadgeText}>Change</Text>
@@ -1889,6 +1952,7 @@ export function CreateEventScreen() {
           onClose={() => setIsPosterPickerOpen(false)}
           onSelect={(sel) => {
             setCoverImage(sel.imageUrl);
+            setCoverImageRemoved(false);
             // Library pick → set posterId. Custom upload → null so the
             // update mutation can explicitly clear the previous posterId
             // (undefined would be interpreted as "no change").
@@ -1971,6 +2035,18 @@ const styles = StyleSheet.create({
     position: "absolute",
     bottom: 12,
     right: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
+    backgroundColor: "rgba(0,0,0,0.55)",
+  },
+  posterSlotRemoveBadge: {
+    position: "absolute",
+    bottom: 12,
+    left: 12,
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
