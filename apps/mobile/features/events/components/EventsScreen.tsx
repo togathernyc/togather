@@ -171,18 +171,17 @@ interface GreetingProps {
 }
 
 function Greeting({ firstName, colors, primaryColor, onMakePlans }: GreetingProps) {
-  const dayOfWeek = new Date().toLocaleDateString('en-US', { weekday: 'long' });
   const hello = firstName ? `Hey ${firstName}` : 'Hey there';
   return (
     <View style={styles.greeting}>
       <Text style={[styles.greetingTitle, { color: colors.text }]}>{hello}</Text>
       <Text style={[styles.greetingSubtitle, { color: colors.textSecondary }]}>
-        It's {dayOfWeek}!{' '}
+        Life is better in community.{' '}
         <Text
           style={[styles.greetingAction, { color: primaryColor }]}
           onPress={onMakePlans}
         >
-          Make plans
+          Gather up
         </Text>
       </Text>
     </View>
