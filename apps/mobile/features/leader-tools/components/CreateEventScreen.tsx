@@ -67,11 +67,18 @@ interface CreateMeetingInput {
 export function CreateEventScreen() {
   const { colors } = useTheme();
   // All hooks must be called at the top level, before any early returns
-  const { group_id, event_id: eventIdParam, hostingGroupId } = useLocalSearchParams<{
+  const { group_id, event_id: eventIdParam, hostingGroupId, cweAdmin } = useLocalSearchParams<{
     group_id?: string;
     event_id?: string;
     hostingGroupId?: string;
+    cweAdmin?: string;
   }>();
+  // Entering from admin > community-wide events > Edit. That surface treats
+  // the CWE as a single entity, so on save we skip the per-meeting scope
+  // picker and route every field through `communityWideEvents.update` — the
+  // parent-only cover edit lands on the shared record, cascading fields
+  // propagate to every non-overridden child automatically.
+  const isCweAdminEdit = cweAdmin === "1";
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { primaryColor } = useCommunityTheme();
@@ -716,8 +723,9 @@ export function CreateEventScreen() {
                 meetingType: data.meetingType,
                 meetingLink: data.meetingLink,
                 note: data.note,
-                // Cascades to parent + non-overridden children. `isOverridden`
-                // is untouched; only per-meeting edits flip that flag.
+                // Parent-only. Child detail pages fall back to this when the
+                // child has no cover of its own, so admin cover edits show up
+                // everywhere without touching leader-set per-group overrides.
                 coverImage: data.coverImage,
                 // Cascade rsvp + visibility so scope-wide edits don't
                 // silently drop these fields. Per-group `locationOverride`
@@ -757,7 +765,12 @@ export function CreateEventScreen() {
           }
         };
 
-        if (hasSeries || isCommunityWide) {
+        // Admin CWE settings edit: treat the CWE as a single entity and skip
+        // the per-meeting scope picker. Every field routes through
+        // `communityWideEvents.update` with the cross-group scope.
+        if (isCweAdminEdit && isCommunityWide) {
+          performUpdate("this_date_all_groups");
+        } else if (hasSeries || isCommunityWide) {
           showEditScopePrompt({
             isCommunityWide,
             isInSeries: hasSeries,

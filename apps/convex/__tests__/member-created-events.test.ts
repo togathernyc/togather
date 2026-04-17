@@ -430,7 +430,7 @@ describe("meetings.create — locationMode validation", () => {
     ).rejects.toThrow(/meeting link/i);
   });
 
-  test("CWE update cascades coverImage to non-overridden children", async () => {
+  test("CWE update writes coverImage to parent only, leaving leader overrides intact", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
 
@@ -457,9 +457,7 @@ describe("meetings.create — locationMode validation", () => {
         coverImage: "https://images.togather.nyc/old-cover.png",
       })
     );
-    // Two children: both start with the old cover (mirrors how
-    // `createCommunityWideEvent` writes the cover to every child). One is
-    // later overridden and should be skipped by the cascade.
+    // Inherited child: no cover of its own, relies on parent fallback at read time.
     const inheritedChildId = await t.run(async (ctx) =>
       ctx.db.insert("meetings", {
         groupId: s.groupId,
@@ -471,10 +469,11 @@ describe("meetings.create — locationMode validation", () => {
         communityWideEventId: cweId,
         createdAt: Date.now(),
         shortId: "cweshort2",
-        coverImage: "https://images.togather.nyc/old-cover.png",
         isOverridden: false,
       })
     );
+    // Leader-overridden child: has its own cover that must not be touched by
+    // admin CWE edits.
     const overriddenChildId = await t.run(async (ctx) =>
       ctx.db.insert("meetings", {
         groupId: s.groupId,
@@ -486,7 +485,7 @@ describe("meetings.create — locationMode validation", () => {
         communityWideEventId: cweId,
         createdAt: Date.now(),
         shortId: "cweshort3",
-        coverImage: "https://images.togather.nyc/custom-override.png",
+        coverImage: "https://images.togather.nyc/leader-override.png",
         isOverridden: true,
       })
     );
@@ -501,11 +500,60 @@ describe("meetings.create — locationMode validation", () => {
     const inherited = await t.run(async (ctx) => ctx.db.get(inheritedChildId));
     const overridden = await t.run(async (ctx) => ctx.db.get(overriddenChildId));
     expect(parent?.coverImage).toContain("new-cover.png");
-    expect(inherited?.coverImage).toContain("new-cover.png");
-    // Cascading must not flip the flag.
-    expect(inherited?.isOverridden).toBe(false);
-    // Overridden child keeps its custom art.
-    expect(overridden?.coverImage).toContain("custom-override.png");
+    // Parent-only: inherited child's cover stays empty; read path will fall
+    // back to the new parent cover.
+    expect(inherited?.coverImage).toBeUndefined();
+    // Leader-set override is untouched.
+    expect(overridden?.coverImage).toContain("leader-override.png");
+  });
+
+  test("createCommunityWideEvent does not stamp coverImage on children", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    const groupTypeId = await t.run(async (ctx) =>
+      ctx.db.insert("groupTypes", {
+        communityId: s.communityId,
+        name: "Dinner Parties",
+        slug: "dinner-parties",
+        isActive: true,
+        displayOrder: 1,
+        createdAt: Date.now(),
+      })
+    );
+    // Attach the existing seed group to this group type so the CWE find a
+    // child to create against.
+    await t.run(async (ctx) => ctx.db.patch(s.groupId, { groupTypeId }));
+
+    const result = await t.mutation(
+      api.functions.meetings.communityEvents.createCommunityWideEvent,
+      {
+        token: s.adminToken,
+        communityId: s.communityId,
+        groupTypeId,
+        title: "Dinner",
+        scheduledAt: FUTURE(),
+        meetingType: 1,
+        coverImage: "https://images.togather.nyc/shared.png",
+      }
+    );
+
+    const parent = await t.run(async (ctx) =>
+      ctx.db.get(result.communityWideEventId as Id<"communityWideEvents">)
+    );
+    const children = await t.run(async (ctx) =>
+      ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", result.communityWideEventId as Id<"communityWideEvents">)
+        )
+        .collect()
+    );
+    expect(parent?.coverImage).toContain("shared.png");
+    expect(children.length).toBeGreaterThan(0);
+    for (const child of children) {
+      expect(child.coverImage).toBeUndefined();
+    }
   });
 
   test("update enforces location invariants even when caller omits locationMode", async () => {
