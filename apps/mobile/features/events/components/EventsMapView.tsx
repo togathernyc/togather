@@ -14,8 +14,9 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import { ExploreMap } from '@features/explore/components/ExploreMap';
 import {
@@ -178,9 +179,8 @@ export function EventsMapView({ enabled = true }: EventsMapViewProps) {
     }
   };
 
-  // Don't render the map with an empty list — it initializes oddly.
-  // Show a spinner while loading or geocoding.
-  if (isLoading || isGeocoding || markers.length === 0) {
+  // Spinner while loading OR while geocoding a non-empty list.
+  if (isLoading || isGeocoding) {
     return (
       <View
         style={[
@@ -189,6 +189,33 @@ export function EventsMapView({ enabled = true }: EventsMapViewProps) {
         ]}
       >
         <ActivityIndicator size="small" color={colors.textSecondary} />
+      </View>
+    );
+  }
+
+  // Loaded but nothing to show — render an empty state instead of a
+  // perpetual spinner. Happens when the community has no near-term
+  // events OR when events lack resolvable coordinates.
+  if (markers.length === 0) {
+    return (
+      <View
+        style={[
+          styles.loadingContainer,
+          { backgroundColor: colors.backgroundSecondary, padding: 24 },
+        ]}
+      >
+        <Ionicons
+          name="map-outline"
+          size={40}
+          color={colors.textSecondary}
+          style={{ marginBottom: 12 }}
+        />
+        <Text style={[styles.emptyTitle, { color: colors.text }]}>
+          No events on the map yet
+        </Text>
+        <Text style={[styles.emptyBody, { color: colors.textSecondary }]}>
+          Events happening in the next 7 days will show up here.
+        </Text>
       </View>
     );
   }
@@ -213,5 +240,15 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  emptyTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+    textAlign: 'center',
+  },
+  emptyBody: {
+    fontSize: 13,
+    textAlign: 'center',
   },
 });
