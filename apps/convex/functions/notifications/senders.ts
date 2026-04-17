@@ -10,7 +10,7 @@ import { internalAction } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import { Id } from "../../_generated/dataModel";
 import { joinRequestApprovedEmail } from "../../lib/notifications/emailTemplates";
-import { eventRsvpReceived } from "../../lib/notifications/definitions";
+import { eventCreatedByMember, eventRsvpReceived } from "../../lib/notifications/definitions";
 import type { ExtractNotificationData, FormatterContext } from "../../lib/notifications/types";
 
 type NotificationGroupInfo = {
@@ -505,6 +505,130 @@ export const notifyRsvpReceived = internalAction({
       return { success: result.success, sent: notifications.length };
     } catch (error) {
       console.error("[NotifyRsvpReceived] Error:", error);
+      return { success: false, error: String(error) };
+    }
+  },
+});
+
+// ============================================================================
+// Notification Action for Member-Created Events
+// ============================================================================
+
+/**
+ * Notify group leaders when a non-leader member creates an event in their group.
+ * Called from meetings.create when the creator is not a leader. ADR-022 requires
+ * this to be suppressed for the announcement group — that check lives in the
+ * caller (meetings.create), not here.
+ */
+export const notifyEventCreatedByMember = internalAction({
+  args: {
+    meetingId: v.id("meetings"),
+  },
+  handler: async (ctx, args): Promise<{ success: boolean; error?: string; sent?: number }> => {
+    try {
+      const meeting: { title?: string; groupId: Id<"groups">; shortId?: string; createdById?: Id<"users"> } | null = await ctx.runQuery(internal.functions.notifications.internal.getMeetingInfo, {
+        meetingId: args.meetingId,
+      });
+      if (!meeting) {
+        console.log("[NotifyEventCreatedByMember] Meeting not found");
+        return { success: false, error: "Meeting not found" };
+      }
+
+      const groupInfo: NotificationGroupInfo | null = await ctx.runQuery(internal.functions.notifications.internal.getGroupInfo, {
+        groupId: meeting.groupId,
+      });
+      if (!groupInfo) {
+        console.log("[NotifyEventCreatedByMember] Group not found");
+        return { success: false, error: "Group not found" };
+      }
+
+      const creatorName: string = meeting.createdById
+        ? await ctx.runQuery(internal.functions.notifications.internal.getUserDisplayName, {
+            userId: meeting.createdById,
+          })
+        : "A member";
+
+      const leaderIds: Id<"users">[] = await ctx.runQuery(internal.functions.notifications.internal.getGroupMembersForNotification, {
+        groupId: meeting.groupId,
+        filter: "leaders",
+      });
+      const recipientIds = meeting.createdById
+        ? leaderIds.filter((id) => id !== meeting.createdById)
+        : leaderIds;
+
+      if (recipientIds.length === 0) {
+        return { success: true, sent: 0 };
+      }
+
+      const tokenResults: Array<{ userId: string; tokens: string[] }> = await ctx.runQuery(internal.functions.notifications.tokens.getActiveTokensForUsers, {
+        userIds: recipientIds,
+      });
+
+      const meetingTitle = meeting.title || "Event";
+      const pushFormatter = eventCreatedByMember.formatters.push;
+      if (!pushFormatter) {
+        return { success: false, error: "Missing push formatter" };
+      }
+      type MemberPushData = ExtractNotificationData<typeof eventCreatedByMember>;
+      const formatterCtx: FormatterContext<MemberPushData> = {
+        data: {
+          creatorName,
+          meetingTitle,
+          groupName: groupInfo.name,
+          groupId: meeting.groupId,
+          communityId: groupInfo.communityId,
+          shortId: meeting.shortId,
+        },
+        userId: meeting.createdById ?? (recipientIds[0] as Id<"users">),
+      };
+      const { title, body, data: pushData } = pushFormatter(formatterCtx);
+
+      const notificationImageUrl = getSenderNotificationImage(groupInfo);
+      const notifications = tokenResults.flatMap((result: { userId: string; tokens: string[] }) =>
+        result.tokens.map((token: string) => ({
+          token,
+          title,
+          body,
+          data: {
+            ...pushData,
+            groupAvatarUrl: notificationImageUrl,
+          },
+          imageUrl: notificationImageUrl,
+        }))
+      );
+
+      if (notifications.length === 0) {
+        return { success: true, sent: 0 };
+      }
+
+      const result = await ctx.runAction(internal.functions.notifications.internal.sendBatchPushNotifications, {
+        notifications,
+      });
+
+      const notificationRecords = recipientIds.map((leaderId) => ({
+        userId: leaderId,
+        communityId: groupInfo.communityId as Id<"communities">,
+        groupId: meeting.groupId,
+        notificationType: "event_created_by_member",
+        title,
+        body,
+        data: {
+          groupId: meeting.groupId,
+          communityId: groupInfo.communityId,
+          shortId: meeting.shortId,
+          url: meeting.shortId ? `/e/${meeting.shortId}?source=app` : undefined,
+          groupAvatarUrl: notificationImageUrl,
+        },
+        status: result.success ? "sent" : "failed",
+      }));
+
+      await ctx.runMutation(internal.functions.notifications.mutations.createNotificationsBatch, {
+        notifications: notificationRecords,
+      });
+
+      return { success: result.success, sent: notifications.length };
+    } catch (error) {
+      console.error("[NotifyEventCreatedByMember] Error:", error);
       return { success: false, error: String(error) };
     }
   },

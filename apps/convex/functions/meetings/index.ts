@@ -10,6 +10,13 @@ import { internal } from "../../_generated/api";
 import { now, generateShortId, getDisplayName, getMediaUrl } from "../../lib/utils";
 import { requireAuth } from "../../lib/auth";
 import { isActiveLeader } from "../../lib/helpers";
+import {
+  canCreateInGroup,
+  canEditMeeting,
+  countFutureEventsCreatedBy,
+  NON_LEADER_FUTURE_EVENT_CAP,
+  validateLocationMode,
+} from "../../lib/meetingPermissions";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
 import {
   DEFAULT_REMINDER_OFFSET_MS,
@@ -102,6 +109,9 @@ export const create = mutation({
     meetingType: v.number(), // 1=In-Person, 2=Online
     meetingLink: v.optional(v.string()),
     locationOverride: v.optional(v.string()),
+    locationMode: v.optional(
+      v.union(v.literal("address"), v.literal("online"), v.literal("tbd"))
+    ),
     note: v.optional(v.string()),
     coverImage: v.optional(v.string()),
     rsvpEnabled: v.optional(v.boolean()),
@@ -120,17 +130,39 @@ export const create = mutation({
   handler: async (ctx, args) => {
     const createdById = await requireAuth(ctx, args.token);
 
-    // Verify user is a leader of this group
-    const membership = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group_user", (q) =>
-        q.eq("groupId", args.groupId).eq("userId", createdById)
-      )
-      .first();
-
-    if (!isActiveLeader(membership)) {
-      throw new Error("Only group leaders can create events");
+    // Any active member can create; leaders get extra privileges below. See ADR-022.
+    const { allowed, isLeader } = await canCreateInGroup(
+      ctx,
+      createdById,
+      args.groupId
+    );
+    if (!allowed) {
+      throw new Error("You must be a member of this group to create events");
     }
+
+    // Series creation remains leader-only.
+    if (args.seriesId && !isLeader) {
+      throw new Error("Only group leaders can add events to a series");
+    }
+
+    // 1-future-event cap for non-leaders (ADR-022). Convex mutations are
+    // serialized per-document; a concurrent second create reads the just-inserted
+    // row and this check rejects it.
+    if (!isLeader) {
+      const futureCount = await countFutureEventsCreatedBy(ctx, createdById, now());
+      if (futureCount >= NON_LEADER_FUTURE_EVENT_CAP) {
+        throw new Error(
+          "You already have an upcoming event. Cancel or finish it before creating another."
+        );
+      }
+    }
+
+    // Location mode validation applies uniformly to members AND leaders.
+    validateLocationMode({
+      locationMode: args.locationMode,
+      locationOverride: args.locationOverride,
+      meetingLink: args.meetingLink,
+    });
 
     const timestamp = now();
 
@@ -164,6 +196,7 @@ export const create = mutation({
       meetingType: args.meetingType,
       meetingLink: args.meetingLink,
       locationOverride: args.locationOverride,
+      locationMode: args.locationMode,
       note: args.note,
       coverImage: args.coverImage,
       status: "scheduled",
@@ -215,6 +248,16 @@ export const create = mutation({
       });
     }
 
+    // Notify group leaders when a non-leader creates an event, EXCEPT in the
+    // announcement group (community-wide events), where this would spam admins.
+    if (!isLeader && !group.isAnnouncementGroup) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.notifications.senders.notifyEventCreatedByMember,
+        { meetingId }
+      );
+    }
+
     return meetingId;
   },
 });
@@ -232,6 +275,9 @@ export const update = mutation({
     meetingType: v.optional(v.number()),
     meetingLink: v.optional(v.string()),
     locationOverride: v.optional(v.string()),
+    locationMode: v.optional(
+      v.union(v.literal("address"), v.literal("online"), v.literal("tbd"))
+    ),
     note: v.optional(v.string()),
     coverImage: v.optional(v.string()),
     status: v.optional(v.union(v.literal("scheduled"), v.literal("confirmed"), v.literal("completed"), v.literal("cancelled"))),
@@ -259,16 +305,22 @@ export const update = mutation({
       throw new Error("Meeting not found");
     }
 
-    // Verify user is a leader of this group
-    const membership = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group_user", (q) =>
-        q.eq("groupId", meeting.groupId).eq("userId", userId)
-      )
-      .first();
+    // Per ADR-022: creator, group leaders, and community admins can update.
+    if (!(await canEditMeeting(ctx, userId, meeting))) {
+      throw new Error("You do not have permission to update this event");
+    }
 
-    if (!isActiveLeader(membership)) {
-      throw new Error("Only group leaders can update meetings");
+    // Location mode validation runs on every write path (members + leaders).
+    if (args.locationMode !== undefined) {
+      validateLocationMode({
+        locationMode: args.locationMode,
+        locationOverride:
+          args.locationOverride !== undefined
+            ? args.locationOverride
+            : meeting.locationOverride,
+        meetingLink:
+          args.meetingLink !== undefined ? args.meetingLink : meeting.meetingLink,
+      });
     }
 
     // Track what changed for notification
@@ -488,16 +540,9 @@ export const cancel = mutation({
       throw new Error("Meeting not found");
     }
 
-    // Verify user is a leader of this group
-    const membership = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group_user", (q) =>
-        q.eq("groupId", meeting.groupId).eq("userId", userId)
-      )
-      .first();
-
-    if (!isActiveLeader(membership)) {
-      throw new Error("Only group leaders can cancel meetings");
+    // Per ADR-022: creator, group leaders, and community admins can cancel.
+    if (!(await canEditMeeting(ctx, userId, meeting))) {
+      throw new Error("You do not have permission to cancel this event");
     }
 
     if (args.scope === "all_in_series" && meeting.seriesId) {

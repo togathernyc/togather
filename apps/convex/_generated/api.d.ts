@@ -140,6 +140,7 @@ import type * as lib_email_templates_VerificationCode from "../lib/email/templat
 import type * as lib_followupConstants from "../lib/followupConstants.js";
 import type * as lib_helpers from "../lib/helpers.js";
 import type * as lib_meetingConfig from "../lib/meetingConfig.js";
+import type * as lib_meetingPermissions from "../lib/meetingPermissions.js";
 import type * as lib_meetingSearchText from "../lib/meetingSearchText.js";
 import type * as lib_memberSearch from "../lib/memberSearch.js";
 import type * as lib_membership from "../lib/membership.js";
@@ -303,6 +304,7 @@ declare const fullApi: ApiFromModules<{
   "lib/followupConstants": typeof lib_followupConstants;
   "lib/helpers": typeof lib_helpers;
   "lib/meetingConfig": typeof lib_meetingConfig;
+  "lib/meetingPermissions": typeof lib_meetingPermissions;
   "lib/meetingSearchText": typeof lib_meetingSearchText;
   "lib/memberSearch": typeof lib_memberSearch;
   "lib/membership": typeof lib_membership;
