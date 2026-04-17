@@ -87,23 +87,18 @@ export const getById = query({
       ? await ctx.db.get(group.groupTypeId)
       : null;
 
-    // Count active members (same filter as getByShortId: no leftAt, and
-    // either no requestStatus or "accepted"). Used by the chat header to
-    // surface "N members" as a tappable link to the members page.
-    const activeMemberRows = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
-      .filter((q) =>
-        q.and(
-          q.eq(q.field("leftAt"), undefined),
-          q.or(
-            q.eq(q.field("requestStatus"), undefined),
-            q.eq(q.field("requestStatus"), "accepted"),
-          ),
-        ),
+    // Reuse the denormalized count on the group's main ("general") channel.
+    // Every active group member is a member of the main channel by design,
+    // so this avoids a .collect() scan of groupMembers (which for a 9k-
+    // member group would read thousands of rows on every reactive re-run).
+    // O(1) lookup via the by_group_type index.
+    const mainChannel = await ctx.db
+      .query("chatChannels")
+      .withIndex("by_group_type", (q) =>
+        q.eq("groupId", args.groupId).eq("channelType", "main"),
       )
-      .collect();
-    const memberCount = activeMemberRows.length;
+      .first();
+    const memberCount = mainChannel?.memberCount ?? 0;
 
     // SECURITY: Only include sensitive fields for members or community admins
     const canSeeSensitiveData = isActiveMember || isCommAdmin;
