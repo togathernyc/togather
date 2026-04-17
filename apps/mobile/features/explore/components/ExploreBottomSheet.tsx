@@ -365,12 +365,12 @@ export const ExploreBottomSheet = forwardRef<ExploreBottomSheetRef, ExploreBotto
 
           {/* Map/List Toggle Button */}
           <TouchableOpacity
-            style={styles.mapListToggleButton}
+            style={[styles.mapListToggleButton, { backgroundColor: colors.text }]}
             onPress={() => setIsMapMode(!isMapMode)}
             activeOpacity={0.9}
           >
-            <Text style={[styles.mapButtonText, { color: colors.textInverse }]}>{isMapMode ? 'List' : 'Map'}</Text>
-            <Ionicons name={isMapMode ? 'list' : 'map'} size={16} color={colors.textInverse} />
+            <Text style={[styles.mapButtonText, { color: colors.surface }]}>{isMapMode ? 'List' : 'Map'}</Text>
+            <Ionicons name={isMapMode ? 'list' : 'map'} size={16} color={colors.surface} />
           </TouchableOpacity>
         </View>
       );
@@ -504,7 +504,6 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#222224',
     paddingHorizontal: 20,
     paddingVertical: 12,
     borderRadius: 24,
