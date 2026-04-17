@@ -1,10 +1,6 @@
 export { ExploreBottomSheet } from "./ExploreBottomSheet";
 export { GroupPreviewCard } from "./GroupPreviewCard";
 export { ExploreMap } from "./ExploreMap";
-export { ExploreScreen } from "./ExploreScreen";
+export { GroupsScreen } from "./GroupsScreen";
 export { ExploreFilters } from "./ExploreFilters";
 export { ExploreListView } from "./ExploreListView";
-export { ViewToggle } from "./ViewToggle";
-export { EventCard } from "./EventCard";
-export { EventsListView } from "./EventsListView";
-export { EventsFilterModal } from "./EventsFilterModal";

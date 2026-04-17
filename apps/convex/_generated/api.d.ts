@@ -63,6 +63,7 @@ import type * as functions_linkPreview from "../functions/linkPreview.js";
 import type * as functions_meetingRsvps from "../functions/meetingRsvps.js";
 import type * as functions_meetings_attendance from "../functions/meetings/attendance.js";
 import type * as functions_meetings_communityEvents from "../functions/meetings/communityEvents.js";
+import type * as functions_meetings_events from "../functions/meetings/events.js";
 import type * as functions_meetings_explore from "../functions/meetings/explore.js";
 import type * as functions_meetings_index from "../functions/meetings/index.js";
 import type * as functions_meetings_migrations from "../functions/meetings/migrations.js";
@@ -225,6 +226,7 @@ declare const fullApi: ApiFromModules<{
   "functions/meetingRsvps": typeof functions_meetingRsvps;
   "functions/meetings/attendance": typeof functions_meetings_attendance;
   "functions/meetings/communityEvents": typeof functions_meetings_communityEvents;
+  "functions/meetings/events": typeof functions_meetings_events;
   "functions/meetings/explore": typeof functions_meetings_explore;
   "functions/meetings/index": typeof functions_meetings_index;
   "functions/meetings/migrations": typeof functions_meetings_migrations;

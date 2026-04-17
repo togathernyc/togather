@@ -23,124 +23,92 @@ describe('useExploreFilters', () => {
     mockSetParams.mockClear();
   });
 
-  it('defaults to groups view when no params', () => {
+  it('defaults to no active filters when no params', () => {
     const { result } = renderHook(() => useExploreFilters());
-    expect(result.current.filters.view).toBe('groups');
+    expect(result.current.filters.groupType).toBeNull();
+    expect(result.current.filters.meetingType).toBeNull();
+    expect(result.current.hasActiveGroupFilters).toBe(false);
+    expect(result.current.activeGroupFilterCount).toBe(0);
   });
 
-  it('reads view from URL params', () => {
-    mockParams = { view: 'events' };
+  it('reads numeric groupType from URL params', () => {
+    mockParams = { groupType: '5' };
     const { result } = renderHook(() => useExploreFilters());
-    expect(result.current.filters.view).toBe('events');
+    expect(result.current.filters.groupType).toBe(5);
   });
 
-  describe('ViewToggle fix - switching back to groups', () => {
-    it('explicitly includes view=groups in URL when switching to groups', () => {
-      // Start with events view
-      mockParams = { view: 'events' };
-      const { result } = renderHook(() => useExploreFilters());
-
-      act(() => {
-        result.current.setFilters({ view: 'groups' });
-      });
-
-      // The critical assertion: view=groups must be in the URL
-      // Previously, view was omitted for 'groups' (default), causing
-      // Expo Router param merge to keep stale view=events
-      expect(mockReplace).toHaveBeenCalledTimes(1);
-      const calledUrl = mockReplace.mock.calls[0][0] as string;
-      expect(calledUrl).toContain('view=groups');
-    });
-
-    it('explicitly includes view=events in URL when switching to events', () => {
-      mockParams = {};
-      const { result } = renderHook(() => useExploreFilters());
-
-      act(() => {
-        result.current.setFilters({ view: 'events' });
-      });
-
-      expect(mockReplace).toHaveBeenCalledTimes(1);
-      const calledUrl = mockReplace.mock.calls[0][0] as string;
-      expect(calledUrl).toContain('view=events');
-    });
-
-    it('uses router.replace (not setParams) to avoid param merging', () => {
-      mockParams = { view: 'events' };
-      const { result } = renderHook(() => useExploreFilters());
-
-      act(() => {
-        result.current.setFilters({ view: 'groups' });
-      });
-
-      // Must use replace, not setParams
-      expect(mockReplace).toHaveBeenCalled();
-      expect(mockSetParams).not.toHaveBeenCalled();
-    });
+  it('reads string groupType (Convex ID) from URL params', () => {
+    mockParams = { groupType: 'xvht54eke' };
+    const { result } = renderHook(() => useExploreFilters());
+    expect(result.current.filters.groupType).toBe('xvht54eke');
   });
 
-  describe('resetFilters', () => {
-    it('always includes view param when resetting', () => {
-      mockParams = { view: 'events', dateFilter: 'this_week' };
-      const { result } = renderHook(() => useExploreFilters());
-
-      act(() => {
-        result.current.resetFilters();
-      });
-
-      expect(mockReplace).toHaveBeenCalledTimes(1);
-      const calledUrl = mockReplace.mock.calls[0][0] as string;
-      expect(calledUrl).toContain('view=events');
-      expect(calledUrl).not.toContain('dateFilter');
-    });
-
-    it('includes view=groups when resetting from groups view', () => {
-      mockParams = { groupType: '5' };
-      const { result } = renderHook(() => useExploreFilters());
-
-      act(() => {
-        result.current.resetFilters();
-      });
-
-      expect(mockReplace).toHaveBeenCalledTimes(1);
-      const calledUrl = mockReplace.mock.calls[0][0] as string;
-      expect(calledUrl).toContain('view=groups');
-    });
+  it('reads meetingType from URL params', () => {
+    mockParams = { meetingType: '2' };
+    const { result } = renderHook(() => useExploreFilters());
+    expect(result.current.filters.meetingType).toBe(2);
   });
 
-  describe('skips update when nothing changed', () => {
-    it('does not call replace when setting same view', () => {
-      mockParams = { view: 'events' };
-      const { result } = renderHook(() => useExploreFilters());
+  it('updates URL when setting groupType', () => {
+    const { result } = renderHook(() => useExploreFilters());
 
-      act(() => {
-        result.current.setFilters({ view: 'events' });
-      });
-
-      expect(mockReplace).not.toHaveBeenCalled();
+    act(() => {
+      result.current.setFilters({ groupType: 3 });
     });
+
+    expect(mockReplace).toHaveBeenCalledTimes(1);
+    const calledUrl = mockReplace.mock.calls[0][0] as string;
+    expect(calledUrl).toContain('groupType=3');
   });
 
-  describe('mode locking', () => {
-    it('uses mode as view when mode is set', () => {
-      mockParams = { mode: 'events' };
-      const { result } = renderHook(() => useExploreFilters());
-      expect(result.current.filters.view).toBe('events');
-      expect(result.current.isModeLocked).toBe(true);
+  it('uses router.replace (not setParams) to avoid param merging', () => {
+    mockParams = { groupType: '5' };
+    const { result } = renderHook(() => useExploreFilters());
+
+    act(() => {
+      result.current.setFilters({ groupType: 7 });
     });
 
-    it('does not include view param when mode is set', () => {
-      mockParams = { mode: 'events' };
-      const { result } = renderHook(() => useExploreFilters());
+    expect(mockReplace).toHaveBeenCalled();
+    expect(mockSetParams).not.toHaveBeenCalled();
+  });
 
-      act(() => {
-        result.current.setFilters({ dateFilter: 'today' });
-      });
+  it('does not call replace when setting same values', () => {
+    mockParams = { groupType: '5' };
+    const { result } = renderHook(() => useExploreFilters());
 
-      expect(mockReplace).toHaveBeenCalledTimes(1);
-      const calledUrl = mockReplace.mock.calls[0][0] as string;
-      expect(calledUrl).toContain('mode=events');
-      expect(calledUrl).not.toMatch(/[?&]view=/);
+    act(() => {
+      result.current.setFilters({ groupType: 5 });
     });
+
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+
+  it('resetFilters clears all group filter params', () => {
+    mockParams = { groupType: '5', meetingType: '2' };
+    const { result } = renderHook(() => useExploreFilters());
+
+    act(() => {
+      result.current.resetFilters();
+    });
+
+    expect(mockReplace).toHaveBeenCalledTimes(1);
+    const calledUrl = mockReplace.mock.calls[0][0] as string;
+    expect(calledUrl).not.toContain('groupType');
+    expect(calledUrl).not.toContain('meetingType');
+  });
+
+  it('reports hasActiveGroupFilters when groupType is set', () => {
+    mockParams = { groupType: '5' };
+    const { result } = renderHook(() => useExploreFilters());
+    expect(result.current.hasActiveGroupFilters).toBe(true);
+    expect(result.current.activeGroupFilterCount).toBe(1);
+  });
+
+  it('reports hasActiveGroupFilters when both filters are set', () => {
+    mockParams = { groupType: '5', meetingType: '2' };
+    const { result } = renderHook(() => useExploreFilters());
+    expect(result.current.hasActiveGroupFilters).toBe(true);
+    expect(result.current.activeGroupFilterCount).toBe(2);
   });
 });

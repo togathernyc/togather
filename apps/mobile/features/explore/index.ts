@@ -9,7 +9,7 @@ export {
   ExploreBottomSheet,
   GroupPreviewCard,
   ExploreMap,
-  ExploreScreen,
+  GroupsScreen,
   ExploreFilters,
   ExploreListView,
 } from './components';

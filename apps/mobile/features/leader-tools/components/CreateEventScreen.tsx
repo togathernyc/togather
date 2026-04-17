@@ -28,7 +28,7 @@ import {
   DEFAULT_RSVP_OPTIONS,
 } from "./RsvpOptionsEditor";
 import { VisibilitySelector, VisibilityLevel } from "./VisibilitySelector";
-import { useLeaderGroups } from "../../explore/hooks/useCommunityEvents";
+import { useLeaderGroups } from "@features/events/hooks/useCommunityEvents";
 import { ShareToChatModal } from "./ShareToChatModal";
 import { ConfirmModal } from "@components/ui/ConfirmModal";
 import { getGroupCoordinates, geocodeAddressAsync } from "../../groups/utils/geocodeLocation";
@@ -948,7 +948,7 @@ export function CreateEventScreen() {
         >
           {/* Community-Wide Event Toggle - only show for admins in unified mode */}
           {canCreateCommunityWide && !isEditMode && (
-            <View style={styles.communityWideSection}>
+            <View style={[styles.communityWideSection, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
               <View style={styles.communityWideToggleRow}>
                 <View style={styles.communityWideToggleLabel}>
                   <Text style={[styles.label, { color: colors.text }]}>Create for all</Text>
@@ -982,8 +982,8 @@ export function CreateEventScreen() {
                       <Text style={[styles.loadingDropdownText, { color: colors.textSecondary }]}>Loading group types...</Text>
                     </View>
                   ) : !groupTypes || groupTypes.length === 0 ? (
-                    <View style={styles.noGroupsContainer}>
-                      <Text style={styles.noGroupsText}>
+                    <View style={[styles.noGroupsContainer, { backgroundColor: colors.surfaceSecondary }]}>
+                      <Text style={[styles.noGroupsText, { color: colors.destructive }]}>
                         No group types available.
                       </Text>
                     </View>
@@ -1052,9 +1052,9 @@ export function CreateEventScreen() {
 
                   {/* Show count of groups that will receive the event */}
                   {selectedGroupTypeId && groupCountForType !== undefined && (
-                    <View style={styles.groupCountInfo}>
+                    <View style={[styles.groupCountInfo, { backgroundColor: colors.surfaceSecondary }]}>
                       <Ionicons name="information-circle" size={16} color={colors.link} />
-                      <Text style={styles.groupCountText}>
+                      <Text style={[styles.groupCountText, { color: colors.link }]}>
                         This will create events for {groupCountForType} {selectedGroupType?.name || "group"} groups
                       </Text>
                     </View>
@@ -1066,12 +1066,12 @@ export function CreateEventScreen() {
 
           {/* Community-Wide Event Edit Warning */}
           {isEditMode && meeting?.communityWideEventId && !meeting?.isOverridden && (
-            <View style={styles.communityWideWarning}>
+            <View style={[styles.communityWideWarning, { backgroundColor: colors.surfaceSecondary, borderColor: colors.warning }]}>
               <View style={styles.communityWideWarningHeader}>
                 <Ionicons name="globe-outline" size={20} color={colors.link} />
-                <Text style={styles.communityWideWarningTitle}>Community-wide event</Text>
+                <Text style={[styles.communityWideWarningTitle, { color: colors.text }]}>Community-wide event</Text>
               </View>
-              <Text style={styles.communityWideWarningText}>
+              <Text style={[styles.communityWideWarningText, { color: colors.textSecondary }]}>
                 Editing will disconnect this event from community-wide updates. Future changes to the parent event won't affect this group's event.
               </Text>
             </View>
@@ -1087,8 +1087,8 @@ export function CreateEventScreen() {
                   <Text style={[styles.loadingDropdownText, { color: colors.textSecondary }]}>Loading groups...</Text>
                 </View>
               ) : !leaderGroups || leaderGroups.length === 0 ? (
-                <View style={styles.noGroupsContainer}>
-                  <Text style={styles.noGroupsText}>
+                <View style={[styles.noGroupsContainer, { backgroundColor: colors.surfaceSecondary }]}>
+                  <Text style={[styles.noGroupsText, { color: colors.destructive }]}>
                     You don't have permission to create events for any groups.
                   </Text>
                 </View>
@@ -1294,6 +1294,7 @@ export function CreateEventScreen() {
                   <TextInput
                     style={[styles.input, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground, color: colors.text }]}
                     placeholder="e.g., Weekly Dinner Party"
+                    placeholderTextColor={colors.inputPlaceholder}
                     value={seriesName}
                     onChangeText={setSeriesName}
                     editable={!isSubmitting}
@@ -1306,9 +1307,9 @@ export function CreateEventScreen() {
 
               {/* Summary */}
               {selectedDates.length > 0 && (
-                <View style={styles.groupCountInfo}>
+                <View style={[styles.groupCountInfo, { backgroundColor: colors.surfaceSecondary }]}>
                   <Ionicons name="information-circle" size={16} color={colors.link} />
-                  <Text style={styles.groupCountText}>
+                  <Text style={[styles.groupCountText, { color: colors.link }]}>
                     {isCommunityWideEnabled && groupCountForType
                       ? `${selectedDates.length} dates \u00b7 ${groupCountForType} groups \u00b7 ${selectedDates.length * groupCountForType} events total`
                       : `${selectedDates.length} events will be created`}
@@ -1334,6 +1335,7 @@ export function CreateEventScreen() {
             <TextInput
               style={[styles.input, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground, color: colors.text }]}
               placeholder={`e.g., "${groupTypeName}" (leave blank for default)`}
+              placeholderTextColor={colors.inputPlaceholder}
               value={title}
               onChangeText={setTitle}
               editable={!isSubmitting}
@@ -1381,6 +1383,7 @@ export function CreateEventScreen() {
               <TextInput
                 style={[styles.input, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground, color: colors.text }]}
                 placeholder="https://zoom.us/j/..."
+                placeholderTextColor={colors.inputPlaceholder}
                 value={meetingLink}
                 onChangeText={setMeetingLink}
                 keyboardType="url"
@@ -1397,6 +1400,7 @@ export function CreateEventScreen() {
               <TextInput
                 style={[styles.input, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground, color: colors.text }]}
                 placeholder="Enter full address with ZIP code"
+                placeholderTextColor={colors.inputPlaceholder}
                 value={location}
                 onChangeText={setLocation}
                 editable={!isSubmitting}
@@ -1411,9 +1415,9 @@ export function CreateEventScreen() {
                     </View>
                   )}
                   {!isCheckingLocation && locationCanBeGeocoded === false && (
-                    <View style={styles.locationWarning}>
+                    <View style={[styles.locationWarning, { backgroundColor: colors.surfaceSecondary }]}>
                       <Ionicons name="warning" size={20} color={colors.warning} />
-                      <Text style={styles.locationWarningText}>
+                      <Text style={[styles.locationWarningText, { color: colors.textSecondary }]}>
                         This address couldn't be found. Enter a full address with ZIP code (e.g., "123 Main St, Dallas, TX 75201") so this event appears on the map.
                       </Text>
                     </View>
@@ -1421,7 +1425,7 @@ export function CreateEventScreen() {
                   {!isCheckingLocation && locationCanBeGeocoded === true && (
                     <View style={styles.locationSuccess}>
                       <Ionicons name="checkmark-circle" size={16} color={colors.success} />
-                      <Text style={styles.locationSuccessText}>Location found</Text>
+                      <Text style={[styles.locationSuccessText, { color: colors.success }]}>Location found</Text>
                     </View>
                   )}
                 </>
@@ -1435,6 +1439,7 @@ export function CreateEventScreen() {
             <TextInput
               style={[styles.input, styles.textArea, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground, color: colors.text }]}
               placeholder="Add any notes about this event..."
+              placeholderTextColor={colors.inputPlaceholder}
               value={note}
               onChangeText={setNote}
               multiline
@@ -1634,7 +1639,7 @@ export function CreateEventScreen() {
             {isSubmitting ? (
               <ActivityIndicator color={colors.textInverse} />
             ) : (
-              <Text style={styles.submitButtonText}>
+              <Text style={[styles.submitButtonText, { color: '#fff' }]}>
                 {isEditMode ? "Save Changes" : "Create Event"}
               </Text>
             )}
@@ -1645,13 +1650,14 @@ export function CreateEventScreen() {
             <TouchableOpacity
               style={[
                 styles.cancelEventButton,
+                { backgroundColor: colors.surfaceSecondary, borderColor: colors.destructive },
                 isSubmitting && styles.cancelEventButtonDisabled,
               ]}
               onPress={handleCancelEvent}
               disabled={isSubmitting}
             >
               <Ionicons name="close-circle-outline" size={20} color={colors.destructive} />
-              <Text style={styles.cancelEventButtonText}>Cancel Event</Text>
+              <Text style={[styles.cancelEventButtonText, { color: colors.destructive }]}>Cancel Event</Text>
             </TouchableOpacity>
           )}
         </ScrollView>

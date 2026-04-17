@@ -19,9 +19,9 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { COLORS } from '../constants';
+import { COLORS } from '@features/explore/constants';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
-import type { ExploreFilters, DateFilterPreset } from '../hooks/useExploreFilters';
+import type { EventsFilterShape, DateFilterPreset } from '@features/explore/hooks/useExploreFilters';
 
 // Date preset options
 const DATE_PRESETS: Array<{ label: string; value: DateFilterPreset }> = [
@@ -41,8 +41,8 @@ interface GroupOption {
 interface EventsFilterModalProps {
   visible: boolean;
   onClose: () => void;
-  filters: ExploreFilters;
-  onFilterChange: (updates: Partial<ExploreFilters>) => void;
+  filters: EventsFilterShape;
+  onFilterChange: (updates: Partial<EventsFilterShape>) => void;
   /** Pre-loaded selected groups (only the ones currently selected) */
   selectedGroups?: GroupOption[];
   /** Search results from async search */

@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
-import { View, StyleSheet, Text, TouchableOpacity, Platform, ScrollView, RefreshControl } from 'react-native';
+import { View, StyleSheet, Text, TouchableOpacity, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Constants from 'expo-constants';
 import { Ionicons } from '@expo/vector-icons';
@@ -11,13 +11,9 @@ import { ExploreMap, MapBounds } from './ExploreMap';
 import { ExploreBottomSheet, ExploreBottomSheetRef } from './ExploreBottomSheet';
 import { FloatingGroupCard } from './FloatingGroupCard';
 import { FilterModal, FilterState } from './FilterModal';
-import { EventsFilterModal } from './EventsFilterModal';
-import { getGroupCoordinates, geocodeZipCode, geocodeAddressAsync } from '@features/groups/utils/geocodeLocation';
-import { useExploreFilters, ExploreView } from '../hooks/useExploreFilters';
+import { getGroupCoordinates } from '@features/groups/utils/geocodeLocation';
+import { useExploreFilters } from '../hooks/useExploreFilters';
 import { filterExploreGroups } from '../utils/filterGroups';
-import { useCommunityEvents, useLeaderGroups, useMyRsvpedEvents, CommunityEvent } from '../hooks/useCommunityEvents';
-import { useEventSearch } from '../hooks/useEventSearch';
-import { AppImage } from '@components/ui';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
 import { useTheme } from '@hooks/useTheme';
 import { useQuery, api } from '@services/api/convex';
@@ -31,32 +27,29 @@ const mapboxToken = Constants.expoConfig?.extra?.mapboxAccessToken ||
 // Stable empty arrays to prevent infinite re-renders
 const EMPTY_GROUPS: Group[] = [];
 
-export function ExploreScreen() {
+export function GroupsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user, community, token } = useAuth();
   const { primaryColor } = useCommunityTheme();
   const { colors } = useTheme();
   const isAdmin = user?.is_admin === true;
-  // Check if user has community context (required for groups and events queries)
+  // Check if user has community context (required for groups queries)
   const hasCommunityContext = !!community?.id;
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [visibleGroups, setVisibleGroups] = useState<Group[]>([]);
   const [isFilterModalVisible, setIsFilterModalVisible] = useState(false);
-  const [isEventsFilterModalVisible, setIsEventsFilterModalVisible] = useState(false);
   const bottomSheetRef = useRef<ExploreBottomSheetRef>(null);
   // Track if a group was selected to know when to skip bounds updates
   const hadSelectedGroupRef = useRef(false);
 
-  // URL-synced filters for both groups and events
+  // URL-synced filters for groups
   const {
     filters: exploreFilters,
     setFilters: setExploreFilters,
     hasActiveGroupFilters,
-    hasActiveEventFilters,
     activeGroupFilterCount,
-    activeEventFilterCount,
   } = useExploreFilters();
 
   // Fetch community explore defaults (admin-configured default filters)
@@ -109,39 +102,6 @@ export function ExploreScreen() {
     meetingType: exploreFilters.meetingType ?? null,
   }), [exploreFilters.groupType, exploreFilters.meetingType]);
 
-  // Fetch events for events view (requires community context)
-  const {
-    data: eventsData,
-    isLoading: isLoadingEvents,
-    refetch: refetchEvents,
-    isFetching: isFetchingEvents,
-  } = useCommunityEvents(exploreFilters, { enabled: hasCommunityContext });
-
-  // Backend event search (replaces client-side filtering when searching)
-  const {
-    data: eventSearchData,
-    isLoading: isSearchingEvents,
-    isSearching: hasActiveEventSearch,
-  } = useEventSearch(
-    exploreFilters.view === 'events' ? searchQuery : '',
-    community?.id
-  );
-
-  // Fetch user's leader groups for events filter modal (requires community context)
-  const { data: leaderGroups, isLoading: isLoadingLeaderGroups } = useLeaderGroups({ enabled: hasCommunityContext });
-
-  // Fetch user's RSVPed events (does NOT require community context)
-  // Used when user has no community to show their upcoming events
-  const {
-    data: myRsvpedEventsData,
-    isLoading: isLoadingMyRsvps,
-    isFetching: isFetchingMyRsvps,
-    refetch: refetchMyRsvps,
-  } = useMyRsvpedEvents({ enabled: !hasCommunityContext });
-
-  // Check if user is a leader of any group
-  const isLeader = (leaderGroups?.length ?? 0) > 0;
-
   // Check if user has pending group creation requests
   const pendingRequests = useQuery(
     api.functions.groupCreationRequests.mine,
@@ -189,7 +149,6 @@ export function ExploreScreen() {
 
   // Convex doesn't have error/isFetching states in the same way as tRPC
   const error = null;
-  const isFetching = isLoading;
 
   // Parse groups from tRPC response - tRPC returns array directly
   const allGroups: Group[] = useMemo(() => {
@@ -256,88 +215,7 @@ export function ExploreScreen() {
     return { groupsWithLocation: withLocation, groupsWithoutLocation: withoutLocation };
   }, [filteredGroups]);
 
-  // Convert events to map markers, prioritizing event's locationOverride
-  // Falls back to hosting group's address if event has no specific location
-  // Uses async geocoding to support full addresses without zip codes
-  // Use stable empty array to prevent infinite re-renders
-  const emptyMarkersRef = useRef<Group[]>([]);
-  const [eventsAsMapMarkers, setEventsAsMapMarkers] = useState<Group[]>([]);
-
-  useEffect(() => {
-    const events = eventsData?.events ?? [];
-    if (events.length === 0) {
-      // Use stable empty array reference to prevent infinite re-renders
-      setEventsAsMapMarkers(prev => prev.length === 0 ? prev : emptyMarkersRef.current);
-      return;
-    }
-
-    let cancelled = false;
-
-    async function geocodeEvents() {
-      const markers: Group[] = [];
-
-      for (const event of events) {
-        if (cancelled) return;
-
-        let coords = null;
-
-        // Priority 1: Try event's own locationOverride (event-specific venue)
-        if (event.locationOverride) {
-          // First try sync zip code extraction
-          coords = getGroupCoordinates({ location: event.locationOverride });
-
-          // If no zip code found, try async geocoding (Apple/Google Maps)
-          if (!coords) {
-            coords = await geocodeAddressAsync(event.locationOverride);
-          }
-        }
-
-        // Priority 2: Fall back to hosting group's address
-        if (!coords) {
-          const groupData = {
-            address_line1: event.group.addressLine1,
-            address_line2: event.group.addressLine2,
-            city: event.group.city,
-            state: event.group.state,
-            zip_code: event.group.zipCode,
-          };
-          coords = getGroupCoordinates(groupData as any);
-        }
-
-        if (coords) {
-          // Create a Group-compatible marker for the event
-          const eventImageUrl = event.coverImage || event.group?.image || null;
-          markers.push({
-            _id: event.id, // Convex document ID (required)
-            id: parseInt(event.id, 10) || Math.abs(event.id.split('').reduce((a: number, b: string) => ((a << 5) - a) + b.charCodeAt(0), 0)),
-            uuid: event.id,
-            name: event.title || event.group.name,
-            title: event.title || event.group.name,
-            preview: eventImageUrl,
-            image_url: eventImageUrl,
-            group_type_name: event.group.groupTypeName,
-            latitude: coords.latitude,
-            longitude: coords.longitude,
-            // Mark this as an event for special handling
-            _isEvent: true,
-            _eventShortId: event.shortId,
-          } as Group & { _isEvent: boolean; _eventShortId: string });
-        }
-      }
-
-      if (!cancelled) {
-        setEventsAsMapMarkers(markers);
-      }
-    }
-
-    geocodeEvents();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [eventsData?.events]);
-
-  // Handle group/event selection from map
+  // Handle group selection from map
   const handleRequestGroupPress = useCallback(() => {
     // Check if user has pending request before navigating
     if (!isAdmin && hasPendingRequest) {
@@ -359,18 +237,9 @@ export function ExploreScreen() {
       return;
     }
 
-    // Check if this is an event marker (has _isEvent flag)
-    const markerAsAny = group as Group & { _isEvent?: boolean; _eventShortId?: string };
-    if (markerAsAny._isEvent && markerAsAny._eventShortId) {
-      // Navigate directly to event detail
-      router.push(`/e/${markerAsAny._eventShortId}?source=app`);
-      return;
-    }
-
-    // Regular group selection
     hadSelectedGroupRef.current = true;
     setSelectedGroup(group);
-  }, [router]);
+  }, []);
 
   // Handle bounds change from map
   // Don't update visibleGroups when a group is selected or was just deselected,
@@ -418,22 +287,6 @@ export function ExploreScreen() {
     setSearchQuery(query);
   }, []);
 
-  // Handle view change (groups/events)
-  const handleViewChange = useCallback((view: ExploreView) => {
-    setExploreFilters({ view });
-    setSearchQuery(''); // Clear search when switching views
-  }, [setExploreFilters]);
-
-  // Handle event press - navigate to event detail
-  const handleEventPress = useCallback((event: CommunityEvent) => {
-    router.push(`/e/${event.shortId}?source=app`);
-  }, [router]);
-
-  // Handle events refresh
-  const handleRefreshEvents = useCallback(() => {
-    refetchEvents();
-  }, [refetchEvents]);
-
   // Handle group filter change - clears session group type defaults so the user's
   // explicit filter choice takes full effect (admin defaults stop restricting)
   const handleGroupFilterChange = useCallback((newFilters: FilterState) => {
@@ -454,93 +307,22 @@ export function ExploreScreen() {
     );
   }
 
-  // Show RSVPed events when no community context
+  // Show empty state when user has no community context
   if (!hasCommunityContext) {
-    const myEvents = myRsvpedEventsData?.events ?? [];
-
     return (
-      <View style={[styles.noCommunityContainer, { backgroundColor: colors.backgroundSecondary }]}>
-        <View style={[styles.noCommunityHeader, { paddingTop: insets.top + 16, backgroundColor: colors.surface, borderBottomColor: colors.borderLight }]}>
-          <Text style={[styles.noCommunityTitle, { color: colors.text }]}>My Events</Text>
-          <Text style={[styles.noCommunitySubtitle, { color: colors.textSecondary }]}>Events you've RSVPed to</Text>
-        </View>
-
-        {isLoadingMyRsvps ? (
-          <View style={[styles.errorContainer, { backgroundColor: colors.backgroundSecondary }]}>
-            <Text style={[styles.errorSubtext, { color: colors.textSecondary }]}>Loading your events...</Text>
-          </View>
-        ) : myEvents.length === 0 ? (
-          <View style={[styles.errorContainer, { backgroundColor: colors.backgroundSecondary }]}>
-            <Ionicons name="calendar-outline" size={48} color={colors.textSecondary} style={{ marginBottom: 16 }} />
-            <Text style={[styles.errorText, { color: colors.text }]}>No upcoming events</Text>
-            <Text style={[styles.errorSubtext, { color: colors.textSecondary }]}>Events you RSVP to will appear here</Text>
-          </View>
-        ) : (
-          <ScrollView
-            style={styles.noCommunityScrollView}
-            contentContainerStyle={styles.noCommunityScrollContent}
-            refreshControl={
-              <RefreshControl
-                refreshing={isFetchingMyRsvps && !isLoadingMyRsvps}
-                onRefresh={refetchMyRsvps}
-              />
-            }
-          >
-            {myEvents.map((event) => (
-              <TouchableOpacity
-                key={event.id}
-                style={[styles.myEventCard, { backgroundColor: colors.surface }]}
-                onPress={() => router.push(`/e/${event.shortId}?source=app`)}
-                activeOpacity={0.7}
-              >
-                <AppImage
-                  source={event.coverImage || event.group.image}
-                  style={styles.myEventImage}
-                  resizeMode="cover"
-                  optimizedWidth={150}
-                  placeholder={{
-                    type: 'initials',
-                    name: event.title || event.group.name,
-                  }}
-                />
-                <View style={styles.myEventInfo}>
-                  <Text style={[styles.myEventTitle, { color: colors.text }]} numberOfLines={1}>
-                    {event.title || event.group.name}
-                  </Text>
-                  <Text style={[styles.myEventDate, { color: primaryColor }]}>
-                    {new Date(event.scheduledAt).toLocaleDateString('en-US', {
-                      weekday: 'short',
-                      month: 'short',
-                      day: 'numeric',
-                      hour: 'numeric',
-                      minute: '2-digit',
-                    })}
-                  </Text>
-                  <Text style={[styles.myEventGroup, { color: colors.textSecondary }]} numberOfLines={1}>
-                    {event.group.name} • {event.community.name}
-                  </Text>
-                </View>
-                <View style={[styles.myEventStatus, { backgroundColor: `${primaryColor}15` }]}>
-                  <Text style={[styles.myEventStatusText, { color: primaryColor }]}>
-                    {event.rsvpStatus.optionLabel || 'RSVPed'}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        )}
+      <View style={[styles.errorContainer, { backgroundColor: colors.backgroundSecondary, paddingTop: insets.top }]}>
+        <Ionicons name="people-outline" size={48} color={colors.textSecondary} style={{ marginBottom: 16 }} />
+        <Text style={[styles.errorText, { color: colors.text }]}>Join a community to see groups</Text>
+        <Text style={[styles.errorSubtext, { color: colors.textSecondary }]}>Groups are organized within communities</Text>
       </View>
     );
   }
 
-  // Determine which markers to show on the map based on current view
-  const mapMarkers = exploreFilters.view === 'events' ? eventsAsMapMarkers : groupsWithLocation;
-
   return (
     <View style={[styles.container, { backgroundColor: colors.backgroundSecondary }]}>
-      {/* Map layer - shows groups or events based on current view */}
+      {/* Map layer - shows groups */}
       <ExploreMap
-        groups={mapMarkers}
+        groups={groupsWithLocation}
         selectedGroupId={selectedGroup?.id ? (typeof selectedGroup.id === 'number' ? selectedGroup.id : parseInt(String(selectedGroup.id), 10)) : null}
         onGroupSelect={handleGroupSelect}
         onBoundsChange={handleBoundsChange}
@@ -551,46 +333,23 @@ export function ExploreScreen() {
       {!selectedGroup && (
         <TouchableOpacity
           style={[styles.filterButton, { top: insets.top + 12, backgroundColor: colors.buttonPrimary }]}
-          onPress={() => {
-            if (exploreFilters.view === 'events') {
-              setIsEventsFilterModalVisible(true);
-            } else {
-              setIsFilterModalVisible(true);
-            }
-          }}
+          onPress={() => setIsFilterModalVisible(true)}
           activeOpacity={0.9}
         >
           <Ionicons name="options-outline" size={20} color={colors.buttonPrimaryText} />
-          {/* Show badge for active filters based on current view */}
-          {exploreFilters.view === 'groups' && hasActiveGroupFilters && (
+          {hasActiveGroupFilters && (
             <View style={[styles.filterBadge, { backgroundColor: primaryColor }]}>
               <Text style={[styles.filterBadgeText, { color: colors.textInverse }]}>{activeGroupFilterCount}</Text>
-            </View>
-          )}
-          {exploreFilters.view === 'events' && hasActiveEventFilters && (
-            <View style={[styles.filterBadge, { backgroundColor: primaryColor }]}>
-              <Text style={[styles.filterBadgeText, { color: colors.textInverse }]}>{activeEventFilterCount}</Text>
             </View>
           )}
         </TouchableOpacity>
       )}
 
-      {/* Floating add button - context-aware based on view */}
-      {/* Groups view: all users can create/request groups */}
-      {!selectedGroup && exploreFilters.view === 'groups' && (
+      {/* Floating add button - all users can create/request groups */}
+      {!selectedGroup && (
         <TouchableOpacity
           style={[styles.addButton, { top: insets.top + 64, backgroundColor: colors.buttonPrimary }]}
           onPress={handleRequestGroupPress}
-          activeOpacity={0.9}
-        >
-          <Ionicons name="add" size={24} color={colors.buttonPrimaryText} />
-        </TouchableOpacity>
-      )}
-      {/* Events view: leaders can create events */}
-      {!selectedGroup && exploreFilters.view === 'events' && isLeader && (
-        <TouchableOpacity
-          style={[styles.addButton, { top: insets.top + 64, backgroundColor: colors.buttonPrimary }]}
-          onPress={() => router.push('/(user)/create-event')}
           activeOpacity={0.9}
         >
           <Ionicons name="add" size={24} color={colors.buttonPrimaryText} />
@@ -601,19 +360,10 @@ export function ExploreScreen() {
       {!selectedGroup && (
         <ExploreBottomSheet
           ref={bottomSheetRef}
-          activeView={exploreFilters.view}
-          onViewChange={handleViewChange}
           visibleGroups={visibleGroups}
           groupsWithoutLocation={groupsWithoutLocation}
           onGroupSelect={handleGroupSelect}
           isLoadingGroups={isLoading}
-          events={eventsData?.events ?? []}
-          eventSearchResults={hasActiveEventSearch ? eventSearchData?.events : undefined}
-          isSearchingEvents={isSearchingEvents}
-          onEventPress={handleEventPress}
-          isLoadingEvents={isLoadingEvents}
-          onRefreshEvents={handleRefreshEvents}
-          isRefreshingEvents={isFetchingEvents}
           searchQuery={searchQuery}
           onSearchChange={handleSearchChange}
         />
@@ -635,21 +385,6 @@ export function ExploreScreen() {
         onFilterChange={handleGroupFilterChange}
         groupTypes={groupTypes || []}
         isLoadingGroupTypes={isLoadingGroupTypes}
-      />
-
-      {/* Events Filter Modal */}
-      <EventsFilterModal
-        visible={isEventsFilterModalVisible}
-        onClose={() => setIsEventsFilterModalVisible(false)}
-        filters={exploreFilters}
-        onFilterChange={setExploreFilters}
-        groups={leaderGroups?.filter((g): g is NonNullable<typeof g> => g !== null).map(g => ({
-          id: g.id,
-          name: g.name,
-          groupTypeName: g.groupTypeName,
-          preview: g.preview,
-        })) ?? []}
-        isLoadingGroups={isLoadingLeaderGroups}
       />
     </View>
   );
@@ -731,77 +466,5 @@ const styles = StyleSheet.create({
         elevation: 5,
       },
     }),
-  },
-  // No-community view styles
-  noCommunityContainer: {
-    flex: 1,
-  },
-  noCommunityHeader: {
-    paddingHorizontal: 20,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-  },
-  noCommunityTitle: {
-    fontSize: 28,
-    fontWeight: '700',
-    marginBottom: 4,
-  },
-  noCommunitySubtitle: {
-    fontSize: 14,
-  },
-  noCommunityScrollView: {
-    flex: 1,
-  },
-  noCommunityScrollContent: {
-    padding: 16,
-    gap: 12,
-  },
-  myEventCard: {
-    borderRadius: 12,
-    padding: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    ...Platform.select({
-      web: {
-        boxShadow: '0px 1px 3px rgba(0, 0, 0, 0.1)',
-      },
-      default: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.1,
-        shadowRadius: 2,
-        elevation: 2,
-      },
-    }),
-  },
-  myEventImage: {
-    width: 60,
-    height: 60,
-    borderRadius: 8,
-  },
-  myEventInfo: {
-    flex: 1,
-  },
-  myEventTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  myEventDate: {
-    fontSize: 14,
-    marginBottom: 2,
-  },
-  myEventGroup: {
-    fontSize: 13,
-  },
-  myEventStatus: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  myEventStatusText: {
-    fontSize: 12,
-    fontWeight: '600',
   },
 });

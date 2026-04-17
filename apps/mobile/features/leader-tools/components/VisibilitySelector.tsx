@@ -51,12 +51,16 @@ export function VisibilitySelector({ value, onChange }: VisibilitySelectorProps)
         return (
           <TouchableOpacity
             key={option.value}
-            style={[styles.option, isSelected && { borderColor: primaryColor, backgroundColor: colors.surfaceSecondary }]}
+            style={[
+              styles.option,
+              { backgroundColor: colors.surface, borderColor: colors.border },
+              isSelected && { borderColor: primaryColor, backgroundColor: colors.surfaceSecondary },
+            ]}
             onPress={() => onChange(option.value)}
             activeOpacity={0.7}
           >
             <View style={styles.optionHeader}>
-              <View style={[styles.radio, isSelected && { borderColor: primaryColor }]}>
+              <View style={[styles.radio, { borderColor: colors.border }, isSelected && { borderColor: primaryColor }]}>
                 {isSelected && <View style={[styles.radioInner, { backgroundColor: primaryColor }]} />}
               </View>
               <Ionicons
@@ -65,11 +69,11 @@ export function VisibilitySelector({ value, onChange }: VisibilitySelectorProps)
                 color={isSelected ? primaryColor : colors.textSecondary}
                 style={styles.icon}
               />
-              <Text style={[styles.label, isSelected && { color: primaryColor }]}>
+              <Text style={[styles.label, { color: colors.text }, isSelected && { color: primaryColor }]}>
                 {option.label}
               </Text>
             </View>
-            <Text style={styles.description}>{option.description}</Text>
+            <Text style={[styles.description, { color: colors.textSecondary }]}>{option.description}</Text>
           </TouchableOpacity>
         );
       })}

@@ -51,14 +51,27 @@ export default function TabsLayout() {
         }}
       />
 
-      {/* Visible tabs - Order: Explore, Inbox, (Admin for admins), Profile */}
+      {/* Visible tabs - Order: Groups, Events, Inbox, (Admin for admins), Profile */}
       <Tabs.Screen
         name="search"
         options={{
-          title: 'Explore',
+          title: 'Groups',
           tabBarIcon: ({ color, focused }) => (
             <Ionicons
-              name={focused ? 'globe' : 'globe-outline'}
+              name={focused ? 'map' : 'map-outline'}
+              size={24}
+              color={color}
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="events"
+        options={{
+          title: 'Events',
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? 'calendar' : 'calendar-outline'}
               size={24}
               color={color}
             />
