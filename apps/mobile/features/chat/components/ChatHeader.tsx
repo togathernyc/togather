@@ -12,6 +12,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { AppImage } from "@components/ui";
 import { useTheme } from "@hooks/useTheme";
+import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { getGroupTypeColorScheme } from "../../../constants/groupTypes";
 import { useIsDesktopWeb } from "../../../hooks/useIsDesktopWeb";
 
@@ -40,6 +41,7 @@ export const ChatHeader = memo(function ChatHeader({
   onMembersPress,
 }: ChatHeaderProps) {
   const { colors: themeColors } = useTheme();
+  const { primaryColor } = useCommunityTheme();
   const scheme = getGroupTypeColorScheme(groupTypeId);
   const badgeColors = { bg: scheme.bg, text: scheme.color };
   const isDesktopWeb = useIsDesktopWeb();
@@ -87,10 +89,7 @@ export const ChatHeader = memo(function ChatHeader({
               style={styles.memberCountButton}
             >
               <Text
-                style={[
-                  styles.memberCountText,
-                  { color: themeColors.textSecondary },
-                ]}
+                style={[styles.memberCountText, { color: primaryColor }]}
               >
                 {memberCount} {memberCount === 1 ? "member" : "members"}
               </Text>
@@ -177,12 +176,11 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   memberCountButton: {
-    // Keep the hit-target visually tight — just the text. Underline signals
-    // it's tappable without competing with the type badge.
+    // Hit-target is tight to the text. Tappability signalled by brand color.
   },
   memberCountText: {
     fontSize: 12,
-    textDecorationLine: "underline",
+    fontWeight: "600",
   },
   menuButton: {
     padding: 8,
