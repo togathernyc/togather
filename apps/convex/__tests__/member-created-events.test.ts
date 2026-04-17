@@ -585,6 +585,86 @@ describe("meetings — CWE children + cover", () => {
     });
     expect(id).toBeDefined();
   });
+
+  test("getByShortId surfaces creator only for member-led events", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    // Member-led: non-leader member creates an event.
+    const memberMeetingId = await t.mutation(api.functions.meetings.index.create, {
+      token: s.memberToken,
+      groupId: s.groupId,
+      scheduledAt: FUTURE(),
+      meetingType: 1,
+      locationMode: "tbd",
+    });
+    const memberShortId = await t.run(
+      async (ctx) => (await ctx.db.get(memberMeetingId))?.shortId
+    );
+    const memberResult = await t.query(api.functions.meetings.index.getByShortId, {
+      shortId: memberShortId!,
+      token: s.memberToken,
+    });
+    expect(memberResult?.creatorName).toBeTruthy();
+
+    // Leader-led: a group leader creates an event. No host attribution.
+    const leaderMeetingId = await t.mutation(api.functions.meetings.index.create, {
+      token: s.leaderToken,
+      groupId: s.groupId,
+      scheduledAt: FUTURE() + 1000,
+      meetingType: 1,
+      locationMode: "tbd",
+    });
+    const leaderShortId = await t.run(
+      async (ctx) => (await ctx.db.get(leaderMeetingId))?.shortId
+    );
+    const leaderResult = await t.query(api.functions.meetings.index.getByShortId, {
+      shortId: leaderShortId!,
+      token: s.leaderToken,
+    });
+    expect(leaderResult?.creatorName).toBeNull();
+
+    // CWE child: admin-created, shared across groups. Even though the admin
+    // is also a group leader, the CWE shortcut fires first.
+    const cweId = await t.run(async (ctx) =>
+      ctx.db.insert("communityWideEvents", {
+        communityId: s.communityId,
+        groupTypeId: await ctx.db.insert("groupTypes", {
+          communityId: s.communityId,
+          name: "Dinner",
+          slug: "dinner",
+          isActive: true,
+          displayOrder: 1,
+          createdAt: Date.now(),
+        }),
+        title: "Community Dinner",
+        scheduledAt: FUTURE() + 2000,
+        status: "scheduled",
+        meetingType: 1,
+        createdById: s.adminId,
+        createdAt: Date.now(),
+      })
+    );
+    const cweChildId = await t.run(async (ctx) =>
+      ctx.db.insert("meetings", {
+        groupId: s.groupId,
+        createdById: s.adminId,
+        scheduledAt: FUTURE() + 2000,
+        status: "scheduled",
+        meetingType: 1,
+        communityId: s.communityId,
+        communityWideEventId: cweId,
+        createdAt: Date.now(),
+        shortId: "cwehostcheck",
+      })
+    );
+    void cweChildId;
+    const cweResult = await t.query(api.functions.meetings.index.getByShortId, {
+      shortId: "cwehostcheck",
+      token: s.adminToken,
+    });
+    expect(cweResult?.creatorName).toBeNull();
+  });
 });
 
 // ============================================================================
