@@ -556,6 +556,66 @@ describe("meetings.create — locationMode validation", () => {
     }
   });
 
+  test("coverImage: \"\" clears the cover (both meetings.update and communityWideEvents.update)", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    // Standalone meeting — leader clears their own cover.
+    const meetingId = await t.mutation(api.functions.meetings.index.create, {
+      token: s.memberToken,
+      groupId: s.groupId,
+      scheduledAt: FUTURE(),
+      meetingType: 1,
+      locationMode: "address",
+      locationOverride: "123 Main St, Dallas, TX 75201",
+      coverImage: "https://images.togather.nyc/original.png",
+    });
+    const beforeClear = await t.run(async (ctx) => ctx.db.get(meetingId));
+    expect(beforeClear?.coverImage).toContain("original.png");
+
+    await t.mutation(api.functions.meetings.index.update, {
+      token: s.memberToken,
+      meetingId,
+      coverImage: "",
+    });
+    const afterClear = await t.run(async (ctx) => ctx.db.get(meetingId));
+    // "" is translated to undefined in the patch so the field is fully
+    // unset — read paths see no cover without having to special-case "".
+    expect(afterClear?.coverImage).toBeUndefined();
+
+    // CWE parent — admin clears the shared cover.
+    const groupTypeId = await t.run(async (ctx) =>
+      ctx.db.insert("groupTypes", {
+        communityId: s.communityId,
+        name: "Dinner Parties 2",
+        slug: "dinner-parties-2",
+        isActive: true,
+        displayOrder: 1,
+        createdAt: Date.now(),
+      })
+    );
+    const cweId = await t.run(async (ctx) =>
+      ctx.db.insert("communityWideEvents", {
+        communityId: s.communityId,
+        groupTypeId,
+        title: "Dinner Party",
+        scheduledAt: FUTURE(),
+        status: "scheduled",
+        meetingType: 1,
+        createdById: s.adminId,
+        createdAt: Date.now(),
+        coverImage: "https://images.togather.nyc/shared.png",
+      })
+    );
+    await t.mutation(api.functions.communityWideEvents.update, {
+      token: s.adminToken,
+      communityWideEventId: cweId,
+      coverImage: "",
+    });
+    const parent = await t.run(async (ctx) => ctx.db.get(cweId));
+    expect(parent?.coverImage).toBeUndefined();
+  });
+
   test("update enforces location invariants even when caller omits locationMode", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);

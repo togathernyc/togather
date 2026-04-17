@@ -262,7 +262,12 @@ export const update = mutation({
     if (args.meetingType !== undefined) parentUpdates.meetingType = args.meetingType;
     if (args.meetingLink !== undefined) parentUpdates.meetingLink = args.meetingLink;
     if (args.note !== undefined) parentUpdates.note = args.note;
-    if (args.coverImage !== undefined) parentUpdates.coverImage = args.coverImage;
+    if (args.coverImage !== undefined) {
+      // `""` is the client's explicit-remove sentinel. Convex patches drop
+      // fields set to `undefined`, so translate it here to fully unset the
+      // shared cover instead of persisting an empty string.
+      parentUpdates.coverImage = args.coverImage === "" ? undefined : args.coverImage;
+    }
 
     // Update the parent event
     await ctx.db.patch(args.communityWideEventId, parentUpdates);

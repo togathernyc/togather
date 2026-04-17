@@ -406,6 +406,12 @@ export const update = mutation({
     if (cleanedUpdates.posterId === null) {
       cleanedUpdates.posterId = undefined;
     }
+    // `coverImage: ""` is the client's explicit-remove sentinel. Translate
+    // to undefined so the patch unsets the field (instead of storing an
+    // empty string that every read path would have to treat as falsy).
+    if (cleanedUpdates.coverImage === "") {
+      cleanedUpdates.coverImage = undefined;
+    }
 
     // If this meeting is linked to a community-wide event and hasn't been overridden yet,
     // mark it as overridden so future cascade updates from the parent event skip it

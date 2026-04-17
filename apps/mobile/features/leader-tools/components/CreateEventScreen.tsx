@@ -132,6 +132,11 @@ export function CreateEventScreen() {
   const [meetingLink, setMeetingLink] = useState("");
   const [note, setNote] = useState("");
   const [coverImage, setCoverImage] = useState<string | undefined>();
+  // True when the user tapped "Remove" on an existing cover. On save we
+  // send `coverImage: ""` so the backend patches through the removal;
+  // without this flag, an undefined `coverImage` would be interpreted as
+  // "no change" and the old cover would stick.
+  const [coverImageRemoved, setCoverImageRemoved] = useState(false);
   // null = user explicitly cleared (picked a custom upload after having a
   // curated poster). undefined = no change. Keeping this tri-state matters
   // for edits: sending undefined means "don't touch" the existing posterId,
@@ -691,7 +696,12 @@ export function CreateEventScreen() {
             : undefined,
         locationMode: resolvedLocationMode,
         note: note.trim() || undefined,
-        coverImage: finalCoverImage || undefined,
+        // "" signals an explicit removal on edit — the backend stores the
+        // empty string and read paths fall back to the parent cover (for
+        // CWE children) or render no cover (for standalone events).
+        // `undefined` means "no change" so we don't clobber an existing
+        // cover on an edit that didn't touch the picker.
+        coverImage: finalCoverImage || (coverImageRemoved ? "" : undefined),
         posterId: posterId,
         rsvpEnabled: rsvpEnabled,
         rsvpOptions: rsvpOptions.filter((opt) => opt.enabled),
@@ -1512,6 +1522,20 @@ export function CreateEventScreen() {
                     style={styles.posterSlotImage}
                     imageStyle={styles.posterSlotImageInner}
                   />
+                  <TouchableOpacity
+                    onPress={() => {
+                      if (isSubmitting) return;
+                      setCoverImage(undefined);
+                      setCoverImageRemoved(true);
+                      setPosterId(null);
+                    }}
+                    activeOpacity={0.7}
+                    accessibilityLabel="Remove cover image"
+                    style={styles.posterSlotRemoveBadge}
+                  >
+                    <Ionicons name="trash-outline" size={14} color="#fff" />
+                    <Text style={styles.posterSlotEditBadgeText}>Remove</Text>
+                  </TouchableOpacity>
                   <View style={styles.posterSlotEditBadge}>
                     <Ionicons name="pencil" size={14} color="#fff" />
                     <Text style={styles.posterSlotEditBadgeText}>Change</Text>
@@ -1902,6 +1926,7 @@ export function CreateEventScreen() {
           onClose={() => setIsPosterPickerOpen(false)}
           onSelect={(sel) => {
             setCoverImage(sel.imageUrl);
+            setCoverImageRemoved(false);
             // Library pick → set posterId. Custom upload → null so the
             // update mutation can explicitly clear the previous posterId
             // (undefined would be interpreted as "no change").
@@ -1984,6 +2009,18 @@ const styles = StyleSheet.create({
     position: "absolute",
     bottom: 12,
     right: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
+    backgroundColor: "rgba(0,0,0,0.55)",
+  },
+  posterSlotRemoveBadge: {
+    position: "absolute",
+    bottom: 12,
+    left: 12,
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
