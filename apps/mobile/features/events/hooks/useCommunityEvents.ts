@@ -14,7 +14,13 @@ import { useMemo } from 'react';
 import { useQuery, api } from '@services/api/convex';
 import { useAuth } from '@providers/AuthProvider';
 import type { Id } from '@services/api/convex';
-import { ExploreFilters } from './useExploreFilters';
+
+export interface EventsFilters {
+  dateFilter: 'all' | 'today' | 'this_week' | 'this_month' | 'custom';
+  startDate?: string;
+  endDate?: string;
+  hostingGroups: string[];
+}
 
 export interface CommunityEvent {
   id: string;
@@ -57,7 +63,7 @@ const EMPTY_EVENTS_DATA: { events: any[]; nextCursor: null } = { events: [], nex
 const EMPTY_LEADER_GROUPS: any[] = [];
 const EMPTY_RSVP_EVENTS_DATA: { events: any[] } = { events: [] };
 
-export function useCommunityEvents(filters: ExploreFilters, options?: { enabled?: boolean }) {
+export function useCommunityEvents(filters: EventsFilters, options?: { enabled?: boolean }) {
   const { community, user, token } = useAuth();
 
   // Get community Convex ID
@@ -69,7 +75,7 @@ export function useCommunityEvents(filters: ExploreFilters, options?: { enabled?
     if (user?.id && !token) {
       return "skip" as const;
     }
-    if (!communityId || filters.view !== 'events' || options?.enabled === false) {
+    if (!communityId || options?.enabled === false) {
       return "skip" as const;
     }
 
@@ -96,7 +102,6 @@ export function useCommunityEvents(filters: ExploreFilters, options?: { enabled?
     return baseArgs;
   }, [
     communityId,
-    filters.view,
     filters.dateFilter,
     filters.startDate,
     filters.endDate,

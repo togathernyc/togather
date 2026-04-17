@@ -11,12 +11,12 @@ import { ExploreMap, MapBounds } from './ExploreMap';
 import { ExploreBottomSheet, ExploreBottomSheetRef } from './ExploreBottomSheet';
 import { FloatingGroupCard } from './FloatingGroupCard';
 import { FilterModal, FilterState } from './FilterModal';
-import { EventsFilterModal } from './EventsFilterModal';
+import { EventsFilterModal } from '@features/events/components/EventsFilterModal';
 import { getGroupCoordinates, geocodeZipCode, geocodeAddressAsync } from '@features/groups/utils/geocodeLocation';
 import { useExploreFilters, ExploreView } from '../hooks/useExploreFilters';
 import { filterExploreGroups } from '../utils/filterGroups';
-import { useCommunityEvents, useLeaderGroups, useMyRsvpedEvents, CommunityEvent } from '../hooks/useCommunityEvents';
-import { useEventSearch } from '../hooks/useEventSearch';
+import { useCommunityEvents, useLeaderGroups, useMyRsvpedEvents, type CommunityEvent } from '@features/events/hooks/useCommunityEvents';
+import { useEventSearch } from '@features/events/hooks/useEventSearch';
 import { AppImage } from '@components/ui';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
 import { useTheme } from '@hooks/useTheme';
@@ -109,13 +109,27 @@ export function ExploreScreen() {
     meetingType: exploreFilters.meetingType ?? null,
   }), [exploreFilters.groupType, exploreFilters.meetingType]);
 
+  // Adapt ExploreFilters (nullable fields) → EventsFilters (narrower shape) without
+  // touching useExploreFilters (tracked as a follow-up cleanup).
+  const eventsFilters = useMemo(() => ({
+    dateFilter: exploreFilters.dateFilter ?? 'this_week',
+    startDate: exploreFilters.startDate ?? undefined,
+    endDate: exploreFilters.endDate ?? undefined,
+    hostingGroups: exploreFilters.hostingGroups,
+  }), [
+    exploreFilters.dateFilter,
+    exploreFilters.startDate,
+    exploreFilters.endDate,
+    exploreFilters.hostingGroups,
+  ]);
+
   // Fetch events for events view (requires community context)
   const {
     data: eventsData,
     isLoading: isLoadingEvents,
     refetch: refetchEvents,
     isFetching: isFetchingEvents,
-  } = useCommunityEvents(exploreFilters, { enabled: hasCommunityContext });
+  } = useCommunityEvents(eventsFilters, { enabled: hasCommunityContext && exploreFilters.view === 'events' });
 
   // Backend event search (replaces client-side filtering when searching)
   const {

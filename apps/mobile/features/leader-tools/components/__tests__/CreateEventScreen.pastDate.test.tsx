@@ -65,7 +65,7 @@ jest.mock("../../../groups/hooks/useGroupDetails", () => ({
 }));
 
 // Mock useLeaderGroups hook
-jest.mock("../../../explore/hooks/useCommunityEvents", () => ({
+jest.mock("@features/events/hooks/useCommunityEvents", () => ({
   useLeaderGroups: () => ({
     data: [
       { id: "group-123", name: "Test Group", groupTypeName: "Small Group" },

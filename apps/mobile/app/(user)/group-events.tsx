@@ -29,12 +29,12 @@ const isWeb = Platform.OS === "web";
 import { useQuery, api, Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { ExploreMap, MapBounds } from "@features/explore/components/ExploreMap";
-import { EventCard } from "@features/explore/components/EventCard";
-import { EventsFilterModal } from "@features/explore/components/EventsFilterModal";
+import { EventCard } from "@features/events/components/EventCard";
+import { EventsFilterModal } from "@features/events/components/EventsFilterModal";
 import { COLORS } from "@features/explore/constants";
 import { getGroupCoordinates, geocodeAddressAsync } from "@features/groups/utils/geocodeLocation";
 import { Group } from "@features/groups/types";
-import type { CommunityEvent } from "@features/explore/hooks/useCommunityEvents";
+import type { CommunityEvent } from "@features/events/hooks/useCommunityEvents";
 import type {
   DateFilterPreset,
   ExploreFilters,

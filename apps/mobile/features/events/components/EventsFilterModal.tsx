@@ -19,9 +19,9 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { COLORS } from '../constants';
+import { COLORS } from '@features/explore/constants';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
-import type { ExploreFilters, DateFilterPreset } from '../hooks/useExploreFilters';
+import type { ExploreFilters, DateFilterPreset } from '@features/explore/hooks/useExploreFilters';
 
 // Date preset options
 const DATE_PRESETS: Array<{ label: string; value: DateFilterPreset }> = [

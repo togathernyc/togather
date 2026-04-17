@@ -28,7 +28,7 @@ import {
   DEFAULT_RSVP_OPTIONS,
 } from "./RsvpOptionsEditor";
 import { VisibilitySelector, VisibilityLevel } from "./VisibilitySelector";
-import { useLeaderGroups } from "../../explore/hooks/useCommunityEvents";
+import { useLeaderGroups } from "@features/events/hooks/useCommunityEvents";
 import { ShareToChatModal } from "./ShareToChatModal";
 import { ConfirmModal } from "@components/ui/ConfirmModal";
 import { getGroupCoordinates, geocodeAddressAsync } from "../../groups/utils/geocodeLocation";

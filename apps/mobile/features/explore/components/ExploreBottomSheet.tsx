@@ -22,11 +22,11 @@ import BottomSheet, { BottomSheetFlatList, BottomSheetTextInput, BottomSheetSect
 import { Ionicons } from '@expo/vector-icons';
 import { Group } from '@features/groups/types';
 import { GroupCard } from './GroupCard';
-import { EventCard } from './EventCard';
+import { EventCard } from '@features/events/components/EventCard';
 import { ViewToggle } from './ViewToggle';
 import { COLORS } from '../constants';
 import type { ExploreView } from '../hooks/useExploreFilters';
-import type { CommunityEvent } from '../hooks/useCommunityEvents';
+import type { CommunityEvent } from '@features/events/hooks/useCommunityEvents';
 import { useTheme } from '@hooks/useTheme';
 
 interface ExploreBottomSheetProps {
