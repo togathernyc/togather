@@ -694,6 +694,10 @@ export function CreateEventScreen() {
                 meetingType: data.meetingType,
                 meetingLink: data.meetingLink,
                 note: data.note,
+                // Parent-only — updating the shared cover doesn't mark
+                // every child as `isOverridden`. Children fall back to
+                // parent.coverImage on render.
+                coverImage: data.coverImage,
                 scope,
               });
               router.back();

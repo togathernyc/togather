@@ -213,6 +213,10 @@ export const update = mutation({
     meetingType: v.optional(v.number()),
     meetingLink: v.optional(v.string()),
     note: v.optional(v.string()),
+    // Parent-only. Children fall back to this via the card/detail render
+    // paths instead of being individually patched — updating the shared
+    // cover shouldn't mark every child as `isOverridden`.
+    coverImage: v.optional(v.string()),
     scope: v.optional(v.union(v.literal("this_date_all_groups"), v.literal("all_in_series"))),
   },
   handler: async (ctx, args) => {
@@ -241,6 +245,8 @@ export const update = mutation({
     if (args.meetingType !== undefined) parentUpdates.meetingType = args.meetingType;
     if (args.meetingLink !== undefined) parentUpdates.meetingLink = args.meetingLink;
     if (args.note !== undefined) parentUpdates.note = args.note;
+    // coverImage is parent-only — intentionally NOT added to childUpdates below.
+    if (args.coverImage !== undefined) parentUpdates.coverImage = args.coverImage;
 
     // Update the parent event
     await ctx.db.patch(args.communityWideEventId, parentUpdates);

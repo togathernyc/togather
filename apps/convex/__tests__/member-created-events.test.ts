@@ -311,6 +311,55 @@ describe("meetings.create — locationMode validation", () => {
     ).rejects.toThrow(/meeting link/i);
   });
 
+  test("CWE child inherits parent coverImage on getByShortId when its own is empty", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    const groupTypeId = await t.run(async (ctx) =>
+      ctx.db.insert("groupTypes", {
+        communityId: s.communityId,
+        name: "Dinner Parties",
+        slug: "dinner-parties",
+        isActive: true,
+        displayOrder: 1,
+        createdAt: Date.now(),
+      })
+    );
+    const cweId = await t.run(async (ctx) =>
+      ctx.db.insert("communityWideEvents", {
+        communityId: s.communityId,
+        groupTypeId,
+        title: "Dinner Party",
+        scheduledAt: FUTURE(),
+        status: "scheduled",
+        meetingType: 1,
+        createdById: s.adminId,
+        createdAt: Date.now(),
+        coverImage: "https://images.togather.nyc/parent-cover.png",
+      })
+    );
+    await t.run(async (ctx) =>
+      ctx.db.insert("meetings", {
+        groupId: s.groupId,
+        createdById: s.adminId,
+        scheduledAt: FUTURE(),
+        status: "scheduled",
+        meetingType: 1,
+        communityId: s.communityId,
+        communityWideEventId: cweId,
+        createdAt: Date.now(),
+        shortId: "cweshort1",
+        // No coverImage — should inherit parent's.
+      })
+    );
+
+    const result = await t.query(api.functions.meetings.index.getByShortId, {
+      shortId: "cweshort1",
+      token: s.adminToken,
+    });
+    expect(result?.coverImage).toContain("parent-cover.png");
+  });
+
   test("update on a CWE child skips locationMode validation — location is inherited", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);

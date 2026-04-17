@@ -472,7 +472,12 @@ export function buildBucket(
       meetingType: parent.meetingType,
       groupCount: children.length,
       totalGoing,
-      coverImage: getMediaUrl(earliest.coverImage) ?? null,
+      // Prefer the shared parent cover. Falls back to the earliest child's
+      // cover so legacy rows without a parent cover don't lose their art.
+      coverImage:
+        getMediaUrl((parent as any).coverImage) ??
+        getMediaUrl(earliest.coverImage) ??
+        null,
       representativeShortId: representative?.shortId ?? null,
       sortAt: earliest.scheduledAt,
     });
