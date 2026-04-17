@@ -33,6 +33,7 @@ import { useCommunityTheme } from '@hooks/useCommunityTheme';
 import { AppImage } from '@components/ui';
 import { useEventsByTimeWindow } from '../hooks/useEventsByTimeWindow';
 import { useMyRsvpedEvents } from '../hooks/useCommunityEvents';
+import { useMyHostedEvents } from '../hooks/useMyEvents';
 import { EventCardRow } from './EventCardRow';
 import { EventRowCommunityWide } from './EventRowCommunityWide';
 import { FeaturedEventTile } from './FeaturedEventTile';
@@ -223,6 +224,14 @@ export function EventsScreen() {
   const { data: myRsvpedEventsData, isLoading: isLoadingMyRsvps } =
     useMyRsvpedEvents({ enabled: !hasCommunityContext });
 
+  // Events this user is hosting in the current community. Used to surface
+  // them in the "Next Up" featured row even when the user hasn't RSVPed
+  // (the host is implicitly going). Community-scoped via the hook.
+  const { data: myHostedData } = useMyHostedEvents({
+    enabled: hasCommunityContext,
+    includePast: false,
+  });
+
   const handleCreateEvent = useCallback(() => {
     router.push('/(user)/create-event');
   }, [router]);
@@ -328,19 +337,35 @@ export function EventsScreen() {
   // overlaps the empty area next to the first section header.
   const contentTopPadding = insets.top + 8;
 
-  // Featured "Next Up" events: merge happeningNow + myRsvps, drop
-  // community-wide cards (no single time/place to headline), and take the
-  // first 2. Community data only — memo avoids re-computing on unrelated
-  // renders.
+  // Featured "Next Up" events: merge happeningNow + myRsvps + events I'm
+  // hosting, drop community-wide cards (no single time/place to headline),
+  // dedupe by id, sort by scheduledAt ASC, take the first 2. Hosted events
+  // join so a creator sees their own event even before any RSVPs roll in.
   const featuredEvents: CommunityEvent[] = useMemo(() => {
     if (!hasCommunityContext) return [];
     const happeningNow = data?.happeningNow ?? [];
     const myRsvps = data?.myRsvps ?? [];
-    const merged = [...happeningNow, ...myRsvps]
-      .filter((card: any) => card.kind !== 'community_wide')
-      .map((card: any) => toCommunityEvent(card));
-    return merged.slice(0, 2);
-  }, [hasCommunityContext, data?.happeningNow, data?.myRsvps]);
+    const myHostedUpcoming = (myHostedData?.upcoming ?? []) as any[];
+
+    const byId = new Map<string, CommunityEvent>();
+    for (const card of [...happeningNow, ...myRsvps, ...myHostedUpcoming]) {
+      if ((card as any).kind === 'community_wide') continue;
+      const cast = card as any;
+      if (byId.has(String(cast.id))) continue;
+      byId.set(String(cast.id), toCommunityEvent(cast));
+    }
+    const deduped = Array.from(byId.values());
+    deduped.sort(
+      (a, b) =>
+        new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime()
+    );
+    return deduped.slice(0, 2);
+  }, [
+    hasCommunityContext,
+    data?.happeningNow,
+    data?.myRsvps,
+    myHostedData?.upcoming,
+  ]);
 
   // No community context → "My RSVPs" fallback body
   if (!hasCommunityContext) {
