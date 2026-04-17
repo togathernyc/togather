@@ -13,6 +13,7 @@ import { isActiveLeader } from "../../lib/helpers";
 import {
   canCreateInGroup,
   canEditMeeting,
+  canEditSeriesWide,
   countFutureEventsCreatedBy,
   NON_LEADER_FUTURE_EVENT_CAP,
   validateLocationMode,
@@ -310,6 +311,18 @@ export const update = mutation({
       throw new Error("You do not have permission to update this event");
     }
 
+    // Series-wide scope can cascade writes to siblings the caller may not own
+    // or lead (shared series spanning multiple groups). Tighten: require the
+    // caller to be a leader of the anchor group or a community admin. A plain
+    // creator can only touch their own single meeting.
+    if (args.scope === "all_in_series" && meeting.seriesId) {
+      if (!(await canEditSeriesWide(ctx, userId, meeting))) {
+        throw new Error(
+          "Only group leaders or community admins can edit all events in a series"
+        );
+      }
+    }
+
     // Location mode validation runs on every write path (members + leaders).
     if (args.locationMode !== undefined) {
       validateLocationMode({
@@ -543,6 +556,16 @@ export const cancel = mutation({
     // Per ADR-022: creator, group leaders, and community admins can cancel.
     if (!(await canEditMeeting(ctx, userId, meeting))) {
       throw new Error("You do not have permission to cancel this event");
+    }
+
+    // Series-wide cancel can destroy meetings the caller doesn't own or lead.
+    // Tighten to leader-of-anchor-group or community admin.
+    if (args.scope === "all_in_series" && meeting.seriesId) {
+      if (!(await canEditSeriesWide(ctx, userId, meeting))) {
+        throw new Error(
+          "Only group leaders or community admins can cancel all events in a series"
+        );
+      }
     }
 
     if (args.scope === "all_in_series" && meeting.seriesId) {

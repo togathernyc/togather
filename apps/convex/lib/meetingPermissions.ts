@@ -66,6 +66,30 @@ export async function canEditMeeting(
 }
 
 /**
+ * Can this user apply a series-wide edit or cancel from this anchor meeting?
+ * Tighter than `canEditMeeting`: the bare creator of one sibling should NOT
+ * be able to cascade changes to meetings they don't own or lead. Required
+ * for `scope === "all_in_series"` paths.
+ */
+export async function canEditSeriesWide(
+  ctx: Ctx,
+  userId: Id<"users">,
+  meeting: Doc<"meetings">
+): Promise<boolean> {
+  const membership = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_group_user", (q: any) =>
+      q.eq("groupId", meeting.groupId).eq("userId", userId)
+    )
+    .first();
+  if (isActiveLeader(membership)) return true;
+  if (meeting.communityId) {
+    return await isCommunityAdmin(ctx, meeting.communityId, userId);
+  }
+  return false;
+}
+
+/**
  * Count a user's current "future events" for the non-leader cap.
  * Future event = status ∈ {scheduled, confirmed} AND scheduledAt > now.
  * Cancelled and completed don't count. See ADR-022.

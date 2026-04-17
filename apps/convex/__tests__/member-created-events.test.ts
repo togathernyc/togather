@@ -358,6 +358,94 @@ describe("meetings.update/cancel — perms", () => {
     ).rejects.toThrow(/permission/i);
   });
 
+  test("creator cannot cascade series-wide update to siblings they don't lead", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    const seriesId = await t.run(async (ctx) =>
+      ctx.db.insert("eventSeries", {
+        groupId: s.groupId,
+        createdById: s.leaderId,
+        name: "Weekly",
+        status: "active",
+        createdAt: Date.now(),
+      })
+    );
+
+    const meetingId = await t.run(async (ctx) =>
+      ctx.db.insert("meetings", {
+        groupId: s.groupId,
+        createdById: s.memberId,
+        scheduledAt: FUTURE(),
+        status: "scheduled",
+        meetingType: 1,
+        communityId: s.communityId,
+        seriesId,
+        createdAt: Date.now(),
+      })
+    );
+
+    // Single-meeting edit by creator: allowed.
+    await t.mutation(api.functions.meetings.index.update, {
+      token: s.memberToken,
+      meetingId,
+      title: "local-only edit",
+    });
+
+    // Series-wide edit by creator: blocked — they aren't a leader.
+    await expect(
+      t.mutation(api.functions.meetings.index.update, {
+        token: s.memberToken,
+        meetingId,
+        title: "series-wide hijack",
+        scope: "all_in_series",
+      })
+    ).rejects.toThrow(/series/i);
+  });
+
+  test("leader can apply series-wide cancel; bare creator cannot", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    const seriesId = await t.run(async (ctx) =>
+      ctx.db.insert("eventSeries", {
+        groupId: s.groupId,
+        createdById: s.leaderId,
+        name: "Weekly",
+        status: "active",
+        createdAt: Date.now(),
+      })
+    );
+
+    const meetingId = await t.run(async (ctx) =>
+      ctx.db.insert("meetings", {
+        groupId: s.groupId,
+        createdById: s.memberId,
+        scheduledAt: FUTURE(),
+        status: "scheduled",
+        meetingType: 1,
+        communityId: s.communityId,
+        seriesId,
+        createdAt: Date.now(),
+      })
+    );
+
+    await expect(
+      t.mutation(api.functions.meetings.index.cancel, {
+        token: s.memberToken,
+        meetingId,
+        scope: "all_in_series",
+      })
+    ).rejects.toThrow(/series/i);
+
+    // Leader can.
+    await t.mutation(api.functions.meetings.index.cancel, {
+      token: s.leaderToken,
+      meetingId,
+      scope: "all_in_series",
+    });
+  });
+
   test("group leader and community admin can both cancel a member's event", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
@@ -434,6 +522,55 @@ describe("meetingReports", () => {
     const after = await t.run(async (ctx) => ctx.db.get(reportId));
     expect(after?.status).toBe("dismissed");
     expect(after?.reviewedById).toBe(s.leaderId);
+  });
+
+  test("re-reporting a dismissed event reopens it as pending", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    const meetingId = await t.mutation(api.functions.meetings.index.create, {
+      token: s.memberToken,
+      groupId: s.groupId,
+      scheduledAt: FUTURE(),
+      meetingType: 1,
+      locationMode: "tbd",
+    });
+
+    const reportId = await t.mutation(
+      api.functions.meetings.reports.createReport,
+      { token: s.otherMemberToken, meetingId, reason: "spam" }
+    );
+
+    await t.mutation(api.functions.meetings.reports.resolveReport, {
+      token: s.leaderToken,
+      reportId,
+      action: "dismissed",
+    });
+
+    // Same reporter files a new report with a different reason.
+    const reReportId = await t.mutation(
+      api.functions.meetings.reports.createReport,
+      {
+        token: s.otherMemberToken,
+        meetingId,
+        reason: "inappropriate",
+        details: "still bad",
+      }
+    );
+    expect(reReportId).toBe(reportId); // upsert, same row
+
+    const after = await t.run(async (ctx) => ctx.db.get(reportId));
+    expect(after?.status).toBe("pending");
+    expect(after?.reviewedById).toBeUndefined();
+    expect(after?.reviewedAt).toBeUndefined();
+
+    // The leader's pending queue sees it again.
+    const list = await t.query(
+      api.functions.meetings.reports.listReportsForGroup,
+      { token: s.leaderToken, groupId: s.groupId }
+    );
+    expect(list.length).toBe(1);
+    expect(list[0]._id).toBe(reportId);
   });
 
   test("rejects invalid reason", async () => {

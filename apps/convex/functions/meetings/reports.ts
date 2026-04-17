@@ -65,9 +65,17 @@ export const createReport = mutation({
       .first();
 
     if (existing) {
+      // Re-reporting an already-resolved event should put it back in the
+      // leader queue. Without this, a dismissed or actioned row stays
+      // non-pending and `listReportsForGroup` (which filters to pending)
+      // silently drops the new signal.
       await ctx.db.patch(existing._id, {
         reason: args.reason,
         details: args.details,
+        status: "pending",
+        reviewedById: undefined,
+        reviewedAt: undefined,
+        actionTaken: undefined,
       });
       return existing._id;
     }
