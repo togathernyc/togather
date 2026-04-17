@@ -439,20 +439,25 @@ export function EventsScreen() {
   const hasAnyContent =
     featuredEvents.length > 0 || thisWeek.length > 0 || later.length > 0;
 
-  // Flattened event list for the map view (map handles its own
-  // filtering + de-dup + geocoding). Use the raw buckets so the map still
-  // gets every card, not just the featured subset.
-  const allCards = [
+  // Events shown on the map: everything coming up in the next 7 days,
+  // regardless of RSVP status. That's happeningNow + thisWeek, plus any
+  // of the user's RSVPs whose scheduledAt falls inside the 7-day window
+  // (since thisWeek excludes myRsvps server-side to avoid double-display
+  // in the list view). `later` is intentionally excluded — the map would
+  // be cluttered with events weeks away.
+  const weekCutoffMs = Date.now() + 7 * 24 * 60 * 60 * 1000;
+  const mapCards = [
     ...data.happeningNow,
-    ...data.myRsvps,
     ...data.thisWeek,
-    ...data.later,
+    ...data.myRsvps.filter(
+      (m: any) => new Date(m.scheduledAt).getTime() < weekCutoffMs
+    ),
   ];
 
   return (
     <View style={[styles.container, { backgroundColor: colors.backgroundSecondary }]}>
       {viewMode === 'map' ? (
-        <EventsMapView cards={allCards} isLoading={isLoading} />
+        <EventsMapView cards={mapCards} isLoading={isLoading} />
       ) : (
         <>
           {isLoading ? (

@@ -27,7 +27,7 @@ import { Ionicons } from '@expo/vector-icons';
 import BottomSheet, { BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import { format, toZonedTime } from 'date-fns-tz';
 import { formatTimeWithTimezone } from '@togather/shared';
-import { useQuery, api } from '@services/api/convex';
+import { api, useAuthenticatedQuery } from '@services/api/convex';
 import type { Id } from '@services/api/convex';
 import { useAuth } from '@providers/AuthProvider';
 import { useTheme } from '@hooks/useTheme';
@@ -83,7 +83,7 @@ export function CommunityWideEventSheet({
   onDismiss,
 }: CommunityWideEventSheetProps) {
   const router = useRouter();
-  const { user, token } = useAuth();
+  const { user } = useAuth();
   const { colors } = useTheme();
   const bottomSheetRef = useRef<BottomSheet>(null);
 
@@ -91,18 +91,11 @@ export function CommunityWideEventSheet({
 
   const userTimezone = user?.timezone || 'America/New_York';
 
-  // Fire lookup only when sheet is open.
-  const queryArgs = useMemo(() => {
-    if (!parentId) return 'skip' as const;
-    if (user?.id && !token) return 'skip' as const;
-    const base = { parentId };
-    if (user?.id && token) return { ...base, token };
-    return base;
-  }, [parentId, user?.id, token]);
-
-  const result = useQuery(
+  // useAuthenticatedQuery handles token stability internally (see #299) —
+  // avoids re-subscribing on token refresh.
+  const result = useAuthenticatedQuery(
     api.functions.meetings.events.getCommunityWideEventChildren,
-    queryArgs
+    parentId ? { parentId } : 'skip'
   );
   const isLoading = parentId !== null && result === undefined;
   const parent = result?.parent ?? null;
@@ -269,10 +262,13 @@ const styles = StyleSheet.create({
   },
   webPanel: {
     position: 'absolute',
+    // Leave a top gap so the sheet reads as a modal panel (not full-screen
+    // takeover) and feels draggable. Matches the native BottomSheet
+    // snapPoint 90% behavior.
+    top: 80,
     bottom: 0,
     left: 0,
     right: 0,
-    maxHeight: '80%',
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
     overflow: 'hidden',

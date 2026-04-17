@@ -9,8 +9,8 @@
  * without re-running the query on every render.
  */
 
-import { useEffect, useMemo, useState } from 'react';
-import { useQuery, api } from '@services/api/convex';
+import { useEffect, useState } from 'react';
+import { useQuery, api, useAuthenticatedQuery } from '@services/api/convex';
 import { useAuth } from '@providers/AuthProvider';
 import type { Id } from '@services/api/convex';
 
@@ -43,7 +43,7 @@ const EMPTY_DATA: EventsTabData = {
 const NOW_REFRESH_INTERVAL_MS = 30 * 1000;
 
 export function useEventsByTimeWindow(options?: { enabled?: boolean }) {
-  const { community, user, token } = useAuth();
+  const { community } = useAuth();
   const communityId = community?.id as Id<'communities'> | undefined;
 
   // `now` advances every 30s so the backend can re-slice buckets without us
@@ -56,24 +56,14 @@ export function useEventsByTimeWindow(options?: { enabled?: boolean }) {
     return () => clearInterval(interval);
   }, []);
 
-  const queryArgs = useMemo(() => {
-    // Authenticated queries require the token to be ready.
-    if (user?.id && !token) {
-      return 'skip' as const;
-    }
-    if (!communityId || options?.enabled === false) {
-      return 'skip' as const;
-    }
-    const baseArgs = { communityId, now };
-    if (user?.id && token) {
-      return { ...baseArgs, token };
-    }
-    return baseArgs;
-  }, [communityId, now, user?.id, token, options?.enabled]);
-
-  const result = useQuery(
+  // useAuthenticatedQuery pulls the token from useStoredAuthToken (ref-stable
+  // across refreshes) and handles memoization internally — avoids the
+  // previously-fixed cascading re-render pattern from token changes.
+  // See #299 / commit 01251be.
+  const shouldSkip = !communityId || options?.enabled === false;
+  const result = useAuthenticatedQuery(
     api.functions.meetings.events.listForEventsTab,
-    queryArgs
+    shouldSkip ? 'skip' : { communityId: communityId!, now }
   );
 
   const isLoading = result === undefined;
