@@ -28,8 +28,10 @@ import {
   DEFAULT_RSVP_OPTIONS,
 } from "./RsvpOptionsEditor";
 import { VisibilitySelector, VisibilityLevel } from "./VisibilitySelector";
-import { useLeaderGroups } from "@features/events/hooks/useCommunityEvents";
-import { ShareToChatModal } from "./ShareToChatModal";
+import { useCreatableGroups } from "@features/events/hooks/useCommunityEvents";
+import { useMyHostedEvents } from "@features/events/hooks/useMyEvents";
+import { useAnalytics } from "@services/analytics";
+import { InviteToEventSheet } from "./InviteToEventSheet";
 import { ConfirmModal } from "@components/ui/ConfirmModal";
 import { getGroupCoordinates, geocodeAddressAsync } from "../../groups/utils/geocodeLocation";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
@@ -47,6 +49,7 @@ interface CreateMeetingInput {
   meetingType?: number;
   meetingLink?: string;
   locationOverride?: string;
+  locationMode?: "address" | "online" | "tbd";
   note?: string;
   coverImage?: string;
   rsvpEnabled?: boolean;
@@ -66,6 +69,7 @@ export function CreateEventScreen() {
   const insets = useSafeAreaInsets();
   const { primaryColor } = useCommunityTheme();
   const { token, user, community } = useAuth();
+  const analytics = useAnalytics();
 
   // Check if user is a community admin
   const isAdmin = user?.is_admin === true;
@@ -76,8 +80,9 @@ export function CreateEventScreen() {
   // Community-wide event toggle should only show for admins in unified mode (not editing)
   const canCreateCommunityWide = isAdmin && isUnifiedMode;
 
-  // Fetch leader groups for unified mode dropdown
-  const { data: leaderGroups, isLoading: isLoadingLeaderGroups } = useLeaderGroups();
+  // Fetch groups the user can create events in (leader + member groups).
+  // Replaces the previous leader-only source per ADR-022.
+  const { data: creatableGroups, isLoading: isLoadingCreatableGroups } = useCreatableGroups();
 
   // Fetch group types for community-wide event creation (only for admins)
   const { groupTypes, isLoading: isLoadingGroupTypes } = useGroupTypes();
@@ -109,6 +114,7 @@ export function CreateEventScreen() {
   const [title, setTitle] = useState("");
   const [location, setLocation] = useState("");
   const [isOnline, setIsOnline] = useState(false);
+  const [locationTbd, setLocationTbd] = useState(false);
   const [meetingLink, setMeetingLink] = useState("");
   const [note, setNote] = useState("");
   const [coverImage, setCoverImage] = useState<string | undefined>();
@@ -149,8 +155,8 @@ export function CreateEventScreen() {
   const [isSeriesDropdownOpen, setIsSeriesDropdownOpen] = useState(false);
   const [isSeriesLinking, setIsSeriesLinking] = useState(false);
 
-  // Share to chat modal state
-  const [showShareModal, setShowShareModal] = useState(false);
+  // Post-create invite sheet state
+  const [showInviteSheet, setShowInviteSheet] = useState(false);
   const [pendingMeetingId, setPendingMeetingId] = useState<string | null>(null);
 
   // Past date confirmation modal state (for admins only)
@@ -179,11 +185,45 @@ export function CreateEventScreen() {
   const { data: groupDetails } = useGroupDetails(effectiveGroupId ?? undefined);
   const groupTypeName = groupDetails?.group_type_name || "Event";
 
-  // Get selected group info from leaderGroups for display
+  // Get selected group info from creatableGroups for display
   const selectedGroup = useMemo(() => {
-    if (!selectedGroupId || !leaderGroups) return null;
-    return leaderGroups.find(g => g && g.id === selectedGroupId) || null;
-  }, [selectedGroupId, leaderGroups]);
+    if (!selectedGroupId || !creatableGroups) return null;
+    return creatableGroups.find(g => g && g.id === selectedGroupId) || null;
+  }, [selectedGroupId, creatableGroups]);
+
+  // Does the current user have leader-level privileges in the selected group?
+  // Drives visibility of leader-only controls (Series toggle, CWE toggle,
+  // leader warnings). Admins are always treated as leaders. Falsy when no
+  // group is selected yet, so we default-hide leader controls — safer than
+  // flashing them and yanking them away. See ADR-022.
+  const isLeaderOfSelectedGroup = useMemo(() => {
+    if (isAdmin) return true;
+    return selectedGroup?.isLeader === true;
+  }, [isAdmin, selectedGroup]);
+
+  // Announcement group is the natural default for members, since it's the
+  // community-wide venue and they're always joined to it (ADR-008).
+  const announcementGroup = useMemo(
+    () => creatableGroups?.find((g: any) => g && g.isAnnouncementGroup) ?? null,
+    [creatableGroups]
+  );
+  useEffect(() => {
+    if (isEditMode) return;
+    if (hostingGroupId || group_id) return;
+    if (selectedGroupId) return;
+    if (!announcementGroup) return;
+    if (isAdmin) return; // leaders/admins pick explicitly
+    setSelectedGroupId(announcementGroup.id);
+  }, [isEditMode, hostingGroupId, group_id, selectedGroupId, announcementGroup, isAdmin]);
+
+  // Non-leader 1-future-event cap enforcement (client gate — the backend
+  // enforces authoritatively). We only query when the user is actually at
+  // risk of hitting the cap (non-leader, not editing) so leaders don't pay
+  // the query cost.
+  const capGateEnabled = !isAdmin && !isEditMode && !isLeaderOfSelectedGroup;
+  const { data: myHosted } = useMyHostedEvents({ enabled: capGateEnabled });
+  const futureHostedCount = (myHosted?.upcoming?.length ?? 0) as number;
+  const capReached = capGateEnabled && futureHostedCount >= 1;
 
   // Fetch existing meeting data if editing (using Convex)
   const meetingData = useConvexQuery(
@@ -212,6 +252,7 @@ export function CreateEventScreen() {
       setTitle(meeting.title || "");
       setLocation(meeting.locationOverride || "");
       setIsOnline(meeting.meetingType === 2); // 2 = online
+      setLocationTbd((meeting as any).locationMode === "tbd");
       setMeetingLink(meeting.meetingLink || "");
       setNote(meeting.note || "");
       setCoverImage(meeting.coverImage || undefined);
@@ -271,46 +312,22 @@ export function CreateEventScreen() {
   const addMeetingToSeriesMutation = useAuthenticatedMutation(api.functions.eventSeries.addMeetingToSeries);
   const removeMeetingFromSeriesMutation = useAuthenticatedMutation(api.functions.eventSeries.removeMeetingFromSeries);
   const createSeriesFromMeetingsMutation = useAuthenticatedMutation(api.functions.eventSeries.createSeriesFromMeetings);
-  const postToChatMutationFn = useAuthenticatedMutation(api.functions.meetings.index.postToChat);
 
   // Mutation state tracking
   const [isCreating, setIsCreating] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
-  const [isPostingToChat, setIsPostingToChat] = useState(false);
   const [isCreatingCommunityWide, setIsCreatingCommunityWide] = useState(false);
 
-  // Show the share to chat modal
-  const showShareToChatModal = (eventMeetingId: string) => {
+  // Open the post-create invite sheet (replaces the old "post to group chat"
+  // flow — we now let the creator copy the link or use the native share sheet).
+  const showInviteSheetForMeeting = (eventMeetingId: string) => {
     setPendingMeetingId(eventMeetingId);
-    setShowShareModal(true);
+    setShowInviteSheet(true);
   };
 
-  // Handle sending the event to chat with a message
-  const handleSendToChat = async (message: string) => {
-    if (!pendingMeetingId) return;
-    setIsPostingToChat(true);
-    try {
-      await postToChatMutationFn({
-        meetingId: pendingMeetingId as Id<"meetings">,
-        message,
-      });
-      setShowShareModal(false);
-      setPendingMeetingId(null);
-      router.back();
-    } catch (error: any) {
-      Alert.alert(
-        "Error",
-        error.message || "Failed to post event to chat. Please try again."
-      );
-    } finally {
-      setIsPostingToChat(false);
-    }
-  };
-
-  // Handle skipping the share to chat
-  const handleSkipShare = () => {
-    setShowShareModal(false);
+  const handleInviteSheetClose = () => {
+    setShowInviteSheet(false);
     setPendingMeetingId(null);
     router.back();
   };
@@ -318,7 +335,7 @@ export function CreateEventScreen() {
   // Wrapper for create mutation with state tracking
   // Note: useAuthenticatedMutation auto-injects the token
   const createMeeting = {
-    mutate: async (data: { groupId: string; scheduledAt: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; note?: string; coverImage?: string; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; visibility?: VisibilityLevel }) => {
+    mutate: async (data: { groupId: string; scheduledAt: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; locationMode?: "address" | "online" | "tbd"; note?: string; coverImage?: string; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; visibility?: VisibilityLevel }) => {
       setIsCreating(true);
       try {
         const newMeetingId = await createMeetingMutation({
@@ -328,15 +345,25 @@ export function CreateEventScreen() {
           meetingType: data.meetingType ?? 1,
           meetingLink: data.meetingLink,
           locationOverride: data.locationOverride,
+          locationMode: data.locationMode,
           note: data.note,
           coverImage: data.coverImage,
           rsvpEnabled: data.rsvpEnabled,
           rsvpOptions: data.rsvpOptions,
           visibility: data.visibility,
         });
+        // ADR-022 analytics: only fire for non-leader creators so the funnel
+        // is clean (leaders creating events is the baseline, not the signal).
+        if (!isLeaderOfSelectedGroup) {
+          analytics.capture("event_created_by_member", {
+            group_id: data.groupId,
+            is_announcement_group: selectedGroup?.isAnnouncementGroup === true,
+            location_type: data.locationMode ?? null,
+          });
+        }
         // Convex automatically updates queries, so no need to invalidate
         // Show the share to chat modal
-        showShareToChatModal(newMeetingId);
+        showInviteSheetForMeeting(newMeetingId);
       } catch (error: any) {
         Alert.alert("Error", formatError(error, "Failed to create event"));
       } finally {
@@ -349,7 +376,7 @@ export function CreateEventScreen() {
   // Wrapper for update mutation with state tracking
   // Note: useAuthenticatedMutation auto-injects the token
   const updateMeeting = {
-    mutate: async (data: { meetingId: string; scheduledAt?: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; note?: string; coverImage?: string; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; visibility?: VisibilityLevel; notifyGuests?: boolean }) => {
+    mutate: async (data: { meetingId: string; scheduledAt?: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; locationMode?: "address" | "online" | "tbd"; note?: string; coverImage?: string; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; visibility?: VisibilityLevel; notifyGuests?: boolean }) => {
       setIsUpdating(true);
       try {
         await updateMeetingMutation({
@@ -359,6 +386,7 @@ export function CreateEventScreen() {
           meetingType: data.meetingType,
           meetingLink: data.meetingLink,
           locationOverride: data.locationOverride,
+          locationMode: data.locationMode,
           note: data.note,
           coverImage: data.coverImage,
           rsvpEnabled: data.rsvpEnabled,
@@ -385,6 +413,27 @@ export function CreateEventScreen() {
         await cancelMeetingMutation({
           meetingId: data.meetingId as Id<"meetings">,
         });
+        // ADR-022 analytics. Cancel can now come from the creator too, so
+        // derive the role from actual privilege instead of bucketing every
+        // non-admin as "leader". Backend already gated who can even reach
+        // this point via `canEditMeeting`, so we just label which of the
+        // three allowed roles acted. Falls back to "leader" when we can't
+        // tell (e.g. the meeting doc hasn't loaded), which was the prior
+        // default.
+        let deleterRole: "admin" | "creator" | "leader" = "leader";
+        if (isAdmin) {
+          deleterRole = "admin";
+        } else if (
+          !!user?.id &&
+          !!(meeting as any)?.createdById &&
+          String(user.id) === String((meeting as any).createdById)
+        ) {
+          deleterRole = "creator";
+        }
+        analytics.capture("event_deleted_by_leader", {
+          event_id: data.meetingId,
+          deleter_role: deleterRole,
+        });
         // Convex automatically updates queries
         Alert.alert(
           "Event Cancelled",
@@ -401,9 +450,6 @@ export function CreateEventScreen() {
   };
 
   // Post to chat mutation state (for the modal)
-  const postToChatMutation = {
-    isPending: isPostingToChat,
-  };
 
   const handleCancelEvent = () => {
     if (!meetingId) return;
@@ -594,6 +640,14 @@ export function CreateEventScreen() {
         console.log('[CreateEvent] R2 upload complete, path:', finalCoverImage);
       }
 
+      // Derive locationMode from the UI primitives. ADR-022: every event must
+      // declare one of address/online/tbd, applied uniformly to leaders too.
+      const resolvedLocationMode: "address" | "online" | "tbd" = isOnline
+        ? "online"
+        : locationTbd
+          ? "tbd"
+          : "address";
+
       const data: CreateMeetingInput = {
         scheduledAt: isSeriesMode
           ? new Date().toISOString() // Placeholder — series paths use selectedDates + timeOfDay directly
@@ -603,7 +657,10 @@ export function CreateEventScreen() {
         meetingLink:
           isOnline && meetingLink.trim() ? meetingLink.trim() : undefined,
         locationOverride:
-          !isOnline && location.trim() ? location.trim() : undefined,
+          !isOnline && !locationTbd && location.trim()
+            ? location.trim()
+            : undefined,
+        locationMode: resolvedLocationMode,
         note: note.trim() || undefined,
         coverImage: finalCoverImage || undefined,
         rsvpEnabled: rsvpEnabled,
@@ -854,7 +911,6 @@ export function CreateEventScreen() {
   const isSubmitting =
     createMeeting.isPending ||
     updateMeeting.isPending ||
-    postToChatMutation.isPending ||
     cancelMeeting.isPending ||
     isUploadingImage ||
     isCreatingCommunityWide;
@@ -1081,12 +1137,12 @@ export function CreateEventScreen() {
           {isUnifiedMode && !isEditMode && !isCommunityWideEnabled && (
             <View style={styles.fieldContainer}>
               <Text style={[styles.label, { color: colors.text }]}>Hosting Group *</Text>
-              {isLoadingLeaderGroups ? (
+              {isLoadingCreatableGroups ? (
                 <View style={[styles.loadingDropdown, { backgroundColor: colors.surfaceSecondary }]}>
                   <ActivityIndicator size="small" color={primaryColor} />
                   <Text style={[styles.loadingDropdownText, { color: colors.textSecondary }]}>Loading groups...</Text>
                 </View>
-              ) : !leaderGroups || leaderGroups.length === 0 ? (
+              ) : !creatableGroups || creatableGroups.length === 0 ? (
                 <View style={[styles.noGroupsContainer, { backgroundColor: colors.surfaceSecondary }]}>
                   <Text style={[styles.noGroupsText, { color: colors.destructive }]}>
                     You don't have permission to create events for any groups.
@@ -1105,8 +1161,16 @@ export function CreateEventScreen() {
                   >
                     {selectedGroup ? (
                       <View style={styles.selectedGroupRow}>
-                        <Text style={[styles.selectedGroupName, { color: colors.text }]}>{selectedGroup.name}</Text>
-                        <Text style={[styles.selectedGroupType, { color: colors.textSecondary }]}>{selectedGroup.groupTypeName}</Text>
+                        <Text style={[styles.selectedGroupName, { color: colors.text }]}>
+                          {(selectedGroup as any).isAnnouncementGroup
+                            ? community?.name ?? selectedGroup.name
+                            : selectedGroup.name}
+                        </Text>
+                        <Text style={[styles.selectedGroupType, { color: colors.textSecondary }]}>
+                          {(selectedGroup as any).isAnnouncementGroup
+                            ? "Hosted by you"
+                            : selectedGroup.groupTypeName}
+                        </Text>
                       </View>
                     ) : (
                       <Text style={[styles.dropdownPlaceholder, { color: colors.inputPlaceholder }]}>Select a group</Text>
@@ -1119,7 +1183,7 @@ export function CreateEventScreen() {
                   </TouchableOpacity>
                   {isGroupDropdownOpen && (
                     <View style={[styles.dropdownList, { borderColor: colors.inputBorder, backgroundColor: colors.surface }]}>
-                      {leaderGroups.filter(Boolean).map((group) => (
+                      {creatableGroups.filter(Boolean).map((group) => (
                         <TouchableOpacity
                           key={group!.id}
                           style={[
@@ -1140,9 +1204,15 @@ export function CreateEventScreen() {
                               selectedGroupId === group!.id && [styles.dropdownItemTextSelected, { color: primaryColor }],
                             ]}
                           >
-                            {group!.name}
+                            {(group as any).isAnnouncementGroup
+                              ? community?.name ?? group!.name
+                              : group!.name}
                           </Text>
-                          <Text style={[styles.dropdownItemSubtext, { color: colors.textSecondary }]}>{group!.groupTypeName}</Text>
+                          <Text style={[styles.dropdownItemSubtext, { color: colors.textSecondary }]}>
+                            {(group as any).isAnnouncementGroup
+                              ? "Community"
+                              : group!.groupTypeName}
+                          </Text>
                           {selectedGroupId === group!.id && (
                             <Ionicons name="checkmark" size={18} color={primaryColor} />
                           )}
@@ -1158,8 +1228,10 @@ export function CreateEventScreen() {
             </View>
           )}
 
-          {/* Series Toggle - shown when not editing */}
-          {!isEditMode && (
+          {/* Series Toggle - shown when not editing. Hidden (not disabled) for
+              non-leaders per ADR-022: disabled-with-tooltip feels patronising,
+              and the toggle reappears automatically if the user is promoted. */}
+          {!isEditMode && isLeaderOfSelectedGroup && (
             <View style={styles.fieldContainer}>
               <View style={styles.toggleRow}>
                 <Text style={[styles.label, { color: colors.text }]}>Create / Add to Series</Text>
@@ -1368,13 +1440,39 @@ export function CreateEventScreen() {
               <Text style={[styles.label, { color: colors.text }]}>Online Event</Text>
               <Switch
                 value={isOnline}
-                onValueChange={setIsOnline}
+                onValueChange={(value) => {
+                  setIsOnline(value);
+                  if (value) setLocationTbd(false);
+                }}
                 trackColor={{ false: colors.border, true: primaryColor }}
                 thumbColor={colors.textInverse}
                 disabled={isSubmitting}
               />
             </View>
           </View>
+
+          {/* Location TBD Toggle — applies only when not online. Required-but-
+              flexible location model per ADR-022: some events genuinely don't
+              have a venue picked yet. */}
+          {!isOnline && (
+            <View style={styles.fieldContainer}>
+              <View style={styles.toggleRow}>
+                <Text style={[styles.label, { color: colors.text }]}>Location TBD</Text>
+                <Switch
+                  value={locationTbd}
+                  onValueChange={setLocationTbd}
+                  trackColor={{ false: colors.border, true: primaryColor }}
+                  thumbColor={colors.textInverse}
+                  disabled={isSubmitting}
+                />
+              </View>
+              {locationTbd && (
+                <Text style={[styles.helperText, { color: colors.textTertiary }]}>
+                  No location yet — attendees will see "TBD" on the event page.
+                </Text>
+              )}
+            </View>
+          )}
 
           {/* Meeting Link (only if online) */}
           {isOnline && (
@@ -1393,8 +1491,8 @@ export function CreateEventScreen() {
             </View>
           )}
 
-          {/* Location (only if in-person) */}
-          {!isOnline && (
+          {/* Location (only if in-person and not TBD) */}
+          {!isOnline && !locationTbd && (
             <View style={styles.fieldContainer}>
               <Text style={[styles.label, { color: colors.text }]}>Location</Text>
               <TextInput
@@ -1625,16 +1723,34 @@ export function CreateEventScreen() {
             </View>
           )}
 
+          {/* 1-future-event cap notice for non-leaders (ADR-022). Shown
+              directly above the submit button so the disabled state doesn't
+              read as a bug. */}
+          {capReached && (
+            <View
+              style={[
+                styles.locationWarning,
+                { backgroundColor: colors.surfaceSecondary, marginTop: 16 },
+              ]}
+            >
+              <Ionicons name="information-circle" size={20} color={colors.link} />
+              <Text style={[styles.locationWarningText, { color: colors.textSecondary }]}>
+                You already have an upcoming event. Cancel or wait for it to
+                pass before creating another.
+              </Text>
+            </View>
+          )}
+
           {/* Submit Button */}
           <TouchableOpacity
             testID="submit-button"
             style={[
               styles.submitButton,
               { backgroundColor: primaryColor },
-              isSubmitting && styles.submitButtonDisabled,
+              (isSubmitting || capReached) && styles.submitButtonDisabled,
             ]}
             onPress={handleSubmit}
-            disabled={isSubmitting}
+            disabled={isSubmitting || capReached}
           >
             {isSubmitting ? (
               <ActivityIndicator color={colors.textInverse} />
@@ -1662,18 +1778,14 @@ export function CreateEventScreen() {
           )}
         </ScrollView>
 
-        {/* Share to Chat Modal */}
-        <ShareToChatModal
-          visible={showShareModal}
-          onClose={() => {
-            setShowShareModal(false);
-            setPendingMeetingId(null);
-            router.back();
-          }}
-          onSend={handleSendToChat}
-          onSkip={handleSkipShare}
-          isLoading={postToChatMutation.isPending}
+        {/* Post-create Invite Sheet — replaces the old Share-to-Group-Chat
+            modal. Copy-link + native Share covers both togather chats and
+            every external messenger. */}
+        <InviteToEventSheet
+          visible={showInviteSheet}
+          meetingId={pendingMeetingId}
           eventTitle={title || groupTypeName}
+          onClose={handleInviteSheetClose}
         />
 
         {/* Past Date Confirmation Modal (for admins only) */}

@@ -237,6 +237,14 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
 
   const isLeader = leaderStatus?.isLeader ?? false;
 
+  // Creators can edit their own event even if they aren't group leaders
+  // (ADR-022). Backend enforces authoritatively; this just shows the button.
+  const isCreator =
+    !!user?.id &&
+    !!(eventData as any)?.createdById &&
+    String(user.id) === String((eventData as any).createdById);
+  const canEdit = isLeader || isCreator;
+
   // ============================================================================
   // Loading & Error States
   // ============================================================================
@@ -584,7 +592,7 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
         <TouchableOpacity style={styles.shareButton} onPress={handleShare}>
           <Ionicons name="share-outline" size={22} color={colors.text} />
         </TouchableOpacity>
-        {isLeader && (
+        {canEdit && (
           <TouchableOpacity style={[styles.editButton, { backgroundColor: colors.surfaceSecondary }]} onPress={handleEdit}>
             <Text style={[styles.editButtonText, { color: colors.text }]}>Edit</Text>
           </TouchableOpacity>
@@ -612,20 +620,51 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
         />
 
         <View style={styles.content}>
-          {/* Community/Group Info */}
+          {/* Host Attribution. ADR-022 member-led events must visibly read
+              "Hosted by [creator]" so attendees don't mistake them for
+              official community posts. We show the creator's name as the
+              primary line with the hosting group (or community for
+              announcement-group events) as the secondary line. Falls back
+              to the old group/community display for legacy rows where
+              `createdById` is missing. */}
           <View style={[styles.organizerRow, { borderBottomColor: colors.surfaceSecondary }]}>
-            <AppImage
-              source={eventData.groupImage}
-              style={styles.groupAvatar}
-              placeholder={{
-                type: 'initials',
-                name: (eventData.groupName || eventData.communityName) ?? undefined,
-              }}
-            />
-            <View style={styles.organizerInfo}>
-              <Text style={[styles.organizerName, { color: colors.text }]}>{eventData.groupName}</Text>
-              <Text style={[styles.communityName, { color: colors.textSecondary }]}>{eventData.communityName}</Text>
-            </View>
+            {(eventData as any).creatorName ? (
+              <>
+                <AppImage
+                  source={(eventData as any).creatorImage}
+                  style={styles.groupAvatar}
+                  placeholder={{
+                    type: 'initials',
+                    name: (eventData as any).creatorName,
+                  }}
+                />
+                <View style={styles.organizerInfo}>
+                  <Text style={[styles.organizerName, { color: colors.text }]}>
+                    {`Hosted by ${(eventData as any).creatorName}`}
+                  </Text>
+                  <Text style={[styles.communityName, { color: colors.textSecondary }]}>
+                    {(eventData as any).isAnnouncementGroup
+                      ? eventData.communityName
+                      : `${eventData.groupName}${eventData.communityName ? ' · ' + eventData.communityName : ''}`}
+                  </Text>
+                </View>
+              </>
+            ) : (
+              <>
+                <AppImage
+                  source={eventData.groupImage}
+                  style={styles.groupAvatar}
+                  placeholder={{
+                    type: 'initials',
+                    name: (eventData.groupName || eventData.communityName) ?? undefined,
+                  }}
+                />
+                <View style={styles.organizerInfo}>
+                  <Text style={[styles.organizerName, { color: colors.text }]}>{eventData.groupName}</Text>
+                  <Text style={[styles.communityName, { color: colors.textSecondary }]}>{eventData.communityName}</Text>
+                </View>
+              </>
+            )}
           </View>
 
           {/* Date */}

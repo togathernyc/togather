@@ -136,6 +136,36 @@ export function useLeaderGroups(options?: { enabled?: boolean }) {
 }
 
 /**
+ * Hook to fetch groups the current user can create events IN — i.e., any
+ * active-membership group. Each row carries `isLeader` and
+ * `isAnnouncementGroup` flags so the CreateEventScreen can toggle
+ * leader-only UI and default the dropdown to the community announcement
+ * group for members. See ADR-022.
+ */
+export function useCreatableGroups(options?: { enabled?: boolean }) {
+  const { community } = useAuth();
+  const communityId = community?.id as Id<"communities"> | undefined;
+
+  const shouldSkip = options?.enabled === false || !communityId;
+  const result = useAuthenticatedQuery(
+    api.functions.groups.members.myCreatableGroups,
+    shouldSkip ? 'skip' : { communityId: communityId! }
+  );
+
+  const isLoading = result === undefined;
+  const data = result ?? EMPTY_LEADER_GROUPS;
+
+  return {
+    data,
+    isLoading,
+    isFetching: isLoading,
+    isError: false,
+    error: null,
+    refetch: () => {},
+  };
+}
+
+/**
  * Hook to fetch events the user has RSVPed to
  * This does NOT require community context - useful for users without a community
  */

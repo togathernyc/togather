@@ -527,6 +527,36 @@ export const eventRsvpReceived: NotificationDefinition<EventRsvpReceivedData> = 
   defaultChannels: ['push'],
 };
 
+// Sent to group leaders when a non-leader member creates an event in their
+// group. Suppressed for the announcement group (would spam admins). See ADR-022.
+interface EventCreatedByMemberData {
+  creatorName: string;
+  meetingTitle: string;
+  groupName: string;
+  groupId: string;
+  communityId?: string;
+  shortId?: string;
+}
+
+export const eventCreatedByMember: NotificationDefinition<EventCreatedByMemberData> = {
+  type: 'event_created_by_member',
+  description: 'Sent to group leaders when a member creates an event in their group',
+  formatters: {
+    push: (ctx) => ({
+      title: 'New event in your group',
+      body: `${ctx.data.creatorName} created "${ctx.data.meetingTitle}" in ${ctx.data.groupName}`,
+      data: {
+        type: 'event_created_by_member',
+        groupId: ctx.data.groupId,
+        communityId: ctx.data.communityId,
+        shortId: ctx.data.shortId,
+        url: ctx.data.shortId ? `/e/${ctx.data.shortId}?source=app` : undefined,
+      },
+    }),
+  },
+  defaultChannels: ['push'],
+};
+
 // ============================================================================
 // Admin Definitions
 // ============================================================================

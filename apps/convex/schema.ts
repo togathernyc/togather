@@ -621,6 +621,13 @@ export default defineSchema({
     // Max guests (plus-ones) allowed per RSVP. Falls back to MAX_GUESTS_PER_RSVP constant.
     maxGuestsPerRsvp: v.optional(v.number()),
 
+    // Location flexibility: "address" uses locationOverride, "online" uses meetingLink,
+    // "tbd" means intentionally unspecified. Optional for backwards compatibility with
+    // legacy rows; enforced on create/update for new writes. See ADR-022.
+    locationMode: v.optional(
+      v.union(v.literal("address"), v.literal("online"), v.literal("tbd"))
+    ),
+
     // Search support (denormalized)
     communityId: v.optional(v.id("communities")), // Denormalized from group for search filtering
     searchText: v.optional(v.string()), // Denormalized: title + location + group name
@@ -1610,6 +1617,27 @@ export default defineSchema({
     createdAt: v.number(), // Unix timestamp ms
   })
     .index("by_message", ["messageId"])
+    .index("by_reportedBy", ["reportedById"])
+    .index("by_status", ["status"])
+    .index("by_reviewedBy", ["reviewedById"]),
+
+  /**
+   * Meeting Reports
+   * Content moderation reports for meetings (mirrors chatMessageFlags).
+   * Reports route to the event's group leaders. See ADR-022.
+   */
+  meetingReports: defineTable({
+    meetingId: v.id("meetings"),
+    reportedById: v.id("users"),
+    reason: v.string(), // "spam" | "inappropriate" | "other"
+    details: v.optional(v.string()),
+    status: v.string(), // "pending" | "reviewed" | "dismissed" | "actioned"
+    reviewedById: v.optional(v.id("users")),
+    reviewedAt: v.optional(v.number()), // Unix timestamp ms
+    actionTaken: v.optional(v.string()),
+    createdAt: v.number(), // Unix timestamp ms
+  })
+    .index("by_meeting", ["meetingId"])
     .index("by_reportedBy", ["reportedById"])
     .index("by_status", ["status"])
     .index("by_reviewedBy", ["reviewedById"]),

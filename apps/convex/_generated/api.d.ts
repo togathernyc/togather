@@ -67,7 +67,9 @@ import type * as functions_meetings_events from "../functions/meetings/events.js
 import type * as functions_meetings_explore from "../functions/meetings/explore.js";
 import type * as functions_meetings_index from "../functions/meetings/index.js";
 import type * as functions_meetings_migrations from "../functions/meetings/migrations.js";
+import type * as functions_meetings_myEvents from "../functions/meetings/myEvents.js";
 import type * as functions_meetings_queries from "../functions/meetings/queries.js";
+import type * as functions_meetings_reports from "../functions/meetings/reports.js";
 import type * as functions_memberFollowups from "../functions/memberFollowups.js";
 import type * as functions_messaging_blocking from "../functions/messaging/blocking.js";
 import type * as functions_messaging_channelInvites from "../functions/messaging/channelInvites.js";
@@ -140,6 +142,7 @@ import type * as lib_email_templates_VerificationCode from "../lib/email/templat
 import type * as lib_followupConstants from "../lib/followupConstants.js";
 import type * as lib_helpers from "../lib/helpers.js";
 import type * as lib_meetingConfig from "../lib/meetingConfig.js";
+import type * as lib_meetingPermissions from "../lib/meetingPermissions.js";
 import type * as lib_meetingSearchText from "../lib/meetingSearchText.js";
 import type * as lib_memberSearch from "../lib/memberSearch.js";
 import type * as lib_membership from "../lib/membership.js";
@@ -230,7 +233,9 @@ declare const fullApi: ApiFromModules<{
   "functions/meetings/explore": typeof functions_meetings_explore;
   "functions/meetings/index": typeof functions_meetings_index;
   "functions/meetings/migrations": typeof functions_meetings_migrations;
+  "functions/meetings/myEvents": typeof functions_meetings_myEvents;
   "functions/meetings/queries": typeof functions_meetings_queries;
+  "functions/meetings/reports": typeof functions_meetings_reports;
   "functions/memberFollowups": typeof functions_memberFollowups;
   "functions/messaging/blocking": typeof functions_messaging_blocking;
   "functions/messaging/channelInvites": typeof functions_messaging_channelInvites;
@@ -303,6 +308,7 @@ declare const fullApi: ApiFromModules<{
   "lib/followupConstants": typeof lib_followupConstants;
   "lib/helpers": typeof lib_helpers;
   "lib/meetingConfig": typeof lib_meetingConfig;
+  "lib/meetingPermissions": typeof lib_meetingPermissions;
   "lib/meetingSearchText": typeof lib_meetingSearchText;
   "lib/memberSearch": typeof lib_memberSearch;
   "lib/membership": typeof lib_membership;

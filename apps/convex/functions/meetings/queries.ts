@@ -91,6 +91,22 @@ export const getByShortId = query({
     // Get group type name
     const groupType = await ctx.db.get(group.groupTypeId);
 
+    // Get creator display info (for member-led events we surface
+    // "Hosted by [name]" so the attendee can tell it's a member event, not
+    // an official community post). Name is rendered in "First L." form
+    // everywhere — short, identity-preserving, and privacy-friendly even
+    // on public share pages where non-members may land. Safe to load
+    // regardless of access: names already appear on guest lists.
+    const creator = meeting.createdById
+      ? await ctx.db.get(meeting.createdById)
+      : null;
+    const creatorName = creator
+      ? [creator.firstName, creator.lastName?.[0] ? `${creator.lastName[0]}.` : ""]
+          .filter(Boolean)
+          .join(" ")
+          .trim() || null
+      : null;
+
     // Build access prompt for users without access
     let accessPrompt = null;
     if (!hasAccess) {
@@ -129,10 +145,15 @@ export const getByShortId = query({
       groupName: group.name,
       groupImage: getMediaUrl(group.preview),
       groupTypeName: groupType?.name || "Group",
+      isAnnouncementGroup: group.isAnnouncementGroup === true,
       // Community info
       communityId: community?._id || null,
       communityName: community?.name || null,
       communityLogo: getMediaUrl(community?.logo),
+      // Creator info (ADR-022: distinguishes member-led from leader-led)
+      createdById: meeting.createdById ?? null,
+      creatorName,
+      creatorImage: creator ? getMediaUrl(creator.profilePhoto) : null,
       // Access info
       hasAccess,
       accessPrompt,

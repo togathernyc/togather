@@ -229,19 +229,20 @@ async function seedTestData(t: ReturnType<typeof convexTest>): Promise<TestSetup
 // GROUP LEADER PERMISSION TESTS - meetings.create
 // ============================================================================
 
-describe("Group Leader Permissions - meetings.create", () => {
-  test("throws 'Only group leaders can create events' when non-leader tries to create", async () => {
+describe("meetings.create — permissions", () => {
+  test("allows a non-leader member to create an event (ADR-022)", async () => {
     const t = convexTest(schema, modules);
     const setup = await seedTestData(t);
 
-    await expect(
-      t.mutation(api.functions.meetings.index.create, {
-        token: setup.memberToken,
-        groupId: setup.groupId,
-        scheduledAt: Date.now() + 86400000,
-        meetingType: 1,
-      })
-    ).rejects.toThrow("Only group leaders can create events");
+    const meetingId = await t.mutation(api.functions.meetings.index.create, {
+      token: setup.memberToken,
+      groupId: setup.groupId,
+      scheduledAt: Date.now() + 86400000,
+      meetingType: 1,
+      locationMode: "tbd",
+    });
+
+    expect(meetingId).toBeDefined();
   });
 
   test("succeeds when leader creates event", async () => {
@@ -317,7 +318,7 @@ describe("Group Leader Permissions - meetings.create", () => {
         scheduledAt: Date.now() + 86400000,
         meetingType: 1,
       })
-    ).rejects.toThrow("Only group leaders can create events");
+    ).rejects.toThrow("You must be a member of this group to create events");
   });
 
   test("throws when former member (leftAt set) tries to create event", async () => {
@@ -338,7 +339,7 @@ describe("Group Leader Permissions - meetings.create", () => {
         scheduledAt: Date.now() + 86400000,
         meetingType: 1,
       })
-    ).rejects.toThrow("Only group leaders can create events");
+    ).rejects.toThrow("You must be a member of this group to create events");
   });
 });
 
@@ -829,21 +830,11 @@ describe("Permission Flow Integration", () => {
   });
 
   describe("Member limitations", () => {
-    test("member can only leave group, cannot perform leader actions", async () => {
+    test("member can leave the group (ADR-022: members can also create events)", async () => {
       const t = convexTest(schema, modules);
       const setup = await seedTestData(t);
 
-      // Cannot create events
-      await expect(
-        t.mutation(api.functions.meetings.index.create, {
-          token: setup.memberToken,
-          groupId: setup.groupId,
-          scheduledAt: Date.now() + 86400000,
-          meetingType: 1,
-        })
-      ).rejects.toThrow("Only group leaders can create events");
-
-      // But CAN leave (self-removal)
+      // Self-removal still works for regular members.
       const leaveResult = await t.mutation(api.functions.groupMembers.remove, {
         token: setup.memberToken,
         groupId: setup.groupId,

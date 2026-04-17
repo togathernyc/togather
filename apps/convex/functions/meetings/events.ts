@@ -33,7 +33,7 @@ const BUCKET_CANDIDATE_MULTIPLIER = 5;
 
 type MeetingDoc = Doc<"meetings">;
 type GroupDoc = Doc<"groups">;
-type MeetingWithGroup = MeetingDoc & { group: GroupDoc };
+export type MeetingWithGroup = MeetingDoc & { group: GroupDoc };
 
 type SingleEventCard = {
   kind: "single";
@@ -84,7 +84,7 @@ type CommunityWideCard = {
   representativeShortId: string | null;
 };
 
-type EventCard = SingleEventCard | CommunityWideCard;
+export type EventCard = SingleEventCard | CommunityWideCard;
 
 export const listForEventsTab = query({
   args: {
@@ -352,7 +352,7 @@ type Enrichment = {
   parentsMap: Map<Id<"communityWideEvents">, Doc<"communityWideEvents">>;
 };
 
-async function buildEnrichment(
+export async function buildEnrichment(
   ctx: QueryCtx,
   meetings: MeetingWithGroup[]
 ): Promise<Enrichment> {
@@ -414,10 +414,11 @@ async function buildEnrichment(
   return { groupTypesMap, rsvpsByMeeting, usersMap, parentsMap };
 }
 
-function buildBucket(
+export function buildBucket(
   meetings: MeetingWithGroup[],
   limit: number,
-  e: Enrichment
+  e: Enrichment,
+  opts?: { order?: "asc" | "desc" }
 ): EventCard[] {
   // Partition into standalones vs community-wide children.
   const standalones: MeetingWithGroup[] = [];
@@ -477,7 +478,8 @@ function buildBucket(
     });
   }
 
-  cards.sort((a, b) => a.sortAt - b.sortAt);
+  const dir = opts?.order === "desc" ? -1 : 1;
+  cards.sort((a, b) => dir * (a.sortAt - b.sortAt));
   return cards.slice(0, limit).map(({ sortAt: _, ...card }) => card);
 }
 

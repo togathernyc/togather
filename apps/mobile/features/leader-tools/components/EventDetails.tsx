@@ -35,6 +35,7 @@ import { DragHandle } from "@components/ui/DragHandle";
 import { useTheme } from "@hooks/useTheme";
 import { EventBlastSheet } from "./EventBlastSheet";
 import { EventBlastHistory } from "./EventBlastHistory";
+import { ReportEventSheet } from "@features/events/components/ReportEventSheet";
 
 interface RsvpOption {
   id: number;
@@ -71,6 +72,10 @@ export function EventDetails({
   const [showRsvpSheet, setShowRsvpSheet] = useState(false);
   const [isSubmittingRsvp, setIsSubmittingRsvp] = useState(false);
   const [showBlastSheet, setShowBlastSheet] = useState(false);
+  const [showReportSheet, setShowReportSheet] = useState(false);
+
+  // Computed below once `meeting` is loaded. Declared here so it's referenced
+  // by JSX; actual value derives from useQuery result downstream.
 
   // Fetch meeting details if meetingId is available (using Convex)
   // NOTE: This must be called before any conditional returns (Rules of Hooks)
@@ -80,6 +85,13 @@ export function EventDetails({
   );
   const meeting = meetingData ?? undefined;
   const isLoadingMeeting = groupId && meetingId && meetingData === undefined;
+
+  // ADR-022: creators can edit their own events even when they aren't
+  // leaders of the group.
+  const isCreator =
+    !!user?.id &&
+    !!(meeting as any)?.createdById &&
+    String(user.id) === String((meeting as any).createdById);
 
   // Fetch RSVPs for the meeting (using Convex)
   const rsvpsRaw = useQuery(
@@ -345,7 +357,18 @@ export function EventDetails({
         >
           <Ionicons name="share-outline" size={22} color={colors.text} />
         </TouchableOpacity>
-        {isLeader && (
+        {/* Report Button — members can flag events for the group leaders.
+            Creators see it too; backend just won't let them report their own
+            event (low-risk of self-abuse). */}
+        <TouchableOpacity
+          testID="report-event-button"
+          accessibilityLabel="Report event"
+          style={styles.shareButton}
+          onPress={() => setShowReportSheet(true)}
+        >
+          <Ionicons name="flag-outline" size={20} color={colors.text} />
+        </TouchableOpacity>
+        {(isLeader || isCreator) && (
           <TouchableOpacity
             testID="edit-button"
             style={[styles.editButton, { backgroundColor: colors.surfaceSecondary }]}
@@ -383,17 +406,62 @@ export function EventDetails({
               </View>
             )}
 
-            {/* Group Info Section */}
+            {/* Host Attribution (ADR-022). When there's a creator, surface
+                "Hosted by [name]" so the viewer can tell a member event
+                apart from an official/community event. */}
             {meeting?.group && (
               <View style={[styles.groupInfoCard, { backgroundColor: colors.surface }]}>
-                <Avatar
-                  name={meeting.group.name}
-                  imageUrl={meeting.group.preview || null}
-                  size={48}
-                />
-                <View style={styles.groupInfoText}>
-                  <Text style={[styles.groupName, { color: colors.text }]}>{meeting.group.name}</Text>
-                </View>
+                {(meeting as any).creator ? (
+                  <>
+                    <Avatar
+                      name={
+                        [
+                          (meeting as any).creator.firstName,
+                          (meeting as any).creator.lastName,
+                        ]
+                          .filter(Boolean)
+                          .join(" ") || meeting.group.name
+                      }
+                      imageUrl={
+                        (meeting as any).creator.profilePhoto || null
+                      }
+                      size={48}
+                    />
+                    <View style={styles.groupInfoText}>
+                      <Text style={[styles.groupName, { color: colors.text }]}>
+                        {(() => {
+                          const firstName = (meeting as any).creator.firstName || "";
+                          const lastInitial = (meeting as any).creator.lastName?.[0]
+                            ? `${(meeting as any).creator.lastName[0]}.`
+                            : "";
+                          const display = [firstName, lastInitial]
+                            .filter(Boolean)
+                            .join(" ")
+                            .trim();
+                          return display ? `Hosted by ${display}` : "Hosted";
+                        })()}
+                      </Text>
+                      <Text
+                        style={[styles.groupName, { color: colors.textSecondary, fontSize: 13, fontWeight: "400", marginTop: 2 }]}
+                      >
+                        {(meeting as any).group?.isAnnouncementGroup
+                          ? "Community"
+                          : meeting.group.name}
+                      </Text>
+                    </View>
+                  </>
+                ) : (
+                  <>
+                    <Avatar
+                      name={meeting.group.name}
+                      imageUrl={meeting.group.preview || null}
+                      size={48}
+                    />
+                    <View style={styles.groupInfoText}>
+                      <Text style={[styles.groupName, { color: colors.text }]}>{meeting.group.name}</Text>
+                    </View>
+                  </>
+                )}
               </View>
             )}
 
@@ -741,6 +809,13 @@ export function EventDetails({
           onSent={() => {}}
         />
       )}
+
+      {/* Report Event Sheet (ADR-022) */}
+      <ReportEventSheet
+        visible={showReportSheet}
+        meetingId={meetingId ? (meetingId as Id<"meetings">) : null}
+        onClose={() => setShowReportSheet(false)}
+      />
 
     </View>
   );
