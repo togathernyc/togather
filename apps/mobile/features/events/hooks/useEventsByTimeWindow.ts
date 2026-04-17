@@ -9,7 +9,7 @@
  * without re-running the query on every render.
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
 import { useQuery, api, useAuthenticatedQuery } from '@services/api/convex';
 import { useAuth } from '@providers/AuthProvider';
@@ -44,15 +44,22 @@ export function useEventsByTimeWindow(options?: { enabled?: boolean }) {
   const { community } = useAuth();
   const communityId = community?.id as Id<'communities'> | undefined;
 
-  // `now` advances ONLY when the screen gains focus — NOT on a timer.
-  // A timer-driven refresh forces the query to re-subscribe at every
-  // tick, which is visible as a UI flicker. Refreshing on focus is both
-  // cheaper and matches user expectation ("when I come back to this tab
-  // it should be up-to-date"). See also feedback on PR #316.
+  // `now` advances only when the user leaves the Events tab and comes back
+  // — NOT on initial mount (the useState initializer already set a fresh
+  // `now`), and NOT on every focus event (stacked routes / sheets can fire
+  // focus-regained without a meaningful departure, which read as flicker).
+  // See feedback on PR #316 + follow-up.
   const [now, setNow] = useState<number>(() => Date.now());
+  const hasBlurredRef = useRef(false);
   useFocusEffect(
     useCallback(() => {
-      setNow(Date.now());
+      if (hasBlurredRef.current) {
+        setNow(Date.now());
+        hasBlurredRef.current = false;
+      }
+      return () => {
+        hasBlurredRef.current = true;
+      };
     }, [])
   );
 
