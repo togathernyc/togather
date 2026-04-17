@@ -451,20 +451,37 @@ export function EventsScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.backgroundSecondary }]}>
-      {viewMode === 'map' ? (
+      {/*
+        The map renders as an ambient background in list mode and as the
+        full-screen surface in map mode. Keeping a single instance avoids
+        re-running geocoding when the user toggles.
+      */}
+      <View style={StyleSheet.absoluteFill} pointerEvents={viewMode === 'map' ? 'auto' : 'none'}>
         <EventsMapView cards={allCards} isLoading={isLoading} />
-      ) : isLoading ? (
-        <View style={styles.centerContainer}>
-          <ActivityIndicator size="small" color={colors.textSecondary} />
-        </View>
-      ) : (
-        <ScrollView
-          style={styles.scrollView}
-          contentContainerStyle={[
-            styles.scrollContent,
-            { paddingTop: contentTopPadding },
-          ]}
-        >
+      </View>
+
+      {viewMode === 'list' && (
+        <>
+          {/* Overlay that dims the map so list content stays readable. */}
+          <View
+            style={[
+              StyleSheet.absoluteFill,
+              { backgroundColor: colors.backgroundSecondary, opacity: 0.82 },
+            ]}
+            pointerEvents="none"
+          />
+          {isLoading ? (
+            <View style={styles.centerContainer}>
+              <ActivityIndicator size="small" color={colors.textSecondary} />
+            </View>
+          ) : (
+            <ScrollView
+              style={styles.scrollView}
+              contentContainerStyle={[
+                styles.scrollContent,
+                { paddingTop: contentTopPadding },
+              ]}
+            >
           {!hasAnyContent && (
             <View style={styles.centerContainer}>
               <Ionicons
@@ -507,6 +524,8 @@ export function EventsScreen() {
             colors={colors}
           />
         </ScrollView>
+      )}
+        </>
       )}
 
       {/* Community-wide children sheet — renders when parentId is non-null */}
