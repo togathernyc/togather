@@ -31,8 +31,11 @@ import { useMyRsvpedEvents } from '../hooks/useCommunityEvents';
 import { EventCard } from './EventCard';
 import { CommunityWideEventCard } from './CommunityWideEventCard';
 import { CommunityWideEventSheet } from './CommunityWideEventSheet';
+import { EventsMapView } from './EventsMapView';
 import type { CommunityEvent } from '../hooks/useCommunityEvents';
 import type { Id } from '@services/api/convex';
+
+type ViewMode = 'list' | 'map';
 
 /**
  * Adapter: maps a SingleEventCard (backend shape with Convex ids) into the
@@ -125,6 +128,10 @@ export function EventsScreen() {
   const [expandedParentId, setExpandedParentId] =
     useState<Id<'communityWideEvents'> | null>(null);
 
+  // List vs map view (list by default). Only surfaced when we have a
+  // community context — the no-community fallback body stays list-only.
+  const [viewMode, setViewMode] = useState<ViewMode>('list');
+
   const handleCommunityWideTap = useCallback(
     (parentId: Id<'communityWideEvents'>) => {
       setExpandedParentId(parentId);
@@ -149,13 +156,75 @@ export function EventsScreen() {
     router.push('/(user)/create-event');
   }, [router]);
 
-  const handlePastEventsPress = useCallback(() => {
-    // Note: /(user)/my-events does not yet exist — link added now, route
-    // comes in PR 2. Until then this will 404 gracefully.
-    router.push('/(user)/my-events?segment=attended');
-  }, [router]);
+  // Segmented List/Map toggle — only shown when we have community context.
+  // Sits to the right of the title row, next to the Create Event CTA.
+  const renderViewToggle = () => {
+    if (!hasCommunityContext) return null;
+    const listActive = viewMode === 'list';
+    const mapActive = viewMode === 'map';
+    return (
+      <View
+        style={[
+          styles.toggleContainer,
+          {
+            backgroundColor: colors.backgroundSecondary,
+            borderColor: colors.borderLight,
+          },
+        ]}
+      >
+        <TouchableOpacity
+          style={[
+            styles.toggleButton,
+            listActive && { backgroundColor: colors.surface },
+          ]}
+          onPress={() => setViewMode('list')}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="List view"
+        >
+          <Ionicons
+            name={listActive ? 'list' : 'list-outline'}
+            size={14}
+            color={listActive ? colors.text : colors.textSecondary}
+          />
+          <Text
+            style={[
+              styles.toggleText,
+              { color: listActive ? colors.text : colors.textSecondary },
+            ]}
+          >
+            List
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.toggleButton,
+            mapActive && { backgroundColor: colors.surface },
+          ]}
+          onPress={() => setViewMode('map')}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Map view"
+        >
+          <Ionicons
+            name={mapActive ? 'map' : 'map-outline'}
+            size={14}
+            color={mapActive ? colors.text : colors.textSecondary}
+          />
+          <Text
+            style={[
+              styles.toggleText,
+              { color: mapActive ? colors.text : colors.textSecondary },
+            ]}
+          >
+            Map
+          </Text>
+        </TouchableOpacity>
+      </View>
+    );
+  };
 
-  // Header with sticky "+ Create Event" CTA
+  // Header with sticky "+ Create Event" CTA and optional List/Map toggle
   const header = (
     <View
       style={[
@@ -168,14 +237,17 @@ export function EventsScreen() {
       ]}
     >
       <Text style={[styles.headerTitle, { color: colors.text }]}>Events</Text>
-      <TouchableOpacity
-        style={[styles.createButton, { backgroundColor: primaryColor }]}
-        onPress={handleCreateEvent}
-        activeOpacity={0.8}
-      >
-        <Ionicons name="add" size={16} color="#fff" />
-        <Text style={styles.createButtonText}>Create Event</Text>
-      </TouchableOpacity>
+      <View style={styles.headerActions}>
+        {renderViewToggle()}
+        <TouchableOpacity
+          style={[styles.createButton, { backgroundColor: primaryColor }]}
+          onPress={handleCreateEvent}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="add" size={16} color="#fff" />
+          <Text style={styles.createButtonText}>Create Event</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 
@@ -273,11 +345,17 @@ export function EventsScreen() {
     thisWeek.length > 0 ||
     later.length > 0;
 
+  // Flattened event list for the map view (map handles its own
+  // filtering + de-dup + geocoding).
+  const allCards = [...happeningNow, ...myRsvps, ...thisWeek, ...later];
+
   return (
     <View style={[styles.container, { backgroundColor: colors.backgroundSecondary }]}>
       {header}
 
-      {isLoading ? (
+      {viewMode === 'map' ? (
+        <EventsMapView cards={allCards} isLoading={isLoading} />
+      ) : isLoading ? (
         <View style={styles.centerContainer}>
           <ActivityIndicator size="small" color={colors.textSecondary} />
         </View>
@@ -325,23 +403,6 @@ export function EventsScreen() {
             onCommunityWideTap={handleCommunityWideTap}
             colors={colors}
           />
-
-          {/* Past events link — route lands in PR 2 */}
-          <TouchableOpacity
-            style={[styles.pastEventsLink, { borderColor: colors.borderLight }]}
-            onPress={handlePastEventsPress}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="time-outline" size={18} color={colors.textSecondary} />
-            <Text style={[styles.pastEventsText, { color: colors.textSecondary }]}>
-              View past events
-            </Text>
-            <Ionicons
-              name="chevron-forward"
-              size={18}
-              color={colors.textSecondary}
-            />
-          </TouchableOpacity>
         </ScrollView>
       )}
 
@@ -369,6 +430,31 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 28,
     fontWeight: '700',
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  toggleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 100,
+    borderWidth: 1,
+    padding: 2,
+    gap: 2,
+  },
+  toggleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 100,
+    gap: 4,
+  },
+  toggleText: {
+    fontSize: 12,
+    fontWeight: '600',
   },
   createButton: {
     flexDirection: 'row',
