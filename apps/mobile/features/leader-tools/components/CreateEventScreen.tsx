@@ -413,10 +413,26 @@ export function CreateEventScreen() {
         await cancelMeetingMutation({
           meetingId: data.meetingId as Id<"meetings">,
         });
-        // ADR-022 analytics.
+        // ADR-022 analytics. Cancel can now come from the creator too, so
+        // derive the role from actual privilege instead of bucketing every
+        // non-admin as "leader". Backend already gated who can even reach
+        // this point via `canEditMeeting`, so we just label which of the
+        // three allowed roles acted. Falls back to "leader" when we can't
+        // tell (e.g. the meeting doc hasn't loaded), which was the prior
+        // default.
+        let deleterRole: "admin" | "creator" | "leader" = "leader";
+        if (isAdmin) {
+          deleterRole = "admin";
+        } else if (
+          !!user?.id &&
+          !!(meeting as any)?.createdById &&
+          String(user.id) === String((meeting as any).createdById)
+        ) {
+          deleterRole = "creator";
+        }
         analytics.capture("event_deleted_by_leader", {
           event_id: data.meetingId,
-          deleter_role: isAdmin ? "admin" : "leader",
+          deleter_role: deleterRole,
         });
         // Convex automatically updates queries
         Alert.alert(

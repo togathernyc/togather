@@ -597,6 +597,27 @@ describe("meetingReports", () => {
     expect(list[0]._id).toBe(reportId);
   });
 
+  test("creator cannot report their own event", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    const meetingId = await t.mutation(api.functions.meetings.index.create, {
+      token: s.memberToken,
+      groupId: s.groupId,
+      scheduledAt: FUTURE(),
+      meetingType: 1,
+      locationMode: "tbd",
+    });
+
+    await expect(
+      t.mutation(api.functions.meetings.reports.createReport, {
+        token: s.memberToken, // the creator
+        meetingId,
+        reason: "spam",
+      })
+    ).rejects.toThrow(/you created/i);
+  });
+
   test("rejects invalid reason", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);

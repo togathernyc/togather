@@ -42,6 +42,14 @@ export const createReport = mutation({
       throw new Error("Event not found");
     }
 
+    // Creators can't report their own event. The client shows the flag icon
+    // uniformly (we don't want to special-case the UI for creators), but we
+    // reject here so self-reports don't pollute the moderation queue or the
+    // `event_reported` analytics signal.
+    if (meeting.createdById && meeting.createdById === reportedById) {
+      throw new Error("You can't report an event you created");
+    }
+
     // Caller must be an active member of the event's community (we gate on
     // community membership so community-wide events remain reportable by any
     // member, not just members of the hosting group).
