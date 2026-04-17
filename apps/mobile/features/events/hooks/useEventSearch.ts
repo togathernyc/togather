@@ -6,42 +6,29 @@
  * event filtering with proper backend search.
  */
 
-import { useMemo } from 'react';
-import { useQuery, api } from '@services/api/convex';
-import { useAuth } from '@providers/AuthProvider';
+import { api, useAuthenticatedQuery } from '@services/api/convex';
 import type { Id } from '@services/api/convex';
 
 export function useEventSearch(searchTerm: string, communityId?: string) {
-  const { user, token } = useAuth();
+  const trimmed = searchTerm.trim();
+  const shouldSkip = !trimmed || !communityId;
 
-  const queryArgs = useMemo(() => {
-    const trimmed = searchTerm.trim();
-    if (!trimmed || !communityId) {
-      return "skip" as const;
-    }
-
-    // Wait for token if user is authenticated
-    if (user?.id && !token) {
-      return "skip" as const;
-    }
-
-    const baseArgs = {
-      communityId: communityId as Id<"communities">,
-      searchTerm: trimmed,
-      limit: 20,
-    };
-
-    if (user?.id && token) {
-      return { ...baseArgs, token };
-    }
-    return baseArgs;
-  }, [searchTerm, communityId, user?.id, token]);
-
-  const result = useQuery(api.functions.meetings.explore.searchEvents, queryArgs);
+  // useAuthenticatedQuery handles token stability — see
+  // features/events/__tests__/query-patterns.test.ts for the rationale.
+  const result = useAuthenticatedQuery(
+    api.functions.meetings.explore.searchEvents,
+    shouldSkip
+      ? 'skip'
+      : {
+          communityId: communityId as Id<'communities'>,
+          searchTerm: trimmed,
+          limit: 20,
+        }
+  );
 
   return {
     data: result,
-    isLoading: result === undefined && queryArgs !== "skip",
-    isSearching: queryArgs !== "skip",
+    isLoading: result === undefined && !shouldSkip,
+    isSearching: !shouldSkip,
   };
 }

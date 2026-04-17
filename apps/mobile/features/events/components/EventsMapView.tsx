@@ -1,12 +1,12 @@
 /**
  * EventsMapView
  *
- * Map view for the Events tab. Renders events from all four buckets
- * (happeningNow + myRsvps + thisWeek + later) as markers on ExploreMap.
+ * Map view for the Events tab. Fetches ALL events happening in the next
+ * 7 days via `communityEvents` — which does NOT collapse community-wide
+ * events into grouped cards like `listForEventsTab` does. That's what we
+ * want here: each per-group child of a community-wide event has its own
+ * real location, so they should each get their own marker on the map.
  *
- * - Community-wide grouped cards (kind !== 'single') are filtered out —
- *   they have no single location of their own.
- * - Events are de-duped by id across buckets.
  * - Geocoding priority: event.locationOverride (sync zip → async address)
  *   falls back to the hosting group's address components.
  * - Tapping a marker navigates directly to the event detail route. No
@@ -14,8 +14,9 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import { ExploreMap } from '@features/explore/components/ExploreMap';
 import {
@@ -24,6 +25,7 @@ import {
 } from '@features/groups/utils/geocodeLocation';
 import { Group } from '@features/groups/types';
 import { useTheme } from '@hooks/useTheme';
+import { useCommunityEvents } from '../hooks/useCommunityEvents';
 
 // Mapbox token — match GroupsScreen's source exactly.
 const mapboxToken =
@@ -35,12 +37,11 @@ type EventMarker = Group & { _isEvent: true; _eventShortId: string };
 
 interface EventsMapViewProps {
   /**
-   * Cards from all four Events-tab buckets, already flattened.
-   * Community-wide grouped cards are filtered out inside this component.
+   * When false, the map view skips fetching. Used so the query doesn't
+   * fire in list mode — this component stays mounted across toggle but
+   * only needs data when it's actually rendered.
    */
-  cards: any[];
-  /** True while the events query is still loading. */
-  isLoading: boolean;
+  enabled?: boolean;
 }
 
 /**
@@ -57,25 +58,35 @@ function hashToInt(id: string): number {
   );
 }
 
-export function EventsMapView({ cards, isLoading }: EventsMapViewProps) {
+export function EventsMapView({ enabled = true }: EventsMapViewProps) {
   const router = useRouter();
   const { colors } = useTheme();
 
-  // Flatten + de-dupe + drop community-wide grouped cards.
-  // Community-wide cards have kind === 'community_wide' and no per-card
-  // location — they collapse multiple per-group instances into one card.
+  // Fetch every event in the next 7 days (no CWE collapsing — each
+  // per-group child of a community-wide event needs its own marker).
+  // `communityEvents` already filters by visibility server-side.
+  const { data, isLoading } = useCommunityEvents(
+    {
+      dateFilter: 'this_week',
+      startDate: undefined,
+      endDate: undefined,
+      hostingGroups: [],
+    },
+    { enabled }
+  );
+
   const singleEvents = useMemo(() => {
+    const events = (data?.events ?? []) as any[];
     const seen = new Set<string>();
     const result: any[] = [];
-    for (const card of cards) {
-      if (!card || card.kind !== 'single') continue;
-      const id = String(card.id);
+    for (const event of events) {
+      const id = String(event.id);
       if (seen.has(id)) continue;
       seen.add(id);
-      result.push(card);
+      result.push(event);
     }
     return result;
-  }, [cards]);
+  }, [data?.events]);
 
   // Geocode events → markers. Stable empty ref to avoid re-render loops
   // when the input is empty (see ExploreScreen pattern).
@@ -168,9 +179,8 @@ export function EventsMapView({ cards, isLoading }: EventsMapViewProps) {
     }
   };
 
-  // Don't render the map with an empty list — it initializes oddly.
-  // Show a spinner while loading or geocoding.
-  if (isLoading || isGeocoding || markers.length === 0) {
+  // Spinner while loading OR while geocoding a non-empty list.
+  if (isLoading || isGeocoding) {
     return (
       <View
         style={[
@@ -179,6 +189,33 @@ export function EventsMapView({ cards, isLoading }: EventsMapViewProps) {
         ]}
       >
         <ActivityIndicator size="small" color={colors.textSecondary} />
+      </View>
+    );
+  }
+
+  // Loaded but nothing to show — render an empty state instead of a
+  // perpetual spinner. Happens when the community has no near-term
+  // events OR when events lack resolvable coordinates.
+  if (markers.length === 0) {
+    return (
+      <View
+        style={[
+          styles.loadingContainer,
+          { backgroundColor: colors.backgroundSecondary, padding: 24 },
+        ]}
+      >
+        <Ionicons
+          name="map-outline"
+          size={40}
+          color={colors.textSecondary}
+          style={{ marginBottom: 12 }}
+        />
+        <Text style={[styles.emptyTitle, { color: colors.text }]}>
+          No events on the map yet
+        </Text>
+        <Text style={[styles.emptyBody, { color: colors.textSecondary }]}>
+          Events happening in the next 7 days will show up here.
+        </Text>
       </View>
     );
   }
@@ -203,5 +240,15 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  emptyTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+    textAlign: 'center',
+  },
+  emptyBody: {
+    fontSize: 13,
+    textAlign: 'center',
   },
 });

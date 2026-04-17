@@ -10,8 +10,7 @@
  * - api.functions.groups.index.myLeaderGroups - Groups where user has leader role
  */
 
-import { useMemo } from 'react';
-import { useQuery, api } from '@services/api/convex';
+import { api, useAuthenticatedQuery } from '@services/api/convex';
 import { useAuth } from '@providers/AuthProvider';
 import type { Id } from '@services/api/convex';
 
@@ -64,54 +63,33 @@ const EMPTY_LEADER_GROUPS: any[] = [];
 const EMPTY_RSVP_EVENTS_DATA: { events: any[] } = { events: [] };
 
 export function useCommunityEvents(filters: EventsFilters, options?: { enabled?: boolean }) {
-  const { community, user, token } = useAuth();
+  const { community } = useAuth();
 
   // Get community Convex ID
   const communityId = community?.id as Id<"communities"> | undefined;
 
-  // Memoize query args to prevent unnecessary re-renders
-  const queryArgs = useMemo(() => {
-    // For authenticated queries, require token
-    if (user?.id && !token) {
-      return "skip" as const;
-    }
-    if (!communityId || options?.enabled === false) {
-      return "skip" as const;
-    }
+  const shouldSkip = !communityId || options?.enabled === false;
+  const hostingGroupIds = filters.hostingGroups.length > 0
+    ? (filters.hostingGroups as unknown as Id<"groups">[])
+    : undefined;
+  const datePreset = filters.dateFilter === 'all'
+    ? undefined
+    : (filters.dateFilter ?? undefined);
 
-    // Convert hostingGroups (legacy string IDs) to Convex IDs
-    const hostingGroupIds = filters.hostingGroups.length > 0
-      ? filters.hostingGroups as unknown as Id<"groups">[]
-      : undefined;
-
-    // 'all' means no date filtering; map to undefined for the backend
-    const datePreset = filters.dateFilter === 'all' ? undefined : (filters.dateFilter ?? undefined);
-
-    const baseArgs = {
-      communityId,
-      datePreset,
-      startDate: filters.startDate ?? undefined,
-      endDate: filters.endDate ?? undefined,
-      hostingGroupIds,
-    };
-
-    // Add token for authenticated queries
-    if (user?.id && token) {
-      return { ...baseArgs, token };
-    }
-    return baseArgs;
-  }, [
-    communityId,
-    filters.dateFilter,
-    filters.startDate,
-    filters.endDate,
-    filters.hostingGroups,
-    options?.enabled,
-    user?.id,
-    token,
-  ]);
-
-  const result = useQuery(api.functions.meetings.explore.communityEvents, queryArgs);
+  // useAuthenticatedQuery handles token stability — see
+  // features/events/__tests__/query-patterns.test.ts for the rationale.
+  const result = useAuthenticatedQuery(
+    api.functions.meetings.explore.communityEvents,
+    shouldSkip
+      ? 'skip'
+      : {
+          communityId: communityId!,
+          datePreset,
+          startDate: filters.startDate ?? undefined,
+          endDate: filters.endDate ?? undefined,
+          hostingGroupIds,
+        }
+  );
 
   // Convex returns undefined while loading, then the actual data
   const isLoading = result === undefined;
@@ -133,27 +111,14 @@ export function useCommunityEvents(filters: EventsFilters, options?: { enabled?:
  * Hook to fetch groups user can create events for (leader/admin groups)
  */
 export function useLeaderGroups(options?: { enabled?: boolean }) {
-  const { community, user, token } = useAuth();
+  const { community } = useAuth();
   const communityId = community?.id as Id<"communities"> | undefined;
 
-  // Memoize query args to prevent unnecessary re-renders
-  const queryArgs = useMemo(() => {
-    // For authenticated queries, require token
-    if (user?.id && !token) {
-      return "skip" as const;
-    }
-    if (options?.enabled === false || !communityId) {
-      return "skip" as const;
-    }
-    const baseArgs = { communityId };
-    // Add token for authenticated queries
-    if (user?.id && token) {
-      return { ...baseArgs, token };
-    }
-    return baseArgs;
-  }, [communityId, options?.enabled, user?.id, token]);
-
-  const result = useQuery(api.functions.groups.index.myLeaderGroups, queryArgs);
+  const shouldSkip = options?.enabled === false || !communityId;
+  const result = useAuthenticatedQuery(
+    api.functions.groups.index.myLeaderGroups,
+    shouldSkip ? 'skip' : { communityId: communityId! }
+  );
 
   // Convex returns undefined while loading
   const isLoading = result === undefined;
@@ -175,28 +140,11 @@ export function useLeaderGroups(options?: { enabled?: boolean }) {
  * This does NOT require community context - useful for users without a community
  */
 export function useMyRsvpedEvents(options?: { enabled?: boolean; includePast?: boolean }) {
-  const { user, token } = useAuth();
-
-  // Memoize query args to prevent unnecessary re-renders
-  const queryArgs = useMemo(() => {
-    // For authenticated queries, require token
-    if (user?.id && !token) {
-      return "skip" as const;
-    }
-    if (options?.enabled === false) {
-      return "skip" as const;
-    }
-    const baseArgs = {
-      includePast: options?.includePast ?? false,
-    };
-    // Add token for authenticated queries
-    if (user?.id && token) {
-      return { ...baseArgs, token };
-    }
-    return baseArgs;
-  }, [options?.enabled, options?.includePast, user?.id, token]);
-
-  const result = useQuery(api.functions.meetings.explore.myRsvpEvents, queryArgs);
+  const shouldSkip = options?.enabled === false;
+  const result = useAuthenticatedQuery(
+    api.functions.meetings.explore.myRsvpEvents,
+    shouldSkip ? 'skip' : { includePast: options?.includePast ?? false }
+  );
 
   // Convex returns undefined while loading
   const isLoading = result === undefined;

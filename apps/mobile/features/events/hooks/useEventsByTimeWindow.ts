@@ -9,8 +9,9 @@
  * without re-running the query on every render.
  */
 
-import { useEffect, useMemo, useState } from 'react';
-import { useQuery, api } from '@services/api/convex';
+import { useCallback, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
+import { useQuery, api, useAuthenticatedQuery } from '@services/api/convex';
 import { useAuth } from '@providers/AuthProvider';
 import type { Id } from '@services/api/convex';
 
@@ -39,41 +40,30 @@ const EMPTY_DATA: EventsTabData = {
   later: [],
 };
 
-// How often to advance `now` so time-window boundaries stay fresh.
-const NOW_REFRESH_INTERVAL_MS = 30 * 1000;
-
 export function useEventsByTimeWindow(options?: { enabled?: boolean }) {
-  const { community, user, token } = useAuth();
+  const { community } = useAuth();
   const communityId = community?.id as Id<'communities'> | undefined;
 
-  // `now` advances every 30s so the backend can re-slice buckets without us
-  // re-querying on every render. useState initializer ensures one initial value.
+  // `now` advances ONLY when the screen gains focus — NOT on a timer.
+  // A timer-driven refresh forces the query to re-subscribe at every
+  // tick, which is visible as a UI flicker. Refreshing on focus is both
+  // cheaper and matches user expectation ("when I come back to this tab
+  // it should be up-to-date"). See also feedback on PR #316.
   const [now, setNow] = useState<number>(() => Date.now());
-  useEffect(() => {
-    const interval = setInterval(() => {
+  useFocusEffect(
+    useCallback(() => {
       setNow(Date.now());
-    }, NOW_REFRESH_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, []);
+    }, [])
+  );
 
-  const queryArgs = useMemo(() => {
-    // Authenticated queries require the token to be ready.
-    if (user?.id && !token) {
-      return 'skip' as const;
-    }
-    if (!communityId || options?.enabled === false) {
-      return 'skip' as const;
-    }
-    const baseArgs = { communityId, now };
-    if (user?.id && token) {
-      return { ...baseArgs, token };
-    }
-    return baseArgs;
-  }, [communityId, now, user?.id, token, options?.enabled]);
-
-  const result = useQuery(
+  // useAuthenticatedQuery pulls the token from useStoredAuthToken (ref-stable
+  // across refreshes) and handles memoization internally — avoids the
+  // previously-fixed cascading re-render pattern from token changes.
+  // See #299 / commit 01251be.
+  const shouldSkip = !communityId || options?.enabled === false;
+  const result = useAuthenticatedQuery(
     api.functions.meetings.events.listForEventsTab,
-    queryArgs
+    shouldSkip ? 'skip' : { communityId: communityId!, now }
   );
 
   const isLoading = result === undefined;
