@@ -11,6 +11,7 @@ import {
   Switch,
   KeyboardAvoidingView,
   Platform,
+  ImageBackground,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -22,6 +23,8 @@ import { useGroupDetails } from "../../groups/hooks/useGroupDetails";
 import { DatePicker } from "@components/ui/DatePicker";
 import { MultiDateCalendarPicker } from "@components/ui/MultiDateCalendarPicker";
 import { ImagePickerComponent } from "@components/ui/ImagePicker";
+import { PosterPickerSheet } from "./PosterPickerSheet";
+import { getMediaUrl } from "@/utils/media";
 import {
   RsvpOptionsEditor,
   RsvpOption,
@@ -52,6 +55,7 @@ interface CreateMeetingInput {
   locationMode?: "address" | "online" | "tbd";
   note?: string;
   coverImage?: string;
+  posterId?: Id<"posters">;
   rsvpEnabled?: boolean;
   rsvpOptions?: RsvpOption[];
   visibility?: VisibilityLevel;
@@ -118,6 +122,8 @@ export function CreateEventScreen() {
   const [meetingLink, setMeetingLink] = useState("");
   const [note, setNote] = useState("");
   const [coverImage, setCoverImage] = useState<string | undefined>();
+  const [posterId, setPosterId] = useState<Id<"posters"> | undefined>();
+  const [isPosterPickerOpen, setIsPosterPickerOpen] = useState(false);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
 
   // Convex action for getting R2 presigned upload URL
@@ -256,6 +262,7 @@ export function CreateEventScreen() {
       setMeetingLink(meeting.meetingLink || "");
       setNote(meeting.note || "");
       setCoverImage(meeting.coverImage || undefined);
+      setPosterId((meeting as any).posterId || undefined);
 
       // Initialize RSVP fields
       if (meeting.rsvpEnabled !== undefined) {
@@ -335,7 +342,7 @@ export function CreateEventScreen() {
   // Wrapper for create mutation with state tracking
   // Note: useAuthenticatedMutation auto-injects the token
   const createMeeting = {
-    mutate: async (data: { groupId: string; scheduledAt: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; locationMode?: "address" | "online" | "tbd"; note?: string; coverImage?: string; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; visibility?: VisibilityLevel }) => {
+    mutate: async (data: { groupId: string; scheduledAt: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; locationMode?: "address" | "online" | "tbd"; note?: string; coverImage?: string; posterId?: Id<"posters">; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; visibility?: VisibilityLevel }) => {
       setIsCreating(true);
       try {
         const newMeetingId = await createMeetingMutation({
@@ -348,6 +355,7 @@ export function CreateEventScreen() {
           locationMode: data.locationMode,
           note: data.note,
           coverImage: data.coverImage,
+          posterId: data.posterId,
           rsvpEnabled: data.rsvpEnabled,
           rsvpOptions: data.rsvpOptions,
           visibility: data.visibility,
@@ -376,7 +384,7 @@ export function CreateEventScreen() {
   // Wrapper for update mutation with state tracking
   // Note: useAuthenticatedMutation auto-injects the token
   const updateMeeting = {
-    mutate: async (data: { meetingId: string; scheduledAt?: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; locationMode?: "address" | "online" | "tbd"; note?: string; coverImage?: string; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; visibility?: VisibilityLevel; notifyGuests?: boolean }) => {
+    mutate: async (data: { meetingId: string; scheduledAt?: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; locationMode?: "address" | "online" | "tbd"; note?: string; coverImage?: string; posterId?: Id<"posters">; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; visibility?: VisibilityLevel; notifyGuests?: boolean }) => {
       setIsUpdating(true);
       try {
         await updateMeetingMutation({
@@ -389,6 +397,7 @@ export function CreateEventScreen() {
           locationMode: data.locationMode,
           note: data.note,
           coverImage: data.coverImage,
+          posterId: data.posterId,
           rsvpEnabled: data.rsvpEnabled,
           rsvpOptions: data.rsvpOptions,
           visibility: data.visibility,
@@ -663,6 +672,7 @@ export function CreateEventScreen() {
         locationMode: resolvedLocationMode,
         note: note.trim() || undefined,
         coverImage: finalCoverImage || undefined,
+        posterId: posterId,
         rsvpEnabled: rsvpEnabled,
         rsvpOptions: rsvpOptions.filter((opt) => opt.enabled),
         visibility: visibility,
@@ -1417,21 +1427,53 @@ export function CreateEventScreen() {
             </Text>
           </View>
 
-          {/* Cover Photo */}
+          {/* Cover poster — big tappable area that opens the curated library.
+              Users can also upload their own image via the fallback button
+              inside the picker sheet (see PosterPickerSheet). */}
           <View style={styles.fieldContainer}>
-            <Text style={[styles.label, { color: colors.text }]}>Cover Photo</Text>
-            <ImagePickerComponent
-              currentImage={coverImage}
-              onImageSelected={(uri) => {
-                setCoverImage(uri);
-              }}
-              onImageRemoved={() => {
-                setCoverImage(undefined);
-              }}
-              buttonText="Add Cover Photo"
-              aspect={[16, 9]}
-              isUploading={isUploadingImage}
-            />
+            <TouchableOpacity
+              onPress={() => !isSubmitting && setIsPosterPickerOpen(true)}
+              activeOpacity={0.85}
+              style={[
+                styles.posterSlot,
+                { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
+              ]}
+            >
+              {coverImage ? (
+                <>
+                  <ImageBackground
+                    source={{ uri: getMediaUrl(coverImage) ?? coverImage }}
+                    style={styles.posterSlotImage}
+                    imageStyle={styles.posterSlotImageInner}
+                  />
+                  <View style={styles.posterSlotEditBadge}>
+                    <Ionicons name="pencil" size={14} color="#fff" />
+                    <Text style={styles.posterSlotEditBadgeText}>Change</Text>
+                  </View>
+                </>
+              ) : (
+                <View style={styles.posterSlotEmpty}>
+                  <Ionicons
+                    name="image-outline"
+                    size={40}
+                    color={colors.textSecondary}
+                  />
+                  <Text
+                    style={[
+                      styles.posterSlotEmptyText,
+                      { color: colors.textSecondary },
+                    ]}
+                  >
+                    Tap to choose a poster
+                  </Text>
+                </View>
+              )}
+              {isUploadingImage ? (
+                <View style={styles.posterSlotOverlay}>
+                  <ActivityIndicator color="#fff" />
+                </View>
+              ) : null}
+            </TouchableOpacity>
           </View>
 
           {/* Meeting Type Toggle */}
@@ -1788,6 +1830,16 @@ export function CreateEventScreen() {
           onClose={handleInviteSheetClose}
         />
 
+        {/* Poster picker — curated library with keyword search + own-image upload */}
+        <PosterPickerSheet
+          visible={isPosterPickerOpen}
+          onClose={() => setIsPosterPickerOpen(false)}
+          onSelect={(sel) => {
+            setCoverImage(sel.imageUrl);
+            setPosterId(sel.posterId);
+          }}
+        />
+
         {/* Past Date Confirmation Modal (for admins only) */}
         <ConfirmModal
           visible={showPastDateModal}
@@ -1836,6 +1888,54 @@ const styles = StyleSheet.create({
   },
   fieldContainer: {
     marginBottom: 20,
+  },
+  posterSlot: {
+    aspectRatio: 1,
+    borderRadius: 20,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: "hidden",
+    alignItems: "center",
+    justifyContent: "center",
+    position: "relative",
+  },
+  posterSlotImage: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  posterSlotImageInner: {
+    resizeMode: "cover",
+  },
+  posterSlotEditBadge: {
+    position: "absolute",
+    bottom: 12,
+    right: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
+    backgroundColor: "rgba(0,0,0,0.55)",
+  },
+  posterSlotEditBadgeText: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  posterSlotEmpty: {
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    padding: 24,
+  },
+  posterSlotEmptyText: {
+    fontSize: 14,
+    fontWeight: "500",
+  },
+  posterSlotOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    alignItems: "center",
+    justifyContent: "center",
   },
   label: {
     fontSize: 14,

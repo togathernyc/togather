@@ -115,6 +115,7 @@ export const create = mutation({
     ),
     note: v.optional(v.string()),
     coverImage: v.optional(v.string()),
+    posterId: v.optional(v.id("posters")),
     rsvpEnabled: v.optional(v.boolean()),
     rsvpOptions: v.optional(
       v.array(
@@ -211,6 +212,7 @@ export const create = mutation({
       locationMode: args.locationMode,
       note: args.note,
       coverImage: args.coverImage,
+      posterId: args.posterId,
       status: "scheduled",
       createdById,
       createdAt: timestamp,
@@ -292,6 +294,7 @@ export const update = mutation({
     ),
     note: v.optional(v.string()),
     coverImage: v.optional(v.string()),
+    posterId: v.optional(v.id("posters")),
     status: v.optional(v.union(v.literal("scheduled"), v.literal("confirmed"), v.literal("completed"), v.literal("cancelled"))),
     rsvpEnabled: v.optional(v.boolean()),
     rsvpOptions: v.optional(
@@ -521,6 +524,7 @@ export const update = mutation({
       if (updates.meetingLink !== undefined) seriesUpdates.meetingLink = updates.meetingLink;
       if (updates.note !== undefined) seriesUpdates.note = updates.note;
       if (updates.coverImage !== undefined) seriesUpdates.coverImage = updates.coverImage;
+      if (updates.posterId !== undefined) seriesUpdates.posterId = updates.posterId;
       if (updates.rsvpEnabled !== undefined) seriesUpdates.rsvpEnabled = updates.rsvpEnabled;
       if (updates.rsvpOptions !== undefined) seriesUpdates.rsvpOptions = updates.rsvpOptions;
       if (updates.visibility !== undefined) seriesUpdates.visibility = updates.visibility;

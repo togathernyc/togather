@@ -108,6 +108,7 @@ import type * as functions_pcoServices_rotation from "../functions/pcoServices/r
 import type * as functions_pcoServices_runSheet from "../functions/pcoServices/runSheet.js";
 import type * as functions_pcoServices_servingHistory from "../functions/pcoServices/servingHistory.js";
 import type * as functions_peopleSavedViews from "../functions/peopleSavedViews.js";
+import type * as functions_posters from "../functions/posters.js";
 import type * as functions_proposals from "../functions/proposals.js";
 import type * as functions_resources from "../functions/resources.js";
 import type * as functions_scheduledJobs from "../functions/scheduledJobs.js";
@@ -274,6 +275,7 @@ declare const fullApi: ApiFromModules<{
   "functions/pcoServices/runSheet": typeof functions_pcoServices_runSheet;
   "functions/pcoServices/servingHistory": typeof functions_pcoServices_servingHistory;
   "functions/peopleSavedViews": typeof functions_peopleSavedViews;
+  "functions/posters": typeof functions_posters;
   "functions/proposals": typeof functions_proposals;
   "functions/resources": typeof functions_resources;
   "functions/scheduledJobs": typeof functions_scheduledJobs;
