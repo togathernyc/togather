@@ -1573,12 +1573,12 @@ export function CreateEventScreen() {
             </View>
           )}
 
-          {/* Notes */}
+          {/* Description */}
           <View style={styles.fieldContainer}>
-            <Text style={[styles.label, { color: colors.text }]}>Notes</Text>
+            <Text style={[styles.label, { color: colors.text }]}>Description</Text>
             <TextInput
               style={[styles.input, styles.textArea, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground, color: colors.text }]}
-              placeholder="Add any notes about this event..."
+              placeholder="Add a description of your event..."
               placeholderTextColor={colors.inputPlaceholder}
               value={note}
               onChangeText={setNote}
