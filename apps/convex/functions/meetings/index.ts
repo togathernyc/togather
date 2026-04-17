@@ -629,8 +629,12 @@ export const cancel = mutation({
 });
 
 /**
- * Toggle RSVP leader notifications for a meeting
- * Leaders can enable/disable getting notified when someone RSVPs
+ * Toggle RSVP leader notifications for a meeting.
+ * Strictly leader/admin-only per ADR-022. This flag controls whether the
+ * group's leaders get notified — creators shouldn't be able to silence
+ * their own group's leaders by creating an event there. Creators receive
+ * RSVP notifications unconditionally via `notifyRsvpReceived`, so they
+ * don't need a toggle here.
  */
 export const toggleRsvpLeaderNotifications = mutation({
   args: {
@@ -646,7 +650,6 @@ export const toggleRsvpLeaderNotifications = mutation({
       throw new Error("Meeting not found");
     }
 
-    // Verify user is a leader of the group
     const membership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>

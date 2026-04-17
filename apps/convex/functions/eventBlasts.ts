@@ -10,7 +10,7 @@ import { query, mutation, internalQuery, internalMutation, internalAction } from
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { requireAuth } from "../lib/auth";
-import { isActiveLeader } from "../lib/helpers";
+import { canEditMeeting } from "../lib/meetingPermissions";
 import { now, getMediaUrl } from "../lib/utils";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
 
@@ -29,18 +29,12 @@ export const list = query({
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
 
-    // Verify the user is a leader of the meeting's group
     const meeting = await ctx.db.get(args.meetingId);
     if (!meeting) return [];
 
-    const membership = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group_user", (q) =>
-        q.eq("groupId", meeting.groupId).eq("userId", userId),
-      )
-      .first();
-
-    if (!isActiveLeader(membership)) return [];
+    // Creator, group leaders, and community admins can see the blast log —
+    // hosts who sent the messages need to see what they sent (ADR-022).
+    if (!(await canEditMeeting(ctx, userId, meeting))) return [];
 
     const blasts = await ctx.db
       .query("eventBlasts")
@@ -98,16 +92,13 @@ export const initiate = mutation({
     const meeting = await ctx.db.get(args.meetingId);
     if (!meeting) throw new Error("Meeting not found");
 
-    // Verify leader
-    const membership = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group_user", (q) =>
-        q.eq("groupId", meeting.groupId).eq("userId", userId)
-      )
-      .first();
-
-    if (!isActiveLeader(membership)) {
-      throw new Error("Only group leaders can send event blasts");
+    // Creator, group leaders, and community admins can message attendees.
+    // Mirrors the ADR-022 edit/cancel permission set — the event host
+    // reasonably wants to reach out to people who RSVPed.
+    if (!(await canEditMeeting(ctx, userId, meeting))) {
+      throw new Error(
+        "Only the event creator, group leaders, or community admins can message attendees"
+      );
     }
 
     // Schedule the send action

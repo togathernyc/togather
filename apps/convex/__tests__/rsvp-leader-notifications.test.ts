@@ -249,7 +249,7 @@ describe("RSVP Leader Notifications", () => {
             enabled: false,
           }
         )
-      ).rejects.toThrow("Only group leaders");
+      ).rejects.toThrow(/Only group leaders/);
     });
   });
 });

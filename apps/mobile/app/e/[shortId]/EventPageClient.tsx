@@ -778,7 +778,10 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
             </TouchableOpacity>
           )}
 
-          {/* Leader: RSVP Notification Toggle */}
+          {/* Leader: RSVP Notification Toggle. Leader/admin-only — creators
+              always get notified about RSVPs to their own event via a
+              separate path in `notifyRsvpReceived`, so they don't need to
+              toggle anything here. */}
           {isLeader && eventData.rsvpEnabled && (
             <View style={[styles.leaderCard, { backgroundColor: colors.surfaceSecondary }]}>
               <View style={styles.leaderCardRow}>
@@ -795,8 +798,10 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
             </View>
           )}
 
-          {/* Leader: Message Attendees */}
-          {isLeader && (
+          {/* Host actions: Message Attendees + Blast History. ADR-022 extends
+              this surface to creators — they're the host, so they should be
+              able to reach out to RSVPed guests. Backend is authoritative. */}
+          {canEdit && (
             <TouchableOpacity
               style={[styles.messageAttendeesButton, { backgroundColor: colors.surfaceSecondary }]}
               onPress={() => setShowBlastSheet(true)}
@@ -808,8 +813,7 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
             </TouchableOpacity>
           )}
 
-          {/* Leader: Blast History */}
-          {isLeader && eventData.id && (
+          {canEdit && eventData.id && (
             <EventBlastHistory meetingId={eventData.id as string} />
           )}
         </View>

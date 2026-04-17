@@ -567,7 +567,7 @@ export function EventDetails({
               </View>
             )}
 
-            {/* Leader: RSVP Notification Toggle */}
+            {/* Leader-only toggle (creators always get notified; see sender). */}
             {isLeader && rsvpEnabled && (
               <View style={[styles.detailCard, { backgroundColor: colors.surface }]}>
                 <View style={styles.detailRow}>
@@ -681,8 +681,9 @@ export function EventDetails({
               </>
             )}
 
-            {/* Leader: Message Attendees */}
-            {isLeader && (
+            {/* Host actions: Message Attendees + Blast History. Available to
+                creators too (ADR-022) — backend enforces. */}
+            {(isLeader || isCreator) && (
               <TouchableOpacity
                 style={[styles.messageAttendeesButton, { backgroundColor: colors.surface }]}
                 onPress={() => setShowBlastSheet(true)}
@@ -694,8 +695,7 @@ export function EventDetails({
               </TouchableOpacity>
             )}
 
-            {/* Leader: Blast History */}
-            {isLeader && meetingId && (
+            {(isLeader || isCreator) && meetingId && (
               <EventBlastHistory meetingId={meetingId} />
             )}
 
