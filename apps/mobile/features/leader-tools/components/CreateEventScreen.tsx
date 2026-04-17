@@ -55,7 +55,10 @@ interface CreateMeetingInput {
   locationMode?: "address" | "online" | "tbd";
   note?: string;
   coverImage?: string;
-  posterId?: Id<"posters">;
+  // Nullable on update: `null` explicitly clears a previously-set curated
+  // poster reference (e.g. switching to a custom upload). Create ignores
+  // null because there's nothing to clear on insert.
+  posterId?: Id<"posters"> | null;
   rsvpEnabled?: boolean;
   rsvpOptions?: RsvpOption[];
   visibility?: VisibilityLevel;
@@ -122,7 +125,13 @@ export function CreateEventScreen() {
   const [meetingLink, setMeetingLink] = useState("");
   const [note, setNote] = useState("");
   const [coverImage, setCoverImage] = useState<string | undefined>();
-  const [posterId, setPosterId] = useState<Id<"posters"> | undefined>();
+  // null = user explicitly cleared (picked a custom upload after having a
+  // curated poster). undefined = no change. Keeping this tri-state matters
+  // for edits: sending undefined means "don't touch" the existing posterId,
+  // while null tells the server to remove it.
+  const [posterId, setPosterId] = useState<
+    Id<"posters"> | null | undefined
+  >();
   const [isPosterPickerOpen, setIsPosterPickerOpen] = useState(false);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
 
@@ -342,7 +351,7 @@ export function CreateEventScreen() {
   // Wrapper for create mutation with state tracking
   // Note: useAuthenticatedMutation auto-injects the token
   const createMeeting = {
-    mutate: async (data: { groupId: string; scheduledAt: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; locationMode?: "address" | "online" | "tbd"; note?: string; coverImage?: string; posterId?: Id<"posters">; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; visibility?: VisibilityLevel }) => {
+    mutate: async (data: { groupId: string; scheduledAt: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; locationMode?: "address" | "online" | "tbd"; note?: string; coverImage?: string; posterId?: Id<"posters"> | null; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; visibility?: VisibilityLevel }) => {
       setIsCreating(true);
       try {
         const newMeetingId = await createMeetingMutation({
@@ -355,7 +364,10 @@ export function CreateEventScreen() {
           locationMode: data.locationMode,
           note: data.note,
           coverImage: data.coverImage,
-          posterId: data.posterId,
+          // Create has no existing posterId to clear — drop null and only
+          // pass through a real Id, matching the create mutation's
+          // non-nullable posterId validator.
+          posterId: data.posterId ?? undefined,
           rsvpEnabled: data.rsvpEnabled,
           rsvpOptions: data.rsvpOptions,
           visibility: data.visibility,
@@ -384,7 +396,7 @@ export function CreateEventScreen() {
   // Wrapper for update mutation with state tracking
   // Note: useAuthenticatedMutation auto-injects the token
   const updateMeeting = {
-    mutate: async (data: { meetingId: string; scheduledAt?: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; locationMode?: "address" | "online" | "tbd"; note?: string; coverImage?: string; posterId?: Id<"posters">; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; visibility?: VisibilityLevel; notifyGuests?: boolean }) => {
+    mutate: async (data: { meetingId: string; scheduledAt?: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; locationMode?: "address" | "online" | "tbd"; note?: string; coverImage?: string; posterId?: Id<"posters"> | null; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; visibility?: VisibilityLevel; notifyGuests?: boolean }) => {
       setIsUpdating(true);
       try {
         await updateMeetingMutation({
@@ -1836,7 +1848,10 @@ export function CreateEventScreen() {
           onClose={() => setIsPosterPickerOpen(false)}
           onSelect={(sel) => {
             setCoverImage(sel.imageUrl);
-            setPosterId(sel.posterId);
+            // Library pick → set posterId. Custom upload → null so the
+            // update mutation can explicitly clear the previous posterId
+            // (undefined would be interpreted as "no change").
+            setPosterId(sel.posterId ?? null);
           }}
         />
 
