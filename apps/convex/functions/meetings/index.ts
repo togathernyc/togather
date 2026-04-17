@@ -148,9 +148,20 @@ export const create = mutation({
 
     // 1-future-event cap for non-leaders (ADR-022). Convex mutations are
     // serialized per-document; a concurrent second create reads the just-inserted
-    // row and this check rejects it.
+    // row and this check rejects it. Scoped to the target group's community —
+    // events in a different community don't count against this one.
     if (!isLeader) {
-      const futureCount = await countFutureEventsCreatedBy(ctx, createdById, now());
+      // Look ahead to the target group so we know the community scope.
+      const targetGroup = await ctx.db.get(args.groupId);
+      if (!targetGroup?.communityId) {
+        throw new Error("Group is not linked to a community");
+      }
+      const futureCount = await countFutureEventsCreatedBy(
+        ctx,
+        createdById,
+        now(),
+        targetGroup.communityId
+      );
       if (futureCount >= NON_LEADER_FUTURE_EVENT_CAP) {
         throw new Error(
           "You already have an upcoming event. Cancel or finish it before creating another."
@@ -324,9 +335,16 @@ export const update = mutation({
     }
 
     // Location mode validation runs on every write path (members + leaders).
-    if (args.locationMode !== undefined) {
+    // We validate whenever the resulting state has a locationMode — even when
+    // the caller only sends `locationOverride`/`meetingLink` without
+    // re-declaring `locationMode` — so partial payloads can't sneak the row
+    // into an invalid state (e.g. `locationMode: "address"` ending up with an
+    // empty `locationOverride`). Legacy rows with no `locationMode` remain
+    // untouched so this isn't a backfill.
+    const effectiveLocationMode = args.locationMode ?? meeting.locationMode;
+    if (effectiveLocationMode !== undefined) {
       validateLocationMode({
-        locationMode: args.locationMode,
+        locationMode: effectiveLocationMode,
         locationOverride:
           args.locationOverride !== undefined
             ? args.locationOverride

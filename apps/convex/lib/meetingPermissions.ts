@@ -92,12 +92,15 @@ export async function canEditSeriesWide(
 /**
  * Count a user's current "future events" for the non-leader cap.
  * Future event = status ∈ {scheduled, confirmed} AND scheduledAt > now.
- * Cancelled and completed don't count. See ADR-022.
+ * Cancelled and completed don't count. Scoped to a community so a user
+ * with hosted events in community A isn't throttled when creating in
+ * community B. See ADR-022.
  */
 export async function countFutureEventsCreatedBy(
   ctx: Ctx,
   userId: Id<"users">,
-  nowMs: number
+  nowMs: number,
+  communityId: Id<"communities">
 ): Promise<number> {
   const rows = await ctx.db
     .query("meetings")
@@ -105,6 +108,7 @@ export async function countFutureEventsCreatedBy(
     .collect();
   return rows.filter(
     (m: Doc<"meetings">) =>
+      m.communityId === communityId &&
       (m.status === "scheduled" || m.status === "confirmed") &&
       m.scheduledAt > nowMs
   ).length;

@@ -311,6 +311,30 @@ describe("meetings.create — locationMode validation", () => {
     ).rejects.toThrow(/meeting link/i);
   });
 
+  test("update enforces location invariants even when caller omits locationMode", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    const meetingId = await t.mutation(api.functions.meetings.index.create, {
+      token: s.memberToken,
+      groupId: s.groupId,
+      scheduledAt: FUTURE(),
+      meetingType: 1,
+      locationMode: "address",
+      locationOverride: "123 Main St, Dallas, TX 75201",
+    });
+
+    // Partial payload that would break the invariant if the gate was
+    // `args.locationMode !== undefined`.
+    await expect(
+      t.mutation(api.functions.meetings.index.update, {
+        token: s.memberToken,
+        meetingId,
+        locationOverride: "",
+      })
+    ).rejects.toThrow(/location address/i);
+  });
+
   test("tbd accepts empty location + link", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);

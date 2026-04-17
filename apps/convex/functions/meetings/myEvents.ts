@@ -66,6 +66,7 @@ export const myHostedEvents = query({
   args: {
     token: v.string(),
     now: v.number(),
+    communityId: v.id("communities"),
     includePast: v.optional(v.boolean()),
   },
   handler: async (
@@ -79,7 +80,9 @@ export const myHostedEvents = query({
       .withIndex("by_createdBy", (q) => q.eq("createdById", userId))
       .collect();
 
-    const live = rows.filter((m) => m.status !== "cancelled");
+    const live = rows.filter(
+      (m) => m.status !== "cancelled" && m.communityId === args.communityId
+    );
     const withGroupDocs = await withGroups(ctx, live);
     const { upcoming, past } = splitByTime(withGroupDocs, args.now);
 
@@ -93,7 +96,12 @@ export const myHostedEvents = query({
 
     return {
       upcoming: buildBucket(upcomingCapped, HOSTED_UPCOMING_LIMIT, enrichment),
-      past: buildBucket(pastCapped, HOSTED_PAST_LIMIT, enrichment),
+      // ADR-022: past events render newest-first. `buildBucket` defaults to
+      // ASC (what the Events tab wants); we pass `desc` here to match the
+      // Profile → My Events behavior.
+      past: buildBucket(pastCapped, HOSTED_PAST_LIMIT, enrichment, {
+        order: "desc",
+      }),
     };
   },
 });
@@ -107,6 +115,7 @@ export const myAttendedEvents = query({
   args: {
     token: v.string(),
     now: v.number(),
+    communityId: v.id("communities"),
     includePast: v.optional(v.boolean()),
   },
   handler: async (
@@ -125,7 +134,8 @@ export const myAttendedEvents = query({
     const meetings = (await Promise.all(meetingIds.map((id) => ctx.db.get(id))))
       .filter((m): m is Doc<"meetings"> => m !== null)
       .filter((m) => m.status !== "cancelled")
-      .filter((m) => m.createdById !== userId);
+      .filter((m) => m.createdById !== userId)
+      .filter((m) => m.communityId === args.communityId);
 
     const withGroupDocs = await withGroups(ctx, meetings);
     const { upcoming, past } = splitByTime(withGroupDocs, args.now);
@@ -140,7 +150,9 @@ export const myAttendedEvents = query({
 
     return {
       upcoming: buildBucket(upcomingCapped, ATTENDED_UPCOMING_LIMIT, enrichment),
-      past: buildBucket(pastCapped, ATTENDED_PAST_LIMIT, enrichment),
+      past: buildBucket(pastCapped, ATTENDED_PAST_LIMIT, enrichment, {
+        order: "desc",
+      }),
     };
   },
 });

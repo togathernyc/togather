@@ -8,6 +8,8 @@
 
 import { useMemo } from 'react';
 import { api, useAuthenticatedQuery } from '@services/api/convex';
+import { useAuth } from '@providers/AuthProvider';
+import type { Id } from '@services/api/convex';
 
 type EventCard = unknown; // keep the client loose; Convex return types flow through
 
@@ -25,19 +27,27 @@ interface Options {
 
 /**
  * Events the current user created. Drives Profile → My Events (Hosted) and
- * the 1-future-event cap on CreateEventScreen.
+ * the 1-future-event cap on CreateEventScreen. Scoped to the active
+ * community so the cap doesn't fire for events the user hosts in a
+ * different community.
  */
 export function useMyHostedEvents(options?: Options) {
   // `now` is memoised so the query key stays stable across renders — we don't
   // want a new `Date.now()` each render re-subscribing the query.
   const nowMs = useMemo(() => Date.now(), []);
-  const shouldSkip = options?.enabled === false;
+  const { community } = useAuth();
+  const communityId = community?.id as Id<'communities'> | undefined;
+  const shouldSkip = options?.enabled === false || !communityId;
 
   const result = useAuthenticatedQuery(
     api.functions.meetings.myEvents.myHostedEvents,
     shouldSkip
       ? 'skip'
-      : { now: nowMs, includePast: options?.includePast ?? false }
+      : {
+          now: nowMs,
+          communityId: communityId!,
+          includePast: options?.includePast ?? false,
+        }
   );
 
   const isLoading = result === undefined;
@@ -54,17 +64,23 @@ export function useMyHostedEvents(options?: Options) {
 
 /**
  * Events the current user has RSVP'd Going to (excluding events they hosted).
- * Drives Profile → My Events (Attended).
+ * Drives Profile → My Events (Attended). Scoped to the active community.
  */
 export function useMyAttendedEvents(options?: Options) {
   const nowMs = useMemo(() => Date.now(), []);
-  const shouldSkip = options?.enabled === false;
+  const { community } = useAuth();
+  const communityId = community?.id as Id<'communities'> | undefined;
+  const shouldSkip = options?.enabled === false || !communityId;
 
   const result = useAuthenticatedQuery(
     api.functions.meetings.myEvents.myAttendedEvents,
     shouldSkip
       ? 'skip'
-      : { now: nowMs, includePast: options?.includePast ?? false }
+      : {
+          now: nowMs,
+          communityId: communityId!,
+          includePast: options?.includePast ?? false,
+        }
   );
 
   const isLoading = result === undefined;
