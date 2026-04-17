@@ -18,6 +18,7 @@ import { getOptionalAuth } from "../../lib/auth";
 import { DEFAULT_MEETING_DURATION_MS } from "../../lib/meetingConfig";
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const HAPPENING_NOW_LIMIT = 10;
 const MY_RSVPS_LIMIT = 10;
 const THIS_WEEK_LIMIT = 25;
@@ -25,6 +26,10 @@ const LATER_LIMIT = 25;
 const PER_GROUP_FETCH = 100;
 const TOP_GUEST_COUNT = 5;
 const RSVP_FETCH_CAP = 100;
+// Multiplier over per-bucket UI limit: we fetch up to N× raw meetings
+// per bucket so community-wide-event collapsing still yields `limit`
+// cards even when multiple CWEs contribute many children.
+const BUCKET_CANDIDATE_MULTIPLIER = 5;
 
 type MeetingDoc = Doc<"meetings">;
 type GroupDoc = Doc<"groups">;
@@ -102,14 +107,18 @@ export const listForEventsTab = query({
       .filter((q) => q.eq(q.field("isArchived"), false))
       .collect();
 
+    // Use an ASC range filter on the scheduledAt index so we always fetch
+    // the near-term meetings first. Including a 1-day past window keeps
+    // "Happening now" events (started earlier today) in scope.
+    const scheduledFloor = currentTime - ONE_DAY_MS;
     const perGroupFetches = await Promise.all(
       communityGroups.map(async (group) => {
         const meetings = await ctx.db
           .query("meetings")
           .withIndex("by_group_scheduledAt", (q) =>
-            q.eq("groupId", group._id)
+            q.eq("groupId", group._id).gte("scheduledAt", scheduledFloor)
           )
-          .order("desc")
+          .order("asc")
           .filter((q) => q.neq(q.field("status"), "cancelled"))
           .take(PER_GROUP_FETCH);
         return meetings.map((m) => ({ ...m, group }));
@@ -157,26 +166,52 @@ export const listForEventsTab = query({
       )
       .sort((a, b) => a.scheduledAt - b.scheduledAt);
 
-    // Build per-bucket cards (with server-side community-wide collapsing).
-    // We share a single batched enrichment pass across buckets to avoid
-    // N+1 fetches of group types, RSVPs, and user profiles.
-    const allForEnrichment = [
-      ...happeningNow,
-      ...myRsvps,
-      ...thisWeek,
-      ...later,
-    ];
-    const enrichment = await buildEnrichment(ctx, allForEnrichment);
+    // Cap raw candidates per bucket BEFORE enrichment. Without this, a
+    // large community runs N RSVP queries across every visible meeting
+    // — hundreds or thousands — even though only a handful end up in
+    // each bucket's UI. The multiplier gives CWE collapsing headroom so
+    // `limit` grouped cards are still producible if children collapse.
+    const happeningNowCandidates = happeningNow.slice(
+      0,
+      HAPPENING_NOW_LIMIT * BUCKET_CANDIDATE_MULTIPLIER
+    );
+    const myRsvpsCandidates = myRsvps.slice(
+      0,
+      MY_RSVPS_LIMIT * BUCKET_CANDIDATE_MULTIPLIER
+    );
+    const thisWeekCandidates = thisWeek.slice(
+      0,
+      THIS_WEEK_LIMIT * BUCKET_CANDIDATE_MULTIPLIER
+    );
+    const laterCandidates = later.slice(
+      0,
+      LATER_LIMIT * BUCKET_CANDIDATE_MULTIPLIER
+    );
+
+    // Enrich only the capped candidate set, de-duped across buckets
+    // (a meeting can only legitimately land in one bucket, but we
+    // Set-merge defensively).
+    const uniqueForEnrichment = Array.from(
+      new Map(
+        [
+          ...happeningNowCandidates,
+          ...myRsvpsCandidates,
+          ...thisWeekCandidates,
+          ...laterCandidates,
+        ].map((m) => [m._id, m] as const)
+      ).values()
+    );
+    const enrichment = await buildEnrichment(ctx, uniqueForEnrichment);
 
     return {
       happeningNow: buildBucket(
-        happeningNow,
+        happeningNowCandidates,
         HAPPENING_NOW_LIMIT,
         enrichment
       ),
-      myRsvps: buildBucket(myRsvps, MY_RSVPS_LIMIT, enrichment),
-      thisWeek: buildBucket(thisWeek, THIS_WEEK_LIMIT, enrichment),
-      later: buildBucket(later, LATER_LIMIT, enrichment),
+      myRsvps: buildBucket(myRsvpsCandidates, MY_RSVPS_LIMIT, enrichment),
+      thisWeek: buildBucket(thisWeekCandidates, THIS_WEEK_LIMIT, enrichment),
+      later: buildBucket(laterCandidates, LATER_LIMIT, enrichment),
     };
   },
 });
@@ -423,18 +458,22 @@ function buildBucket(
 
     const representative = children.find((c) => c.shortId);
 
+    // Use the earliest child's scheduledAt (and its sort key). Children
+    // may be overridden to diverge from the parent's time, so relying on
+    // the parent here can surface a card with the wrong date for the
+    // bucketed content.
     cards.push({
       kind: "community_wide",
       parentId,
       title: parent.title,
-      scheduledAt: new Date(parent.scheduledAt).toISOString(),
+      scheduledAt: new Date(earliest.scheduledAt).toISOString(),
       status: parent.status,
       meetingType: parent.meetingType,
       groupCount: children.length,
       totalGoing,
       coverImage: getMediaUrl(earliest.coverImage) ?? null,
       representativeShortId: representative?.shortId ?? null,
-      sortAt: parent.scheduledAt,
+      sortAt: earliest.scheduledAt,
     });
   }
 
