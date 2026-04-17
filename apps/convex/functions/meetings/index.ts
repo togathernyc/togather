@@ -629,12 +629,12 @@ export const cancel = mutation({
 });
 
 /**
- * Toggle RSVP host notifications for a meeting.
- * The host (creator, group leaders, community admins) can enable/disable
- * getting notified when someone RSVPs. ADR-022 originally reserved this to
- * leaders; expanded to creators so they know when RSVPs land on their own
- * event. Recipient list follows the same permission set — see
- * `notifyRsvpReceived`.
+ * Toggle RSVP leader notifications for a meeting.
+ * Strictly leader/admin-only per ADR-022. This flag controls whether the
+ * group's leaders get notified — creators shouldn't be able to silence
+ * their own group's leaders by creating an event there. Creators receive
+ * RSVP notifications unconditionally via `notifyRsvpReceived`, so they
+ * don't need a toggle here.
  */
 export const toggleRsvpLeaderNotifications = mutation({
   args: {
@@ -650,10 +650,14 @@ export const toggleRsvpLeaderNotifications = mutation({
       throw new Error("Meeting not found");
     }
 
-    if (!(await canEditMeeting(ctx, userId, meeting))) {
-      throw new Error(
-        "Only the event creator, group leaders, or community admins can change notification settings"
-      );
+    const membership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", meeting.groupId).eq("userId", userId)
+      )
+      .first();
+    if (!isActiveLeader(membership)) {
+      throw new Error("Only group leaders can change notification settings");
     }
 
     await ctx.db.patch(args.meetingId, {

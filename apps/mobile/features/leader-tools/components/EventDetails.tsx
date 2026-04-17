@@ -567,8 +567,8 @@ export function EventDetails({
               </View>
             )}
 
-            {/* Host: RSVP Notification Toggle. Creators see this too. */}
-            {(isLeader || isCreator) && rsvpEnabled && (
+            {/* Leader-only toggle (creators always get notified; see sender). */}
+            {isLeader && rsvpEnabled && (
               <View style={[styles.detailCard, { backgroundColor: colors.surface }]}>
                 <View style={styles.detailRow}>
                   <Ionicons name="notifications-outline" size={20} color={colors.textSecondary} />

@@ -394,12 +394,6 @@ export const notifyRsvpReceived = internalAction({
         return { success: false, error: "Meeting not found" };
       }
 
-      // Check if host notifications are enabled (defaults to true)
-      if (meeting.rsvpNotifyLeaders === false) {
-        console.log("[NotifyRsvpReceived] RSVP host notifications disabled for this event");
-        return { success: true, sent: 0 };
-      }
-
       // Get group info
       const groupInfo: NotificationGroupInfo | null = await ctx.runQuery(internal.functions.notifications.internal.getGroupInfo, {
         groupId: meeting.groupId,
@@ -414,13 +408,18 @@ export const notifyRsvpReceived = internalAction({
         userId: args.userId,
       });
 
-      // Recipients: group leaders + the event creator (if they aren't already
-      // a leader). ADR-022 extension — the host wants to know when RSVPs
-      // arrive to their own event even if they aren't a group leader.
-      const leaderIds: Id<"users">[] = await ctx.runQuery(internal.functions.notifications.internal.getGroupMembersForNotification, {
-        groupId: meeting.groupId,
-        filter: "leaders",
-      });
+      // Recipients: the `rsvpNotifyLeaders` toggle (leader-only; see
+      // `toggleRsvpLeaderNotifications`) controls whether GROUP LEADERS get
+      // pinged. The creator always gets notified about RSVPs to their own
+      // event — ADR-022: the host wants to know without being able to
+      // override the leader-level preference.
+      const leaderNotificationsEnabled = meeting.rsvpNotifyLeaders !== false;
+      const leaderIds: Id<"users">[] = leaderNotificationsEnabled
+        ? await ctx.runQuery(internal.functions.notifications.internal.getGroupMembersForNotification, {
+            groupId: meeting.groupId,
+            filter: "leaders",
+          })
+        : [];
       const recipientSet = new Set<string>(leaderIds.map((id) => String(id)));
       if (meeting.createdById) {
         recipientSet.add(String(meeting.createdById));

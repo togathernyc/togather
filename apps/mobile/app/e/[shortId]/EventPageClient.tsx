@@ -778,9 +778,11 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
             </TouchableOpacity>
           )}
 
-          {/* Host: RSVP Notification Toggle. Creators see this too so they
-              know when people RSVP to their own event. */}
-          {canEdit && eventData.rsvpEnabled && (
+          {/* Leader: RSVP Notification Toggle. Leader/admin-only — creators
+              always get notified about RSVPs to their own event via a
+              separate path in `notifyRsvpReceived`, so they don't need to
+              toggle anything here. */}
+          {isLeader && eventData.rsvpEnabled && (
             <View style={[styles.leaderCard, { backgroundColor: colors.surfaceSecondary }]}>
               <View style={styles.leaderCardRow}>
                 <Ionicons name="notifications-outline" size={20} color={colors.textSecondary} />
