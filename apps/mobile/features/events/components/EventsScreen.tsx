@@ -1,15 +1,20 @@
 /**
  * EventsScreen
  *
- * The dedicated Events tab introduced in ADR-022. Renders four pre-sliced
- * buckets from `listForEventsTab` — Happening now / Your RSVPs / This week /
- * Later — with a sticky "Create Event" header and a link to past events.
+ * The dedicated Events tab introduced in ADR-022. Redesigned in a Partiful
+ * style:
+ *   - No screen title — the tab bar already indicates the current tab.
+ *   - Tight action row with List/Map toggle + "Create Event" CTA.
+ *   - "Next Up" featured row: up to 2 large tiles merging `happeningNow` and
+ *     `myRsvps` (community-wide parents excluded — no single time/place).
+ *   - Dense row list below: "This week" + "Later" (the other two buckets
+ *     were already promoted into the featured row).
  *
  * When the user has no community context, falls back to the "My RSVPs"
  * view (ported from the legacy ExploreScreen) so the tab still has content.
  */
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -28,8 +33,9 @@ import { useCommunityTheme } from '@hooks/useCommunityTheme';
 import { AppImage } from '@components/ui';
 import { useEventsByTimeWindow } from '../hooks/useEventsByTimeWindow';
 import { useMyRsvpedEvents } from '../hooks/useCommunityEvents';
-import { EventCard } from './EventCard';
-import { CommunityWideEventCard } from './CommunityWideEventCard';
+import { EventCardRow } from './EventCardRow';
+import { EventRowCommunityWide } from './EventRowCommunityWide';
+import { FeaturedEventTile } from './FeaturedEventTile';
 import { CommunityWideEventSheet } from './CommunityWideEventSheet';
 import { EventsMapView } from './EventsMapView';
 import type { CommunityEvent } from '../hooks/useCommunityEvents';
@@ -39,7 +45,7 @@ type ViewMode = 'list' | 'map';
 
 /**
  * Adapter: maps a SingleEventCard (backend shape with Convex ids) into the
- * CommunityEvent shape the existing EventCard component consumes. Convex ids
+ * CommunityEvent shape the existing row/tile components consume. Convex ids
  * are strings at runtime, so this is mostly a type-level passthrough.
  */
 function toCommunityEvent(card: any): CommunityEvent {
@@ -89,7 +95,7 @@ function Section({ title, cards, onCommunityWideTap, colors }: SectionProps) {
         {cards.map((card) => {
           if (card.kind === 'community_wide') {
             return (
-              <CommunityWideEventCard
+              <EventRowCommunityWide
                 key={`cw-${String(card.parentId)}`}
                 event={{
                   kind: 'community_wide',
@@ -110,8 +116,35 @@ function Section({ title, cards, onCommunityWideTap, colors }: SectionProps) {
             );
           }
           const adapted = toCommunityEvent(card);
-          return <EventCard key={String(card.id)} event={adapted} />;
+          return <EventCardRow key={String(card.id)} event={adapted} />;
         })}
+      </View>
+    </View>
+  );
+}
+
+interface NextUpProps {
+  events: CommunityEvent[];
+  colors: ReturnType<typeof useTheme>['colors'];
+}
+
+function NextUpRow({ events, colors }: NextUpProps) {
+  if (events.length < 1) return null;
+  return (
+    <View style={styles.nextUpSection}>
+      <View style={styles.nextUpHeader}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Next Up</Text>
+        {/* TODO: wire "View all" — no dedicated route yet, decorative for now */}
+        <TouchableOpacity onPress={() => {}} activeOpacity={0.6}>
+          <Text style={[styles.viewAll, { color: colors.textSecondary }]}>
+            View all
+          </Text>
+        </TouchableOpacity>
+      </View>
+      <View style={styles.nextUpRow}>
+        {events.map((ev) => (
+          <FeaturedEventTile key={String(ev.id)} event={ev} />
+        ))}
       </View>
     </View>
   );
@@ -120,7 +153,7 @@ function Section({ title, cards, onCommunityWideTap, colors }: SectionProps) {
 export function EventsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { community, user, token } = useAuth();
+  const { community } = useAuth();
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const hasCommunityContext = !!community?.id;
@@ -156,8 +189,7 @@ export function EventsScreen() {
     router.push('/(user)/create-event');
   }, [router]);
 
-  // Segmented List/Map toggle — only shown when we have community context.
-  // Sits to the right of the title row, next to the Create Event CTA.
+  // Compact List/Map toggle — only shown when we have community context.
   const renderViewToggle = () => {
     if (!hasCommunityContext) return null;
     const listActive = viewMode === 'list';
@@ -224,32 +256,46 @@ export function EventsScreen() {
     );
   };
 
-  // Header with sticky "+ Create Event" CTA and optional List/Map toggle
+  // Action row — no title. Just safe-area padding, the List/Map toggle,
+  // and the Create Event CTA.
   const header = (
     <View
       style={[
         styles.header,
         {
-          paddingTop: insets.top + 16,
+          paddingTop: insets.top + 12,
           backgroundColor: colors.surface,
           borderBottomColor: colors.borderLight,
         },
       ]}
     >
-      <Text style={[styles.headerTitle, { color: colors.text }]}>Events</Text>
       <View style={styles.headerActions}>
         {renderViewToggle()}
-        <TouchableOpacity
-          style={[styles.createButton, { backgroundColor: primaryColor }]}
-          onPress={handleCreateEvent}
-          activeOpacity={0.8}
-        >
-          <Ionicons name="add" size={16} color="#fff" />
-          <Text style={styles.createButtonText}>Create Event</Text>
-        </TouchableOpacity>
       </View>
+      <TouchableOpacity
+        style={[styles.createButton, { backgroundColor: primaryColor }]}
+        onPress={handleCreateEvent}
+        activeOpacity={0.8}
+      >
+        <Ionicons name="add" size={16} color="#fff" />
+        <Text style={styles.createButtonText}>Create Event</Text>
+      </TouchableOpacity>
     </View>
   );
+
+  // Featured "Next Up" events: merge happeningNow + myRsvps, drop
+  // community-wide cards (no single time/place to headline), and take the
+  // first 2. Community data only — memo avoids re-computing on unrelated
+  // renders.
+  const featuredEvents: CommunityEvent[] = useMemo(() => {
+    if (!hasCommunityContext) return [];
+    const happeningNow = data?.happeningNow ?? [];
+    const myRsvps = data?.myRsvps ?? [];
+    const merged = [...happeningNow, ...myRsvps]
+      .filter((card: any) => card.kind !== 'community_wide')
+      .map((card: any) => toCommunityEvent(card));
+    return merged.slice(0, 2);
+  }, [hasCommunityContext, data?.happeningNow, data?.myRsvps]);
 
   // No community context → "My RSVPs" fallback body
   if (!hasCommunityContext) {
@@ -337,17 +383,23 @@ export function EventsScreen() {
     );
   }
 
-  // Community context → four-bucket view
-  const { happeningNow, myRsvps, thisWeek, later } = data;
+  // Community context → Next Up featured row + "This week" / "Later" lists.
+  // happeningNow + myRsvps were consumed by the featured row; rendering them
+  // again would duplicate. Leaving the backend shape untouched in case we
+  // want per-bucket labeling later.
+  const { thisWeek, later } = data;
   const hasAnyContent =
-    happeningNow.length > 0 ||
-    myRsvps.length > 0 ||
-    thisWeek.length > 0 ||
-    later.length > 0;
+    featuredEvents.length > 0 || thisWeek.length > 0 || later.length > 0;
 
   // Flattened event list for the map view (map handles its own
-  // filtering + de-dup + geocoding).
-  const allCards = [...happeningNow, ...myRsvps, ...thisWeek, ...later];
+  // filtering + de-dup + geocoding). Use the raw buckets so the map still
+  // gets every card, not just the featured subset.
+  const allCards = [
+    ...data.happeningNow,
+    ...data.myRsvps,
+    ...data.thisWeek,
+    ...data.later,
+  ];
 
   return (
     <View style={[styles.container, { backgroundColor: colors.backgroundSecondary }]}>
@@ -379,18 +431,8 @@ export function EventsScreen() {
             </View>
           )}
 
-          <Section
-            title="Happening now"
-            cards={happeningNow}
-            onCommunityWideTap={handleCommunityWideTap}
-            colors={colors}
-          />
-          <Section
-            title="Your RSVPs"
-            cards={myRsvps}
-            onCommunityWideTap={handleCommunityWideTap}
-            colors={colors}
-          />
+          <NextUpRow events={featuredEvents} colors={colors} />
+
           <Section
             title="This week"
             cards={thisWeek}
@@ -420,16 +462,12 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     paddingBottom: 12,
     borderBottomWidth: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-  },
-  headerTitle: {
-    fontSize: 28,
-    fontWeight: '700',
   },
   headerActions: {
     flexDirection: 'row',
@@ -485,18 +523,36 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingTop: 12,
     paddingBottom: 40,
   },
   section: {
-    marginBottom: 20,
+    marginBottom: 16,
   },
   sectionTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '700',
-    marginBottom: 10,
+    marginBottom: 8,
   },
   sectionBody: {
+    gap: 8,
+  },
+  nextUpSection: {
+    marginBottom: 20,
+  },
+  nextUpHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  viewAll: {
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  nextUpRow: {
+    flexDirection: 'row',
     gap: 12,
   },
   centerContainer: {
@@ -514,21 +570,6 @@ const styles = StyleSheet.create({
   emptySubtitle: {
     fontSize: 14,
     textAlign: 'center',
-  },
-  pastEventsLink: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    gap: 10,
-    marginTop: 4,
-  },
-  pastEventsText: {
-    flex: 1,
-    fontSize: 14,
-    fontWeight: '500',
   },
   // My-RSVPs fallback styles
   myRsvpsContent: {
