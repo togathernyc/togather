@@ -778,7 +778,10 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
             </TouchableOpacity>
           )}
 
-          {/* Leader: RSVP Notification Toggle */}
+          {/* Leader: RSVP Notification Toggle. Leader/admin-only — creators
+              always get notified about RSVPs to their own event via a
+              separate path in `notifyRsvpReceived`, so they don't need to
+              toggle anything here. */}
           {isLeader && eventData.rsvpEnabled && (
             <View style={[styles.leaderCard, { backgroundColor: colors.surfaceSecondary }]}>
               <View style={styles.leaderCardRow}>

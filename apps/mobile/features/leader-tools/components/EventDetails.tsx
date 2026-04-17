@@ -567,7 +567,7 @@ export function EventDetails({
               </View>
             )}
 
-            {/* Leader: RSVP Notification Toggle */}
+            {/* Leader-only toggle (creators always get notified; see sender). */}
             {isLeader && rsvpEnabled && (
               <View style={[styles.detailCard, { backgroundColor: colors.surface }]}>
                 <View style={styles.detailRow}>
