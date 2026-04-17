@@ -12,6 +12,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { AppImage } from "@components/ui";
 import { useTheme } from "@hooks/useTheme";
+import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { getGroupTypeColorScheme } from "../../../constants/groupTypes";
 import { useIsDesktopWeb } from "../../../hooks/useIsDesktopWeb";
 
@@ -20,9 +21,12 @@ type ChatHeaderProps = {
   displayType: string;
   displayImage: string;
   groupTypeId: number;
+  /** When provided, renders a tappable "N members" link under the group name. */
+  memberCount?: number;
   onBack: () => void;
   onMenuPress: () => void;
   onGroupPagePress: () => void;
+  onMembersPress?: () => void;
 };
 
 export const ChatHeader = memo(function ChatHeader({
@@ -30,11 +34,14 @@ export const ChatHeader = memo(function ChatHeader({
   displayType,
   displayImage,
   groupTypeId,
+  memberCount,
   onBack,
   onMenuPress,
   onGroupPagePress,
+  onMembersPress,
 }: ChatHeaderProps) {
   const { colors: themeColors } = useTheme();
+  const { primaryColor } = useCommunityTheme();
   const scheme = getGroupTypeColorScheme(groupTypeId);
   const badgeColors = { bg: scheme.bg, text: scheme.color };
   const isDesktopWeb = useIsDesktopWeb();
@@ -66,13 +73,29 @@ export const ChatHeader = memo(function ChatHeader({
         <Text style={[styles.groupName, { color: themeColors.text }]} numberOfLines={1}>
           {displayName}
         </Text>
-        {displayType && (
-          <View style={[styles.headerBadge, { backgroundColor: badgeColors.bg }]}>
-            <Text style={[styles.headerBadgeText, { color: badgeColors.text }]}>
-              {displayType}
-            </Text>
-          </View>
-        )}
+        <View style={styles.headerMetaRow}>
+          {displayType && (
+            <View style={[styles.headerBadge, { backgroundColor: badgeColors.bg }]}>
+              <Text style={[styles.headerBadgeText, { color: badgeColors.text }]}>
+                {displayType}
+              </Text>
+            </View>
+          )}
+          {typeof memberCount === "number" && memberCount > 0 && (
+            <TouchableOpacity
+              onPress={onMembersPress}
+              disabled={!onMembersPress}
+              hitSlop={6}
+              style={styles.memberCountButton}
+            >
+              <Text
+                style={[styles.memberCountText, { color: primaryColor }]}
+              >
+                {memberCount} {memberCount === 1 ? "member" : "members"}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       {/* Menu Button */}
@@ -137,14 +160,26 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     marginBottom: 2,
   },
+  headerMetaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    flexWrap: "wrap",
+  },
   headerBadge: {
-    alignSelf: "flex-start",
     paddingHorizontal: 6,
     paddingVertical: 1,
     borderRadius: 3,
   },
   headerBadgeText: {
     fontSize: 10,
+    fontWeight: "600",
+  },
+  memberCountButton: {
+    // Hit-target is tight to the text. Tappability signalled by brand color.
+  },
+  memberCountText: {
+    fontSize: 12,
     fontWeight: "600",
   },
   menuButton: {
