@@ -31,7 +31,6 @@ import { useAuth } from '@providers/AuthProvider';
 import { useTheme } from '@hooks/useTheme';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
 import { AppImage } from '@components/ui';
-import { SafeLinearGradient } from '@components/ui/SafeLinearGradient';
 import { useEventsByTimeWindow } from '../hooks/useEventsByTimeWindow';
 import { useMyRsvpedEvents } from '../hooks/useCommunityEvents';
 import { EventCardRow } from './EventCardRow';
@@ -452,37 +451,10 @@ export function EventsScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.backgroundSecondary }]}>
-      {/*
-        The map. In list mode it occupies only the top band of the screen
-        and fades into the surface color via a gradient overlay — an
-        ambient sense-of-place without dominating the content. In map mode
-        it fills the whole screen and becomes interactive.
-      */}
-      <View
-        style={
-          viewMode === 'map'
-            ? StyleSheet.absoluteFill
-            : styles.mapBackdrop
-        }
-        pointerEvents={viewMode === 'map' ? 'auto' : 'none'}
-      >
+      {viewMode === 'map' ? (
         <EventsMapView cards={allCards} isLoading={isLoading} />
-      </View>
-
-      {viewMode === 'list' && (
+      ) : (
         <>
-          {/* Gradient fade from transparent at the top of the map band to
-              solid surface at the bottom. Also covers the full page below
-              the map band with solid surface color. */}
-          <View style={styles.mapFade} pointerEvents="none">
-            <SafeLinearGradient
-              colors={['rgba(0,0,0,0)', colors.backgroundSecondary]}
-              locations={[0, 1]}
-              start={{ x: 0.5, y: 0 }}
-              end={{ x: 0.5, y: 1 }}
-              style={StyleSheet.absoluteFill}
-            />
-          </View>
           {isLoading ? (
             <View style={styles.centerContainer}>
               <ActivityIndicator size="small" color={colors.textSecondary} />
@@ -555,20 +527,6 @@ export function EventsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-  },
-  mapBackdrop: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 180,
-  },
-  mapFade: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 180,
   },
   header: {
     paddingHorizontal: 16,
@@ -688,10 +646,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   greeting: {
-    // Sit just below the floating List/Map toggle. The map band behind
-    // us is ~180px tall; gradient fully fades to surface right under
-    // the subtitle line so the list content below rests on solid ground.
-    paddingTop: 20,
+    paddingTop: 48,
     paddingBottom: 28,
     alignItems: 'center',
     gap: 4,
