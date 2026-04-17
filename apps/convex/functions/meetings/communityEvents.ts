@@ -102,6 +102,7 @@ export const createCommunityWideEvent = mutation({
       meetingType: args.meetingType,
       meetingLink: args.meetingLink,
       note: args.note,
+      coverImage: args.coverImage,
       status: "scheduled",
       createdAt: timestamp,
     });

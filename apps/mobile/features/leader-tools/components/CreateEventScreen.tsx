@@ -322,6 +322,7 @@ export function CreateEventScreen() {
   const updateMeetingMutation = useAuthenticatedMutation(api.functions.meetings.index.update);
   const cancelMeetingMutation = useAuthenticatedMutation(api.functions.meetings.index.cancel);
   const cancelCommunityWideEventMutation = useAuthenticatedMutation(api.functions.communityWideEvents.cancel);
+  const updateCommunityWideEventMutation = useAuthenticatedMutation(api.functions.communityWideEvents.update);
   const createCommunityWideEventMutation = useAuthenticatedMutation(api.functions.meetings.communityEvents.createCommunityWideEvent);
   const createSeriesEventsMutation = useAuthenticatedMutation(api.functions.meetings.index.createSeriesEvents);
   const createCommunityWideSeriesMutation = useAuthenticatedMutation(api.functions.communityWideEvents.createSeries);
@@ -694,8 +695,48 @@ export function CreateEventScreen() {
         const hasSeries = !!meeting?.seriesId;
         const isCommunityWide = !!meeting?.communityWideEventId;
 
-        // Determine edit scope
-        const performUpdate = (scope?: EditScope) => {
+        // Determine edit scope. Cross-cutting scopes on a community-wide
+        // event route to `communityWideEvents.update`, which cascades to every
+        // sibling. Single-meeting edits (and series-only) stay on
+        // `meetings.update`. Matches the cancel flow split.
+        const performUpdate = async (scope?: EditScope) => {
+          if (
+            isCommunityWide &&
+            (scope === "this_date_all_groups" || scope === "all_in_series") &&
+            meeting?.communityWideEventId
+          ) {
+            setIsUpdating(true);
+            try {
+              await updateCommunityWideEventMutation({
+                communityWideEventId: meeting.communityWideEventId as Id<"communityWideEvents">,
+                title: data.title,
+                scheduledAt: data.scheduledAt
+                  ? new Date(data.scheduledAt).getTime()
+                  : undefined,
+                meetingType: data.meetingType,
+                meetingLink: data.meetingLink,
+                note: data.note,
+                // Cascades to parent + non-overridden children. `isOverridden`
+                // is untouched; only per-meeting edits flip that flag.
+                coverImage: data.coverImage,
+                // Cascade rsvp + visibility so scope-wide edits don't
+                // silently drop these fields. Per-group `locationOverride`
+                // stays on the single-meeting path since it can't sensibly
+                // cascade across differing group addresses.
+                rsvpEnabled: data.rsvpEnabled,
+                rsvpOptions: data.rsvpOptions,
+                visibility: data.visibility,
+                scope,
+              });
+              router.back();
+            } catch (error: any) {
+              Alert.alert("Error", formatError(error, "Failed to update event"));
+            } finally {
+              setIsUpdating(false);
+            }
+            return;
+          }
+
           const updateData = scope && scope !== "this_only"
             ? { meetingId, ...data, scope }
             : { meetingId, ...data };

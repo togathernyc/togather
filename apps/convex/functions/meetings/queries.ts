@@ -91,6 +91,15 @@ export const getByShortId = query({
     // Get group type name
     const groupType = await ctx.db.get(group.groupTypeId);
 
+    // If this is a CWE child and has no cover of its own, inherit the
+    // parent's cover so "edit just the cover on the parent" propagates
+    // visually without touching the child row.
+    let effectiveCoverImage: string | null | undefined = meeting.coverImage;
+    if (!effectiveCoverImage && meeting.communityWideEventId) {
+      const parent = await ctx.db.get(meeting.communityWideEventId);
+      effectiveCoverImage = (parent as any)?.coverImage ?? null;
+    }
+
     // Get creator display info (for member-led events we surface
     // "Hosted by [name]" so the attendee can tell it's a member event, not
     // an official community post). Name is rendered in "First L." form
@@ -135,7 +144,7 @@ export const getByShortId = query({
       meetingLink: hasAccess ? meeting.meetingLink : null,
       locationOverride: meeting.locationOverride,
       note: hasAccess ? meeting.note : null,
-      coverImage: getMediaUrl(meeting.coverImage),
+      coverImage: getMediaUrl(effectiveCoverImage ?? undefined),
       visibility: meeting.visibility || "group",
       rsvpEnabled: meeting.rsvpEnabled ?? true,
       rsvpOptions: meeting.rsvpOptions || [],
@@ -191,12 +200,17 @@ export const getWithDetails = query({
       total: rsvps.length,
     };
 
-    // Get parent event title if it's a community-wide event
+    // Get parent event title + cover if it's a community-wide event. Parent
+    // holds the shared cover so "edit just the parent cover" propagates to
+    // every child without marking them overridden.
     let parentEventTitle: string | undefined;
+    let parentCoverImage: string | undefined;
     if (meeting.communityWideEventId) {
       const parentEvent = await ctx.db.get(meeting.communityWideEventId);
       parentEventTitle = parentEvent?.title;
+      parentCoverImage = (parentEvent as any)?.coverImage;
     }
+    const effectiveCoverImage = meeting.coverImage || parentCoverImage;
 
     // Get series info if meeting is part of a series
     let seriesInfo: {
@@ -224,7 +238,7 @@ export const getWithDetails = query({
 
     return {
       ...meeting,
-      coverImage: getMediaUrl(meeting.coverImage),
+      coverImage: getMediaUrl(effectiveCoverImage),
       group: group
         ? {
             ...group,

@@ -549,6 +549,10 @@ export default defineSchema({
     meetingType: v.number(), // 1=In-Person, 2=Online
     meetingLink: v.optional(v.string()),
     note: v.optional(v.string()),
+    // Shared cover image for the parent CWE. Children display this when
+    // they don't have their own — so updating the parent cover doesn't
+    // force-override any child event.
+    coverImage: v.optional(v.string()),
     status: v.string(), // 'scheduled' | 'cancelled'
     createdAt: v.number(), // Unix timestamp ms
     updatedAt: v.optional(v.number()), // Unix timestamp ms

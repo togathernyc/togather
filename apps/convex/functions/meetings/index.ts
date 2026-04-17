@@ -341,23 +341,31 @@ export const update = mutation({
       }
     }
 
-    // Location mode validation runs on every write path (members + leaders).
-    // We validate whenever the resulting state has a locationMode — even when
-    // the caller only sends `locationOverride`/`meetingLink` without
-    // re-declaring `locationMode` — so partial payloads can't sneak the row
-    // into an invalid state (e.g. `locationMode: "address"` ending up with an
-    // empty `locationOverride`). Legacy rows with no `locationMode` remain
-    // untouched so this isn't a backfill.
+    // Location mode validation runs on every write path. One narrow exception:
+    // a non-overridden CWE child in `address` mode with an empty override
+    // inherits its physical location from the hosting group, so the usual
+    // "address mode requires a non-empty override" invariant would reject a
+    // no-op edit of an inherited event. Other modes (online/tbd) and any
+    // case where the user actually typed an override still validate — e.g.
+    // switching an inherited child to online must still require a link.
     const effectiveLocationMode = args.locationMode ?? meeting.locationMode;
-    if (effectiveLocationMode !== undefined) {
+    const effectiveLocationOverride =
+      args.locationOverride !== undefined
+        ? args.locationOverride
+        : meeting.locationOverride;
+    const effectiveMeetingLink =
+      args.meetingLink !== undefined ? args.meetingLink : meeting.meetingLink;
+    const isInheritedCweChild =
+      !!meeting.communityWideEventId && meeting.isOverridden !== true;
+    const isInheritedAddressNoop =
+      isInheritedCweChild &&
+      effectiveLocationMode === "address" &&
+      !effectiveLocationOverride?.trim();
+    if (effectiveLocationMode !== undefined && !isInheritedAddressNoop) {
       validateLocationMode({
         locationMode: effectiveLocationMode,
-        locationOverride:
-          args.locationOverride !== undefined
-            ? args.locationOverride
-            : meeting.locationOverride,
-        meetingLink:
-          args.meetingLink !== undefined ? args.meetingLink : meeting.meetingLink,
+        locationOverride: effectiveLocationOverride,
+        meetingLink: effectiveMeetingLink,
       });
     }
 
