@@ -93,14 +93,18 @@ export const getByShortId = query({
 
     // Get creator display info (for member-led events we surface
     // "Hosted by [name]" so the attendee can tell it's a member event, not
-    // an official community post). Safe to load regardless of access: name
-    // is already shown elsewhere (guest lists).
+    // an official community post). Name is rendered in "First L." form
+    // everywhere — short, identity-preserving, and privacy-friendly even
+    // on public share pages where non-members may land. Safe to load
+    // regardless of access: names already appear on guest lists.
     const creator = meeting.createdById
       ? await ctx.db.get(meeting.createdById)
       : null;
     const creatorName = creator
-      ? [creator.firstName, creator.lastName].filter(Boolean).join(" ").trim() ||
-        null
+      ? [creator.firstName, creator.lastName?.[0] ? `${creator.lastName[0]}.` : ""]
+          .filter(Boolean)
+          .join(" ")
+          .trim() || null
       : null;
 
     // Build access prompt for users without access

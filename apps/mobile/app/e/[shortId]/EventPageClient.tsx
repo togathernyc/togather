@@ -640,9 +640,7 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
                 />
                 <View style={styles.organizerInfo}>
                   <Text style={[styles.organizerName, { color: colors.text }]}>
-                    {isCreator
-                      ? 'Hosted by you'
-                      : `Hosted by ${(eventData as any).creatorName}`}
+                    {`Hosted by ${(eventData as any).creatorName}`}
                   </Text>
                   <Text style={[styles.communityName, { color: colors.textSecondary }]}>
                     {(eventData as any).isAnnouncementGroup

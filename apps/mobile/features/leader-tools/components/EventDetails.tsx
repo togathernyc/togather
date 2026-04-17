@@ -429,14 +429,17 @@ export function EventDetails({
                     />
                     <View style={styles.groupInfoText}>
                       <Text style={[styles.groupName, { color: colors.text }]}>
-                        {isCreator
-                          ? "Hosted by you"
-                          : `Hosted by ${[
-                              (meeting as any).creator.firstName,
-                              (meeting as any).creator.lastName,
-                            ]
-                              .filter(Boolean)
-                              .join(" ")}`}
+                        {(() => {
+                          const firstName = (meeting as any).creator.firstName || "";
+                          const lastInitial = (meeting as any).creator.lastName?.[0]
+                            ? `${(meeting as any).creator.lastName[0]}.`
+                            : "";
+                          const display = [firstName, lastInitial]
+                            .filter(Boolean)
+                            .join(" ")
+                            .trim();
+                          return display ? `Hosted by ${display}` : "Hosted";
+                        })()}
                       </Text>
                       <Text
                         style={[styles.groupName, { color: colors.textSecondary, fontSize: 13, fontWeight: "400", marginTop: 2 }]}
