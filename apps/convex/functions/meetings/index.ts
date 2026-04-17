@@ -115,6 +115,7 @@ export const create = mutation({
     ),
     note: v.optional(v.string()),
     coverImage: v.optional(v.string()),
+    posterId: v.optional(v.id("posters")),
     rsvpEnabled: v.optional(v.boolean()),
     rsvpOptions: v.optional(
       v.array(
@@ -211,6 +212,7 @@ export const create = mutation({
       locationMode: args.locationMode,
       note: args.note,
       coverImage: args.coverImage,
+      posterId: args.posterId,
       status: "scheduled",
       createdById,
       createdAt: timestamp,
@@ -292,6 +294,11 @@ export const update = mutation({
     ),
     note: v.optional(v.string()),
     coverImage: v.optional(v.string()),
+    // `undefined` → leave posterId unchanged. `null` → explicitly clear the
+    // linked curated poster (e.g. user switched from a library pick to a
+    // custom upload). We translate null → `ctx.db.patch(..., { posterId:
+    // undefined })` below, which Convex interprets as "delete this field."
+    posterId: v.optional(v.union(v.id("posters"), v.null())),
     status: v.optional(v.union(v.literal("scheduled"), v.literal("confirmed"), v.literal("completed"), v.literal("cancelled"))),
     rsvpEnabled: v.optional(v.boolean()),
     rsvpOptions: v.optional(
@@ -383,6 +390,14 @@ export const update = mutation({
     const cleanedUpdates: Record<string, unknown> = Object.fromEntries(
       Object.entries(updates).filter(([, val]) => val !== undefined)
     );
+
+    // Clients send `posterId: null` to explicitly clear the curated-poster
+    // reference (e.g. switching to a custom upload). Convex patches drop
+    // fields when the value is `undefined`, so translate null → undefined to
+    // remove `posterId` from the document.
+    if (cleanedUpdates.posterId === null) {
+      cleanedUpdates.posterId = undefined;
+    }
 
     // If this meeting is linked to a community-wide event and hasn't been overridden yet,
     // mark it as overridden so future cascade updates from the parent event skip it
@@ -521,6 +536,12 @@ export const update = mutation({
       if (updates.meetingLink !== undefined) seriesUpdates.meetingLink = updates.meetingLink;
       if (updates.note !== undefined) seriesUpdates.note = updates.note;
       if (updates.coverImage !== undefined) seriesUpdates.coverImage = updates.coverImage;
+      // null → delete the field on every sibling (same semantics as the
+      // single-meeting path above).
+      if (updates.posterId !== undefined) {
+        seriesUpdates.posterId =
+          updates.posterId === null ? undefined : updates.posterId;
+      }
       if (updates.rsvpEnabled !== undefined) seriesUpdates.rsvpEnabled = updates.rsvpEnabled;
       if (updates.rsvpOptions !== undefined) seriesUpdates.rsvpOptions = updates.rsvpOptions;
       if (updates.visibility !== undefined) seriesUpdates.visibility = updates.visibility;
