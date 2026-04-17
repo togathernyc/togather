@@ -778,8 +778,9 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
             </TouchableOpacity>
           )}
 
-          {/* Leader: RSVP Notification Toggle */}
-          {isLeader && eventData.rsvpEnabled && (
+          {/* Host: RSVP Notification Toggle. Creators see this too so they
+              know when people RSVP to their own event. */}
+          {canEdit && eventData.rsvpEnabled && (
             <View style={[styles.leaderCard, { backgroundColor: colors.surfaceSecondary }]}>
               <View style={styles.leaderCardRow}>
                 <Ionicons name="notifications-outline" size={20} color={colors.textSecondary} />

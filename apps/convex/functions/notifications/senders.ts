@@ -386,7 +386,7 @@ export const notifyRsvpReceived = internalAction({
   handler: async (ctx, args): Promise<{ success: boolean; error?: string; sent?: number }> => {
     try {
       // Get meeting info
-      const meeting: { title?: string; groupId: Id<"groups">; shortId?: string; rsvpNotifyLeaders?: boolean } | null = await ctx.runQuery(internal.functions.notifications.internal.getMeetingInfo, {
+      const meeting: { title?: string; groupId: Id<"groups">; shortId?: string; rsvpNotifyLeaders?: boolean; createdById?: Id<"users"> } | null = await ctx.runQuery(internal.functions.notifications.internal.getMeetingInfo, {
         meetingId: args.meetingId,
       });
       if (!meeting) {
@@ -394,9 +394,9 @@ export const notifyRsvpReceived = internalAction({
         return { success: false, error: "Meeting not found" };
       }
 
-      // Check if leader notifications are enabled (defaults to true)
+      // Check if host notifications are enabled (defaults to true)
       if (meeting.rsvpNotifyLeaders === false) {
-        console.log("[NotifyRsvpReceived] RSVP leader notifications disabled for this event");
+        console.log("[NotifyRsvpReceived] RSVP host notifications disabled for this event");
         return { success: true, sent: 0 };
       }
 
@@ -414,17 +414,23 @@ export const notifyRsvpReceived = internalAction({
         userId: args.userId,
       });
 
-      // Get leader user IDs (excluding the RSVPing user if they're a leader)
+      // Recipients: group leaders + the event creator (if they aren't already
+      // a leader). ADR-022 extension — the host wants to know when RSVPs
+      // arrive to their own event even if they aren't a group leader.
       const leaderIds: Id<"users">[] = await ctx.runQuery(internal.functions.notifications.internal.getGroupMembersForNotification, {
         groupId: meeting.groupId,
         filter: "leaders",
       });
-
-      // Exclude the RSVPing user from recipients
-      const recipientIds = leaderIds.filter((id) => id !== args.userId);
+      const recipientSet = new Set<string>(leaderIds.map((id) => String(id)));
+      if (meeting.createdById) {
+        recipientSet.add(String(meeting.createdById));
+      }
+      // Exclude the RSVPing user so they don't get notified about their own RSVP.
+      recipientSet.delete(String(args.userId));
+      const recipientIds = [...recipientSet] as Id<"users">[];
 
       if (recipientIds.length === 0) {
-        console.log("[NotifyRsvpReceived] No leader recipients found");
+        console.log("[NotifyRsvpReceived] No host recipients found");
         return { success: true, sent: 0 };
       }
 
