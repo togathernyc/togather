@@ -561,14 +561,14 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
-    height: 420,
+    height: 180,
   },
   mapFade: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
-    height: 420,
+    height: 180,
   },
   header: {
     paddingHorizontal: 16,
@@ -688,13 +688,13 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   greeting: {
-    // Push the greeting well below the floating List/Map toggle so it feels
-    // centered in the upper region of the screen (Partiful-style breathing room).
-    // `contentTopPadding` already clears the status bar; add another 88px here.
-    paddingTop: 88,
-    paddingBottom: 40,
+    // Sit just below the floating List/Map toggle. The map band behind
+    // us is ~180px tall; gradient fully fades to surface right under
+    // the subtitle line so the list content below rests on solid ground.
+    paddingTop: 20,
+    paddingBottom: 28,
     alignItems: 'center',
-    gap: 8,
+    gap: 4,
   },
   greetingTitle: {
     fontSize: 20,
