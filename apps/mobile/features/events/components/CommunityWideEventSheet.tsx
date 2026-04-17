@@ -203,6 +203,7 @@ export function CommunityWideEventSheet({
       index={parentId ? 0 : -1}
       snapPoints={snapPoints}
       enablePanDownToClose
+      enableOverDrag={false}
       onClose={onDismiss}
       handleIndicatorStyle={[styles.handleIndicator, { backgroundColor: colors.border }]}
       backgroundStyle={[styles.sheetBackground, { backgroundColor: colors.surface }]}
