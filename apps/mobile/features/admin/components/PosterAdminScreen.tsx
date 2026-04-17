@@ -196,6 +196,31 @@ export function PosterAdminScreen() {
         </View>
       </View>
 
+      {/* Global-library reminder — every poster here is visible to every user
+          across every community when they create an event. Keep contributions
+          taste-appropriate and on-brand. */}
+      <View
+        style={[
+          styles.noticeBar,
+          {
+            backgroundColor: colors.surfaceSecondary,
+            borderColor: colors.border,
+          },
+        ]}
+      >
+        <Ionicons
+          name="information-circle-outline"
+          size={18}
+          color={colors.textSecondary}
+          style={{ marginTop: 1 }}
+        />
+        <Text style={[styles.noticeText, { color: colors.textSecondary }]}>
+          Heads up: posters uploaded here show up for every user across every
+          community when they create an event. Please keep them appropriate,
+          on-brand, and mindful of our users.
+        </Text>
+      </View>
+
       {/* Grid */}
       {posters === undefined ? (
         <View style={styles.centered}>
@@ -378,6 +403,21 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 15,
     padding: 0,
+  },
+  noticeBar: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    marginHorizontal: 12,
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  noticeText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 17,
   },
   gridContent: {
     padding: 12,
