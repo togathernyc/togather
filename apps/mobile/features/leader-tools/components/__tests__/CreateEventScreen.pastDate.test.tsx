@@ -239,9 +239,9 @@ jest.mock("../VisibilitySelector", () => ({
   VisibilitySelector: () => null,
 }));
 
-// Mock ShareToChatModal
-jest.mock("../ShareToChatModal", () => ({
-  ShareToChatModal: () => null,
+// Mock InviteToEventSheet
+jest.mock("../InviteToEventSheet", () => ({
+  InviteToEventSheet: () => null,
 }));
 
 // Mock ConfirmModal

@@ -31,7 +31,7 @@ import { VisibilitySelector, VisibilityLevel } from "./VisibilitySelector";
 import { useCreatableGroups } from "@features/events/hooks/useCommunityEvents";
 import { useMyHostedEvents } from "@features/events/hooks/useMyEvents";
 import { useAnalytics } from "@services/analytics";
-import { ShareToChatModal } from "./ShareToChatModal";
+import { InviteToEventSheet } from "./InviteToEventSheet";
 import { ConfirmModal } from "@components/ui/ConfirmModal";
 import { getGroupCoordinates, geocodeAddressAsync } from "../../groups/utils/geocodeLocation";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
@@ -155,8 +155,8 @@ export function CreateEventScreen() {
   const [isSeriesDropdownOpen, setIsSeriesDropdownOpen] = useState(false);
   const [isSeriesLinking, setIsSeriesLinking] = useState(false);
 
-  // Share to chat modal state
-  const [showShareModal, setShowShareModal] = useState(false);
+  // Post-create invite sheet state
+  const [showInviteSheet, setShowInviteSheet] = useState(false);
   const [pendingMeetingId, setPendingMeetingId] = useState<string | null>(null);
 
   // Past date confirmation modal state (for admins only)
@@ -312,46 +312,22 @@ export function CreateEventScreen() {
   const addMeetingToSeriesMutation = useAuthenticatedMutation(api.functions.eventSeries.addMeetingToSeries);
   const removeMeetingFromSeriesMutation = useAuthenticatedMutation(api.functions.eventSeries.removeMeetingFromSeries);
   const createSeriesFromMeetingsMutation = useAuthenticatedMutation(api.functions.eventSeries.createSeriesFromMeetings);
-  const postToChatMutationFn = useAuthenticatedMutation(api.functions.meetings.index.postToChat);
 
   // Mutation state tracking
   const [isCreating, setIsCreating] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
-  const [isPostingToChat, setIsPostingToChat] = useState(false);
   const [isCreatingCommunityWide, setIsCreatingCommunityWide] = useState(false);
 
-  // Show the share to chat modal
-  const showShareToChatModal = (eventMeetingId: string) => {
+  // Open the post-create invite sheet (replaces the old "post to group chat"
+  // flow — we now let the creator copy the link or use the native share sheet).
+  const showInviteSheetForMeeting = (eventMeetingId: string) => {
     setPendingMeetingId(eventMeetingId);
-    setShowShareModal(true);
+    setShowInviteSheet(true);
   };
 
-  // Handle sending the event to chat with a message
-  const handleSendToChat = async (message: string) => {
-    if (!pendingMeetingId) return;
-    setIsPostingToChat(true);
-    try {
-      await postToChatMutationFn({
-        meetingId: pendingMeetingId as Id<"meetings">,
-        message,
-      });
-      setShowShareModal(false);
-      setPendingMeetingId(null);
-      router.back();
-    } catch (error: any) {
-      Alert.alert(
-        "Error",
-        error.message || "Failed to post event to chat. Please try again."
-      );
-    } finally {
-      setIsPostingToChat(false);
-    }
-  };
-
-  // Handle skipping the share to chat
-  const handleSkipShare = () => {
-    setShowShareModal(false);
+  const handleInviteSheetClose = () => {
+    setShowInviteSheet(false);
     setPendingMeetingId(null);
     router.back();
   };
@@ -387,7 +363,7 @@ export function CreateEventScreen() {
         }
         // Convex automatically updates queries, so no need to invalidate
         // Show the share to chat modal
-        showShareToChatModal(newMeetingId);
+        showInviteSheetForMeeting(newMeetingId);
       } catch (error: any) {
         Alert.alert("Error", formatError(error, "Failed to create event"));
       } finally {
@@ -458,9 +434,6 @@ export function CreateEventScreen() {
   };
 
   // Post to chat mutation state (for the modal)
-  const postToChatMutation = {
-    isPending: isPostingToChat,
-  };
 
   const handleCancelEvent = () => {
     if (!meetingId) return;
@@ -922,7 +895,6 @@ export function CreateEventScreen() {
   const isSubmitting =
     createMeeting.isPending ||
     updateMeeting.isPending ||
-    postToChatMutation.isPending ||
     cancelMeeting.isPending ||
     isUploadingImage ||
     isCreatingCommunityWide;
@@ -1790,18 +1762,14 @@ export function CreateEventScreen() {
           )}
         </ScrollView>
 
-        {/* Share to Chat Modal */}
-        <ShareToChatModal
-          visible={showShareModal}
-          onClose={() => {
-            setShowShareModal(false);
-            setPendingMeetingId(null);
-            router.back();
-          }}
-          onSend={handleSendToChat}
-          onSkip={handleSkipShare}
-          isLoading={postToChatMutation.isPending}
+        {/* Post-create Invite Sheet — replaces the old Share-to-Group-Chat
+            modal. Copy-link + native Share covers both togather chats and
+            every external messenger. */}
+        <InviteToEventSheet
+          visible={showInviteSheet}
+          meetingId={pendingMeetingId}
           eventTitle={title || groupTypeName}
+          onClose={handleInviteSheetClose}
         />
 
         {/* Past Date Confirmation Modal (for admins only) */}
