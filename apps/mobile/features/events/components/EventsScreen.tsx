@@ -134,10 +134,6 @@ interface NextUpPropsWithAction extends NextUpProps {
 
 function NextUpRow({ events, colors, onViewAll }: NextUpPropsWithAction) {
   if (events.length < 1) return null;
-  // When there's only a single featured tile, center it so it doesn't look
-  // stranded against the left edge. Otherwise keep the horizontal row flush
-  // to the left so users can swipe into the second tile.
-  const isSingle = events.length === 1;
   return (
     <View style={styles.nextUpSection}>
       <View style={styles.nextUpHeader}>
@@ -157,10 +153,7 @@ function NextUpRow({ events, colors, onViewAll }: NextUpPropsWithAction) {
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        contentContainerStyle={[
-          styles.nextUpScrollContent,
-          isSingle && styles.nextUpScrollContentCentered,
-        ]}
+        contentContainerStyle={styles.nextUpScrollContent}
       >
         {events.map((ev) => (
           <FeaturedEventTile key={String(ev.id)} event={ev} />
@@ -188,7 +181,7 @@ function Greeting({ firstName, colors, primaryColor, onMakePlans }: GreetingProp
           style={[styles.greetingAction, { color: primaryColor }]}
           onPress={onMakePlans}
         >
-          Gather up
+          Make plans
         </Text>
       </Text>
     </View>
@@ -658,10 +651,10 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   greetingTitle: {
-    fontSize: 28,
+    fontSize: 20,
     fontWeight: '700',
-    lineHeight: 34,
-    letterSpacing: -0.5,
+    lineHeight: 26,
+    letterSpacing: -0.3,
     textAlign: 'center',
   },
   greetingSubtitle: {
