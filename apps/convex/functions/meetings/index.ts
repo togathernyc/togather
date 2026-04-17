@@ -341,14 +341,15 @@ export const update = mutation({
       }
     }
 
-    // Location mode validation runs on every write path (members + leaders),
-    // but NOT on community-wide event children — those inherit location from
-    // their hosting group, so the meeting-level `locationOverride` is
-    // intentionally blank and enforcing the invariant would block legitimate
-    // edits. The parent CWE has its own location flow via
-    // `communityWideEvents.update`.
+    // Location mode validation runs on every write path, with one exception:
+    // CWE children that haven't been overridden yet inherit their location
+    // from the hosting group, so their meeting-level `locationOverride` is
+    // intentionally blank. Once a leader has overridden a child (edited it
+    // individually), it owns its own location and the invariant applies.
     const effectiveLocationMode = args.locationMode ?? meeting.locationMode;
-    if (effectiveLocationMode !== undefined && !meeting.communityWideEventId) {
+    const isInheritedCweChild =
+      !!meeting.communityWideEventId && meeting.isOverridden !== true;
+    if (effectiveLocationMode !== undefined && !isInheritedCweChild) {
       validateLocationMode({
         locationMode: effectiveLocationMode,
         locationOverride:

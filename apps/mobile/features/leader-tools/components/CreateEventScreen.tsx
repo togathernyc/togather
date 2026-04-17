@@ -720,6 +720,13 @@ export function CreateEventScreen() {
                 // every child as `isOverridden`. Children fall back to
                 // parent.coverImage on render.
                 coverImage: data.coverImage,
+                // Cascade rsvp + visibility so scope-wide edits don't
+                // silently drop these fields. Per-group `locationOverride`
+                // stays on the single-meeting path since it can't sensibly
+                // cascade across differing group addresses.
+                rsvpEnabled: data.rsvpEnabled,
+                rsvpOptions: data.rsvpOptions,
+                visibility: data.visibility,
                 scope,
               });
               router.back();
