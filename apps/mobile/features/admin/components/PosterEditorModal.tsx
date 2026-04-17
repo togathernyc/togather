@@ -26,7 +26,10 @@ import {
   Alert,
   Platform,
   KeyboardAvoidingView,
+  useWindowDimensions,
 } from "react-native";
+
+const WIDE_BREAKPOINT = 768;
 import { Ionicons } from "@expo/vector-icons";
 import {
   useQuery,
@@ -38,14 +41,7 @@ import type { Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { useTheme } from "@hooks/useTheme";
 import { AppImage } from "@components/ui/AppImage";
-
-// Lazy-require expo-image-picker (mirrors components/ui/ImagePicker.tsx pattern)
-let ExpoImagePicker: any = null;
-try {
-  ExpoImagePicker = require("expo-image-picker");
-} catch {
-  // Not installed — web file picker fallback kicks in
-}
+import * as ImagePicker from "expo-image-picker";
 
 interface Props {
   visible: boolean;
@@ -56,6 +52,8 @@ interface Props {
 export function PosterEditorModal({ visible, posterId, onClose }: Props) {
   const { colors } = useTheme();
   const { token } = useAuth();
+  const { width: screenWidth } = useWindowDimensions();
+  const isWide = screenWidth >= WIDE_BREAKPOINT;
 
   const existing = useQuery(
     api.functions.posters.getById,
@@ -105,44 +103,30 @@ export function PosterEditorModal({ visible, posterId, onClose }: Props) {
   }, [existing, visible]);
 
   const pickAndUpload = useCallback(async () => {
-    if (Platform.OS !== "web" && !ExpoImagePicker) {
-      Alert.alert("Not available", "expo-image-picker is not installed.");
-      return;
-    }
-
-    // Pick
-    let uri: string | null = null;
-    let fileName = "poster.jpg";
-    let contentType = "image/jpeg";
-
-    if (Platform.OS === "web") {
-      // Web: use a plain file input
-      uri = await pickImageOnWeb((n, ct) => {
-        fileName = n;
-        contentType = ct;
-      });
-      if (!uri) return;
-    } else {
-      const perm = await ExpoImagePicker.requestMediaLibraryPermissionsAsync();
+    // expo-image-picker handles the web flow via a hidden <input type="file">
+    // internally, so the same call works across web and native. Mirrors the
+    // chat attachment flow (features/chat/components/MessageInput.tsx).
+    if (Platform.OS !== "web") {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (perm.status !== "granted") {
         Alert.alert("Permission needed", "Please allow photo library access.");
         return;
       }
-      const result = await ExpoImagePicker.launchImageLibraryAsync({
-        mediaTypes: ExpoImagePicker.MediaTypeOptions.Images,
-        allowsEditing: false,
-        quality: 0.9,
-      });
-      if (result.canceled || !result.assets?.[0]) return;
-      const asset = result.assets[0];
-      uri = asset.uri;
-      const maybeName = asset.fileName ?? asset.uri.split("/").pop();
-      if (maybeName) fileName = maybeName;
-      const ext = fileName.split(".").pop()?.toLowerCase() ?? "jpg";
-      contentType = `image/${ext === "jpg" ? "jpeg" : ext}`;
     }
 
-    if (!uri) return;
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      allowsEditing: false,
+      quality: 0.9,
+    });
+    if (result.canceled || !result.assets?.[0]) return;
+
+    const asset = result.assets[0];
+    const uri = asset.uri;
+    const fileName =
+      asset.fileName || asset.uri.split("/").pop() || "poster.jpg";
+    const ext = (fileName.split(".").pop() || "jpg").toLowerCase();
+    const contentType = `image/${ext === "jpg" ? "jpeg" : ext}`;
 
     setLocalPreview(uri);
     setIsUploading(true);
@@ -153,6 +137,9 @@ export function PosterEditorModal({ visible, posterId, onClose }: Props) {
         folder: "posters",
       });
 
+      // Upload to R2. Matches useImageUpload: fetch/blob on web (works with
+      // both blob: URIs from expo-image-picker web and file:// native URIs
+      // fetched as blobs).
       const response = await fetch(uri);
       const blob = await response.blob();
       const putRes = await fetch(upload.uploadUrl, {
@@ -276,12 +263,30 @@ export function PosterEditorModal({ visible, posterId, onClose }: Props) {
       transparent
       onRequestClose={onClose}
     >
-      <View style={styles.backdrop}>
+      <View
+        style={[
+          styles.backdrop,
+          {
+            justifyContent: isWide ? "center" : "flex-end",
+            alignItems: isWide ? "center" : "stretch",
+            padding: isWide ? 24 : 0,
+          },
+        ]}
+      >
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : undefined}
-          style={styles.sheetWrap}
+          style={[styles.sheetWrap, isWide && { maxWidth: 640 }]}
         >
-          <View style={[styles.sheet, { backgroundColor: colors.background }]}>
+          <View
+            style={[
+              styles.sheet,
+              { backgroundColor: colors.background },
+              isWide && {
+                borderBottomLeftRadius: 18,
+                borderBottomRightRadius: 18,
+              },
+            ]}
+          >
             <View
               style={[styles.sheetHeader, { borderBottomColor: colors.border }]}
             >
@@ -469,29 +474,6 @@ export function PosterEditorModal({ visible, posterId, onClose }: Props) {
   );
 }
 
-async function pickImageOnWeb(
-  onMeta: (fileName: string, contentType: string) => void,
-): Promise<string | null> {
-  return new Promise((resolve) => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = "image/*";
-    input.onchange = () => {
-      const file = input.files?.[0];
-      if (!file) {
-        resolve(null);
-        return;
-      }
-      onMeta(file.name, file.type || "image/jpeg");
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = () => resolve(null);
-      reader.readAsDataURL(file);
-    };
-    input.click();
-  });
-}
-
 async function confirmAsync(title: string, message: string): Promise<boolean> {
   if (Platform.OS === "web") {
     return window.confirm(`${title}\n\n${message}`);
@@ -517,10 +499,10 @@ const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "flex-end",
   },
   sheetWrap: {
     maxHeight: "92%",
+    width: "100%",
   },
   sheet: {
     borderTopLeftRadius: 18,

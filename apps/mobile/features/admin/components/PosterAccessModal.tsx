@@ -16,7 +16,10 @@ import {
   ActivityIndicator,
   Alert,
   Platform,
+  useWindowDimensions,
 } from "react-native";
+
+const WIDE_BREAKPOINT = 768;
 import { Ionicons } from "@expo/vector-icons";
 import {
   useQuery,
@@ -47,6 +50,8 @@ type UserResult = {
 export function PosterAccessModal({ visible, onClose }: Props) {
   const { colors } = useTheme();
   const { token } = useAuth();
+  const { width: screenWidth } = useWindowDimensions();
+  const isWide = screenWidth >= WIDE_BREAKPOINT;
 
   const [query, setQuery] = useState("");
 
@@ -109,8 +114,27 @@ export function PosterAccessModal({ visible, onClose }: Props) {
       transparent
       onRequestClose={onClose}
     >
-      <View style={styles.backdrop}>
-        <View style={[styles.sheet, { backgroundColor: colors.background }]}>
+      <View
+        style={[
+          styles.backdrop,
+          {
+            justifyContent: isWide ? "center" : "flex-end",
+            alignItems: isWide ? "center" : "stretch",
+            padding: isWide ? 24 : 0,
+          },
+        ]}
+      >
+        <View
+          style={[
+            styles.sheet,
+            { backgroundColor: colors.background },
+            isWide && {
+              maxWidth: 560,
+              borderBottomLeftRadius: 18,
+              borderBottomRightRadius: 18,
+            },
+          ]}
+        >
           <View style={[styles.header, { borderBottomColor: colors.border }]}>
             <TouchableOpacity onPress={onClose} hitSlop={12}>
               <Ionicons name="close" size={24} color={colors.text} />
@@ -316,12 +340,12 @@ const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "flex-end",
   },
   sheet: {
     borderTopLeftRadius: 18,
     borderTopRightRadius: 18,
     maxHeight: "90%",
+    width: "100%",
     overflow: "hidden",
   },
   header: {

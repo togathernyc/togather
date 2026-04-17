@@ -1897,6 +1897,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     position: "relative",
+    // Prevent the square cover from ballooning on wide viewports while the
+    // rest of the form stays full-width. 480px cap is applied unconditionally
+    // — on narrow screens the intrinsic width is smaller anyway, so the cap
+    // is a no-op there.
+    maxWidth: 480,
+    alignSelf: "center",
+    width: "100%",
   },
   posterSlotImage: {
     ...StyleSheet.absoluteFillObject,

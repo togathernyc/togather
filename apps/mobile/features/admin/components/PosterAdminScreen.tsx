@@ -13,13 +13,11 @@ import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
   TouchableOpacity,
   TextInput,
   ActivityIndicator,
   FlatList,
-  Platform,
-  Dimensions,
+  useWindowDimensions,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -34,6 +32,9 @@ import { useTheme } from "@hooks/useTheme";
 import { AppImage } from "@components/ui/AppImage";
 import { PosterEditorModal } from "./PosterEditorModal";
 import { PosterAccessModal } from "./PosterAccessModal";
+
+const CONTENT_MAX_WIDTH = 900;
+const WIDE_BREAKPOINT = 768;
 
 type PosterDoc = {
   _id: Id<"posters">;
@@ -70,15 +71,19 @@ export function PosterAdminScreen() {
   const isGated = access === undefined;
   const isDenied = access !== undefined && !access.isPosterAdmin;
 
+  const { width: screenWidth } = useWindowDimensions();
+  const isWideScreen = screenWidth >= WIDE_BREAKPOINT;
+
+  // Column count scales with the constrained content width, so a desktop
+  // viewport gets 3-4 columns while a phone/narrow window stays at 2.
+  // Decision driven by screen size, not Platform.OS — mobile web in a narrow
+  // window should render the same as the native mobile app.
   const numColumns = useMemo(() => {
-    if (Platform.OS === "web") {
-      const w = Dimensions.get("window").width;
-      if (w > 1100) return 5;
-      if (w > 800) return 4;
-      if (w > 500) return 3;
-    }
+    const effective = Math.min(screenWidth, CONTENT_MAX_WIDTH);
+    if (effective >= 800) return 4;
+    if (effective >= 560) return 3;
     return 2;
-  }, []);
+  }, [screenWidth]);
 
   if (isGated) {
     return (
@@ -118,6 +123,8 @@ export function PosterAdminScreen() {
     setEditorOpen(true);
   };
 
+  const widthConstrain = isWideScreen ? styles.widthConstrain : null;
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Header bar */}
@@ -131,7 +138,7 @@ export function PosterAdminScreen() {
           },
         ]}
       >
-        <View style={styles.headerRow}>
+        <View style={[styles.headerRow, widthConstrain]}>
           <Text style={[styles.headerTitle, { color: colors.text }]}>
             Posters
           </Text>
@@ -175,6 +182,7 @@ export function PosterAdminScreen() {
         <View
           style={[
             styles.searchBar,
+            widthConstrain,
             { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
           ]}
         >
@@ -202,6 +210,7 @@ export function PosterAdminScreen() {
       <View
         style={[
           styles.noticeBar,
+          widthConstrain,
           {
             backgroundColor: colors.surfaceSecondary,
             borderColor: colors.border,
@@ -238,7 +247,7 @@ export function PosterAdminScreen() {
           data={posters}
           numColumns={numColumns}
           keyExtractor={(p) => p._id}
-          contentContainerStyle={styles.gridContent}
+          contentContainerStyle={[styles.gridContent, widthConstrain]}
           columnWrapperStyle={numColumns > 1 ? styles.gridRow : undefined}
           renderItem={({ item }) => (
             <PosterCard
@@ -318,6 +327,14 @@ function PosterCard({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  // Applied when the screen is wider than WIDE_BREAKPOINT to keep content to
+  // a readable column on wide desktops. Driven by screen size, not platform:
+  // mobile web in a narrow window skips this and matches the native layout.
+  widthConstrain: {
+    maxWidth: CONTENT_MAX_WIDTH,
+    width: "100%",
+    alignSelf: "center",
   },
   centered: {
     flex: 1,

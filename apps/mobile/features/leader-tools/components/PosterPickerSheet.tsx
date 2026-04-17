@@ -20,8 +20,10 @@ import {
   FlatList,
   Platform,
   Alert,
-  Dimensions,
+  useWindowDimensions,
 } from "react-native";
+
+const WIDE_BREAKPOINT = 768;
 import { Ionicons } from "@expo/vector-icons";
 import {
   useQuery,
@@ -31,13 +33,7 @@ import type { Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { useTheme } from "@hooks/useTheme";
 import { AppImage } from "@components/ui/AppImage";
-
-let ExpoImagePicker: any = null;
-try {
-  ExpoImagePicker = require("expo-image-picker");
-} catch {
-  // Not installed — web file input fallback is used instead
-}
+import * as ImagePicker from "expo-image-picker";
 
 type PickedPoster = {
   posterId: Id<"posters">;
@@ -60,6 +56,8 @@ interface Props {
 export function PosterPickerSheet({ visible, onClose, onSelect }: Props) {
   const { colors } = useTheme();
   const { token } = useAuth();
+  const { width: screenWidth } = useWindowDimensions();
+  const isWide = screenWidth >= WIDE_BREAKPOINT;
   const [query, setQuery] = useState("");
 
   const posters = useQuery(
@@ -67,39 +65,35 @@ export function PosterPickerSheet({ visible, onClose, onSelect }: Props) {
     token && visible ? { token, query, limit: 120 } : "skip",
   );
 
+  // Sheet itself is capped at 720px on wide screens (see backdrop below), so
+  // column count should scale with that effective width rather than viewport.
   const numColumns = useMemo(() => {
-    if (Platform.OS === "web") {
-      const w = Dimensions.get("window").width;
-      if (w > 900) return 4;
-      if (w > 600) return 3;
-    }
+    const effective = isWide ? Math.min(screenWidth, 720) : screenWidth;
+    if (effective >= 700) return 4;
+    if (effective >= 500) return 3;
     return 2;
-  }, []);
+  }, [isWide, screenWidth]);
 
   const handleUploadOwn = async () => {
-    let uri: string | null = null;
-    if (Platform.OS === "web") {
-      uri = await pickImageOnWeb();
-    } else {
-      if (!ExpoImagePicker) {
-        Alert.alert("Not available", "expo-image-picker is not installed.");
-        return;
-      }
-      const perm = await ExpoImagePicker.requestMediaLibraryPermissionsAsync();
+    // Mirrors the chat attachment pattern (features/chat/components/MessageInput.tsx):
+    // ImagePicker.launchImageLibraryAsync handles the web file-input flow
+    // internally, so the same call path works on both web and native.
+    if (Platform.OS !== "web") {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (perm.status !== "granted") {
         Alert.alert("Permission needed", "Please allow photo library access.");
         return;
       }
-      const result = await ExpoImagePicker.launchImageLibraryAsync({
-        mediaTypes: ExpoImagePicker.MediaTypeOptions.Images,
-        allowsEditing: false,
-        quality: 0.85,
-      });
-      if (result.canceled || !result.assets?.[0]) return;
-      uri = result.assets[0].uri;
     }
-    if (!uri) return;
-    onSelect({ imageUrl: uri });
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      allowsEditing: false,
+      quality: 0.85,
+    });
+    if (result.canceled || !result.assets?.[0]) return;
+
+    onSelect({ imageUrl: result.assets[0].uri });
     onClose();
   };
 
@@ -110,8 +104,30 @@ export function PosterPickerSheet({ visible, onClose, onSelect }: Props) {
       transparent
       onRequestClose={onClose}
     >
-      <View style={styles.backdrop}>
-        <View style={[styles.sheet, { backgroundColor: colors.background }]}>
+      <View
+        style={[
+          styles.backdrop,
+          {
+            justifyContent: isWide ? "center" : "flex-end",
+            alignItems: isWide ? "center" : "stretch",
+            padding: isWide ? 24 : 0,
+          },
+        ]}
+      >
+        <View
+          style={[
+            styles.sheet,
+            { backgroundColor: colors.background },
+            isWide
+              ? {
+                  maxWidth: 720,
+                  maxHeight: "90%",
+                  borderBottomLeftRadius: 18,
+                  borderBottomRightRadius: 18,
+                }
+              : { height: "90%" },
+          ]}
+        >
           <View style={[styles.header, { borderBottomColor: colors.border }]}>
             <View style={styles.grabber} />
             <View style={styles.headerRow}>
@@ -242,36 +258,16 @@ function PosterTile({
   );
 }
 
-async function pickImageOnWeb(): Promise<string | null> {
-  return new Promise((resolve) => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = "image/*";
-    input.onchange = () => {
-      const file = input.files?.[0];
-      if (!file) {
-        resolve(null);
-        return;
-      }
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = () => resolve(null);
-      reader.readAsDataURL(file);
-    };
-    input.click();
-  });
-}
 
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "flex-end",
   },
   sheet: {
     borderTopLeftRadius: 18,
     borderTopRightRadius: 18,
-    height: "90%",
+    width: "100%",
     overflow: "hidden",
   },
   header: {
