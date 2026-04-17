@@ -132,13 +132,6 @@ export function PosterAdminScreen() {
         ]}
       >
         <View style={styles.headerRow}>
-          <TouchableOpacity
-            onPress={() => router.back()}
-            style={styles.iconBtn}
-            hitSlop={12}
-          >
-            <Ionicons name="chevron-back" size={26} color={colors.text} />
-          </TouchableOpacity>
           <Text style={[styles.headerTitle, { color: colors.text }]}>
             Posters
           </Text>
