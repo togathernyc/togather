@@ -85,7 +85,7 @@ export function FeaturedEventTile({ event }: FeaturedEventTileProps) {
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
+    width: 164,
     // gap between image and title handled with marginTop on title
   },
   imageWrap: {

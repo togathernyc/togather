@@ -141,11 +141,15 @@ function NextUpRow({ events, colors }: NextUpProps) {
           </Text>
         </TouchableOpacity>
       </View>
-      <View style={styles.nextUpRow}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.nextUpScrollContent}
+      >
         {events.map((ev) => (
           <FeaturedEventTile key={String(ev.id)} event={ev} />
         ))}
-      </View>
+      </ScrollView>
     </View>
   );
 }
@@ -256,32 +260,37 @@ export function EventsScreen() {
     );
   };
 
-  // Action row — no title. Just safe-area padding, the List/Map toggle,
-  // and the Create Event CTA.
-  const header = (
-    <View
-      style={[
-        styles.header,
-        {
-          paddingTop: insets.top + 12,
-          backgroundColor: colors.surface,
-          borderBottomColor: colors.borderLight,
-        },
-      ]}
-    >
-      <View style={styles.headerActions}>
+  // Floating controls — no static header. The List/Map toggle floats
+  // over the top-left; the Create Event CTA floats over the bottom
+  // center (above the tab bar). Content scrolls beneath them.
+  const renderFloatingControls = () => (
+    <>
+      <View
+        style={[styles.floatingToggle, { top: insets.top + 12 }]}
+        pointerEvents="box-none"
+      >
         {renderViewToggle()}
       </View>
-      <TouchableOpacity
-        style={[styles.createButton, { backgroundColor: primaryColor }]}
-        onPress={handleCreateEvent}
-        activeOpacity={0.8}
+      <View
+        style={[
+          styles.floatingCreateContainer,
+          { paddingBottom: insets.bottom + 16 },
+        ]}
       >
-        <Ionicons name="add" size={16} color="#fff" />
-        <Text style={styles.createButtonText}>Create Event</Text>
-      </TouchableOpacity>
-    </View>
+        <TouchableOpacity
+          style={[styles.floatingCreateButton, { backgroundColor: primaryColor }]}
+          onPress={handleCreateEvent}
+          activeOpacity={0.85}
+        >
+          <Ionicons name="add" size={18} color="#fff" />
+          <Text style={styles.floatingCreateText}>Create Event</Text>
+        </TouchableOpacity>
+      </View>
+    </>
   );
+
+  // paddingTop that every scroll container needs to clear the floating toggle
+  const contentTopPadding = insets.top + 12 + 44;
 
   // Featured "Next Up" events: merge happeningNow + myRsvps, drop
   // community-wide cards (no single time/place to headline), and take the
@@ -302,7 +311,6 @@ export function EventsScreen() {
     const myEvents = myRsvpedEventsData?.events ?? [];
     return (
       <View style={[styles.container, { backgroundColor: colors.backgroundSecondary }]}>
-        {header}
         {isLoadingMyRsvps ? (
           <View style={styles.centerContainer}>
             <ActivityIndicator size="small" color={colors.textSecondary} />
@@ -323,7 +331,10 @@ export function EventsScreen() {
         ) : (
           <ScrollView
             style={styles.scrollView}
-            contentContainerStyle={styles.myRsvpsContent}
+            contentContainerStyle={[
+              styles.myRsvpsContent,
+              { paddingTop: contentTopPadding, paddingBottom: 120 },
+            ]}
           >
             {myEvents.map((event: any) => (
               <TouchableOpacity
@@ -379,6 +390,7 @@ export function EventsScreen() {
             ))}
           </ScrollView>
         )}
+        {renderFloatingControls()}
       </View>
     );
   }
@@ -403,8 +415,6 @@ export function EventsScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.backgroundSecondary }]}>
-      {header}
-
       {viewMode === 'map' ? (
         <EventsMapView cards={allCards} isLoading={isLoading} />
       ) : isLoading ? (
@@ -414,7 +424,10 @@ export function EventsScreen() {
       ) : (
         <ScrollView
           style={styles.scrollView}
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[
+            styles.scrollContent,
+            { paddingTop: contentTopPadding },
+          ]}
         >
           {!hasAnyContent && (
             <View style={styles.centerContainer}>
@@ -453,6 +466,8 @@ export function EventsScreen() {
         parentId={expandedParentId}
         onDismiss={handleDismissSheet}
       />
+
+      {renderFloatingControls()}
     </View>
   );
 }
@@ -524,8 +539,46 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 40,
+    paddingBottom: 120, // leaves room for the floating Create Event button
+  },
+  floatingToggle: {
+    position: 'absolute',
+    left: 16,
+    zIndex: 20,
+  },
+  floatingCreateContainer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    zIndex: 20,
+    pointerEvents: 'box-none',
+  },
+  floatingCreateButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderRadius: 100,
+    gap: 6,
+    ...Platform.select({
+      web: {
+        boxShadow: '0px 4px 16px rgba(0, 0, 0, 0.18)',
+      },
+      default: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.2,
+        shadowRadius: 8,
+        elevation: 6,
+      },
+    }),
+  },
+  floatingCreateText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '600',
   },
   section: {
     marginBottom: 16,
@@ -551,9 +604,10 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '500',
   },
-  nextUpRow: {
+  nextUpScrollContent: {
     flexDirection: 'row',
     gap: 12,
+    paddingRight: 16,
   },
   centerContainer: {
     flex: 1,

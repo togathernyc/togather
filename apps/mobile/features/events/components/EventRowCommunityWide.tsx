@@ -11,7 +11,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { AppImage, CommunityWideBadge } from '@components/ui';
+import { AppImage } from '@components/ui';
 import { useAuth } from '@providers/AuthProvider';
 import { formatTimeWithTimezone } from '@togather/shared';
 import { format, toZonedTime } from 'date-fns-tz';
@@ -59,16 +59,11 @@ export function EventRowCommunityWide({ event, onPress }: EventRowCommunityWideP
       </View>
 
       <View style={styles.content}>
-        <View style={styles.titleRow}>
-          <Text style={styles.title} numberOfLines={1}>
-            {eventTitle}
-          </Text>
-          <View style={styles.badgeInline}>
-            <CommunityWideBadge size="small" />
-          </View>
-        </View>
-        <Text style={styles.subtitle} numberOfLines={1}>
-          {formattedDate} at {formattedTime} · {locationsLabel} · {goingLabel}
+        <Text style={styles.title} numberOfLines={2}>
+          {eventTitle}
+        </Text>
+        <Text style={styles.subtitle} numberOfLines={2}>
+          Community-wide · {formattedDate} at {formattedTime} · {locationsLabel} · {goingLabel}
         </Text>
       </View>
 
@@ -85,14 +80,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#fff',
     borderRadius: 12,
-    paddingVertical: 8,
+    paddingVertical: 10,
     paddingHorizontal: 10,
     gap: 12,
-    minHeight: 84,
   },
   thumb: {
-    width: 72,
-    height: 72,
+    width: 64,
+    height: 64,
     borderRadius: 10,
     overflow: 'hidden',
     backgroundColor: '#f5f5f5',
@@ -104,25 +98,19 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     justifyContent: 'center',
-    gap: 4,
-  },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
+    gap: 2,
   },
   title: {
-    flexShrink: 1,
-    fontSize: 15,
-    fontWeight: '600',
+    fontSize: 17,
+    fontWeight: '700',
     color: COLORS.text,
-  },
-  badgeInline: {
-    flexShrink: 0,
+    lineHeight: 22,
   },
   subtitle: {
     fontSize: 13,
+    fontWeight: '400',
     color: COLORS.textMuted,
+    lineHeight: 18,
   },
   trailing: {
     paddingLeft: 4,
