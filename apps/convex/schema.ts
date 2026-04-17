@@ -152,6 +152,11 @@ export default defineSchema({
     notifyDailyBookings: v.optional(v.boolean()),
     // Denormalized field for full-text search (combines firstName, lastName, email, phone)
     searchText: v.optional(v.string()),
+    // Cross-app field: Togather shares its dev Convex deployment with other
+    // Supa apps (Fount Studios etc.) that write platform-level role tags.
+    // Togather doesn't read or write this — the schema just stays tolerant
+    // so `convex dev` pushes don't fail on cross-app data.
+    platformRoles: v.optional(v.array(v.string())),
   })
     .index("by_legacyId", ["legacyId"])
     .index("by_email", ["email"])

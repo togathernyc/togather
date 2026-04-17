@@ -334,15 +334,14 @@ export const update = mutation({
       }
     }
 
-    // Location mode validation runs on every write path (members + leaders).
-    // We validate whenever the resulting state has a locationMode — even when
-    // the caller only sends `locationOverride`/`meetingLink` without
-    // re-declaring `locationMode` — so partial payloads can't sneak the row
-    // into an invalid state (e.g. `locationMode: "address"` ending up with an
-    // empty `locationOverride`). Legacy rows with no `locationMode` remain
-    // untouched so this isn't a backfill.
+    // Location mode validation runs on every write path (members + leaders),
+    // but NOT on community-wide event children — those inherit location from
+    // their hosting group, so the meeting-level `locationOverride` is
+    // intentionally blank and enforcing the invariant would block legitimate
+    // edits. The parent CWE has its own location flow via
+    // `communityWideEvents.update`.
     const effectiveLocationMode = args.locationMode ?? meeting.locationMode;
-    if (effectiveLocationMode !== undefined) {
+    if (effectiveLocationMode !== undefined && !meeting.communityWideEventId) {
       validateLocationMode({
         locationMode: effectiveLocationMode,
         locationOverride:

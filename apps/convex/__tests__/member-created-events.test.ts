@@ -311,6 +311,63 @@ describe("meetings.create — locationMode validation", () => {
     ).rejects.toThrow(/meeting link/i);
   });
 
+  test("update on a CWE child skips locationMode validation — location is inherited", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    // Build a community-wide parent + a child meeting linked to it.
+    const groupTypeId = await t.run(async (ctx) =>
+      ctx.db.insert("groupTypes", {
+        communityId: s.communityId,
+        name: "Dinner Parties",
+        slug: "dinner-parties",
+        isActive: true,
+        displayOrder: 1,
+        createdAt: Date.now(),
+      })
+    );
+    const cweId = await t.run(async (ctx) =>
+      ctx.db.insert("communityWideEvents", {
+        communityId: s.communityId,
+        groupTypeId,
+        title: "Dinner Party",
+        scheduledAt: FUTURE(),
+        status: "scheduled",
+        meetingType: 1,
+        createdById: s.adminId,
+        createdAt: Date.now(),
+      })
+    );
+    const meetingId = await t.run(async (ctx) =>
+      ctx.db.insert("meetings", {
+        groupId: s.groupId,
+        createdById: s.adminId,
+        scheduledAt: FUTURE(),
+        status: "scheduled",
+        meetingType: 1,
+        communityId: s.communityId,
+        communityWideEventId: cweId,
+        createdAt: Date.now(),
+        // No locationOverride — CWE children inherit from their group.
+      })
+    );
+
+    // The CreateEventScreen always sends `locationMode: "address"` + empty
+    // `locationOverride` when the form hasn't explicitly chosen online/tbd.
+    // Before the fix this would throw "Location address is required"; now it
+    // should pass because CWE children are exempt from the invariant.
+    await t.mutation(api.functions.meetings.index.update, {
+      token: s.adminToken,
+      meetingId,
+      title: "Updated title",
+      locationMode: "address",
+      // No locationOverride provided.
+    });
+
+    const after = await t.run(async (ctx) => ctx.db.get(meetingId));
+    expect(after?.title).toBe("Updated title");
+  });
+
   test("update enforces location invariants even when caller omits locationMode", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
