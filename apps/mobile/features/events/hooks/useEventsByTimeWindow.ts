@@ -9,7 +9,8 @@
  * without re-running the query on every render.
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
 import { useQuery, api, useAuthenticatedQuery } from '@services/api/convex';
 import { useAuth } from '@providers/AuthProvider';
 import type { Id } from '@services/api/convex';
@@ -39,22 +40,21 @@ const EMPTY_DATA: EventsTabData = {
   later: [],
 };
 
-// How often to advance `now` so time-window boundaries stay fresh.
-const NOW_REFRESH_INTERVAL_MS = 30 * 1000;
-
 export function useEventsByTimeWindow(options?: { enabled?: boolean }) {
   const { community } = useAuth();
   const communityId = community?.id as Id<'communities'> | undefined;
 
-  // `now` advances every 30s so the backend can re-slice buckets without us
-  // re-querying on every render. useState initializer ensures one initial value.
+  // `now` advances ONLY when the screen gains focus — NOT on a timer.
+  // A timer-driven refresh forces the query to re-subscribe at every
+  // tick, which is visible as a UI flicker. Refreshing on focus is both
+  // cheaper and matches user expectation ("when I come back to this tab
+  // it should be up-to-date"). See also feedback on PR #316.
   const [now, setNow] = useState<number>(() => Date.now());
-  useEffect(() => {
-    const interval = setInterval(() => {
+  useFocusEffect(
+    useCallback(() => {
       setNow(Date.now());
-    }, NOW_REFRESH_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, []);
+    }, [])
+  );
 
   // useAuthenticatedQuery pulls the token from useStoredAuthToken (ref-stable
   // across refreshes) and handles memoization internally — avoids the
