@@ -7,7 +7,7 @@
  */
 
 import { convexTest } from "convex-test";
-import { expect, test, describe } from "vitest";
+import { expect, test, describe, afterEach } from "vitest";
 import schema from "../schema";
 import { modules } from "../test.setup";
 import { api } from "../_generated/api";
@@ -15,6 +15,16 @@ import { generateTokens } from "../lib/auth";
 import type { Id } from "../_generated/dataModel";
 
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
+
+// convex-test leaves its global TransactionManager busy when a mutation
+// rejects (a handler throw during a `rejects.toThrow` assertion), which
+// surfaces the next `convexTest()` call as "test began while previous
+// transaction was still open" — intermittently locally, consistently in CI.
+// Yielding to the microtask + timer queues between tests lets the harness
+// unwind before the next test starts.
+afterEach(async () => {
+  await new Promise((resolve) => setImmediate(resolve));
+});
 
 interface Seed {
   communityId: Id<"communities">;
