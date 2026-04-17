@@ -892,6 +892,7 @@ export const get = query({
       meetingType: event.meetingType,
       meetingLink: event.meetingLink || null,
       note: event.note || null,
+      coverImage: event.coverImage ?? null,
       status: event.status,
       createdAt: event.createdAt,
       updatedAt: event.updatedAt || null,

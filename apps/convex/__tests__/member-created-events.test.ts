@@ -510,6 +510,19 @@ describe("meetings — CWE children + cover", () => {
     for (const child of children) {
       expect(child.coverImage).toBeUndefined();
     }
+
+    // List/search queries used to read `meeting.coverImage` directly. Now
+    // that children don't store a cover, those surfaces have to resolve
+    // the parent fallback or the artwork disappears from the Events tab,
+    // My RSVPs, and search.
+    const communityEventsResult = await t.query(
+      api.functions.meetings.index.communityEvents,
+      { token: s.adminToken, communityId: s.communityId }
+    );
+    const cweInList = communityEventsResult.events.find(
+      (e: any) => e.communityWideEventId === result.communityWideEventId
+    );
+    expect(cweInList?.coverImage).toContain("shared.png");
   });
 
   test("coverImage: \"\" clears the cover (both meetings.update and communityWideEvents.update)", async () => {

@@ -260,6 +260,23 @@ export function CreateEventScreen() {
   const meeting = meetingData ?? undefined;
   const isLoadingMeeting = isEditMode && !!meetingId && meetingData === undefined;
 
+  // Admin CWE edit: prefill from the parent CWE, not the opened child. The
+  // admin screen has to pick *some* child to route through because the edit
+  // form lives under the leader-tools meeting route — but if that child has
+  // been overridden individually its title/time/cover can diverge from the
+  // parent. Saving through `communityWideEvents.update` patches every
+  // non-undefined field onto the parent, so without this override an
+  // overridden child's divergent values would silently become the parent's.
+  const parentCweData = useConvexQuery(
+    api.functions.communityWideEvents.get,
+    isCweAdminEdit && meeting?.communityWideEventId && token
+      ? {
+          token,
+          communityWideEventId: meeting.communityWideEventId as Id<"communityWideEvents">,
+        }
+      : "skip"
+  );
+
   // Query existing series for the group (edit mode series linking)
   const editGroupId = effectiveGroupId || (meeting as any)?.groupId;
   const groupSeriesList = useConvexQuery(
@@ -272,17 +289,26 @@ export function CreateEventScreen() {
   // Initialize form from meeting data when editing
   useEffect(() => {
     if (meeting && isEditMode) {
-      if (meeting.scheduledAt) {
+      // Admin CWE edit: parent CWE owns title/time/meetingType/link/note
+      // and the shared cover. Source those from the parent so overridden
+      // child divergence can't bleed into the parent on save. rsvp/
+      // visibility/posterId still come from the child because they aren't
+      // stored on the parent — cascading those from whichever child the
+      // admin screen picked is an acceptable tradeoff.
+      const source =
+        isCweAdminEdit && parentCweData ? parentCweData : meeting;
+
+      if (source.scheduledAt) {
         // Convex stores scheduledAt as a timestamp number
-        setScheduledAt(new Date(meeting.scheduledAt));
+        setScheduledAt(new Date(source.scheduledAt));
       }
-      setTitle(meeting.title || "");
-      setLocation(meeting.locationOverride || "");
-      setIsOnline(meeting.meetingType === 2); // 2 = online
+      setTitle(source.title || "");
+      setLocation((meeting as any).locationOverride || "");
+      setIsOnline(source.meetingType === 2); // 2 = online
       setLocationTbd((meeting as any).locationMode === "tbd");
-      setMeetingLink(meeting.meetingLink || "");
-      setNote(meeting.note || "");
-      setCoverImage(meeting.coverImage || undefined);
+      setMeetingLink(source.meetingLink || "");
+      setNote(source.note || "");
+      setCoverImage((source as any).coverImage || undefined);
       setPosterId((meeting as any).posterId || undefined);
 
       // Initialize RSVP fields
@@ -296,7 +322,7 @@ export function CreateEventScreen() {
         setVisibility(meeting.visibility as VisibilityLevel);
       }
     }
-  }, [meeting, isEditMode]);
+  }, [meeting, isEditMode, isCweAdminEdit, parentCweData]);
 
   // Debounced geocoding check for location field
   useEffect(() => {
