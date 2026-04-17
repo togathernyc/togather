@@ -80,6 +80,18 @@ export function ProfileMenu() {
         </TouchableOpacity>
 
         <TouchableOpacity
+          style={[styles.menuItem, { borderBottomColor: colors.border }]}
+          onPress={() => router.push('/(user)/my-events')}
+          activeOpacity={0.7}
+        >
+          <View style={[styles.menuIconContainer, { backgroundColor: colors.surfaceSecondary }]}>
+            <Ionicons name="calendar-outline" size={20} color={colors.text} />
+          </View>
+          <Text style={[styles.menuText, { color: colors.text }]}>My Events</Text>
+          <Ionicons name="chevron-forward" size={18} color={colors.iconSecondary} />
+        </TouchableOpacity>
+
+        <TouchableOpacity
           style={[styles.menuItem, styles.menuItemLast, { borderBottomColor: colors.border }]}
           onPress={() => router.push('/(user)/settings')}
           activeOpacity={0.7}

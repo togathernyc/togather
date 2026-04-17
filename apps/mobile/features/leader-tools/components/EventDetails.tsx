@@ -35,6 +35,7 @@ import { DragHandle } from "@components/ui/DragHandle";
 import { useTheme } from "@hooks/useTheme";
 import { EventBlastSheet } from "./EventBlastSheet";
 import { EventBlastHistory } from "./EventBlastHistory";
+import { ReportEventSheet } from "@features/events/components/ReportEventSheet";
 
 interface RsvpOption {
   id: number;
@@ -71,6 +72,7 @@ export function EventDetails({
   const [showRsvpSheet, setShowRsvpSheet] = useState(false);
   const [isSubmittingRsvp, setIsSubmittingRsvp] = useState(false);
   const [showBlastSheet, setShowBlastSheet] = useState(false);
+  const [showReportSheet, setShowReportSheet] = useState(false);
 
   // Fetch meeting details if meetingId is available (using Convex)
   // NOTE: This must be called before any conditional returns (Rules of Hooks)
@@ -344,6 +346,17 @@ export function EventDetails({
           onPress={handleShare}
         >
           <Ionicons name="share-outline" size={22} color={colors.text} />
+        </TouchableOpacity>
+        {/* Report Button — members can flag events for the group leaders.
+            Creators see it too; backend just won't let them report their own
+            event (low-risk of self-abuse). */}
+        <TouchableOpacity
+          testID="report-event-button"
+          accessibilityLabel="Report event"
+          style={styles.shareButton}
+          onPress={() => setShowReportSheet(true)}
+        >
+          <Ionicons name="flag-outline" size={20} color={colors.text} />
         </TouchableOpacity>
         {isLeader && (
           <TouchableOpacity
@@ -741,6 +754,13 @@ export function EventDetails({
           onSent={() => {}}
         />
       )}
+
+      {/* Report Event Sheet (ADR-022) */}
+      <ReportEventSheet
+        visible={showReportSheet}
+        meetingId={meetingId ? (meetingId as Id<"meetings">) : null}
+        onClose={() => setShowReportSheet(false)}
+      />
 
     </View>
   );
