@@ -277,40 +277,10 @@ describe("meetings.create — member flow", () => {
 });
 
 // ============================================================================
-// locationMode validation
+// CWE children + cover inheritance
 // ============================================================================
 
-describe("meetings.create — locationMode validation", () => {
-  test("address mode requires non-empty locationOverride — member", async () => {
-    const t = convexTest(schema, modules);
-    const s = await seed(t);
-
-    await expect(
-      t.mutation(api.functions.meetings.index.create, {
-        token: s.memberToken,
-        groupId: s.groupId,
-        scheduledAt: FUTURE(),
-        meetingType: 1,
-        locationMode: "address",
-      })
-    ).rejects.toThrow(/location address/i);
-  });
-
-  test("online mode requires non-empty meetingLink — applies to leaders", async () => {
-    const t = convexTest(schema, modules);
-    const s = await seed(t);
-
-    await expect(
-      t.mutation(api.functions.meetings.index.create, {
-        token: s.leaderToken,
-        groupId: s.groupId,
-        scheduledAt: FUTURE(),
-        meetingType: 2,
-        locationMode: "online",
-      })
-    ).rejects.toThrow(/meeting link/i);
-  });
-
+describe("meetings — CWE children + cover", () => {
   test("CWE child inherits parent coverImage on getByShortId when its own is empty", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
@@ -360,7 +330,7 @@ describe("meetings.create — locationMode validation", () => {
     expect(result?.coverImage).toContain("parent-cover.png");
   });
 
-  test("update on a CWE child skips locationMode validation — location is inherited", async () => {
+  test("update on a CWE child with empty location succeeds — location is inherited", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
 
@@ -403,9 +373,7 @@ describe("meetings.create — locationMode validation", () => {
 
     // The CreateEventScreen always sends `locationMode: "address"` + empty
     // `locationOverride` when the form hasn't explicitly chosen online/tbd.
-    // Before the fix this would throw "Location address is required"; now it
-    // should pass because non-overridden CWE children in address mode inherit
-    // their location from the hosting group.
+    // Backend no longer enforces location invariants, so this just saves.
     await t.mutation(api.functions.meetings.index.update, {
       token: s.adminToken,
       meetingId,
@@ -416,18 +384,6 @@ describe("meetings.create — locationMode validation", () => {
 
     const after = await t.run(async (ctx) => ctx.db.get(meetingId));
     expect(after?.title).toBe("Updated title");
-
-    // But switching the same inherited child to online with no link must
-    // still reject — the skip is narrow to address+inherited, not a blanket
-    // CWE exemption.
-    await expect(
-      t.mutation(api.functions.meetings.index.update, {
-        token: s.adminToken,
-        meetingId,
-        locationMode: "online",
-        meetingLink: "",
-      })
-    ).rejects.toThrow(/meeting link/i);
   });
 
   test("CWE update writes coverImage to parent only, leaving leader overrides intact", async () => {
@@ -614,30 +570,6 @@ describe("meetings.create — locationMode validation", () => {
     });
     const parent = await t.run(async (ctx) => ctx.db.get(cweId));
     expect(parent?.coverImage).toBeUndefined();
-  });
-
-  test("update enforces location invariants even when caller omits locationMode", async () => {
-    const t = convexTest(schema, modules);
-    const s = await seed(t);
-
-    const meetingId = await t.mutation(api.functions.meetings.index.create, {
-      token: s.memberToken,
-      groupId: s.groupId,
-      scheduledAt: FUTURE(),
-      meetingType: 1,
-      locationMode: "address",
-      locationOverride: "123 Main St, Dallas, TX 75201",
-    });
-
-    // Partial payload that would break the invariant if the gate was
-    // `args.locationMode !== undefined`.
-    await expect(
-      t.mutation(api.functions.meetings.index.update, {
-        token: s.memberToken,
-        meetingId,
-        locationOverride: "",
-      })
-    ).rejects.toThrow(/location address/i);
   });
 
   test("tbd accepts empty location + link", async () => {

@@ -115,25 +115,3 @@ export async function countFutureEventsCreatedBy(
 }
 
 export const NON_LEADER_FUTURE_EVENT_CAP = 1;
-
-/**
- * Validates the locationMode / location pair.
- * - "address": locationOverride must be non-empty
- * - "online": meetingLink must be non-empty
- * - "tbd": no location required
- * Called from create/update before writing. See ADR-022.
- */
-export function validateLocationMode(args: {
-  locationMode?: "address" | "online" | "tbd";
-  locationOverride?: string;
-  meetingLink?: string;
-}): void {
-  if (!args.locationMode) return; // legacy path; creation screen always sends one
-
-  if (args.locationMode === "address" && !args.locationOverride?.trim()) {
-    throw new Error("Location address is required when location mode is 'address'");
-  }
-  if (args.locationMode === "online" && !args.meetingLink?.trim()) {
-    throw new Error("Meeting link is required when location mode is 'online'");
-  }
-}
