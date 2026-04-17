@@ -134,6 +134,10 @@ interface NextUpPropsWithAction extends NextUpProps {
 
 function NextUpRow({ events, colors, onViewAll }: NextUpPropsWithAction) {
   if (events.length < 1) return null;
+  // When there's only a single featured tile, center it so it doesn't look
+  // stranded against the left edge. Otherwise keep the horizontal row flush
+  // to the left so users can swipe into the second tile.
+  const isSingle = events.length === 1;
   return (
     <View style={styles.nextUpSection}>
       <View style={styles.nextUpHeader}>
@@ -153,7 +157,10 @@ function NextUpRow({ events, colors, onViewAll }: NextUpPropsWithAction) {
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.nextUpScrollContent}
+        contentContainerStyle={[
+          styles.nextUpScrollContent,
+          isSingle && styles.nextUpScrollContentCentered,
+        ]}
       >
         {events.map((ev) => (
           <FeaturedEventTile key={String(ev.id)} event={ev} />
@@ -486,7 +493,13 @@ export function EventsScreen() {
             primaryColor={primaryColor}
             onMakePlans={handleCreateEvent}
           />
-          <NextUpRow events={featuredEvents} colors={colors} />
+          <NextUpRow
+            events={featuredEvents}
+            colors={colors}
+            // TODO: wire to a full "Next Up" destination once that screen exists.
+            // No-op for PR 1 — surfaces the pill button without routing.
+            onViewAll={() => {}}
+          />
 
           <Section
             title="This week"
@@ -623,42 +636,55 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   section: {
-    marginBottom: 16,
+    marginTop: 28, // breathing room between section groups (Next Up → This week → Later)
+    marginBottom: 8,
   },
   sectionTitle: {
-    fontSize: 16,
+    fontSize: 19,
     fontWeight: '700',
-    marginBottom: 8,
+    letterSpacing: -0.2,
+    marginBottom: 12,
   },
   sectionBody: {
     gap: 8,
   },
   greeting: {
-    paddingTop: 48, // clear the floating toggle visually
-    paddingBottom: 20,
-    gap: 4,
+    // Push the greeting well below the floating List/Map toggle so it feels
+    // centered in the upper region of the screen (Partiful-style breathing room).
+    // `contentTopPadding` already clears the status bar; add another 88px here.
+    paddingTop: 88,
+    paddingBottom: 40,
+    alignItems: 'center',
+    gap: 8,
   },
   greetingTitle: {
-    fontSize: 26,
+    fontSize: 28,
     fontWeight: '700',
-    lineHeight: 32,
+    lineHeight: 34,
+    letterSpacing: -0.5,
+    textAlign: 'center',
   },
   greetingSubtitle: {
-    fontSize: 15,
-    lineHeight: 20,
+    fontSize: 16,
+    fontWeight: '400',
+    lineHeight: 22,
+    textAlign: 'center',
   },
   greetingAction: {
+    fontSize: 16,
     fontWeight: '600',
     textDecorationLine: 'underline',
   },
   nextUpSection: {
-    marginBottom: 20,
-    gap: 10,
+    marginTop: 8,
+    marginBottom: 8,
+    gap: 12,
   },
   nextUpHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    marginBottom: 4,
   },
   viewAllButton: {
     paddingHorizontal: 14,
@@ -674,6 +700,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12,
     paddingRight: 16,
+  },
+  nextUpScrollContentCentered: {
+    // When only 1 featured tile is present, center it horizontally so it
+    // doesn't look stranded next to empty space.
+    justifyContent: 'center',
+    flexGrow: 1,
+    paddingRight: 0,
   },
   centerContainer: {
     flex: 1,
