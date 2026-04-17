@@ -2,7 +2,7 @@ import React from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Platform } from "react-native";
 import { Redirect, useLocalSearchParams } from "expo-router";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { ExploreScreen } from "@features/explore/components";
+import { GroupsScreen } from "@features/explore/components";
 
 function MapErrorFallback({ error, resetError }: { error: Error; resetError: () => void }) {
   return (
@@ -22,7 +22,7 @@ function MapErrorFallback({ error, resetError }: { error: Error; resetError: () 
   );
 }
 
-export default function ExploreScreenWithBoundary() {
+export default function GroupsScreenWithBoundary() {
   // Legacy deep-link compat: the old Explore tab bundled groups + events
   // behind a `?view=events` param. After the split (ADR-022) those links
   // live on the Events tab. Redirect once so old push-notification / chat
@@ -37,7 +37,7 @@ export default function ExploreScreenWithBoundary() {
 
   return (
     <ErrorBoundary FallbackComponent={MapErrorFallback}>
-      <ExploreScreen />
+      <GroupsScreen />
     </ErrorBoundary>
   );
 }

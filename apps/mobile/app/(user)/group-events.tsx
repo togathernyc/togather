@@ -37,7 +37,7 @@ import { Group } from "@features/groups/types";
 import type { CommunityEvent } from "@features/events/hooks/useCommunityEvents";
 import type {
   DateFilterPreset,
-  ExploreFilters,
+  EventsFilterShape,
 } from "@features/explore/hooks/useExploreFilters";
 import { useTheme } from "@hooks/useTheme";
 
@@ -337,7 +337,7 @@ export default function GroupEventsModal() {
   );
 
   // Handle filter changes from modal
-  const handleFilterChange = useCallback((updates: Partial<ExploreFilters>) => {
+  const handleFilterChange = useCallback((updates: Partial<EventsFilterShape>) => {
     if (updates.dateFilter !== undefined) {
       setDateFilter(updates.dateFilter);
     }
@@ -347,12 +347,8 @@ export default function GroupEventsModal() {
   }, []);
 
   // Build current filters object for modal
-  const currentFilters: ExploreFilters = useMemo(
+  const currentFilters: EventsFilterShape = useMemo(
     () => ({
-      view: "events",
-      mode: undefined,
-      groupType: null,
-      meetingType: null,
       dateFilter,
       startDate: null,
       endDate: null,

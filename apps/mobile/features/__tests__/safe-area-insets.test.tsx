@@ -280,15 +280,15 @@ describe('Safe Area Insets', () => {
     jest.clearAllMocks();
   });
 
-  // ExploreScreen tests are skipped because the component requires extensive mocking
+  // GroupsScreen tests are skipped because the component requires extensive mocking
   // of tRPC endpoints (groups.meetings.communityEvents, etc.) that change frequently.
   // The safe-area behavior is validated by the Profile Screen tests below.
-  describe.skip('Explore Screen', () => {
+  describe.skip('Groups Screen', () => {
     // Import dynamically to ensure mocks are set up
     let ExploreScreen: any;
 
     beforeAll(() => {
-      ExploreScreen = require('@features/explore/components/ExploreScreen').ExploreScreen;
+      ExploreScreen = require('@features/explore/components/GroupsScreen').GroupsScreen;
     });
 
     it('should NOT have top padding on the main container (edge-to-edge map)', () => {
