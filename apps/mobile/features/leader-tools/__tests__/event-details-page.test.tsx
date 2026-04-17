@@ -211,7 +211,7 @@ describe("EventDetailsPage", () => {
 
     fireEvent.press(screen.getByTestId("back-button"));
     expect(mockRouter.push).toHaveBeenCalledWith(
-      "/(tabs)/search?view=events"
+      "/(tabs)/events"
     );
   });
 
