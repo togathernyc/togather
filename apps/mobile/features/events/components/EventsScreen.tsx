@@ -132,15 +132,7 @@ function NextUpRow({ events, colors }: NextUpProps) {
   if (events.length < 1) return null;
   return (
     <View style={styles.nextUpSection}>
-      <View style={styles.nextUpHeader}>
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>Next Up</Text>
-        {/* TODO: wire "View all" — no dedicated route yet, decorative for now */}
-        <TouchableOpacity onPress={() => {}} activeOpacity={0.6}>
-          <Text style={[styles.viewAll, { color: colors.textSecondary }]}>
-            View all
-          </Text>
-        </TouchableOpacity>
-      </View>
+      <Text style={[styles.sectionTitle, { color: colors.text }]}>Next Up</Text>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -289,8 +281,10 @@ export function EventsScreen() {
     </>
   );
 
-  // paddingTop that every scroll container needs to clear the floating toggle
-  const contentTopPadding = insets.top + 12 + 44;
+  // The toggle floats on top with zIndex — it should NOT take y-space. So
+  // scroll content only clears the status bar, and the toggle visually
+  // overlaps the empty area next to the first section header.
+  const contentTopPadding = insets.top + 8;
 
   // Featured "Next Up" events: merge happeningNow + myRsvps, drop
   // community-wide cards (no single time/place to headline), and take the
@@ -593,16 +587,7 @@ const styles = StyleSheet.create({
   },
   nextUpSection: {
     marginBottom: 20,
-  },
-  nextUpHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  viewAll: {
-    fontSize: 13,
-    fontWeight: '500',
+    gap: 10,
   },
   nextUpScrollContent: {
     flexDirection: 'row',
