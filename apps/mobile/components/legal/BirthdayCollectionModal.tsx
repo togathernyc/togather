@@ -8,7 +8,7 @@
  * - Age-appropriate content filtering
  */
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -23,12 +23,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '@providers/AuthProvider';
 import { useAuthenticatedMutation, api } from '@services/api/convex';
-import { storage } from '@utils/storage';
 import { useTheme } from '@hooks/useTheme';
-
-// Must match the version in TermsAcceptanceModal
-const CURRENT_TERMS_VERSION = '1.0';
-const TERMS_ACCEPTED_KEY = 'terms_accepted_version';
 
 interface BirthdayCollectionModalProps {
   onCompleted?: () => void;
@@ -43,28 +38,16 @@ export function BirthdayCollectionModal({ onCompleted }: BirthdayCollectionModal
   const [birthday, setBirthday] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [termsAccepted, setTermsAccepted] = useState(false);
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
 
   // Use mutation hook for auth-aware updates
   const updateUser = useAuthenticatedMutation(api.functions.users.update);
 
-  // Check if terms have been accepted
-  useEffect(() => {
-    const checkTerms = async () => {
-      try {
-        const acceptedVersion = await storage.getItem(TERMS_ACCEPTED_KEY);
-        setTermsAccepted(acceptedVersion === CURRENT_TERMS_VERSION);
-      } catch {
-        setTermsAccepted(false);
-      }
-    };
-    checkTerms();
-  }, []);
-
-  // Show modal only if user is authenticated, has accepted terms, but has no birthday
-  const shouldShow = isAuthenticated && !authLoading && user && !user.date_of_birth && termsAccepted;
+  // Terms acceptance is enforced server-side at signup, so authentication
+  // already implies acceptance. Show the modal whenever an authed user is
+  // missing a date_of_birth.
+  const shouldShow = isAuthenticated && !authLoading && user && !user.date_of_birth;
 
   // Format input as MM/DD/YYYY
   const handleBirthdayChange = useCallback((text: string) => {
