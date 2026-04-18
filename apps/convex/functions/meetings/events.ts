@@ -30,6 +30,12 @@ const THIS_WEEK_LIMIT = 25;
 const LATER_PAGE_SIZE = 20;
 const TOP_GUEST_COUNT = 5;
 const RSVP_FETCH_CAP = 100;
+// Over-fetch factor for CWE-collapsing sections: if a CWE has 19 children,
+// it consumes 19 candidate slots but produces 1 card, so we need headroom
+// to still hit `limit` cards after collapsing. Without a cap, a 7-day
+// window query in a large community would trigger per-meeting RSVP
+// enrichment on hundreds of meetings the UI won't render.
+const BUCKET_CANDIDATE_MULTIPLIER = 5;
 
 type MeetingDoc = Doc<"meetings">;
 type GroupDoc = Doc<"groups">;
@@ -173,9 +179,23 @@ export const listForEventsTab = query({
     // collapse into CWE cards here. If they RSVP'd to "Manhattan Service",
     // they want that specific card, not a collapsed parent.
 
+    // Cap candidate sets BEFORE enrichment. buildEnrichment runs a
+    // per-meeting RSVP query for each input; without a cap, a 7-day
+    // window in a large community fans out to hundreds of reads for a
+    // UI that only renders `limit` cards per section.
+    const nextUpCandidates = nextUp.slice(
+      0,
+      NEXT_UP_LIMIT * BUCKET_CANDIDATE_MULTIPLIER
+    );
+    const thisWeekCandidates = thisWeek.slice(
+      0,
+      THIS_WEEK_LIMIT * BUCKET_CANDIDATE_MULTIPLIER
+    );
+    const myEventsCandidates = myEventsVisible.slice(0, MY_EVENTS_LIMIT);
+
     const uniqueForEnrichment = Array.from(
       new Map(
-        [...nextUp, ...thisWeek, ...myEventsVisible].map(
+        [...nextUpCandidates, ...thisWeekCandidates, ...myEventsCandidates].map(
           (m) => [m._id, m] as const
         )
       ).values()
@@ -183,11 +203,9 @@ export const listForEventsTab = query({
     const enrichment = await buildEnrichment(ctx, uniqueForEnrichment);
 
     return {
-      myEvents: myEventsVisible
-        .slice(0, MY_EVENTS_LIMIT)
-        .map((m) => buildSingleCard(m, enrichment)),
-      nextUp: buildBucket(nextUp, NEXT_UP_LIMIT, enrichment),
-      thisWeek: buildBucket(thisWeek, THIS_WEEK_LIMIT, enrichment),
+      myEvents: myEventsCandidates.map((m) => buildSingleCard(m, enrichment)),
+      nextUp: buildBucket(nextUpCandidates, NEXT_UP_LIMIT, enrichment),
+      thisWeek: buildBucket(thisWeekCandidates, THIS_WEEK_LIMIT, enrichment),
     };
   },
 });
