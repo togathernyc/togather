@@ -328,6 +328,7 @@ async function loadVisibilityContext(
   communityId: Id<"communities">
 ) {
   const userGroupIds = new Set<string>();
+  const userLeaderGroupIds = new Set<string>();
   const userRsvpMeetingIds = new Set<Id<"meetings">>();
   const userHostedMeetingIds = new Set<Id<"meetings">>();
   let isCommunityMember = false;
@@ -335,6 +336,7 @@ async function loadVisibilityContext(
   if (!userId) {
     return {
       userGroupIds,
+      userLeaderGroupIds,
       isCommunityMember,
       userRsvpMeetingIds,
       userHostedMeetingIds,
@@ -363,7 +365,10 @@ async function loadVisibilityContext(
       )
     )
     .collect();
-  for (const m of memberships) userGroupIds.add(m.groupId);
+  for (const m of memberships) {
+    userGroupIds.add(m.groupId);
+    if (m.role === "leader") userLeaderGroupIds.add(m.groupId);
+  }
 
   const rsvps = await ctx.db
     .query("meetingRsvps")
@@ -377,18 +382,26 @@ async function loadVisibilityContext(
     .collect();
   for (const r of rsvps) userRsvpMeetingIds.add(r.meetingId);
 
+  // "Hosting" for My Events:
+  //   - A standalone meeting the user created → host of that meeting.
+  //   - A CWE child the user created → only counts as hosting if the user
+  //     is a leader of that child's group. Creating a CWE across N groups
+  //     spawns N children, but you're not meaningfully hosting a meeting
+  //     in a group you don't lead.
   const hosted = await ctx.db
     .query("meetings")
     .withIndex("by_createdBy", (q) => q.eq("createdById", userId))
     .collect();
   for (const m of hosted) {
-    if (m.communityId === communityId && m.status !== "cancelled") {
-      userHostedMeetingIds.add(m._id);
-    }
+    if (m.communityId !== communityId) continue;
+    if (m.status === "cancelled") continue;
+    if (m.communityWideEventId && !userLeaderGroupIds.has(m.groupId)) continue;
+    userHostedMeetingIds.add(m._id);
   }
 
   return {
     userGroupIds,
+    userLeaderGroupIds,
     isCommunityMember,
     userRsvpMeetingIds,
     userHostedMeetingIds,
