@@ -487,7 +487,12 @@ export function EventsScreen() {
             onMakePlans={handleCreateEvent}
           />
           <HorizontalTileRow title="My Events" cards={myEvents} colors={colors} />
-          <HorizontalTileRow title="Next Up" cards={nextUp} colors={colors} />
+          <Section
+            title="Next Up"
+            cards={nextUp}
+            onCommunityWideTap={handleCommunityWideTap}
+            colors={colors}
+          />
           <Section
             title="This Week"
             cards={thisWeek}
