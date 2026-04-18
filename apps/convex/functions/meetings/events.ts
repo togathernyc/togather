@@ -1,34 +1,40 @@
 /**
- * Events Tab queries
+ * Events Tab queries.
  *
- * Powers the new Events tab (PR 1 of the events-first navigation split).
- * Returns four pre-sliced buckets (Happening now / Your RSVPs / This week /
- * Later) with community-wide child events collapsed into single grouped
- * cards server-side — client-side grouping would break pagination since
- * the same parent could appear across pages.
+ * Three section model:
+ *   - myEvents: upcoming meetings the user is RSVP'd to OR hosting. Not
+ *     CWE-collapsed — the user sees the specific child they're attending.
+ *   - nextUp: meetings in the next 48 hours. Both types, CWE-collapsed.
+ *   - thisWeek: meetings within 7 days. Both types, CWE-collapsed.
+ *
+ * Sections can overlap — an RSVP'd event tomorrow shows in both myEvents
+ * and nextUp. Later (>7d out) is a separate paginated query so the
+ * payload stays small.
  *
  * See ADR-022.
  */
 
 import { v } from "convex/values";
+import { paginationOptsValidator } from "convex/server";
 import { query, QueryCtx } from "../../_generated/server";
 import { Id, Doc } from "../../_generated/dataModel";
 import { getMediaUrl } from "../../lib/utils";
 import { getOptionalAuth } from "../../lib/auth";
-import { DEFAULT_MEETING_DURATION_MS } from "../../lib/meetingConfig";
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-const HAPPENING_NOW_LIMIT = 10;
-const MY_RSVPS_LIMIT = 10;
+const MY_EVENTS_LIMIT = 20;
+const NEXT_UP_LIMIT = 10;
 const THIS_WEEK_LIMIT = 25;
-const LATER_LIMIT = 25;
-const PER_GROUP_FETCH = 100;
+const LATER_PAGE_SIZE = 20;
 const TOP_GUEST_COUNT = 5;
 const RSVP_FETCH_CAP = 100;
-// Multiplier over per-bucket UI limit: we fetch up to N× raw meetings
-// per bucket so community-wide-event collapsing still yields `limit`
-// cards even when multiple CWEs contribute many children.
+// Over-fetch factor for CWE-collapsing sections: if a CWE has 19 children,
+// it consumes 19 candidate slots but produces 1 card, so we need headroom
+// to still hit `limit` cards after collapsing. Without a cap, a 7-day
+// window query in a large community would trigger per-meeting RSVP
+// enrichment on hundreds of meetings the UI won't render.
 const BUCKET_CANDIDATE_MULTIPLIER = 5;
 
 type MeetingDoc = Doc<"meetings">;
@@ -96,8 +102,12 @@ export const listForEventsTab = query({
     const userId = await getOptionalAuth(ctx, args.token);
     const currentTime = args.now;
 
-    const { userGroupIds, isCommunityMember, userRsvpMeetingIds } =
-      await loadVisibilityContext(ctx, userId, args.communityId);
+    const {
+      userGroupIds,
+      isCommunityMember,
+      userRsvpMeetingIds,
+      userHostedMeetingIds,
+    } = await loadVisibilityContext(ctx, userId, args.communityId);
 
     const communityGroups = await ctx.db
       .query("groups")
@@ -107,111 +117,95 @@ export const listForEventsTab = query({
       .filter((q) => q.eq(q.field("isArchived"), false))
       .collect();
 
-    // Use an ASC range filter on the scheduledAt index so we always fetch
-    // the near-term meetings first. Including a 1-day past window keeps
-    // "Happening now" events (started earlier today) in scope.
+    // Per-group fetch bounded by [now - 1d, now + 7d]. The 1-day past floor
+    // lets us include meetings that started earlier today for the nextUp
+    // window; the 7-day ceiling keeps the payload small (Later events come
+    // from the paginated listLaterEvents query).
     const scheduledFloor = currentTime - ONE_DAY_MS;
+    const weekCutoff = currentTime + SEVEN_DAYS_MS;
     const perGroupFetches = await Promise.all(
       communityGroups.map(async (group) => {
         const meetings = await ctx.db
           .query("meetings")
           .withIndex("by_group_scheduledAt", (q) =>
-            q.eq("groupId", group._id).gte("scheduledAt", scheduledFloor)
+            q
+              .eq("groupId", group._id)
+              .gte("scheduledAt", scheduledFloor)
+              .lt("scheduledAt", weekCutoff)
           )
-          .order("asc")
           .filter((q) => q.neq(q.field("status"), "cancelled"))
-          .take(PER_GROUP_FETCH);
+          .collect();
         return meetings.map((m) => ({ ...m, group }));
       })
     );
-    const allMeetings = perGroupFetches.flat();
+    const inWindowMeetings = perGroupFetches.flat();
 
-    const visible = allMeetings.filter((m) =>
+    const visibleInWindow = inWindowMeetings.filter((m) =>
       isVisible(m, userId, userGroupIds, isCommunityMember)
     );
 
-    const endOfNow = currentTime;
-    const weekCutoff = currentTime + SEVEN_DAYS_MS;
-
-    const happeningNow = visible
+    // nextUp: upcoming within 48h. Both types; CWE-collapsed.
+    const nextUpCutoff = currentTime + TWO_DAYS_MS;
+    const nextUp = visibleInWindow
       .filter(
-        (m) =>
-          m.scheduledAt <= endOfNow &&
-          endOfNow <= m.scheduledAt + DEFAULT_MEETING_DURATION_MS
+        (m) => m.scheduledAt > currentTime && m.scheduledAt < nextUpCutoff
       )
       .sort((a, b) => a.scheduledAt - b.scheduledAt);
 
-    const myRsvps = visible
-      .filter(
-        (m) =>
-          m.scheduledAt > endOfNow && userRsvpMeetingIds.has(m._id)
-      )
+    // thisWeek: upcoming within 7 days. Both types; CWE-collapsed.
+    // Overlaps with nextUp by design — the frontend decides what to show
+    // where. No exclusion filter (that's what caused the CWE "0 going"
+    // miscount in the old design).
+    const thisWeek = visibleInWindow
+      .filter((m) => m.scheduledAt > currentTime)
       .sort((a, b) => a.scheduledAt - b.scheduledAt);
 
-    const myRsvpIdSet = new Set(myRsvps.map((m) => m._id));
-
-    const thisWeek = visible
-      .filter(
-        (m) =>
-          m.scheduledAt > endOfNow &&
-          m.scheduledAt < weekCutoff &&
-          !myRsvpIdSet.has(m._id)
-      )
-      .sort((a, b) => a.scheduledAt - b.scheduledAt);
-
-    const later = visible
-      .filter(
-        (m) =>
-          m.scheduledAt >= weekCutoff && !myRsvpIdSet.has(m._id)
-      )
-      .sort((a, b) => a.scheduledAt - b.scheduledAt);
-
-    // Cap raw candidates per bucket BEFORE enrichment. Without this, a
-    // large community runs N RSVP queries across every visible meeting
-    // — hundreds or thousands — even though only a handful end up in
-    // each bucket's UI. The multiplier gives CWE collapsing headroom so
-    // `limit` grouped cards are still producible if children collapse.
-    const happeningNowCandidates = happeningNow.slice(
-      0,
-      HAPPENING_NOW_LIMIT * BUCKET_CANDIDATE_MULTIPLIER
+    // myEvents: upcoming meetings the user RSVP'd to OR is hosting. Not
+    // bounded to the 7-day window — a dinner party in 3 weeks that the
+    // user RSVP'd to belongs here. Fetched directly from the user's
+    // RSVP/hosted sets so we catch events outside the window above.
+    const myEventsMeetings = await loadMyEventsMeetings(
+      ctx,
+      userId,
+      args.communityId,
+      currentTime,
+      userRsvpMeetingIds,
+      userHostedMeetingIds
     );
-    const myRsvpsCandidates = myRsvps.slice(
+    const myEventsVisible = myEventsMeetings.filter((m) =>
+      isVisible(m, userId, userGroupIds, isCommunityMember)
+    );
+    // myEvents shows the exact meeting the user is going to — don't
+    // collapse into CWE cards here. If they RSVP'd to "Manhattan Service",
+    // they want that specific card, not a collapsed parent.
+
+    // Cap candidate sets BEFORE enrichment. buildEnrichment runs a
+    // per-meeting RSVP query for each input; without a cap, a 7-day
+    // window in a large community fans out to hundreds of reads for a
+    // UI that only renders `limit` cards per section.
+    const nextUpCandidates = nextUp.slice(
       0,
-      MY_RSVPS_LIMIT * BUCKET_CANDIDATE_MULTIPLIER
+      NEXT_UP_LIMIT * BUCKET_CANDIDATE_MULTIPLIER
     );
     const thisWeekCandidates = thisWeek.slice(
       0,
       THIS_WEEK_LIMIT * BUCKET_CANDIDATE_MULTIPLIER
     );
-    const laterCandidates = later.slice(
-      0,
-      LATER_LIMIT * BUCKET_CANDIDATE_MULTIPLIER
-    );
+    const myEventsCandidates = myEventsVisible.slice(0, MY_EVENTS_LIMIT);
 
-    // Enrich only the capped candidate set, de-duped across buckets
-    // (a meeting can only legitimately land in one bucket, but we
-    // Set-merge defensively).
     const uniqueForEnrichment = Array.from(
       new Map(
-        [
-          ...happeningNowCandidates,
-          ...myRsvpsCandidates,
-          ...thisWeekCandidates,
-          ...laterCandidates,
-        ].map((m) => [m._id, m] as const)
+        [...nextUpCandidates, ...thisWeekCandidates, ...myEventsCandidates].map(
+          (m) => [m._id, m] as const
+        )
       ).values()
     );
     const enrichment = await buildEnrichment(ctx, uniqueForEnrichment);
 
     return {
-      happeningNow: buildBucket(
-        happeningNowCandidates,
-        HAPPENING_NOW_LIMIT,
-        enrichment
-      ),
-      myRsvps: buildBucket(myRsvpsCandidates, MY_RSVPS_LIMIT, enrichment),
+      myEvents: myEventsCandidates.map((m) => buildSingleCard(m, enrichment)),
+      nextUp: buildBucket(nextUpCandidates, NEXT_UP_LIMIT, enrichment),
       thisWeek: buildBucket(thisWeekCandidates, THIS_WEEK_LIMIT, enrichment),
-      later: buildBucket(laterCandidates, LATER_LIMIT, enrichment),
     };
   },
 });
@@ -277,6 +271,71 @@ export const getCommunityWideEventChildren = query({
   },
 });
 
+/**
+ * Paginated "Later" section — meetings beyond the 7-day window handled by
+ * `listForEventsTab`. Uses the `by_community_scheduledAt` index to stream
+ * meetings chronologically, collapsing CWE children in-page. Because
+ * children of the same CWE share `scheduledAt` in the common case, a
+ * given parent's children overwhelmingly land on the same page; when a
+ * leader has overridden children to diverge, the parent may appear on
+ * two consecutive pages. The client de-dupes by `parentId` across pages.
+ *
+ * Meetings without `communityId` set (legacy rows) are excluded.
+ */
+export const listLaterEvents = query({
+  args: {
+    token: v.optional(v.string()),
+    communityId: v.id("communities"),
+    now: v.number(),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    const userId = await getOptionalAuth(ctx, args.token);
+    const { userGroupIds, isCommunityMember } = await loadVisibilityContext(
+      ctx,
+      userId,
+      args.communityId
+    );
+
+    const weekCutoff = args.now + SEVEN_DAYS_MS;
+    const page = await ctx.db
+      .query("meetings")
+      .withIndex("by_community_scheduledAt", (q) =>
+        q.eq("communityId", args.communityId).gte("scheduledAt", weekCutoff)
+      )
+      .filter((q) => q.neq(q.field("status"), "cancelled"))
+      .paginate(args.paginationOpts);
+
+    const groupIds = [...new Set(page.page.map((m) => m.groupId))];
+    const groups = await Promise.all(groupIds.map((id) => ctx.db.get(id)));
+    const groupsMap = new Map(
+      groups.filter(Boolean).map((g) => [g!._id, g!] as const)
+    );
+
+    const withGroup = page.page
+      .map((m) => {
+        const group = groupsMap.get(m.groupId);
+        return group ? ({ ...m, group } as MeetingWithGroup) : null;
+      })
+      .filter((m): m is MeetingWithGroup => m !== null);
+
+    const visible = withGroup.filter((m) =>
+      isVisible(m, userId, userGroupIds, isCommunityMember)
+    );
+
+    const enrichment = await buildEnrichment(ctx, visible);
+    // Use a limit equal to the fetched count so buildBucket never truncates
+    // a page — Convex pagination controls the size upstream.
+    const cards = buildBucket(visible, visible.length, enrichment);
+
+    return {
+      page: cards,
+      isDone: page.isDone,
+      continueCursor: page.continueCursor,
+    };
+  },
+});
+
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -287,11 +346,19 @@ async function loadVisibilityContext(
   communityId: Id<"communities">
 ) {
   const userGroupIds = new Set<string>();
-  const userRsvpMeetingIds = new Set<string>();
+  const userLeaderGroupIds = new Set<string>();
+  const userRsvpMeetingIds = new Set<Id<"meetings">>();
+  const userHostedMeetingIds = new Set<Id<"meetings">>();
   let isCommunityMember = false;
 
   if (!userId) {
-    return { userGroupIds, isCommunityMember, userRsvpMeetingIds };
+    return {
+      userGroupIds,
+      userLeaderGroupIds,
+      isCommunityMember,
+      userRsvpMeetingIds,
+      userHostedMeetingIds,
+    };
   }
 
   const communityMembership = await ctx.db
@@ -316,7 +383,10 @@ async function loadVisibilityContext(
       )
     )
     .collect();
-  for (const m of memberships) userGroupIds.add(m.groupId);
+  for (const m of memberships) {
+    userGroupIds.add(m.groupId);
+    if (m.role === "leader") userLeaderGroupIds.add(m.groupId);
+  }
 
   const rsvps = await ctx.db
     .query("meetingRsvps")
@@ -330,7 +400,78 @@ async function loadVisibilityContext(
     .collect();
   for (const r of rsvps) userRsvpMeetingIds.add(r.meetingId);
 
-  return { userGroupIds, isCommunityMember, userRsvpMeetingIds };
+  // "Hosting" for My Events:
+  //   - A standalone meeting the user created → host of that meeting.
+  //   - A CWE child the user created → only counts as hosting if the user
+  //     is a leader of that child's group. Creating a CWE across N groups
+  //     spawns N children, but you're not meaningfully hosting a meeting
+  //     in a group you don't lead.
+  const hosted = await ctx.db
+    .query("meetings")
+    .withIndex("by_createdBy", (q) => q.eq("createdById", userId))
+    .collect();
+  for (const m of hosted) {
+    if (m.communityId !== communityId) continue;
+    if (m.status === "cancelled") continue;
+    if (m.communityWideEventId && !userLeaderGroupIds.has(m.groupId)) continue;
+    userHostedMeetingIds.add(m._id);
+  }
+
+  return {
+    userGroupIds,
+    userLeaderGroupIds,
+    isCommunityMember,
+    userRsvpMeetingIds,
+    userHostedMeetingIds,
+  };
+}
+
+// Load meetings for the "My Events" section — RSVP'd or hosted, upcoming,
+// scoped to this community. Not window-bounded since a far-future RSVP
+// still belongs here. Returns meetings with their group attached so the
+// caller can run the shared visibility filter.
+async function loadMyEventsMeetings(
+  ctx: QueryCtx,
+  userId: Id<"users"> | null,
+  communityId: Id<"communities">,
+  now: number,
+  userRsvpMeetingIds: Set<Id<"meetings">>,
+  userHostedMeetingIds: Set<Id<"meetings">>
+): Promise<MeetingWithGroup[]> {
+  if (!userId) return [];
+
+  const allIds = new Set<Id<"meetings">>([
+    ...userRsvpMeetingIds,
+    ...userHostedMeetingIds,
+  ]);
+  if (allIds.size === 0) return [];
+
+  const meetings = (
+    await Promise.all([...allIds].map((id) => ctx.db.get(id)))
+  ).filter((m): m is Doc<"meetings"> => m !== null);
+
+  const upcoming = meetings.filter(
+    (m) =>
+      m.status !== "cancelled" &&
+      m.communityId === communityId &&
+      m.scheduledAt > now
+  );
+
+  const groupIds = [...new Set(upcoming.map((m) => m.groupId))];
+  const groups = await Promise.all(groupIds.map((id) => ctx.db.get(id)));
+  const groupsMap = new Map(
+    groups.filter(Boolean).map((g) => [g!._id, g!] as const)
+  );
+
+  const withGroup = upcoming
+    .map((m) => {
+      const group = groupsMap.get(m.groupId);
+      return group ? ({ ...m, group } as MeetingWithGroup) : null;
+    })
+    .filter((m): m is MeetingWithGroup => m !== null);
+
+  withGroup.sort((a, b) => a.scheduledAt - b.scheduledAt);
+  return withGroup;
 }
 
 function isVisible(
@@ -350,6 +491,11 @@ type Enrichment = {
   rsvpsByMeeting: Map<Id<"meetings">, Array<Doc<"meetingRsvps">>>;
   usersMap: Map<Id<"users">, Doc<"users">>;
   parentsMap: Map<Id<"communityWideEvents">, Doc<"communityWideEvents">>;
+  // Total "going" count per CWE parent, summed across ALL children of
+  // the parent — not just the children surfaced in the current bucket.
+  // Reading this prevents the old bug where a CWE card showed "0 going"
+  // when the RSVP'd child was routed to a different section.
+  totalGoingByParent: Map<Id<"communityWideEvents">, number>;
 };
 
 export async function buildEnrichment(
@@ -411,7 +557,52 @@ export async function buildEnrichment(
     parents.filter(Boolean).map((p) => [p!._id, p!] as const)
   );
 
-  return { groupTypesMap, rsvpsByMeeting, usersMap, parentsMap };
+  // Per-parent totalGoing aggregated across ALL children, regardless of
+  // which section they land in. Fetch all children of each surfaced CWE
+  // parent and count their "going" RSVPs (option 1) directly via the
+  // rsvps index — cheaper than re-fetching full RSVP rows.
+  const childrenByParentAll = await Promise.all(
+    parentIds.map(async (parentId) => {
+      const children = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", parentId)
+        )
+        .filter((q) => q.neq(q.field("status"), "cancelled"))
+        .collect();
+      return { parentId, children };
+    })
+  );
+
+  const totalGoingByParent = new Map<Id<"communityWideEvents">, number>();
+  await Promise.all(
+    childrenByParentAll.map(async ({ parentId, children }) => {
+      const counts = await Promise.all(
+        children.map((c) => {
+          const cached = rsvpsByMeeting.get(c._id);
+          if (cached) return Promise.resolve(cached.length);
+          return ctx.db
+            .query("meetingRsvps")
+            .withIndex("by_meeting", (q) => q.eq("meetingId", c._id))
+            .filter((q) => q.eq(q.field("rsvpOptionId"), 1))
+            .take(RSVP_FETCH_CAP)
+            .then((rs) => rs.length);
+        })
+      );
+      totalGoingByParent.set(
+        parentId,
+        counts.reduce((a, b) => a + b, 0)
+      );
+    })
+  );
+
+  return {
+    groupTypesMap,
+    rsvpsByMeeting,
+    usersMap,
+    parentsMap,
+    totalGoingByParent,
+  };
 }
 
 export function buildBucket(
@@ -452,10 +643,10 @@ export function buildBucket(
     children.sort((a, b) => a.scheduledAt - b.scheduledAt);
     const earliest = children[0];
 
-    let totalGoing = 0;
-    for (const c of children) {
-      totalGoing += (e.rsvpsByMeeting.get(c._id) ?? []).length;
-    }
+    // Read the pre-aggregated parent total (all children, all sections),
+    // not a bucket-local sum — avoids undercounting when an RSVP'd child
+    // is routed to a different section.
+    const totalGoing = e.totalGoingByParent.get(parentId) ?? 0;
 
     const representative = children.find((c) => c.shortId);
 

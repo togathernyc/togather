@@ -2,11 +2,9 @@
  * useEventsByTimeWindow Hook
  *
  * Wraps `api.functions.meetings.events.listForEventsTab` — the backend query
- * that powers the Events tab. Returns four pre-sliced buckets of event cards.
- *
- * We pass `now` as a state value that advances every 30s via a setInterval,
- * so time-window boundaries (happening now / this week / later) stay fresh
- * without re-running the query on every render.
+ * that powers the Events tab. Returns three in-window sections: myEvents
+ * (RSVP'd or hosted), nextUp (next 48h), thisWeek (next 7d). The Later
+ * section (>7d out) has its own paginated query — see useLaterEvents.
  */
 
 import { useCallback, useRef, useState } from 'react';
@@ -17,7 +15,7 @@ import type { Id } from '@services/api/convex';
 
 type EventCard =
   ReturnType<typeof useQuery<typeof api.functions.meetings.events.listForEventsTab>> extends
-    | { happeningNow: infer T; myRsvps: any; thisWeek: any; later: any }
+    | { myEvents: infer T; nextUp: any; thisWeek: any }
     | undefined
     | null
     ? T extends Array<infer U>
@@ -26,18 +24,16 @@ type EventCard =
     : never;
 
 type EventsTabData = {
-  happeningNow: EventCard[];
-  myRsvps: EventCard[];
+  myEvents: EventCard[];
+  nextUp: EventCard[];
   thisWeek: EventCard[];
-  later: EventCard[];
 };
 
 // Stable empty fallback to prevent re-render loops while loading
 const EMPTY_DATA: EventsTabData = {
-  happeningNow: [],
-  myRsvps: [],
+  myEvents: [],
+  nextUp: [],
   thisWeek: [],
-  later: [],
 };
 
 export function useEventsByTimeWindow(options?: { enabled?: boolean }) {

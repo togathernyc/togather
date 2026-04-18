@@ -658,6 +658,7 @@ export default defineSchema({
     .index("by_communityWideEvent", ["communityWideEventId"])
     .index("by_series", ["seriesId"])
     .index("by_community", ["communityId"])
+    .index("by_community_scheduledAt", ["communityId", "scheduledAt"])
     .searchIndex("search_meetings", {
       searchField: "searchText",
       filterFields: ["communityId", "status"],

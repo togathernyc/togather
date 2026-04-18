@@ -1,20 +1,21 @@
 /**
  * EventsScreen
  *
- * The dedicated Events tab introduced in ADR-022. Redesigned in a Partiful
- * style:
- *   - No screen title — the tab bar already indicates the current tab.
- *   - Tight action row with List/Map toggle + "Create Event" CTA.
- *   - "Next Up" featured row: up to 2 large tiles merging `happeningNow` and
- *     `myRsvps` (community-wide parents excluded — no single time/place).
- *   - Dense row list below: "This week" + "Later" (the other two buckets
- *     were already promoted into the featured row).
+ * The dedicated Events tab introduced in ADR-022. Four sections:
+ *   - "My Events" horizontal tiles — events I'm RSVP'd to or hosting.
+ *   - "Next Up" horizontal tiles — events in the next 48 hours.
+ *   - "This Week" vertical rows — everything within 7 days.
+ *   - "Later" vertical rows — everything else, paginated on scroll.
+ *
+ * Sections can overlap (an RSVP'd event tomorrow shows in both My Events
+ * and Next Up). "Later" is a separate paginated query so the initial
+ * payload stays small.
  *
  * When the user has no community context, falls back to the "My RSVPs"
  * view (ported from the legacy ExploreScreen) so the tab still has content.
  */
 
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   View,
   Text,
@@ -23,6 +24,8 @@ import {
   TouchableOpacity,
   Platform,
   ActivityIndicator,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -32,8 +35,8 @@ import { useTheme } from '@hooks/useTheme';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
 import { AppImage } from '@components/ui';
 import { useEventsByTimeWindow } from '../hooks/useEventsByTimeWindow';
+import { useLaterEvents } from '../hooks/useLaterEvents';
 import { useMyRsvpedEvents } from '../hooks/useCommunityEvents';
-import { useMyHostedEvents } from '../hooks/useMyEvents';
 import { EventCardRow } from './EventCardRow';
 import { EventRowCommunityWide } from './EventRowCommunityWide';
 import { FeaturedEventTile } from './FeaturedEventTile';
@@ -124,39 +127,29 @@ function Section({ title, cards, onCommunityWideTap, colors }: SectionProps) {
   );
 }
 
-interface NextUpProps {
-  events: CommunityEvent[];
+interface HorizontalTileRowProps {
+  title: string;
+  cards: any[];
   colors: ReturnType<typeof useTheme>['colors'];
 }
 
-interface NextUpPropsWithAction extends NextUpProps {
-  onViewAll?: () => void;
-}
-
-function NextUpRow({ events, colors, onViewAll }: NextUpPropsWithAction) {
-  if (events.length < 1) return null;
+function HorizontalTileRow({ title, cards, colors }: HorizontalTileRowProps) {
+  // Drop community-wide cards in horizontal tile rows — the FeaturedEventTile
+  // UI assumes a single time/place/group. CWE collapsed parents don't fit.
+  // Users can still reach those events through This Week / Later.
+  const tiles: CommunityEvent[] = cards
+    .filter((c) => c.kind !== 'community_wide')
+    .map((c) => toCommunityEvent(c));
+  if (tiles.length === 0) return null;
   return (
-    <View style={styles.nextUpSection}>
-      <View style={styles.nextUpHeader}>
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>Next Up</Text>
-        {onViewAll && (
-          <TouchableOpacity
-            onPress={onViewAll}
-            activeOpacity={0.6}
-            style={[styles.viewAllButton, { borderColor: colors.borderLight }]}
-          >
-            <Text style={[styles.viewAllText, { color: colors.textSecondary }]}>
-              View all
-            </Text>
-          </TouchableOpacity>
-        )}
-      </View>
+    <View style={styles.horizontalSection}>
+      <Text style={[styles.sectionTitle, { color: colors.text }]}>{title}</Text>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.nextUpScrollContent}
+        contentContainerStyle={styles.horizontalScrollContent}
       >
-        {events.map((ev) => (
+        {tiles.map((ev) => (
           <FeaturedEventTile key={String(ev.id)} event={ev} />
         ))}
       </ScrollView>
@@ -215,22 +208,23 @@ export function EventsScreen() {
     setExpandedParentId(null);
   }, []);
 
-  // Primary data source when we have a community.
+  // Primary data source when we have a community. Returns myEvents, nextUp,
+  // thisWeek. Later events come from a separate paginated query below.
   const { data, isLoading } = useEventsByTimeWindow({
     enabled: hasCommunityContext,
   });
 
+  // Paginated Later section. `status === 'CanLoadMore'` means there's more
+  // to fetch; `loadMore()` advances the cursor.
+  const {
+    cards: laterCards,
+    loadMore: loadMoreLater,
+    status: laterStatus,
+  } = useLaterEvents({ enabled: hasCommunityContext });
+
   // Fallback: user with no community — show their RSVPed events
   const { data: myRsvpedEventsData, isLoading: isLoadingMyRsvps } =
     useMyRsvpedEvents({ enabled: !hasCommunityContext });
-
-  // Events this user is hosting in the current community. Used to surface
-  // them in the "Next Up" featured row even when the user hasn't RSVPed
-  // (the host is implicitly going). Community-scoped via the hook.
-  const { data: myHostedData } = useMyHostedEvents({
-    enabled: hasCommunityContext,
-    includePast: false,
-  });
 
   const handleCreateEvent = useCallback(() => {
     router.push('/(user)/create-event');
@@ -337,35 +331,22 @@ export function EventsScreen() {
   // overlaps the empty area next to the first section header.
   const contentTopPadding = insets.top + 8;
 
-  // Featured "Next Up" events: merge happeningNow + myRsvps + events I'm
-  // hosting, drop community-wide cards (no single time/place to headline),
-  // dedupe by id, sort by scheduledAt ASC, take the first 2. Hosted events
-  // join so a creator sees their own event even before any RSVPs roll in.
-  const featuredEvents: CommunityEvent[] = useMemo(() => {
-    if (!hasCommunityContext) return [];
-    const happeningNow = data?.happeningNow ?? [];
-    const myRsvps = data?.myRsvps ?? [];
-    const myHostedUpcoming = (myHostedData?.upcoming ?? []) as any[];
-
-    const byId = new Map<string, CommunityEvent>();
-    for (const card of [...happeningNow, ...myRsvps, ...myHostedUpcoming]) {
-      if ((card as any).kind === 'community_wide') continue;
-      const cast = card as any;
-      if (byId.has(String(cast.id))) continue;
-      byId.set(String(cast.id), toCommunityEvent(cast));
-    }
-    const deduped = Array.from(byId.values());
-    deduped.sort(
-      (a, b) =>
-        new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime()
-    );
-    return deduped.slice(0, 2);
-  }, [
-    hasCommunityContext,
-    data?.happeningNow,
-    data?.myRsvps,
-    myHostedData?.upcoming,
-  ]);
+  // Infinite scroll: trigger loadMore when the user gets within a page of
+  // the bottom. Runs on every scroll event; the pagination hook guards
+  // against duplicate fetches via its internal status state.
+  const LOAD_MORE_THRESHOLD = 400;
+  const handleScroll = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      if (laterStatus !== 'CanLoadMore') return;
+      const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+      const distanceFromBottom =
+        contentSize.height - (contentOffset.y + layoutMeasurement.height);
+      if (distanceFromBottom < LOAD_MORE_THRESHOLD) {
+        loadMoreLater();
+      }
+    },
+    [laterStatus, loadMoreLater]
+  );
 
   // No community context → "My RSVPs" fallback body
   if (!hasCommunityContext) {
@@ -456,14 +437,13 @@ export function EventsScreen() {
     );
   }
 
-  // Community context → Next Up featured row + "This week" / "Later" lists.
-  // happeningNow + myRsvps were consumed by the featured row; rendering them
-  // again would duplicate. Leaving the backend shape untouched in case we
-  // want per-bucket labeling later.
-  const { thisWeek, later } = data;
+  // Community context → My Events → Next Up → This Week → Later.
+  const { myEvents, nextUp, thisWeek } = data;
   const hasAnyContent =
-    featuredEvents.length > 0 || thisWeek.length > 0 || later.length > 0;
-
+    myEvents.length > 0 ||
+    nextUp.length > 0 ||
+    thisWeek.length > 0 ||
+    laterCards.length > 0;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.backgroundSecondary }]}>
@@ -482,6 +462,8 @@ export function EventsScreen() {
                 styles.scrollContent,
                 { paddingTop: contentTopPadding },
               ]}
+              onScroll={handleScroll}
+              scrollEventThrottle={200}
             >
           {!hasAnyContent && (
             <View style={styles.centerContainer}>
@@ -504,26 +486,30 @@ export function EventsScreen() {
             primaryColor={primaryColor}
             onMakePlans={handleCreateEvent}
           />
-          <NextUpRow
-            events={featuredEvents}
-            colors={colors}
-            // TODO: wire to a full "Next Up" destination once that screen exists.
-            // No-op for PR 1 — surfaces the pill button without routing.
-            onViewAll={() => {}}
-          />
-
+          <HorizontalTileRow title="My Events" cards={myEvents} colors={colors} />
           <Section
-            title="This week"
+            title="Next Up"
+            cards={nextUp}
+            onCommunityWideTap={handleCommunityWideTap}
+            colors={colors}
+          />
+          <Section
+            title="This Week"
             cards={thisWeek}
             onCommunityWideTap={handleCommunityWideTap}
             colors={colors}
           />
           <Section
             title="Later"
-            cards={later}
+            cards={laterCards}
             onCommunityWideTap={handleCommunityWideTap}
             colors={colors}
           />
+          {laterStatus === 'LoadingMore' && (
+            <View style={styles.loadMoreIndicator}>
+              <ActivityIndicator size="small" color={colors.textSecondary} />
+            </View>
+          )}
         </ScrollView>
       )}
         </>
@@ -685,38 +671,19 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textDecorationLine: 'underline',
   },
-  nextUpSection: {
+  horizontalSection: {
     marginTop: 8,
     marginBottom: 8,
     gap: 12,
   },
-  nextUpHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 4,
-  },
-  viewAllButton: {
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 100,
-    borderWidth: 1,
-  },
-  viewAllText: {
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  nextUpScrollContent: {
+  horizontalScrollContent: {
     flexDirection: 'row',
     gap: 12,
     paddingRight: 16,
   },
-  nextUpScrollContentCentered: {
-    // When only 1 featured tile is present, center it horizontally so it
-    // doesn't look stranded next to empty space.
-    justifyContent: 'center',
-    flexGrow: 1,
-    paddingRight: 0,
+  loadMoreIndicator: {
+    paddingVertical: 24,
+    alignItems: 'center',
   },
   centerContainer: {
     flex: 1,
