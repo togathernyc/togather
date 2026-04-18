@@ -37,6 +37,16 @@ export function EditProfileForm({ onCancel }: EditProfileFormProps) {
     return `${parts[1]}/${parts[2]}/${parts[0]}`;
   };
 
+  // Auto-insert slashes as the user types digits (MM/DD/YYYY).
+  // The birthday field uses a number-pad keyboard that has no "/" key,
+  // so we format on input instead of requiring the user to type it.
+  const formatBirthdayInput = (text: string): string => {
+    const cleaned = text.replace(/\D/g, '');
+    if (cleaned.length <= 2) return cleaned;
+    if (cleaned.length <= 4) return `${cleaned.substring(0, 2)}/${cleaned.substring(2)}`;
+    return `${cleaned.substring(0, 2)}/${cleaned.substring(2, 4)}/${cleaned.substring(4, 8)}`;
+  };
+
   // Validate date string in MM/DD/YYYY format
   const validateDate = useCallback((dateStr: string): { valid: boolean; dateForApi?: string; error?: string } => {
     if (!dateStr) return { valid: true }; // Optional field
@@ -222,6 +232,7 @@ export function EditProfileForm({ onCancel }: EditProfileFormProps) {
           placeholder="MM/DD/YYYY"
           keyboardType="number-pad"
           maxLength={10}
+          formatValue={formatBirthdayInput}
         />
       </View>
 
