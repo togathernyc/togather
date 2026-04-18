@@ -92,15 +92,6 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
   }),
 }));
 
-// Mock storage utility
-jest.mock('@utils/storage', () => ({
-  storage: {
-    getItem: jest.fn().mockResolvedValue('1.0'), // Terms accepted
-    setItem: jest.fn().mockResolvedValue(undefined),
-    removeItem: jest.fn().mockResolvedValue(undefined),
-  },
-}));
-
 // Mock expo-router
 jest.mock('expo-router', () => ({
   useRouter: () => ({
@@ -172,20 +163,16 @@ describe('BirthdayCollectionModal', () => {
         { wrapper: Wrapper }
       );
 
-      // Wait for async storage check to complete and modal to appear
-      await waitFor(
-        () => {
-          expect(getByText("When's Your Birthday?")).toBeTruthy();
-        },
-        { timeout: 10000 }
-      );
+      await waitFor(() => {
+        expect(getByText("When's Your Birthday?")).toBeTruthy();
+      });
 
       // Continue button should be present
       expect(getByText('Continue')).toBeTruthy();
       // There should be no X button or close option (non-dismissible modal)
       expect(queryByText('Close')).toBeNull();
       expect(queryByText('Skip')).toBeNull();
-    }, 15000);
+    });
 
     it('hides modal when user has DOB', async () => {
       // Set user with existing DOB
@@ -243,13 +230,9 @@ describe('BirthdayCollectionModal', () => {
         { wrapper: Wrapper }
       );
 
-      // Wait for async storage check to complete and modal to appear
-      await waitFor(
-        () => {
-          expect(getByPlaceholderText('MM/DD/YYYY')).toBeTruthy();
-        },
-        { timeout: 10000 }
-      );
+      await waitFor(() => {
+        expect(getByPlaceholderText('MM/DD/YYYY')).toBeTruthy();
+      });
 
       const input = getByPlaceholderText('MM/DD/YYYY');
 
@@ -260,7 +243,7 @@ describe('BirthdayCollectionModal', () => {
         // Should format as MM/DD/YYYY
         expect(input.props.value).toBe('12/25/2000');
       });
-    }, 15000);
+    });
 
     it('strips non-numeric characters from input', async () => {
       const Wrapper = createTestWrapper();
