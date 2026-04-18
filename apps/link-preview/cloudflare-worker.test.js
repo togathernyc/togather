@@ -270,19 +270,18 @@ test("/.well-known/apple-app-site-association returns correct JSON for productio
 
   const json = await res.json();
   assert.ok(json.applinks, "should have applinks");
-  assert.ok(Array.isArray(json.applinks.apps), "applinks.apps should be an empty array");
-  assert.equal(json.applinks.apps.length, 0);
   assert.ok(Array.isArray(json.applinks.details), "applinks.details should be an array");
 
-  // Production domain should include production app
-  const appIDs = json.applinks.details.map(d => d.appID);
+  // Production domain should include production app (components format uses appIDs array)
+  const appIDs = json.applinks.details.flatMap(d => d.appIDs);
   assert.ok(appIDs.some(id => id.includes("app.gatherful.mobile")), "should include production bundle ID");
 
-  // Check paths use exclusion pattern (NOT) for landing pages and wildcard for app routes
-  const paths = json.applinks.details[0].paths;
-  assert.ok(paths.includes("*"), "should include wildcard for all app routes");
-  assert.ok(paths.includes("NOT /"), "should exclude root landing page");
-  assert.ok(paths.includes("NOT /android"), "should exclude Android download page");
+  // Check components use exclusion for landing pages and wildcard for app routes
+  const components = json.applinks.details[0].components;
+  assert.ok(Array.isArray(components), "details[0].components should be an array");
+  assert.ok(components.some(c => c["/"] === "*" && !c.exclude), "should include wildcard match for app routes");
+  assert.ok(components.some(c => c["/"] === "/" && c.exclude === true), "should exclude root landing page");
+  assert.ok(components.some(c => c["/"] === "/android" && c.exclude === true), "should exclude Android download page");
 });
 
 test("/.well-known/apple-app-site-association returns correct JSON for staging domain", async () => {
@@ -296,7 +295,7 @@ test("/.well-known/apple-app-site-association returns correct JSON for staging d
   assert.ok(json.applinks, "should have applinks");
 
   // Staging domain should only include staging app
-  const appIDs = json.applinks.details.map(d => d.appID);
+  const appIDs = json.applinks.details.flatMap(d => d.appIDs);
   assert.ok(appIDs.some(id => id.includes("life.togather.staging")), "should include staging bundle ID");
   assert.ok(!appIDs.some(id => id.includes("app.gatherful.mobile")), "should NOT include production bundle ID");
 });
