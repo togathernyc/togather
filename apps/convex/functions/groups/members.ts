@@ -231,3 +231,91 @@ export const myLeaderGroups = query({
     return result.sort((a, b) => a.name.localeCompare(b.name));
   },
 });
+
+/**
+ * Groups the current user is an active member of, enriched with an `isLeader`
+ * flag per group. Backs the CreateEventScreen group dropdown in ADR-022 —
+ * members see every group they can create in; leaders still see their leader
+ * groups (they appear here with `isLeader: true`). The announcement group
+ * appears for everyone (ADR-008).
+ */
+export const myCreatableGroups = query({
+  args: {
+    token: v.optional(v.string()),
+    communityId: v.optional(v.id("communities")),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getOptionalAuth(ctx, args.token);
+    if (!userId) return [];
+
+    const memberships = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("leftAt"), undefined),
+          q.or(
+            q.eq(q.field("requestStatus"), undefined),
+            q.eq(q.field("requestStatus"), "accepted")
+          )
+        )
+      )
+      .take(200);
+
+    if (memberships.length === 0) return [];
+
+    const groupIds = memberships.map((m) => m.groupId);
+    const allGroups = await Promise.all(groupIds.map((id) => ctx.db.get(id)));
+
+    const membershipByGroup = new Map(memberships.map((m) => [m.groupId, m]));
+
+    const validGroups = allGroups.filter(
+      (g): g is NonNullable<typeof g> =>
+        g !== null &&
+        !g.isArchived &&
+        (!args.communityId || g.communityId === args.communityId)
+    );
+
+    if (validGroups.length === 0) return [];
+
+    const groupTypeIds = [
+      ...new Set(
+        validGroups
+          .map((g) => g.groupTypeId)
+          .filter((id): id is NonNullable<typeof id> => id !== undefined)
+      ),
+    ];
+    const groupTypes = await Promise.all(
+      groupTypeIds.map((id) => ctx.db.get(id))
+    );
+    const groupTypeMap = new Map(
+      groupTypes
+        .filter((gt): gt is NonNullable<typeof gt> => gt !== null)
+        .map((gt) => [gt._id, gt])
+    );
+
+    const result = validGroups.map((group) => {
+      const groupType = group.groupTypeId
+        ? groupTypeMap.get(group.groupTypeId)
+        : null;
+      const membership = membershipByGroup.get(group._id);
+      return {
+        id: group._id,
+        name: group.name,
+        groupTypeName: groupType?.name || "Group",
+        preview: getMediaUrl(group.preview),
+        isLeader: isLeaderRole(membership?.role),
+        isAnnouncementGroup: group.isAnnouncementGroup === true,
+      };
+    });
+
+    // Announcement group first (so CreateEventScreen can default to it),
+    // then by name.
+    return result.sort((a, b) => {
+      if (a.isAnnouncementGroup !== b.isAnnouncementGroup) {
+        return a.isAnnouncementGroup ? -1 : 1;
+      }
+      return a.name.localeCompare(b.name);
+    });
+  },
+});

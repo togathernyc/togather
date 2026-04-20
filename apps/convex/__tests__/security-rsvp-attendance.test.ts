@@ -423,7 +423,7 @@ describe("Attendance Permission Tests", () => {
           userId: setup.leaderId, // Marking for someone else
           status: 1,
         })
-      ).rejects.toThrow("Only leaders can mark attendance for others");
+      ).rejects.toThrow(/event creator, group leaders/i);
     });
 
     test("member can mark their own attendance (self-reporting)", async () => {
@@ -775,7 +775,7 @@ describe("Guest Management Tests (Issue #303)", () => {
           token: setup.memberToken,
           guestId,
         })
-      ).rejects.toThrow("Only leaders can remove guests");
+      ).rejects.toThrow(/event creator, group leaders/i);
     });
 
     test("cannot remove non-existent guest", async () => {
@@ -863,7 +863,7 @@ describe("Guest Management Tests (Issue #303)", () => {
           guestId,
           firstName: "Updated",
         })
-      ).rejects.toThrow("Only leaders can update guests");
+      ).rejects.toThrow(/event creator, group leaders/i);
     });
   });
 });

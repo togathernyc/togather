@@ -118,7 +118,16 @@ const SAMPLE_GROUPS = [
   },
 ];
 
-// Sample users to create
+// Sample users to create. The mix covers every permission bucket the product
+// has so reviewers can simulate each flow with a single seed run:
+//   - Primary admin (Test User) — the default login for most paths.
+//   - Community admin (Alice) — admin-gated flows like CWE creation.
+//   - Group leader (Bob) — leader-only flows within a single group.
+//   - Plain member (Mia) — non-leader, non-admin. Used to exercise the
+//     ADR-022 member-created-events flow, the 1-future-event cap, and the
+//     report flow. Reviewers should add Mia's phone to
+//     `OTP_TEST_PHONE_NUMBERS` to log in as her with the 000000 bypass.
+//   - Filler users (Carol, David, Emma) — populate member lists.
 const SAMPLE_USERS = [
   {
     phone: TEST_PHONE,
@@ -158,6 +167,14 @@ const SAMPLE_USERS = [
     firstName: "Emma",
     lastName: "Davis",
     email: "emma@example.com",
+  },
+  {
+    // Dedicated "plain member" for ADR-022 reviewer testing. Not a leader of
+    // any seeded group, just an announcement-group member via ADR-008.
+    phone: "+12025550130",
+    firstName: "Mia",
+    lastName: "Member",
+    email: "mia@example.com",
   },
 ];
 

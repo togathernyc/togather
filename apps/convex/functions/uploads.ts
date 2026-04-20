@@ -107,7 +107,8 @@ export const folderValidator = v.union(
   v.literal("profiles"),
   v.literal("groups"),
   v.literal("meetings"),
-  v.literal("chat")
+  v.literal("chat"),
+  v.literal("posters")
 );
 
 export const entityTypeValidator = v.union(

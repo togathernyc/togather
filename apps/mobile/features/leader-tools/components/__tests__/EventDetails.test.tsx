@@ -62,6 +62,9 @@ jest.mock("@services/api/convex", () => ({
         index: {
           getWithDetails: "api.functions.meetings.index.getWithDetails",
         },
+        reports: {
+          createReport: "api.functions.meetings.reports.createReport",
+        },
       },
       meetingRsvps: {
         list: "api.functions.meetingRsvps.list",

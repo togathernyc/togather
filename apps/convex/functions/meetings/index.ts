@@ -10,6 +10,13 @@ import { internal } from "../../_generated/api";
 import { now, generateShortId, getDisplayName, getMediaUrl } from "../../lib/utils";
 import { requireAuth } from "../../lib/auth";
 import { isActiveLeader } from "../../lib/helpers";
+import {
+  canCreateInGroup,
+  canEditMeeting,
+  canEditSeriesWide,
+  countFutureEventsCreatedBy,
+  NON_LEADER_FUTURE_EVENT_CAP,
+} from "../../lib/meetingPermissions";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
 import {
   DEFAULT_REMINDER_OFFSET_MS,
@@ -102,8 +109,12 @@ export const create = mutation({
     meetingType: v.number(), // 1=In-Person, 2=Online
     meetingLink: v.optional(v.string()),
     locationOverride: v.optional(v.string()),
+    locationMode: v.optional(
+      v.union(v.literal("address"), v.literal("online"), v.literal("tbd"))
+    ),
     note: v.optional(v.string()),
     coverImage: v.optional(v.string()),
+    posterId: v.optional(v.id("posters")),
     rsvpEnabled: v.optional(v.boolean()),
     rsvpOptions: v.optional(
       v.array(
@@ -120,16 +131,42 @@ export const create = mutation({
   handler: async (ctx, args) => {
     const createdById = await requireAuth(ctx, args.token);
 
-    // Verify user is a leader of this group
-    const membership = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group_user", (q) =>
-        q.eq("groupId", args.groupId).eq("userId", createdById)
-      )
-      .first();
+    // Any active member can create; leaders get extra privileges below. See ADR-022.
+    const { allowed, isLeader } = await canCreateInGroup(
+      ctx,
+      createdById,
+      args.groupId
+    );
+    if (!allowed) {
+      throw new Error("You must be a member of this group to create events");
+    }
 
-    if (!isActiveLeader(membership)) {
-      throw new Error("Only group leaders can create events");
+    // Series creation remains leader-only.
+    if (args.seriesId && !isLeader) {
+      throw new Error("Only group leaders can add events to a series");
+    }
+
+    // 1-future-event cap for non-leaders (ADR-022). Convex mutations are
+    // serialized per-document; a concurrent second create reads the just-inserted
+    // row and this check rejects it. Scoped to the target group's community —
+    // events in a different community don't count against this one.
+    if (!isLeader) {
+      // Look ahead to the target group so we know the community scope.
+      const targetGroup = await ctx.db.get(args.groupId);
+      if (!targetGroup?.communityId) {
+        throw new Error("Group is not linked to a community");
+      }
+      const futureCount = await countFutureEventsCreatedBy(
+        ctx,
+        createdById,
+        now(),
+        targetGroup.communityId
+      );
+      if (futureCount >= NON_LEADER_FUTURE_EVENT_CAP) {
+        throw new Error(
+          "You already have an upcoming event. Cancel or finish it before creating another."
+        );
+      }
     }
 
     const timestamp = now();
@@ -164,8 +201,10 @@ export const create = mutation({
       meetingType: args.meetingType,
       meetingLink: args.meetingLink,
       locationOverride: args.locationOverride,
+      locationMode: args.locationMode,
       note: args.note,
       coverImage: args.coverImage,
+      posterId: args.posterId,
       status: "scheduled",
       createdById,
       createdAt: timestamp,
@@ -215,6 +254,16 @@ export const create = mutation({
       });
     }
 
+    // Notify group leaders when a non-leader creates an event, EXCEPT in the
+    // announcement group (community-wide events), where this would spam admins.
+    if (!isLeader && !group.isAnnouncementGroup) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.notifications.senders.notifyEventCreatedByMember,
+        { meetingId }
+      );
+    }
+
     return meetingId;
   },
 });
@@ -232,8 +281,16 @@ export const update = mutation({
     meetingType: v.optional(v.number()),
     meetingLink: v.optional(v.string()),
     locationOverride: v.optional(v.string()),
+    locationMode: v.optional(
+      v.union(v.literal("address"), v.literal("online"), v.literal("tbd"))
+    ),
     note: v.optional(v.string()),
     coverImage: v.optional(v.string()),
+    // `undefined` → leave posterId unchanged. `null` → explicitly clear the
+    // linked curated poster (e.g. user switched from a library pick to a
+    // custom upload). We translate null → `ctx.db.patch(..., { posterId:
+    // undefined })` below, which Convex interprets as "delete this field."
+    posterId: v.optional(v.union(v.id("posters"), v.null())),
     status: v.optional(v.union(v.literal("scheduled"), v.literal("confirmed"), v.literal("completed"), v.literal("cancelled"))),
     rsvpEnabled: v.optional(v.boolean()),
     rsvpOptions: v.optional(
@@ -259,16 +316,21 @@ export const update = mutation({
       throw new Error("Meeting not found");
     }
 
-    // Verify user is a leader of this group
-    const membership = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group_user", (q) =>
-        q.eq("groupId", meeting.groupId).eq("userId", userId)
-      )
-      .first();
+    // Per ADR-022: creator, group leaders, and community admins can update.
+    if (!(await canEditMeeting(ctx, userId, meeting))) {
+      throw new Error("You do not have permission to update this event");
+    }
 
-    if (!isActiveLeader(membership)) {
-      throw new Error("Only group leaders can update meetings");
+    // Series-wide scope can cascade writes to siblings the caller may not own
+    // or lead (shared series spanning multiple groups). Tighten: require the
+    // caller to be a leader of the anchor group or a community admin. A plain
+    // creator can only touch their own single meeting.
+    if (args.scope === "all_in_series" && meeting.seriesId) {
+      if (!(await canEditSeriesWide(ctx, userId, meeting))) {
+        throw new Error(
+          "Only group leaders or community admins can edit all events in a series"
+        );
+      }
     }
 
     // Track what changed for notification
@@ -300,6 +362,20 @@ export const update = mutation({
     const cleanedUpdates: Record<string, unknown> = Object.fromEntries(
       Object.entries(updates).filter(([, val]) => val !== undefined)
     );
+
+    // Clients send `posterId: null` to explicitly clear the curated-poster
+    // reference (e.g. switching to a custom upload). Convex patches drop
+    // fields when the value is `undefined`, so translate null → undefined to
+    // remove `posterId` from the document.
+    if (cleanedUpdates.posterId === null) {
+      cleanedUpdates.posterId = undefined;
+    }
+    // `coverImage: ""` is the client's explicit-remove sentinel. Translate
+    // to undefined so the patch unsets the field (instead of storing an
+    // empty string that every read path would have to treat as falsy).
+    if (cleanedUpdates.coverImage === "") {
+      cleanedUpdates.coverImage = undefined;
+    }
 
     // If this meeting is linked to a community-wide event and hasn't been overridden yet,
     // mark it as overridden so future cascade updates from the parent event skip it
@@ -438,6 +514,12 @@ export const update = mutation({
       if (updates.meetingLink !== undefined) seriesUpdates.meetingLink = updates.meetingLink;
       if (updates.note !== undefined) seriesUpdates.note = updates.note;
       if (updates.coverImage !== undefined) seriesUpdates.coverImage = updates.coverImage;
+      // null → delete the field on every sibling (same semantics as the
+      // single-meeting path above).
+      if (updates.posterId !== undefined) {
+        seriesUpdates.posterId =
+          updates.posterId === null ? undefined : updates.posterId;
+      }
       if (updates.rsvpEnabled !== undefined) seriesUpdates.rsvpEnabled = updates.rsvpEnabled;
       if (updates.rsvpOptions !== undefined) seriesUpdates.rsvpOptions = updates.rsvpOptions;
       if (updates.visibility !== undefined) seriesUpdates.visibility = updates.visibility;
@@ -488,16 +570,19 @@ export const cancel = mutation({
       throw new Error("Meeting not found");
     }
 
-    // Verify user is a leader of this group
-    const membership = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group_user", (q) =>
-        q.eq("groupId", meeting.groupId).eq("userId", userId)
-      )
-      .first();
+    // Per ADR-022: creator, group leaders, and community admins can cancel.
+    if (!(await canEditMeeting(ctx, userId, meeting))) {
+      throw new Error("You do not have permission to cancel this event");
+    }
 
-    if (!isActiveLeader(membership)) {
-      throw new Error("Only group leaders can cancel meetings");
+    // Series-wide cancel can destroy meetings the caller doesn't own or lead.
+    // Tighten to leader-of-anchor-group or community admin.
+    if (args.scope === "all_in_series" && meeting.seriesId) {
+      if (!(await canEditSeriesWide(ctx, userId, meeting))) {
+        throw new Error(
+          "Only group leaders or community admins can cancel all events in a series"
+        );
+      }
     }
 
     if (args.scope === "all_in_series" && meeting.seriesId) {
@@ -543,8 +628,12 @@ export const cancel = mutation({
 });
 
 /**
- * Toggle RSVP leader notifications for a meeting
- * Leaders can enable/disable getting notified when someone RSVPs
+ * Toggle RSVP leader notifications for a meeting.
+ * Strictly leader/admin-only per ADR-022. This flag controls whether the
+ * group's leaders get notified — creators shouldn't be able to silence
+ * their own group's leaders by creating an event there. Creators receive
+ * RSVP notifications unconditionally via `notifyRsvpReceived`, so they
+ * don't need a toggle here.
  */
 export const toggleRsvpLeaderNotifications = mutation({
   args: {
@@ -560,7 +649,6 @@ export const toggleRsvpLeaderNotifications = mutation({
       throw new Error("Meeting not found");
     }
 
-    // Verify user is a leader of the group
     const membership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>

@@ -8,9 +8,7 @@ import {
   LayoutAnimation,
   UIManager,
   FlatList,
-  SectionList,
   TextInput,
-  ScrollView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -18,46 +16,18 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
-import BottomSheet, { BottomSheetFlatList, BottomSheetTextInput, BottomSheetSectionList } from '@gorhom/bottom-sheet';
+import BottomSheet, { BottomSheetFlatList, BottomSheetTextInput } from '@gorhom/bottom-sheet';
 import { Ionicons } from '@expo/vector-icons';
 import { Group } from '@features/groups/types';
 import { GroupCard } from './GroupCard';
-import { EventCard } from './EventCard';
-import { ViewToggle } from './ViewToggle';
-import { COLORS } from '../constants';
-import type { ExploreView } from '../hooks/useExploreFilters';
-import type { CommunityEvent } from '../hooks/useCommunityEvents';
 import { useTheme } from '@hooks/useTheme';
 
 interface ExploreBottomSheetProps {
-  // View state
-  activeView: ExploreView;
-  onViewChange: (view: ExploreView) => void;
-  isModeLocked?: boolean; // When true, hides the ViewToggle (for deep-linking from group context)
   // Groups props
   visibleGroups: Group[];
   groupsWithoutLocation: Group[];
   onGroupSelect: (group: Group) => void;
   isLoadingGroups?: boolean;
-  // Events props
-  events: CommunityEvent[];
-  eventSearchResults?: Array<{
-    _id: string;
-    title: string;
-    scheduledAt: number;
-    actualEnd?: number;
-    meetingType: number;
-    locationOverride?: string | null;
-    shortId?: string | null;
-    visibility?: string | null;
-    coverImage?: string | null;
-    group?: { _id: string; name: string; city?: string | null; state?: string | null } | null;
-  }>;
-  isSearchingEvents?: boolean;
-  onEventPress?: (event: CommunityEvent) => void;
-  isLoadingEvents?: boolean;
-  onRefreshEvents?: () => void;
-  isRefreshingEvents?: boolean;
   // Shared
   searchQuery: string;
   onSearchChange: (query: string) => void;
@@ -127,11 +97,9 @@ interface SearchBarProps {
   searchQuery: string;
   onSearchChange: (query: string) => void;
   onFocus: () => void;
-  activeView: ExploreView;
 }
 
-const SearchBar = memo(function SearchBar({ searchQuery, onSearchChange, onFocus, activeView }: SearchBarProps) {
-  const placeholder = activeView === 'events' ? 'Search events...' : 'Search groups...';
+const SearchBar = memo(function SearchBar({ searchQuery, onSearchChange, onFocus }: SearchBarProps) {
   const InputComponent = isWeb ? TextInput : BottomSheetTextInput;
   const { colors } = useTheme();
 
@@ -146,7 +114,7 @@ const SearchBar = memo(function SearchBar({ searchQuery, onSearchChange, onFocus
         />
         <InputComponent
           style={[styles.searchInput, { color: colors.text }]}
-          placeholder={placeholder}
+          placeholder="Search groups..."
           placeholderTextColor={colors.inputPlaceholder}
           value={searchQuery}
           onChangeText={onSearchChange}
@@ -172,20 +140,10 @@ const SearchBar = memo(function SearchBar({ searchQuery, onSearchChange, onFocus
 export const ExploreBottomSheet = forwardRef<ExploreBottomSheetRef, ExploreBottomSheetProps>(
   function ExploreBottomSheet(
     {
-      activeView,
-      onViewChange,
-      isModeLocked = false,
       visibleGroups,
       groupsWithoutLocation,
       onGroupSelect,
       isLoadingGroups = false,
-      events,
-      eventSearchResults,
-      isSearchingEvents = false,
-      onEventPress,
-      isLoadingEvents = false,
-      onRefreshEvents,
-      isRefreshingEvents = false,
       searchQuery,
       onSearchChange,
     },
@@ -193,7 +151,7 @@ export const ExploreBottomSheet = forwardRef<ExploreBottomSheetRef, ExploreBotto
   ) {
     const bottomSheetRef = useRef<BottomSheet>(null);
     const insets = useSafeAreaInsets();
-    const { colors, isDark } = useTheme();
+    const { colors } = useTheme();
     // Use a topInset to ensure the handle is always visible below the status bar/notch
     const topInset = insets.top + 20; // Extra space to keep handle accessible
     const snapPoints = useMemo(() => ['12%', '50%', '75%'], []);
@@ -256,89 +214,6 @@ export const ExploreBottomSheet = forwardRef<ExploreBottomSheetRef, ExploreBotto
       });
     }, [groupsWithoutLocation, searchQuery]);
 
-    // Filter events based on search query.
-    // When backend search results are available, map them to CommunityEvent shape.
-    // Otherwise fall back to client-side filtering.
-    const filteredEvents = useMemo(() => {
-      if (searchQuery.trim() && isSearchingEvents) {
-        return [];
-      }
-      if (eventSearchResults) {
-        // Map backend search results to CommunityEvent-compatible objects
-        return eventSearchResults.map((result) => ({
-          id: result._id,
-          shortId: result.shortId ?? null,
-          title: result.title,
-          scheduledAt: new Date(result.scheduledAt).toISOString(),
-          status: 'scheduled',
-          visibility: (result.visibility ?? 'group') as 'group' | 'community' | 'public',
-          coverImage: result.coverImage ?? null,
-          locationOverride: result.locationOverride ?? null,
-          meetingType: result.meetingType,
-          rsvpEnabled: false,
-          group: {
-            id: result.group?._id ?? '',
-            name: result.group?.name ?? '',
-            groupTypeName: '',
-            addressLine1: null,
-            addressLine2: null,
-            city: result.group?.city ?? null,
-            state: result.group?.state ?? null,
-            zipCode: null,
-          },
-          rsvpSummary: { totalGoing: 0, topGoingGuests: [] },
-        })) as CommunityEvent[];
-      }
-
-      if (!searchQuery.trim()) return events;
-
-      const query = searchQuery.toLowerCase();
-      return events.filter((event) => {
-        const title = (event.title || '').toLowerCase();
-        const groupName = event.group.name.toLowerCase();
-        const location = (event.locationOverride || '').toLowerCase();
-        return title.includes(query) || groupName.includes(query) || location.includes(query);
-      });
-    }, [events, eventSearchResults, searchQuery, isSearchingEvents]);
-
-    // Group events by date sections
-    const eventSections = useMemo(() => {
-      const now = new Date();
-      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const startOfTomorrow = new Date(startOfToday);
-      startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
-      const startOfDayAfterTomorrow = new Date(startOfToday);
-      startOfDayAfterTomorrow.setDate(startOfDayAfterTomorrow.getDate() + 2);
-      const endOfWeek = new Date(startOfToday);
-      endOfWeek.setDate(endOfWeek.getDate() + (7 - endOfWeek.getDay()));
-
-      const today: CommunityEvent[] = [];
-      const tomorrow: CommunityEvent[] = [];
-      const thisWeek: CommunityEvent[] = [];
-      const later: CommunityEvent[] = [];
-
-      filteredEvents.forEach((event) => {
-        const eventDate = new Date(event.scheduledAt);
-        if (eventDate >= startOfToday && eventDate < startOfTomorrow) {
-          today.push(event);
-        } else if (eventDate >= startOfTomorrow && eventDate < startOfDayAfterTomorrow) {
-          tomorrow.push(event);
-        } else if (eventDate >= startOfDayAfterTomorrow && eventDate < endOfWeek) {
-          thisWeek.push(event);
-        } else if (eventDate >= endOfWeek) {
-          later.push(event);
-        }
-      });
-
-      const sections: Array<{ title: string; data: CommunityEvent[] }> = [];
-      if (today.length > 0) sections.push({ title: 'TODAY', data: today });
-      if (tomorrow.length > 0) sections.push({ title: 'TOMORROW', data: tomorrow });
-      if (thisWeek.length > 0) sections.push({ title: 'THIS WEEK', data: thisWeek });
-      if (later.length > 0) sections.push({ title: 'COMING UP', data: later });
-
-      return sections;
-    }, [filteredEvents]);
-
     // Toggle the no-location section with animation
     const toggleNoLocationSection = useCallback(() => {
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -355,28 +230,6 @@ export const ExploreBottomSheet = forwardRef<ExploreBottomSheetRef, ExploreBotto
         />
       ),
       [handleGroupCardPress]
-    );
-
-    // Render event card for list
-    const renderEventCard = useCallback(
-      ({ item }: { item: CommunityEvent }) => (
-        <EventCard
-          event={item}
-          onPress={onEventPress ? () => onEventPress(item) : undefined}
-        />
-      ),
-      [onEventPress]
-    );
-
-    // Render event section header
-    const renderEventSectionHeader = useCallback(
-      ({ section }: { section: { title: string; data: CommunityEvent[] } }) => (
-        <View style={styles.eventSectionHeader}>
-          <Text style={[styles.eventSectionTitle, { color: colors.textSecondary }]}>{section.title}</Text>
-          <Text style={[styles.eventSectionCount, { color: COLORS.primary, backgroundColor: isDark ? '#2d1f4e' : '#F3E8FF' }]}>{section.data.length}</Text>
-        </View>
-      ),
-      [colors, isDark]
     );
 
     // List header with count and collapsible "Groups not on map" section (search is rendered separately)
@@ -437,113 +290,58 @@ export const ExploreBottomSheet = forwardRef<ExploreBottomSheetRef, ExploreBotto
           </View>
         )}
       </View>
-    ), [filteredGroups.length, filteredGroupsWithoutLocation, isNoLocationExpanded, toggleNoLocationSection, handleGroupCardPress, isLoadingGroups, colors, isDark]);
-
-    // Events empty component
-    const EventsEmptyComponent = useCallback(() => {
-      if (isSearchingEvents && searchQuery.trim()) {
-        return (
-          <View>
-            <SkeletonCard />
-            <SkeletonCard />
-            <SkeletonCard />
-          </View>
-        );
-      }
-      if (isLoadingEvents) {
-        return (
-          <View>
-            <SkeletonCard />
-            <SkeletonCard />
-            <SkeletonCard />
-          </View>
-        );
-      }
-      return (
-        <View style={styles.emptyContainer}>
-          <Ionicons name="calendar-outline" size={48} color={colors.textSecondary} />
-          <Text style={[styles.emptyTitle, { color: colors.text }]}>No upcoming events</Text>
-          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>Check back later for new events</Text>
-        </View>
-      );
-    }, [isLoadingEvents, isSearchingEvents, searchQuery, colors]);
+    ), [filteredGroups.length, filteredGroupsWithoutLocation, isNoLocationExpanded, toggleNoLocationSection, handleGroupCardPress, isLoadingGroups, colors]);
 
     // Shared list content for both web and native
     const groupsListContent = (
       <>
-        {activeView === 'groups' ? (
-          isWeb ? (
-            <FlatList
-              data={filteredGroups}
-              keyExtractor={(item) => String(item.id)}
-              renderItem={renderGroupCard}
-              ListHeaderComponent={GroupsListHeaderComponent}
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={styles.listContent}
-              ListEmptyComponent={
-                isLoadingGroups ? (
-                  <View>
-                    <SkeletonCard />
-                    <SkeletonCard />
-                    <SkeletonCard />
-                  </View>
-                ) : filteredGroupsWithoutLocation.length === 0 ? (
-                  <View style={styles.emptyContainer}>
-                    <Ionicons name="people-outline" size={48} color={colors.textSecondary} />
-                    <Text style={[styles.emptyTitle, { color: colors.text }]}>No groups in view</Text>
-                    <Text style={[styles.emptyText, { color: colors.textSecondary }]}>Pan the map to explore different areas</Text>
-                  </View>
-                ) : null
-              }
-            />
-          ) : (
-            <BottomSheetFlatList
-              data={filteredGroups}
-              keyExtractor={(item: Group) => String(item.id)}
-              renderItem={renderGroupCard}
-              ListHeaderComponent={GroupsListHeaderComponent}
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={styles.listContent}
-              ListEmptyComponent={
-                isLoadingGroups ? (
-                  <View>
-                    <SkeletonCard />
-                    <SkeletonCard />
-                    <SkeletonCard />
-                  </View>
-                ) : filteredGroupsWithoutLocation.length === 0 ? (
-                  <View style={styles.emptyContainer}>
-                    <Ionicons name="people-outline" size={48} color={colors.textSecondary} />
-                    <Text style={[styles.emptyTitle, { color: colors.text }]}>No groups in view</Text>
-                    <Text style={[styles.emptyText, { color: colors.textSecondary }]}>Pan the map to explore different areas</Text>
-                  </View>
-                ) : null
-              }
-            />
-          )
-        ) : isWeb ? (
-          <SectionList
-            sections={eventSections}
-            keyExtractor={(item) => item.id}
-            renderItem={renderEventCard}
-            renderSectionHeader={renderEventSectionHeader}
-            stickySectionHeadersEnabled={false}
+        {isWeb ? (
+          <FlatList
+            data={filteredGroups}
+            keyExtractor={(item) => String(item.id)}
+            renderItem={renderGroupCard}
+            ListHeaderComponent={GroupsListHeaderComponent}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.listContent}
-            ListEmptyComponent={EventsEmptyComponent}
-            ItemSeparatorComponent={() => <View style={styles.eventSeparator} />}
+            ListEmptyComponent={
+              isLoadingGroups ? (
+                <View>
+                  <SkeletonCard />
+                  <SkeletonCard />
+                  <SkeletonCard />
+                </View>
+              ) : filteredGroupsWithoutLocation.length === 0 ? (
+                <View style={styles.emptyContainer}>
+                  <Ionicons name="people-outline" size={48} color={colors.textSecondary} />
+                  <Text style={[styles.emptyTitle, { color: colors.text }]}>No groups in view</Text>
+                  <Text style={[styles.emptyText, { color: colors.textSecondary }]}>Pan the map to explore different areas</Text>
+                </View>
+              ) : null
+            }
           />
         ) : (
-          <BottomSheetSectionList
-            sections={eventSections}
-            keyExtractor={(item: CommunityEvent) => item.id}
-            renderItem={renderEventCard}
-            renderSectionHeader={renderEventSectionHeader}
-            stickySectionHeadersEnabled={false}
+          <BottomSheetFlatList
+            data={filteredGroups}
+            keyExtractor={(item: Group) => String(item.id)}
+            renderItem={renderGroupCard}
+            ListHeaderComponent={GroupsListHeaderComponent}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.listContent}
-            ListEmptyComponent={EventsEmptyComponent}
-            ItemSeparatorComponent={() => <View style={styles.eventSeparator} />}
+            ListEmptyComponent={
+              isLoadingGroups ? (
+                <View>
+                  <SkeletonCard />
+                  <SkeletonCard />
+                  <SkeletonCard />
+                </View>
+              ) : filteredGroupsWithoutLocation.length === 0 ? (
+                <View style={styles.emptyContainer}>
+                  <Ionicons name="people-outline" size={48} color={colors.textSecondary} />
+                  <Text style={[styles.emptyTitle, { color: colors.text }]}>No groups in view</Text>
+                  <Text style={[styles.emptyText, { color: colors.textSecondary }]}>Pan the map to explore different areas</Text>
+                </View>
+              ) : null
+            }
           />
         )}
       </>
@@ -553,20 +351,12 @@ export const ExploreBottomSheet = forwardRef<ExploreBottomSheetRef, ExploreBotto
     if (isWeb) {
       return (
         <View style={[styles.webPanel, { backgroundColor: colors.surface }, isMapMode && styles.webPanelCollapsed]}>
-          {/* View Toggle - hidden when mode is locked */}
-          {!isModeLocked && (
-            <View style={styles.toggleContainer}>
-              <ViewToggle activeView={activeView} onViewChange={onViewChange} />
-            </View>
-          )}
-
           {!isMapMode && (
             <>
               <SearchBar
                 searchQuery={searchQuery}
                 onSearchChange={onSearchChange}
                 onFocus={handleSearchFocus}
-                activeView={activeView}
               />
 
               {groupsListContent}
@@ -575,12 +365,12 @@ export const ExploreBottomSheet = forwardRef<ExploreBottomSheetRef, ExploreBotto
 
           {/* Map/List Toggle Button */}
           <TouchableOpacity
-            style={styles.mapListToggleButton}
+            style={[styles.mapListToggleButton, { backgroundColor: colors.text }]}
             onPress={() => setIsMapMode(!isMapMode)}
             activeOpacity={0.9}
           >
-            <Text style={[styles.mapButtonText, { color: colors.textInverse }]}>{isMapMode ? 'List' : 'Map'}</Text>
-            <Ionicons name={isMapMode ? 'list' : 'map'} size={16} color={colors.textInverse} />
+            <Text style={[styles.mapButtonText, { color: colors.surface }]}>{isMapMode ? 'List' : 'Map'}</Text>
+            <Ionicons name={isMapMode ? 'list' : 'map'} size={16} color={colors.surface} />
           </TouchableOpacity>
         </View>
       );
@@ -601,18 +391,10 @@ export const ExploreBottomSheet = forwardRef<ExploreBottomSheetRef, ExploreBotto
         keyboardBehavior="extend"
         keyboardBlurBehavior="restore"
       >
-        {/* View Toggle - hidden when mode is locked (deep-linking from specific context) */}
-        {!isModeLocked && (
-          <View style={styles.toggleContainer}>
-            <ViewToggle activeView={activeView} onViewChange={onViewChange} />
-          </View>
-        )}
-
         <SearchBar
           searchQuery={searchQuery}
           onSearchChange={onSearchChange}
           onFocus={handleSearchFocus}
-          activeView={activeView}
         />
 
         {groupsListContent}
@@ -722,7 +504,6 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#222224',
     paddingHorizontal: 20,
     paddingVertical: 12,
     borderRadius: 24,
@@ -777,31 +558,5 @@ const styles = StyleSheet.create({
   onMapHeaderText: {
     fontSize: 14,
     fontWeight: '600',
-  },
-  toggleContainer: {
-    paddingHorizontal: 16,
-    paddingBottom: 8,
-  },
-  eventSectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    gap: 8,
-  },
-  eventSectionTitle: {
-    fontSize: 12,
-    fontWeight: '600',
-    letterSpacing: 0.5,
-  },
-  eventSectionCount: {
-    fontSize: 12,
-    fontWeight: '500',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 10,
-    overflow: 'hidden',
-  },
-  eventSeparator: {
-    height: 12,
   },
 });

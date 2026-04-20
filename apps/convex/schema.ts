@@ -125,6 +125,9 @@ export default defineSchema({
     password: v.optional(v.string()),
     lastLogin: v.optional(v.number()), // Unix timestamp ms
     isSuperuser: v.optional(v.boolean()),
+    // Granular platform-level roles for delegated operator access.
+    // Values: "poster_admin" (may expand later). isSuperuser/isStaff bypass this check.
+    platformRoles: v.optional(v.array(v.string())),
     username: v.optional(v.string()),
     firstName: v.optional(v.string()),
     lastName: v.optional(v.string()),
@@ -546,6 +549,10 @@ export default defineSchema({
     meetingType: v.number(), // 1=In-Person, 2=Online
     meetingLink: v.optional(v.string()),
     note: v.optional(v.string()),
+    // Shared cover image for the parent CWE. Children display this when
+    // they don't have their own — so updating the parent cover doesn't
+    // force-override any child event.
+    coverImage: v.optional(v.string()),
     status: v.string(), // 'scheduled' | 'cancelled'
     createdAt: v.number(), // Unix timestamp ms
     updatedAt: v.optional(v.number()), // Unix timestamp ms
@@ -575,6 +582,9 @@ export default defineSchema({
     locationOverride: v.optional(v.string()),
     note: v.optional(v.string()),
     coverImage: v.optional(v.string()),
+    // When the cover came from the curated poster library, this references the source.
+    // Null when the user uploaded a custom image via the fallback flow.
+    posterId: v.optional(v.id("posters")),
     createdAt: v.number(), // Unix timestamp ms
 
     // RSVP configuration
@@ -621,6 +631,13 @@ export default defineSchema({
     // Max guests (plus-ones) allowed per RSVP. Falls back to MAX_GUESTS_PER_RSVP constant.
     maxGuestsPerRsvp: v.optional(v.number()),
 
+    // Location flexibility: "address" uses locationOverride, "online" uses meetingLink,
+    // "tbd" means intentionally unspecified. Optional for backwards compatibility with
+    // legacy rows; enforced on create/update for new writes. See ADR-022.
+    locationMode: v.optional(
+      v.union(v.literal("address"), v.literal("online"), v.literal("tbd"))
+    ),
+
     // Search support (denormalized)
     communityId: v.optional(v.id("communities")), // Denormalized from group for search filtering
     searchText: v.optional(v.string()), // Denormalized: title + location + group name
@@ -641,6 +658,7 @@ export default defineSchema({
     .index("by_communityWideEvent", ["communityWideEventId"])
     .index("by_series", ["seriesId"])
     .index("by_community", ["communityId"])
+    .index("by_community_scheduledAt", ["communityId", "scheduledAt"])
     .searchIndex("search_meetings", {
       searchField: "searchText",
       filterFields: ["communityId", "status"],
@@ -1615,6 +1633,27 @@ export default defineSchema({
     .index("by_reviewedBy", ["reviewedById"]),
 
   /**
+   * Meeting Reports
+   * Content moderation reports for meetings (mirrors chatMessageFlags).
+   * Reports route to the event's group leaders. See ADR-022.
+   */
+  meetingReports: defineTable({
+    meetingId: v.id("meetings"),
+    reportedById: v.id("users"),
+    reason: v.string(), // "spam" | "inappropriate" | "other"
+    details: v.optional(v.string()),
+    status: v.string(), // "pending" | "reviewed" | "dismissed" | "actioned"
+    reviewedById: v.optional(v.id("users")),
+    reviewedAt: v.optional(v.number()), // Unix timestamp ms
+    actionTaken: v.optional(v.string()),
+    createdAt: v.number(), // Unix timestamp ms
+  })
+    .index("by_meeting", ["meetingId"])
+    .index("by_reportedBy", ["reportedById"])
+    .index("by_status", ["status"])
+    .index("by_reviewedBy", ["reviewedById"]),
+
+  /**
    * Chat User Flags
    * Content moderation flags for users (pattern of behavior).
    */
@@ -2098,6 +2137,30 @@ export default defineSchema({
     .index("by_group_assignee", ["groupId", "assigneeUserId"])
     .index("by_community_assignee", ["communityId", "assigneeUserId"])
     .index("by_communityPerson", ["communityPersonId"]),
+
+  // =============================================================================
+  // POSTERS (global curated event cover library)
+  // =============================================================================
+  // Curated by platform-level poster_admins. Global-only: every community sees
+  // the same library. Used as event cover art in the event-create flow.
+
+  posters: defineTable({
+    imageUrl: v.string(),
+    imageStorageKey: v.optional(v.string()), // R2 key for deletion
+    keywords: v.array(v.string()),
+    // Denormalized joined keywords (space-separated) for the search index.
+    searchText: v.string(),
+    uploadedById: v.id("users"),
+    active: v.boolean(), // Soft-delete flag; inactive posters hidden from picker
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_active_createdAt", ["active", "createdAt"])
+    .index("by_uploader", ["uploadedById"])
+    .searchIndex("search_posters", {
+      searchField: "searchText",
+      filterFields: ["active"],
+    }),
 
   // =============================================================================
 });

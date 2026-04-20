@@ -11,6 +11,7 @@ interface FormInputProps extends Omit<TextInputProps, 'style'> {
   required?: boolean;
   containerStyle?: any;
   inputStyle?: any;
+  formatValue?: (text: string) => string;
 }
 
 export function FormInput({
@@ -21,6 +22,7 @@ export function FormInput({
   required = false,
   containerStyle,
   inputStyle,
+  formatValue,
   ...textInputProps
 }: FormInputProps) {
   const { colors } = useTheme();
@@ -52,7 +54,7 @@ export function FormInput({
               <TextInput
                 style={[styles.input, { color: colors.text }, inputStyle]}
                 value={value || ''}
-                onChangeText={onChange}
+                onChangeText={(text) => onChange(formatValue ? formatValue(text) : text)}
                 onBlur={onBlur}
                 placeholderTextColor={colors.inputPlaceholder}
                 {...textInputProps}

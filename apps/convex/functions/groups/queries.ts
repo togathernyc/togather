@@ -87,6 +87,19 @@ export const getById = query({
       ? await ctx.db.get(group.groupTypeId)
       : null;
 
+    // Reuse the denormalized count on the group's main ("general") channel.
+    // Every active group member is a member of the main channel by design,
+    // so this avoids a .collect() scan of groupMembers (which for a 9k-
+    // member group would read thousands of rows on every reactive re-run).
+    // O(1) lookup via the by_group_type index.
+    const mainChannel = await ctx.db
+      .query("chatChannels")
+      .withIndex("by_group_type", (q) =>
+        q.eq("groupId", args.groupId).eq("channelType", "main"),
+      )
+      .first();
+    const memberCount = mainChannel?.memberCount ?? 0;
+
     // SECURITY: Only include sensitive fields for members or community admins
     const canSeeSensitiveData = isActiveMember || isCommAdmin;
 
@@ -118,6 +131,7 @@ export const getById = query({
       userRequestStatus,
       groupTypeName: groupType?.name,
       groupTypeSlug: groupType?.slug,
+      memberCount,
     };
 
     // Add sensitive fields only for authorized users

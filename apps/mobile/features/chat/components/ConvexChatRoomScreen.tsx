@@ -93,7 +93,6 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   const token = useStoredAuthToken();
   const { primaryColor } = useCommunityTheme();
   const { colors } = useTheme();
-  const { addBlockedUser } = useBlockedUsersContext();
 
   // Mutations
   const flagMessageMutation = useMutation(api.functions.messaging.flagging.flagMessage);
@@ -862,7 +861,6 @@ const ConvexChatRoomScreenInner: React.FC = () => {
                 token,
                 blockedId: targetUserId,
               });
-              addBlockedUser(targetUserId);
               Alert.alert(
                 "User Blocked",
                 `${targetUserName} has been blocked. You can unblock them from your settings.`,
@@ -881,7 +879,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
         },
       ]
     );
-  }, [selectedMessageSenderId, token, blockUserMutation, addBlockedUser]);
+  }, [selectedMessageSenderId, token, blockUserMutation]);
 
   const handleCancelReply = useCallback(() => {
     setReplyToMessageId(null);
@@ -941,9 +939,16 @@ const ConvexChatRoomScreenInner: React.FC = () => {
           displayType={displayType}
           displayImage={displayImage}
           groupTypeId={groupTypeId}
+          // Announcement groups auto-include everyone in the community, so
+          // surfacing a count next to them reads as noise ("9225 members" on
+          // every post) rather than signal. Hide for those only.
+          memberCount={
+            isAnnouncementGroup ? undefined : groupDetails?.memberCount
+          }
           onBack={handleBack}
           onMenuPress={() => setMenuVisible(true)}
           onGroupPagePress={handleGoToGroupPage}
+          onMembersPress={handleGoToMembers}
         />
         <ChatNavigation
           activeSlug={activeSlug}

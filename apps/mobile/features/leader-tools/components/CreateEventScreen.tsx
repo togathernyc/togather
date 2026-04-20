@@ -11,6 +11,7 @@ import {
   Switch,
   KeyboardAvoidingView,
   Platform,
+  ImageBackground,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -22,14 +23,18 @@ import { useGroupDetails } from "../../groups/hooks/useGroupDetails";
 import { DatePicker } from "@components/ui/DatePicker";
 import { MultiDateCalendarPicker } from "@components/ui/MultiDateCalendarPicker";
 import { ImagePickerComponent } from "@components/ui/ImagePicker";
+import { PosterPickerSheet } from "./PosterPickerSheet";
+import { getMediaUrl } from "@/utils/media";
 import {
   RsvpOptionsEditor,
   RsvpOption,
   DEFAULT_RSVP_OPTIONS,
 } from "./RsvpOptionsEditor";
 import { VisibilitySelector, VisibilityLevel } from "./VisibilitySelector";
-import { useLeaderGroups } from "../../explore/hooks/useCommunityEvents";
-import { ShareToChatModal } from "./ShareToChatModal";
+import { useCreatableGroups } from "@features/events/hooks/useCommunityEvents";
+import { useMyHostedEvents } from "@features/events/hooks/useMyEvents";
+import { useAnalytics } from "@services/analytics";
+import { InviteToEventSheet } from "./InviteToEventSheet";
 import { ConfirmModal } from "@components/ui/ConfirmModal";
 import { getGroupCoordinates, geocodeAddressAsync } from "../../groups/utils/geocodeLocation";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
@@ -47,8 +52,13 @@ interface CreateMeetingInput {
   meetingType?: number;
   meetingLink?: string;
   locationOverride?: string;
+  locationMode?: "address" | "online" | "tbd";
   note?: string;
   coverImage?: string;
+  // Nullable on update: `null` explicitly clears a previously-set curated
+  // poster reference (e.g. switching to a custom upload). Create ignores
+  // null because there's nothing to clear on insert.
+  posterId?: Id<"posters"> | null;
   rsvpEnabled?: boolean;
   rsvpOptions?: RsvpOption[];
   visibility?: VisibilityLevel;
@@ -57,15 +67,23 @@ interface CreateMeetingInput {
 export function CreateEventScreen() {
   const { colors } = useTheme();
   // All hooks must be called at the top level, before any early returns
-  const { group_id, event_id: eventIdParam, hostingGroupId } = useLocalSearchParams<{
+  const { group_id, event_id: eventIdParam, hostingGroupId, cweAdmin } = useLocalSearchParams<{
     group_id?: string;
     event_id?: string;
     hostingGroupId?: string;
+    cweAdmin?: string;
   }>();
+  // Entering from admin > community-wide events > Edit. That surface treats
+  // the CWE as a single entity, so on save we skip the per-meeting scope
+  // picker and route every field through `communityWideEvents.update` — the
+  // parent-only cover edit lands on the shared record, cascading fields
+  // propagate to every non-overridden child automatically.
+  const isCweAdminEdit = cweAdmin === "1";
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { primaryColor } = useCommunityTheme();
   const { token, user, community } = useAuth();
+  const analytics = useAnalytics();
 
   // Check if user is a community admin
   const isAdmin = user?.is_admin === true;
@@ -76,8 +94,9 @@ export function CreateEventScreen() {
   // Community-wide event toggle should only show for admins in unified mode (not editing)
   const canCreateCommunityWide = isAdmin && isUnifiedMode;
 
-  // Fetch leader groups for unified mode dropdown
-  const { data: leaderGroups, isLoading: isLoadingLeaderGroups } = useLeaderGroups();
+  // Fetch groups the user can create events in (leader + member groups).
+  // Replaces the previous leader-only source per ADR-022.
+  const { data: creatableGroups, isLoading: isLoadingCreatableGroups } = useCreatableGroups();
 
   // Fetch group types for community-wide event creation (only for admins)
   const { groupTypes, isLoading: isLoadingGroupTypes } = useGroupTypes();
@@ -109,9 +128,23 @@ export function CreateEventScreen() {
   const [title, setTitle] = useState("");
   const [location, setLocation] = useState("");
   const [isOnline, setIsOnline] = useState(false);
+  const [locationTbd, setLocationTbd] = useState(false);
   const [meetingLink, setMeetingLink] = useState("");
   const [note, setNote] = useState("");
   const [coverImage, setCoverImage] = useState<string | undefined>();
+  // True when the user tapped "Remove" on an existing cover. On save we
+  // send `coverImage: ""` so the backend patches through the removal;
+  // without this flag, an undefined `coverImage` would be interpreted as
+  // "no change" and the old cover would stick.
+  const [coverImageRemoved, setCoverImageRemoved] = useState(false);
+  // null = user explicitly cleared (picked a custom upload after having a
+  // curated poster). undefined = no change. Keeping this tri-state matters
+  // for edits: sending undefined means "don't touch" the existing posterId,
+  // while null tells the server to remove it.
+  const [posterId, setPosterId] = useState<
+    Id<"posters"> | null | undefined
+  >();
+  const [isPosterPickerOpen, setIsPosterPickerOpen] = useState(false);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
 
   // Convex action for getting R2 presigned upload URL
@@ -149,8 +182,8 @@ export function CreateEventScreen() {
   const [isSeriesDropdownOpen, setIsSeriesDropdownOpen] = useState(false);
   const [isSeriesLinking, setIsSeriesLinking] = useState(false);
 
-  // Share to chat modal state
-  const [showShareModal, setShowShareModal] = useState(false);
+  // Post-create invite sheet state
+  const [showInviteSheet, setShowInviteSheet] = useState(false);
   const [pendingMeetingId, setPendingMeetingId] = useState<string | null>(null);
 
   // Past date confirmation modal state (for admins only)
@@ -179,11 +212,45 @@ export function CreateEventScreen() {
   const { data: groupDetails } = useGroupDetails(effectiveGroupId ?? undefined);
   const groupTypeName = groupDetails?.group_type_name || "Event";
 
-  // Get selected group info from leaderGroups for display
+  // Get selected group info from creatableGroups for display
   const selectedGroup = useMemo(() => {
-    if (!selectedGroupId || !leaderGroups) return null;
-    return leaderGroups.find(g => g && g.id === selectedGroupId) || null;
-  }, [selectedGroupId, leaderGroups]);
+    if (!selectedGroupId || !creatableGroups) return null;
+    return creatableGroups.find(g => g && g.id === selectedGroupId) || null;
+  }, [selectedGroupId, creatableGroups]);
+
+  // Does the current user have leader-level privileges in the selected group?
+  // Drives visibility of leader-only controls (Series toggle, CWE toggle,
+  // leader warnings). Admins are always treated as leaders. Falsy when no
+  // group is selected yet, so we default-hide leader controls — safer than
+  // flashing them and yanking them away. See ADR-022.
+  const isLeaderOfSelectedGroup = useMemo(() => {
+    if (isAdmin) return true;
+    return selectedGroup?.isLeader === true;
+  }, [isAdmin, selectedGroup]);
+
+  // Announcement group is the natural default for members, since it's the
+  // community-wide venue and they're always joined to it (ADR-008).
+  const announcementGroup = useMemo(
+    () => creatableGroups?.find((g: any) => g && g.isAnnouncementGroup) ?? null,
+    [creatableGroups]
+  );
+  useEffect(() => {
+    if (isEditMode) return;
+    if (hostingGroupId || group_id) return;
+    if (selectedGroupId) return;
+    if (!announcementGroup) return;
+    if (isAdmin) return; // leaders/admins pick explicitly
+    setSelectedGroupId(announcementGroup.id);
+  }, [isEditMode, hostingGroupId, group_id, selectedGroupId, announcementGroup, isAdmin]);
+
+  // Non-leader 1-future-event cap enforcement (client gate — the backend
+  // enforces authoritatively). We only query when the user is actually at
+  // risk of hitting the cap (non-leader, not editing) so leaders don't pay
+  // the query cost.
+  const capGateEnabled = !isAdmin && !isEditMode && !isLeaderOfSelectedGroup;
+  const { data: myHosted } = useMyHostedEvents({ enabled: capGateEnabled });
+  const futureHostedCount = (myHosted?.upcoming?.length ?? 0) as number;
+  const capReached = capGateEnabled && futureHostedCount >= 1;
 
   // Fetch existing meeting data if editing (using Convex)
   const meetingData = useConvexQuery(
@@ -192,6 +259,23 @@ export function CreateEventScreen() {
   );
   const meeting = meetingData ?? undefined;
   const isLoadingMeeting = isEditMode && !!meetingId && meetingData === undefined;
+
+  // Admin CWE edit: prefill from the parent CWE, not the opened child. The
+  // admin screen has to pick *some* child to route through because the edit
+  // form lives under the leader-tools meeting route — but if that child has
+  // been overridden individually its title/time/cover can diverge from the
+  // parent. Saving through `communityWideEvents.update` patches every
+  // non-undefined field onto the parent, so without this override an
+  // overridden child's divergent values would silently become the parent's.
+  const parentCweData = useConvexQuery(
+    api.functions.communityWideEvents.get,
+    isCweAdminEdit && meeting?.communityWideEventId && token
+      ? {
+          token,
+          communityWideEventId: meeting.communityWideEventId as Id<"communityWideEvents">,
+        }
+      : "skip"
+  );
 
   // Query existing series for the group (edit mode series linking)
   const editGroupId = effectiveGroupId || (meeting as any)?.groupId;
@@ -205,16 +289,27 @@ export function CreateEventScreen() {
   // Initialize form from meeting data when editing
   useEffect(() => {
     if (meeting && isEditMode) {
-      if (meeting.scheduledAt) {
+      // Admin CWE edit: parent CWE owns title/time/meetingType/link/note
+      // and the shared cover. Source those from the parent so overridden
+      // child divergence can't bleed into the parent on save. rsvp/
+      // visibility/posterId still come from the child because they aren't
+      // stored on the parent — cascading those from whichever child the
+      // admin screen picked is an acceptable tradeoff.
+      const source =
+        isCweAdminEdit && parentCweData ? parentCweData : meeting;
+
+      if (source.scheduledAt) {
         // Convex stores scheduledAt as a timestamp number
-        setScheduledAt(new Date(meeting.scheduledAt));
+        setScheduledAt(new Date(source.scheduledAt));
       }
-      setTitle(meeting.title || "");
-      setLocation(meeting.locationOverride || "");
-      setIsOnline(meeting.meetingType === 2); // 2 = online
-      setMeetingLink(meeting.meetingLink || "");
-      setNote(meeting.note || "");
-      setCoverImage(meeting.coverImage || undefined);
+      setTitle(source.title || "");
+      setLocation((meeting as any).locationOverride || "");
+      setIsOnline(source.meetingType === 2); // 2 = online
+      setLocationTbd((meeting as any).locationMode === "tbd");
+      setMeetingLink(source.meetingLink || "");
+      setNote(source.note || "");
+      setCoverImage((source as any).coverImage || undefined);
+      setPosterId((meeting as any).posterId || undefined);
 
       // Initialize RSVP fields
       if (meeting.rsvpEnabled !== undefined) {
@@ -227,7 +322,7 @@ export function CreateEventScreen() {
         setVisibility(meeting.visibility as VisibilityLevel);
       }
     }
-  }, [meeting, isEditMode]);
+  }, [meeting, isEditMode, isCweAdminEdit, parentCweData]);
 
   // Debounced geocoding check for location field
   useEffect(() => {
@@ -265,52 +360,29 @@ export function CreateEventScreen() {
   const updateMeetingMutation = useAuthenticatedMutation(api.functions.meetings.index.update);
   const cancelMeetingMutation = useAuthenticatedMutation(api.functions.meetings.index.cancel);
   const cancelCommunityWideEventMutation = useAuthenticatedMutation(api.functions.communityWideEvents.cancel);
+  const updateCommunityWideEventMutation = useAuthenticatedMutation(api.functions.communityWideEvents.update);
   const createCommunityWideEventMutation = useAuthenticatedMutation(api.functions.meetings.communityEvents.createCommunityWideEvent);
   const createSeriesEventsMutation = useAuthenticatedMutation(api.functions.meetings.index.createSeriesEvents);
   const createCommunityWideSeriesMutation = useAuthenticatedMutation(api.functions.communityWideEvents.createSeries);
   const addMeetingToSeriesMutation = useAuthenticatedMutation(api.functions.eventSeries.addMeetingToSeries);
   const removeMeetingFromSeriesMutation = useAuthenticatedMutation(api.functions.eventSeries.removeMeetingFromSeries);
   const createSeriesFromMeetingsMutation = useAuthenticatedMutation(api.functions.eventSeries.createSeriesFromMeetings);
-  const postToChatMutationFn = useAuthenticatedMutation(api.functions.meetings.index.postToChat);
 
   // Mutation state tracking
   const [isCreating, setIsCreating] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
-  const [isPostingToChat, setIsPostingToChat] = useState(false);
   const [isCreatingCommunityWide, setIsCreatingCommunityWide] = useState(false);
 
-  // Show the share to chat modal
-  const showShareToChatModal = (eventMeetingId: string) => {
+  // Open the post-create invite sheet (replaces the old "post to group chat"
+  // flow — we now let the creator copy the link or use the native share sheet).
+  const showInviteSheetForMeeting = (eventMeetingId: string) => {
     setPendingMeetingId(eventMeetingId);
-    setShowShareModal(true);
+    setShowInviteSheet(true);
   };
 
-  // Handle sending the event to chat with a message
-  const handleSendToChat = async (message: string) => {
-    if (!pendingMeetingId) return;
-    setIsPostingToChat(true);
-    try {
-      await postToChatMutationFn({
-        meetingId: pendingMeetingId as Id<"meetings">,
-        message,
-      });
-      setShowShareModal(false);
-      setPendingMeetingId(null);
-      router.back();
-    } catch (error: any) {
-      Alert.alert(
-        "Error",
-        error.message || "Failed to post event to chat. Please try again."
-      );
-    } finally {
-      setIsPostingToChat(false);
-    }
-  };
-
-  // Handle skipping the share to chat
-  const handleSkipShare = () => {
-    setShowShareModal(false);
+  const handleInviteSheetClose = () => {
+    setShowInviteSheet(false);
     setPendingMeetingId(null);
     router.back();
   };
@@ -318,7 +390,7 @@ export function CreateEventScreen() {
   // Wrapper for create mutation with state tracking
   // Note: useAuthenticatedMutation auto-injects the token
   const createMeeting = {
-    mutate: async (data: { groupId: string; scheduledAt: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; note?: string; coverImage?: string; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; visibility?: VisibilityLevel }) => {
+    mutate: async (data: { groupId: string; scheduledAt: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; locationMode?: "address" | "online" | "tbd"; note?: string; coverImage?: string; posterId?: Id<"posters"> | null; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; visibility?: VisibilityLevel }) => {
       setIsCreating(true);
       try {
         const newMeetingId = await createMeetingMutation({
@@ -328,15 +400,29 @@ export function CreateEventScreen() {
           meetingType: data.meetingType ?? 1,
           meetingLink: data.meetingLink,
           locationOverride: data.locationOverride,
+          locationMode: data.locationMode,
           note: data.note,
           coverImage: data.coverImage,
+          // Create has no existing posterId to clear — drop null and only
+          // pass through a real Id, matching the create mutation's
+          // non-nullable posterId validator.
+          posterId: data.posterId ?? undefined,
           rsvpEnabled: data.rsvpEnabled,
           rsvpOptions: data.rsvpOptions,
           visibility: data.visibility,
         });
+        // ADR-022 analytics: only fire for non-leader creators so the funnel
+        // is clean (leaders creating events is the baseline, not the signal).
+        if (!isLeaderOfSelectedGroup) {
+          analytics.capture("event_created_by_member", {
+            group_id: data.groupId,
+            is_announcement_group: selectedGroup?.isAnnouncementGroup === true,
+            location_type: data.locationMode ?? null,
+          });
+        }
         // Convex automatically updates queries, so no need to invalidate
         // Show the share to chat modal
-        showShareToChatModal(newMeetingId);
+        showInviteSheetForMeeting(newMeetingId);
       } catch (error: any) {
         Alert.alert("Error", formatError(error, "Failed to create event"));
       } finally {
@@ -349,7 +435,7 @@ export function CreateEventScreen() {
   // Wrapper for update mutation with state tracking
   // Note: useAuthenticatedMutation auto-injects the token
   const updateMeeting = {
-    mutate: async (data: { meetingId: string; scheduledAt?: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; note?: string; coverImage?: string; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; visibility?: VisibilityLevel; notifyGuests?: boolean }) => {
+    mutate: async (data: { meetingId: string; scheduledAt?: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; locationMode?: "address" | "online" | "tbd"; note?: string; coverImage?: string; posterId?: Id<"posters"> | null; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; visibility?: VisibilityLevel; notifyGuests?: boolean }) => {
       setIsUpdating(true);
       try {
         await updateMeetingMutation({
@@ -359,8 +445,10 @@ export function CreateEventScreen() {
           meetingType: data.meetingType,
           meetingLink: data.meetingLink,
           locationOverride: data.locationOverride,
+          locationMode: data.locationMode,
           note: data.note,
           coverImage: data.coverImage,
+          posterId: data.posterId,
           rsvpEnabled: data.rsvpEnabled,
           rsvpOptions: data.rsvpOptions,
           visibility: data.visibility,
@@ -385,6 +473,27 @@ export function CreateEventScreen() {
         await cancelMeetingMutation({
           meetingId: data.meetingId as Id<"meetings">,
         });
+        // ADR-022 analytics. Cancel can now come from the creator too, so
+        // derive the role from actual privilege instead of bucketing every
+        // non-admin as "leader". Backend already gated who can even reach
+        // this point via `canEditMeeting`, so we just label which of the
+        // three allowed roles acted. Falls back to "leader" when we can't
+        // tell (e.g. the meeting doc hasn't loaded), which was the prior
+        // default.
+        let deleterRole: "admin" | "creator" | "leader" = "leader";
+        if (isAdmin) {
+          deleterRole = "admin";
+        } else if (
+          !!user?.id &&
+          !!(meeting as any)?.createdById &&
+          String(user.id) === String((meeting as any).createdById)
+        ) {
+          deleterRole = "creator";
+        }
+        analytics.capture("event_deleted_by_leader", {
+          event_id: data.meetingId,
+          deleter_role: deleterRole,
+        });
         // Convex automatically updates queries
         Alert.alert(
           "Event Cancelled",
@@ -401,9 +510,6 @@ export function CreateEventScreen() {
   };
 
   // Post to chat mutation state (for the modal)
-  const postToChatMutation = {
-    isPending: isPostingToChat,
-  };
 
   const handleCancelEvent = () => {
     if (!meetingId) return;
@@ -594,6 +700,14 @@ export function CreateEventScreen() {
         console.log('[CreateEvent] R2 upload complete, path:', finalCoverImage);
       }
 
+      // Derive locationMode from the UI primitives. ADR-022: every event must
+      // declare one of address/online/tbd, applied uniformly to leaders too.
+      const resolvedLocationMode: "address" | "online" | "tbd" = isOnline
+        ? "online"
+        : locationTbd
+          ? "tbd"
+          : "address";
+
       const data: CreateMeetingInput = {
         scheduledAt: isSeriesMode
           ? new Date().toISOString() // Placeholder — series paths use selectedDates + timeOfDay directly
@@ -603,9 +717,18 @@ export function CreateEventScreen() {
         meetingLink:
           isOnline && meetingLink.trim() ? meetingLink.trim() : undefined,
         locationOverride:
-          !isOnline && location.trim() ? location.trim() : undefined,
+          !isOnline && !locationTbd && location.trim()
+            ? location.trim()
+            : undefined,
+        locationMode: resolvedLocationMode,
         note: note.trim() || undefined,
-        coverImage: finalCoverImage || undefined,
+        // "" signals an explicit removal on edit — the backend stores the
+        // empty string and read paths fall back to the parent cover (for
+        // CWE children) or render no cover (for standalone events).
+        // `undefined` means "no change" so we don't clobber an existing
+        // cover on an edit that didn't touch the picker.
+        coverImage: finalCoverImage || (coverImageRemoved ? "" : undefined),
+        posterId: posterId,
         rsvpEnabled: rsvpEnabled,
         rsvpOptions: rsvpOptions.filter((opt) => opt.enabled),
         visibility: visibility,
@@ -615,8 +738,49 @@ export function CreateEventScreen() {
         const hasSeries = !!meeting?.seriesId;
         const isCommunityWide = !!meeting?.communityWideEventId;
 
-        // Determine edit scope
-        const performUpdate = (scope?: EditScope) => {
+        // Determine edit scope. Cross-cutting scopes on a community-wide
+        // event route to `communityWideEvents.update`, which cascades to every
+        // sibling. Single-meeting edits (and series-only) stay on
+        // `meetings.update`. Matches the cancel flow split.
+        const performUpdate = async (scope?: EditScope) => {
+          if (
+            isCommunityWide &&
+            (scope === "this_date_all_groups" || scope === "all_in_series") &&
+            meeting?.communityWideEventId
+          ) {
+            setIsUpdating(true);
+            try {
+              await updateCommunityWideEventMutation({
+                communityWideEventId: meeting.communityWideEventId as Id<"communityWideEvents">,
+                title: data.title,
+                scheduledAt: data.scheduledAt
+                  ? new Date(data.scheduledAt).getTime()
+                  : undefined,
+                meetingType: data.meetingType,
+                meetingLink: data.meetingLink,
+                note: data.note,
+                // Parent-only. Child detail pages fall back to this when the
+                // child has no cover of its own, so admin cover edits show up
+                // everywhere without touching leader-set per-group overrides.
+                coverImage: data.coverImage,
+                // Cascade rsvp + visibility so scope-wide edits don't
+                // silently drop these fields. Per-group `locationOverride`
+                // stays on the single-meeting path since it can't sensibly
+                // cascade across differing group addresses.
+                rsvpEnabled: data.rsvpEnabled,
+                rsvpOptions: data.rsvpOptions,
+                visibility: data.visibility,
+                scope,
+              });
+              router.back();
+            } catch (error: any) {
+              Alert.alert("Error", formatError(error, "Failed to update event"));
+            } finally {
+              setIsUpdating(false);
+            }
+            return;
+          }
+
           const updateData = scope && scope !== "this_only"
             ? { meetingId, ...data, scope }
             : { meetingId, ...data };
@@ -637,7 +801,12 @@ export function CreateEventScreen() {
           }
         };
 
-        if (hasSeries || isCommunityWide) {
+        // Admin CWE settings edit: treat the CWE as a single entity and skip
+        // the per-meeting scope picker. Every field routes through
+        // `communityWideEvents.update` with the cross-group scope.
+        if (isCweAdminEdit && isCommunityWide) {
+          performUpdate("this_date_all_groups");
+        } else if (hasSeries || isCommunityWide) {
           showEditScopePrompt({
             isCommunityWide,
             isInSeries: hasSeries,
@@ -854,7 +1023,6 @@ export function CreateEventScreen() {
   const isSubmitting =
     createMeeting.isPending ||
     updateMeeting.isPending ||
-    postToChatMutation.isPending ||
     cancelMeeting.isPending ||
     isUploadingImage ||
     isCreatingCommunityWide;
@@ -948,7 +1116,7 @@ export function CreateEventScreen() {
         >
           {/* Community-Wide Event Toggle - only show for admins in unified mode */}
           {canCreateCommunityWide && !isEditMode && (
-            <View style={styles.communityWideSection}>
+            <View style={[styles.communityWideSection, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
               <View style={styles.communityWideToggleRow}>
                 <View style={styles.communityWideToggleLabel}>
                   <Text style={[styles.label, { color: colors.text }]}>Create for all</Text>
@@ -982,8 +1150,8 @@ export function CreateEventScreen() {
                       <Text style={[styles.loadingDropdownText, { color: colors.textSecondary }]}>Loading group types...</Text>
                     </View>
                   ) : !groupTypes || groupTypes.length === 0 ? (
-                    <View style={styles.noGroupsContainer}>
-                      <Text style={styles.noGroupsText}>
+                    <View style={[styles.noGroupsContainer, { backgroundColor: colors.surfaceSecondary }]}>
+                      <Text style={[styles.noGroupsText, { color: colors.destructive }]}>
                         No group types available.
                       </Text>
                     </View>
@@ -1052,9 +1220,9 @@ export function CreateEventScreen() {
 
                   {/* Show count of groups that will receive the event */}
                   {selectedGroupTypeId && groupCountForType !== undefined && (
-                    <View style={styles.groupCountInfo}>
+                    <View style={[styles.groupCountInfo, { backgroundColor: colors.surfaceSecondary }]}>
                       <Ionicons name="information-circle" size={16} color={colors.link} />
-                      <Text style={styles.groupCountText}>
+                      <Text style={[styles.groupCountText, { color: colors.link }]}>
                         This will create events for {groupCountForType} {selectedGroupType?.name || "group"} groups
                       </Text>
                     </View>
@@ -1066,12 +1234,12 @@ export function CreateEventScreen() {
 
           {/* Community-Wide Event Edit Warning */}
           {isEditMode && meeting?.communityWideEventId && !meeting?.isOverridden && (
-            <View style={styles.communityWideWarning}>
+            <View style={[styles.communityWideWarning, { backgroundColor: colors.surfaceSecondary, borderColor: colors.warning }]}>
               <View style={styles.communityWideWarningHeader}>
                 <Ionicons name="globe-outline" size={20} color={colors.link} />
-                <Text style={styles.communityWideWarningTitle}>Community-wide event</Text>
+                <Text style={[styles.communityWideWarningTitle, { color: colors.text }]}>Community-wide event</Text>
               </View>
-              <Text style={styles.communityWideWarningText}>
+              <Text style={[styles.communityWideWarningText, { color: colors.textSecondary }]}>
                 Editing will disconnect this event from community-wide updates. Future changes to the parent event won't affect this group's event.
               </Text>
             </View>
@@ -1081,14 +1249,14 @@ export function CreateEventScreen() {
           {isUnifiedMode && !isEditMode && !isCommunityWideEnabled && (
             <View style={styles.fieldContainer}>
               <Text style={[styles.label, { color: colors.text }]}>Hosting Group *</Text>
-              {isLoadingLeaderGroups ? (
+              {isLoadingCreatableGroups ? (
                 <View style={[styles.loadingDropdown, { backgroundColor: colors.surfaceSecondary }]}>
                   <ActivityIndicator size="small" color={primaryColor} />
                   <Text style={[styles.loadingDropdownText, { color: colors.textSecondary }]}>Loading groups...</Text>
                 </View>
-              ) : !leaderGroups || leaderGroups.length === 0 ? (
-                <View style={styles.noGroupsContainer}>
-                  <Text style={styles.noGroupsText}>
+              ) : !creatableGroups || creatableGroups.length === 0 ? (
+                <View style={[styles.noGroupsContainer, { backgroundColor: colors.surfaceSecondary }]}>
+                  <Text style={[styles.noGroupsText, { color: colors.destructive }]}>
                     You don't have permission to create events for any groups.
                   </Text>
                 </View>
@@ -1105,8 +1273,16 @@ export function CreateEventScreen() {
                   >
                     {selectedGroup ? (
                       <View style={styles.selectedGroupRow}>
-                        <Text style={[styles.selectedGroupName, { color: colors.text }]}>{selectedGroup.name}</Text>
-                        <Text style={[styles.selectedGroupType, { color: colors.textSecondary }]}>{selectedGroup.groupTypeName}</Text>
+                        <Text style={[styles.selectedGroupName, { color: colors.text }]}>
+                          {(selectedGroup as any).isAnnouncementGroup
+                            ? community?.name ?? selectedGroup.name
+                            : selectedGroup.name}
+                        </Text>
+                        <Text style={[styles.selectedGroupType, { color: colors.textSecondary }]}>
+                          {(selectedGroup as any).isAnnouncementGroup
+                            ? "Hosted by you"
+                            : selectedGroup.groupTypeName}
+                        </Text>
                       </View>
                     ) : (
                       <Text style={[styles.dropdownPlaceholder, { color: colors.inputPlaceholder }]}>Select a group</Text>
@@ -1119,7 +1295,7 @@ export function CreateEventScreen() {
                   </TouchableOpacity>
                   {isGroupDropdownOpen && (
                     <View style={[styles.dropdownList, { borderColor: colors.inputBorder, backgroundColor: colors.surface }]}>
-                      {leaderGroups.filter(Boolean).map((group) => (
+                      {creatableGroups.filter(Boolean).map((group) => (
                         <TouchableOpacity
                           key={group!.id}
                           style={[
@@ -1140,9 +1316,15 @@ export function CreateEventScreen() {
                               selectedGroupId === group!.id && [styles.dropdownItemTextSelected, { color: primaryColor }],
                             ]}
                           >
-                            {group!.name}
+                            {(group as any).isAnnouncementGroup
+                              ? community?.name ?? group!.name
+                              : group!.name}
                           </Text>
-                          <Text style={[styles.dropdownItemSubtext, { color: colors.textSecondary }]}>{group!.groupTypeName}</Text>
+                          <Text style={[styles.dropdownItemSubtext, { color: colors.textSecondary }]}>
+                            {(group as any).isAnnouncementGroup
+                              ? "Community"
+                              : group!.groupTypeName}
+                          </Text>
                           {selectedGroupId === group!.id && (
                             <Ionicons name="checkmark" size={18} color={primaryColor} />
                           )}
@@ -1158,8 +1340,10 @@ export function CreateEventScreen() {
             </View>
           )}
 
-          {/* Series Toggle - shown when not editing */}
-          {!isEditMode && (
+          {/* Series Toggle - shown when not editing. Hidden (not disabled) for
+              non-leaders per ADR-022: disabled-with-tooltip feels patronising,
+              and the toggle reappears automatically if the user is promoted. */}
+          {!isEditMode && isLeaderOfSelectedGroup && (
             <View style={styles.fieldContainer}>
               <View style={styles.toggleRow}>
                 <Text style={[styles.label, { color: colors.text }]}>Create / Add to Series</Text>
@@ -1294,6 +1478,7 @@ export function CreateEventScreen() {
                   <TextInput
                     style={[styles.input, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground, color: colors.text }]}
                     placeholder="e.g., Weekly Dinner Party"
+                    placeholderTextColor={colors.inputPlaceholder}
                     value={seriesName}
                     onChangeText={setSeriesName}
                     editable={!isSubmitting}
@@ -1306,9 +1491,9 @@ export function CreateEventScreen() {
 
               {/* Summary */}
               {selectedDates.length > 0 && (
-                <View style={styles.groupCountInfo}>
+                <View style={[styles.groupCountInfo, { backgroundColor: colors.surfaceSecondary }]}>
                   <Ionicons name="information-circle" size={16} color={colors.link} />
-                  <Text style={styles.groupCountText}>
+                  <Text style={[styles.groupCountText, { color: colors.link }]}>
                     {isCommunityWideEnabled && groupCountForType
                       ? `${selectedDates.length} dates \u00b7 ${groupCountForType} groups \u00b7 ${selectedDates.length * groupCountForType} events total`
                       : `${selectedDates.length} events will be created`}
@@ -1334,6 +1519,7 @@ export function CreateEventScreen() {
             <TextInput
               style={[styles.input, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground, color: colors.text }]}
               placeholder={`e.g., "${groupTypeName}" (leave blank for default)`}
+              placeholderTextColor={colors.inputPlaceholder}
               value={title}
               onChangeText={setTitle}
               editable={!isSubmitting}
@@ -1343,21 +1529,67 @@ export function CreateEventScreen() {
             </Text>
           </View>
 
-          {/* Cover Photo */}
+          {/* Cover poster — big tappable area that opens the curated library.
+              Users can also upload their own image via the fallback button
+              inside the picker sheet (see PosterPickerSheet). */}
           <View style={styles.fieldContainer}>
-            <Text style={[styles.label, { color: colors.text }]}>Cover Photo</Text>
-            <ImagePickerComponent
-              currentImage={coverImage}
-              onImageSelected={(uri) => {
-                setCoverImage(uri);
-              }}
-              onImageRemoved={() => {
-                setCoverImage(undefined);
-              }}
-              buttonText="Add Cover Photo"
-              aspect={[16, 9]}
-              isUploading={isUploadingImage}
-            />
+            <TouchableOpacity
+              onPress={() => !isSubmitting && setIsPosterPickerOpen(true)}
+              activeOpacity={0.85}
+              style={[
+                styles.posterSlot,
+                { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
+              ]}
+            >
+              {coverImage ? (
+                <>
+                  <ImageBackground
+                    source={{ uri: getMediaUrl(coverImage) ?? coverImage }}
+                    style={styles.posterSlotImage}
+                    imageStyle={styles.posterSlotImageInner}
+                  />
+                  <TouchableOpacity
+                    onPress={() => {
+                      if (isSubmitting) return;
+                      setCoverImage(undefined);
+                      setCoverImageRemoved(true);
+                      setPosterId(null);
+                    }}
+                    activeOpacity={0.7}
+                    accessibilityLabel="Remove cover image"
+                    style={styles.posterSlotRemoveBadge}
+                  >
+                    <Ionicons name="trash-outline" size={14} color="#fff" />
+                    <Text style={styles.posterSlotEditBadgeText}>Remove</Text>
+                  </TouchableOpacity>
+                  <View style={styles.posterSlotEditBadge}>
+                    <Ionicons name="pencil" size={14} color="#fff" />
+                    <Text style={styles.posterSlotEditBadgeText}>Change</Text>
+                  </View>
+                </>
+              ) : (
+                <View style={styles.posterSlotEmpty}>
+                  <Ionicons
+                    name="image-outline"
+                    size={40}
+                    color={colors.textSecondary}
+                  />
+                  <Text
+                    style={[
+                      styles.posterSlotEmptyText,
+                      { color: colors.textSecondary },
+                    ]}
+                  >
+                    Tap to choose a poster
+                  </Text>
+                </View>
+              )}
+              {isUploadingImage ? (
+                <View style={styles.posterSlotOverlay}>
+                  <ActivityIndicator color="#fff" />
+                </View>
+              ) : null}
+            </TouchableOpacity>
           </View>
 
           {/* Meeting Type Toggle */}
@@ -1366,13 +1598,39 @@ export function CreateEventScreen() {
               <Text style={[styles.label, { color: colors.text }]}>Online Event</Text>
               <Switch
                 value={isOnline}
-                onValueChange={setIsOnline}
+                onValueChange={(value) => {
+                  setIsOnline(value);
+                  if (value) setLocationTbd(false);
+                }}
                 trackColor={{ false: colors.border, true: primaryColor }}
                 thumbColor={colors.textInverse}
                 disabled={isSubmitting}
               />
             </View>
           </View>
+
+          {/* Location TBD Toggle — applies only when not online. Required-but-
+              flexible location model per ADR-022: some events genuinely don't
+              have a venue picked yet. */}
+          {!isOnline && (
+            <View style={styles.fieldContainer}>
+              <View style={styles.toggleRow}>
+                <Text style={[styles.label, { color: colors.text }]}>Location TBD</Text>
+                <Switch
+                  value={locationTbd}
+                  onValueChange={setLocationTbd}
+                  trackColor={{ false: colors.border, true: primaryColor }}
+                  thumbColor={colors.textInverse}
+                  disabled={isSubmitting}
+                />
+              </View>
+              {locationTbd && (
+                <Text style={[styles.helperText, { color: colors.textTertiary }]}>
+                  No location yet — attendees will see "TBD" on the event page.
+                </Text>
+              )}
+            </View>
+          )}
 
           {/* Meeting Link (only if online) */}
           {isOnline && (
@@ -1381,6 +1639,7 @@ export function CreateEventScreen() {
               <TextInput
                 style={[styles.input, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground, color: colors.text }]}
                 placeholder="https://zoom.us/j/..."
+                placeholderTextColor={colors.inputPlaceholder}
                 value={meetingLink}
                 onChangeText={setMeetingLink}
                 keyboardType="url"
@@ -1390,13 +1649,14 @@ export function CreateEventScreen() {
             </View>
           )}
 
-          {/* Location (only if in-person) */}
-          {!isOnline && (
+          {/* Location (only if in-person and not TBD) */}
+          {!isOnline && !locationTbd && (
             <View style={styles.fieldContainer}>
               <Text style={[styles.label, { color: colors.text }]}>Location</Text>
               <TextInput
                 style={[styles.input, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground, color: colors.text }]}
                 placeholder="Enter full address with ZIP code"
+                placeholderTextColor={colors.inputPlaceholder}
                 value={location}
                 onChangeText={setLocation}
                 editable={!isSubmitting}
@@ -1411,9 +1671,9 @@ export function CreateEventScreen() {
                     </View>
                   )}
                   {!isCheckingLocation && locationCanBeGeocoded === false && (
-                    <View style={styles.locationWarning}>
+                    <View style={[styles.locationWarning, { backgroundColor: colors.surfaceSecondary }]}>
                       <Ionicons name="warning" size={20} color={colors.warning} />
-                      <Text style={styles.locationWarningText}>
+                      <Text style={[styles.locationWarningText, { color: colors.textSecondary }]}>
                         This address couldn't be found. Enter a full address with ZIP code (e.g., "123 Main St, Dallas, TX 75201") so this event appears on the map.
                       </Text>
                     </View>
@@ -1421,7 +1681,7 @@ export function CreateEventScreen() {
                   {!isCheckingLocation && locationCanBeGeocoded === true && (
                     <View style={styles.locationSuccess}>
                       <Ionicons name="checkmark-circle" size={16} color={colors.success} />
-                      <Text style={styles.locationSuccessText}>Location found</Text>
+                      <Text style={[styles.locationSuccessText, { color: colors.success }]}>Location found</Text>
                     </View>
                   )}
                 </>
@@ -1429,12 +1689,13 @@ export function CreateEventScreen() {
             </View>
           )}
 
-          {/* Notes */}
+          {/* Description */}
           <View style={styles.fieldContainer}>
-            <Text style={[styles.label, { color: colors.text }]}>Notes</Text>
+            <Text style={[styles.label, { color: colors.text }]}>Description</Text>
             <TextInput
               style={[styles.input, styles.textArea, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground, color: colors.text }]}
-              placeholder="Add any notes about this event..."
+              placeholder="Add a description of your event..."
+              placeholderTextColor={colors.inputPlaceholder}
               value={note}
               onChangeText={setNote}
               multiline
@@ -1620,21 +1881,39 @@ export function CreateEventScreen() {
             </View>
           )}
 
+          {/* 1-future-event cap notice for non-leaders (ADR-022). Shown
+              directly above the submit button so the disabled state doesn't
+              read as a bug. */}
+          {capReached && (
+            <View
+              style={[
+                styles.locationWarning,
+                { backgroundColor: colors.surfaceSecondary, marginTop: 16 },
+              ]}
+            >
+              <Ionicons name="information-circle" size={20} color={colors.link} />
+              <Text style={[styles.locationWarningText, { color: colors.textSecondary }]}>
+                You already have an upcoming event. Cancel or wait for it to
+                pass before creating another.
+              </Text>
+            </View>
+          )}
+
           {/* Submit Button */}
           <TouchableOpacity
             testID="submit-button"
             style={[
               styles.submitButton,
               { backgroundColor: primaryColor },
-              isSubmitting && styles.submitButtonDisabled,
+              (isSubmitting || capReached) && styles.submitButtonDisabled,
             ]}
             onPress={handleSubmit}
-            disabled={isSubmitting}
+            disabled={isSubmitting || capReached}
           >
             {isSubmitting ? (
               <ActivityIndicator color={colors.textInverse} />
             ) : (
-              <Text style={styles.submitButtonText}>
+              <Text style={[styles.submitButtonText, { color: '#fff' }]}>
                 {isEditMode ? "Save Changes" : "Create Event"}
               </Text>
             )}
@@ -1645,29 +1924,40 @@ export function CreateEventScreen() {
             <TouchableOpacity
               style={[
                 styles.cancelEventButton,
+                { backgroundColor: colors.surfaceSecondary, borderColor: colors.destructive },
                 isSubmitting && styles.cancelEventButtonDisabled,
               ]}
               onPress={handleCancelEvent}
               disabled={isSubmitting}
             >
               <Ionicons name="close-circle-outline" size={20} color={colors.destructive} />
-              <Text style={styles.cancelEventButtonText}>Cancel Event</Text>
+              <Text style={[styles.cancelEventButtonText, { color: colors.destructive }]}>Cancel Event</Text>
             </TouchableOpacity>
           )}
         </ScrollView>
 
-        {/* Share to Chat Modal */}
-        <ShareToChatModal
-          visible={showShareModal}
-          onClose={() => {
-            setShowShareModal(false);
-            setPendingMeetingId(null);
-            router.back();
-          }}
-          onSend={handleSendToChat}
-          onSkip={handleSkipShare}
-          isLoading={postToChatMutation.isPending}
+        {/* Post-create Invite Sheet — replaces the old Share-to-Group-Chat
+            modal. Copy-link + native Share covers both togather chats and
+            every external messenger. */}
+        <InviteToEventSheet
+          visible={showInviteSheet}
+          meetingId={pendingMeetingId}
           eventTitle={title || groupTypeName}
+          onClose={handleInviteSheetClose}
+        />
+
+        {/* Poster picker — curated library with keyword search + own-image upload */}
+        <PosterPickerSheet
+          visible={isPosterPickerOpen}
+          onClose={() => setIsPosterPickerOpen(false)}
+          onSelect={(sel) => {
+            setCoverImage(sel.imageUrl);
+            setCoverImageRemoved(false);
+            // Library pick → set posterId. Custom upload → null so the
+            // update mutation can explicitly clear the previous posterId
+            // (undefined would be interpreted as "no change").
+            setPosterId(sel.posterId ?? null);
+          }}
         />
 
         {/* Past Date Confirmation Modal (for admins only) */}
@@ -1718,6 +2008,73 @@ const styles = StyleSheet.create({
   },
   fieldContainer: {
     marginBottom: 20,
+  },
+  posterSlot: {
+    aspectRatio: 1,
+    borderRadius: 20,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: "hidden",
+    alignItems: "center",
+    justifyContent: "center",
+    position: "relative",
+    // Prevent the square cover from ballooning on wide viewports while the
+    // rest of the form stays full-width. 480px cap is applied unconditionally
+    // — on narrow screens the intrinsic width is smaller anyway, so the cap
+    // is a no-op there.
+    maxWidth: 480,
+    alignSelf: "center",
+    width: "100%",
+  },
+  posterSlotImage: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  posterSlotImageInner: {
+    resizeMode: "cover",
+  },
+  posterSlotEditBadge: {
+    position: "absolute",
+    bottom: 12,
+    right: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
+    backgroundColor: "rgba(0,0,0,0.55)",
+  },
+  posterSlotRemoveBadge: {
+    position: "absolute",
+    bottom: 12,
+    left: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
+    backgroundColor: "rgba(0,0,0,0.55)",
+  },
+  posterSlotEditBadgeText: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  posterSlotEmpty: {
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    padding: 24,
+  },
+  posterSlotEmptyText: {
+    fontSize: 14,
+    fontWeight: "500",
+  },
+  posterSlotOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    alignItems: "center",
+    justifyContent: "center",
   },
   label: {
     fontSize: 14,

@@ -231,7 +231,7 @@ describe("Event Blasts", () => {
             channels: ["push"],
           }
         )
-      ).rejects.toThrow("Only group leaders");
+      ).rejects.toThrow(/event creator, group leaders/i);
     });
   });
 

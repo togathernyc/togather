@@ -106,7 +106,7 @@ function EventDetailsPage() {
     if (router.canGoBack()) {
       router.back();
     } else {
-      router.push(`/(tabs)/search?view=events`);
+      router.push(`/(tabs)/events`);
     }
   };
 
@@ -137,7 +137,7 @@ function EventDetailsPage() {
     if (router.canGoBack()) {
       router.back();
     } else {
-      router.replace(`/(tabs)/search?view=events`);
+      router.replace(`/(tabs)/events`);
     }
     return null;
   }
@@ -150,7 +150,7 @@ function EventDetailsPage() {
     if (router.canGoBack()) {
       router.back();
     } else {
-      router.replace(`/(tabs)/search?view=events`);
+      router.replace(`/(tabs)/events`);
     }
     return null;
   }
@@ -186,7 +186,7 @@ function EventDetailsPage() {
     if (router.canGoBack()) {
       router.back();
     } else {
-      router.replace(`/(tabs)/search?view=events`);
+      router.replace(`/(tabs)/events`);
     }
     return null;
   }

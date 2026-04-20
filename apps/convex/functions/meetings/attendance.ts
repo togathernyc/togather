@@ -10,6 +10,7 @@ import { internal } from "../../_generated/api";
 import { Id, Doc } from "../../_generated/dataModel";
 import { now } from "../../lib/utils";
 import { requireAuth, getOptionalAuth } from "../../lib/auth";
+import { canEditMeeting } from "../../lib/meetingPermissions";
 
 // ============================================================================
 // Attendance Management
@@ -78,22 +79,13 @@ export const markAttendance = mutation({
       throw new Error("Meeting not found");
     }
 
-    // If marking attendance for someone else, verify leader/admin role
+    // Marking attendance for someone else is a host action (ADR-022):
+    // event creator, group leaders, and community admins are all allowed.
     if (args.userId !== recordedById) {
-      const recorderMembership = await ctx.db
-        .query("groupMembers")
-        .withIndex("by_group_user", (q) =>
-          q.eq("groupId", meeting.groupId).eq("userId", recordedById)
-        )
-        .first();
-
-      // Must be an active leader or admin to mark others' attendance
-      if (
-        !recorderMembership ||
-        recorderMembership.leftAt ||
-        !["leader", "admin"].includes(recorderMembership.role)
-      ) {
-        throw new Error("Only leaders can mark attendance for others");
+      if (!(await canEditMeeting(ctx, recordedById, meeting))) {
+        throw new Error(
+          "Only the event creator, group leaders, or community admins can mark attendance for others"
+        );
       }
     }
 
@@ -216,20 +208,12 @@ export const removeGuest = mutation({
       throw new Error("Meeting not found");
     }
 
-    // Verify user is a leader or admin of the group
-    const membership = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group_user", (q) =>
-        q.eq("groupId", meeting.groupId).eq("userId", userId)
-      )
-      .first();
-
-    if (
-      !membership ||
-      membership.leftAt ||
-      !["leader", "admin"].includes(membership.role)
-    ) {
-      throw new Error("Only leaders can remove guests");
+    // Managing guests is a host action (ADR-022): event creator, group
+    // leaders, and community admins can trim the list.
+    if (!(await canEditMeeting(ctx, userId, meeting))) {
+      throw new Error(
+        "Only the event creator, group leaders, or community admins can remove guests"
+      );
     }
 
     // Delete the guest record
@@ -268,20 +252,11 @@ export const updateGuest = mutation({
       throw new Error("Meeting not found");
     }
 
-    // Verify user is a leader or admin of the group
-    const membership = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group_user", (q) =>
-        q.eq("groupId", meeting.groupId).eq("userId", userId)
-      )
-      .first();
-
-    if (
-      !membership ||
-      membership.leftAt ||
-      !["leader", "admin"].includes(membership.role)
-    ) {
-      throw new Error("Only leaders can update guests");
+    // Editing guests is a host action (ADR-022): creator, leaders, admins.
+    if (!(await canEditMeeting(ctx, userId, meeting))) {
+      throw new Error(
+        "Only the event creator, group leaders, or community admins can update guests"
+      );
     }
 
     // Build update object with only provided fields

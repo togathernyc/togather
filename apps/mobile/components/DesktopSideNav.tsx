@@ -30,12 +30,20 @@ export function DesktopSideNav() {
 
   const items: NavItem[] = [
     {
-      key: "explore",
-      label: "Explore",
-      icon: "globe-outline",
-      iconFocused: "globe",
+      key: "groups",
+      label: "Groups",
+      icon: "map-outline",
+      iconFocused: "map",
       href: "/(tabs)/search",
       match: (p) => p === "/" || p.startsWith("/search"),
+    },
+    {
+      key: "events",
+      label: "Events",
+      icon: "calendar-outline",
+      iconFocused: "calendar",
+      href: "/(tabs)/events",
+      match: (p) => p.startsWith("/events"),
     },
     ...(hasCommunity
       ? [

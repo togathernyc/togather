@@ -3,93 +3,50 @@
  *
  * Provides:
  * - Set of blocked user IDs (Convex user IDs)
- * - Functions to check if a user is blocked
- * - Functions to update blocked users list
+ * - Function to check if a user is blocked
  *
- * Uses Convex messaging blocking functions instead of StreamChat.
+ * State is derived directly from the Convex query. Convex's useQuery is
+ * reactive — mutations trigger automatic re-fetches, so local optimistic
+ * updates are unnecessary and would be overwritten on the next render.
  */
-import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react';
+import React, { createContext, useContext, useCallback, useMemo, ReactNode } from 'react';
 import { useQuery, api, useStoredAuthToken } from '@services/api/convex';
-import type { Id } from '@services/api/convex';
 
 interface BlockedUsersContextValue {
   blockedUserIds: Set<string>;
   isLoading: boolean;
   isUserBlocked: (userId: string | undefined) => boolean;
-  addBlockedUser: (userId: string) => void;
-  removeBlockedUser: (userId: string) => void;
-  refreshBlockedUsers: () => Promise<void>;
 }
 
 const BlockedUsersContext = createContext<BlockedUsersContextValue | null>(null);
 
 export function BlockedUsersProvider({ children }: { children: ReactNode }) {
   const token = useStoredAuthToken();
-  const [blockedUserIds, setBlockedUserIds] = useState<Set<string>>(new Set());
-  const [isLoading, setIsLoading] = useState(true);
 
-  // Fetch blocked users from Convex
-  // useQuery returns data directly (or undefined when loading)
   const blockedUsers = useQuery(
     api.functions.messaging.blocking.getBlockedUsers,
     token ? { token } : "skip"
   );
 
-  // Update local state when query data changes
-  useEffect(() => {
-    // Loading state: undefined means loading, defined means loaded (even if empty array)
-    setIsLoading(blockedUsers === undefined && !!token);
-    
-    if (blockedUsers) {
-      // blockedUsers is an array of user objects with _id
-      const ids = new Set(blockedUsers.map(u => u._id));
-      setBlockedUserIds(ids);
-      console.log('[BlockedUsersContext] Loaded blocked users:', ids.size);
-    }
-  }, [blockedUsers, token]);
+  const blockedUserIds = useMemo(
+    () => new Set<string>(blockedUsers?.map(u => u._id as string) ?? []),
+    [blockedUsers]
+  );
 
-  // Refresh blocked users (re-fetch from Convex)
-  const refreshBlockedUsers = useCallback(async () => {
-    // The query will automatically refetch when token changes
-    // This is mainly for manual refresh scenarios
-    setIsLoading(true);
-    // Query will update automatically via useQuery
-  }, []);
+  const isLoading = blockedUsers === undefined && !!token;
 
-  // Check if a user ID is blocked (accepts Convex ID or legacy ID)
-  const isUserBlocked = useCallback((userId: string | undefined): boolean => {
-    if (!userId) return false;
-    return blockedUserIds.has(userId);
-  }, [blockedUserIds]);
+  const isUserBlocked = useCallback(
+    (userId: string | undefined): boolean => {
+      if (!userId) return false;
+      return blockedUserIds.has(userId);
+    },
+    [blockedUserIds]
+  );
 
-  // Add a user to blocked list (optimistic update)
-  const addBlockedUser = useCallback((userId: string) => {
-    setBlockedUserIds(prev => {
-      const next = new Set(prev);
-      next.add(userId);
-      return next;
-    });
-    console.log('[BlockedUsersContext] Added blocked user:', userId);
-  }, []);
-
-  // Remove a user from blocked list (optimistic update)
-  const removeBlockedUser = useCallback((userId: string) => {
-    setBlockedUserIds(prev => {
-      const next = new Set(prev);
-      next.delete(userId);
-      return next;
-    });
-    console.log('[BlockedUsersContext] Removed blocked user:', userId);
-  }, []);
-
-  const value = useMemo(() => ({
-    blockedUserIds,
-    isLoading,
-    isUserBlocked,
-    addBlockedUser,
-    removeBlockedUser,
-    refreshBlockedUsers,
-  }), [blockedUserIds, isLoading, isUserBlocked, addBlockedUser, removeBlockedUser, refreshBlockedUsers]);
+  const value = useMemo(
+    () => ({ blockedUserIds, isLoading, isUserBlocked }),
+    [blockedUserIds, isLoading, isUserBlocked]
+  );
 
   return (
     <BlockedUsersContext.Provider value={value}>

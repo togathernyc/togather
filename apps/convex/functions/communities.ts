@@ -573,7 +573,48 @@ async function removeUserFromCommunity(
     await ctx.db.delete(cp._id);
   }
 
-  // 4. Schedule background cleanup for group memberships, followups, RSVPs, channels
+  // 4. Transfer ownership of future meetings to the primary admin. ADR-022:
+  //    member-created events are allowed to outlive the creator's community
+  //    membership — we don't want to orphan them or hide them from existing
+  //    RSVPers. The primary admin inherits silently.
+  const primaryAdminRow = await ctx.db
+    .query("userCommunities")
+    .withIndex("by_community", (q: any) => q.eq("communityId", communityId))
+    .filter((q: any) =>
+      q.and(
+        q.eq(q.field("roles"), PRIMARY_ADMIN_ROLE),
+        q.eq(q.field("status"), 1)
+      )
+    )
+    .first();
+  if (primaryAdminRow) {
+    const futureMeetings = await ctx.db
+      .query("meetings")
+      .withIndex("by_createdBy", (q: any) => q.eq("createdById", userId))
+      .collect();
+    const nowMs = now();
+    let transferred = 0;
+    for (const meeting of futureMeetings) {
+      if (
+        meeting.communityId !== communityId ||
+        meeting.scheduledAt <= nowMs ||
+        meeting.status === "cancelled" ||
+        meeting.status === "completed"
+      ) {
+        continue;
+      }
+      await ctx.db.patch(meeting._id, { createdById: primaryAdminRow.userId });
+      transferred++;
+    }
+    if (transferred > 0) {
+      console.log(
+        `${logPrefix} Transferred ${transferred} future meeting(s) to primary admin`,
+        { userId, communityId, primaryAdminId: primaryAdminRow.userId }
+      );
+    }
+  }
+
+  // 5. Schedule background cleanup for group memberships, followups, RSVPs, channels
   await ctx.scheduler.runAfter(
     0,
     internal.functions.communities.cleanupRemovedMemberGroups,

@@ -16,7 +16,7 @@ import {
   RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { COLORS } from '../constants';
+import { COLORS } from '@features/explore/constants';
 import { EventCard } from './EventCard';
 import type { CommunityEvent } from '../hooks/useCommunityEvents';
 

@@ -5,10 +5,47 @@
  */
 
 import { v } from "convex/values";
+import type { QueryCtx } from "../../_generated/server";
 import { query } from "../../_generated/server";
 import { Id, Doc } from "../../_generated/dataModel";
 import { now, getMediaUrl } from "../../lib/utils";
 import { getOptionalAuth } from "../../lib/auth";
+
+/**
+ * Resolve effective cover images for a batch of meetings, using the CWE
+ * parent's cover as a fallback when a child has none. `createCommunityWideEvent`
+ * no longer stamps the cover on every child, so list/bucket queries have to
+ * resolve the parent here or new CWE events render without artwork.
+ */
+async function resolveCoverImages(
+  ctx: QueryCtx,
+  meetings: ReadonlyArray<{
+    coverImage?: string;
+    communityWideEventId?: Id<"communityWideEvents">;
+  }>
+): Promise<Array<string | undefined>> {
+  const parentIds = new Set<Id<"communityWideEvents">>();
+  meetings.forEach((m) => {
+    if (!m.coverImage && m.communityWideEventId) {
+      parentIds.add(m.communityWideEventId);
+    }
+  });
+  const parentCoverById = new Map<string, string | undefined>();
+  if (parentIds.size > 0) {
+    const parents = await Promise.all(
+      [...parentIds].map((id) => ctx.db.get(id))
+    );
+    parents.forEach((p) => {
+      if (p) parentCoverById.set(p._id, (p as any).coverImage);
+    });
+  }
+  return meetings.map((m) =>
+    m.coverImage ??
+    (m.communityWideEventId
+      ? parentCoverById.get(m.communityWideEventId)
+      : undefined)
+  );
+}
 
 /**
  * List all events in a community that the user has access to.
@@ -227,8 +264,10 @@ export const communityEvents = query({
       users.filter((u): u is Doc<"users"> => u !== null).map((u) => [u._id, u])
     );
 
+    const effectiveCovers = await resolveCoverImages(ctx, meetings);
+
     // Build results using pre-fetched data
-    const results = meetings.map((meeting) => {
+    const results = meetings.map((meeting, index) => {
       const goingRsvps = rsvpsByMeeting.get(meeting._id) || [];
       const groupType = groupTypesMap.get(meeting.group.groupTypeId);
 
@@ -261,7 +300,7 @@ export const communityEvents = query({
           | "group"
           | "community"
           | "public",
-        coverImage: getMediaUrl(meeting.coverImage),
+        coverImage: getMediaUrl(effectiveCovers[index]),
         locationOverride: meeting.locationOverride || null,
         meetingType: meeting.meetingType,
         rsvpEnabled: meeting.rsvpEnabled ?? true,
@@ -411,7 +450,12 @@ export const myRsvpEvents = query({
       .sort((a, b) => a!.meeting.scheduledAt - b!.meeting.scheduledAt)
       .slice(0, limit);
 
-    const events = validMeetings.map((item) => ({
+    const effectiveCovers = await resolveCoverImages(
+      ctx,
+      validMeetings.map((item) => item!.meeting)
+    );
+
+    const events = validMeetings.map((item, index) => ({
       id: item!.meeting._id,
       shortId: item!.meeting.shortId || null,
       title: item!.meeting.title || null,
@@ -421,7 +465,7 @@ export const myRsvpEvents = query({
         | "group"
         | "community"
         | "public",
-      coverImage: getMediaUrl(item!.meeting.coverImage),
+      coverImage: getMediaUrl(effectiveCovers[index]),
       locationOverride: item!.meeting.locationOverride || null,
       meetingType: item!.meeting.meetingType,
       rsvpEnabled: item!.meeting.rsvpEnabled ?? true,
@@ -555,10 +599,13 @@ export const searchEvents = query({
       groups.filter(Boolean).map((g) => [g!._id, g!])
     );
 
+    const effectiveCovers = await resolveCoverImages(ctx, events);
+
     // Return enriched results
     return {
-      events: events.map((meeting) => {
+      events: events.map((meeting, index) => {
         const group = groupMap.get(meeting.groupId);
+        const cover = effectiveCovers[index];
         return {
           _id: meeting._id,
           title: meeting.title || "Untitled Event",
@@ -568,9 +615,7 @@ export const searchEvents = query({
           locationOverride: meeting.locationOverride,
           shortId: meeting.shortId,
           visibility: meeting.visibility,
-          coverImage: meeting.coverImage
-            ? getMediaUrl(meeting.coverImage)
-            : null,
+          coverImage: cover ? getMediaUrl(cover) : null,
           group: group
             ? {
                 _id: group._id,

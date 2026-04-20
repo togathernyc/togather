@@ -19,7 +19,7 @@ import { Avatar, AppImage, CommunityWideBadge } from '@components/ui';
 import { useAuth } from '@providers/AuthProvider';
 import { formatTimeWithTimezone } from '@togather/shared';
 import { format, toZonedTime } from 'date-fns-tz';
-import { COLORS } from '../constants';
+import { COLORS } from '@features/explore/constants';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
 import type { CommunityEvent } from '../hooks/useCommunityEvents';
 

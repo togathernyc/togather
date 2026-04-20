@@ -407,31 +407,57 @@ export const resolveAndUpdateCount = internalAction({
 export const resolveAndSend = internalAction({
   args: { broadcastId: v.id("adminBroadcasts") },
   handler: async (ctx, args) => {
-    const broadcast = await ctx.runQuery(internal.functions.adminBroadcasts.getBroadcast, {
-      broadcastId: args.broadcastId,
-    });
-    if (!broadcast) return;
+    const logPrefix = `[broadcast ${args.broadcastId}]`;
+    try {
+      const broadcast = await ctx.runQuery(internal.functions.adminBroadcasts.getBroadcast, {
+        broadcastId: args.broadcastId,
+      });
+      if (!broadcast) {
+        console.error(`${logPrefix} resolveAndSend: broadcast not found`);
+        return;
+      }
+      console.log(
+        `${logPrefix} resolveAndSend start: community=${broadcast.communityId} criteria=${JSON.stringify(broadcast.targetCriteria)} channels=${broadcast.channels.join(",")}`
+      );
 
-    const { userIds, perUserDeepLinks } = await resolveTargetUsersAction(ctx, broadcast.communityId as Id<"communities">, broadcast.targetCriteria);
+      const { userIds, perUserDeepLinks } = await resolveTargetUsersAction(ctx, broadcast.communityId as Id<"communities">, broadcast.targetCriteria);
+      console.log(
+        `${logPrefix} resolveAndSend: resolved ${userIds.length} target users` +
+          (perUserDeepLinks ? ` (${perUserDeepLinks.size} per-user deep links)` : "")
+      );
 
-    await ctx.runMutation(internal.functions.adminBroadcasts.updateTargetCount, {
-      broadcastId: args.broadcastId,
-      count: userIds.length,
-    });
+      if (userIds.length === 0) {
+        console.warn(
+          `${logPrefix} resolveAndSend: targeting produced 0 users — nothing to deliver`
+        );
+      }
 
-    // Convert Map to plain object for serialization
-    const deepLinksObj: Record<string, string> = {};
-    if (perUserDeepLinks) {
-      for (const [k, v] of perUserDeepLinks) deepLinksObj[k] = v;
+      await ctx.runMutation(internal.functions.adminBroadcasts.updateTargetCount, {
+        broadcastId: args.broadcastId,
+        count: userIds.length,
+      });
+
+      // Convert Map to plain object for serialization
+      const deepLinksObj: Record<string, string> = {};
+      if (perUserDeepLinks) {
+        for (const [k, v] of perUserDeepLinks) deepLinksObj[k] = v;
+      }
+
+      // Delegate to sendToUsers
+      await ctx.runAction(internal.functions.adminBroadcasts.sendToUsers, {
+        broadcastId: args.broadcastId,
+        userIds,
+        isTest: false,
+        perUserDeepLinks: Object.keys(deepLinksObj).length > 0 ? deepLinksObj : undefined,
+      });
+      console.log(`${logPrefix} resolveAndSend: complete`);
+    } catch (err) {
+      console.error(
+        `${logPrefix} resolveAndSend FAILED:`,
+        err instanceof Error ? err.stack || err.message : String(err)
+      );
+      throw err;
     }
-
-    // Delegate to sendToUsers
-    await ctx.runAction(internal.functions.adminBroadcasts.sendToUsers, {
-      broadcastId: args.broadcastId,
-      userIds,
-      isTest: false,
-      perUserDeepLinks: Object.keys(deepLinksObj).length > 0 ? deepLinksObj : undefined,
-    });
   },
 });
 
@@ -443,10 +469,17 @@ export const sendToUsers = internalAction({
     perUserDeepLinks: v.optional(v.any()), // Record<string, string> — userId → deep link URL
   },
   handler: async (ctx, args) => {
+    const logPrefix = `[broadcast ${args.broadcastId}${args.isTest ? " TEST" : ""}]`;
     const broadcast = await ctx.runQuery(internal.functions.adminBroadcasts.getBroadcast, {
       broadcastId: args.broadcastId,
     });
-    if (!broadcast) return;
+    if (!broadcast) {
+      console.error(`${logPrefix} sendToUsers: broadcast not found`);
+      return;
+    }
+    console.log(
+      `${logPrefix} sendToUsers start: ${args.userIds.length} users, channels=${broadcast.channels.join(",")}`
+    );
 
     const perUserLinks = (args.perUserDeepLinks || {}) as Record<string, string>;
     const results = { pushSucceeded: 0, pushFailed: 0, emailSucceeded: 0, emailFailed: 0 };
@@ -462,6 +495,16 @@ export const sendToUsers = internalAction({
           internal.functions.notifications.tokens.getActiveTokensForUsers,
           { userIds: args.userIds }
         );
+
+      const totalTokens = tokenResults.reduce((sum, r) => sum + r.tokens.length, 0);
+      console.log(
+        `${logPrefix} push: ${tokenResults.length}/${args.userIds.length} users have tokens in env=${getCurrentEnvironment()} (${totalTokens} tokens total)`
+      );
+      if (tokenResults.length === 0 && args.userIds.length > 0) {
+        console.warn(
+          `${logPrefix} push: ZERO users have active push tokens in env=${getCurrentEnvironment()} — broadcast will not deliver via push`
+        );
+      }
 
       const notifications = tokenResults.flatMap(
         (result: { userId: string; tokens: string[] }) =>
@@ -503,6 +546,17 @@ export const sendToUsers = internalAction({
 
       results.pushSucceeded = tickets.filter((t) => t.ok).length;
       results.pushFailed = tickets.length - results.pushSucceeded;
+
+      // Log a sample of error messages so malformed-payload or token-invalid
+      // failures are visible without dumping every ticket.
+      const errorSamples = tickets
+        .filter((t) => !t.ok && t.error)
+        .slice(0, 5)
+        .map((t) => t.error);
+      console.log(
+        `${logPrefix} push: sent ${results.pushSucceeded}/${tickets.length} tickets ok` +
+          (errorSamples.length > 0 ? ` | first errors: ${errorSamples.join(" | ")}` : "")
+      );
     }
 
     if (broadcast.channels.includes("email")) {
@@ -513,6 +567,15 @@ export const sendToUsers = internalAction({
       const eligible = userEmails.filter(
         (u): u is { userId: Id<"users">; email: string } => !!u.email,
       );
+      console.log(
+        `${logPrefix} email: ${eligible.length}/${args.userIds.length} users eligible (have address + opted in)`
+      );
+      if (eligible.length === 0 && args.userIds.length > 0) {
+        console.warn(
+          `${logPrefix} email: ZERO eligible recipients — broadcast will not deliver via email`
+        );
+      }
+
       const emails = eligible.map((u) => ({
         to: u.email,
         subject: broadcast.title,
@@ -530,6 +593,9 @@ export const sendToUsers = internalAction({
         eligible.forEach((u, i) => {
           emailOutcome.set(u.userId, emailResults[i]?.success ? "sent" : "failed");
         });
+        console.log(
+          `${logPrefix} email: sent ${results.emailSucceeded}/${emails.length} ok`
+        );
       }
     }
 
@@ -537,6 +603,15 @@ export const sendToUsers = internalAction({
       ...pushOutcome.keys(),
       ...emailOutcome.keys(),
     ]);
+    console.log(
+      `${logPrefix} summary: push ${results.pushSucceeded}/${results.pushSucceeded + results.pushFailed} ok, email ${results.emailSucceeded}/${results.emailSucceeded + results.emailFailed} ok, ${allReachedUserIds.size} unique users touched`
+    );
+
+    if (!args.isTest && allReachedUserIds.size === 0) {
+      console.warn(
+        `${logPrefix} no notification rows written — no user was reached on any channel. Check earlier logs for reason.`
+      );
+    }
 
     if (!args.isTest && allReachedUserIds.size > 0) {
       const notificationRecords = Array.from(allReachedUserIds).map((userId) => {

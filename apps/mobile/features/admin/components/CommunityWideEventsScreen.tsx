@@ -149,8 +149,12 @@ export function CommunityWideEventsScreen() {
       }
       const dateStr = format(new Date(event.scheduledAt), "EEE, MMM d, yyyy 'at' h:mm a");
       const eventIdentifier = `id-${event.firstChildMeetingId}|${encodeURIComponent(dateStr)}`;
+      // `?cweAdmin=1` tells CreateEventScreen this edit originates from the
+      // admin CWE settings surface. The save path will skip the per-meeting
+      // scope picker and write to the parent CWE directly, so cover edits
+      // land on the shared parent (not the one group we opened on).
       router.push(
-        `/(user)/leader-tools/${event.firstChildGroupId}/events/${eventIdentifier}/edit`
+        `/(user)/leader-tools/${event.firstChildGroupId}/events/${eventIdentifier}/edit?cweAdmin=1`
       );
     },
     [router]

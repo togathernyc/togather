@@ -102,6 +102,7 @@ export const createCommunityWideEvent = mutation({
       meetingType: args.meetingType,
       meetingLink: args.meetingLink,
       note: args.note,
+      coverImage: args.coverImage,
       status: "scheduled",
       createdAt: timestamp,
     });
@@ -129,7 +130,10 @@ export const createCommunityWideEvent = mutation({
         meetingType: args.meetingType,
         meetingLink: args.meetingLink,
         note: args.note,
-        coverImage: args.coverImage,
+        // coverImage lives on the parent CWE only. Children fall back to it
+        // via the read paths so the shared cover propagates without writing
+        // to every row; leaders can still override per-group via
+        // `meetings.update`.
         status: "scheduled",
         visibility: args.visibility || "community",
         createdById: userId,
