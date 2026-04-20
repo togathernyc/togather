@@ -23,6 +23,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import type { Id } from '@services/api/convex';
 import { useImageUpload } from '../hooks/useImageUpload';
+import { useWebEnterToSend } from '../hooks/useWebEnterToSend';
 import { useFileUpload, type SelectedFile } from '../hooks/useFileUpload';
 import { useSendMessage } from '../hooks/useConvexSendMessage';
 import { useConnectionStatus } from '@providers/ConnectionProvider';
@@ -795,6 +796,9 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   }, [setTyping]);
 
   const canSend = (text.trim().length > 0 || uploadedImageUrls.length > 0 || uploadedFile !== null || uploadedVideo !== null) && !isSending && !uploading;
+
+  // Web: Enter sends, Shift+Enter newlines. Detached while the voice recorder replaces the input.
+  useWebEnterToSend(textInputRef, canSend, handleSend, !isVoiceRecording);
 
   // Build attachment panel options (WhatsApp-style grid)
   const attachmentOptions = React.useMemo(() => {
