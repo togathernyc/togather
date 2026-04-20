@@ -61,18 +61,26 @@ export function useImageUpload(): UseImageUploadResult {
     setProgress(0);
 
     try {
-      // Extract filename and content type
-      let filename = imageUri.split('/').pop() || 'chat-image.jpg';
-      const match = /\.(\w+)$/.exec(filename);
-      const ext = match ? match[1].toLowerCase() : 'jpg';
-      const contentType = `image/${ext === 'jpg' ? 'jpeg' : ext}`;
+      let filename: string;
+      let contentType: string;
+      let webBlob: Blob | null = null;
 
-      // On web, blob URIs have no file extension — append one so the backend accepts it
-      if (!match) {
-        filename = `${filename}.${ext}`;
+      if (Platform.OS === 'web') {
+        // Fetch the blob first so we can read its real MIME (expo-image-picker on web
+        // returns extensionless blob: URIs, but the Blob object carries the correct type).
+        const response = await fetch(imageUri);
+        webBlob = await response.blob();
+        contentType = webBlob.type || 'image/jpeg';
+        const ext = contentType.split('/')[1] || 'jpg';
+        const rawName = imageUri.split('/').pop() || 'chat-image';
+        filename = /\.\w+$/.test(rawName) ? rawName : `${rawName}.${ext}`;
+      } else {
+        filename = imageUri.split('/').pop() || 'chat-image.jpg';
+        const match = /\.(\w+)$/.exec(filename);
+        const ext = match ? match[1].toLowerCase() : 'jpg';
+        contentType = `image/${ext === 'jpg' ? 'jpeg' : ext}`;
       }
 
-      // Step 1: Get R2 presigned upload URL
       setProgress(10);
       const { uploadUrl, storagePath } = await getR2UploadUrl({
         fileName: filename,
@@ -80,17 +88,13 @@ export function useImageUpload(): UseImageUploadResult {
         folder: 'chat',
       });
 
-      // Step 2: Upload file to R2 (requires R2 CORS to be configured for web)
+      // Upload file to R2 (web requires R2 CORS to be configured)
       setProgress(20);
 
       if (Platform.OS === 'web') {
-        // Web: Use fetch/blob
-        const response = await fetch(imageUri);
-        const blob = await response.blob();
-
         const uploadResponse = await fetch(uploadUrl, {
           method: 'PUT',
-          body: blob,
+          body: webBlob!,
           headers: {
             'Content-Type': contentType,
           },
