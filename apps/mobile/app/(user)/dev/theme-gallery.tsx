@@ -33,6 +33,7 @@ import {
   darkColors,
   type ThemeColors,
 } from "@/theme/colors";
+import { defaultFonts } from "@/theme/fonts";
 import {
   Button,
   Card,
@@ -1050,10 +1051,12 @@ export default function ThemeGalleryScreen() {
   const overrideValue = useMemo(
     () => ({
       colors: effectiveScheme === "dark" ? darkColors : lightColors,
+      fonts: defaultFonts,
       isDark: effectiveScheme === "dark",
       colorScheme: effectiveScheme,
       preference: mode,
       setPreference: () => {},
+      fontsLoading: false,
     }),
     [effectiveScheme, mode]
   );

@@ -383,13 +383,27 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
               style={
                 [
                   {
+                    "includeFontPadding": false,
+                  },
+                  {
                     "fontSize": 20,
                     "fontWeight": "600",
-                    "marginBottom": 4,
+                    "lineHeight": 26,
                   },
                   {
                     "color": "#1a1a1a",
+                    "fontFamily": "System",
                   },
+                  [
+                    {
+                      "fontSize": 20,
+                      "fontWeight": "600",
+                      "marginBottom": 4,
+                    },
+                    {
+                      "color": "#1a1a1a",
+                    },
+                  ],
                 ]
               }
             >
@@ -1342,13 +1356,27 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
               style={
                 [
                   {
+                    "includeFontPadding": false,
+                  },
+                  {
                     "fontSize": 20,
                     "fontWeight": "600",
-                    "marginBottom": 4,
+                    "lineHeight": 26,
                   },
                   {
                     "color": "#1a1a1a",
+                    "fontFamily": "System",
                   },
+                  [
+                    {
+                      "fontSize": 20,
+                      "fontWeight": "600",
+                      "marginBottom": 4,
+                    },
+                    {
+                      "color": "#1a1a1a",
+                    },
+                  ],
                 ]
               }
             >

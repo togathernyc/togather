@@ -21,6 +21,7 @@ import { useNotifications } from '@providers/NotificationProvider';
 import { useQuery, useAuthenticatedMutation, useMutation, api } from '@services/api/convex';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
 import { useTheme } from '@hooks/useTheme';
+import { ThemedHeading } from '@components/ui/ThemedHeading';
 import { useAuth } from '@providers/AuthProvider';
 import type { Id } from '@services/api/convex';
 
@@ -130,7 +131,7 @@ export const NotificationPreferencesSection: React.FC = () => {
   if (isLoading) {
     return (
       <View style={[styles.section, { backgroundColor: colors.surface }]}>
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>Notifications</Text>
+        <ThemedHeading level={2} style={[styles.sectionTitle, { color: colors.text }]}>Notifications</ThemedHeading>
         <ActivityIndicator style={styles.loader} />
       </View>
     );
@@ -139,7 +140,7 @@ export const NotificationPreferencesSection: React.FC = () => {
   if (!preferences) {
     return (
       <View style={[styles.section, { backgroundColor: colors.surface }]}>
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>Notifications</Text>
+        <ThemedHeading level={2} style={[styles.sectionTitle, { color: colors.text }]}>Notifications</ThemedHeading>
         <Text style={[styles.errorText, { color: colors.error }]}>Failed to load notification settings</Text>
         <TouchableOpacity
           style={[styles.retryButton, { backgroundColor: colors.surfaceSecondary }]}

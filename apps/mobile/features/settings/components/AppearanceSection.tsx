@@ -2,6 +2,7 @@ import React from "react";
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@hooks/useTheme";
+import { ThemedHeading } from "@components/ui/ThemedHeading";
 import type { ThemePreference } from "@providers/ThemeProvider";
 import {
   hearthColors,
@@ -39,7 +40,7 @@ export function AppearanceSection() {
 
   return (
     <View style={[styles.section, { backgroundColor: colors.surface }]}>
-      <Text style={[styles.sectionTitle, { color: colors.text }]}>Appearance</Text>
+      <ThemedHeading level={2} style={[styles.sectionTitle, { color: colors.text }]}>Appearance</ThemedHeading>
       <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>
         Choose how Togather looks. Auto follows your device setting; designs apply custom colors and fonts across the app.
       </Text>

@@ -12,6 +12,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Group } from "../types";
 import { formatCadence } from "../utils";
 import { AppImageBackground } from "@components/ui/AppImageBackground";
+import { ThemedHeading } from "@components/ui/ThemedHeading";
 import { useTheme } from "@hooks/useTheme";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
@@ -68,16 +69,17 @@ export function GroupHeader({ group, onMenuPress, showMenu = true }: GroupHeader
 
       {/* Group name and cadence */}
       <View style={styles.textContainer}>
-        <Text 
+        <ThemedHeading
+          level={1}
           style={[
-            styles.groupName, 
+            styles.groupName,
             { color: textColor },
-            !hasImage && styles.groupNameNoImage
-          ]} 
+            !hasImage && styles.groupNameNoImage,
+          ]}
           numberOfLines={2}
         >
           {groupName}
-        </Text>
+        </ThemedHeading>
         {cadence && (
           <Text 
             style={[

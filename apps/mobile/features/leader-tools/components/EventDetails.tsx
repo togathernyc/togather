@@ -32,6 +32,7 @@ import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { DOMAIN_CONFIG } from "@togather/shared";
 import * as Clipboard from "expo-clipboard";
 import { DragHandle } from "@components/ui/DragHandle";
+import { ThemedHeading } from "@components/ui/ThemedHeading";
 import { useTheme } from "@hooks/useTheme";
 import { EventBlastSheet } from "./EventBlastSheet";
 import { EventBlastHistory } from "./EventBlastHistory";
@@ -333,9 +334,9 @@ export function EventDetails({
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
         <View style={styles.headerContent}>
-          <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
+          <ThemedHeading level={2} style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
             {displayTitle}
-          </Text>
+          </ThemedHeading>
         </View>
         {/* Share Button */}
         <TouchableOpacity

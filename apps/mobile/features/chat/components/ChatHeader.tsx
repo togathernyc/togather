@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { AppImage } from "@components/ui";
+import { ThemedHeading } from "@components/ui/ThemedHeading";
 import { useTheme } from "@hooks/useTheme";
 import { getGroupTypeColorScheme } from "../../../constants/groupTypes";
 import { useIsDesktopWeb } from "../../../hooks/useIsDesktopWeb";
@@ -63,9 +64,9 @@ export const ChatHeader = memo(function ChatHeader({
 
       {/* Group Info */}
       <View style={styles.headerInfo}>
-        <Text style={[styles.groupName, { color: themeColors.text }]} numberOfLines={1}>
+        <ThemedHeading level={3} style={[styles.groupName, { color: themeColors.text }]} numberOfLines={1}>
           {displayName}
-        </Text>
+        </ThemedHeading>
         {displayType && (
           <View style={[styles.headerBadge, { backgroundColor: badgeColors.bg }]}>
             <Text style={[styles.headerBadgeText, { color: badgeColors.text }]}>

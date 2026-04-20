@@ -26,6 +26,7 @@ import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { Environment } from "@services/environment";
 import { useDevToolsEscapeHatch } from "@hooks/useDevToolsEscapeHatch";
 import { useTheme } from "@hooks/useTheme";
+import { ThemedHeading } from "@components/ui/ThemedHeading";
 
 const DEVELOPER_EMAIL = "togather@supa.media";
 
@@ -246,7 +247,7 @@ ${logs || "No logs captured yet. Try reproducing the issue first."}`;
 
   return (
     <View style={[styles.section, { backgroundColor: colors.surface }]}>
-      <Text style={[styles.sectionTitle, { color: colors.text }]}>App Info</Text>
+      <ThemedHeading level={2} style={[styles.sectionTitle, { color: colors.text }]}>App Info</ThemedHeading>
 
       {/* Version row - tappable for dev tools escape hatch */}
       <TouchableOpacity

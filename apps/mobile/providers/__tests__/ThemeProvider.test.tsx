@@ -3,7 +3,7 @@ import { Text } from 'react-native';
 import { act, render, waitFor } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { ThemeProvider, ThemeContext } from '../ThemeProvider';
+import { ThemeProvider, ThemeContext, type ThemeContextValue } from '../ThemeProvider';
 import {
   hearthColors,
   consoleColors,
@@ -27,7 +27,7 @@ jest.mock('@/theme/fontLoader', () => ({
 const getItemMock = AsyncStorage.getItem as jest.Mock;
 const setItemMock = AsyncStorage.setItem as jest.Mock;
 
-function TestConsumer({ onValue }: { onValue: (ctx: ReturnType<typeof useContext<typeof ThemeContext>>) => void }) {
+function TestConsumer({ onValue }: { onValue: (ctx: ThemeContextValue) => void }) {
   const ctx = useContext(ThemeContext);
   onValue(ctx);
   return <Text>ok</Text>;
@@ -35,7 +35,7 @@ function TestConsumer({ onValue }: { onValue: (ctx: ReturnType<typeof useContext
 
 async function mountWithStoredPreference(stored: string | null) {
   getItemMock.mockResolvedValueOnce(stored);
-  let captured: any;
+  let captured: ThemeContextValue | undefined;
   const result = render(
     <ThemeProvider>
       <TestConsumer onValue={(v) => (captured = v)} />
@@ -43,7 +43,7 @@ async function mountWithStoredPreference(stored: string | null) {
   );
   // Flush effects that read AsyncStorage
   await waitFor(() => expect(getItemMock).toHaveBeenCalled());
-  return { result, read: () => captured };
+  return { result, read: () => captured! };
 }
 
 describe('ThemeProvider', () => {

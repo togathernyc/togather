@@ -2,6 +2,7 @@ import React from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Platform } from "react-native";
 import { useRouter } from "expo-router";
 import { Avatar, AppImage } from "@components/ui";
+import { ThemedHeading } from "@components/ui/ThemedHeading";
 import { getGroupTypeLabel } from "@features/groups/utils";
 import { useAuth } from "@providers/AuthProvider";
 import { Group, GroupMember } from "@features/groups/types";
@@ -101,9 +102,9 @@ export function GroupPreviewCard({ group }: GroupPreviewCardProps) {
         )}
 
         {/* Group Name */}
-        <Text style={styles.groupName} numberOfLines={2}>
+        <ThemedHeading level={3} style={styles.groupName} numberOfLines={2}>
           {groupName}
-        </Text>
+        </ThemedHeading>
 
         {/* Location */}
         {locationString && (

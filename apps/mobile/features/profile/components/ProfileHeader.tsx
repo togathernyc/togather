@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Avatar, Card } from '@components/ui';
+import { ThemedHeading } from '@components/ui/ThemedHeading';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@hooks/useTheme';
 import { useRouter } from 'expo-router';
@@ -31,9 +32,9 @@ export function ProfileHeader({ user }: ProfileHeaderProps) {
           size={80}
         />
         <View style={styles.profileInfo}>
-          <Text style={[styles.name, { color: colors.text }]}>
+          <ThemedHeading level={2} style={[styles.name, { color: colors.text }]}>
             {user?.first_name} {user?.last_name}
-          </Text>
+          </ThemedHeading>
           <Text style={[styles.email, { color: colors.textSecondary }]}>{user?.email}</Text>
           {user?.phone && (
             <View style={styles.phoneContainer}>
