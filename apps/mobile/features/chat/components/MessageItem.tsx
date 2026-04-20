@@ -16,6 +16,7 @@ import {
   Text,
   StyleSheet,
   Pressable,
+  Platform,
   GestureResponderEvent,
   Linking,
   ActivityIndicator,
@@ -299,6 +300,32 @@ function MessageItemInner({
   // Double-tap to open reaction picker
   const lastTapRef = useRef<number>(0);
   const bubbleRef = useRef<View>(null);
+  const containerRef = useRef<View>(null);
+
+  // Web: right-click opens the actions overlay (same as long press on mobile)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !containerRef.current) return;
+    const node = containerRef.current as unknown as HTMLElement;
+    if (typeof node.addEventListener !== 'function') return;
+    const handler = (e: MouseEvent) => {
+      e.preventDefault();
+      if (onLongPress) {
+        onLongPress(
+          {
+            _id: message._id,
+            senderId: message.senderId,
+            content: message.content,
+            senderName: message.senderName,
+            senderProfilePhoto: message.senderProfilePhoto,
+            attachments: message.attachments,
+          },
+          { nativeEvent: { pageX: e.pageX, pageY: e.pageY } }
+        );
+      }
+    };
+    node.addEventListener('contextmenu', handler);
+    return () => node.removeEventListener('contextmenu', handler);
+  }, [message._id, message.senderId, message.content, message.senderName, message.senderProfilePhoto, message.attachments, onLongPress]);
 
   // Detect event links in message content
   const eventShortIds = useMemo(() => {
@@ -926,7 +953,7 @@ function MessageItemInner({
 
   return (
     <Animated.View style={{ transform: [{ translateY: slideAnim }, { scale: scaleAnim }] }}>
-    <Pressable onPress={handlePress} onLongPress={handleLongPress} delayLongPress={300}>
+    <Pressable ref={containerRef} onPress={handlePress} onLongPress={handleLongPress} delayLongPress={300}>
       <View
         style={[
           styles.container,
