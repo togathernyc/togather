@@ -177,3 +177,8 @@ export const darkColors: ThemeColors = {
   modalBackground: '#1f2c34',
   modalCloseBackground: 'rgba(31, 44, 52, 0.9)',
 };
+
+// Design-theme palettes
+export { hearthColors } from './palettes/hearthColors';
+export { consoleColors } from './palettes/consoleColors';
+export { conservatoryColors } from './palettes/conservatoryColors';

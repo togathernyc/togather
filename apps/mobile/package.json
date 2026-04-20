@@ -70,6 +70,11 @@
   },
   "dependencies": {
     "@bacons/apple-targets": "^4.0.6",
+    "@expo-google-fonts/dm-sans": "^0.4.2",
+    "@expo-google-fonts/fraunces": "^0.4.1",
+    "@expo-google-fonts/jetbrains-mono": "^0.4.1",
+    "@expo-google-fonts/literata": "^0.4.3",
+    "@expo-google-fonts/manrope": "^0.4.2",
     "@expo/metro-runtime": "~6.1.2",
     "@expo/vector-icons": "^15.0.3",
     "@gorhom/bottom-sheet": "^5.2.8",
