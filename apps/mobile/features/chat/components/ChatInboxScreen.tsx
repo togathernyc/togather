@@ -26,6 +26,8 @@ import { useTheme } from "@hooks/useTheme";
 import { GroupedInboxItem } from "./GroupedInboxItem";
 import { useExpandedGroups } from "../hooks/useExpandedGroups";
 import { useInboxCache } from "../../../stores/inboxCache";
+import { toDesignGroups } from "../utils/inboxDesignAdapter";
+import { HearthInbox, ConsoleInbox, ConservatoryInbox } from "./inbox-designs";
 
 // Type for the grouped inbox data from getInboxChannels query
 type InboxGroup = {
@@ -69,7 +71,8 @@ export function ChatInboxScreen({
   const { user, community } = useAuth();
   const token = useStoredAuthToken();
   const { primaryColor } = useCommunityTheme();
-  const { colors } = useTheme();
+  const { colors, preference } = useTheme();
+  const isDesignTheme = preference === 'hearth' || preference === 'console' || preference === 'conservatory';
   const hasCommunity = !!community?.id;
   const { isGroupExpanded, toggleGroupExpanded } = useExpandedGroups();
   const { getInboxChannels, setInboxChannels } = useInboxCache();
@@ -203,7 +206,10 @@ export function ChatInboxScreen({
 
   const showLoadingSpinner = isLoading && !isStale;
 
-  if (showLoadingSpinner) {
+  // For default themes, render the production loading + empty states. Design themes
+  // pass `loading` / `items: []` into the design component so they can render their
+  // own native-language equivalents below.
+  if (showLoadingSpinner && !isDesignTheme) {
     return (
       <Wrapper>
         <View style={[styles.container, { backgroundColor: colors.surface }]}>
@@ -219,7 +225,7 @@ export function ChatInboxScreen({
     );
   }
 
-  if (!displayChannels || displayChannels.length === 0) {
+  if ((!displayChannels || displayChannels.length === 0) && !isDesignTheme) {
     return (
       <Wrapper>
         <View style={[styles.container, { backgroundColor: colors.surface }]}>
@@ -239,6 +245,62 @@ export function ChatInboxScreen({
             </Text>
           </ScrollView>
         </View>
+      </Wrapper>
+    );
+  }
+
+  if (isDesignTheme) {
+    const items = toDesignGroups(displayChannels);
+    const handleGroupPress = (groupId: string) => {
+      const entry = displayChannels?.find((g) => String(g.group._id) === groupId);
+      if (!entry) return;
+      const main = entry.channels.find((c) => c.channelType === 'main') ?? entry.channels[0];
+      if (!main) return;
+      router.push({
+        pathname: `/inbox/${entry.group._id}/${main.slug}` as any,
+        params: {
+          groupName: entry.group.name,
+          groupType: entry.group.groupTypeName || '',
+          groupTypeId: entry.group.groupTypeId,
+          imageUrl: entry.group.preview || '',
+          isLeader: entry.userRole === 'leader' ? '1' : '0',
+          isAnnouncementGroup: entry.group.isAnnouncementGroup ? '1' : '0',
+          channelId: main._id,
+        },
+      });
+    };
+    const handleChannelPress = (groupId: string, channelSlug: string) => {
+      const entry = displayChannels?.find((g) => String(g.group._id) === groupId);
+      if (!entry) return;
+      const ch = entry.channels.find((c) => c.slug === channelSlug);
+      if (!ch) return;
+      router.push({
+        pathname: `/inbox/${entry.group._id}/${ch.slug}` as any,
+        params: {
+          groupName: entry.group.name,
+          groupType: entry.group.groupTypeName || '',
+          groupTypeId: entry.group.groupTypeId,
+          imageUrl: entry.group.preview || '',
+          isLeader: entry.userRole === 'leader' ? '1' : '0',
+          isAnnouncementGroup: entry.group.isAnnouncementGroup ? '1' : '0',
+          channelId: ch._id,
+        },
+      });
+    };
+    const designProps = {
+      items,
+      loading: showLoadingSpinner,
+      sidebarMode,
+      activeGroupId: sidebarMode ? activeGroupId : undefined,
+      activeChannelSlug: sidebarMode ? activeChannelSlug : undefined,
+      onGroupPress: handleGroupPress,
+      onChannelPress: handleChannelPress,
+    };
+    return (
+      <Wrapper>
+        {preference === 'hearth' && <HearthInbox {...designProps} />}
+        {preference === 'console' && <ConsoleInbox {...designProps} />}
+        {preference === 'conservatory' && <ConservatoryInbox {...designProps} />}
       </Wrapper>
     );
   }

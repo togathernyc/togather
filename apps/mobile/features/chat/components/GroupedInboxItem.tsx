@@ -27,6 +27,7 @@ import { useTheme } from "@hooks/useTheme";
 import { getGroupTypeColorScheme } from "../../../constants/groupTypes";
 import type { Id } from "@services/api/convex";
 import { useAwaitPrefetch, useTriggerPrefetch } from "../hooks/usePrefetchChannel";
+import { formatInboxTime } from "../utils/formatInboxTime";
 
 // Type for channel data from getInboxChannels query
 interface ChannelData {
@@ -73,34 +74,7 @@ function getBadgeColors(typeId: string): { bg: string; text: string } {
   return { bg: scheme.bg, text: scheme.color };
 }
 
-// Format relative time (e.g., "2h", "Yesterday", "Jan 15")
-function formatRelativeTime(timestamp: number): string {
-  const date = new Date(timestamp);
-  const now = new Date();
-  const diff = now.getTime() - date.getTime();
-  const minutes = Math.floor(diff / (1000 * 60));
-  const hours = Math.floor(diff / (1000 * 60 * 60));
-  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-
-  if (minutes < 1) return "now";
-  if (minutes < 60) return `${minutes}m`;
-  if (hours < 24) return `${hours}h`;
-  if (days === 1) return "Yesterday";
-  if (days < 7) return `${days}d`;
-
-  const months = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-  ];
-  const month = months[date.getMonth()];
-  const day = date.getDate();
-
-  if (date.getFullYear() !== now.getFullYear()) {
-    return `${month} ${day}, ${date.getFullYear()}`;
-  }
-
-  return `${month} ${day}`;
-}
+const formatRelativeTime = (timestamp: number) => formatInboxTime(timestamp);
 
 function GroupedInboxItemInner({
   group,
