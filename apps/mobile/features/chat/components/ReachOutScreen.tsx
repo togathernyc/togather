@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -16,6 +16,7 @@ import type { Id } from "@services/api/convex";
 import { useQuery, useAuthenticatedMutation, api, useStoredAuthToken } from "@services/api/convex";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { ReachOutTaskCard } from "./ReachOutTaskCard";
+import { useWebEnterToSend } from "../hooks/useWebEnterToSend";
 
 interface ReachOutScreenProps {
   channelId: Id<"chatChannels">;
@@ -70,6 +71,9 @@ export function ReachOutScreen({ channelId, groupId }: ReachOutScreenProps) {
 
   const canSend = content.trim().length > 0 && !submitting;
 
+  const textInputRef = useRef<TextInput>(null);
+  useWebEnterToSend(textInputRef, canSend, handleSubmit);
+
   return (
     <KeyboardAvoidingView
       style={styles.container}
@@ -81,6 +85,7 @@ export function ReachOutScreen({ channelId, groupId }: ReachOutScreenProps) {
         <Text style={styles.inputLabel}>What would you like to reach out about?</Text>
         <View style={styles.inputRow}>
           <TextInput
+            ref={textInputRef}
             style={styles.textInput}
             placeholder="Type your message..."
             placeholderTextColor="#999"
