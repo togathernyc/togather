@@ -2213,9 +2213,10 @@ export function FollowupMobileGrid({
               leaderOptions={leaderOptions}
               primaryColor={primaryColor}
               onCancel={() => setShowQuickAddModal(false)}
-              onCreated={({ groupMemberId }) => {
+              onCreated={({ groupMemberId, communityPeopleId }) => {
                 setShowQuickAddModal(false);
-                router.push(`/(user)/leader-tools/${groupId}/followup/${groupMemberId}`);
+                // Route param is a communityPeopleId (matches adaptCommunityPerson row shape).
+                router.push(`/(user)/leader-tools/${groupId}/followup/${communityPeopleId ?? groupMemberId}`);
               }}
             />
           </View>
