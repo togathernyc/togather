@@ -2990,8 +2990,47 @@ export const quickAddRow = mutation({
       );
     }
 
-    // Schedule communityPeople upsert so the People table is immediately populated
+    // Ensure a communityPeople record exists synchronously so the client can
+    // open the detail sheet with a valid communityPeopleId immediately.
+    // The scheduled upsertFromSubmission below will fill in denormalized
+    // score/status fields once the background score computation completes.
+    let communityPeopleId: Id<"communityPeople"> | undefined;
     if (group.communityId) {
+      const existingCp = await ctx.db
+        .query("communityPeople")
+        .withIndex("by_group_user", (q: any) =>
+          q.eq("groupId", group._id).eq("userId", userId),
+        )
+        .first();
+      if (existingCp) {
+        communityPeopleId = existingCp._id;
+      } else {
+        const user = await ctx.db.get(userId);
+        communityPeopleId = await ctx.db.insert("communityPeople", {
+          communityId: group.communityId,
+          groupId: group._id,
+          userId,
+          firstName: user?.firstName || prepared.row.firstName || "",
+          lastName: user?.lastName || prepared.row.lastName,
+          email: user?.email || prepared.row.email,
+          phone: user?.phone || prepared.row.phone,
+          zipCode: user?.zipCode || prepared.row.zipCode,
+          searchText: [
+            user?.firstName || prepared.row.firstName,
+            user?.lastName || prepared.row.lastName,
+            user?.email || prepared.row.email,
+            user?.phone || prepared.row.phone,
+          ]
+            .filter(Boolean)
+            .join(" "),
+          addedAt: timestamp,
+          addedAtInv: Number.MAX_SAFE_INTEGER - timestamp,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        });
+      }
+
+      // Schedule communityPeople upsert so denormalized fields catch up
       await ctx.scheduler.runAfter(0, internal.functions.communityPeople.upsertFromSubmission, {
         communityId: group.communityId,
         userId,
@@ -3000,6 +3039,7 @@ export const quickAddRow = mutation({
 
     return {
       groupMemberId,
+      communityPeopleId,
       userId,
       createdUser,
       row: report,

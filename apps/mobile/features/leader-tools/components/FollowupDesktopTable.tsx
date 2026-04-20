@@ -2765,9 +2765,11 @@ export function FollowupDesktopTable({
                 leaderOptions={leaderOptions}
                 primaryColor={primaryColor}
                 onCancel={() => setShowQuickAddPanel(false)}
-                onCreated={({ groupMemberId }) => {
+                onCreated={({ groupMemberId, communityPeopleId }) => {
                   setShowQuickAddPanel(false);
-                  setSelectedMemberId(groupMemberId);
+                  // Prefer communityPeopleId (matches adaptCommunityPerson row shape).
+                  // Fall back to groupMemberId only if backend didn't return it.
+                  setSelectedMemberId(communityPeopleId ?? groupMemberId);
                   setScrollToNotes(false);
                   setScrollToTasks(false);
                 }}

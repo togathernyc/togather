@@ -31,7 +31,7 @@ type Props = {
   leaderOptions: LeaderOption[];
   primaryColor: string;
   onCancel: () => void;
-  onCreated?: (result: { groupMemberId: string; userId: string }) => void;
+  onCreated?: (result: { groupMemberId: string; communityPeopleId?: string; userId: string }) => void;
 };
 
 const STATUS_OPTIONS: Array<{ value: string; label: string }> = [
@@ -124,6 +124,7 @@ export function FollowupQuickAddPanel({
       Alert.alert("Person added", "They were added to the group and people list.");
       onCreated?.({
         groupMemberId: String(result.groupMemberId),
+        communityPeopleId: result.communityPeopleId ? String(result.communityPeopleId) : undefined,
         userId: String(result.userId),
       });
     } catch (error: unknown) {
