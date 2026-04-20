@@ -34,6 +34,12 @@ export function isValidImageUri(imageUri: string): boolean {
   // Check for ph:// URI on iOS (Photos framework)
   if (imageUri.startsWith('ph://')) return true;
 
+  // Check for blob: URI (web platform - expo-image-picker returns blob URLs)
+  if (imageUri.startsWith('blob:')) return true;
+
+  // Check for http/https URI (web platform - some pickers return object URLs)
+  if (imageUri.startsWith('http://') || imageUri.startsWith('https://')) return true;
+
   return false;
 }
 

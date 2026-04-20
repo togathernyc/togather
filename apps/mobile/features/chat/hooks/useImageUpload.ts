@@ -62,10 +62,15 @@ export function useImageUpload(): UseImageUploadResult {
 
     try {
       // Extract filename and content type
-      const filename = imageUri.split('/').pop() || 'chat-image.jpg';
+      let filename = imageUri.split('/').pop() || 'chat-image.jpg';
       const match = /\.(\w+)$/.exec(filename);
       const ext = match ? match[1].toLowerCase() : 'jpg';
       const contentType = `image/${ext === 'jpg' ? 'jpeg' : ext}`;
+
+      // On web, blob URIs have no file extension — append one so the backend accepts it
+      if (!match) {
+        filename = `${filename}.${ext}`;
+      }
 
       // Step 1: Get R2 presigned upload URL
       setProgress(10);
