@@ -4,6 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
+import { ThemedHeading } from "@components/ui/ThemedHeading";
 import { useAuth } from "@providers/AuthProvider";
 import { api, Id, useAuthenticatedQuery } from "@services/api/convex";
 
@@ -30,7 +31,7 @@ export function LeaderToolsSection() {
 
   return (
     <View style={[styles.section, { backgroundColor: colors.surface }]}>
-      <Text style={[styles.sectionTitle, { color: colors.text }]}>Leader Tools</Text>
+      <ThemedHeading level={2} style={[styles.sectionTitle, { color: colors.text }]}>Leader Tools</ThemedHeading>
 
       <TouchableOpacity
         style={[styles.menuItem, { backgroundColor: colors.surfaceSecondary }]}

@@ -9,6 +9,7 @@
  */
 import { useMemo } from 'react';
 import { useAuth } from '@providers/AuthProvider';
+import { useTheme } from '@hooks/useTheme';
 import { DEFAULT_PRIMARY_COLOR, DEFAULT_SECONDARY_COLOR } from '@utils/styles';
 
 interface CommunityTheme {
@@ -53,11 +54,18 @@ export function darkenColor(hex: string, factor: number = 0.4): string {
 
 export function useCommunityTheme(): CommunityTheme {
   const { user } = useAuth();
+  const { preference, colors } = useTheme();
+
+  // When a design theme is active, its accent supersedes the community color
+  // so primary buttons, tab tints, link colors, etc. flow with the theme.
+  const isDesignTheme =
+    preference === 'hearth' || preference === 'console' || preference === 'conservatory';
 
   return useMemo(() => {
-    const primaryColor = user?.community_primary_color || DEFAULT_PRIMARY_COLOR;
+    const baseCommunityColor = user?.community_primary_color || DEFAULT_PRIMARY_COLOR;
+    const primaryColor = isDesignTheme ? colors.link : baseCommunityColor;
     const secondaryColor = user?.community_secondary_color || DEFAULT_SECONDARY_COLOR;
-    const isCustomTheme = !!(user?.community_primary_color || user?.community_secondary_color);
+    const isCustomTheme = isDesignTheme || !!(user?.community_primary_color || user?.community_secondary_color);
 
     return {
       primaryColor,
@@ -66,5 +74,5 @@ export function useCommunityTheme(): CommunityTheme {
       primaryColorDark: darkenColor(primaryColor, 0.4),
       isCustomTheme,
     };
-  }, [user?.community_primary_color, user?.community_secondary_color]);
+  }, [user?.community_primary_color, user?.community_secondary_color, isDesignTheme, colors.link]);
 }

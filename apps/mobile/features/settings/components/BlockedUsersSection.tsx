@@ -10,6 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
 import { useTheme } from '@hooks/useTheme';
+import { ThemedHeading } from '@components/ui/ThemedHeading';
 
 export function BlockedUsersSection() {
   const router = useRouter();
@@ -18,7 +19,7 @@ export function BlockedUsersSection() {
 
   return (
     <View style={[styles.section, { backgroundColor: colors.surface }]}>
-      <Text style={[styles.sectionTitle, { color: colors.text }]}>Privacy</Text>
+      <ThemedHeading level={2} style={[styles.sectionTitle, { color: colors.text }]}>Privacy</ThemedHeading>
 
       <TouchableOpacity
         style={[styles.menuItem, { backgroundColor: colors.surfaceSecondary }]}

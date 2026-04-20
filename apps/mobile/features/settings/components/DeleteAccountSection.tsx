@@ -8,6 +8,7 @@ import React, { useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@hooks/useTheme";
+import { ThemedHeading } from "@components/ui/ThemedHeading";
 import { DeleteAccountModal } from "./DeleteAccountModal";
 
 export function DeleteAccountSection() {
@@ -16,7 +17,7 @@ export function DeleteAccountSection() {
 
   return (
     <View style={[styles.section, { backgroundColor: colors.surface }]}>
-      <Text style={[styles.sectionTitle, { color: colors.text }]}>Account</Text>
+      <ThemedHeading level={2} style={[styles.sectionTitle, { color: colors.text }]}>Account</ThemedHeading>
 
       <View style={[styles.warningContainer, { backgroundColor: colors.destructive + '10' }]}>
         <Ionicons

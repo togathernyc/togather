@@ -10,6 +10,7 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "@hooks/useTheme";
+import { ThemedHeading } from "@components/ui/ThemedHeading";
 import { SettingsForm } from "./SettingsForm";
 import { TimezoneSection } from "./TimezoneSection";
 import { NotificationPreferencesSection } from "./NotificationPreferencesSection";
@@ -40,7 +41,7 @@ export function SettingsScreen() {
         >
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>Settings</Text>
+        <ThemedHeading level={1} style={[styles.headerTitle, { color: colors.text }]}>Settings</ThemedHeading>
       </View>
 
       <SettingsForm />

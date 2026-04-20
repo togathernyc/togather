@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuthenticatedMutation, api } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { useTheme } from "@hooks/useTheme";
+import { ThemedHeading } from "@components/ui/ThemedHeading";
 import {
   COMMON_TIMEZONES,
   getTimezoneAbbreviation,
@@ -58,7 +59,7 @@ export function TimezoneSection() {
 
   return (
     <View style={[styles.section, { backgroundColor: colors.surface }]}>
-      <Text style={[styles.sectionTitle, { color: colors.text }]}>Time Zone</Text>
+      <ThemedHeading level={2} style={[styles.sectionTitle, { color: colors.text }]}>Time Zone</ThemedHeading>
       <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>
         Events and meetings will be displayed in your selected time zone.
       </Text>

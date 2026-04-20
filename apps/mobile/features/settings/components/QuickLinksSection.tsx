@@ -9,6 +9,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
+import { ThemedHeading } from "@components/ui/ThemedHeading";
 import { useAuth } from "@providers/AuthProvider";
 
 export function QuickLinksSection() {
@@ -22,7 +23,7 @@ export function QuickLinksSection() {
 
   return (
     <View style={[styles.section, { backgroundColor: colors.surface }]}>
-      <Text style={[styles.sectionTitle, { color: colors.text }]}>Quick Links</Text>
+      <ThemedHeading level={2} style={[styles.sectionTitle, { color: colors.text }]}>Quick Links</ThemedHeading>
 
       <TouchableOpacity
         style={[styles.menuItem, { backgroundColor: colors.surfaceSecondary }]}

@@ -23,6 +23,7 @@ import { useQuery, api, useStoredAuthToken } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
+import { ThemedHeading } from "@components/ui/ThemedHeading";
 import { GroupedInboxItem } from "./GroupedInboxItem";
 import { useExpandedGroups } from "../hooks/useExpandedGroups";
 import { useInboxCache } from "../../../stores/inboxCache";
@@ -171,7 +172,7 @@ export function ChatInboxScreen({
       <Wrapper>
         <View style={[styles.container, { backgroundColor: colors.surface }]}>
           <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
-            <Text style={[styles.headerTitle, { color: colors.text }]}>Inbox</Text>
+            <ThemedHeading level={1} style={[styles.headerTitle, { color: colors.text }]}>Inbox</ThemedHeading>
           </View>
           <View style={styles.centered}>
             <Ionicons
@@ -214,7 +215,7 @@ export function ChatInboxScreen({
       <Wrapper>
         <View style={[styles.container, { backgroundColor: colors.surface }]}>
           <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
-            <Text style={[styles.headerTitle, { color: colors.text }]}>Inbox</Text>
+            <ThemedHeading level={1} style={[styles.headerTitle, { color: colors.text }]}>Inbox</ThemedHeading>
           </View>
           <View style={styles.centered}>
             <ActivityIndicator size="large" color={primaryColor} />
@@ -230,7 +231,7 @@ export function ChatInboxScreen({
       <Wrapper>
         <View style={[styles.container, { backgroundColor: colors.surface }]}>
           <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
-            <Text style={[styles.headerTitle, { color: colors.text }]}>Inbox</Text>
+            <ThemedHeading level={1} style={[styles.headerTitle, { color: colors.text }]}>Inbox</ThemedHeading>
           </View>
           <ScrollView contentContainerStyle={styles.centeredScrollContent}>
             <Ionicons
@@ -309,7 +310,7 @@ export function ChatInboxScreen({
     <Wrapper>
       <View style={[styles.container, { backgroundColor: colors.surface }]}>
         <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
-          <Text style={[styles.headerTitle, { color: colors.text }]}>Inbox</Text>
+          <ThemedHeading level={1} style={[styles.headerTitle, { color: colors.text }]}>Inbox</ThemedHeading>
         </View>
         <FlatList
           data={displayChannels}
