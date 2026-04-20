@@ -12,21 +12,31 @@ jest.mock('@services/api/convex', () => ({
   api: { functions: { uploads: { getR2UploadUrl: 'getR2UploadUrl' } } },
 }));
 
-// Mock fetch for web upload path
-const mockFetch = jest.fn().mockResolvedValue({
-  ok: true,
-  blob: () => Promise.resolve(new Blob(['fake-image'], { type: 'image/jpeg' })),
-});
+const mockFetch = jest.fn();
 global.fetch = mockFetch;
+
+/**
+ * Set up fetch mocks for the web upload path:
+ *   1st call: blob: URI fetch → returns a Blob with the given MIME
+ *   2nd call: PUT to R2 presigned URL → returns ok
+ */
+function mockWebUpload(blobType: string) {
+  mockFetch.mockImplementation((url: string, init?: RequestInit) => {
+    if (init?.method === 'PUT') {
+      return Promise.resolve({ ok: true, statusText: 'OK' });
+    }
+    return Promise.resolve({
+      ok: true,
+      blob: () => Promise.resolve(new Blob(['fake-image'], { type: blobType })),
+    });
+  });
+}
 
 import { useImageUpload } from '../useImageUpload';
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockFetch.mockResolvedValue({
-    ok: true,
-    blob: () => Promise.resolve(new Blob(['fake-image'], { type: 'image/jpeg' })),
-  });
+  mockFetch.mockReset();
 });
 
 describe('useImageUpload', () => {
@@ -42,22 +52,6 @@ describe('useImageUpload', () => {
         expect.objectContaining({
           fileName: 'vacation.png',
           contentType: 'image/png',
-        })
-      );
-    });
-
-    test('appends .jpg extension for blob URIs without extension (web)', async () => {
-      const { result } = renderHook(() => useImageUpload());
-
-      await act(async () => {
-        await result.current.uploadImage('blob:http://localhost:8081/f533135f-e039-4303-bf23-fad810cc9e73');
-      });
-
-      // The blob URI segment has no extension, so .jpg should be appended
-      expect(mockGetR2UploadUrl).toHaveBeenCalledWith(
-        expect.objectContaining({
-          fileName: expect.stringMatching(/\.jpg$/),
-          contentType: 'image/jpeg',
         })
       );
     });
@@ -89,20 +83,84 @@ describe('useImageUpload', () => {
       (Platform as any).OS = originalPlatform;
     });
 
-    test('uses fetch with PUT for web uploads', async () => {
+    test('derives contentType and extension from blob.type for JPEG blob URIs', async () => {
+      mockWebUpload('image/jpeg');
+      const { result } = renderHook(() => useImageUpload());
+
+      await act(async () => {
+        await result.current.uploadImage('blob:http://localhost:8081/f533135f-e039-4303-bf23-fad810cc9e73');
+      });
+
+      expect(mockGetR2UploadUrl).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fileName: expect.stringMatching(/\.jpeg$/),
+          contentType: 'image/jpeg',
+        })
+      );
+    });
+
+    test('uses image/png and .png for PNG blob URIs (not hardcoded jpeg)', async () => {
+      mockWebUpload('image/png');
       const { result } = renderHook(() => useImageUpload());
 
       await act(async () => {
         await result.current.uploadImage('blob:http://localhost:8081/abc-123');
       });
 
-      // First fetch: blob URI to get blob data
-      // Second fetch: PUT to R2 presigned URL
-      const putCall = mockFetch.mock.calls.find(
-        (call) => call[1]?.method === 'PUT'
+      expect(mockGetR2UploadUrl).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fileName: expect.stringMatching(/\.png$/),
+          contentType: 'image/png',
+        })
       );
+    });
+
+    test('uses image/webp and .webp for WebP blob URIs', async () => {
+      mockWebUpload('image/webp');
+      const { result } = renderHook(() => useImageUpload());
+
+      await act(async () => {
+        await result.current.uploadImage('blob:http://localhost:8081/webp-asset');
+      });
+
+      expect(mockGetR2UploadUrl).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fileName: expect.stringMatching(/\.webp$/),
+          contentType: 'image/webp',
+        })
+      );
+    });
+
+    test('PUTs blob to the presigned URL with the blob-derived Content-Type', async () => {
+      mockWebUpload('image/png');
+      const { result } = renderHook(() => useImageUpload());
+
+      await act(async () => {
+        await result.current.uploadImage('blob:http://localhost:8081/abc-123');
+      });
+
+      const putCall = mockFetch.mock.calls.find((call) => call[1]?.method === 'PUT');
       expect(putCall).toBeDefined();
       expect(putCall![0]).toBe('https://r2.example.com/presigned-url');
+      expect((putCall![1] as RequestInit).headers).toEqual(
+        expect.objectContaining({ 'Content-Type': 'image/png' })
+      );
+    });
+
+    test('falls back to image/jpeg when blob.type is empty', async () => {
+      mockWebUpload('');
+      const { result } = renderHook(() => useImageUpload());
+
+      await act(async () => {
+        await result.current.uploadImage('blob:http://localhost:8081/no-type');
+      });
+
+      expect(mockGetR2UploadUrl).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fileName: expect.stringMatching(/\.jpeg$/),
+          contentType: 'image/jpeg',
+        })
+      );
     });
   });
 
