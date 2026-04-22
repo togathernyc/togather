@@ -843,6 +843,16 @@ export default defineSchema({
     .index("by_hour_type", ["hourStartMs", "type"])
     .index("by_type_hour", ["type", "hourStartMs"]),
 
+  // Cursor tracking the latest hour `runHourlyRollup` has fully processed.
+  // Needed as a separate doc because hours with zero notifications produce
+  // no rows in `notificationHourlyStats` — so we can't derive progress from
+  // that table (the cron would stall after >MAX_CATCH_UP_HOURS empty hours).
+  // Singleton — the only expected key is "default".
+  notificationRollupCursor: defineTable({
+    key: v.string(),
+    lastProcessedHourMs: v.number(),
+  }).index("by_key", ["key"]),
+
   // =============================================================================
   // PUSH TOKENS
   // =============================================================================

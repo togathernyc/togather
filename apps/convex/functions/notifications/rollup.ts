@@ -105,18 +105,21 @@ export const pageClicked = internalQuery({
 });
 
 // ============================================================================
-// Latest-processed-hour probe (for auto catch-up)
+// Rollup cursor (for auto catch-up)
 // ============================================================================
+// Dedicated singleton row; reading the max from notificationHourlyStats would
+// stall after enough consecutive empty hours (no row written → cursor stuck).
 
-export const getLatestProcessedHour = internalQuery({
+const CURSOR_KEY = "default";
+
+export const getRollupCursor = internalQuery({
   args: {},
   handler: async (ctx) => {
     const row = await ctx.db
-      .query("notificationHourlyStats")
-      .withIndex("by_hour")
-      .order("desc")
+      .query("notificationRollupCursor")
+      .withIndex("by_key", (q) => q.eq("key", CURSOR_KEY))
       .first();
-    return row?.hourStartMs ?? null;
+    return row?.lastProcessedHourMs ?? null;
   },
 });
 
@@ -135,6 +138,7 @@ export const writeHourRows = internalMutation({
         clicked: v.number(),
       })
     ),
+    advanceCursor: v.boolean(),
   },
   handler: async (ctx, args) => {
     const existing = await ctx.db
@@ -156,6 +160,26 @@ export const writeHourRows = internalMutation({
         updatedAt,
       });
     }
+
+    // Advance the cursor only for forward-processing (cron catch-up), not
+    // ad-hoc backfill of an older hour via explicit `hourStartMs`. Guarded by
+    // a monotonic check so a future backfill can't regress the cursor.
+    if (args.advanceCursor) {
+      const cursor = await ctx.db
+        .query("notificationRollupCursor")
+        .withIndex("by_key", (q) => q.eq("key", CURSOR_KEY))
+        .first();
+      if (!cursor) {
+        await ctx.db.insert("notificationRollupCursor", {
+          key: CURSOR_KEY,
+          lastProcessedHourMs: args.hourStartMs,
+        });
+      } else if (args.hourStartMs > cursor.lastProcessedHourMs) {
+        await ctx.db.patch(cursor._id, {
+          lastProcessedHourMs: args.hourStartMs,
+        });
+      }
+    }
   },
 });
 
@@ -166,12 +190,14 @@ export const writeHourRows = internalMutation({
 /**
  * Roll up notification counters.
  *
- * - Cron usage (no args): catches up from the last row in
- *   `notificationHourlyStats` forward to the hour just completed, processing
- *   up to MAX_CATCH_UP_HOURS per invocation. If the table is empty, rolls
- *   up only the hour just completed (no history backfill).
+ * - Cron usage (no args): catches up from the persisted cursor forward to
+ *   the hour just completed, processing up to MAX_CATCH_UP_HOURS per
+ *   invocation and advancing the cursor after each hour (including empty
+ *   hours). On first run with no cursor, rolls up only the hour just
+ *   completed (no history backfill).
  * - Explicit backfill: pass `hourStartMs` to reprocess a single specific
- *   hour (idempotent — deletes + re-inserts rows for that hour).
+ *   hour (idempotent — deletes + re-inserts rows). Does not advance the
+ *   cursor, so backfilling an older hour can't regress ongoing catch-up.
  */
 export const runHourlyRollup = internalAction({
   args: { hourStartMs: v.optional(v.number()) },
@@ -179,12 +205,13 @@ export const runHourlyRollup = internalAction({
     const latestTarget =
       Math.floor(Date.now() / HOUR_MS) * HOUR_MS - HOUR_MS;
 
+    const isExplicitBackfill = args.hourStartMs !== undefined;
     let hoursToProcess: number[];
     if (args.hourStartMs !== undefined) {
       hoursToProcess = [args.hourStartMs];
     } else {
       const lastProcessed: number | null = await ctx.runQuery(
-        internal.functions.notifications.rollup.getLatestProcessedHour,
+        internal.functions.notifications.rollup.getRollupCursor,
         {}
       );
       if (lastProcessed === null) {
@@ -269,7 +296,7 @@ export const runHourlyRollup = internalAction({
 
       await ctx.runMutation(
         internal.functions.notifications.rollup.writeHourRows,
-        { hourStartMs, rows }
+        { hourStartMs, rows, advanceCursor: !isExplicitBackfill }
       );
     }
   },
