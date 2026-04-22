@@ -64,12 +64,20 @@ export const registerNewUser = action({
       throw new Error("Invalid verification code format");
     }
 
-    // Require and verify the phone verification token
+    // Require the phone verification token before any other work.
     if (!args.phoneVerificationToken) {
       throw new Error(
         "Phone verification token is required. Please complete phone verification first."
       );
     }
+
+    // Validate dateOfBirth BEFORE consuming the phone verification token.
+    // verifyPhoneToken is single-use; if we consumed it first and then
+    // threw on a bad date, the user's retry would fail with "Token already
+    // used" and they'd have to restart phone OTP for a fixable client error.
+    const dateOfBirth = args.dateOfBirth
+      ? parseAndValidateDate(args.dateOfBirth)
+      : undefined;
 
     const tokenResult = await ctx.runMutation(
       internal.functions.authInternal.verifyPhoneToken,
@@ -87,11 +95,6 @@ export const registerNewUser = action({
         "Phone verification failed. Please verify your phone number again."
       );
     }
-
-    // Validate dateOfBirth if provided
-    const dateOfBirth = args.dateOfBirth
-      ? parseAndValidateDate(args.dateOfBirth)
-      : undefined;
 
     // Check if user already exists (handles race conditions and retries)
     const existingUser = await ctx.runQuery(

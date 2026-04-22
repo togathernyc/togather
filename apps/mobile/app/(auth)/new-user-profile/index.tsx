@@ -76,6 +76,25 @@ export default function NewUserProfilePage() {
       newErrors.birthday = "Birthday is required";
     } else if (birthday.length !== 10) {
       newErrors.birthday = "Please enter a complete date (MM/DD/YYYY)";
+    } else {
+      const [mm, dd, yyyy] = birthday.split("/");
+      const month = parseInt(mm, 10);
+      const day = parseInt(dd, 10);
+      const year = parseInt(yyyy, 10);
+      const reconstructed = new Date(year, month - 1, day);
+      const isValidCalendarDate =
+        reconstructed.getFullYear() === year &&
+        reconstructed.getMonth() === month - 1 &&
+        reconstructed.getDate() === day;
+      const now = new Date();
+      const currentYear = now.getFullYear();
+      if (!isValidCalendarDate) {
+        newErrors.birthday = "Please enter a valid date";
+      } else if (year < 1900 || year > currentYear) {
+        newErrors.birthday = "Please enter a valid year";
+      } else if (reconstructed.getTime() > now.getTime()) {
+        newErrors.birthday = "Birthday can't be in the future";
+      }
     }
 
     setErrors(newErrors);
