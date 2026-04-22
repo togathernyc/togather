@@ -96,6 +96,7 @@ import type * as functions_notifications_mutations from "../functions/notificati
 import type * as functions_notifications_preferences from "../functions/notifications/preferences.js";
 import type * as functions_notifications_proposalNotifications from "../functions/notifications/proposalNotifications.js";
 import type * as functions_notifications_queries from "../functions/notifications/queries.js";
+import type * as functions_notifications_rollup from "../functions/notifications/rollup.js";
 import type * as functions_notifications_senders from "../functions/notifications/senders.js";
 import type * as functions_notifications_tokens from "../functions/notifications/tokens.js";
 import type * as functions_pcoServices_actions from "../functions/pcoServices/actions.js";
@@ -263,6 +264,7 @@ declare const fullApi: ApiFromModules<{
   "functions/notifications/preferences": typeof functions_notifications_preferences;
   "functions/notifications/proposalNotifications": typeof functions_notifications_proposalNotifications;
   "functions/notifications/queries": typeof functions_notifications_queries;
+  "functions/notifications/rollup": typeof functions_notifications_rollup;
   "functions/notifications/senders": typeof functions_notifications_senders;
   "functions/notifications/tokens": typeof functions_notifications_tokens;
   "functions/pcoServices/actions": typeof functions_pcoServices_actions;

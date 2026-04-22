@@ -8,7 +8,6 @@ import { v } from "convex/values";
 import { mutation, internalMutation } from "../../_generated/server";
 import { now } from "../../lib/utils";
 import { requireAuth } from "../../lib/auth";
-import { incrementNotificationHourlyStat } from "../../lib/notificationStats";
 
 /**
  * Mark a specific notification as read
@@ -130,14 +129,6 @@ export const createNotification = internalMutation({
       trackingId: args.trackingId,
     });
 
-    if (args.status === "sent") {
-      await incrementNotificationHourlyStat(ctx, {
-        type: args.notificationType,
-        ts: timestamp,
-        field: "sent",
-      });
-    }
-
     return id;
   },
 });
@@ -183,14 +174,6 @@ export const createNotificationsBatch = internalMutation({
         trackingId: notification.trackingId,
       });
       insertedIds.push(id);
-
-      if (notification.status === "sent") {
-        await incrementNotificationHourlyStat(ctx, {
-          type: notification.notificationType,
-          ts: timestamp,
-          field: "sent",
-        });
-      }
     }
 
     return insertedIds;
@@ -212,11 +195,6 @@ export const recordImpression = mutation({
     if (!notification.impressedAt) {
       const ts = now();
       await ctx.db.patch(notification._id, { impressedAt: ts });
-      await incrementNotificationHourlyStat(ctx, {
-        type: notification.notificationType,
-        ts,
-        field: "impressed",
-      });
     }
   },
 });
@@ -238,18 +216,5 @@ export const recordClick = mutation({
     const firstImpression = !notification.impressedAt;
     if (firstImpression) updates.impressedAt = ts;
     await ctx.db.patch(notification._id, updates);
-
-    await incrementNotificationHourlyStat(ctx, {
-      type: notification.notificationType,
-      ts,
-      field: "clicked",
-    });
-    if (firstImpression) {
-      await incrementNotificationHourlyStat(ctx, {
-        type: notification.notificationType,
-        ts,
-        field: "impressed",
-      });
-    }
   },
 });

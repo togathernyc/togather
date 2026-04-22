@@ -167,6 +167,21 @@ crons.daily(
 );
 
 // =============================================================================
+// NOTIFICATION HOURLY ROLLUP
+// =============================================================================
+// Runs hourly at :05 past to count the previous hour's notifications
+// (sent/impressed/clicked) by type and populate notificationHourlyStats.
+// Replaces per-notification inline counter writes, which caused OCC conflicts
+// when fan-outs hit the same counter row simultaneously.
+
+crons.hourly(
+  "notification-hourly-rollup",
+  { minuteUTC: 5 },
+  internal.functions.notifications.rollup.runHourlyRollup,
+  {}
+);
+
+// =============================================================================
 // COMMUNITY SCORE REFRESH
 // =============================================================================
 // Runs daily at 7:30 UTC (2:30 AM EST) to refresh community-level scores

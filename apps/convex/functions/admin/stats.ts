@@ -1431,8 +1431,9 @@ export const getDailySummary = query({
  *
  * Reads from `notificationHourlyStats` (one row per hour per type) so cost is
  * O(hours × types) — ~24 × ~types regardless of daily send volume. Counters
- * are populated incrementally from `incrementNotificationHourlyStat`; history
- * starts from first-deploy time (no backfill).
+ * are populated by the hourly rollup cron (`runHourlyRollup`); history starts
+ * from first-deploy time (no backfill). The current hour is empty until the
+ * cron fires at :05 past.
  */
 export const getNotificationStats = query({
   args: {
