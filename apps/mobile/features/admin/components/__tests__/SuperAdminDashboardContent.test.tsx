@@ -19,6 +19,11 @@ jest.mock("@services/api/convex", () => ({
           getNotificationStats: "api.functions.admin.stats.getNotificationStats",
         },
       },
+      ee: {
+        proposals: {
+          list: "api.functions.ee.proposals.list",
+        },
+      },
     },
   },
 }));
@@ -148,6 +153,8 @@ describe("SuperAdminDashboardContent", () => {
     const calls = (useQuery as jest.Mock).mock.calls.filter(
       ([fn]: [string]) => fn === "api.functions.admin.stats.getDailySummary"
     );
-    expect(calls[0][1]).toEqual({ token: "token", daysAgo: 0 });
+    expect(calls[0][1]).toEqual(
+      expect.objectContaining({ token: "token", daysAgo: 0 })
+    );
   });
 });

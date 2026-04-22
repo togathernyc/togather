@@ -32,6 +32,18 @@ function formatDate(dateStr: string): string {
   });
 }
 
+function formatRelativeDate(ts: number): string {
+  const diffMs = Date.now() - ts;
+  const days = Math.floor(diffMs / 86400000);
+  if (days < 1) {
+    const hours = Math.floor(diffMs / 3600000);
+    if (hours < 1) return "just now";
+    return `${hours}h ago`;
+  }
+  if (days < 7) return `${days}d ago`;
+  return new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
 export function SuperAdminDashboardContent() {
   const { user, token } = useAuth();
   const { primaryColor } = useCommunityTheme();
@@ -40,14 +52,28 @@ export function SuperAdminDashboardContent() {
 
   const isInternalUser = user?.is_staff === true || user?.is_superuser === true;
 
+  // Prefer the user's saved timezone preference (Settings → Time Zone); fall
+  // back to the device's current zone so day boundaries still match what the
+  // viewer expects if they haven't set one.
+  const timeZone =
+    user?.timezone ??
+    (typeof Intl !== "undefined"
+      ? Intl.DateTimeFormat().resolvedOptions().timeZone
+      : undefined);
+
   const data = useQuery(
     api.functions.admin.stats.getDailySummary,
-    token && isInternalUser ? { token, daysAgo } : "skip"
+    token && isInternalUser ? { token, daysAgo, timeZone } : "skip"
   );
 
   const notifStats = useQuery(
     api.functions.admin.stats.getNotificationStats,
-    token && isInternalUser ? { token, daysAgo } : "skip"
+    token && isInternalUser ? { token, daysAgo, timeZone } : "skip"
+  );
+
+  const pendingProposals = useQuery(
+    api.functions.ee.proposals.list,
+    token && isInternalUser ? { token, status: "pending" } : "skip"
   );
 
   if (!isInternalUser) {
@@ -95,6 +121,59 @@ export function SuperAdminDashboardContent() {
           <Ionicons name="chevron-forward" size={18} color={colors.text} />
         </TouchableOpacity>
       </View>
+
+      {/* Community Proposals (pending) — action items, not day-scoped */}
+      {pendingProposals && pendingProposals.length > 0 && (
+        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <View style={styles.proposalHeader}>
+            <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: 0 }]}>
+              Community Proposals
+            </Text>
+            <View style={[styles.badge, { backgroundColor: primaryColor }]}>
+              <Text style={styles.badgeText}>{pendingProposals.length}</Text>
+            </View>
+          </View>
+          {pendingProposals.map((proposal: any, index: number) => (
+            <View
+              key={proposal._id}
+              style={[
+                styles.proposalRow,
+                index < pendingProposals.length - 1 && {
+                  borderBottomWidth: 1,
+                  borderBottomColor: colors.borderLight,
+                },
+              ]}
+            >
+              <View style={styles.proposalTopRow}>
+                <Text style={[styles.proposalName, { color: colors.text }]} numberOfLines={1}>
+                  {proposal.communityName}
+                </Text>
+                <Text style={[styles.proposalPrice, { color: primaryColor }]}>
+                  ${proposal.proposedMonthlyPrice}/mo
+                </Text>
+              </View>
+              <Text style={[styles.proposalMeta, { color: colors.textSecondary }]} numberOfLines={1}>
+                {proposal.proposerName ?? "Unknown proposer"}
+                {proposal.proposerEmail ? ` · ${proposal.proposerEmail}` : ""}
+              </Text>
+              <Text style={[styles.proposalMeta, { color: colors.textTertiary }]} numberOfLines={1}>
+                ~{proposal.estimatedSize} people
+                {proposal.needsMigration ? " · needs migration" : ""}
+                {" · "}
+                {formatRelativeDate(proposal.createdAt)}
+              </Text>
+              {proposal.notes ? (
+                <Text
+                  style={[styles.proposalNotes, { color: colors.textSecondary }]}
+                  numberOfLines={2}
+                >
+                  {proposal.notes}
+                </Text>
+              ) : null}
+            </View>
+          ))}
+        </View>
+      )}
 
       {!data ? (
         <View style={styles.loadingRow}>
@@ -417,5 +496,51 @@ const styles = StyleSheet.create({
   },
   notifTypeStats: {
     fontSize: 12,
+  },
+  proposalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  badge: {
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    paddingHorizontal: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  badgeText: {
+    color: "white",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  proposalRow: {
+    paddingVertical: 10,
+  },
+  proposalTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  proposalName: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: "600",
+    marginRight: 8,
+  },
+  proposalPrice: {
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  proposalMeta: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  proposalNotes: {
+    fontSize: 12,
+    marginTop: 4,
+    fontStyle: "italic",
   },
 });
