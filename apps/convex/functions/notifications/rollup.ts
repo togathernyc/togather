@@ -25,6 +25,10 @@ import { internal } from "../../_generated/api";
 
 const HOUR_MS = 60 * 60 * 1000;
 const PAGE_SIZE = 1000;
+// Cap auto-catch-up per cron run. If the cron is skipped for longer than
+// this (e.g. prolonged deploy pause), subsequent hourly runs will keep
+// advancing the cursor until the backlog clears.
+const MAX_CATCH_UP_HOURS = 24;
 
 // ============================================================================
 // Internal queries — paginated scans by event-time index
@@ -101,6 +105,22 @@ export const pageClicked = internalQuery({
 });
 
 // ============================================================================
+// Latest-processed-hour probe (for auto catch-up)
+// ============================================================================
+
+export const getLatestProcessedHour = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const row = await ctx.db
+      .query("notificationHourlyStats")
+      .withIndex("by_hour")
+      .order("desc")
+      .first();
+    return row?.hourStartMs ?? null;
+  },
+});
+
+// ============================================================================
 // Writer — replaces all rows for a given hour
 // ============================================================================
 
@@ -144,16 +164,47 @@ export const writeHourRows = internalMutation({
 // ============================================================================
 
 /**
- * Roll up one hour's counters. Pass `hourStartMs` to backfill a specific
- * hour; omit to roll up the hour just completed (typical cron usage).
+ * Roll up notification counters.
+ *
+ * - Cron usage (no args): catches up from the last row in
+ *   `notificationHourlyStats` forward to the hour just completed, processing
+ *   up to MAX_CATCH_UP_HOURS per invocation. If the table is empty, rolls
+ *   up only the hour just completed (no history backfill).
+ * - Explicit backfill: pass `hourStartMs` to reprocess a single specific
+ *   hour (idempotent — deletes + re-inserts rows for that hour).
  */
 export const runHourlyRollup = internalAction({
   args: { hourStartMs: v.optional(v.number()) },
   handler: async (ctx, args) => {
-    const hourStartMs =
-      args.hourStartMs ??
+    const latestTarget =
       Math.floor(Date.now() / HOUR_MS) * HOUR_MS - HOUR_MS;
-    const hourEndMs = hourStartMs + HOUR_MS;
+
+    let hoursToProcess: number[];
+    if (args.hourStartMs !== undefined) {
+      hoursToProcess = [args.hourStartMs];
+    } else {
+      const lastProcessed: number | null = await ctx.runQuery(
+        internal.functions.notifications.rollup.getLatestProcessedHour,
+        {}
+      );
+      if (lastProcessed === null) {
+        hoursToProcess = [latestTarget];
+      } else {
+        const firstPending = lastProcessed + HOUR_MS;
+        if (firstPending > latestTarget) {
+          hoursToProcess = [];
+        } else {
+          const pendingCount = Math.floor(
+            (latestTarget - firstPending) / HOUR_MS
+          ) + 1;
+          const count = Math.min(pendingCount, MAX_CATCH_UP_HOURS);
+          hoursToProcess = Array.from(
+            { length: count },
+            (_, i) => firstPending + i * HOUR_MS
+          );
+        }
+      }
+    }
 
     type Page = { types: string[]; isDone: boolean; continueCursor: string };
     type PageQuery =
@@ -161,7 +212,11 @@ export const runHourlyRollup = internalAction({
       | typeof internal.functions.notifications.rollup.pageImpressed
       | typeof internal.functions.notifications.rollup.pageClicked;
 
-    const tally = async (query: PageQuery): Promise<Map<string, number>> => {
+    const tally = async (
+      query: PageQuery,
+      hourStartMs: number,
+      hourEndMs: number
+    ): Promise<Map<string, number>> => {
       const counts = new Map<string, number>();
       let cursor: string | null = null;
       while (true) {
@@ -179,27 +234,43 @@ export const runHourlyRollup = internalAction({
       return counts;
     };
 
-    const [sent, impressed, clicked] = await Promise.all([
-      tally(internal.functions.notifications.rollup.pageSent),
-      tally(internal.functions.notifications.rollup.pageImpressed),
-      tally(internal.functions.notifications.rollup.pageClicked),
-    ]);
+    for (const hourStartMs of hoursToProcess) {
+      const hourEndMs = hourStartMs + HOUR_MS;
 
-    const types = new Set<string>([
-      ...sent.keys(),
-      ...impressed.keys(),
-      ...clicked.keys(),
-    ]);
-    const rows = Array.from(types).map((type) => ({
-      type,
-      sent: sent.get(type) ?? 0,
-      impressed: impressed.get(type) ?? 0,
-      clicked: clicked.get(type) ?? 0,
-    }));
+      const [sent, impressed, clicked] = await Promise.all([
+        tally(
+          internal.functions.notifications.rollup.pageSent,
+          hourStartMs,
+          hourEndMs
+        ),
+        tally(
+          internal.functions.notifications.rollup.pageImpressed,
+          hourStartMs,
+          hourEndMs
+        ),
+        tally(
+          internal.functions.notifications.rollup.pageClicked,
+          hourStartMs,
+          hourEndMs
+        ),
+      ]);
 
-    await ctx.runMutation(
-      internal.functions.notifications.rollup.writeHourRows,
-      { hourStartMs, rows }
-    );
+      const types = new Set<string>([
+        ...sent.keys(),
+        ...impressed.keys(),
+        ...clicked.keys(),
+      ]);
+      const rows = Array.from(types).map((type) => ({
+        type,
+        sent: sent.get(type) ?? 0,
+        impressed: impressed.get(type) ?? 0,
+        clicked: clicked.get(type) ?? 0,
+      }));
+
+      await ctx.runMutation(
+        internal.functions.notifications.rollup.writeHourRows,
+        { hourStartMs, rows }
+      );
+    }
   },
 });
