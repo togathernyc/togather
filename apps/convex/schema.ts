@@ -822,6 +822,26 @@ export default defineSchema({
     .index("by_trackingId", ["trackingId"]),
 
   // =============================================================================
+  // NOTIFICATION HOURLY ROLLUPS
+  // =============================================================================
+  // Incremental counters keyed by (hourStartMs, notificationType). Updated on
+  // send/impression/click so the admin dashboard can read O(hours × types)
+  // instead of scanning the notifications table. Hourly granularity lets any
+  // viewer timezone slice "today" exactly.
+
+  notificationHourlyStats: defineTable({
+    hourStartMs: v.number(), // UTC timestamp at the start of the hour
+    type: v.string(),        // notificationType
+    sent: v.number(),
+    impressed: v.number(),
+    clicked: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_hour", ["hourStartMs"])
+    .index("by_hour_type", ["hourStartMs", "type"])
+    .index("by_type_hour", ["type", "hourStartMs"]),
+
+  // =============================================================================
   // PUSH TOKENS
   // =============================================================================
 

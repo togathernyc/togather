@@ -37,6 +37,79 @@ function utcMonthStart(timestamp: number): number {
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
 }
 
+const DEFAULT_TZ = "America/New_York";
+
+/** Offset of `timeZone` from UTC at `timestampMs`, in milliseconds. */
+function tzOffsetMs(timestampMs: number, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date(timestampMs));
+  const pick = (t: string) => parts.find((p) => p.type === t)!.value;
+  // Intl's hour12:false sometimes returns "24" for midnight.
+  const hour = Number(pick("hour")) % 24;
+  const localAsUtc = Date.UTC(
+    Number(pick("year")),
+    Number(pick("month")) - 1,
+    Number(pick("day")),
+    hour,
+    Number(pick("minute")),
+    Number(pick("second"))
+  );
+  return localAsUtc - timestampMs;
+}
+
+/** UTC timestamp at the start of the given (y, m, d) calendar day in `timeZone`. */
+function tzMidnightUtc(year: number, month: number, day: number, timeZone: string): number {
+  const utcGuess = Date.UTC(year, month - 1, day);
+  return utcGuess - tzOffsetMs(utcGuess, timeZone);
+}
+
+/**
+ * Returns the `timeZone` calendar-day window that contains `timestampMs`.
+ * `start`/`end` are UTC timestamps (inclusive/exclusive), `ymd` is "YYYY-MM-DD".
+ */
+function dayWindow(timestampMs: number, timeZone: string): {
+  ymd: string;
+  start: number;
+  end: number;
+} {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(timestampMs));
+  const pick = (t: string) => parts.find((p) => p.type === t)!.value;
+  const ymd = `${pick("year")}-${pick("month")}-${pick("day")}`;
+  const y = Number(pick("year"));
+  const m = Number(pick("month"));
+  const d = Number(pick("day"));
+  return {
+    ymd,
+    start: tzMidnightUtc(y, m, d, timeZone),
+    end: tzMidnightUtc(y, m, d + 1, timeZone),
+  };
+}
+
+/** Validate a timezone string; fall back to America/New_York if invalid. */
+function resolveTimeZone(tz: string | undefined): string {
+  if (!tz) return DEFAULT_TZ;
+  try {
+    // Intl throws RangeError on unknown zones
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return tz;
+  } catch {
+    return DEFAULT_TZ;
+  }
+}
+
 function nextBucketStart(timestamp: number, granularity: SuperAdminGranularity): number {
   const d = new Date(timestamp);
   if (granularity === "month") {
@@ -1177,6 +1250,8 @@ export const getDailySummary = query({
     token: v.string(),
     /** Days offset from today (0 = today, 1 = yesterday, 2 = day before, etc.) */
     daysAgo: v.optional(v.number()),
+    /** IANA time zone for day boundaries (e.g. "America/New_York"). */
+    timeZone: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -1187,8 +1262,11 @@ export const getDailySummary = query({
 
     const offset = args.daysAgo ?? 0;
     const nowMs = now();
-    const dayStart = utcDayStart(nowMs - offset * DAY_MS);
-    const dayEnd = dayStart + DAY_MS;
+    const tz = resolveTimeZone(args.timeZone ?? user.timezone);
+    const { start: dayStart, end: dayEnd, ymd: dateLabel } = dayWindow(
+      nowMs - offset * DAY_MS,
+      tz
+    );
 
     // Scan the day's messages using the by_createdAt index
     const dayMessages = await ctx.db
@@ -1329,12 +1407,8 @@ export const getDailySummary = query({
       })
     );
 
-    // Format date as YYYY-MM-DD in UTC
-    const d = new Date(dayStart);
-    const date = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
-
     return {
-      date,
+      date: dateLabel,
       messages: {
         total: totalMessages,
         uniqueSenders: uniqueSenders.size,
@@ -1352,12 +1426,20 @@ export const getDailySummary = query({
 // ============================================================================
 
 /**
- * Get notification impression and click statistics for a community on a given day
+ * Get notification sent/impression/click counts for a single day in the
+ * caller's time zone.
+ *
+ * Reads from `notificationHourlyStats` (one row per hour per type) so cost is
+ * O(hours × types) — ~24 × ~types regardless of daily send volume. Counters
+ * are populated incrementally from `incrementNotificationHourlyStat`; history
+ * starts from first-deploy time (no backfill).
  */
 export const getNotificationStats = query({
   args: {
     token: v.string(),
     daysAgo: v.number(),
+    /** IANA time zone for day boundaries (e.g. "America/New_York"). */
+    timeZone: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -1366,46 +1448,36 @@ export const getNotificationStats = query({
       throw new Error("Togather internal access required");
     }
 
-    // Calculate day boundaries
-    const targetDate = new Date();
-    targetDate.setDate(targetDate.getDate() - args.daysAgo);
-    targetDate.setHours(0, 0, 0, 0);
-    const dayStart = targetDate.getTime();
-    const dayEnd = dayStart + DAY_MS;
+    const tz = resolveTimeZone(args.timeZone ?? user.timezone);
+    const { start: dayStart, end: dayEnd } = dayWindow(
+      now() - args.daysAgo * DAY_MS,
+      tz
+    );
 
-    // Get all notifications for this day
-    const notifications = await ctx.db
-      .query("notifications")
-      .withIndex("by_createdAt")
-      .filter((q) =>
-        q.and(
-          q.gte(q.field("createdAt"), dayStart),
-          q.lt(q.field("createdAt"), dayEnd)
-        )
+    const rows = await ctx.db
+      .query("notificationHourlyStats")
+      .withIndex("by_hour", (q) =>
+        q.gte("hourStartMs", dayStart).lt("hourStartMs", dayEnd)
       )
       .collect();
 
-    // Aggregate by type
-    const byType: Record<string, { sent: number; impressed: number; clicked: number }> = {};
+    const byType: Record<
+      string,
+      { sent: number; impressed: number; clicked: number }
+    > = {};
     let totalSent = 0;
     let totalImpressed = 0;
     let totalClicked = 0;
 
-    for (const n of notifications) {
-      const type = n.notificationType;
-      if (!byType[type]) byType[type] = { sent: 0, impressed: 0, clicked: 0 };
-      if (n.status === "sent") {
-        byType[type].sent++;
-        totalSent++;
-      }
-      if (n.impressedAt) {
-        byType[type].impressed++;
-        totalImpressed++;
-      }
-      if (n.clickedAt) {
-        byType[type].clicked++;
-        totalClicked++;
-      }
+    for (const row of rows) {
+      const entry = byType[row.type] ?? { sent: 0, impressed: 0, clicked: 0 };
+      entry.sent += row.sent;
+      entry.impressed += row.impressed;
+      entry.clicked += row.clicked;
+      byType[row.type] = entry;
+      totalSent += row.sent;
+      totalImpressed += row.impressed;
+      totalClicked += row.clicked;
     }
 
     return {
