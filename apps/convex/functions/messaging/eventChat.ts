@@ -111,11 +111,16 @@ export const getChannelByMeetingId = query({
 // ============================================================================
 
 /**
- * Idempotently create the chat channel for an event and seed its members.
+ * Idempotently create the chat channel for an event and seat the host.
  *
- * Call this the first time we need a channel for a meeting (e.g. on first
- * RSVP, or lazily when a host opens the chat UI). Safe to call repeatedly —
+ * Call this the first time we need a channel for a meeting (e.g. when a
+ * host opens the chat UI, or on the first blast). Safe to call repeatedly —
  * if a channel already exists for the meeting, the existing id is returned.
+ *
+ * Seating model: only the host is seated here. Non-host members are added
+ * lazily by `openEventChat` (they only become subscribers after explicitly
+ * opening the chat), which prevents unrelated-to-them push notifications
+ * and caps the write set for this mutation regardless of RSVP scale.
  */
 export const ensureEventChannel = internalMutation({
   args: {
@@ -156,10 +161,11 @@ export const ensureEventChannel = internalMutation({
       isArchived: false,
       isEnabled: true,
       meetingId: args.meetingId,
-      memberCount: 0,
+      memberCount: 1,
     });
 
-    // Seat the host as admin.
+    // Seat the host as admin. Non-host RSVPers are seated lazily when they
+    // call openEventChat — see the comment at the top of this mutation.
     await ctx.db.insert("chatChannelMembers", {
       channelId,
       userId: hostUserId,
@@ -167,38 +173,6 @@ export const ensureEventChannel = internalMutation({
       syncSource: "event_rsvp",
       joinedAt: ts,
       isMuted: false,
-    });
-
-    // Seat every current RSVPer whose option is enabled.
-    const rsvps = await ctx.db
-      .query("meetingRsvps")
-      .withIndex("by_meeting", (q) => q.eq("meetingId", args.meetingId))
-      .collect();
-
-    const enabledOptionIds = new Set(
-      (meeting.rsvpOptions ?? [])
-        .filter((opt) => opt.enabled)
-        .map((opt) => opt.id),
-    );
-
-    let rsvpMemberCount = 0;
-    for (const rsvp of rsvps) {
-      if (rsvp.userId === hostUserId) continue; // host already seated
-      if (!enabledOptionIds.has(rsvp.rsvpOptionId)) continue;
-
-      await ctx.db.insert("chatChannelMembers", {
-        channelId,
-        userId: rsvp.userId,
-        role: "member",
-        syncSource: "event_rsvp",
-        joinedAt: ts,
-        isMuted: false,
-      });
-      rsvpMemberCount += 1;
-    }
-
-    await ctx.db.patch(channelId, {
-      memberCount: 1 + rsvpMemberCount,
     });
 
     return channelId;
@@ -335,6 +309,36 @@ export const openEventChat = mutation({
       internal.functions.messaging.eventChat.ensureEventChannel,
       { meetingId: args.meetingId },
     );
+
+    // Lazily seat the caller as a channel member if they aren't already
+    // (the host was seated by ensureEventChannel; non-host RSVPers are
+    // seated only on their first openEventChat so they don't start
+    // receiving push notifications for events they haven't looked at).
+    if (!isHost) {
+      const existingMembership = await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", userId),
+        )
+        .first();
+
+      if (!existingMembership) {
+        await ctx.db.insert("chatChannelMembers", {
+          channelId,
+          userId,
+          role: "member",
+          syncSource: "event_rsvp",
+          joinedAt: now(),
+          isMuted: false,
+        });
+        const channel = await ctx.db.get(channelId);
+        if (channel) {
+          await ctx.db.patch(channelId, {
+            memberCount: (channel.memberCount ?? 0) + 1,
+          });
+        }
+      }
+    }
 
     return { channelId, slug: `event-${meeting.shortId}` };
   },

@@ -324,7 +324,7 @@ describe("ensureEventChannel", () => {
     expect(hostMembership?.syncSource).toBe("event_rsvp");
   });
 
-  test("seeds users with RSVPs to enabled options as members", async () => {
+  test("does NOT bulk-seed RSVPers — only the host is seated initially", async () => {
     const t = convexTest(schema, modules);
     const data = await setupTestData(t);
 
@@ -341,13 +341,15 @@ describe("ensureEventChannel", () => {
     });
 
     const userIds = rows.map((r) => r.userId);
-    expect(userIds).toContain(data.goingId);
-    expect(userIds).toContain(data.notGoingId);
-    // Maybe option is disabled — this user should NOT be seeded.
+    // Lazy-seed model: only the host is seated by ensureEventChannel.
+    // Non-host RSVPers become members when they call openEventChat.
+    expect(userIds).toEqual([data.hostId]);
+    expect(userIds).not.toContain(data.goingId);
+    expect(userIds).not.toContain(data.notGoingId);
     expect(userIds).not.toContain(data.maybeDisabledId);
   });
 
-  test("memberCount equals host + enabled-option RSVPers", async () => {
+  test("memberCount starts at 1 (just the host)", async () => {
     const t = convexTest(schema, modules);
     const data = await setupTestData(t);
 
@@ -357,8 +359,7 @@ describe("ensureEventChannel", () => {
     );
 
     const channel = await t.run(async (ctx) => ctx.db.get(channelId));
-    // host (1) + goingId + notGoingId = 3. maybeDisabledId is excluded.
-    expect(channel?.memberCount).toBe(3);
+    expect(channel?.memberCount).toBe(1);
   });
 
   test("throws when meeting has no shortId", async () => {
@@ -696,6 +697,13 @@ describe("addEventChannelMember / removeEventChannelMember", () => {
       { meetingId: data.meetingId },
     );
 
+    // Lazy-seed model: seat goingId first (simulating an openEventChat
+    // or RSVP-sync add) before testing the removal path.
+    await t.mutation(
+      (internal as any).functions.messaging.eventChat.addEventChannelMember,
+      { meetingId: data.meetingId, userId: data.goingId },
+    );
+
     const before = await t.run(async (ctx) => ctx.db.get(channelId));
     const beforeCount = before?.memberCount ?? 0;
 
@@ -811,7 +819,6 @@ describe("RSVP sync via meetingRsvps.submit", () => {
   });
 
   test("removing an RSVP (via meetingRsvps.remove) removes the user from the channel", async () => {
-    vi.useFakeTimers();
     const t = convexTest(schema, modules);
     const data = await setupTestData(t);
 
@@ -820,7 +827,14 @@ describe("RSVP sync via meetingRsvps.submit", () => {
       { meetingId: data.meetingId },
     );
 
-    // goingId was seeded as a channel member by ensureEventChannel.
+    // Lazy-seed model: seat goingId as a channel member before testing
+    // removal on un-RSVP. (Simulates the user having opened the chat or
+    // been added via a previous RSVP sync.)
+    await t.mutation(
+      (internal as any).functions.messaging.eventChat.addEventChannelMember,
+      { meetingId: data.meetingId, userId: data.goingId },
+    );
+
     // Calling meetingRsvps.remove should remove them from the channel.
     // Note: submit rejects disabled options upstream, so "change to disabled
     // to drop from chat" isn't a reachable path — remove is.
@@ -829,8 +843,7 @@ describe("RSVP sync via meetingRsvps.submit", () => {
       meetingId: data.meetingId,
     });
 
-    vi.runAllTimers();
-    await t.finishInProgressScheduledFunctions();
+    // Inline sync — no scheduled functions to flush.
 
     const membership = await t.run(async (ctx) => {
       return await ctx.db
