@@ -82,7 +82,7 @@ import { DOMAIN_CONFIG } from "@togather/shared";
 import * as Clipboard from "expo-clipboard";
 import { EventBlastSheet } from "@/features/leader-tools/components/EventBlastSheet";
 import { EventBlastHistory } from "@/features/leader-tools/components/EventBlastHistory";
-import { EventActivity, EventActivityComposer } from "./EventActivity";
+import { EventActivity } from "./EventActivity";
 
 /**
  * Initial event data passed from Server Component
@@ -692,12 +692,9 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
   // ============================================================================
 
   // The composer is only rendered when the user has chat access AND chat is
-  // enabled. Composer + floating RSVP pill share one absolute-positioned
-  // bottom dock (stacked vertically) so they're guaranteed to coexist on iOS
-  // — previously independent absolute siblings raced and the composer could
-  // become invisible.
-  const showComposer = canAccessChat && isChatEnabled && !!authToken;
-  const composerBottomOffset = shouldShowTabBar ? 64 : 0;
+  // The composer lives INSIDE the Activity section (scrolls with the page);
+  // the bottom dock is just for the floating RSVP pill / option buttons.
+  const dockBottomOffset = shouldShowTabBar ? 64 : 0;
 
   // Branch for which floating RSVP UI to show (or none).
   const showFloatingRsvpCard =
@@ -706,8 +703,7 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
     canRSVP && (eventData.hasAccess || !eventData.accessPrompt) && myRsvp?.optionId == null;
   const showFloatingPrompt =
     canRSVP && !eventData.hasAccess && !!eventData.accessPrompt;
-  const showBottomDock =
-    showComposer || showFloatingRsvpCard || showFloatingRsvpButtons;
+  const showBottomDock = showFloatingRsvpCard || showFloatingRsvpButtons;
 
   return (
     <KeyboardAvoidingView
@@ -1051,16 +1047,13 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
           style={[
             styles.bottomDock,
             {
-              bottom: composerBottomOffset,
+              bottom: dockBottomOffset,
               paddingBottom: insets.bottom,
               backgroundColor: colors.surface,
               borderTopColor: colors.border,
             },
           ]}
         >
-          {showComposer && (
-            <EventActivityComposer channelId={resolvedChannelId} />
-          )}
           {showFloatingRsvpCard && myRsvp?.optionId != null && (
             <FloatingRsvpCard
               response={{ optionId: myRsvp.optionId, guestCount: myRsvp.guestCount ?? 0 }}

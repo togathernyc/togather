@@ -246,6 +246,15 @@ export function EventActivity({
           </View>
         )}
       </ReactionsProvider>
+
+      {/* Composer rendered inline at the end of the Activity section —
+          scrolls with the page rather than pinning at the viewport bottom.
+          Skipped entirely when chat is disabled. */}
+      {isChatEnabled && (
+        <View style={styles.inlineComposer}>
+          <MessageInput channelId={channelId} />
+        </View>
+      )}
     </View>
   );
 }
@@ -331,5 +340,10 @@ const styles = StyleSheet.create({
   messagesList: {
     // Leave MessageItem's own spacing intact. Messages render in ascending
     // order top-to-bottom (newest at the bottom, like Partiful).
+  },
+  inlineComposer: {
+    // The composer scrolls with the page — breathing room above so it
+    // doesn't hug the last message.
+    marginTop: 16,
   },
 });

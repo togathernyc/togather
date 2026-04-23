@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -169,16 +169,18 @@ export function GuestStepper({
 
   return (
     <View style={[stepperStyles.row, compact && stepperStyles.rowCompact]}>
-      <Text
-        style={[
-          stepperStyles.label,
-          { color: colors.textSecondary },
-          compact && stepperStyles.labelCompact,
-        ]}
-        numberOfLines={1}
-      >
-        {label}
-      </Text>
+      {label ? (
+        <Text
+          style={[
+            stepperStyles.label,
+            { color: colors.textSecondary },
+            compact && stepperStyles.labelCompact,
+          ]}
+          numberOfLines={1}
+        >
+          {label}
+        </Text>
+      ) : null}
       <View style={[stepperStyles.controls, { borderColor: colors.border }]}>
         <TouchableOpacity
           testID="guest-stepper-decrement"
@@ -338,57 +340,7 @@ export function FloatingRsvpCard({
   const emoji = selectedOption ? getEmojiForLabel(selectedOption.label) : "👍";
   const label = selectedOption ? getCleanLabel(selectedOption.label) : "Going";
   const isGoing = selectedOption ? isGoingOptionLabel(selectedOption.label) : false;
-  const guestCount = response.guestCount ?? 0;
-  const [pendingGuestCount, setPendingGuestCount] = useState<number | null>(null);
-
-  // Clear local pending state once the query result catches up.
-  useEffect(() => {
-    if (pendingGuestCount !== null && pendingGuestCount === guestCount) {
-      setPendingGuestCount(null);
-    }
-  }, [guestCount, pendingGuestCount]);
-
-  const displayedGuestCount = pendingGuestCount ?? guestCount;
-
-  // Serialize stepper writes. Rapid taps used to fire concurrent mutations
-  // and, because the backend applies last-write-by-arrival, an earlier
-  // request that finished later could overwrite the user's latest intent.
-  // Instead: at most one request in flight; newer taps stash the latest
-  // value in `queuedRef` and are drained once the current write settles.
-  const inFlightRef = useRef(false);
-  const queuedRef = useRef<number | null>(null);
-
-  const handleGuestChange = (next: number) => {
-    if (!onGuestCountChange) return;
-    setPendingGuestCount(next);
-
-    if (inFlightRef.current) {
-      queuedRef.current = next;
-      return;
-    }
-
-    const run = (value: number) => {
-      inFlightRef.current = true;
-      Promise.resolve(onGuestCountChange(value))
-        .then(() => {
-          inFlightRef.current = false;
-          const queued = queuedRef.current;
-          queuedRef.current = null;
-          if (queued !== null && queued !== value) {
-            run(queued);
-          }
-        })
-        .catch(() => {
-          inFlightRef.current = false;
-          queuedRef.current = null;
-          setPendingGuestCount(null);
-        });
-    };
-
-    run(next);
-  };
-
-  const showInlineStepper = isGoing && !!onGuestCountChange;
+  const displayedGuestCount = response.guestCount ?? 0;
 
   return (
     <View
@@ -407,48 +359,29 @@ export function FloatingRsvpCard({
       }
     >
       <View style={styles.card}>
-        <View style={styles.cardContent}>
-          {/* Left side (emoji + label stack) is the edit target. */}
-          <TouchableOpacity
-            testID="floating-rsvp-card"
-            style={styles.cardEditTarget}
-            onPress={onEdit}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.cardEmoji}>{emoji}</Text>
-            <View style={styles.cardTextContent}>
-              <Text style={styles.statusLabel} numberOfLines={1}>
-                {label}
-              </Text>
-              <Text
-                style={[styles.editPrompt, { color: colors.textSecondary }]}
-                numberOfLines={1}
-              >
-                Edit your RSVP
-              </Text>
-            </View>
-          </TouchableOpacity>
-
-          {/* Inline stepper — its taps must NOT trigger the edit modal. */}
-          {showInlineStepper && (
-            <GuestStepper
-              value={displayedGuestCount}
-              onChange={handleGuestChange}
-              max={maxGuests}
-              label=""
-              compact
-            />
-          )}
-
-          <TouchableOpacity
-            onPress={onEdit}
-            activeOpacity={0.7}
-            hitSlop={8}
-            style={styles.cardEditIcon}
-          >
-            <Ionicons name="create-outline" size={20} color={DEFAULT_PRIMARY_COLOR} />
-          </TouchableOpacity>
-        </View>
+        <TouchableOpacity
+          testID="floating-rsvp-card"
+          style={styles.cardContent}
+          onPress={onEdit}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.cardEmoji}>{emoji}</Text>
+          <View style={styles.cardTextContent}>
+            <Text style={styles.statusLabel} numberOfLines={1}>
+              {label}
+              {isGoing && displayedGuestCount > 0
+                ? ` · +${displayedGuestCount} guest${displayedGuestCount === 1 ? "" : "s"}`
+                : ""}
+            </Text>
+            <Text
+              style={[styles.editPrompt, { color: colors.textSecondary }]}
+              numberOfLines={1}
+            >
+              Edit your RSVP
+            </Text>
+          </View>
+          <Ionicons name="create-outline" size={20} color={DEFAULT_PRIMARY_COLOR} />
+        </TouchableOpacity>
       </View>
     </View>
   );
