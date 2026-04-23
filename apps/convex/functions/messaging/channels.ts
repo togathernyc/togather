@@ -1203,13 +1203,18 @@ export const getInboxChannels = query({
     );
     const eventMeetingMap = new Map<
       Id<"meetings">,
-      { scheduledAt: number | null; shortId: string | null }
+      {
+        scheduledAt: number | null;
+        shortId: string | null;
+        coverImage: string | null;
+      }
     >();
     for (let i = 0; i < eventMeetingIds.length; i++) {
       const m = eventMeetingDocs[i];
       eventMeetingMap.set(eventMeetingIds[i], {
         scheduledAt: m && typeof m.scheduledAt === "number" ? m.scheduledAt : null,
         shortId: m && typeof m.shortId === "string" ? m.shortId : null,
+        coverImage: m && m.coverImage ? getMediaUrl(m.coverImage) ?? null : null,
       });
     }
 
@@ -1244,6 +1249,12 @@ export const getInboxChannels = query({
          * Activity) instead of the standalone chat room.
          */
         meetingShortId: string | null;
+        /**
+         * For event channels, the meeting's cover image URL (resolved through
+         * R2). The inbox uses this for the row avatar instead of the group's
+         * preview image.
+         */
+        meetingCoverImage: string | null;
       }>;
       userRole: "leader" | "member";
     }> = [];
@@ -1335,6 +1346,10 @@ export const getInboxChannels = query({
           meetingShortId:
             ch.channelType === "event" && ch.meetingId
               ? eventMeetingMap.get(ch.meetingId)?.shortId ?? null
+              : null,
+          meetingCoverImage:
+            ch.channelType === "event" && ch.meetingId
+              ? eventMeetingMap.get(ch.meetingId)?.coverImage ?? null
               : null,
         };
       });

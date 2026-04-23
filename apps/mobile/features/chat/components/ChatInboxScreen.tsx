@@ -63,6 +63,11 @@ type InboxChannel = {
    * rather than the legacy standalone chat room.
    */
   meetingShortId?: string | null;
+  /**
+   * For event channels, the owning meeting's cover image URL. The row
+   * renders this as the avatar so events look distinct from group channels.
+   */
+  meetingCoverImage?: string | null;
 };
 
 // Type for the grouped inbox data from getInboxChannels query
@@ -449,7 +454,7 @@ function EventInboxRowItem({ row, isActive }: EventInboxRowItemProps) {
     >
       <View style={styles.eventAvatarContainer}>
         <AppImage
-          source={group.preview}
+          source={channel.meetingCoverImage || group.preview}
           style={styles.eventAvatarImage}
           optimizedWidth={150}
           placeholder={{
@@ -458,14 +463,6 @@ function EventInboxRowItem({ row, isActive }: EventInboxRowItemProps) {
             backgroundColor: isDark ? "#333" : "#E5E5E5",
           }}
         />
-        <View
-          style={[
-            styles.eventIconBadge,
-            { backgroundColor: primaryColor, borderColor: colors.surface },
-          ]}
-        >
-          <Ionicons name="calendar" size={12} color="#fff" />
-        </View>
       </View>
 
       <View style={styles.eventContent}>
@@ -480,18 +477,6 @@ function EventInboxRowItem({ row, isActive }: EventInboxRowItemProps) {
           >
             {channel.name}
           </Text>
-          <View
-            style={[
-              styles.eventPill,
-              {
-                backgroundColor: isDark ? colors.surfaceSecondary : "#E5E7EB",
-              },
-            ]}
-          >
-            <Text style={[styles.eventPillText, { color: colors.textSecondary }]}>
-              Event
-            </Text>
-          </View>
         </View>
         <View style={styles.eventBottomRow}>
           <Text
