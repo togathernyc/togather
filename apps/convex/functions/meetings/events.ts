@@ -478,7 +478,7 @@ async function loadMyEventsMeetings(
   return withGroup;
 }
 
-function isVisible(
+export function isVisible(
   m: MeetingWithGroup,
   userId: Id<"users"> | null,
   userGroupIds: Set<string>,
