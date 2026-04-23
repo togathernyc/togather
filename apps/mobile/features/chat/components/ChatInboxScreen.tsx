@@ -475,6 +475,9 @@ function EventInboxRowItem({ row, isActive }: EventInboxRowItemProps) {
             ]}
             numberOfLines={1}
           >
+            <Text style={{ color: colors.textSecondary, fontWeight: "400" }}>
+              {group.name}:{" "}
+            </Text>
             {channel.name}
           </Text>
         </View>
