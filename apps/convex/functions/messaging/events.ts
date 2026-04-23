@@ -39,6 +39,13 @@ export const onMessageSent = internalMutation({
     const message = await ctx.db.get(args.messageId);
     if (!message) return;
 
+    // Blast-mirror messages carry blastId and are inserted by
+    // eventBlasts.recordBlast, which already delivers the SMS + push via its
+    // own channels. Short-circuit here so the chat fanout doesn't push the
+    // same content again ~5s later. The mirrored chatMessages row stays
+    // visible in the Activity feed.
+    if (message.blastId) return;
+
     // Generate preview for notifications (but don't update channel - sendMessage already does it
     // with smart previews like "Sent a photo" or "Sent X files")
     const preview = message.content.slice(0, MAX_PREVIEW_LENGTH);
