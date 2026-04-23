@@ -47,6 +47,26 @@ export function EditProfileForm({ onCancel }: EditProfileFormProps) {
     return `${cleaned.substring(0, 2)}/${cleaned.substring(2, 4)}/${cleaned.substring(4, 8)}`;
   };
 
+  // MM/DD-only input formatter for the Profile Information birthday field.
+  // Same idea as `formatBirthdayInput` but caps at 4 digits (month + day).
+  const formatBirthdayMdInput = (text: string): string => {
+    const cleaned = text.replace(/\D/g, '').slice(0, 4);
+    if (cleaned.length <= 2) return cleaned;
+    return `${cleaned.substring(0, 2)}/${cleaned.substring(2)}`;
+  };
+
+  // Seed the M/D birthday from separate month/day fields on the user, which
+  // are how the Convex `users` table stores this value.
+  const formatBirthdayMdFromUser = (
+    month: number | undefined,
+    day: number | undefined,
+  ): string => {
+    if (!month || !day) return '';
+    const mm = String(month).padStart(2, '0');
+    const dd = String(day).padStart(2, '0');
+    return `${mm}/${dd}`;
+  };
+
   // Validate date string in MM/DD/YYYY format
   const validateDate = useCallback((dateStr: string): { valid: boolean; dateForApi?: string; error?: string } => {
     if (!dateStr) return { valid: true }; // Optional field
@@ -96,6 +116,14 @@ export function EditProfileForm({ onCancel }: EditProfileFormProps) {
       phone: user?.phone || '',
       date_of_birth: formatDateForDisplay(user?.date_of_birth),
       zip_code: user?.zip_code || '',
+      bio: (user as any)?.bio || '',
+      instagram_handle: (user as any)?.instagram_handle || '',
+      linkedin_handle: (user as any)?.linkedin_handle || '',
+      birthday_md: formatBirthdayMdFromUser(
+        (user as any)?.birthday_month,
+        (user as any)?.birthday_day,
+      ),
+      location: (user as any)?.location || '',
     },
   });
 
@@ -233,6 +261,61 @@ export function EditProfileForm({ onCancel }: EditProfileFormProps) {
           keyboardType="number-pad"
           maxLength={10}
           formatValue={formatBirthdayInput}
+        />
+      </View>
+
+      <View style={[styles.section, { backgroundColor: colors.surface }]}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Profile Information</Text>
+
+        <FormInput
+          name="bio"
+          control={control}
+          label="Bio"
+          error={errors.bio}
+          placeholder="Tell others about yourself"
+          multiline
+          numberOfLines={4}
+          maxLength={500}
+        />
+
+        <FormInput
+          name="instagram_handle"
+          control={control}
+          label="Instagram"
+          error={errors.instagram_handle}
+          placeholder="@yourhandle"
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+
+        <FormInput
+          name="linkedin_handle"
+          control={control}
+          label="LinkedIn"
+          error={errors.linkedin_handle}
+          placeholder="linkedin.com/in/your-slug"
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+
+        <FormInput
+          name="birthday_md"
+          control={control}
+          label="Birthday (M/D)"
+          error={errors.birthday_md}
+          placeholder="MM/DD"
+          keyboardType="number-pad"
+          maxLength={5}
+          formatValue={formatBirthdayMdInput}
+        />
+
+        <FormInput
+          name="location"
+          control={control}
+          label="Location"
+          error={errors.location}
+          placeholder="City, State"
+          maxLength={100}
         />
       </View>
 

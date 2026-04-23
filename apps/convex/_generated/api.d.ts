@@ -135,6 +135,7 @@ import type * as functions_taskTemplates_index from "../functions/taskTemplates/
 import type * as functions_tasks_index from "../functions/tasks/index.js";
 import type * as functions_toolShortLinks_index from "../functions/toolShortLinks/index.js";
 import type * as functions_uploads from "../functions/uploads.js";
+import type * as functions_userProfiles from "../functions/userProfiles.js";
 import type * as functions_users from "../functions/users.js";
 import type * as http from "../http.js";
 import type * as lib_auth from "../lib/auth.js";
@@ -303,6 +304,7 @@ declare const fullApi: ApiFromModules<{
   "functions/tasks/index": typeof functions_tasks_index;
   "functions/toolShortLinks/index": typeof functions_toolShortLinks_index;
   "functions/uploads": typeof functions_uploads;
+  "functions/userProfiles": typeof functions_userProfiles;
   "functions/users": typeof functions_users;
   http: typeof http;
   "lib/auth": typeof lib_auth;

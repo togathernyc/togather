@@ -7,6 +7,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { useTheme } from '@hooks/useTheme';
+import { useCommunityTheme } from '@hooks/useCommunityTheme';
 import { EventCardRow } from '@features/events/components/EventCardRow';
 import type { UpcomingEvent } from '../hooks/useUserProfile';
 
@@ -18,6 +19,7 @@ export function UserProfileUpcomingEvents({
   events,
 }: UserProfileUpcomingEventsProps) {
   const { colors } = useTheme();
+  const { primaryColor } = useCommunityTheme();
 
   if (events.length === 0) return null;
 
@@ -49,7 +51,7 @@ export function UserProfileUpcomingEvents({
                     {
                       backgroundColor:
                         role === 'hosting'
-                          ? colors.primary
+                          ? primaryColor
                           : colors.backgroundSecondary,
                     },
                   ]}

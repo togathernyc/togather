@@ -7,6 +7,7 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@hooks/useTheme';
+import { useCommunityTheme } from '@hooks/useCommunityTheme';
 
 import type { UserProfile } from '../hooks/useUserProfile';
 
@@ -16,6 +17,7 @@ interface UserProfileBadgesProps {
 
 export function UserProfileBadges({ profile }: UserProfileBadgesProps) {
   const { colors } = useTheme();
+  const { primaryColor } = useCommunityTheme();
 
   const isLeader = (profile.leaderGroupIds?.length ?? 0) > 0;
 
@@ -29,16 +31,16 @@ export function UserProfileBadges({ profile }: UserProfileBadgesProps) {
         <Pill
           icon="star"
           label="Primary Admin"
-          backgroundColor={colors.primary + '20'}
-          color={colors.primary}
+          backgroundColor={primaryColor + '20'}
+          color={primaryColor}
         />
       )}
       {!profile.isPrimaryAdmin && profile.isCommunityAdmin && (
         <Pill
           icon="shield-checkmark"
           label="Community Admin"
-          backgroundColor={colors.primary + '15'}
-          color={colors.primary}
+          backgroundColor={primaryColor + '15'}
+          color={primaryColor}
         />
       )}
       {isLeader && (

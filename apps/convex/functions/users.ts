@@ -621,6 +621,14 @@ export const me = query({
         : null,
       timezone: user.timezone || "America/New_York",
       zipCode: user.zipCode || null,
+      // Public profile fields — surfaced here so the Edit Profile form can
+      // seed its defaults without making a second query.
+      bio: user.bio ?? null,
+      instagramHandle: user.instagramHandle ?? null,
+      linkedinHandle: user.linkedinHandle ?? null,
+      birthdayMonth: user.birthdayMonth ?? null,
+      birthdayDay: user.birthdayDay ?? null,
+      location: user.location ?? null,
       activeCommunityId: user.activeCommunityId || null,
       activeCommunityName,
       activeCommunityPrimaryColor,
