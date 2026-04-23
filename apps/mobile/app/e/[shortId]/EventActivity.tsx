@@ -55,7 +55,7 @@ export interface EventActivityProps {
 export function EventActivity({
   meetingId: _meetingId,
   groupId,
-  shortId: _shortId,
+  shortId,
   currentUserId,
   canAccess,
   isChatEnabled,
@@ -242,6 +242,7 @@ export function EventActivity({
                 }}
                 currentUserId={currentUserId}
                 groupId={groupId}
+                eventShortId={shortId}
               />
             ))}
           </View>

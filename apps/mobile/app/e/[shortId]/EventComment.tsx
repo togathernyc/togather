@@ -57,6 +57,8 @@ export interface EventCommentProps {
   };
   currentUserId: Id<'users'>;
   groupId: Id<'groups'>;
+  /** Event shortId, used to route Reply to the event-scoped thread page. */
+  eventShortId: string;
 }
 
 /**
@@ -94,7 +96,7 @@ function formatRelativeTime(timestamp: number): string {
   return `${month} ${day_}`;
 }
 
-function EventCommentInner({ message, currentUserId, groupId }: EventCommentProps) {
+function EventCommentInner({ message, currentUserId, groupId, eventShortId }: EventCommentProps) {
   const router = useRouter();
   const { colors: themeColors } = useTheme();
 
@@ -168,15 +170,16 @@ function EventCommentInner({ message, currentUserId, groupId }: EventCommentProp
     setImageViewerVisible(true);
   }, []);
 
-  // Reply — route to the shared thread page used by group chat. Plain
-  // string form (not the `pathname` object form) because on native the
-  // event page (/e/[shortId]) and the inbox stack are separate, and the
-  // object form doesn't always cross-stack navigate reliably.
+  // Reply — route to the event-scoped thread page so the push stays
+  // inside the /e/[shortId] stack. The previous /inbox/... target mounted
+  // the thread in a different stack and rendered BEHIND the event page
+  // on native. The event-scoped route imports the same ThreadPage
+  // component so functionality is identical.
   const handleReplyPress = useCallback(() => {
     router.push(
-      `/inbox/${groupId}/thread/${message._id}?channelName=event` as any,
+      `/e/${eventShortId}/thread/${message._id}?groupId=${groupId}&channelName=event` as any,
     );
-  }, [router, groupId, message._id]);
+  }, [router, eventShortId, groupId, message._id]);
 
   // ---- Rendering ----
 
