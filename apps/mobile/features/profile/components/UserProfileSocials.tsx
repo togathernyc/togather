@@ -8,7 +8,7 @@
  */
 
 import React from 'react';
-import { View, Text, StyleSheet, Linking, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, Linking, Platform, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@hooks/useTheme';
 
@@ -75,8 +75,14 @@ function SocialRow({ icon, label, onPress, color, iconColor }: SocialRowProps) {
 }
 
 async function openInstagram(handle: string) {
-  const deepLink = `instagram://user?username=${handle}`;
   const webUrl = `https://instagram.com/${handle}`;
+  // On web, skip the `instagram://` deep link — browsers silently no-op
+  // on unknown custom schemes, so the tap appears dead. Go straight to web.
+  if (Platform.OS === 'web') {
+    openExternal(webUrl);
+    return;
+  }
+  const deepLink = `instagram://user?username=${handle}`;
   try {
     const supported = await Linking.canOpenURL(deepLink);
     if (supported) {
@@ -92,7 +98,14 @@ async function openInstagram(handle: string) {
 }
 
 function openLinkedIn(handle: string) {
-  const url = `https://linkedin.com/in/${handle}`;
+  openExternal(`https://linkedin.com/in/${handle}`);
+}
+
+function openExternal(url: string) {
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    window.open(url, '_blank', 'noopener,noreferrer');
+    return;
+  }
   Linking.openURL(url).catch(() => {
     // Silent — see openInstagram comment.
   });
