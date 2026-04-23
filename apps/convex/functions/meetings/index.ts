@@ -426,8 +426,11 @@ export const update = mutation({
       let newReminderJobId = undefined;
       let newAttendanceConfirmationJobId = undefined;
 
-      // Schedule new reminder if in the future and not yet sent
-      if (newReminderAt > timestamp && !meeting.reminderSent) {
+      // Schedule new reminder if in the future. Don't gate on the old
+      // reminderSent value — line 401 just reset it for forward reschedules,
+      // so an already-fired meeting moved to a new future time still needs
+      // a fresh job. The attendance block below already follows this shape.
+      if (newReminderAt > timestamp) {
         newReminderJobId = await ctx.scheduler.runAt(
           newReminderAt,
           internal.functions.scheduledJobs.sendMeetingReminder,

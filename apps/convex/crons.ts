@@ -42,32 +42,6 @@ crons.hourly(
 );
 
 // =============================================================================
-// MEETING REMINDER CHECK (Fallback)
-// =============================================================================
-// Runs every 15 minutes as a fallback to catch any meeting reminders that
-// weren't scheduled at creation time (e.g., migrated data).
-// Primary scheduling happens in meetings.create mutation via ctx.scheduler.runAt()
-
-crons.cron(
-  "meeting-reminder-fallback",
-  "*/15 * * * *", // Every 15 minutes
-  internal.functions.scheduledJobs.processMeetingReminderFallback
-);
-
-// =============================================================================
-// ATTENDANCE CONFIRMATION CHECK (Fallback)
-// =============================================================================
-// Runs every 15 minutes as a fallback to catch any attendance confirmations that
-// weren't scheduled at creation time (e.g., migrated data).
-// Primary scheduling happens in meetings.create mutation via ctx.scheduler.runAt()
-
-crons.cron(
-  "attendance-confirmation-fallback",
-  "*/15 * * * *", // Every 15 minutes
-  internal.functions.scheduledJobs.processAttendanceConfirmationFallback
-);
-
-// =============================================================================
 // EMAIL VERIFICATION CODE CLEANUP
 // =============================================================================
 // Runs hourly to clean up expired email verification codes.
