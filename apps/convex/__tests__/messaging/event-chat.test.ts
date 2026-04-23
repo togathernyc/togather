@@ -38,7 +38,7 @@ import { convexTest } from "convex-test";
 import schema from "../../schema";
 import type { Id } from "../../_generated/dataModel";
 import { modules } from "../../test.setup";
-import { internal } from "../../_generated/api";
+import { api, internal } from "../../_generated/api";
 
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
 
@@ -1039,5 +1039,265 @@ describe("text blast mirror", () => {
     expect(channel).not.toBeNull();
     expect(channel?.lastMessageAt).toBeGreaterThan(0);
     expect(channel?.lastMessagePreview).toContain("See you at 7pm");
+  });
+
+  test("onMessageSent skips push fanout for blast-mirrored messages", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const data = await setupTestData(t);
+
+    // Send a blast — this mirrors into the event chat with blastId set.
+    await t.mutation("functions/eventBlasts:initiate" as any, {
+      token: data.hostToken,
+      meetingId: data.meetingId,
+      message: "No duplicate push please",
+      channels: ["push"],
+    });
+    vi.runAllTimers();
+    await t.finishInProgressScheduledFunctions();
+
+    const channel = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("chatChannels")
+        .withIndex("by_meetingId", (q) => q.eq("meetingId", data.meetingId))
+        .unique();
+    });
+    expect(channel).not.toBeNull();
+
+    const mirrored = await t.run(async (ctx) => {
+      const rows = await ctx.db
+        .query("chatMessages")
+        .withIndex("by_channel", (q) => q.eq("channelId", channel!._id))
+        .collect();
+      return rows.find((m) => m.blastId != null);
+    });
+    expect(mirrored).toBeDefined();
+    expect(mirrored!.blastId).toBeTruthy();
+
+    // Call onMessageSent directly for the mirrored message. Under the fix,
+    // it must short-circuit and not schedule sendMessageNotifications.
+    const scheduledBefore = await t.run(async (ctx) => {
+      return await ctx.db.system.query("_scheduled_functions").collect();
+    });
+
+    await t.mutation(
+      (internal as any).functions.messaging.events.onMessageSent,
+      {
+        messageId: mirrored!._id,
+        channelId: channel!._id,
+        senderId: data.hostId,
+      },
+    );
+
+    const scheduledAfter = await t.run(async (ctx) => {
+      return await ctx.db.system.query("_scheduled_functions").collect();
+    });
+
+    // No new scheduled sendMessageNotifications entries — onMessageSent
+    // bails out when message.blastId is set.
+    const newNotifJobs = scheduledAfter
+      .filter((j) => !scheduledBefore.some((b) => b._id === j._id))
+      .filter((j) => String(j.name).includes("sendMessageNotifications"));
+    expect(newNotifJobs).toHaveLength(0);
+  });
+});
+
+// ============================================================================
+// Reactions auth on event channels
+// ============================================================================
+
+describe("reactions auth on event channels", () => {
+  test("RSVPer with access but no chatChannelMembers row can toggleReaction", async () => {
+    const t = convexTest(schema, modules);
+    const data = await setupTestData(t);
+
+    // Host opens chat → channel created + host seated. goingId is NOT
+    // seated yet under the lazy-seed model (they have an enabled RSVP
+    // but haven't called openEventChat).
+    const channelId = await t.mutation(
+      (internal as any).functions.messaging.eventChat.ensureEventChannel,
+      { meetingId: data.meetingId },
+    );
+
+    // Verify goingId has no chatChannelMembers row.
+    const noMembership = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", data.goingId),
+        )
+        .unique();
+    });
+    expect(noMembership).toBeNull();
+
+    // Host posts a message. Insert directly to avoid pulling in the
+    // full sendMessage path.
+    const messageId = await t.run(async (ctx) => {
+      return await ctx.db.insert("chatMessages", {
+        channelId,
+        senderId: data.hostId,
+        content: "Anyone bringing dessert?",
+        contentType: "text",
+        createdAt: Date.now(),
+        isDeleted: false,
+        lastActivityAt: Date.now(),
+      });
+    });
+
+    // goingId (RSVPer with enabled option, but no chatChannelMembers row)
+    // should be allowed to react.
+    await t.mutation(api.functions.messaging.reactions.toggleReaction, {
+      token: data.goingToken,
+      messageId,
+      emoji: "🍰",
+    });
+
+    const reaction = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("chatMessageReactions")
+        .withIndex("by_message_user", (q) =>
+          q.eq("messageId", messageId).eq("userId", data.goingId),
+        )
+        .first();
+    });
+    expect(reaction).not.toBeNull();
+    expect(reaction?.emoji).toBe("🍰");
+  });
+
+  test("user without event-channel access is rejected from toggleReaction", async () => {
+    const t = convexTest(schema, modules);
+    const data = await setupTestData(t);
+
+    const channelId = await t.mutation(
+      (internal as any).functions.messaging.eventChat.ensureEventChannel,
+      { meetingId: data.meetingId },
+    );
+
+    const messageId = await t.run(async (ctx) => {
+      return await ctx.db.insert("chatMessages", {
+        channelId,
+        senderId: data.hostId,
+        content: "Private event chatter",
+        contentType: "text",
+        createdAt: Date.now(),
+        isDeleted: false,
+        lastActivityAt: Date.now(),
+      });
+    });
+
+    // outsiderId has no RSVP and isn't the host — must be rejected.
+    await expect(
+      t.mutation(api.functions.messaging.reactions.toggleReaction, {
+        token: data.outsiderToken,
+        messageId,
+        emoji: "👍",
+      }),
+    ).rejects.toThrow(/Not a member of this channel/);
+  });
+});
+
+// ============================================================================
+// Inline RSVP sync (no scheduler flush needed)
+// ============================================================================
+
+describe("inline RSVP chat sync", () => {
+  test("submit adds chatChannelMembers row in the same transaction", async () => {
+    const t = convexTest(schema, modules);
+    const data = await setupTestData(t);
+
+    const channelId = await t.mutation(
+      (internal as any).functions.messaging.eventChat.ensureEventChannel,
+      { meetingId: data.meetingId },
+    );
+
+    // Fresh user with group membership but no RSVP yet.
+    const newUserId = await t.run(async (ctx) => {
+      const ts = Date.now();
+      const uid = await ctx.db.insert("users", {
+        firstName: "Inline",
+        lastName: "Syncer",
+        phone: "+15554440099",
+        createdAt: ts,
+        updatedAt: ts,
+      });
+      await ctx.db.insert("userCommunities", {
+        userId: uid,
+        communityId: data.communityId,
+        roles: 1,
+        status: 1,
+        createdAt: ts,
+        updatedAt: ts,
+      });
+      await ctx.db.insert("groupMembers", {
+        groupId: data.groupId,
+        userId: uid,
+        role: "member",
+        joinedAt: ts,
+        notificationsEnabled: true,
+      });
+      return uid;
+    });
+
+    await t.mutation("functions/meetingRsvps:submit" as any, {
+      token: `test-token-${newUserId}`,
+      meetingId: data.meetingId,
+      optionId: 1,
+    });
+
+    // Assert row exists immediately, WITHOUT calling
+    // finishInProgressScheduledFunctions — the sync runs inline via
+    // ctx.runMutation, so it must be durable by the time submit returns.
+    const membership = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", newUserId),
+        )
+        .unique();
+    });
+    expect(membership).not.toBeNull();
+    expect(membership?.syncSource).toBe("event_rsvp");
+  });
+
+  test("remove deletes chatChannelMembers row in the same transaction", async () => {
+    const t = convexTest(schema, modules);
+    const data = await setupTestData(t);
+
+    const channelId = await t.mutation(
+      (internal as any).functions.messaging.eventChat.ensureEventChannel,
+      { meetingId: data.meetingId },
+    );
+
+    // Seat goingId (lazy-seed model: they're not seeded by ensureEventChannel).
+    await t.mutation(
+      (internal as any).functions.messaging.eventChat.addEventChannelMember,
+      { meetingId: data.meetingId, userId: data.goingId },
+    );
+
+    const membershipBefore = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", data.goingId),
+        )
+        .unique();
+    });
+    expect(membershipBefore).not.toBeNull();
+
+    await t.mutation("functions/meetingRsvps:remove" as any, {
+      token: data.goingToken,
+      meetingId: data.meetingId,
+    });
+
+    // No scheduler flush — inline sync.
+    const membershipAfter = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", data.goingId),
+        )
+        .unique();
+    });
+    expect(membershipAfter).toBeNull();
   });
 });
