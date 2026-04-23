@@ -440,9 +440,15 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
 
   const rsvpOptions = (eventData.rsvpOptions as unknown as RsvpOption[]) ?? [];
   const eventDate = eventData.scheduledAt ? parseISO(eventData.scheduledAt) : null;
-  // Keep mirroring PAST_EVENT_BUFFER_MS in apps/convex/lib/meetingConfig.ts.
+  // isPastEvent: the event has started. Drives the "event has passed" banner
+  // and the leader's "Record Attendance" CTA — both should fire as soon as
+  // the event begins, not after the RSVP grace window.
+  // isRsvpClosed: RSVPs are no longer accepted. Late arrivals can still RSVP
+  // for PAST_EVENT_BUFFER_MS after start; mirror this constant in
+  // apps/convex/lib/meetingConfig.ts.
   const PAST_EVENT_BUFFER_MS = 3 * 60 * 60 * 1000;
-  const isPastEvent = eventDate
+  const isPastEvent = eventDate ? eventDate < new Date() : false;
+  const isRsvpClosed = eventDate
     ? eventDate.getTime() < Date.now() - PAST_EVENT_BUFFER_MS
     : false;
   const maxGuestsPerRsvp =
@@ -459,7 +465,7 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
   const canRSVP =
     eventData.rsvpEnabled &&
     rsvpOptions.length > 0 &&
-    !isPastEvent &&
+    !isRsvpClosed &&
     hasEventAccess;
 
   // Show the read-only guest list preview even after the event has passed —
@@ -738,7 +744,7 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
               )}
             </View>
           )}
-          {!canRSVP && eventData.rsvpEnabled && eventData.status !== 'cancelled' && !isPastEvent && !eventData.hasAccess && eventData.visibility === 'group' && (
+          {!canRSVP && eventData.rsvpEnabled && eventData.status !== 'cancelled' && !isRsvpClosed && !eventData.hasAccess && eventData.visibility === 'group' && (
             <View style={[styles.statusContainer, { backgroundColor: '#FEF3C7' }]}>
               <Text style={[styles.statusText, { color: '#92400E' }]}>You must be a member of this group to RSVP</Text>
             </View>
