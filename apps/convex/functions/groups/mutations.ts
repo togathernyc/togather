@@ -120,20 +120,29 @@ export async function initializeGroupAfterCreation(
       attendanceConfirmationSent: false,
     });
 
+    let reminderJobId = undefined;
     if (reminderAt > timestamp) {
-      await ctx.scheduler.runAt(
+      reminderJobId = await ctx.scheduler.runAt(
         reminderAt,
         internal.functions.scheduledJobs.sendMeetingReminder,
         { meetingId }
       );
     }
 
+    let attendanceConfirmationJobId = undefined;
     if (attendanceConfirmationAt > timestamp) {
-      await ctx.scheduler.runAt(
+      attendanceConfirmationJobId = await ctx.scheduler.runAt(
         attendanceConfirmationAt,
         internal.functions.scheduledJobs.sendAttendanceConfirmation,
         { meetingId }
       );
+    }
+
+    if (reminderJobId || attendanceConfirmationJobId) {
+      await ctx.db.patch(meetingId, {
+        reminderJobId,
+        attendanceConfirmationJobId,
+      });
     }
   }
 

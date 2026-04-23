@@ -638,7 +638,7 @@ interface RsvpRecord {
 
 /**
  * Send a meeting reminder notification.
- * Called by ctx.scheduler.runAt() when meeting is created, or by fallback cron.
+ * Called by ctx.scheduler.runAt() when meeting is created.
  */
 export const sendMeetingReminder = internalAction({
   args: { meetingId: v.id("meetings") },
@@ -723,70 +723,13 @@ export const sendMeetingReminder = internalAction({
   },
 });
 
-/**
- * Fallback cron to process any meeting reminders that weren't scheduled.
- * Runs every 15 minutes to catch migrated data or missed schedules.
- */
-export const processMeetingReminderFallback = internalAction({
-  args: {},
-  handler: async (ctx) => {
-    const currentTime = now();
-    // Look for reminders due in the past 20 minutes (with buffer)
-    const windowStart = currentTime - 20 * 60 * 1000;
-
-    const meetings = await ctx.runQuery(
-      internal.functions.scheduledJobs.getMeetingsWithDueReminders,
-      { windowStart, windowEnd: currentTime },
-    );
-
-    let processed = 0;
-    for (const meeting of meetings) {
-      try {
-        await ctx.runAction(
-          internal.functions.scheduledJobs.sendMeetingReminder,
-          { meetingId: meeting._id },
-        );
-        processed++;
-      } catch (error) {
-        console.error(
-          `[MeetingReminderFallback] Error for meeting ${meeting._id}:`,
-          error,
-        );
-      }
-    }
-
-    return { processed };
-  },
-});
-
-export const getMeetingsWithDueReminders = internalQuery({
-  args: { windowStart: v.number(), windowEnd: v.number() },
-  handler: async (ctx, { windowStart, windowEnd }) => {
-    // Get meetings with reminderAt in the window that haven't been sent
-    const meetings = await ctx.db
-      .query("meetings")
-      .withIndex("by_reminderAt_sent")
-      .filter((q) =>
-        q.and(
-          q.gte(q.field("reminderAt"), windowStart),
-          q.lte(q.field("reminderAt"), windowEnd),
-          q.eq(q.field("reminderSent"), false),
-          q.neq(q.field("status"), "cancelled"),
-        ),
-      )
-      .collect();
-
-    return meetings;
-  },
-});
-
 // ============================================================================
 // ATTENDANCE CONFIRMATIONS
 // ============================================================================
 
 /**
  * Send attendance confirmation requests.
- * Called by ctx.scheduler.runAt() when meeting ends, or by fallback cron.
+ * Called by ctx.scheduler.runAt() when meeting ends.
  */
 export const sendAttendanceConfirmation = internalAction({
   args: { meetingId: v.id("meetings") },
@@ -899,60 +842,6 @@ export const sendAttendanceConfirmation = internalAction({
     );
 
     return { pushSent, emailSent, totalRsvps: rsvps.length };
-  },
-});
-
-/**
- * Fallback cron to process any attendance confirmations that weren't scheduled.
- */
-export const processAttendanceConfirmationFallback = internalAction({
-  args: {},
-  handler: async (ctx) => {
-    const currentTime = now();
-    const windowStart = currentTime - 20 * 60 * 1000;
-
-    const meetings = await ctx.runQuery(
-      internal.functions.scheduledJobs.getMeetingsWithDueAttendanceConfirmation,
-      { windowStart, windowEnd: currentTime },
-    );
-
-    let processed = 0;
-    for (const meeting of meetings) {
-      try {
-        await ctx.runAction(
-          internal.functions.scheduledJobs.sendAttendanceConfirmation,
-          { meetingId: meeting._id },
-        );
-        processed++;
-      } catch (error) {
-        console.error(
-          `[AttendanceConfirmationFallback] Error for meeting ${meeting._id}:`,
-          error,
-        );
-      }
-    }
-
-    return { processed };
-  },
-});
-
-export const getMeetingsWithDueAttendanceConfirmation = internalQuery({
-  args: { windowStart: v.number(), windowEnd: v.number() },
-  handler: async (ctx, { windowStart, windowEnd }) => {
-    const meetings = await ctx.db
-      .query("meetings")
-      .withIndex("by_attendanceConfirmation")
-      .filter((q) =>
-        q.and(
-          q.gte(q.field("attendanceConfirmationAt"), windowStart),
-          q.lte(q.field("attendanceConfirmationAt"), windowEnd),
-          q.eq(q.field("attendanceConfirmationSent"), false),
-          q.neq(q.field("status"), "cancelled"),
-        ),
-      )
-      .collect();
-
-    return meetings;
   },
 });
 

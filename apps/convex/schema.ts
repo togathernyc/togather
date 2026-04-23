@@ -650,11 +650,6 @@ export default defineSchema({
     .index("by_scheduledAt", ["scheduledAt"])
     .index("by_publicSlug", ["publicSlug"])
     .index("by_shortId", ["shortId"])
-    .index("by_reminderAt_sent", ["reminderAt", "reminderSent"])
-    .index("by_attendanceConfirmation", [
-      "attendanceConfirmationAt",
-      "attendanceConfirmationSent",
-    ])
     .index("by_communityWideEvent", ["communityWideEventId"])
     .index("by_series", ["seriesId"])
     .index("by_community", ["communityId"])
