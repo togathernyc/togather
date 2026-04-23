@@ -9,7 +9,7 @@
  * groups into a dedicated "Events" section pinned to the top of the list.
  */
 
-import React, { useCallback, useEffect, useMemo, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -513,6 +513,82 @@ function shortLocation(loc: string): string {
   return `${parts[0]}, ${parts[1]}`;
 }
 
+interface DirectionsButtonProps {
+  label: string;
+  location: string;
+  isPast: boolean;
+  isDark: boolean;
+  primaryColor: string;
+  borderColor: string;
+  surfaceSecondary: string;
+  textTertiary: string;
+  onOpenMaps: (location: string) => void;
+}
+
+// Small inner Pressable. Layout lives on the inner View because
+// Pressable's function-style `style` is silently dropped on RN Web —
+// see the pressed-state comment in EventInboxRowItem.
+function DirectionsButton({
+  label,
+  location,
+  isPast,
+  isDark,
+  primaryColor,
+  borderColor,
+  surfaceSecondary,
+  textTertiary,
+  onOpenMaps,
+}: DirectionsButtonProps) {
+  const [isPressed, setIsPressed] = useState(false);
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Open ${location} in Maps`}
+      onPress={(e) => {
+        e.stopPropagation?.();
+        onOpenMaps(location);
+      }}
+      onPressIn={() => setIsPressed(true)}
+      onPressOut={() => setIsPressed(false)}
+      hitSlop={6}
+    >
+      <View
+        style={[
+          styles.directionsButton,
+          {
+            backgroundColor: isPast
+              ? surfaceSecondary
+              : isDark
+                ? primaryColor + "22"
+                : primaryColor + "14",
+            borderColor: isPast
+              ? borderColor
+              : isDark
+                ? primaryColor + "44"
+                : primaryColor + "33",
+          },
+          isPressed && { opacity: 0.65 },
+        ]}
+      >
+        <Ionicons
+          name="navigate"
+          size={14}
+          color={isPast ? textTertiary : primaryColor}
+        />
+        <Text
+          style={[
+            styles.directionsButtonText,
+            { color: isPast ? textTertiary : primaryColor },
+          ]}
+          numberOfLines={1}
+        >
+          {label}
+        </Text>
+      </View>
+    </Pressable>
+  );
+}
+
 function EventInboxRowItem({ row, isActive }: EventInboxRowItemProps) {
   const router = useRouter();
   const { user } = useAuth();
@@ -593,18 +669,29 @@ function EventInboxRowItem({ row, isActive }: EventInboxRowItemProps) {
     return colors.surface;
   })();
 
+  // Track pressed state manually. We can't use Pressable's function-form
+  // `style` prop because RN Web silently drops layout styles (padding,
+  // flexDirection, gap) returned from that function — the row would collapse
+  // on web. Instead, layout lives on the inner View and we flip the bg via
+  // state + onPressIn/Out.
+  const [isPressed, setIsPressed] = useState(false);
+
   return (
     <Pressable
       onPress={handlePress}
+      onPressIn={() => setIsPressed(true)}
+      onPressOut={() => setIsPressed(false)}
       accessibilityRole="button"
       accessibilityLabel={`${group.name} — ${channel.name}${
         eventWhen ? `, ${eventWhen.when}` : ""
       }${hasUnread ? `, ${channel.unreadCount} unread` : ""}`}
-      style={({ pressed }) => [
-        styles.eventRow,
-        { backgroundColor: pressed ? colors.surfaceSecondary : rowBackground },
-      ]}
     >
+      <View
+        style={[
+          styles.eventRow,
+          { backgroundColor: isPressed ? colors.surfaceSecondary : rowBackground },
+        ]}
+      >
       {/* Left accent bar — the primary imminence signal. Hidden for past rows
           and for events more than a week out; those rows read as "regular". */}
       <View
@@ -708,46 +795,17 @@ function EventInboxRowItem({ row, isActive }: EventInboxRowItemProps) {
             {eventWhen ? eventWhen.when : "Scheduled"}
           </Text>
           {locationShort ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={`Open ${channel.meetingLocation} in Maps`}
-              onPress={(e) => {
-                e.stopPropagation?.();
-                openMapsForLocation(channel.meetingLocation!);
-              }}
-              hitSlop={6}
-              style={({ pressed }) => [
-                styles.directionsButton,
-                {
-                  backgroundColor: isPast
-                    ? colors.surfaceSecondary
-                    : isDark
-                      ? primaryColor + "22"
-                      : primaryColor + "14",
-                  borderColor: isPast
-                    ? colors.border
-                    : isDark
-                      ? primaryColor + "44"
-                      : primaryColor + "33",
-                },
-                pressed && { opacity: 0.65 },
-              ]}
-            >
-              <Ionicons
-                name="navigate"
-                size={14}
-                color={isPast ? colors.textTertiary : primaryColor}
-              />
-              <Text
-                style={[
-                  styles.directionsButtonText,
-                  { color: isPast ? colors.textTertiary : primaryColor },
-                ]}
-                numberOfLines={1}
-              >
-                {locationShort}
-              </Text>
-            </Pressable>
+            <DirectionsButton
+              label={locationShort}
+              location={channel.meetingLocation!}
+              isPast={isPast}
+              isDark={isDark}
+              primaryColor={primaryColor}
+              borderColor={colors.border}
+              surfaceSecondary={colors.surfaceSecondary}
+              textTertiary={colors.textTertiary}
+              onOpenMaps={openMapsForLocation}
+            />
           ) : null}
         </View>
       </View>
@@ -764,6 +822,7 @@ function EventInboxRowItem({ row, isActive }: EventInboxRowItemProps) {
           </Text>
         </View>
       ) : null}
+      </View>
     </Pressable>
   );
 }
