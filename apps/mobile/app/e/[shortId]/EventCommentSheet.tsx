@@ -65,51 +65,46 @@ export function EventCommentSheet({
       animationType="slide"
       onRequestClose={onClose}
     >
-      <View style={styles.flex}>
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
         {/**
-         * Overlay is a sibling of the sheet (not a parent). On RN Web, wrapping
-         * the TextInput inside a Pressable with `stopPropagation` intercepts
-         * click events before they reach the input, so the composer won't
-         * accept focus. Keeping them as siblings means clicks on the sheet
-         * never touch the overlay Pressable.
+         * Flex column where the overlay fills the space above and the sheet
+         * hugs the bottom naturally. No absolute positioning on the sheet —
+         * on RN Web, `position: absolute; bottom: 0` inside Modal doesn't
+         * always anchor to the viewport and the sheet can render below fold.
+         * The overlay is a sibling so clicks on it don't pass through to the
+         * sheet contents (TextInput can receive focus normally).
          */}
         <Pressable
-          style={[
-            StyleSheet.absoluteFillObject,
-            { backgroundColor: colors.overlay },
-          ]}
+          style={[styles.overlay, { backgroundColor: colors.overlay }]}
           onPress={onClose}
         />
-        <KeyboardAvoidingView
-          style={styles.sheetContainer}
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-          pointerEvents="box-none"
+        <View
+          style={[
+            styles.sheet,
+            {
+              backgroundColor: colors.surface,
+              paddingBottom: Math.max(insets.bottom, 12),
+            },
+          ]}
         >
-          <View
-            style={[
-              styles.sheet,
-              {
-                backgroundColor: colors.surface,
-                paddingBottom: Math.max(insets.bottom, 12),
-              },
-            ]}
-          >
-            <View style={styles.handleContainer}>
-              <View
-                style={[styles.handle, { backgroundColor: colors.border }]}
-              />
-            </View>
-
-            <View style={styles.inputWrapper}>
-              <MessageInput
-                channelId={channelId}
-                externalSendMessage={handleExternalSend}
-                externalIsSending={isSending}
-              />
-            </View>
+          <View style={styles.handleContainer}>
+            <View
+              style={[styles.handle, { backgroundColor: colors.border }]}
+            />
           </View>
-        </KeyboardAvoidingView>
-      </View>
+
+          <View style={styles.inputWrapper}>
+            <MessageInput
+              channelId={channelId}
+              externalSendMessage={handleExternalSend}
+              externalIsSending={isSending}
+            />
+          </View>
+        </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -117,22 +112,19 @@ export function EventCommentSheet({
 export default EventCommentSheet;
 
 const styles = StyleSheet.create({
+  // Full-screen flex column. Overlay stretches to fill empty space, sheet
+  // takes its natural content height at the bottom.
   flex: {
     flex: 1,
+    flexDirection: "column",
+    justifyContent: "flex-end",
   },
-  // Sheet container pins the actual sheet to the bottom of the screen without
-  // wrapping the overlay as a parent — avoids the RN Web click-interception
-  // issue documented above.
-  sheetContainer: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
+  overlay: {
+    flex: 1,
   },
   sheet: {
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    maxHeight: "90%",
   },
   handleContainer: {
     alignItems: "center",
