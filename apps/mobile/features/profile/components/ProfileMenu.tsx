@@ -57,6 +57,21 @@ export function ProfileMenu() {
       <Card style={styles.section}>
         <TouchableOpacity
           style={[styles.menuItem, { borderBottomColor: colors.border }]}
+          onPress={() => {
+            if (userId) router.push(`/(user)/profile/${userId}`);
+          }}
+          activeOpacity={0.7}
+          disabled={!userId}
+        >
+          <View style={[styles.menuIconContainer, { backgroundColor: colors.surfaceSecondary }]}>
+            <Ionicons name="person-circle-outline" size={20} color={colors.text} />
+          </View>
+          <Text style={[styles.menuText, { color: colors.text }]}>View Profile</Text>
+          <Ionicons name="chevron-forward" size={18} color={colors.iconSecondary} />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.menuItem, { borderBottomColor: colors.border }]}
           onPress={handleSwitchCommunity}
           activeOpacity={0.7}
           disabled={isLoadingCommunities || isRefetching}
