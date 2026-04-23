@@ -110,6 +110,12 @@ interface MessageItemProps {
   optimisticStatus?: 'sending' | 'sent' | 'error' | 'queued';
   /** Callback when user taps retry on a failed message */
   onRetry?: () => void;
+  /**
+   * Callback when the user taps another user's avatar in the message list.
+   * Used to open the user profile page. Not invoked for own avatars (none
+   * are rendered) or for bot/system messages (senderId will be missing).
+   */
+  onAvatarPress?: (userId: Id<"users">) => void;
 }
 
 /**
@@ -168,6 +174,7 @@ function MessageItemInner({
   isOptimistic,
   optimisticStatus,
   onRetry,
+  onAvatarPress,
 }: MessageItemProps) {
   const router = useRouter();
   const { colors: themeColors } = useTheme();
@@ -315,16 +322,39 @@ function MessageItemInner({
   // If prefetched, we're not loading; otherwise check the hook's loading state
   const isLinkPreviewLoading = !prefetchedLinkPreview && linkPreviewLoading;
 
-  // Handle mention tap
+  // Handle mention tap — resolve the tapped display name to a user id via
+  // the denormalized `mentionedUserIds` array on the message, then route to
+  // that user's profile page. Older messages predating mention tracking
+  // won't have the array; in that case we silently no-op.
   const handleMentionTap = useCallback(
     (mention: string) => {
-      // Navigate to user profile
-      // TODO: Need to resolve username to userId for navigation
-      console.log('[MessageItem] Tapped mention:', mention);
-      // router.push(`/profile/${userId}`);
+      // `mention` arrives as "@[Display Name]" — strip the wrapper chars.
+      const displayName = mention.replace(/^@\[/, '').replace(/\]$/, '').trim();
+      const ids = message.mentionedUserIds;
+      if (!ids || ids.length === 0 || !displayName) return;
+
+      // The server doesn't persist a map of name → id, so we approximate:
+      // if there's exactly one mention, use it. Otherwise we bail out.
+      // This matches the common case (single @mention per tap) without
+      // guessing when multiple mentions collide.
+      const targetId = ids.length === 1 ? ids[0] : null;
+      if (!targetId) return;
+      if (targetId === currentUserId) return; // don't open self profile
+
+      router.push(`/profile/${targetId}` as any);
     },
-    [router]
+    [router, message.mentionedUserIds, currentUserId]
   );
+
+  // Avatar tap — open the sender's profile. Skip bot/system messages
+  // (they surface as a SystemMessage component, not here) and skip self
+  // (own messages don't render an avatar anyway).
+  const handleAvatarPress = useCallback(() => {
+    if (!onAvatarPress) return;
+    if (!message.senderId) return;
+    if (message.senderId === currentUserId) return;
+    onAvatarPress(message.senderId);
+  }, [onAvatarPress, message.senderId, currentUserId]);
 
   // Handle reaction tap
   const handleReactionTap = useCallback(
@@ -889,9 +919,21 @@ function MessageItemInner({
           isOptimistic && (optimisticStatus === 'error' || optimisticStatus === 'queued') && { opacity: 0.7 },
         ]}
       >
-        {/* Avatar (only for others' messages) */}
+        {/* Avatar (only for others' messages).
+            Wrapped in a Pressable so the chat can route to the sender's
+            profile. `onAvatarPress` is plumbed down from ConvexChatRoomScreen
+            and is undefined for bot/system surfaces — in that case the
+            Pressable still renders but its press is a no-op. */}
         {!isOwnMessage && (
-          <View style={styles.avatarContainer}>
+          <Pressable
+            style={styles.avatarContainer}
+            onPress={handleAvatarPress}
+            disabled={!onAvatarPress}
+            accessibilityRole={onAvatarPress ? 'button' : undefined}
+            accessibilityLabel={
+              onAvatarPress ? `View ${message.senderName || 'user'}'s profile` : undefined
+            }
+          >
             <AppImage
               source={message.senderProfilePhoto}
               style={styles.avatar}
@@ -902,7 +944,7 @@ function MessageItemInner({
                 backgroundColor: '#E5E5E5',
               }}
             />
-          </View>
+          </Pressable>
         )}
 
         <View style={[

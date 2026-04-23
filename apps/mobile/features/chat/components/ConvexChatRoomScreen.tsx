@@ -1009,6 +1009,14 @@ const ConvexChatRoomScreenInner: React.FC = () => {
                 optimisticMessages={optimisticMessages}
                 onRetryMessage={retryMessage}
                 onDismissMessage={dismissMessage}
+                onAvatarPress={(userId) => {
+                  // Short-circuit on self — self-profile lives on a
+                  // different route; the MessageItem already filters
+                  // own-avatar taps, but double-check here in case a
+                  // refactor regresses that.
+                  if (userId === currentUserId) return;
+                  router.push(`/profile/${userId}` as any);
+                }}
               />
             </View>
 
