@@ -18,6 +18,8 @@ import {
   FlatList,
   ScrollView,
   Pressable,
+  Linking,
+  Platform,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter, usePathname } from "expo-router";
@@ -68,6 +70,11 @@ type InboxChannel = {
    * renders this as the avatar so events look distinct from group channels.
    */
   meetingCoverImage?: string | null;
+  /**
+   * For event channels, the meeting's free-form location (address or place
+   * name). Drives the Maps shortcut on the row.
+   */
+  meetingLocation?: string | null;
 };
 
 // Type for the grouped inbox data from getInboxChannels query
@@ -398,6 +405,80 @@ interface EventInboxRowItemProps {
   isActive: boolean;
 }
 
+/**
+ * Format the event's scheduled time in two parts for the inbox row:
+ *   - `when`: short absolute — "Today 5:30 PM", "Tomorrow 5:30 PM",
+ *     "Sat 5:30 PM" (this week), "Apr 28 5:30 PM" (same year), or
+ *     "Apr 28, 2026" (other year).
+ *   - `relative`: "in 45 min", "in 3h", "in 2d", "1d ago", "just now",
+ *     etc. Undefined when the absolute label already makes it obvious
+ *     (e.g. > 14 days away or > 14 days past).
+ */
+function formatEventWhen(
+  scheduledAt: number,
+  now: number,
+): { when: string; relative?: string } {
+  const diffMs = scheduledAt - now;
+  const diffMin = Math.round(diffMs / 60_000);
+  const diffHour = Math.round(diffMs / 3_600_000);
+  const diffDay = Math.round(diffMs / 86_400_000);
+
+  const scheduled = new Date(scheduledAt);
+  const today = new Date(now);
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const startOfScheduled = new Date(
+    scheduled.getFullYear(),
+    scheduled.getMonth(),
+    scheduled.getDate(),
+  ).getTime();
+  const dayDelta = Math.round((startOfScheduled - startOfToday) / 86_400_000);
+
+  const timeStr = scheduled.toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+
+  let when: string;
+  if (dayDelta === 0) when = `Today ${timeStr}`;
+  else if (dayDelta === 1) when = `Tomorrow ${timeStr}`;
+  else if (dayDelta === -1) when = `Yesterday ${timeStr}`;
+  else if (dayDelta > 1 && dayDelta < 7) {
+    when = `${scheduled.toLocaleDateString(undefined, { weekday: "short" })} ${timeStr}`;
+  } else if (scheduled.getFullYear() === today.getFullYear()) {
+    when = `${scheduled.toLocaleDateString(undefined, { month: "short", day: "numeric" })} ${timeStr}`;
+  } else {
+    when = scheduled.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  }
+
+  // Relative — only when the absolute phrasing doesn't already convey it.
+  let relative: string | undefined;
+  if (Math.abs(diffMin) < 1) relative = "happening now";
+  else if (diffMin > 0 && diffMin < 60) relative = `in ${diffMin} min`;
+  else if (diffMin < 0 && diffMin > -60) relative = `${-diffMin} min ago`;
+  else if (diffHour > 0 && diffHour < 24) relative = `in ${diffHour}h`;
+  else if (diffHour < 0 && diffHour > -24) relative = `${-diffHour}h ago`;
+  else if (diffDay > 1 && diffDay <= 14) relative = `in ${diffDay}d`;
+  else if (diffDay < -1 && diffDay >= -14) relative = `${-diffDay}d ago`;
+
+  return { when, relative };
+}
+
+function openMapsForLocation(location: string) {
+  const q = encodeURIComponent(location);
+  const url =
+    Platform.OS === "ios"
+      ? `http://maps.apple.com/?q=${q}`
+      : `https://maps.google.com/?q=${q}`;
+  Linking.openURL(url).catch(() => {
+    // Fallback to Google Maps web if the native handler refuses.
+    Linking.openURL(`https://maps.google.com/?q=${q}`);
+  });
+}
+
 function EventInboxRowItem({ row, isActive }: EventInboxRowItemProps) {
   const router = useRouter();
   const { user } = useAuth();
@@ -431,6 +512,13 @@ function EventInboxRowItem({ row, isActive }: EventInboxRowItemProps) {
     });
   }, [router, group, channel, userRole]);
 
+  // On an event row the time + location are more useful than the last message
+  // preview (the event page shows comments anyway). Fall back to preview when
+  // the event has no scheduledAt — should be rare.
+  const eventWhen =
+    typeof channel.meetingScheduledAt === "number"
+      ? formatEventWhen(channel.meetingScheduledAt, Date.now())
+      : null;
   const messagePreview = (() => {
     if (!channel.lastMessagePreview) return "No messages yet";
     const isOwn = userId && channel.lastMessageSenderId === userId;
@@ -494,8 +582,36 @@ function EventInboxRowItem({ row, isActive }: EventInboxRowItemProps) {
             ]}
             numberOfLines={1}
           >
-            {messagePreview}
+            {eventWhen ? (
+              <>
+                {eventWhen.when}
+                {eventWhen.relative ? (
+                  <Text style={{ color: primaryColor, fontWeight: "600" }}>
+                    {" · "}{eventWhen.relative}
+                  </Text>
+                ) : null}
+              </>
+            ) : (
+              messagePreview
+            )}
           </Text>
+          {channel.meetingLocation ? (
+            <Pressable
+              accessibilityLabel="Open in Maps"
+              onPress={(e) => {
+                // Prevent the row's onPress (open event page) from firing too.
+                e.stopPropagation?.();
+                openMapsForLocation(channel.meetingLocation!);
+              }}
+              hitSlop={8}
+              style={[
+                styles.mapsButton,
+                { borderColor: colors.border, backgroundColor: colors.surface },
+              ]}
+            >
+              <Ionicons name="location" size={14} color={primaryColor} />
+            </Pressable>
+          ) : null}
         </View>
       </View>
 
@@ -622,11 +738,20 @@ const styles = StyleSheet.create({
   eventBottomRow: {
     flexDirection: "row",
     alignItems: "center",
+    gap: 8,
   },
   eventPreview: {
     fontSize: 14,
     flex: 1,
     marginRight: 8,
+  },
+  mapsButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
   eventUnreadBadge: {
     minWidth: 22,

@@ -1207,6 +1207,7 @@ export const getInboxChannels = query({
         scheduledAt: number | null;
         shortId: string | null;
         coverImage: string | null;
+        location: string | null;
       }
     >();
     for (let i = 0; i < eventMeetingIds.length; i++) {
@@ -1215,6 +1216,10 @@ export const getInboxChannels = query({
         scheduledAt: m && typeof m.scheduledAt === "number" ? m.scheduledAt : null,
         shortId: m && typeof m.shortId === "string" ? m.shortId : null,
         coverImage: m && m.coverImage ? getMediaUrl(m.coverImage) ?? null : null,
+        location:
+          m && typeof m.locationOverride === "string" && m.locationOverride.trim().length > 0
+            ? m.locationOverride
+            : null,
       });
     }
 
@@ -1255,6 +1260,11 @@ export const getInboxChannels = query({
          * preview image.
          */
         meetingCoverImage: string | null;
+        /**
+         * For event channels, the meeting's free-form location (address or
+         * place name). Powers the Maps shortcut on the inbox row.
+         */
+        meetingLocation: string | null;
       }>;
       userRole: "leader" | "member";
     }> = [];
@@ -1350,6 +1360,10 @@ export const getInboxChannels = query({
           meetingCoverImage:
             ch.channelType === "event" && ch.meetingId
               ? eventMeetingMap.get(ch.meetingId)?.coverImage ?? null
+              : null,
+          meetingLocation:
+            ch.channelType === "event" && ch.meetingId
+              ? eventMeetingMap.get(ch.meetingId)?.location ?? null
               : null,
         };
       });
