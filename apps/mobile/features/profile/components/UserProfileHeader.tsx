@@ -4,9 +4,10 @@
  */
 
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { AppImage } from '@components/ui';
 import { useTheme } from '@hooks/useTheme';
+import { ImageViewerManager } from '@/providers/ImageViewerProvider';
 
 import type { UserProfile } from '../hooks/useUserProfile';
 
@@ -27,16 +28,26 @@ export function UserProfileHeader({ profile }: UserProfileHeaderProps) {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.surface }]}>
-      <AppImage
-        source={profile.profilePhoto ?? undefined}
-        style={styles.avatar}
-        optimizedWidth={200}
-        placeholder={{
-          type: 'initials',
-          name: displayName,
-          backgroundColor: '#E5E5E5',
+      <TouchableOpacity
+        activeOpacity={0.8}
+        disabled={!profile.profilePhoto}
+        onPress={() => {
+          if (profile.profilePhoto) {
+            ImageViewerManager.show([profile.profilePhoto], 0);
+          }
         }}
-      />
+      >
+        <AppImage
+          source={profile.profilePhoto ?? undefined}
+          style={styles.avatar}
+          optimizedWidth={200}
+          placeholder={{
+            type: 'initials',
+            name: displayName,
+            backgroundColor: '#E5E5E5',
+          }}
+        />
+      </TouchableOpacity>
       <Text style={[styles.name, { color: colors.text }]}>{displayName}</Text>
       {memberSinceLabel && (
         <Text style={[styles.memberSince, { color: colors.textSecondary }]}>

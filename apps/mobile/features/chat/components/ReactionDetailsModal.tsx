@@ -72,6 +72,7 @@ export function ReactionDetailsModal({
         data={users}
         renderItem={renderUserItem}
         keyExtractor={(item) => item.userId}
+        style={styles.list}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
       />
@@ -152,6 +153,9 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 14,
+  },
+  list: {
+    flexShrink: 1,
   },
   listContent: {
     paddingVertical: 8,
