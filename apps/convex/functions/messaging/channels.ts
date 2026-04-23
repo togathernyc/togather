@@ -23,6 +23,7 @@ import { internal } from "../../_generated/api";
 import { syncUserChannelMembershipsLogic } from "../sync/memberships";
 import { updateChannelMemberCount } from "./helpers";
 import { matchesSearchTerms, parseSearchTerms } from "../../lib/memberSearch";
+import { canAccessEventChannel } from "./eventChat";
 
 // ============================================================================
 // Helper Functions
@@ -200,6 +201,18 @@ export const getChannel = query({
     const channel = await ctx.db.get(args.channelId);
     if (!channel) {
       return null;
+    }
+
+    // Event channels use meeting-based access (non-group-members may participate
+    // via RSVP). Short-circuit the group-membership gate below.
+    if (channel.channelType === "event") {
+      if (!(await canAccessEventChannel(ctx, userId, channel))) {
+        return null;
+      }
+      return {
+        ...channel,
+        slug: getChannelSlug(channel),
+      };
     }
 
     // Check channel membership
@@ -465,6 +478,11 @@ export const getChannelsByGroup = query({
     const isLeader = isLeaderRole(groupMembership.role);
 
     const filteredChannels = channels.filter((channel) => {
+      // Event channels are scoped to meetings, not surfaced on the group page.
+      // They appear via getChannelByMeetingId / inbox.
+      if (channel.channelType === "event") {
+        return false;
+      }
       // Leaders channel requires leader/admin role
       if (channel.channelType === "leaders") {
         return isLeader;
@@ -861,6 +879,11 @@ export const listGroupChannels = query({
 
     // Filter channels based on access permissions
     channels = channels.filter((ch) => {
+      // Event channels are scoped to meetings, not surfaced on the group page.
+      // They appear via getChannelByMeetingId / inbox.
+      if (ch.channelType === "event") {
+        return false;
+      }
       // Leaders channel only visible to leaders/admins
       if (ch.channelType === "leaders" && !userIsLeaderOrAdmin) {
         return false;
@@ -991,9 +1014,9 @@ export const getInboxChannels = query({
       )
       .collect();
 
-    if (groupMemberships.length === 0) {
-      return [];
-    }
+    // NOTE: don't early-return on empty groupMemberships — a user with no group
+    // memberships may still have event-channel memberships (event channels
+    // allow non-group-members to participate via RSVP).
 
     // Build a map of groupId -> role
     const groupRoleMap = new Map<Id<"groups">, string>();
@@ -1089,10 +1112,23 @@ export const getInboxChannels = query({
     // Find shared channels from user's memberships that aren't already in allChannels.
     // These are channels owned by other groups but shared with one of the user's groups.
     const allChannelIds = new Set(allChannels.map((ch) => ch._id));
+    // Track event channels picked up from chatChannelMembers so we can ensure
+    // their owning group appears in validGroups / groupRoleMap below.
+    const eventChannelsToInclude: Doc<"chatChannels">[] = [];
     for (const membership of userChannelMemberships) {
       if (allChannelIds.has(membership.channelId)) continue;
       const candidateChannel = await ctx.db.get(membership.channelId);
       if (!candidateChannel || candidateChannel.isArchived) continue;
+
+      // Event channels: user can see the channel via their chatChannelMembers
+      // row regardless of whether they're in the owning group. Disabled event
+      // channels are hidden from the inbox.
+      if (candidateChannel.channelType === "event") {
+        if (candidateChannel.isEnabled === false) continue;
+        eventChannelsToInclude.push(candidateChannel);
+        continue;
+      }
+
       if (!candidateChannel.isShared || !candidateChannel.sharedGroups) continue;
 
       // Check if any of the user's valid groups appear in sharedGroups with "accepted" status
@@ -1123,6 +1159,34 @@ export const getInboxChannels = query({
         // Also add to userChannelIds since we know user is a member
         userChannelIds.add(candidateChannel._id);
       }
+    }
+
+    // Event channels: surface every enabled event channel the user is a member
+    // of, even when they're not a member of the owning group. We fetch the
+    // owning group (and its group type) on demand and add it to validGroups
+    // so the normal grouping step picks the channel up.
+    for (const eventChannel of eventChannelsToInclude) {
+      const owningGroup = allGroups.find((g) => g && g._id === eventChannel.groupId)
+        ?? (await ctx.db.get(eventChannel.groupId));
+      if (!owningGroup || owningGroup.isArchived) continue;
+      if (args.communityId && owningGroup.communityId !== args.communityId) continue;
+
+      if (!validGroupIds.has(owningGroup._id)) {
+        validGroups.push(owningGroup);
+        validGroupIds.add(owningGroup._id);
+        // Non-group-members default to "member" userRole for grouping only.
+        if (!groupRoleMap.has(owningGroup._id)) {
+          groupRoleMap.set(owningGroup._id, "member");
+        }
+        // Fetch missing group type for display metadata.
+        if (owningGroup.groupTypeId && !groupTypeMap.has(owningGroup.groupTypeId)) {
+          const gt = await ctx.db.get(owningGroup.groupTypeId);
+          if (gt) groupTypeMap.set(gt._id, gt);
+        }
+      }
+      allChannels.push(eventChannel);
+      allChannelIds.add(eventChannel._id);
+      userChannelIds.add(eventChannel._id);
     }
 
     // Build the result grouped by group

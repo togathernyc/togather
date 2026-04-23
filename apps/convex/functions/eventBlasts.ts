@@ -335,7 +335,13 @@ export const getUserPhones = internalQuery({
 });
 
 /**
- * Record a blast in the database
+ * Record a blast in the database and mirror it into the event chat channel.
+ *
+ * The mirror appears as a real text message from the sender (not a system
+ * message), carries `blastId` so the mobile UI can render an "Also sent via
+ * SMS" badge, and denormalizes lastMessage* on the channel like `sendMessage`
+ * does. If the event channel is disabled we skip the mirror silently — the
+ * blast still delivers via SMS/push.
  */
 export const recordBlast = internalMutation({
   args: {
@@ -350,7 +356,9 @@ export const recordBlast = internalMutation({
     results: v.any(),
   },
   handler: async (ctx, args) => {
-    await ctx.db.insert("eventBlasts", {
+    const ts = now();
+
+    const blastId = await ctx.db.insert("eventBlasts", {
       meetingId: args.meetingId,
       groupId: args.groupId,
       communityId: args.communityId,
@@ -360,7 +368,50 @@ export const recordBlast = internalMutation({
       recipientCount: args.recipientCount,
       status: args.status,
       results: args.results,
-      createdAt: now(),
+      createdAt: ts,
+    });
+
+    // Mirror the blast into the event chat channel as a real text message
+    // from the sender. Ensure the channel exists first — a blast is a
+    // legitimate trigger for lazy channel creation.
+    const channelId = await ctx.runMutation(
+      internal.functions.messaging.eventChat.ensureEventChannel,
+      { meetingId: args.meetingId },
+    );
+
+    const channel = await ctx.db.get(channelId);
+    if (!channel) return;
+
+    // If a leader has explicitly disabled the event chat, skip the mirror
+    // but don't fail the blast — SMS/push still went out.
+    if (channel.isEnabled === false) return;
+
+    const sender = await ctx.db.get(args.sentById);
+    const senderName = sender
+      ? `${sender.firstName || ""} ${sender.lastName || ""}`.trim() || "Someone"
+      : "Someone";
+    const senderProfilePhoto = sender ? getMediaUrl(sender.profilePhoto) : undefined;
+
+    await ctx.db.insert("chatMessages", {
+      channelId,
+      senderId: args.sentById,
+      content: args.message,
+      contentType: "text",
+      attachments: undefined,
+      createdAt: ts,
+      isDeleted: false,
+      senderName,
+      senderProfilePhoto,
+      lastActivityAt: ts,
+      blastId,
+    });
+
+    await ctx.db.patch(channelId, {
+      lastMessageAt: ts,
+      lastMessagePreview: args.message.slice(0, 100),
+      lastMessageSenderId: args.sentById,
+      lastMessageSenderName: senderName,
+      updatedAt: ts,
     });
   },
 });

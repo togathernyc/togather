@@ -6,6 +6,7 @@
 
 import { v } from "convex/values";
 import { query, mutation, internalMutation } from "../../_generated/server";
+import type { QueryCtx, MutationCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
@@ -19,6 +20,32 @@ import { getDisplayName, getMediaUrl } from "../../lib/utils";
 import { isCommunityAdmin } from "../../lib/permissions";
 import { checkRateLimit } from "../../lib/rateLimit";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
+import { canAccessEventChannel } from "./eventChat";
+
+/**
+ * Same access check as `canAccessEventChannel` but keyed off a meeting doc
+ * directly — used when the caller hasn't resolved a channel yet (e.g. the
+ * first `sendMessage` call that lazy-creates the event channel).
+ */
+async function canAccessMeetingChat(
+  ctx: QueryCtx | MutationCtx,
+  userId: Id<"users">,
+  meeting: Doc<"meetings">,
+): Promise<boolean> {
+  if (meeting.createdById && userId === meeting.createdById) return true;
+
+  const rsvp = await ctx.db
+    .query("meetingRsvps")
+    .withIndex("by_meeting_user", (q) =>
+      q.eq("meetingId", meeting._id).eq("userId", userId),
+    )
+    .first();
+  if (!rsvp) return false;
+
+  const options = meeting.rsvpOptions ?? [];
+  const matched = options.find((opt) => opt.id === rsvp.rsvpOptionId);
+  return Boolean(matched && matched.enabled);
+}
 
 // ============================================================================
 // Constants
@@ -118,6 +145,16 @@ export const getMessage = query({
         return null;
       }
 
+      // Event channels use meeting-based access rather than chatChannelMembers
+      // (non-group-members can still participate via RSVP).
+      const channel = await ctx.db.get(message.channelId);
+      if (channel?.channelType === "event") {
+        if (!(await canAccessEventChannel(ctx, userId, channel))) {
+          return null;
+        }
+        return message;
+      }
+
       // Check if user has access to the channel
       const membership = await ctx.db
         .query("chatChannelMembers")
@@ -161,67 +198,75 @@ export const getMessages = query({
       throw new Error("Channel not found");
     }
 
-    // Check channel membership
-    const channelMembership = await ctx.db
-      .query("chatChannelMembers")
-      .withIndex("by_channel_user", (q) =>
-        q.eq("channelId", args.channelId).eq("userId", userId)
-      )
-      .filter((q) => q.eq(q.field("leftAt"), undefined))
-      .first();
-
-    // Validate viewingGroupId is actually related to this channel
-    let contextGroupId = channel.groupId;
-    if (args.viewingGroupId) {
-      const isOwningGroup = args.viewingGroupId === channel.groupId;
-      const isAcceptedSharedGroup = channel.sharedGroups?.some(
-        (sg) => sg.groupId === args.viewingGroupId && sg.status === "accepted"
-      );
-      if (isOwningGroup || isAcceptedSharedGroup) {
-        contextGroupId = args.viewingGroupId;
+    // Event channels use meeting-based access (RSVPers may not be group members).
+    // Short-circuit the group-membership gate below.
+    if (channel.channelType === "event") {
+      if (!(await canAccessEventChannel(ctx, userId, channel))) {
+        throw new Error("Not a member of this channel");
       }
-      // If viewingGroupId is not valid, fall back to channel.groupId for auth check
-    }
-    const groupMembership = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group_user", (q) =>
-        q.eq("groupId", contextGroupId).eq("userId", userId)
-      )
-      .filter((q) => q.eq(q.field("leftAt"), undefined))
-      .first();
+    } else {
+      // Check channel membership
+      const channelMembership = await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", args.channelId).eq("userId", userId)
+        )
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .first();
 
-    // If not a channel member, only group leaders/admins may load messages
-    if (!channelMembership && !isLeaderRole(groupMembership?.role)) {
-      throw new Error("Not a member of this channel");
-    }
+      // Validate viewingGroupId is actually related to this channel
+      let contextGroupId = channel.groupId;
+      if (args.viewingGroupId) {
+        const isOwningGroup = args.viewingGroupId === channel.groupId;
+        const isAcceptedSharedGroup = channel.sharedGroups?.some(
+          (sg) => sg.groupId === args.viewingGroupId && sg.status === "accepted"
+        );
+        if (isOwningGroup || isAcceptedSharedGroup) {
+          contextGroupId = args.viewingGroupId;
+        }
+        // If viewingGroupId is not valid, fall back to channel.groupId for auth check
+      }
+      const groupMembership = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q) =>
+          q.eq("groupId", contextGroupId).eq("userId", userId)
+        )
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .first();
 
-    // For bypassing global disabled check, consider leadership in owning group OR linked group
-    const owningGroupMembership = args.viewingGroupId
-      ? await ctx.db
-          .query("groupMembers")
-          .withIndex("by_group_user", (q) =>
-            q.eq("groupId", channel.groupId).eq("userId", userId)
-          )
-          .filter((q) => q.eq(q.field("leftAt"), undefined))
-          .first()
-      : groupMembership;
-    const isOwningGroupLeader = isLeaderRole(owningGroupMembership?.role);
-    // Also check linked group leadership when viewing from a linked group
-    const isLinkedGroupLeader =
-      args.viewingGroupId && args.viewingGroupId !== channel.groupId
-        ? isLeaderRole(groupMembership?.role)
-        : false;
+      // If not a channel member, only group leaders/admins may load messages
+      if (!channelMembership && !isLeaderRole(groupMembership?.role)) {
+        throw new Error("Not a member of this channel");
+      }
 
-    const effectiveEnabled = args.viewingGroupId
-      ? channelEffectiveEnabledForGroup(channel, args.viewingGroupId)
-      : channelIsLeaderEnabled(channel);
-    if (
-      (isCustomChannel(channel.channelType) || channel.channelType === "pco_services") &&
-      !effectiveEnabled &&
-      !isOwningGroupLeader &&
-      !isLinkedGroupLeader
-    ) {
-      throw new Error("Channel is not available");
+      // For bypassing global disabled check, consider leadership in owning group OR linked group
+      const owningGroupMembership = args.viewingGroupId
+        ? await ctx.db
+            .query("groupMembers")
+            .withIndex("by_group_user", (q) =>
+              q.eq("groupId", channel.groupId).eq("userId", userId)
+            )
+            .filter((q) => q.eq(q.field("leftAt"), undefined))
+            .first()
+        : groupMembership;
+      const isOwningGroupLeader = isLeaderRole(owningGroupMembership?.role);
+      // Also check linked group leadership when viewing from a linked group
+      const isLinkedGroupLeader =
+        args.viewingGroupId && args.viewingGroupId !== channel.groupId
+          ? isLeaderRole(groupMembership?.role)
+          : false;
+
+      const effectiveEnabled = args.viewingGroupId
+        ? channelEffectiveEnabledForGroup(channel, args.viewingGroupId)
+        : channelIsLeaderEnabled(channel);
+      if (
+        (isCustomChannel(channel.channelType) || channel.channelType === "pco_services") &&
+        !effectiveEnabled &&
+        !isOwningGroupLeader &&
+        !isLinkedGroupLeader
+      ) {
+        throw new Error("Channel is not available");
+      }
     }
 
     // Get blocked users to filter out their messages
@@ -381,17 +426,25 @@ export const getThreadReplies = query({
       throw new Error("Parent message not found");
     }
 
-    // Check channel membership
-    const membership = await ctx.db
-      .query("chatChannelMembers")
-      .withIndex("by_channel_user", (q) =>
-        q.eq("channelId", parentMessage.channelId).eq("userId", userId)
-      )
-      .filter((q) => q.eq(q.field("leftAt"), undefined))
-      .first();
+    // Event channels use meeting-based access (RSVPers may not be group members).
+    const channel = await ctx.db.get(parentMessage.channelId);
+    if (channel?.channelType === "event") {
+      if (!(await canAccessEventChannel(ctx, userId, channel))) {
+        throw new Error("Not a member of this channel");
+      }
+    } else {
+      // Check channel membership
+      const membership = await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", parentMessage.channelId).eq("userId", userId)
+        )
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .first();
 
-    if (!membership) {
-      throw new Error("Not a member of this channel");
+      if (!membership) {
+        throw new Error("Not a member of this channel");
+      }
     }
 
     const replies = await ctx.db
@@ -418,11 +471,17 @@ export const getThreadReplies = query({
 
 /**
  * Send a message to a channel.
+ *
+ * Accepts EITHER `channelId` (existing callers, all channel types) OR
+ * `meetingId` (event-chat lazy-create path). Exactly one must be provided.
+ * When `meetingId` is passed, the event channel is created if it doesn't
+ * exist yet and the message is sent into it.
  */
 export const sendMessage = mutation({
   args: {
     token: v.string(),
-    channelId: v.id("chatChannels"),
+    channelId: v.optional(v.id("chatChannels")),
+    meetingId: v.optional(v.id("meetings")),
     content: v.string(),
     attachments: v.optional(
       v.array(
@@ -446,39 +505,77 @@ export const sendMessage = mutation({
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
 
+    // Require exactly one of channelId / meetingId.
+    if (!args.channelId && !args.meetingId) {
+      throw new Error("sendMessage requires either channelId or meetingId");
+    }
+    if (args.channelId && args.meetingId) {
+      throw new Error("sendMessage accepts channelId or meetingId, not both");
+    }
+
     // Global rate limit: 20 messages per minute per user
     await checkRateLimit(ctx, `msg:${userId}`, 20, 60_000);
 
-    // Check channel membership
-    const membership = await ctx.db
-      .query("chatChannelMembers")
-      .withIndex("by_channel_user", (q) =>
-        q.eq("channelId", args.channelId).eq("userId", userId)
-      )
-      .filter((q) => q.eq(q.field("leftAt"), undefined))
-      .first();
-
-    if (!membership) {
-      throw new Error("Not a member of this channel");
+    // Resolve the target channelId. For event-chat lazy-create, we verify
+    // meeting access first, then ensure the channel exists, then proceed.
+    let channelId: Id<"chatChannels">;
+    if (args.meetingId) {
+      const meeting = await ctx.db.get(args.meetingId);
+      if (!meeting) {
+        throw new Error("Meeting not found");
+      }
+      if (!(await canAccessMeetingChat(ctx, userId, meeting))) {
+        throw new Error("Not a member of this channel");
+      }
+      channelId = await ctx.runMutation(
+        internal.functions.messaging.eventChat.ensureEventChannel,
+        { meetingId: args.meetingId },
+      );
+    } else {
+      channelId = args.channelId!;
     }
 
-    const channel = await ctx.db.get(args.channelId);
+    const channel = await ctx.db.get(channelId);
     if (!channel) {
       throw new Error("Channel not found");
     }
-    if (args.viewingGroupId) {
-      if (
-        (isCustomChannel(channel.channelType) || channel.channelType === "pco_services") &&
-        !channelEffectiveEnabledForGroup(channel, args.viewingGroupId)
-      ) {
-        throw new Error("This channel is disabled");
+
+    // Event channel permission path: meeting-based access, not group-based.
+    if (channel.channelType === "event") {
+      if (!(await canAccessEventChannel(ctx, userId, channel))) {
+        throw new Error("Not a member of this channel");
+      }
+      if (channel.isEnabled === false) {
+        throw new Error("Event chat is disabled");
       }
     } else {
-      if (
-        (isCustomChannel(channel.channelType) || channel.channelType === "pco_services") &&
-        !channelIsLeaderEnabled(channel)
-      ) {
-        throw new Error("This channel is disabled");
+      // Check channel membership
+      const membership = await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", userId)
+        )
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .first();
+
+      if (!membership) {
+        throw new Error("Not a member of this channel");
+      }
+
+      if (args.viewingGroupId) {
+        if (
+          (isCustomChannel(channel.channelType) || channel.channelType === "pco_services") &&
+          !channelEffectiveEnabledForGroup(channel, args.viewingGroupId)
+        ) {
+          throw new Error("This channel is disabled");
+        }
+      } else {
+        if (
+          (isCustomChannel(channel.channelType) || channel.channelType === "pco_services") &&
+          !channelIsLeaderEnabled(channel)
+        ) {
+          throw new Error("This channel is disabled");
+        }
       }
     }
 
@@ -503,7 +600,7 @@ export const sendMessage = mutation({
     }
 
     const messageId = await ctx.db.insert("chatMessages", {
-      channelId: args.channelId,
+      channelId,
       senderId: userId,
       content: args.content,
       contentType,
@@ -526,7 +623,7 @@ export const sendMessage = mutation({
       attachments: args.attachments,
     });
 
-    await ctx.db.patch(args.channelId, {
+    await ctx.db.patch(channelId, {
       lastMessageAt: now,
       lastMessagePreview: preview,
       lastMessageSenderId: userId,
@@ -548,7 +645,7 @@ export const sendMessage = mutation({
     // Trigger notification and unread count logic
     await ctx.scheduler.runAfter(0, internal.functions.messaging.events.onMessageSent, {
       messageId,
-      channelId: args.channelId,
+      channelId,
       senderId: userId,
     });
 
