@@ -185,7 +185,7 @@ export function EventActivity({
             </Text>
           )}
         </View>
-        {isChatEnabled && (
+        {isChatEnabled && channelId !== null && (
           <TouchableOpacity
             style={[
               styles.commentButton,
