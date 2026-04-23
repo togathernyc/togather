@@ -8,6 +8,7 @@ import { v } from "convex/values";
 import { query, mutation } from "../../_generated/server";
 import type { Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
+import { canAccessEventChannel } from "./eventChat";
 
 // ============================================================================
 // Queries
@@ -29,17 +30,26 @@ export const getReactions = query({
       return [];
     }
 
-    // Check channel membership
-    const membership = await ctx.db
-      .query("chatChannelMembers")
-      .withIndex("by_channel_user", (q) =>
-        q.eq("channelId", message.channelId).eq("userId", userId)
-      )
-      .filter((q) => q.eq(q.field("leftAt"), undefined))
-      .first();
+    // Event channels use RSVP-based access, not chatChannelMembers — RSVPers
+    // who haven't explicitly opened the chat can still see and react.
+    const channel = await ctx.db.get(message.channelId);
+    if (channel?.channelType === "event") {
+      if (!(await canAccessEventChannel(ctx, userId, channel))) {
+        return [];
+      }
+    } else {
+      // Check channel membership
+      const membership = await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", message.channelId).eq("userId", userId)
+        )
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .first();
 
-    if (!membership) {
-      return [];
+      if (!membership) {
+        return [];
+      }
     }
 
     // Get all reactions for this message
@@ -110,9 +120,16 @@ export const getReactionsForMessages = query({
       }
     }
 
-    // Check membership for all channels
+    // Check access for all channels. Event channels use RSVP-based access
+    // (canAccessEventChannel); non-event channels use chatChannelMembers.
+    // One channel fetch + access check per distinct channel id.
     const membershipChecks = await Promise.all(
       Array.from(channelIds).map(async (channelId) => {
+        const channel = await ctx.db.get(channelId);
+        if (channel?.channelType === "event") {
+          const hasAccess = await canAccessEventChannel(ctx, userId, channel);
+          return { channelId, isMember: hasAccess };
+        }
         const membership = await ctx.db
           .query("chatChannelMembers")
           .withIndex("by_channel_user", (q) =>
@@ -213,17 +230,25 @@ export const getReactionDetails = query({
       return [];
     }
 
-    // Check channel membership
-    const membership = await ctx.db
-      .query("chatChannelMembers")
-      .withIndex("by_channel_user", (q) =>
-        q.eq("channelId", message.channelId).eq("userId", userId)
-      )
-      .filter((q) => q.eq(q.field("leftAt"), undefined))
-      .first();
+    // Event channels use RSVP-based access, not chatChannelMembers.
+    const channel = await ctx.db.get(message.channelId);
+    if (channel?.channelType === "event") {
+      if (!(await canAccessEventChannel(ctx, userId, channel))) {
+        return [];
+      }
+    } else {
+      // Check channel membership
+      const membership = await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", message.channelId).eq("userId", userId)
+        )
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .first();
 
-    if (!membership) {
-      return [];
+      if (!membership) {
+        return [];
+      }
     }
 
     // Get all reactions for this message with the specified emoji
@@ -282,17 +307,26 @@ export const toggleReaction = mutation({
       throw new Error("Cannot react to a deleted message");
     }
 
-    // Check channel membership
-    const membership = await ctx.db
-      .query("chatChannelMembers")
-      .withIndex("by_channel_user", (q) =>
-        q.eq("channelId", message.channelId).eq("userId", userId)
-      )
-      .filter((q) => q.eq(q.field("leftAt"), undefined))
-      .first();
+    // Event channels use RSVP-based access — RSVPers can react without
+    // being in chatChannelMembers (they're seated lazily on openEventChat).
+    const channel = await ctx.db.get(message.channelId);
+    if (channel?.channelType === "event") {
+      if (!(await canAccessEventChannel(ctx, userId, channel))) {
+        throw new Error("Not a member of this channel");
+      }
+    } else {
+      // Check channel membership
+      const membership = await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", message.channelId).eq("userId", userId)
+        )
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .first();
 
-    if (!membership) {
-      throw new Error("Not a member of this channel");
+      if (!membership) {
+        throw new Error("Not a member of this channel");
+      }
     }
 
     // Check if user already has this reaction

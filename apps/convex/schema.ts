@@ -1431,7 +1431,7 @@ export default defineSchema({
   chatChannels: defineTable({
     groupId: v.id("groups"),
     slug: v.optional(v.string()), // URL-friendly, unique per group, immutable (optional for migration)
-    channelType: v.string(), // "main" | "leaders" | "dm" | "custom" | "pco_services"
+    channelType: v.string(), // "main" | "leaders" | "dm" | "custom" | "pco_services" | "event"
     name: v.string(),
     description: v.optional(v.string()),
     createdById: v.id("users"),
@@ -1441,6 +1441,10 @@ export default defineSchema({
     archivedAt: v.optional(v.number()), // Unix timestamp ms
     /** false = leader hid channel from members; memberships stay (unlike archive). undefined/true = active. */
     isEnabled: v.optional(v.boolean()),
+    /** For channelType === "event": the meeting this channel is scoped to. */
+    meetingId: v.optional(v.id("meetings")),
+    /** Who toggled isEnabled=false (audit trail for disabling event chats). */
+    disabledByUserId: v.optional(v.id("users")),
     // Denormalized for performance
     lastMessageAt: v.optional(v.number()), // Unix timestamp ms
     lastMessagePreview: v.optional(v.string()), // First 100 chars
@@ -1476,7 +1480,8 @@ export default defineSchema({
     .index("by_lastMessageAt", ["lastMessageAt"])
     .index("by_archived", ["isArchived"])
     .index("by_isShared", ["isShared"])
-    .index("by_inviteShortId", ["inviteShortId"]),
+    .index("by_inviteShortId", ["inviteShortId"])
+    .index("by_meetingId", ["meetingId"]),
 
   /**
    * Chat Channel Members
@@ -1494,7 +1499,7 @@ export default defineSchema({
     displayName: v.optional(v.string()),
     profilePhoto: v.optional(v.string()),
     // Auto-sync tracking (for auto channels like PCO Services)
-    syncSource: v.optional(v.string()), // "pco_services" | null (manual)
+    syncSource: v.optional(v.string()), // "pco_services" | "event_rsvp" | null (manual)
     syncEventId: v.optional(v.string()), // External event/plan ID that added them
     scheduledRemovalAt: v.optional(v.number()), // Unix timestamp ms for auto-removal
     // Additional sync metadata (team, position, service date for display)
@@ -1582,6 +1587,9 @@ export default defineSchema({
     taskId: v.optional(v.id("tasks")),
     // Optional idempotency key for generated bot/task posts
     sourceKey: v.optional(v.string()),
+    // For mirrored text blasts — backlink to the eventBlasts row so the UI
+    // can render an "Also sent via SMS" badge and deep-link to delivery stats.
+    blastId: v.optional(v.id("eventBlasts")),
   })
     .index("by_channel", ["channelId"])
     .index("by_channel_createdAt", ["channelId", "createdAt"])

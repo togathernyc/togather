@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -55,6 +55,12 @@ interface FloatingRsvpButtonsProps {
   onSelect: (id: number) => void;
   insets: { bottom: number };
   tabBarOffset?: number;
+  /**
+   * When true, the component renders as a regular flex child (no absolute
+   * positioning, no top border, no safe-area padding). Used when embedded
+   * inside a shared bottom dock that handles those concerns.
+   */
+  embedded?: boolean;
 }
 
 interface FloatingRsvpCardProps {
@@ -69,6 +75,12 @@ interface FloatingRsvpCardProps {
   maxGuests?: number;
   insets: { bottom: number };
   tabBarOffset?: number;
+  /**
+   * When true, the component renders as a regular flex child (no absolute
+   * positioning, no top border, no safe-area padding). Used when embedded
+   * inside a shared bottom dock that handles those concerns.
+   */
+  embedded?: boolean;
 }
 
 interface RsvpEditModalProps {
@@ -157,16 +169,18 @@ export function GuestStepper({
 
   return (
     <View style={[stepperStyles.row, compact && stepperStyles.rowCompact]}>
-      <Text
-        style={[
-          stepperStyles.label,
-          { color: colors.textSecondary },
-          compact && stepperStyles.labelCompact,
-        ]}
-        numberOfLines={1}
-      >
-        {label}
-      </Text>
+      {label ? (
+        <Text
+          style={[
+            stepperStyles.label,
+            { color: colors.textSecondary },
+            compact && stepperStyles.labelCompact,
+          ]}
+          numberOfLines={1}
+        >
+          {label}
+        </Text>
+      ) : null}
       <View style={[stepperStyles.controls, { borderColor: colors.border }]}>
         <TouchableOpacity
           testID="guest-stepper-decrement"
@@ -256,12 +270,27 @@ export function FloatingRsvpButtons({
   onSelect,
   insets,
   tabBarOffset = 0,
+  embedded = false,
 }: FloatingRsvpButtonsProps) {
   const { colors } = useTheme();
   const enabledOptions = options.filter((opt) => opt.enabled).slice(0, 3);
 
   return (
-    <View style={[styles.container, { paddingBottom: insets.bottom + 20, bottom: tabBarOffset, backgroundColor: colors.surface, borderTopColor: colors.border }]}>
+    <View
+      style={
+        embedded
+          ? styles.embeddedContainer
+          : [
+              styles.container,
+              {
+                paddingBottom: insets.bottom + 20,
+                bottom: tabBarOffset,
+                backgroundColor: colors.surface,
+                borderTopColor: colors.border,
+              },
+            ]
+      }
+    >
       <View style={styles.buttonRow}>
         {enabledOptions.map((option) => {
           const emoji = getEmojiForLabel(option.label);
@@ -304,64 +333,31 @@ export function FloatingRsvpCard({
   maxGuests = DEFAULT_MAX_GUESTS_PER_RSVP,
   insets,
   tabBarOffset = 0,
+  embedded = false,
 }: FloatingRsvpCardProps) {
   const { colors } = useTheme();
   const selectedOption = options.find((opt) => opt.id === response.optionId);
   const emoji = selectedOption ? getEmojiForLabel(selectedOption.label) : "👍";
   const label = selectedOption ? getCleanLabel(selectedOption.label) : "Going";
   const isGoing = selectedOption ? isGoingOptionLabel(selectedOption.label) : false;
-  const guestCount = response.guestCount ?? 0;
-  const [pendingGuestCount, setPendingGuestCount] = useState<number | null>(null);
-
-  // Clear local pending state once the query result catches up.
-  useEffect(() => {
-    if (pendingGuestCount !== null && pendingGuestCount === guestCount) {
-      setPendingGuestCount(null);
-    }
-  }, [guestCount, pendingGuestCount]);
-
-  const displayedGuestCount = pendingGuestCount ?? guestCount;
-
-  // Serialize stepper writes. Rapid taps used to fire concurrent mutations
-  // and, because the backend applies last-write-by-arrival, an earlier
-  // request that finished later could overwrite the user's latest intent.
-  // Instead: at most one request in flight; newer taps stash the latest
-  // value in `queuedRef` and are drained once the current write settles.
-  const inFlightRef = useRef(false);
-  const queuedRef = useRef<number | null>(null);
-
-  const handleGuestChange = (next: number) => {
-    if (!onGuestCountChange) return;
-    setPendingGuestCount(next);
-
-    if (inFlightRef.current) {
-      queuedRef.current = next;
-      return;
-    }
-
-    const run = (value: number) => {
-      inFlightRef.current = true;
-      Promise.resolve(onGuestCountChange(value))
-        .then(() => {
-          inFlightRef.current = false;
-          const queued = queuedRef.current;
-          queuedRef.current = null;
-          if (queued !== null && queued !== value) {
-            run(queued);
-          }
-        })
-        .catch(() => {
-          inFlightRef.current = false;
-          queuedRef.current = null;
-          setPendingGuestCount(null);
-        });
-    };
-
-    run(next);
-  };
+  const displayedGuestCount = response.guestCount ?? 0;
 
   return (
-    <View style={[styles.cardContainer, { paddingBottom: insets.bottom + 20, bottom: tabBarOffset, backgroundColor: colors.surface, borderTopColor: colors.border }]}>
+    <View
+      style={
+        embedded
+          ? styles.embeddedContainer
+          : [
+              styles.cardContainer,
+              {
+                paddingBottom: insets.bottom + 20,
+                bottom: tabBarOffset,
+                backgroundColor: colors.surface,
+                borderTopColor: colors.border,
+              },
+            ]
+      }
+    >
       <View style={styles.card}>
         <TouchableOpacity
           testID="floating-rsvp-card"
@@ -370,28 +366,14 @@ export function FloatingRsvpCard({
           activeOpacity={0.7}
         >
           <Text style={styles.cardEmoji}>{emoji}</Text>
-          <View style={styles.cardTextContent}>
-            <Text style={styles.statusLabel}>
-              {label}
-              {isGoing && displayedGuestCount > 0
-                ? ` · +${displayedGuestCount} guest${displayedGuestCount === 1 ? "" : "s"}`
-                : ""}
-            </Text>
-            <Text style={[styles.editPrompt, { color: colors.textSecondary }]}>Edit your RSVP</Text>
-          </View>
+          <Text style={styles.statusLabel} numberOfLines={1}>
+            {label}
+            {isGoing && displayedGuestCount > 0
+              ? ` · +${displayedGuestCount} guest${displayedGuestCount === 1 ? "" : "s"}`
+              : ""}
+          </Text>
           <Ionicons name="create-outline" size={20} color={DEFAULT_PRIMARY_COLOR} />
         </TouchableOpacity>
-        {isGoing && onGuestCountChange && (
-          <View style={styles.cardStepperRow}>
-            <GuestStepper
-              value={displayedGuestCount}
-              onChange={handleGuestChange}
-              max={maxGuests}
-              label={displayedGuestCount === 0 ? "Bringing guests?" : "Guests"}
-              compact
-            />
-          </View>
-        )}
       </View>
     </View>
   );
@@ -623,23 +605,18 @@ const styles = StyleSheet.create({
   cardContent: {
     flexDirection: "row",
     alignItems: "center",
-    padding: 16,
-    gap: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    gap: 10,
   },
   cardEmoji: {
-    fontSize: 28,
-  },
-  cardTextContent: {
-    flex: 1,
+    fontSize: 22,
   },
   statusLabel: {
+    flex: 1,
     fontSize: 16,
     fontWeight: "600",
     color: DEFAULT_PRIMARY_COLOR,
-    marginBottom: 2,
-  },
-  editPrompt: {
-    fontSize: 13,
   },
 
   // Modal
@@ -713,12 +690,10 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
 
-  // Card stepper row
-  cardStepperRow: {
-    paddingHorizontal: 16,
+  // Embedded mode — the parent dock handles surface, padding, and position.
+  embeddedContainer: {
+    paddingTop: 12,
+    paddingHorizontal: 20,
     paddingBottom: 12,
-    borderTopWidth: 1,
-    borderTopColor: "rgba(0, 0, 0, 0.06)",
-    marginTop: -4,
   },
 });

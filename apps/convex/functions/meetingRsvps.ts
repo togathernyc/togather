@@ -515,6 +515,25 @@ export const submit = mutation({
         });
       }
 
+      // Sync event chat channel membership based on whether the final
+      // option is enabled. Runs inline (same transaction) so the RSVP
+      // write and the chat-member row stay consistent — fire-and-forget
+      // via the scheduler could leave the two rows out of sync if the
+      // scheduled mutation failed, with no reconciliation path. Channels
+      // are lazy-created, so these calls are no-ops if no channel exists
+      // yet.
+      if (selectedOption.enabled) {
+        await ctx.runMutation(internal.functions.messaging.eventChat.addEventChannelMember, {
+          meetingId: args.meetingId,
+          userId,
+        });
+      } else {
+        await ctx.runMutation(internal.functions.messaging.eventChat.removeEventChannelMember, {
+          meetingId: args.meetingId,
+          userId,
+        });
+      }
+
       return {
         success: true,
         optionId: args.optionId,
@@ -537,6 +556,15 @@ export const submit = mutation({
       meetingId: args.meetingId,
       userId,
       rsvpOptionLabel: selectedOption.label,
+    });
+
+    // Sync event chat channel membership. Submit only allows enabled
+    // options (validated above), so new inserts always add. The channel
+    // is lazy-created, so this is a no-op if no channel exists yet.
+    // Runs inline so RSVP + chat membership stay consistent.
+    await ctx.runMutation(internal.functions.messaging.eventChat.addEventChannelMember, {
+      meetingId: args.meetingId,
+      userId,
     });
 
     return {
@@ -568,6 +596,15 @@ export const remove = mutation({
 
     if (rsvp) {
       await ctx.db.delete(rsvp._id);
+
+      // Remove from event chat channel membership. No-op if the
+      // channel hasn't been lazy-created or the user isn't a member.
+      // Runs inline so the RSVP delete and chat membership removal are
+      // atomic — avoids stale "member" rows for users who un-RSVPed.
+      await ctx.runMutation(internal.functions.messaging.eventChat.removeEventChannelMember, {
+        meetingId: args.meetingId,
+        userId,
+      });
     }
 
     return { success: true };
@@ -634,6 +671,15 @@ export const batchUpdate = mutation({
           updatedAt: timestamp,
         });
       }
+
+      // Sync event chat channel membership. batchUpdate only allows
+      // enabled options (filtered via validOptionIds above), so we
+      // always add here. No-op if no channel exists yet. Runs inline so
+      // the RSVP writes and chat membership stay consistent.
+      await ctx.runMutation(internal.functions.messaging.eventChat.addEventChannelMember, {
+        meetingId: args.meetingId,
+        userId: rsvpUpdate.userId,
+      });
     }
 
     return { success: true };

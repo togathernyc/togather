@@ -690,7 +690,7 @@ export function EventDetails({
               >
                 <Ionicons name="megaphone-outline" size={20} color={DEFAULT_PRIMARY_COLOR} />
                 <Text style={[styles.messageAttendeesText, { color: DEFAULT_PRIMARY_COLOR }]}>
-                  Message Attendees
+                  Text Blast
                 </Text>
               </TouchableOpacity>
             )}

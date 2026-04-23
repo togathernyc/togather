@@ -14,6 +14,7 @@ import {
   Alert,
   Share,
   Switch,
+  KeyboardAvoidingView,
 } from "react-native";
 import { useLocalSearchParams, useRouter, useSegments } from "expo-router";
 import { useQuery, useAuthenticatedMutation, api, Id } from "@services/api/convex";
@@ -80,7 +81,7 @@ import { AttendanceConfirmationModal } from "@/features/events/components/Attend
 import { DOMAIN_CONFIG } from "@togather/shared";
 import * as Clipboard from "expo-clipboard";
 import { EventBlastSheet } from "@/features/leader-tools/components/EventBlastSheet";
-import { EventBlastHistory } from "@/features/leader-tools/components/EventBlastHistory";
+import { EventActivity } from "./EventActivity";
 
 /**
  * Initial event data passed from Server Component
@@ -192,6 +193,16 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
       : "skip"
   );
 
+  // Fetch event chat channel state. Returns null if no channel exists yet or
+  // the caller lacks access (not host and no RSVP). We use this for both the
+  // Chat button visibility and the leader-only enable/disable toggle.
+  const eventChannel = useQuery(
+    api.functions.messaging.eventChat.getChannelByMeetingId,
+    eventData?.id && isAuthenticated && authToken
+      ? { meetingId: eventData.id as Id<"meetings">, token: authToken }
+      : "skip"
+  );
+
   // Fetch RSVP list using Convex
   // Pass token if available to get full access (if user has RSVPed), but also works without token
   const rsvpData = useQuery(
@@ -244,6 +255,119 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
     !!(eventData as any)?.createdById &&
     String(user.id) === String((eventData as any).createdById);
   const canEdit = isLeader || isCreator;
+
+  // ============================================================================
+  // Event Chat Mutations
+  // ============================================================================
+
+  const setEventChannelEnabledMutation = useAuthenticatedMutation(
+    api.functions.messaging.eventChat.setEventChannelEnabled
+  );
+  const openEventChatMutation = useAuthenticatedMutation(
+    api.functions.messaging.eventChat.openEventChat
+  );
+
+  // Channel materialization. On mount (or whenever the user becomes chat-
+  // accessible), ensure a channel row exists so the composer can subscribe
+  // and send without a "first-send creates the channel" delay. The backend
+  // is idempotent, so safe to call once per page visit.
+  const [materializedChannelId, setMaterializedChannelId] =
+    useState<Id<"chatChannels"> | null>(null);
+  const resolvedChannelId =
+    (eventChannel?._id as Id<"chatChannels"> | undefined) ??
+    materializedChannelId ??
+    null;
+
+  // Whether the chat is currently enabled. When the channel row doesn't exist
+  // yet, default to enabled (new channels are created with isEnabled: true).
+  const isChatEnabled = eventChannel ? eventChannel.isEnabled !== false : true;
+
+  // Whether the user can access the event chat at all (host or RSVPer with an
+  // enabled option). Mirrors the backend `canAccessEventChannel` check so the
+  // inline Activity feed doesn't render for users the server would reject.
+  const hasRsvp = !!myRsvp?.optionId;
+  const rsvpOptionEnabled = myRsvp?.optionId != null
+    ? ((eventData?.rsvpOptions as unknown as RsvpOption[] | undefined)?.find(
+        (o) => o.id === myRsvp.optionId
+      )?.enabled ?? false)
+    : false;
+  const canAccessChat = isCreator || (hasRsvp && rsvpOptionEnabled);
+
+  // Materialize the channel and seat the caller as a member once per page
+  // visit when they have chat access. Skip while `eventChannel === undefined`
+  // (query still loading). When the channel already exists (`eventChannel`
+  // is a doc), we must still call `openEventChat` — attendees who RSVPed
+  // before the channel existed (e.g. host sent a blast first) are never
+  // seated otherwise, and membership-driven paths (inbox rows, push fanout)
+  // would silently skip them.
+  const meetingIdForChannel = eventData?.id as Id<"meetings"> | undefined;
+  useEffect(() => {
+    if (!meetingIdForChannel) return;
+    if (!canAccessChat || !isChatEnabled) return;
+    if (eventChannel === undefined) return; // still loading
+    if (materializedChannelId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { channelId } = await openEventChatMutation({
+          meetingId: meetingIdForChannel,
+        });
+        if (!cancelled) setMaterializedChannelId(channelId);
+      } catch (err) {
+        // Backend enforces access; a failure here just means the composer
+        // stays disabled. Don't alert — this runs on mount.
+        console.warn("[EventPageClient] openEventChat failed", err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    meetingIdForChannel,
+    canAccessChat,
+    isChatEnabled,
+    eventChannel,
+    materializedChannelId,
+    openEventChatMutation,
+  ]);
+
+  const handleToggleEventChat = async (enabled: boolean) => {
+    if (!eventData?.id) return;
+    const applyToggle = async () => {
+      try {
+        await setEventChannelEnabledMutation({
+          meetingId: eventData.id as Id<"meetings">,
+          enabled,
+        });
+      } catch (err) {
+        console.error("Failed to toggle event chat:", err);
+        Alert.alert("Error", "Failed to update event chat. Please try again.");
+      }
+    };
+
+    // Confirm before disabling; re-enabling is a straight call.
+    // RN Web's Alert.alert is window.alert and can't fire multi-button
+    // callbacks — use window.confirm on web.
+    if (!enabled) {
+      const confirmMessage = "Disable event chat? Attendees won't be able to message the group.";
+      if (Platform.OS === "web") {
+        if (typeof window !== "undefined" && window.confirm(confirmMessage)) {
+          await applyToggle();
+        }
+        return;
+      }
+      Alert.alert(
+        "Disable event chat?",
+        "Attendees won't be able to message the group.",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Disable", style: "destructive", onPress: applyToggle },
+        ]
+      );
+      return;
+    }
+    await applyToggle();
+  };
 
   // ============================================================================
   // Loading & Error States
@@ -577,7 +701,26 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
   // Render
   // ============================================================================
 
+  // The composer is only rendered when the user has chat access AND chat is
+  // The composer lives INSIDE the Activity section (scrolls with the page);
+  // the bottom dock is just for the floating RSVP pill / option buttons.
+  const dockBottomOffset = shouldShowTabBar ? 64 : 0;
+
+  // Branch for which floating RSVP UI to show (or none).
+  const showFloatingRsvpCard =
+    canRSVP && (eventData.hasAccess || !eventData.accessPrompt) && myRsvp?.optionId != null;
+  const showFloatingRsvpButtons =
+    canRSVP && (eventData.hasAccess || !eventData.accessPrompt) && myRsvp?.optionId == null;
+  const showFloatingPrompt =
+    canRSVP && !eventData.hasAccess && !!eventData.accessPrompt;
+  const showBottomDock = showFloatingRsvpCard || showFloatingRsvpButtons;
+
   return (
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      keyboardVerticalOffset={0}
+    >
     <SafeAreaView style={[styles.container, { backgroundColor: colors.surface }]} edges={["top"]}>
       {/* Header */}
       <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
@@ -613,7 +756,10 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
         style={styles.scroll}
         contentContainerStyle={[
           styles.scrollContent,
-          shouldShowTabBar && { paddingBottom: 200 }, // Extra padding for tab bar
+          // Static generous padding so the last message isn't hidden behind
+          // the sticky composer + RSVP dock. The dock floats via absolute
+          // positioning, so no dynamic measurement needed.
+          (showBottomDock || shouldShowTabBar) && { paddingBottom: 220 },
         ]}
       >
         {/* Cover Image - falls back to group image if no event cover */}
@@ -769,6 +915,30 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
             />
           )}
 
+          {/* Inline Activity feed (Partiful-style). Replaces the old "Chat"
+              button that routed to a standalone /inbox/{groupId}/event-{slug}
+              room. Messages render below the event details, composer at the
+              bottom of this component. Gated on canAccessChat (host + RSVPer
+              with enabled option). Backend is authoritative. */}
+          {canAccessChat &&
+            eventData.id &&
+            eventData.groupId &&
+            eventData.shortId &&
+            user?.id &&
+            authToken && (
+              <EventActivity
+                meetingId={eventData.id as Id<"meetings">}
+                groupId={eventData.groupId as Id<"groups">}
+                shortId={eventData.shortId}
+                eventTitle={eventData.title || "Event"}
+                currentUserId={user.id as Id<"users">}
+                canAccess={canAccessChat}
+                isChatEnabled={isChatEnabled}
+                channelId={resolvedChannelId}
+                authToken={authToken}
+              />
+            )}
+
           {/* Leader: jump into the attendance recorder for past events */}
           {isLeader && isPastEvent && eventData.id && eventData.groupId && eventData.scheduledAt && (
             <TouchableOpacity
@@ -808,6 +978,24 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
             </View>
           )}
 
+          {/* Host/Leader: enable/disable event chat. Backend enforces the same
+              permission (event creator, group leader, or community admin). */}
+          {canEdit && (
+            <View style={[styles.leaderCard, { backgroundColor: colors.surfaceSecondary }]}>
+              <View style={styles.leaderCardRow}>
+                <Ionicons name="chatbubble-ellipses-outline" size={20} color={colors.textSecondary} />
+                <Text style={[styles.leaderCardText, { color: colors.text }]}>
+                  Event chat
+                </Text>
+                <Switch
+                  value={isChatEnabled}
+                  onValueChange={handleToggleEventChat}
+                  trackColor={{ false: colors.border, true: DEFAULT_PRIMARY_COLOR }}
+                />
+              </View>
+            </View>
+          )}
+
           {/* Host actions: Message Attendees + Blast History. ADR-022 extends
               this surface to creators — they're the host, so they should be
               able to reach out to RSVPed guests. Backend is authoritative. */}
@@ -818,50 +1006,62 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
             >
               <Ionicons name="megaphone-outline" size={20} color={DEFAULT_PRIMARY_COLOR} />
               <Text style={[styles.messageAttendeesText, { color: DEFAULT_PRIMARY_COLOR }]}>
-                Message Attendees
+                Text Blast
               </Text>
             </TouchableOpacity>
-          )}
-
-          {canEdit && eventData.id && (
-            <EventBlastHistory meetingId={eventData.id as string} />
           )}
         </View>
       </ScrollView>
 
-      {/* Floating RSVP Section */}
-      {canRSVP && (
-        <>
-          {!eventData.hasAccess && eventData.accessPrompt ? (
-            // User can view event but needs to sign in or join to RSVP
-            <View style={[
-              styles.floatingPrompt,
-              {
-                paddingBottom: insets.bottom + 16,
-                bottom: shouldShowTabBar ? 64 : 0, // Offset for tab bar
-                backgroundColor: colors.surface,
-                borderTopColor: colors.border,
+      {/* Sign-in prompt — separate standalone dock, shown when the viewer
+          can see the event but needs to sign in to RSVP. */}
+      {showFloatingPrompt && (
+        <View
+          style={[
+            styles.floatingPrompt,
+            {
+              paddingBottom: insets.bottom + 16,
+              bottom: shouldShowTabBar ? 64 : 0,
+              backgroundColor: colors.surface,
+              borderTopColor: colors.border,
+            },
+          ]}
+        >
+          <TouchableOpacity
+            style={styles.signInButton}
+            onPress={() => {
+              const defaultOption = rsvpOptions.find((o) => o.enabled);
+              if (defaultOption) {
+                router.push(`/e/${shortId}/rsvp/phone?optionId=${defaultOption.id}`);
+              } else {
+                router.push("/(auth)/signin" as any);
               }
-            ]}>
-              <TouchableOpacity
-                style={styles.signInButton}
-                onPress={() => {
-                  // For public events, use the new phone-based RSVP flow
-                  // Get the first enabled RSVP option as default
-                  const defaultOption = rsvpOptions.find((o) => o.enabled);
-                  if (defaultOption) {
-                    router.push(`/e/${shortId}/rsvp/phone?optionId=${defaultOption.id}`);
-                  } else {
-                    router.push("/(auth)/signin" as any);
-                  }
-                }}
-              >
-                <Text style={styles.signInButtonText}>
-                  {eventData.accessPrompt.message}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          ) : myRsvp?.optionId != null ? (
+            }}
+          >
+            <Text style={styles.signInButtonText}>
+              {eventData.accessPrompt?.message}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Unified bottom dock. Stacks the chat composer (if any) on top of the
+          floating RSVP pill/buttons (if any) inside a single absolutely-
+          positioned container. Two independent absolute children used to race
+          on iOS, leaving the composer invisible. */}
+      {showBottomDock && (
+        <View
+          style={[
+            styles.bottomDock,
+            {
+              bottom: dockBottomOffset,
+              paddingBottom: insets.bottom,
+              backgroundColor: colors.surface,
+              borderTopColor: colors.border,
+            },
+          ]}
+        >
+          {showFloatingRsvpCard && myRsvp?.optionId != null && (
             <FloatingRsvpCard
               response={{ optionId: myRsvp.optionId, guestCount: myRsvp.guestCount ?? 0 }}
               options={rsvpOptions}
@@ -869,18 +1069,19 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
               onGuestCountChange={handleGuestCountChange}
               maxGuests={maxGuestsPerRsvp}
               insets={insets}
-              tabBarOffset={shouldShowTabBar ? 64 : 0}
+              embedded
             />
-          ) : (
+          )}
+          {showFloatingRsvpButtons && (
             <FloatingRsvpButtons
               options={rsvpOptions}
               loadingOptionId={loadingOptionId}
               onSelect={handleRsvpSelect}
               insets={insets}
-              tabBarOffset={shouldShowTabBar ? 64 : 0}
+              embedded
             />
           )}
-        </>
+        </View>
       )}
 
       {/* RSVP Edit Modal */}
@@ -924,7 +1125,9 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
           isAdmin={isAdmin}
         />
       )}
+
     </SafeAreaView>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -1105,5 +1308,15 @@ const styles = StyleSheet.create({
   messageAttendeesText: {
     fontSize: 16,
     fontWeight: "600",
+  },
+
+  // Unified bottom dock. Single absolute-positioned column that holds the
+  // chat composer (on top) and the floating RSVP pill/buttons (below). See
+  // the render-site comment for why this is a single container on iOS.
+  bottomDock: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    borderTopWidth: 1,
   },
 });
