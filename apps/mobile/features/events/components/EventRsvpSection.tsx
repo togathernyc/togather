@@ -55,6 +55,12 @@ interface FloatingRsvpButtonsProps {
   onSelect: (id: number) => void;
   insets: { bottom: number };
   tabBarOffset?: number;
+  /**
+   * When true, the component renders as a regular flex child (no absolute
+   * positioning, no top border, no safe-area padding). Used when embedded
+   * inside a shared bottom dock that handles those concerns.
+   */
+  embedded?: boolean;
 }
 
 interface FloatingRsvpCardProps {
@@ -69,6 +75,12 @@ interface FloatingRsvpCardProps {
   maxGuests?: number;
   insets: { bottom: number };
   tabBarOffset?: number;
+  /**
+   * When true, the component renders as a regular flex child (no absolute
+   * positioning, no top border, no safe-area padding). Used when embedded
+   * inside a shared bottom dock that handles those concerns.
+   */
+  embedded?: boolean;
 }
 
 interface RsvpEditModalProps {
@@ -256,12 +268,27 @@ export function FloatingRsvpButtons({
   onSelect,
   insets,
   tabBarOffset = 0,
+  embedded = false,
 }: FloatingRsvpButtonsProps) {
   const { colors } = useTheme();
   const enabledOptions = options.filter((opt) => opt.enabled).slice(0, 3);
 
   return (
-    <View style={[styles.container, { paddingBottom: insets.bottom + 20, bottom: tabBarOffset, backgroundColor: colors.surface, borderTopColor: colors.border }]}>
+    <View
+      style={
+        embedded
+          ? styles.embeddedContainer
+          : [
+              styles.container,
+              {
+                paddingBottom: insets.bottom + 20,
+                bottom: tabBarOffset,
+                backgroundColor: colors.surface,
+                borderTopColor: colors.border,
+              },
+            ]
+      }
+    >
       <View style={styles.buttonRow}>
         {enabledOptions.map((option) => {
           const emoji = getEmojiForLabel(option.label);
@@ -304,6 +331,7 @@ export function FloatingRsvpCard({
   maxGuests = DEFAULT_MAX_GUESTS_PER_RSVP,
   insets,
   tabBarOffset = 0,
+  embedded = false,
 }: FloatingRsvpCardProps) {
   const { colors } = useTheme();
   const selectedOption = options.find((opt) => opt.id === response.optionId);
@@ -360,38 +388,67 @@ export function FloatingRsvpCard({
     run(next);
   };
 
+  const showInlineStepper = isGoing && !!onGuestCountChange;
+
   return (
-    <View style={[styles.cardContainer, { paddingBottom: insets.bottom + 20, bottom: tabBarOffset, backgroundColor: colors.surface, borderTopColor: colors.border }]}>
+    <View
+      style={
+        embedded
+          ? styles.embeddedContainer
+          : [
+              styles.cardContainer,
+              {
+                paddingBottom: insets.bottom + 20,
+                bottom: tabBarOffset,
+                backgroundColor: colors.surface,
+                borderTopColor: colors.border,
+              },
+            ]
+      }
+    >
       <View style={styles.card}>
-        <TouchableOpacity
-          testID="floating-rsvp-card"
-          style={styles.cardContent}
-          onPress={onEdit}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.cardEmoji}>{emoji}</Text>
-          <View style={styles.cardTextContent}>
-            <Text style={styles.statusLabel}>
-              {label}
-              {isGoing && displayedGuestCount > 0
-                ? ` · +${displayedGuestCount} guest${displayedGuestCount === 1 ? "" : "s"}`
-                : ""}
-            </Text>
-            <Text style={[styles.editPrompt, { color: colors.textSecondary }]}>Edit your RSVP</Text>
-          </View>
-          <Ionicons name="create-outline" size={20} color={DEFAULT_PRIMARY_COLOR} />
-        </TouchableOpacity>
-        {isGoing && onGuestCountChange && (
-          <View style={styles.cardStepperRow}>
+        <View style={styles.cardContent}>
+          {/* Left side (emoji + label stack) is the edit target. */}
+          <TouchableOpacity
+            testID="floating-rsvp-card"
+            style={styles.cardEditTarget}
+            onPress={onEdit}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.cardEmoji}>{emoji}</Text>
+            <View style={styles.cardTextContent}>
+              <Text style={styles.statusLabel} numberOfLines={1}>
+                {label}
+              </Text>
+              <Text
+                style={[styles.editPrompt, { color: colors.textSecondary }]}
+                numberOfLines={1}
+              >
+                Edit your RSVP
+              </Text>
+            </View>
+          </TouchableOpacity>
+
+          {/* Inline stepper — its taps must NOT trigger the edit modal. */}
+          {showInlineStepper && (
             <GuestStepper
               value={displayedGuestCount}
               onChange={handleGuestChange}
               max={maxGuests}
-              label={displayedGuestCount === 0 ? "Bringing guests?" : "Guests"}
+              label=""
               compact
             />
-          </View>
-        )}
+          )}
+
+          <TouchableOpacity
+            onPress={onEdit}
+            activeOpacity={0.7}
+            hitSlop={8}
+            style={styles.cardEditIcon}
+          >
+            <Ionicons name="create-outline" size={20} color={DEFAULT_PRIMARY_COLOR} />
+          </TouchableOpacity>
+        </View>
       </View>
     </View>
   );
@@ -623,14 +680,25 @@ const styles = StyleSheet.create({
   cardContent: {
     flexDirection: "row",
     alignItems: "center",
-    padding: 16,
-    gap: 12,
+    padding: 12,
+    gap: 10,
+  },
+  cardEditTarget: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  cardEditIcon: {
+    padding: 4,
   },
   cardEmoji: {
     fontSize: 28,
   },
   cardTextContent: {
-    flex: 1,
+    flexShrink: 1,
+    minWidth: 0,
   },
   statusLabel: {
     fontSize: 16,
@@ -713,12 +781,10 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
 
-  // Card stepper row
-  cardStepperRow: {
-    paddingHorizontal: 16,
+  // Embedded mode — the parent dock handles surface, padding, and position.
+  embeddedContainer: {
+    paddingTop: 12,
+    paddingHorizontal: 20,
     paddingBottom: 12,
-    borderTopWidth: 1,
-    borderTopColor: "rgba(0, 0, 0, 0.06)",
-    marginTop: -4,
   },
 });

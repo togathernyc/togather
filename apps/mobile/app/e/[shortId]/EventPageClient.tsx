@@ -330,10 +330,6 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
     openEventChatMutation,
   ]);
 
-  // Measured composer height — used so FloatingRsvpCard can sit above the
-  // composer without overlapping. Default to 0 when composer isn't rendered.
-  const [composerHeight, setComposerHeight] = useState(0);
-
   const handleToggleEventChat = async (enabled: boolean) => {
     if (!eventData?.id) return;
     const applyToggle = async () => {
@@ -696,13 +692,22 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
   // ============================================================================
 
   // The composer is only rendered when the user has chat access AND chat is
-  // enabled. When rendered it sits absolutely above the FloatingRsvpCard; the
-  // card's tabBarOffset is pushed up by the measured composer height so they
-  // stack instead of overlapping.
+  // enabled. Composer + floating RSVP pill share one absolute-positioned
+  // bottom dock (stacked vertically) so they're guaranteed to coexist on iOS
+  // — previously independent absolute siblings raced and the composer could
+  // become invisible.
   const showComposer = canAccessChat && isChatEnabled && !!authToken;
   const composerBottomOffset = shouldShowTabBar ? 64 : 0;
-  const rsvpStackOffset =
-    composerBottomOffset + (showComposer ? composerHeight : 0);
+
+  // Branch for which floating RSVP UI to show (or none).
+  const showFloatingRsvpCard =
+    canRSVP && (eventData.hasAccess || !eventData.accessPrompt) && myRsvp?.optionId != null;
+  const showFloatingRsvpButtons =
+    canRSVP && (eventData.hasAccess || !eventData.accessPrompt) && myRsvp?.optionId == null;
+  const showFloatingPrompt =
+    canRSVP && !eventData.hasAccess && !!eventData.accessPrompt;
+  const showBottomDock =
+    showComposer || showFloatingRsvpCard || showFloatingRsvpButtons;
 
   return (
     <KeyboardAvoidingView
@@ -745,10 +750,10 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
         style={styles.scroll}
         contentContainerStyle={[
           styles.scrollContent,
-          shouldShowTabBar && { paddingBottom: 200 }, // Extra padding for tab bar
-          // Extra bottom padding so the last message isn't hidden behind the
-          // sticky composer. Uses measured composer height when visible.
-          showComposer && { paddingBottom: 200 + composerHeight },
+          // Static generous padding so the last message isn't hidden behind
+          // the sticky composer + RSVP dock. The dock floats via absolute
+          // positioning, so no dynamic measurement needed.
+          (showBottomDock || shouldShowTabBar) && { paddingBottom: 220 },
         ]}
       >
         {/* Cover Image - falls back to group image if no event cover */}
@@ -1005,39 +1010,58 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
         </View>
       </ScrollView>
 
-      {/* Floating RSVP Section */}
-      {canRSVP && (
-        <>
-          {!eventData.hasAccess && eventData.accessPrompt ? (
-            // User can view event but needs to sign in or join to RSVP
-            <View style={[
-              styles.floatingPrompt,
-              {
-                paddingBottom: insets.bottom + 16,
-                bottom: shouldShowTabBar ? 64 : 0, // Offset for tab bar
-                backgroundColor: colors.surface,
-                borderTopColor: colors.border,
+      {/* Sign-in prompt — separate standalone dock, shown when the viewer
+          can see the event but needs to sign in to RSVP. */}
+      {showFloatingPrompt && (
+        <View
+          style={[
+            styles.floatingPrompt,
+            {
+              paddingBottom: insets.bottom + 16,
+              bottom: shouldShowTabBar ? 64 : 0,
+              backgroundColor: colors.surface,
+              borderTopColor: colors.border,
+            },
+          ]}
+        >
+          <TouchableOpacity
+            style={styles.signInButton}
+            onPress={() => {
+              const defaultOption = rsvpOptions.find((o) => o.enabled);
+              if (defaultOption) {
+                router.push(`/e/${shortId}/rsvp/phone?optionId=${defaultOption.id}`);
+              } else {
+                router.push("/(auth)/signin" as any);
               }
-            ]}>
-              <TouchableOpacity
-                style={styles.signInButton}
-                onPress={() => {
-                  // For public events, use the new phone-based RSVP flow
-                  // Get the first enabled RSVP option as default
-                  const defaultOption = rsvpOptions.find((o) => o.enabled);
-                  if (defaultOption) {
-                    router.push(`/e/${shortId}/rsvp/phone?optionId=${defaultOption.id}`);
-                  } else {
-                    router.push("/(auth)/signin" as any);
-                  }
-                }}
-              >
-                <Text style={styles.signInButtonText}>
-                  {eventData.accessPrompt.message}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          ) : myRsvp?.optionId != null ? (
+            }}
+          >
+            <Text style={styles.signInButtonText}>
+              {eventData.accessPrompt?.message}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Unified bottom dock. Stacks the chat composer (if any) on top of the
+          floating RSVP pill/buttons (if any) inside a single absolutely-
+          positioned container. Two independent absolute children used to race
+          on iOS, leaving the composer invisible. */}
+      {showBottomDock && (
+        <View
+          style={[
+            styles.bottomDock,
+            {
+              bottom: composerBottomOffset,
+              paddingBottom: insets.bottom,
+              backgroundColor: colors.surface,
+              borderTopColor: colors.border,
+            },
+          ]}
+        >
+          {showComposer && (
+            <EventActivityComposer channelId={resolvedChannelId} />
+          )}
+          {showFloatingRsvpCard && myRsvp?.optionId != null && (
             <FloatingRsvpCard
               response={{ optionId: myRsvp.optionId, guestCount: myRsvp.guestCount ?? 0 }}
               options={rsvpOptions}
@@ -1045,18 +1069,19 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
               onGuestCountChange={handleGuestCountChange}
               maxGuests={maxGuestsPerRsvp}
               insets={insets}
-              tabBarOffset={rsvpStackOffset}
+              embedded
             />
-          ) : (
+          )}
+          {showFloatingRsvpButtons && (
             <FloatingRsvpButtons
               options={rsvpOptions}
               loadingOptionId={loadingOptionId}
               onSelect={handleRsvpSelect}
               insets={insets}
-              tabBarOffset={rsvpStackOffset}
+              embedded
             />
           )}
-        </>
+        </View>
       )}
 
       {/* RSVP Edit Modal */}
@@ -1101,24 +1126,6 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
         />
       )}
 
-      {/* Sticky event-chat composer. Absolutely positioned above the tab bar
-          so it stays pinned at the viewport bottom; the surrounding
-          KeyboardAvoidingView lifts the whole tree when the keyboard is
-          shown. FloatingRsvpCard/Buttons stack on top of this via the
-          measured composerHeight (see `rsvpStackOffset`). */}
-      {showComposer && (
-        <EventActivityComposer
-          channelId={resolvedChannelId}
-          onLayout={setComposerHeight}
-          style={[
-            styles.stickyComposer,
-            {
-              bottom: composerBottomOffset,
-              paddingBottom: insets.bottom,
-            },
-          ]}
-        />
-      )}
     </SafeAreaView>
     </KeyboardAvoidingView>
   );
@@ -1303,11 +1310,13 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
 
-  // Sticky composer (absolute bottom bar). `bottom` is set dynamically so the
-  // composer sits above the shared-link tab bar when present.
-  stickyComposer: {
+  // Unified bottom dock. Single absolute-positioned column that holds the
+  // chat composer (on top) and the floating RSVP pill/buttons (below). See
+  // the render-site comment for why this is a single container on iOS.
+  bottomDock: {
     position: "absolute",
     left: 0,
     right: 0,
+    borderTopWidth: 1,
   },
 });
