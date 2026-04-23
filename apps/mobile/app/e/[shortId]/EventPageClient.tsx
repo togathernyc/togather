@@ -344,7 +344,16 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
     };
 
     // Confirm before disabling; re-enabling is a straight call.
+    // RN Web's Alert.alert is window.alert and can't fire multi-button
+    // callbacks — use window.confirm on web.
     if (!enabled) {
+      const confirmMessage = "Disable event chat? Attendees won't be able to message the group.";
+      if (Platform.OS === "web") {
+        if (typeof window !== "undefined" && window.confirm(confirmMessage)) {
+          await applyToggle();
+        }
+        return;
+      }
       Alert.alert(
         "Disable event chat?",
         "Attendees won't be able to message the group.",
