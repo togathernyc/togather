@@ -14,6 +14,7 @@ import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { now, getMediaUrl } from "../lib/utils";
 import { requireAuth, getOptionalAuth } from "../lib/auth";
+import { PAST_EVENT_BUFFER_MS } from "../lib/meetingConfig";
 import {
   getMaxGuestsForMeeting,
   isGoingOption,
@@ -401,8 +402,9 @@ export const submit = mutation({
       throw new Error("Cannot RSVP to cancelled event");
     }
 
-    // Check if meeting is in the past
-    if (meeting.scheduledAt < timestamp) {
+    // Check if meeting is past its grace window. Late arrivals can still RSVP
+    // for PAST_EVENT_BUFFER_MS after start.
+    if (meeting.scheduledAt < timestamp - PAST_EVENT_BUFFER_MS) {
       throw new Error("Cannot RSVP to past event");
     }
 

@@ -30,6 +30,14 @@ export const DEFAULT_MEETING_DURATION_MS = 60 * 60 * 1000; // 1 hour
  */
 export const DEFAULT_ATTENDANCE_CONFIRMATION_OFFSET_MS = 30 * 60 * 1000; // 30 minutes
 
+/**
+ * Grace window after an event's start time during which it should still be
+ * treated as "active" — visible in the events list, openable from the detail
+ * page, and accepting RSVPs. Without this, late arrivals immediately stop
+ * seeing events they could still attend.
+ */
+export const PAST_EVENT_BUFFER_MS = 3 * 60 * 60 * 1000; // 3 hours
+
 // ============================================================================
 // RSVP Configuration
 // ============================================================================
