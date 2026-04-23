@@ -366,20 +366,12 @@ export function FloatingRsvpCard({
           activeOpacity={0.7}
         >
           <Text style={styles.cardEmoji}>{emoji}</Text>
-          <View style={styles.cardTextContent}>
-            <Text style={styles.statusLabel} numberOfLines={1}>
-              {label}
-              {isGoing && displayedGuestCount > 0
-                ? ` · +${displayedGuestCount} guest${displayedGuestCount === 1 ? "" : "s"}`
-                : ""}
-            </Text>
-            <Text
-              style={[styles.editPrompt, { color: colors.textSecondary }]}
-              numberOfLines={1}
-            >
-              Edit your RSVP
-            </Text>
-          </View>
+          <Text style={styles.statusLabel} numberOfLines={1}>
+            {label}
+            {isGoing && displayedGuestCount > 0
+              ? ` · +${displayedGuestCount} guest${displayedGuestCount === 1 ? "" : "s"}`
+              : ""}
+          </Text>
           <Ionicons name="create-outline" size={20} color={DEFAULT_PRIMARY_COLOR} />
         </TouchableOpacity>
       </View>
@@ -613,34 +605,18 @@ const styles = StyleSheet.create({
   cardContent: {
     flexDirection: "row",
     alignItems: "center",
-    padding: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
     gap: 10,
-  },
-  cardEditTarget: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    flexShrink: 1,
-    minWidth: 0,
-  },
-  cardEditIcon: {
-    padding: 4,
   },
   cardEmoji: {
-    fontSize: 28,
-  },
-  cardTextContent: {
-    flexShrink: 1,
-    minWidth: 0,
+    fontSize: 22,
   },
   statusLabel: {
+    flex: 1,
     fontSize: 16,
     fontWeight: "600",
     color: DEFAULT_PRIMARY_COLOR,
-    marginBottom: 2,
-  },
-  editPrompt: {
-    fontSize: 13,
   },
 
   // Modal
