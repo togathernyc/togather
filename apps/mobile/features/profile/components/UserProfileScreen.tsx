@@ -1,0 +1,221 @@
+/**
+ * UserProfileScreen — view another user's profile within the active
+ * community. Composed of the smaller section components in this folder;
+ * this file owns loading/error/not-found and page chrome.
+ *
+ * Route: /profile/[userId]
+ */
+
+import React from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  ActivityIndicator,
+  TouchableOpacity,
+  Platform,
+} from 'react-native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import { useAuth } from '@providers/AuthProvider';
+import { useTheme } from '@hooks/useTheme';
+import type { Id } from '@services/api/convex';
+
+import { useUserProfile } from '../hooks/useUserProfile';
+import { UserProfileHeader } from './UserProfileHeader';
+import { UserProfileBadges } from './UserProfileBadges';
+import { UserProfileBio } from './UserProfileBio';
+import { UserProfileSocials } from './UserProfileSocials';
+import { UserProfileDetailsCard } from './UserProfileDetailsCard';
+import { UserProfileMutualGroups } from './UserProfileMutualGroups';
+import { UserProfileUpcomingEvents } from './UserProfileUpcomingEvents';
+
+export function UserProfileScreen() {
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
+  const { user, community } = useAuth();
+  const params = useLocalSearchParams<{ userId: string }>();
+  const userId = params.userId as Id<'users'> | undefined;
+  const communityId = community?.id as Id<'communities'> | undefined;
+
+  const isSelf = !!userId && !!user?.id && userId === user.id;
+
+  const {
+    profile,
+    mutualGroups,
+    upcomingEvents,
+    isLoading,
+  } = useUserProfile({
+    userId: userId ?? null,
+    communityId: communityId ?? null,
+    // Skip the viewer-dependent queries when looking at your own profile —
+    // the dedicated self profile screen already owns that view.
+    skipViewerScopedQueries: isSelf,
+  });
+
+  const headerBar = (
+    <View
+      style={[
+        styles.header,
+        { paddingTop: insets.top + 12, backgroundColor: colors.surface },
+      ]}
+    >
+      <TouchableOpacity
+        onPress={() => router.back()}
+        style={styles.backButton}
+        accessibilityLabel="Go back"
+      >
+        <Ionicons name="arrow-back" size={24} color={colors.text} />
+      </TouchableOpacity>
+      <Text style={[styles.headerTitle, { color: colors.text }]}>Profile</Text>
+      <View style={styles.headerSpacer} />
+    </View>
+  );
+
+  if (!userId || !communityId) {
+    return (
+      <View
+        style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}
+      >
+        {headerBar}
+        <View style={styles.centered}>
+          <Text style={[styles.missingText, { color: colors.textSecondary }]}>
+            Profile unavailable.
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <View
+        style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}
+      >
+        {headerBar}
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={colors.text} />
+        </View>
+      </View>
+    );
+  }
+
+  if (!profile) {
+    return (
+      <View
+        style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}
+      >
+        {headerBar}
+        <View style={styles.centered}>
+          <Ionicons
+            name="person-outline"
+            size={48}
+            color={colors.iconSecondary}
+            style={{ marginBottom: 12 }}
+          />
+          <Text style={[styles.missingTitle, { color: colors.text }]}>
+            Profile not found
+          </Text>
+          <Text style={[styles.missingText, { color: colors.textSecondary }]}>
+            This member is not in your community.
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <View
+      style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}
+    >
+      {headerBar}
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+      >
+        <UserProfileHeader profile={profile} />
+        <UserProfileBadges profile={profile} />
+        <UserProfileBio bio={profile.bio} />
+        <UserProfileSocials
+          instagramHandle={profile.instagramHandle}
+          linkedinHandle={profile.linkedinHandle}
+        />
+        <UserProfileDetailsCard
+          birthdayMonth={profile.birthdayMonth}
+          birthdayDay={profile.birthdayDay}
+          location={profile.location}
+        />
+        {!isSelf && (
+          <UserProfileMutualGroups groups={mutualGroups ?? []} />
+        )}
+        {!isSelf && (
+          <UserProfileUpcomingEvents events={upcomingEvents ?? []} />
+        )}
+      </ScrollView>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    ...Platform.select({
+      web: {
+        boxShadow: '0px 2px 4px rgba(0, 0, 0, 0.05)',
+      },
+      default: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+        elevation: 2,
+      },
+    }),
+  },
+  backButton: {
+    padding: 8,
+    marginRight: 8,
+  },
+  headerTitle: {
+    flex: 1,
+    fontSize: 20,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  headerSpacer: {
+    width: 40,
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    padding: 20,
+    paddingBottom: 40,
+    gap: 16,
+  },
+  centered: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  missingTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 6,
+  },
+  missingText: {
+    fontSize: 14,
+    textAlign: 'center',
+  },
+});
