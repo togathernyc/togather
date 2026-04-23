@@ -870,6 +870,94 @@ describe("RSVP sync via meetingRsvps.submit", () => {
 });
 
 // ============================================================================
+// openEventChat (public mutation)
+// ============================================================================
+
+describe("openEventChat", () => {
+  test("host can open the chat — creates channel and returns channelId + slug", async () => {
+    const t = convexTest(schema, modules);
+    const data = await setupTestData(t);
+
+    const result = await t.mutation(
+      "functions/messaging/eventChat:openEventChat" as any,
+      { token: data.hostToken, meetingId: data.meetingId },
+    );
+
+    expect(result.channelId).toBeDefined();
+    expect(result.slug).toBe("event-dinner123");
+
+    const channel = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("chatChannels")
+        .withIndex("by_meetingId", (q) => q.eq("meetingId", data.meetingId))
+        .unique();
+    });
+    expect(channel?._id).toBe(result.channelId);
+  });
+
+  test("RSVPer with enabled option can open the chat", async () => {
+    const t = convexTest(schema, modules);
+    const data = await setupTestData(t);
+
+    const result = await t.mutation(
+      "functions/messaging/eventChat:openEventChat" as any,
+      { token: data.goingToken, meetingId: data.meetingId },
+    );
+
+    expect(result.channelId).toBeDefined();
+    expect(result.slug).toBe("event-dinner123");
+  });
+
+  test("outsider (no RSVP, not host) cannot open the chat", async () => {
+    const t = convexTest(schema, modules);
+    const data = await setupTestData(t);
+
+    await expect(
+      t.mutation("functions/messaging/eventChat:openEventChat" as any, {
+        token: data.outsiderToken,
+        meetingId: data.meetingId,
+      }),
+    ).rejects.toThrow(/access/i);
+  });
+
+  test("user whose RSVP option is disabled cannot open the chat", async () => {
+    const t = convexTest(schema, modules);
+    const data = await setupTestData(t);
+
+    await expect(
+      t.mutation("functions/messaging/eventChat:openEventChat" as any, {
+        token: `test-token-${data.maybeDisabledId}`,
+        meetingId: data.meetingId,
+      }),
+    ).rejects.toThrow(/access/i);
+  });
+
+  test("is idempotent — second call returns same channelId without duplicating", async () => {
+    const t = convexTest(schema, modules);
+    const data = await setupTestData(t);
+
+    const first = await t.mutation(
+      "functions/messaging/eventChat:openEventChat" as any,
+      { token: data.hostToken, meetingId: data.meetingId },
+    );
+    const second = await t.mutation(
+      "functions/messaging/eventChat:openEventChat" as any,
+      { token: data.goingToken, meetingId: data.meetingId },
+    );
+
+    expect(second.channelId).toBe(first.channelId);
+
+    const channels = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("chatChannels")
+        .withIndex("by_meetingId", (q) => q.eq("meetingId", data.meetingId))
+        .collect();
+    });
+    expect(channels).toHaveLength(1);
+  });
+});
+
+// ============================================================================
 // Text blast mirror
 // ============================================================================
 

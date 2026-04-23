@@ -262,6 +262,10 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
   const setEventChannelEnabledMutation = useAuthenticatedMutation(
     api.functions.messaging.eventChat.setEventChannelEnabled
   );
+  const openEventChatMutation = useAuthenticatedMutation(
+    api.functions.messaging.eventChat.openEventChat
+  );
+  const [isOpeningChat, setIsOpeningChat] = useState(false);
 
   // Whether the chat is currently enabled. When the channel row doesn't exist
   // yet, default to enabled (new channels are created with isEnabled: true).
@@ -278,19 +282,27 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
     : false;
   const canAccessChat = isCreator || (hasRsvp && rsvpOptionEnabled);
 
-  const handleOpenChat = () => {
-    if (!eventData?.groupId || !eventData?.shortId) return;
+  const handleOpenChat = async () => {
+    if (!eventData?.id || !eventData?.groupId || !eventData?.shortId) return;
     if (!isChatEnabled) {
-      Alert.alert(
-        "Chat disabled",
-        "The host turned off this event's chat."
-      );
+      Alert.alert("Chat disabled", "The host turned off this event's chat.");
       return;
     }
-    // Route format is /inbox/{groupId}/event-{shortId}. The channel slug is
-    // hard-coded by the backend (ensureEventChannel). The first send will
-    // lazy-create the channel if it doesn't exist yet.
-    router.push(`/inbox/${eventData.groupId}/event-${eventData.shortId}` as any);
+    // Materialize the channel row before navigating — the chat room resolves
+    // by (groupId, slug) and can't render for a nonexistent channel. openEventChat
+    // is idempotent; it returns the existing channel if one already exists.
+    setIsOpeningChat(true);
+    try {
+      const { slug } = await openEventChatMutation({
+        meetingId: eventData.id as Id<"meetings">,
+      });
+      router.push(`/inbox/${eventData.groupId}/${slug}` as any);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not open chat";
+      Alert.alert("Chat unavailable", message);
+    } finally {
+      setIsOpeningChat(false);
+    }
   };
 
   const handleToggleEventChat = async (enabled: boolean) => {
@@ -847,19 +859,20 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
           )}
 
           {/* Event Chat button — visible to host + RSVPers with an enabled option.
-              When the channel exists AND isEnabled === false, show a muted
-              "Chat disabled" label that fires an alert instead of navigating.
-              If no channel exists yet, the first send lazy-creates it. */}
+              Tapping calls openEventChat which ensures the channel row exists,
+              then navigates. When isEnabled === false, shows a muted
+              "Chat disabled" label that fires an alert instead. */}
           {canAccessChat && eventData.groupId && eventData.shortId && (
             <TouchableOpacity
               style={[
                 styles.messageAttendeesButton,
                 {
                   backgroundColor: colors.surfaceSecondary,
-                  opacity: isChatEnabled ? 1 : 0.6,
+                  opacity: isChatEnabled && !isOpeningChat ? 1 : 0.6,
                 },
               ]}
               onPress={handleOpenChat}
+              disabled={isOpeningChat}
             >
               <Ionicons
                 name="chatbubble-ellipses-outline"
@@ -872,7 +885,7 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
                   { color: isChatEnabled ? DEFAULT_PRIMARY_COLOR : colors.textSecondary },
                 ]}
               >
-                {isChatEnabled ? "Chat" : "Chat disabled"}
+                {isOpeningChat ? "Opening…" : isChatEnabled ? "Chat" : "Chat disabled"}
               </Text>
             </TouchableOpacity>
           )}

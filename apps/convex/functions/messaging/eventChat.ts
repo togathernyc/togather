@@ -20,6 +20,7 @@ import { v } from "convex/values";
 import { query, mutation, internalMutation } from "../../_generated/server";
 import type { QueryCtx, MutationCtx } from "../../_generated/server";
 import type { Doc, Id } from "../../_generated/dataModel";
+import { internal } from "../../_generated/api";
 import { requireAuth } from "../../lib/auth";
 import { canEditMeeting } from "../../lib/meetingPermissions";
 import { now } from "../../lib/utils";
@@ -280,6 +281,64 @@ export const removeEventChannelMember = internalMutation({
 // ============================================================================
 // Mutations (client-facing)
 // ============================================================================
+
+/**
+ * Ensure the event chat channel exists and return its id + slug so the client
+ * can route to the chat room. Called when a user taps "Chat" on the event
+ * page — we eagerly materialize the channel here (rather than on first send)
+ * because the chat room screen resolves channels by (groupId, slug) and has
+ * no way to render a composer for a channel that doesn't exist yet.
+ *
+ * Access mirrors `canAccessEventChannel`: host OR any RSVPer whose option is
+ * still enabled on the meeting.
+ */
+export const openEventChat = mutation({
+  args: {
+    token: v.string(),
+    meetingId: v.id("meetings"),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ channelId: Id<"chatChannels">; slug: string }> => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const meeting = await ctx.db.get(args.meetingId);
+    if (!meeting) throw new Error("Meeting not found");
+    if (!meeting.shortId) {
+      throw new Error("Event is missing shortId — cannot create chat channel");
+    }
+
+    // Access check — same rule as canAccessEventChannel but keyed off the
+    // meeting since the channel may not exist yet.
+    const isHost = meeting.createdById && meeting.createdById === userId;
+    let hasAccess = Boolean(isHost);
+    if (!hasAccess) {
+      const rsvp = await ctx.db
+        .query("meetingRsvps")
+        .withIndex("by_meeting_user", (q) =>
+          q.eq("meetingId", args.meetingId).eq("userId", userId),
+        )
+        .first();
+      if (rsvp) {
+        const matched = (meeting.rsvpOptions ?? []).find(
+          (opt) => opt.id === rsvp.rsvpOptionId,
+        );
+        hasAccess = Boolean(matched && matched.enabled);
+      }
+    }
+    if (!hasAccess) {
+      throw new Error("You don't have access to this event's chat");
+    }
+
+    const channelId: Id<"chatChannels"> = await ctx.runMutation(
+      internal.functions.messaging.eventChat.ensureEventChannel,
+      { meetingId: args.meetingId },
+    );
+
+    return { channelId, slug: `event-${meeting.shortId}` };
+  },
+});
 
 /**
  * Enable or disable an event chat channel. Disabling hides it from members
