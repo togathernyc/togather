@@ -406,18 +406,31 @@ interface EventInboxRowItemProps {
 }
 
 /**
- * Format the event's scheduled time in two parts for the inbox row:
+ * Imminence tiers drive the row's visual treatment (accent bar color, tag
+ * pill visibility, muted styling). Kept as a small enum so the styling logic
+ * below can switch on it without re-deriving from raw ms deltas.
+ */
+type EventUrgency =
+  | "live" // scheduled start is within +/- 5 min, or event is in-progress
+  | "imminent" // starts in < 60 min
+  | "today" // same calendar day, > 60 min away
+  | "soon" // within 7 days
+  | "later" // more than 7 days away
+  | "past"; // scheduledAt has passed (and we're still in the 2-day grace window)
+
+/**
+ * Format the event's scheduled time for the inbox row.
  *   - `when`: short absolute — "Today 5:30 PM", "Tomorrow 5:30 PM",
  *     "Sat 5:30 PM" (this week), "Apr 28 5:30 PM" (same year), or
  *     "Apr 28, 2026" (other year).
- *   - `relative`: "in 45 min", "in 3h", "in 2d", "1d ago", "just now",
- *     etc. Undefined when the absolute label already makes it obvious
- *     (e.g. > 14 days away or > 14 days past).
+ *   - `relative`: compact hint like "in 28 min", "in 3h", "2d ago". Undefined
+ *     when the absolute label is already precise enough (>14 days out/past).
+ *   - `urgency`: tier used by the row to pick its visual treatment.
  */
 function formatEventWhen(
   scheduledAt: number,
   now: number,
-): { when: string; relative?: string } {
+): { when: string; relative?: string; urgency: EventUrgency } {
   const diffMs = scheduledAt - now;
   const diffMin = Math.round(diffMs / 60_000);
   const diffHour = Math.round(diffMs / 3_600_000);
@@ -456,7 +469,7 @@ function formatEventWhen(
 
   // Relative — only when the absolute phrasing doesn't already convey it.
   let relative: string | undefined;
-  if (Math.abs(diffMin) < 1) relative = "happening now";
+  if (Math.abs(diffMin) < 5) relative = undefined; // "Live" takes over the slot
   else if (diffMin > 0 && diffMin < 60) relative = `in ${diffMin} min`;
   else if (diffMin < 0 && diffMin > -60) relative = `${-diffMin} min ago`;
   else if (diffHour > 0 && diffHour < 24) relative = `in ${diffHour}h`;
@@ -464,7 +477,17 @@ function formatEventWhen(
   else if (diffDay > 1 && diffDay <= 14) relative = `in ${diffDay}d`;
   else if (diffDay < -1 && diffDay >= -14) relative = `${-diffDay}d ago`;
 
-  return { when, relative };
+  // Urgency — broad buckets chosen so the row's styling stays stable for at
+  // least a few minutes at a time (no flashing as the clock ticks).
+  let urgency: EventUrgency;
+  if (Math.abs(diffMin) < 5) urgency = "live";
+  else if (diffMin > 0 && diffMin < 60) urgency = "imminent";
+  else if (dayDelta === 0) urgency = "today";
+  else if (diffMs < 0) urgency = "past";
+  else if (diffDay >= 0 && diffDay <= 7) urgency = "soon";
+  else urgency = "later";
+
+  return { when, relative, urgency };
 }
 
 function openMapsForLocation(location: string) {
@@ -479,15 +502,35 @@ function openMapsForLocation(location: string) {
   });
 }
 
+/**
+ * Compress a free-form address into something that fits on the meta line.
+ * e.g. "123 Main St, Springfield, IL 62701, USA" -> "123 Main St, Springfield".
+ * The event page shows the full address; this is just a scanning aid.
+ */
+function shortLocation(loc: string): string {
+  const parts = loc.split(",").map((p) => p.trim()).filter(Boolean);
+  if (parts.length <= 2) return loc.trim();
+  return `${parts[0]}, ${parts[1]}`;
+}
+
 function EventInboxRowItem({ row, isActive }: EventInboxRowItemProps) {
   const router = useRouter();
   const { user } = useAuth();
   const { colors, isDark } = useTheme();
   const { primaryColor } = useCommunityTheme();
-  const userId = user?.id as Id<"users"> | undefined;
 
   const { channel, group, userRole } = row;
   const hasUnread = channel.unreadCount > 0;
+  const userId = user?.id as Id<"users"> | undefined;
+
+  // Last message preview in the same "Sender: text" shape group rows use, so
+  // event rows slot naturally into the mixed list.
+  const messagePreview = (() => {
+    if (!channel.lastMessagePreview) return "No messages yet";
+    const isOwn = userId && channel.lastMessageSenderId === userId;
+    const prefix = isOwn ? "Me" : channel.lastMessageSenderName;
+    return prefix ? `${prefix}: ${channel.lastMessagePreview}` : channel.lastMessagePreview;
+  })();
 
   // Event rows route to the event page with inline Activity (Partiful-style).
   // The `/inbox/{groupId}/event-{slug}` standalone room was removed — chat
@@ -512,35 +555,73 @@ function EventInboxRowItem({ row, isActive }: EventInboxRowItemProps) {
     });
   }, [router, group, channel, userRole]);
 
-  // On an event row the time + location are more useful than the last message
-  // preview (the event page shows comments anyway). Fall back to preview when
-  // the event has no scheduledAt — should be rare.
+  // Compute time + urgency. Undefined only for legacy rows with no scheduledAt.
   const eventWhen =
     typeof channel.meetingScheduledAt === "number"
       ? formatEventWhen(channel.meetingScheduledAt, Date.now())
       : null;
-  const messagePreview = (() => {
-    if (!channel.lastMessagePreview) return "No messages yet";
-    const isOwn = userId && channel.lastMessageSenderId === userId;
-    const prefix = isOwn ? "Me" : channel.lastMessageSenderName;
-    return prefix ? `${prefix}: ${channel.lastMessagePreview}` : channel.lastMessagePreview;
+
+  const urgency: EventUrgency = eventWhen?.urgency ?? "later";
+  const isPast = urgency === "past";
+  const isLive = urgency === "live";
+  const isImminent = urgency === "imminent";
+
+  // Accent bar color: strong primary for live/imminent, soft primary for
+  // "today", barely-there border tint for soon/later, fully invisible for past.
+  const accentColor = (() => {
+    if (isPast) return "transparent";
+    if (isLive || isImminent) return primaryColor;
+    if (urgency === "today") return primaryColor + "66"; // ~40% alpha
+    return "transparent";
+  })();
+
+  // Right-side relative tag: only rendered when the imminence is the point.
+  // For "soon"/"later"/"past" the absolute `when` string already tells the
+  // full story, so we don't pile on extra chrome.
+  const showRelativeTag = isLive || isImminent || urgency === "today";
+  const relativeTagLabel = isLive ? "Live now" : eventWhen?.relative;
+
+  const locationShort = channel.meetingLocation
+    ? shortLocation(channel.meetingLocation)
+    : null;
+
+  // Background: unread tint (as before), active (sidebar) tint, or surface.
+  // Past events get no tint — we want them to recede, not attract.
+  const rowBackground = (() => {
+    if (isActive) return colors.surfaceSecondary;
+    if (hasUnread && !isPast) return isDark ? colors.surfaceSecondary : "#F0F7FF";
+    return colors.surface;
   })();
 
   return (
     <Pressable
       onPress={handlePress}
+      accessibilityRole="button"
+      accessibilityLabel={`${group.name} — ${channel.name}${
+        eventWhen ? `, ${eventWhen.when}` : ""
+      }${hasUnread ? `, ${channel.unreadCount} unread` : ""}`}
       style={({ pressed }) => [
         styles.eventRow,
-        { backgroundColor: colors.surface },
-        hasUnread && { backgroundColor: isDark ? colors.surfaceSecondary : "#F0F7FF" },
-        pressed && { backgroundColor: colors.surfaceSecondary },
-        isActive && { backgroundColor: colors.surfaceSecondary },
+        { backgroundColor: pressed ? colors.surfaceSecondary : rowBackground },
       ]}
     >
+      {/* Left accent bar — the primary imminence signal. Hidden for past rows
+          and for events more than a week out; those rows read as "regular". */}
+      <View
+        style={[
+          styles.eventAccentBar,
+          { backgroundColor: accentColor },
+        ]}
+        pointerEvents="none"
+      />
+
       <View style={styles.eventAvatarContainer}>
         <AppImage
           source={channel.meetingCoverImage || group.preview}
-          style={styles.eventAvatarImage}
+          style={[
+            styles.eventAvatarImage,
+            isPast && styles.eventAvatarMuted,
+          ]}
           optimizedWidth={150}
           placeholder={{
             type: "initials",
@@ -553,7 +634,10 @@ function EventInboxRowItem({ row, isActive }: EventInboxRowItemProps) {
         <View
           style={[
             styles.eventIconBadge,
-            { backgroundColor: primaryColor, borderColor: colors.surface },
+            {
+              backgroundColor: isPast ? colors.textTertiary : primaryColor,
+              borderColor: colors.surface,
+            },
           ]}
         >
           <Ionicons name="calendar" size={12} color="#fff" />
@@ -561,62 +645,116 @@ function EventInboxRowItem({ row, isActive }: EventInboxRowItemProps) {
       </View>
 
       <View style={styles.eventContent}>
+        {/* Line 1: "Group name: Event name" title + right-side urgency tag. */}
         <View style={styles.eventTopRow}>
           <Text
             style={[
               styles.eventName,
-              { color: colors.text },
-              hasUnread && styles.eventNameUnread,
+              { color: isPast ? colors.textSecondary : colors.text },
+              hasUnread && !isPast && styles.eventNameUnread,
             ]}
             numberOfLines={1}
           >
             {group.name}: {channel.name}
           </Text>
+          {showRelativeTag && relativeTagLabel ? (
+            <View
+              style={[
+                styles.eventUrgencyTag,
+                isLive
+                  ? { backgroundColor: primaryColor }
+                  : {
+                      backgroundColor: isDark
+                        ? primaryColor + "22"
+                        : primaryColor + "14",
+                    },
+              ]}
+            >
+              {isLive ? <View style={styles.eventLiveDot} /> : null}
+              <Text
+                style={[
+                  styles.eventUrgencyTagText,
+                  { color: isLive ? "#fff" : primaryColor },
+                ]}
+              >
+                {relativeTagLabel}
+              </Text>
+            </View>
+          ) : null}
         </View>
-        <View style={styles.eventBottomRow}>
+
+        {/* Line 2: last message preview — same vertical slot as group rows so
+            the list reads uniformly. */}
+        <Text
+          style={[
+            styles.eventPreview,
+            { color: isPast ? colors.textTertiary : colors.textSecondary },
+            hasUnread && !isPast && { fontWeight: "600", color: colors.text },
+          ]}
+          numberOfLines={1}
+        >
+          {messagePreview}
+        </Text>
+
+        {/* Line 3: small muted meta — absolute time + optional location chip. */}
+        <View style={styles.eventMetaRow}>
           <Text
             style={[
-              styles.eventPreview,
-              { color: colors.textSecondary },
-              hasUnread && { fontWeight: "600", color: colors.text },
+              styles.eventMetaText,
+              { color: isPast ? colors.textTertiary : colors.textSecondary },
             ]}
             numberOfLines={1}
           >
-            {eventWhen ? (
-              <>
-                {eventWhen.when}
-                {eventWhen.relative ? (
-                  <Text style={{ color: primaryColor, fontWeight: "600" }}>
-                    {" · "}{eventWhen.relative}
-                  </Text>
-                ) : null}
-              </>
-            ) : (
-              messagePreview
-            )}
+            {eventWhen ? eventWhen.when : "Scheduled"}
           </Text>
-          {channel.meetingLocation ? (
-            <Pressable
-              accessibilityLabel="Open in Maps"
-              onPress={(e) => {
-                // Prevent the row's onPress (open event page) from firing too.
-                e.stopPropagation?.();
-                openMapsForLocation(channel.meetingLocation!);
-              }}
-              hitSlop={8}
-              style={[
-                styles.mapsButton,
-                { borderColor: colors.border, backgroundColor: colors.surface },
-              ]}
-            >
-              <Ionicons name="location" size={14} color={primaryColor} />
-            </Pressable>
+          {locationShort ? (
+            <>
+              <Text
+                style={[styles.eventMetaSeparator, { color: colors.textTertiary }]}
+                accessibilityElementsHidden
+              >
+                {"·"}
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Open ${channel.meetingLocation} in Maps`}
+                onPress={(e) => {
+                  e.stopPropagation?.();
+                  openMapsForLocation(channel.meetingLocation!);
+                }}
+                hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+                style={({ pressed }) => [
+                  styles.locationChip,
+                  pressed && { opacity: 0.6 },
+                ]}
+              >
+                <Ionicons
+                  name="location-outline"
+                  size={12}
+                  color={isPast ? colors.textTertiary : primaryColor}
+                />
+                <Text
+                  style={[
+                    styles.locationChipText,
+                    { color: isPast ? colors.textTertiary : primaryColor },
+                  ]}
+                  numberOfLines={1}
+                >
+                  {locationShort}
+                </Text>
+              </Pressable>
+            </>
           ) : null}
         </View>
       </View>
 
       {hasUnread ? (
-        <View style={[styles.eventUnreadBadge, { backgroundColor: primaryColor }]}>
+        <View
+          style={[
+            styles.eventUnreadBadge,
+            { backgroundColor: isPast ? colors.textTertiary : primaryColor },
+          ]}
+        >
           <Text style={styles.eventUnreadBadgeText}>
             {channel.unreadCount > 99 ? "99+" : channel.unreadCount}
           </Text>
@@ -685,8 +823,22 @@ const styles = StyleSheet.create({
   eventRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 16,
+    // Left padding is slightly reduced (13 vs 16) to make room for the 3px
+    // accent bar so overall row padding still reads as 16. Group rows use
+    // 16 — the delta here is negligible (~1–2px) and keeps the avatar's
+    // horizontal position aligned with the group rows above/below.
+    paddingLeft: 13,
+    paddingRight: 16,
     paddingVertical: 12,
+  },
+  // Thin left accent bar — the primary imminence signal.
+  eventAccentBar: {
+    width: 3,
+    alignSelf: "stretch",
+    borderRadius: 2,
+    marginRight: 10,
+    // When there's no accent color the bar still occupies space so avatars
+    // stay aligned with accented siblings.
   },
   eventAvatarContainer: {
     position: "relative",
@@ -696,6 +848,9 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
+  },
+  eventAvatarMuted: {
+    opacity: 0.55,
   },
   eventIconBadge: {
     position: "absolute",
@@ -712,10 +867,18 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
   },
+  // Small muted group-name caption above the event title.
+  eventGroupCaption: {
+    fontSize: 11,
+    fontWeight: "600",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+    marginBottom: 2,
+  },
   eventTopRow: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 4,
+    marginBottom: 3,
   },
   eventName: {
     fontSize: 16,
@@ -726,32 +889,65 @@ const styles = StyleSheet.create({
   eventNameUnread: {
     fontWeight: "700",
   },
-  eventPill: {
+  // Urgency pill — rendered only for live/imminent/today events.
+  eventUrgencyTag: {
+    flexDirection: "row",
+    alignItems: "center",
     paddingHorizontal: 8,
     paddingVertical: 2,
-    borderRadius: 12,
+    borderRadius: 10,
+    gap: 5,
   },
-  eventPillText: {
+  eventUrgencyTagText: {
     fontSize: 11,
-    fontWeight: "600",
+    fontWeight: "700",
+    letterSpacing: 0.2,
+  },
+  // "Live" pulsing-looking dot. No actual animation — animating on every
+  // visible row in the inbox is overkill; the solid dot + "Live now" label
+  // reads clearly enough.
+  eventLiveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "#fff",
   },
   eventBottomRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
   },
   eventPreview: {
     fontSize: 14,
-    flex: 1,
-    marginRight: 8,
+    marginTop: 2,
   },
-  mapsButton: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    borderWidth: 1,
+  eventMetaRow: {
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    marginTop: 2,
+  },
+  eventMetaText: {
+    fontSize: 12,
+    flexShrink: 0,
+  },
+  eventMetaSeparator: {
+    fontSize: 12,
+    marginHorizontal: 6,
+  },
+  // Inline location chip — no border, no background, just icon + text tinted
+  // with primary color. Reads as "tappable" via the primary tint.
+  locationChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    flexShrink: 1,
+    // Compensate for the small icon by keeping a healthy top/bottom hit area
+    // (see hitSlop on the Pressable).
+    paddingVertical: 2,
+  },
+  locationChipText: {
+    fontSize: 13,
+    fontWeight: "500",
+    flexShrink: 1,
   },
   eventUnreadBadge: {
     minWidth: 22,

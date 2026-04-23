@@ -102,6 +102,16 @@ export const onMessageSent = internalMutation({
       const senderAvatarUrl = message.senderProfilePhoto;
       const channelSlug = channel ? getChannelSlug(channel) : "general";
 
+      // For event channels, look up the meeting's shortId so the push
+      // notification can deep-link to /e/{shortId} instead of /inbox/...
+      // (which was routing tappers into the group-chat stack and had no
+      // event context).
+      let meetingShortId: string | undefined = undefined;
+      if (channel?.channelType === "event" && channel.meetingId) {
+        const meeting = await ctx.db.get(channel.meetingId);
+        if (meeting?.shortId) meetingShortId = meeting.shortId;
+      }
+
       // For shared channels, each member may belong to a different group.
       // We need to route notifications to each member's actual group so tapping
       // the notification opens the correct group context.
@@ -188,6 +198,7 @@ export const onMessageSent = internalMutation({
             channelName: channel.name,
             channelType: channel.channelType || "main",
             channelSlug,
+            meetingShortId,
             mentionRecipients: bucket.mentionRecipients,
             regularRecipients: bucket.regularRecipients,
           });
@@ -223,6 +234,7 @@ export const onMessageSent = internalMutation({
           channelName: channel?.name,
           channelType: channel?.channelType || "main",
           channelSlug,
+          meetingShortId,
           mentionRecipients,
           regularRecipients,
         });
@@ -248,11 +260,35 @@ export const sendMessageNotifications = internalAction({
     channelName: v.optional(v.string()),
     channelType: v.optional(v.string()),
     channelSlug: v.optional(v.string()),
+    /** For event-channel messages, the owning meeting's shortId. Lets us
+     *  deep-link the push to `/e/{shortId}` instead of the inbox route. */
+    meetingShortId: v.optional(v.string()),
     mentionRecipients: v.array(v.id("users")),
     regularRecipients: v.array(v.id("users")),
   },
   handler: async (ctx, args) => {
-    console.log(`[sendMessageNotifications] Starting with channelId=${args.channelId}, groupId=${args.groupId}, messageId=${args.messageId}, channelType=${args.channelType}, channelSlug=${args.channelSlug}`);
+    console.log(`[sendMessageNotifications] Starting with channelId=${args.channelId}, groupId=${args.groupId}, messageId=${args.messageId}, channelType=${args.channelType}, channelSlug=${args.channelSlug}, meetingShortId=${args.meetingShortId}`);
+
+    // Event-channel messages deep-link to the event page rather than the
+    // inbox chat room. The mobile app's notification handler prefers `url`
+    // over `type`/`channelType` routing, so setting it here is sufficient.
+    const isEventChannel = args.channelType === "event";
+    const eventUrl =
+      isEventChannel && args.meetingShortId
+        ? `/e/${args.meetingShortId}?source=app`
+        : undefined;
+
+    // Preserve "event" in channelType for notifications from event channels so
+    // the mobile fallback path doesn't mis-route them through `general`.
+    const dataChannelType = isEventChannel
+      ? "event"
+      : args.channelType === "leaders"
+        ? "leaders"
+        : "general";
+    const dataChannelSlug =
+      args.channelSlug ||
+      (args.channelType === "leaders" ? "leaders" : "general");
+
     // Send mention notifications (push + email)
     if (args.mentionRecipients.length > 0) {
       await notifyBatch(ctx, {
@@ -267,9 +303,9 @@ export const sendMessageNotifications = internalAction({
           channelId: args.channelId,
           channelName: args.channelName,
           communityId: args.communityId,
-          // Map channel type to expected format: "main" -> "general", "leaders" -> "leaders"
-          channelType: args.channelType === "leaders" ? "leaders" : "general",
-          channelSlug: args.channelSlug || (args.channelType === "leaders" ? "leaders" : "general"),
+          channelType: dataChannelType,
+          channelSlug: dataChannelSlug,
+          ...(eventUrl ? { url: eventUrl, shortId: args.meetingShortId } : {}),
         },
         groupId: args.groupId,
         communityId: args.communityId,
@@ -290,10 +326,9 @@ export const sendMessageNotifications = internalAction({
           channelId: args.channelId,
           channelName: args.channelName,
           communityId: args.communityId,
-          // Map channel type to expected format: "main" -> "general", "leaders" -> "leaders"
-          // This ensures the mobile app navigates to the correct channel tab (Issue #302)
-          channelType: args.channelType === "leaders" ? "leaders" : "general",
-          channelSlug: args.channelSlug || (args.channelType === "leaders" ? "leaders" : "general"),
+          channelType: dataChannelType,
+          channelSlug: dataChannelSlug,
+          ...(eventUrl ? { url: eventUrl, shortId: args.meetingShortId } : {}),
         },
         groupId: args.groupId,
         communityId: args.communityId,
