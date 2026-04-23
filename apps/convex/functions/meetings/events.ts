@@ -20,6 +20,7 @@ import { query, QueryCtx } from "../../_generated/server";
 import { Id, Doc } from "../../_generated/dataModel";
 import { getMediaUrl } from "../../lib/utils";
 import { getOptionalAuth } from "../../lib/auth";
+import { PAST_EVENT_BUFFER_MS } from "../../lib/meetingConfig";
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000;
@@ -144,11 +145,14 @@ export const listForEventsTab = query({
       isVisible(m, userId, userGroupIds, isCommunityMember)
     );
 
-    // nextUp: upcoming within 48h. Both types; CWE-collapsed.
+    // nextUp: upcoming within 48h. Both types; CWE-collapsed. Past floor is
+    // pulled back by PAST_EVENT_BUFFER_MS so events still in their grace
+    // window keep appearing.
+    const pastFloor = currentTime - PAST_EVENT_BUFFER_MS;
     const nextUpCutoff = currentTime + TWO_DAYS_MS;
     const nextUp = visibleInWindow
       .filter(
-        (m) => m.scheduledAt > currentTime && m.scheduledAt < nextUpCutoff
+        (m) => m.scheduledAt > pastFloor && m.scheduledAt < nextUpCutoff
       )
       .sort((a, b) => a.scheduledAt - b.scheduledAt);
 
@@ -157,7 +161,7 @@ export const listForEventsTab = query({
     // where. No exclusion filter (that's what caused the CWE "0 going"
     // miscount in the old design).
     const thisWeek = visibleInWindow
-      .filter((m) => m.scheduledAt > currentTime)
+      .filter((m) => m.scheduledAt > pastFloor)
       .sort((a, b) => a.scheduledAt - b.scheduledAt);
 
     // myEvents: upcoming meetings the user RSVP'd to OR is hosting. Not
@@ -454,7 +458,7 @@ async function loadMyEventsMeetings(
     (m) =>
       m.status !== "cancelled" &&
       m.communityId === communityId &&
-      m.scheduledAt > now
+      m.scheduledAt > now - PAST_EVENT_BUFFER_MS
   );
 
   const groupIds = [...new Set(upcoming.map((m) => m.groupId))];

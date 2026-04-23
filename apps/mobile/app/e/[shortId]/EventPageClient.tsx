@@ -440,7 +440,11 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
 
   const rsvpOptions = (eventData.rsvpOptions as unknown as RsvpOption[]) ?? [];
   const eventDate = eventData.scheduledAt ? parseISO(eventData.scheduledAt) : null;
-  const isPastEvent = eventDate ? eventDate < new Date() : false;
+  // Keep mirroring PAST_EVENT_BUFFER_MS in apps/convex/lib/meetingConfig.ts.
+  const PAST_EVENT_BUFFER_MS = 3 * 60 * 60 * 1000;
+  const isPastEvent = eventDate
+    ? eventDate.getTime() < Date.now() - PAST_EVENT_BUFFER_MS
+    : false;
   const maxGuestsPerRsvp =
     ((eventData as any)?.maxGuestsPerRsvp as number | undefined) ??
     DEFAULT_MAX_GUESTS_PER_RSVP;
