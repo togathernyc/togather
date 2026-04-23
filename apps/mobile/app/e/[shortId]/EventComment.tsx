@@ -168,13 +168,14 @@ function EventCommentInner({ message, currentUserId, groupId }: EventCommentProp
     setImageViewerVisible(true);
   }, []);
 
-  // Reply — route to the shared thread page used by group chat. Mirrors
-  // MessageItem's `handleThreadPress`. No channelName param here — the
-  // thread page falls back to a default label.
+  // Reply — route to the shared thread page used by group chat. Plain
+  // string form (not the `pathname` object form) because on native the
+  // event page (/e/[shortId]) and the inbox stack are separate, and the
+  // object form doesn't always cross-stack navigate reliably.
   const handleReplyPress = useCallback(() => {
-    router.push({
-      pathname: `/inbox/${groupId}/thread/${message._id}` as any,
-    });
+    router.push(
+      `/inbox/${groupId}/thread/${message._id}?channelName=event` as any,
+    );
   }, [router, groupId, message._id]);
 
   // ---- Rendering ----

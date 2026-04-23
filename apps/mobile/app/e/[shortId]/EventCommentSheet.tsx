@@ -65,20 +65,27 @@ export function EventCommentSheet({
       animationType="slide"
       onRequestClose={onClose}
     >
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
+      <View style={styles.flex}>
+        {/**
+         * Overlay is a sibling of the sheet (not a parent). On RN Web, wrapping
+         * the TextInput inside a Pressable with `stopPropagation` intercepts
+         * click events before they reach the input, so the composer won't
+         * accept focus. Keeping them as siblings means clicks on the sheet
+         * never touch the overlay Pressable.
+         */}
         <Pressable
-          style={[styles.overlay, { backgroundColor: colors.overlay }]}
+          style={[
+            StyleSheet.absoluteFillObject,
+            { backgroundColor: colors.overlay },
+          ]}
           onPress={onClose}
+        />
+        <KeyboardAvoidingView
+          style={styles.sheetContainer}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          pointerEvents="box-none"
         >
-          {/**
-           * Inner Pressable swallows taps on the sheet itself so they don't
-           * bubble up to the overlay and trigger `onClose`.
-           */}
-          <Pressable
-            onPress={(e) => e.stopPropagation()}
+          <View
             style={[
               styles.sheet,
               {
@@ -100,9 +107,9 @@ export function EventCommentSheet({
                 externalIsSending={isSending}
               />
             </View>
-          </Pressable>
-        </Pressable>
-      </KeyboardAvoidingView>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
     </Modal>
   );
 }
@@ -113,14 +120,18 @@ const styles = StyleSheet.create({
   flex: {
     flex: 1,
   },
-  overlay: {
-    flex: 1,
-    justifyContent: "flex-end",
+  // Sheet container pins the actual sheet to the bottom of the screen without
+  // wrapping the overlay as a parent — avoids the RN Web click-interception
+  // issue documented above.
+  sheetContainer: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
   sheet: {
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    // Cap height so extreme-keyboard scenarios don't push the handle off-screen.
     maxHeight: "90%",
   },
   handleContainer: {
