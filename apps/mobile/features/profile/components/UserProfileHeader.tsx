@@ -3,9 +3,10 @@
  * Role badges live in `UserProfileBadges` for clarity.
  */
 
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { AppImage } from '@components/ui';
+import { ImageViewer } from '@components/ui/ImageViewer';
 import { useTheme } from '@hooks/useTheme';
 
 import type { UserProfile } from '../hooks/useUserProfile';
@@ -16,6 +17,12 @@ interface UserProfileHeaderProps {
 
 export function UserProfileHeader({ profile }: UserProfileHeaderProps) {
   const { colors } = useTheme();
+  // Local viewer state — rendering the Modal via the root-level
+  // ImageViewerProvider doesn't work here because this screen is pushed
+  // inside a React Native Screens Stack on iOS, which obscures the
+  // root-level Modal. Keeping the Modal colocated with this screen puts
+  // it in the same UIViewController hierarchy.
+  const [viewerVisible, setViewerVisible] = useState(false);
 
   const displayName =
     [profile.firstName, profile.lastName].filter(Boolean).join(' ').trim() ||
@@ -27,21 +34,37 @@ export function UserProfileHeader({ profile }: UserProfileHeaderProps) {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.surface }]}>
-      <AppImage
-        source={profile.profilePhoto ?? undefined}
-        style={styles.avatar}
-        optimizedWidth={200}
-        placeholder={{
-          type: 'initials',
-          name: displayName,
-          backgroundColor: '#E5E5E5',
+      <TouchableOpacity
+        activeOpacity={0.8}
+        disabled={!profile.profilePhoto}
+        onPress={() => {
+          if (profile.profilePhoto) setViewerVisible(true);
         }}
-      />
+      >
+        <AppImage
+          source={profile.profilePhoto ?? undefined}
+          style={styles.avatar}
+          optimizedWidth={200}
+          placeholder={{
+            type: 'initials',
+            name: displayName,
+            backgroundColor: '#E5E5E5',
+          }}
+        />
+      </TouchableOpacity>
       <Text style={[styles.name, { color: colors.text }]}>{displayName}</Text>
       {memberSinceLabel && (
         <Text style={[styles.memberSince, { color: colors.textSecondary }]}>
           Member since {memberSinceLabel}
         </Text>
+      )}
+      {profile.profilePhoto && (
+        <ImageViewer
+          visible={viewerVisible}
+          images={[profile.profilePhoto]}
+          initialIndex={0}
+          onClose={() => setViewerVisible(false)}
+        />
       )}
     </View>
   );

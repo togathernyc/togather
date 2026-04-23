@@ -176,46 +176,81 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
           }
         >
           <View
+            accessibilityState={
+              {
+                "busy": undefined,
+                "checked": undefined,
+                "disabled": true,
+                "expanded": undefined,
+                "selected": undefined,
+              }
+            }
+            accessibilityValue={
+              {
+                "max": undefined,
+                "min": undefined,
+                "now": undefined,
+                "text": undefined,
+              }
+            }
+            accessible={true}
+            collapsable={false}
+            focusable={false}
+            onClick={[Function]}
+            onResponderGrant={[Function]}
+            onResponderMove={[Function]}
+            onResponderRelease={[Function]}
+            onResponderTerminate={[Function]}
+            onResponderTerminationRequest={[Function]}
+            onStartShouldSetResponder={[Function]}
             style={
-              [
-                {
-                  "alignItems": "center",
-                  "justifyContent": "center",
-                  "overflow": "hidden",
-                },
-                {
-                  "backgroundColor": "#F56848",
-                },
+              {
+                "opacity": 1,
+              }
+            }
+          >
+            <View
+              style={
                 [
                   {
                     "alignItems": "center",
                     "justifyContent": "center",
+                    "overflow": "hidden",
                   },
                   {
-                    "borderRadius": 40,
-                    "height": 80,
-                    "width": 80,
+                    "backgroundColor": "#F56848",
                   },
-                  undefined,
-                ],
-              ]
-            }
-          >
-            <Text
-              style={
-                [
-                  {
-                    "fontWeight": "600",
-                  },
-                  {
-                    "color": "#ffffff",
-                    "fontSize": 32,
-                  },
+                  [
+                    {
+                      "alignItems": "center",
+                      "justifyContent": "center",
+                    },
+                    {
+                      "borderRadius": 40,
+                      "height": 80,
+                      "width": 80,
+                    },
+                    undefined,
+                  ],
                 ]
               }
             >
-              TU
-            </Text>
+              <Text
+                style={
+                  [
+                    {
+                      "fontWeight": "600",
+                    },
+                    {
+                      "color": "#ffffff",
+                      "fontSize": 32,
+                    },
+                  ]
+                }
+              >
+                TU
+              </Text>
+            </View>
           </View>
           <View
             style={
@@ -1295,46 +1330,81 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
           }
         >
           <View
+            accessibilityState={
+              {
+                "busy": undefined,
+                "checked": undefined,
+                "disabled": true,
+                "expanded": undefined,
+                "selected": undefined,
+              }
+            }
+            accessibilityValue={
+              {
+                "max": undefined,
+                "min": undefined,
+                "now": undefined,
+                "text": undefined,
+              }
+            }
+            accessible={true}
+            collapsable={false}
+            focusable={false}
+            onClick={[Function]}
+            onResponderGrant={[Function]}
+            onResponderMove={[Function]}
+            onResponderRelease={[Function]}
+            onResponderTerminate={[Function]}
+            onResponderTerminationRequest={[Function]}
+            onStartShouldSetResponder={[Function]}
             style={
-              [
-                {
-                  "alignItems": "center",
-                  "justifyContent": "center",
-                  "overflow": "hidden",
-                },
-                {
-                  "backgroundColor": "#F56848",
-                },
+              {
+                "opacity": 1,
+              }
+            }
+          >
+            <View
+              style={
                 [
                   {
                     "alignItems": "center",
                     "justifyContent": "center",
+                    "overflow": "hidden",
                   },
                   {
-                    "borderRadius": 40,
-                    "height": 80,
-                    "width": 80,
+                    "backgroundColor": "#F56848",
                   },
-                  undefined,
-                ],
-              ]
-            }
-          >
-            <Text
-              style={
-                [
-                  {
-                    "fontWeight": "600",
-                  },
-                  {
-                    "color": "#ffffff",
-                    "fontSize": 32,
-                  },
+                  [
+                    {
+                      "alignItems": "center",
+                      "justifyContent": "center",
+                    },
+                    {
+                      "borderRadius": 40,
+                      "height": 80,
+                      "width": 80,
+                    },
+                    undefined,
+                  ],
                 ]
               }
             >
-              TU
-            </Text>
+              <Text
+                style={
+                  [
+                    {
+                      "fontWeight": "600",
+                    },
+                    {
+                      "color": "#ffffff",
+                      "fontSize": 32,
+                    },
+                  ]
+                }
+              >
+                TU
+              </Text>
+            </View>
           </View>
           <View
             style={

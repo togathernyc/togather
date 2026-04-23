@@ -4,6 +4,7 @@ import { Avatar, Card } from '@components/ui';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@hooks/useTheme';
 import { useRouter } from 'expo-router';
+import { ImageViewerManager } from '@/providers/ImageViewerProvider';
 import { Profile } from '../types';
 
 interface ProfileHeaderProps {
@@ -25,11 +26,21 @@ export function ProfileHeader({ user }: ProfileHeaderProps) {
     >
     <Card style={styles.profileCard}>
       <View style={styles.profileHeader}>
-        <Avatar
-          name={`${user?.first_name || ""} ${user?.last_name || ""}`.trim()}
-          imageUrl={user?.profile_photo}
-          size={80}
-        />
+        <TouchableOpacity
+          activeOpacity={0.8}
+          disabled={!user?.profile_photo}
+          onPress={() => {
+            if (user?.profile_photo) {
+              ImageViewerManager.show([user.profile_photo], 0);
+            }
+          }}
+        >
+          <Avatar
+            name={`${user?.first_name || ""} ${user?.last_name || ""}`.trim()}
+            imageUrl={user?.profile_photo}
+            size={80}
+          />
+        </TouchableOpacity>
         <View style={styles.profileInfo}>
           <Text style={[styles.name, { color: colors.text }]}>
             {user?.first_name} {user?.last_name}

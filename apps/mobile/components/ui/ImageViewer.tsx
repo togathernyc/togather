@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -15,6 +15,17 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import {
+  Gesture,
+  GestureDetector,
+  GestureHandlerRootView,
+} from 'react-native-gesture-handler';
+import Reanimated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  runOnJS,
+} from 'react-native-reanimated';
 import { saveImageToLibrary } from '@/utils/saveImage';
 import { ToastManager } from './Toast';
 import { useTheme } from '@hooks/useTheme';
@@ -24,12 +35,99 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 // Separate component for rendering individual images
 interface ImageSlideProps {
   imageUrl: string;
+  onZoomStateChange?: (zoomed: boolean) => void;
 }
 
-function ImageSlide({ imageUrl }: ImageSlideProps) {
+const MIN_SCALE = 1;
+const MAX_SCALE = 5;
+const DOUBLE_TAP_SCALE = 2.5;
+
+function ImageSlide({ imageUrl, onZoomStateChange }: ImageSlideProps) {
   const { colors } = useTheme();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+
+  const scale = useSharedValue(1);
+  const savedScale = useSharedValue(1);
+  const translateX = useSharedValue(0);
+  const savedTranslateX = useSharedValue(0);
+  const translateY = useSharedValue(0);
+  const savedTranslateY = useSharedValue(0);
+
+  const notifyZoomState = useCallback(
+    (zoomed: boolean) => {
+      onZoomStateChange?.(zoomed);
+    },
+    [onZoomStateChange],
+  );
+
+  const pinch = Gesture.Pinch()
+    .onUpdate((e) => {
+      const next = savedScale.value * e.scale;
+      scale.value = Math.min(Math.max(next, MIN_SCALE * 0.8), MAX_SCALE);
+    })
+    .onEnd(() => {
+      if (scale.value < MIN_SCALE) {
+        scale.value = withTiming(MIN_SCALE);
+        translateX.value = withTiming(0);
+        translateY.value = withTiming(0);
+        savedScale.value = MIN_SCALE;
+        savedTranslateX.value = 0;
+        savedTranslateY.value = 0;
+        runOnJS(notifyZoomState)(false);
+      } else {
+        savedScale.value = scale.value;
+        runOnJS(notifyZoomState)(scale.value > MIN_SCALE);
+      }
+    });
+
+  const pan = Gesture.Pan()
+    .averageTouches(true)
+    .minPointers(1)
+    .onUpdate((e) => {
+      if (scale.value > MIN_SCALE) {
+        translateX.value = savedTranslateX.value + e.translationX;
+        translateY.value = savedTranslateY.value + e.translationY;
+      }
+    })
+    .onEnd(() => {
+      savedTranslateX.value = translateX.value;
+      savedTranslateY.value = translateY.value;
+    });
+
+  const doubleTap = Gesture.Tap()
+    .numberOfTaps(2)
+    .maxDelay(250)
+    .onEnd(() => {
+      if (scale.value > MIN_SCALE) {
+        scale.value = withTiming(MIN_SCALE);
+        translateX.value = withTiming(0);
+        translateY.value = withTiming(0);
+        savedScale.value = MIN_SCALE;
+        savedTranslateX.value = 0;
+        savedTranslateY.value = 0;
+        runOnJS(notifyZoomState)(false);
+      } else {
+        scale.value = withTiming(DOUBLE_TAP_SCALE);
+        savedScale.value = DOUBLE_TAP_SCALE;
+        runOnJS(notifyZoomState)(true);
+      }
+    });
+
+  // Pan only activates when zoomed, so it won't fight the FlatList's
+  // horizontal swipe at scale=1. Double-tap races pinch+pan so it wins fast.
+  const composed = Gesture.Race(
+    doubleTap,
+    Gesture.Simultaneous(pinch, pan),
+  );
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: translateX.value },
+      { translateY: translateY.value },
+      { scale: scale.value },
+    ],
+  }));
 
   return (
     <View style={styles.imageSlide}>
@@ -44,17 +142,21 @@ function ImageSlide({ imageUrl }: ImageSlideProps) {
           <Text style={[styles.errorText, { color: colors.textSecondary }]}>Failed to load image</Text>
         </View>
       ) : (
-        <Image
-          source={{ uri: imageUrl }}
-          style={styles.image}
-          resizeMode="contain"
-          onLoadStart={() => setLoading(true)}
-          onLoadEnd={() => setLoading(false)}
-          onError={() => {
-            setLoading(false);
-            setError(true);
-          }}
-        />
+        <GestureDetector gesture={composed}>
+          <Reanimated.View style={[styles.imageWrap, animatedStyle]}>
+            <Image
+              source={{ uri: imageUrl }}
+              style={styles.image}
+              resizeMode="contain"
+              onLoadStart={() => setLoading(true)}
+              onLoadEnd={() => setLoading(false)}
+              onError={() => {
+                setLoading(false);
+                setError(true);
+              }}
+            />
+          </Reanimated.View>
+        </GestureDetector>
       )}
     </View>
   );
@@ -80,12 +182,22 @@ export function ImageViewer({
   const flatListRef = useRef<FlatList>(null);
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [isSaving, setIsSaving] = useState(false);
+  const [isZoomed, setIsZoomed] = useState(false);
   const insets = useSafeAreaInsets();
+
+  // Reset zoom whenever the visible slide changes. Without this, navigating
+  // past a zoomed slide (via the arrow buttons) leaves `isZoomed` stuck true,
+  // so `scrollEnabled={!isZoomed}` keeps the carousel swipe disabled on the
+  // next slide until the user toggles zoom again or closes the viewer.
+  useEffect(() => {
+    setIsZoomed(false);
+  }, [currentIndex]);
 
   useEffect(() => {
     if (visible) {
       // Reset to initial index when opening
       setCurrentIndex(initialIndex);
+      setIsZoomed(false);
 
       // Reset animation values
       fadeAnim.setValue(0);
@@ -164,7 +276,7 @@ export function ImageViewer({
   };
 
   const renderImage = ({ item }: { item: string }) => {
-    return <ImageSlide imageUrl={item} />;
+    return <ImageSlide imageUrl={item} onZoomStateChange={setIsZoomed} />;
   };
 
   const renderDotIndicators = () => {
@@ -216,6 +328,9 @@ export function ImageViewer({
       onRequestClose={onClose}
       statusBarTranslucent
     >
+      {/* GestureHandlerRootView is required inside Modal on Android for
+          gesture-handler gestures (pinch/pan/double-tap) to fire. */}
+      <GestureHandlerRootView style={{ flex: 1 }}>
       <TouchableWithoutFeedback onPress={onClose}>
         <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
           {/* Dark Backdrop */}
@@ -250,7 +365,7 @@ export function ImageViewer({
             )}
           </View>
 
-          {/* Image Carousel */}
+          {/* Image Carousel — paging disabled while zoomed so pan gesture works */}
           <FlatList
             pointerEvents="auto"
             ref={flatListRef}
@@ -259,6 +374,7 @@ export function ImageViewer({
             keyExtractor={(item, index) => `${item}-${index}`}
             horizontal
             pagingEnabled
+            scrollEnabled={!isZoomed}
             showsHorizontalScrollIndicator={false}
             initialScrollIndex={initialIndex}
             getItemLayout={(data, index) => ({
@@ -332,6 +448,7 @@ export function ImageViewer({
         </Animated.View>
       </Animated.View>
       </TouchableWithoutFeedback>
+      </GestureHandlerRootView>
     </Modal>
   );
 }
@@ -380,6 +497,10 @@ const styles = StyleSheet.create({
     height: SCREEN_HEIGHT,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  imageWrap: {
+    width: '100%',
+    height: '100%',
   },
   image: {
     width: '100%',
