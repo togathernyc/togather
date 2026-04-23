@@ -155,6 +155,17 @@ export default defineSchema({
     notifyDailyBookings: v.optional(v.boolean()),
     // Denormalized field for full-text search (combines firstName, lastName, email, phone)
     searchText: v.optional(v.string()),
+
+    // Public profile fields (displayed on the user profile page).
+    // Kept separate from `dateOfBirth` — birthdayMonth/Day are shareable
+    // (M/D only, no year) whereas `dateOfBirth` is PII used for age checks
+    // and is never returned by the profile query.
+    bio: v.optional(v.string()),
+    instagramHandle: v.optional(v.string()),
+    linkedinHandle: v.optional(v.string()),
+    birthdayMonth: v.optional(v.number()), // 1–12
+    birthdayDay: v.optional(v.number()), // 1–31
+    location: v.optional(v.string()),
   })
     .index("by_legacyId", ["legacyId"])
     .index("by_email", ["email"])

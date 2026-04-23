@@ -100,6 +100,8 @@ interface MessageListProps {
   onRetryMessage?: (optimisticId: string) => Promise<void>;
   /** Dismiss a failed optimistic message */
   onDismissMessage?: (optimisticId: string) => void;
+  /** Tap a user's avatar in the list → open their profile. */
+  onAvatarPress?: (userId: Id<"users">) => void;
 }
 
 // Helper to format date as "Today", "Yesterday", or "Jan 15"
@@ -146,6 +148,7 @@ export function MessageList({
   optimisticMessages,
   onRetryMessage,
   onDismissMessage,
+  onAvatarPress,
 }: MessageListProps) {
   const { primaryColor } = useCommunityTheme();
   const { colors: themeColors } = useTheme();
@@ -363,10 +366,11 @@ export function MessageList({
           isOptimistic={item.isOptimistic}
           optimisticStatus={item.optimisticStatus as any}
           onRetry={item.isOptimistic && onRetryMessage ? () => onRetryMessage(String(message._id)) : undefined}
+          onAvatarPress={onAvatarPress}
         />
       );
     },
-    [currentUserId, groupId, channelName, prefetchState, onMessageReply, onMessageReact, onMessageDelete, onMessageLongPress, onMessageDoubleTap, onRetryMessage]
+    [currentUserId, groupId, channelName, prefetchState, onMessageReply, onMessageReact, onMessageDelete, onMessageLongPress, onMessageDoubleTap, onRetryMessage, onAvatarPress]
   );
 
   // Key extractor

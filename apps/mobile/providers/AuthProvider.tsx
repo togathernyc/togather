@@ -390,6 +390,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         timezone: convexUser.timezone,
         zip_code: convexUser.zipCode ?? undefined,
         date_of_birth: convexUser.dateOfBirth ?? undefined,
+        // Public profile fields (bio, socials, birthday M/D, location) —
+        // forwarded here so EditProfileForm can seed its defaults without
+        // a separate query. Stored under snake_case for consistency with
+        // the rest of the User shape.
+        bio: convexUser.bio ?? undefined,
+        instagram_handle: convexUser.instagramHandle ?? undefined,
+        linkedin_handle: convexUser.linkedinHandle ?? undefined,
+        birthday_month: convexUser.birthdayMonth ?? undefined,
+        birthday_day: convexUser.birthdayDay ?? undefined,
+        location: convexUser.location ?? undefined,
         community_primary_color: convexUser.activeCommunityPrimaryColor ?? undefined,
         community_secondary_color: convexUser.activeCommunitySecondaryColor ?? undefined,
       };

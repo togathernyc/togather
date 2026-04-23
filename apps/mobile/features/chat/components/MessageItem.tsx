@@ -42,6 +42,7 @@ import { ReachOutRequestCardFromMessage } from './ReachOutRequestCardFromMessage
 import { TaskCardFromMessage } from './TaskCardFromMessage';
 import { extractEventShortIds, extractToolShortIds, extractChannelInviteShortIds, stripEventLinksFromText, stripToolLinksFromText, stripChannelInviteLinksFromText, extractFirstExternalUrl } from '../utils/eventLinkUtils';
 import { useLinkPreview } from '../hooks/useLinkPreview';
+import { parseMessageContent } from '@features/shared/utils/linkify';
 import { getMediaUrl } from '@/utils/media';
 import { colors } from '@utils/styles';
 import { useTheme } from '@hooks/useTheme';
@@ -109,6 +110,12 @@ interface MessageItemProps {
   optimisticStatus?: 'sending' | 'sent' | 'error' | 'queued';
   /** Callback when user taps retry on a failed message */
   onRetry?: () => void;
+  /**
+   * Callback when the user taps another user's avatar in the message list.
+   * Used to open the user profile page. Not invoked for own avatars (none
+   * are rendered) or for bot/system messages (senderId will be missing).
+   */
+  onAvatarPress?: (userId: Id<"users">) => void;
 }
 
 /**
@@ -153,79 +160,6 @@ function formatMessageTime(timestamp: number): string {
   return `${month} ${day}`;
 }
 
-/**
- * Parse message content and detect @mentions and URLs
- * Mentions use bracketed format: @[Display Name] to support names with spaces
- */
-type ContentPart = { type: 'text' | 'mention' | 'url'; value: string; displayValue?: string };
-
-function parseMessageContent(content: string): ContentPart[] {
-  const parts: ContentPart[] = [];
-
-  // Bracketed mentions: @[Display Name] - supports names with spaces
-  const mentionRegex = /@\[([^\]]+)\]/g;
-  const urlRegex = /(https?:\/\/[^\s]+)/g;
-
-  // Find all matches with their positions
-  const allMatches: Array<{ type: 'mention' | 'url'; value: string; displayValue?: string; index: number }> = [];
-
-  let match: RegExpExecArray | null;
-
-  // Find mentions - capture the display name without brackets
-  while ((match = mentionRegex.exec(content)) !== null) {
-    allMatches.push({
-      type: 'mention',
-      value: match[0], // Full match: @[John Smith]
-      displayValue: `@${match[1]}`, // Display as: @John Smith (without brackets)
-      index: match.index,
-    });
-  }
-
-  // Find URLs
-  while ((match = urlRegex.exec(content)) !== null) {
-    allMatches.push({ type: 'url', value: match[0], index: match.index });
-  }
-
-  // Sort by position
-  allMatches.sort((a, b) => a.index - b.index);
-
-  // Build parts array
-  let lastIndex = 0;
-  for (const m of allMatches) {
-    // Add text before this match
-    if (m.index > lastIndex) {
-      parts.push({
-        type: 'text',
-        value: content.substring(lastIndex, m.index),
-      });
-    }
-
-    // Add the match
-    parts.push({
-      type: m.type,
-      value: m.value,
-      displayValue: m.displayValue,
-    });
-
-    lastIndex = m.index + m.value.length;
-  }
-
-  // Add remaining text
-  if (lastIndex < content.length) {
-    parts.push({
-      type: 'text',
-      value: content.substring(lastIndex),
-    });
-  }
-
-  // If nothing found, return whole content as text
-  if (parts.length === 0) {
-    parts.push({ type: 'text', value: content });
-  }
-
-  return parts;
-}
-
 function MessageItemInner({
   message,
   currentUserId,
@@ -240,6 +174,7 @@ function MessageItemInner({
   isOptimistic,
   optimisticStatus,
   onRetry,
+  onAvatarPress,
 }: MessageItemProps) {
   const router = useRouter();
   const { colors: themeColors } = useTheme();
@@ -387,16 +322,39 @@ function MessageItemInner({
   // If prefetched, we're not loading; otherwise check the hook's loading state
   const isLinkPreviewLoading = !prefetchedLinkPreview && linkPreviewLoading;
 
-  // Handle mention tap
+  // Handle mention tap — resolve the tapped display name to a user id via
+  // the denormalized `mentionedUserIds` array on the message, then route to
+  // that user's profile page. Older messages predating mention tracking
+  // won't have the array; in that case we silently no-op.
   const handleMentionTap = useCallback(
     (mention: string) => {
-      // Navigate to user profile
-      // TODO: Need to resolve username to userId for navigation
-      console.log('[MessageItem] Tapped mention:', mention);
-      // router.push(`/profile/${userId}`);
+      // `mention` arrives as "@[Display Name]" — strip the wrapper chars.
+      const displayName = mention.replace(/^@\[/, '').replace(/\]$/, '').trim();
+      const ids = message.mentionedUserIds;
+      if (!ids || ids.length === 0 || !displayName) return;
+
+      // The server doesn't persist a map of name → id, so we approximate:
+      // if there's exactly one mention, use it. Otherwise we bail out.
+      // This matches the common case (single @mention per tap) without
+      // guessing when multiple mentions collide.
+      const targetId = ids.length === 1 ? ids[0] : null;
+      if (!targetId) return;
+      if (targetId === currentUserId) return; // don't open self profile
+
+      router.push(`/profile/${targetId}` as any);
     },
-    [router]
+    [router, message.mentionedUserIds, currentUserId]
   );
+
+  // Avatar tap — open the sender's profile. Skip bot/system messages
+  // (they surface as a SystemMessage component, not here) and skip self
+  // (own messages don't render an avatar anyway).
+  const handleAvatarPress = useCallback(() => {
+    if (!onAvatarPress) return;
+    if (!message.senderId) return;
+    if (message.senderId === currentUserId) return;
+    onAvatarPress(message.senderId);
+  }, [onAvatarPress, message.senderId, currentUserId]);
 
   // Handle reaction tap
   const handleReactionTap = useCallback(
@@ -961,9 +919,21 @@ function MessageItemInner({
           isOptimistic && (optimisticStatus === 'error' || optimisticStatus === 'queued') && { opacity: 0.7 },
         ]}
       >
-        {/* Avatar (only for others' messages) */}
+        {/* Avatar (only for others' messages).
+            Wrapped in a Pressable so the chat can route to the sender's
+            profile. `onAvatarPress` is plumbed down from ConvexChatRoomScreen
+            and is undefined for bot/system surfaces — in that case the
+            Pressable still renders but its press is a no-op. */}
         {!isOwnMessage && (
-          <View style={styles.avatarContainer}>
+          <Pressable
+            style={styles.avatarContainer}
+            onPress={handleAvatarPress}
+            disabled={!onAvatarPress}
+            accessibilityRole={onAvatarPress ? 'button' : undefined}
+            accessibilityLabel={
+              onAvatarPress ? `View ${message.senderName || 'user'}'s profile` : undefined
+            }
+          >
             <AppImage
               source={message.senderProfilePhoto}
               style={styles.avatar}
@@ -974,7 +944,7 @@ function MessageItemInner({
                 backgroundColor: '#E5E5E5',
               }}
             />
-          </View>
+          </Pressable>
         )}
 
         <View style={[

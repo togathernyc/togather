@@ -84,6 +84,96 @@ export const getById = query({
 });
 
 /**
+ * Get a user's public profile scoped to a community.
+ *
+ * Returns the data needed to render the user profile page:
+ * - Always-public fields: name, photo, bio, socials, birthday (M/D), location.
+ * - Community-scoped fields derived from the profile user's active
+ *   `userCommunities` record: memberSince, communityRole, isCommunityAdmin,
+ *   isPrimaryAdmin.
+ * - `leaderGroupIds`: groups in this community where the profile user is
+ *   an active leader.
+ *
+ * Returns `null` when:
+ * - the profile user is missing or inactive, or
+ * - the profile user has no active membership in the given community.
+ *
+ * Viewer auth is optional — anonymous viewers still see the public fields.
+ * This mirrors the public-safe shape of `getById`.
+ */
+export const getProfile = query({
+  args: {
+    token: v.optional(v.string()),
+    userId: v.id("users"),
+    communityId: v.id("communities"),
+  },
+  handler: async (ctx, args) => {
+    // Viewer auth is optional — we don't gate public fields on it.
+    await getOptionalAuth(ctx, args.token);
+
+    const user = await ctx.db.get(args.userId);
+    if (!user || user.isActive === false) {
+      return null;
+    }
+
+    const membership = await ctx.db
+      .query("userCommunities")
+      .withIndex("by_user_community", (q) =>
+        q.eq("userId", args.userId).eq("communityId", args.communityId),
+      )
+      .filter((q) => q.eq(q.field("status"), 1))
+      .first();
+
+    if (!membership) {
+      return null;
+    }
+
+    const roleLevel = membership.roles ?? COMMUNITY_ROLES.MEMBER;
+
+    // Find groups in this community where the profile user is an active leader.
+    // Pull the user's group memberships first (by_user is indexed), then filter
+    // by leader role + not-left + this community.
+    const groupMemberships = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("role"), "leader"),
+          q.eq(q.field("leftAt"), undefined),
+        ),
+      )
+      .collect();
+
+    const leaderGroupIds: Id<"groups">[] = [];
+    for (const gm of groupMemberships) {
+      const group = await ctx.db.get(gm.groupId);
+      if (group && group.communityId === args.communityId && group.isArchived !== true) {
+        leaderGroupIds.push(group._id);
+      }
+    }
+
+    return {
+      _id: user._id,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      profilePhoto: getMediaUrl(user.profilePhoto) ?? null,
+      bio: user.bio ?? null,
+      instagramHandle: user.instagramHandle ?? null,
+      linkedinHandle: user.linkedinHandle ?? null,
+      birthdayMonth: user.birthdayMonth ?? null,
+      birthdayDay: user.birthdayDay ?? null,
+      location: user.location ?? null,
+      // Community-scoped:
+      memberSince: membership.createdAt ?? null,
+      communityRole: roleLevel,
+      isCommunityAdmin: roleLevel >= COMMUNITY_ADMIN_THRESHOLD,
+      isPrimaryAdmin: roleLevel === COMMUNITY_ROLES.PRIMARY_ADMIN,
+      leaderGroupIds,
+    };
+  },
+});
+
+/**
  * Get user by phone number
  *
  * Security: Requires authentication to prevent phone enumeration attacks.
@@ -178,6 +268,68 @@ export const create = internalMutation({
   },
 });
 
+// =============================================================================
+// Profile field validators (used by the `update` mutation below)
+// =============================================================================
+
+const BIO_MAX_LENGTH = 500;
+const LOCATION_MAX_LENGTH = 100;
+const INSTAGRAM_REGEX = /^[A-Za-z0-9._]{1,30}$/;
+const LINKEDIN_SLUG_REGEX = /^[A-Za-z0-9-]{3,100}$/;
+
+/**
+ * Normalize an Instagram handle:
+ * - trim whitespace
+ * - strip a leading `@`
+ */
+function normalizeInstagramHandle(raw: string): string {
+  return raw.trim().replace(/^@+/, "");
+}
+
+/**
+ * Normalize a LinkedIn handle:
+ * - trim whitespace
+ * - if the user pasted a URL, strip the `https?://.../in/` prefix and any
+ *   trailing slash/query — leaving just the slug.
+ * - strip a leading `@` (users sometimes prefix handles with it)
+ */
+function normalizeLinkedinHandle(raw: string): string {
+  let handle = raw.trim();
+  const urlMatch = handle.match(/linkedin\.com\/in\/([^/?#\s]+)/i);
+  if (urlMatch) {
+    handle = urlMatch[1];
+  }
+  handle = handle.replace(/^@+/, "");
+  // Drop any trailing slash users may have typed
+  handle = handle.replace(/\/+$/, "");
+  return handle;
+}
+
+/**
+ * Check whether (month, day) is a valid calendar M/D. Feb 29 is allowed
+ * (leap day). Rejects Feb 30, Apr 31, Jun 31, Sep 31, Nov 31, etc.
+ */
+function isValidMonthDay(month: number, day: number): boolean {
+  if (!Number.isInteger(month) || !Number.isInteger(day)) return false;
+  if (month < 1 || month > 12) return false;
+  if (day < 1 || day > 31) return false;
+  const daysInMonth: Record<number, number> = {
+    1: 31,
+    2: 29, // leap day allowed
+    3: 31,
+    4: 30,
+    5: 31,
+    6: 30,
+    7: 31,
+    8: 31,
+    9: 30,
+    10: 31,
+    11: 30,
+    12: 31,
+  };
+  return day <= daysInMonth[month];
+}
+
 /**
  * Update user profile
  */
@@ -190,6 +342,13 @@ export const update = mutation({
     timezone: v.optional(v.string()),
     dateOfBirth: v.optional(v.string()), // YYYY-MM-DD format
     zipCode: v.optional(v.string()),
+    // Public profile fields
+    bio: v.optional(v.string()),
+    instagramHandle: v.optional(v.string()),
+    linkedinHandle: v.optional(v.string()),
+    birthdayMonth: v.optional(v.number()),
+    birthdayDay: v.optional(v.number()),
+    location: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -206,6 +365,78 @@ export const update = mutation({
       updates.dateOfBirth = parseDate(args.dateOfBirth, "dateOfBirth");
     }
     if (args.zipCode !== undefined) updates.zipCode = args.zipCode;
+
+    // Profile fields — validate & normalize. Empty string → clear the field.
+    if (args.bio !== undefined) {
+      const trimmed = args.bio.trim();
+      if (trimmed.length > BIO_MAX_LENGTH) {
+        throw new Error(`Bio must be ${BIO_MAX_LENGTH} characters or fewer`);
+      }
+      updates.bio = trimmed.length > 0 ? trimmed : undefined;
+    }
+
+    if (args.location !== undefined) {
+      const trimmed = args.location.trim();
+      if (trimmed.length > LOCATION_MAX_LENGTH) {
+        throw new Error(`Location must be ${LOCATION_MAX_LENGTH} characters or fewer`);
+      }
+      updates.location = trimmed.length > 0 ? trimmed : undefined;
+    }
+
+    if (args.instagramHandle !== undefined) {
+      const normalized = normalizeInstagramHandle(args.instagramHandle);
+      if (normalized.length === 0) {
+        updates.instagramHandle = undefined;
+      } else if (!INSTAGRAM_REGEX.test(normalized)) {
+        throw new Error(
+          "Invalid Instagram handle. Use letters, numbers, periods, or underscores (max 30).",
+        );
+      } else {
+        updates.instagramHandle = normalized;
+      }
+    }
+
+    if (args.linkedinHandle !== undefined) {
+      const normalized = normalizeLinkedinHandle(args.linkedinHandle);
+      if (normalized.length === 0) {
+        updates.linkedinHandle = undefined;
+      } else if (!LINKEDIN_SLUG_REGEX.test(normalized)) {
+        throw new Error(
+          "Invalid LinkedIn handle. Use the slug from linkedin.com/in/<slug> (letters, numbers, hyphens).",
+        );
+      } else {
+        updates.linkedinHandle = normalized;
+      }
+    }
+
+    // Birthday M/D: require both together to either be set or cleared as a pair.
+    // The client uses 0 as an explicit "clear" sentinel for either field.
+    const bmProvided = args.birthdayMonth !== undefined;
+    const bdProvided = args.birthdayDay !== undefined;
+    if (bmProvided || bdProvided) {
+      const clearing =
+        (bmProvided && args.birthdayMonth === 0) ||
+        (bdProvided && args.birthdayDay === 0);
+
+      if (clearing) {
+        updates.birthdayMonth = undefined;
+        updates.birthdayDay = undefined;
+      } else {
+        // Merge with existing so one-sided edits keep the paired value intact.
+        const existing = bmProvided && bdProvided ? null : await ctx.db.get(userId);
+        const month = bmProvided ? args.birthdayMonth! : existing?.birthdayMonth;
+        const day = bdProvided ? args.birthdayDay! : existing?.birthdayDay;
+
+        if (month == null || day == null) {
+          throw new Error("Birthday must include both month and day");
+        } else if (!isValidMonthDay(month, day)) {
+          throw new Error("Invalid birthday — month must be 1–12 and day must be valid for that month");
+        } else {
+          updates.birthdayMonth = month;
+          updates.birthdayDay = day;
+        }
+      }
+    }
 
     // If name changed, rebuild searchText for full-text search
     if (args.firstName !== undefined || args.lastName !== undefined) {
@@ -392,6 +623,14 @@ export const me = query({
         : null,
       timezone: user.timezone || "America/New_York",
       zipCode: user.zipCode || null,
+      // Public profile fields — surfaced here so the Edit Profile form can
+      // seed its defaults without making a second query.
+      bio: user.bio ?? null,
+      instagramHandle: user.instagramHandle ?? null,
+      linkedinHandle: user.linkedinHandle ?? null,
+      birthdayMonth: user.birthdayMonth ?? null,
+      birthdayDay: user.birthdayDay ?? null,
+      location: user.location ?? null,
       activeCommunityId: user.activeCommunityId || null,
       activeCommunityName,
       activeCommunityPrimaryColor,

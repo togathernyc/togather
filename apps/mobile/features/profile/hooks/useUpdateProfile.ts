@@ -22,12 +22,38 @@ export function useUpdateProfile() {
     }
 
     try {
+      // Birthday M/D split. Empty string clears the stored month/day so the
+      // user can wipe their birthday via the form. MM/DD is enforced by
+      // zod upstream.
+      let birthdayMonth: number | undefined;
+      let birthdayDay: number | undefined;
+      if (data.birthday_md !== undefined) {
+        const trimmed = (data.birthday_md || '').trim();
+        if (trimmed === '') {
+          // Explicit clear — send 0 for both so the server patches to undefined.
+          birthdayMonth = 0;
+          birthdayDay = 0;
+        } else {
+          const [m, d] = trimmed.split('/').map(Number);
+          if (Number.isFinite(m) && Number.isFinite(d)) {
+            birthdayMonth = m;
+            birthdayDay = d;
+          }
+        }
+      }
+
       // Transform snake_case to camelCase for Convex API
       const result = await updateMutation({
         firstName: data.first_name,
         lastName: data.last_name,
         dateOfBirth: data.date_of_birth,
         zipCode: data.zip_code,
+        bio: data.bio,
+        instagramHandle: data.instagram_handle,
+        linkedinHandle: data.linkedin_handle,
+        birthdayMonth,
+        birthdayDay,
+        location: data.location,
       });
 
       // Refresh user data in auth context
