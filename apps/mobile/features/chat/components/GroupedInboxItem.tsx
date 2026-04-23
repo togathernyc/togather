@@ -40,6 +40,9 @@ interface ChannelData {
   lastMessageSenderId: Id<"users"> | null;
   unreadCount: number;
   isShared?: boolean;
+  isEnabled?: boolean;
+  meetingId?: Id<"meetings">;
+  meetingScheduledAt?: number | null;
 }
 
 // Type for group data from getInboxChannels query

@@ -72,6 +72,8 @@ interface MessageItemProps {
     hideLinkPreview?: boolean;
     reachOutRequestId?: Id<"reachOutRequests">;
     taskId?: Id<"tasks">;
+    /** Present only on messages that mirror an event text blast (SMS + push). */
+    blastId?: Id<"eventBlasts">;
   };
   currentUserId: Id<"users">;
   groupId?: Id<"groups">;
@@ -977,6 +979,24 @@ function MessageItemInner({
                 {renderAudioAttachments()}
                 {renderVideoAttachments()}
 
+                {/* SMS blast badge — shown on messages mirrored from an event text blast */}
+                {message.blastId && !message.isDeleted && (
+                  <View
+                    style={styles.blastBadge}
+                    accessibilityLabel="This message was also sent as an SMS and push notification"
+                  >
+                    <Ionicons
+                      name="megaphone-outline"
+                      size={11}
+                      color={themeColors.textSecondary}
+                      style={styles.blastBadgeIcon}
+                    />
+                    <Text style={[styles.blastBadgeText, { color: themeColors.textSecondary }]}>
+                      Also sent via SMS
+                    </Text>
+                  </View>
+                )}
+
                 {/* Timestamp and edited badge */}
                 <View style={[styles.messageFooter, styles.bubbleFooter]}>
                   <Text
@@ -1192,6 +1212,24 @@ const styles = StyleSheet.create({
     fontSize: 10,
     marginLeft: 4,
     fontStyle: 'italic',
+  },
+  blastBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    marginHorizontal: 10,
+    marginTop: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 10,
+    backgroundColor: 'rgba(0,0,0,0.06)',
+  },
+  blastBadgeIcon: {
+    marginRight: 3,
+  },
+  blastBadgeText: {
+    fontSize: 10,
+    fontWeight: '500',
   },
   attachmentsContainer: {
     marginTop: 4,

@@ -1189,6 +1189,27 @@ export const getInboxChannels = query({
       userChannelIds.add(eventChannel._id);
     }
 
+    // Pre-fetch meetings referenced by event channels so the inbox can show
+    // event scheduling info (used by mobile to hide stale event channels).
+    const eventMeetingIds = Array.from(
+      new Set(
+        allChannels
+          .filter((ch) => ch.channelType === "event" && ch.meetingId)
+          .map((ch) => ch.meetingId as Id<"meetings">),
+      ),
+    );
+    const eventMeetingDocs = await Promise.all(
+      eventMeetingIds.map((id) => ctx.db.get(id)),
+    );
+    const eventMeetingMap = new Map<Id<"meetings">, number | null>();
+    for (let i = 0; i < eventMeetingIds.length; i++) {
+      const m = eventMeetingDocs[i];
+      eventMeetingMap.set(
+        eventMeetingIds[i],
+        m && typeof m.scheduledAt === "number" ? m.scheduledAt : null,
+      );
+    }
+
     // Build the result grouped by group
     const result: Array<{
       group: {
@@ -1211,6 +1232,9 @@ export const getInboxChannels = query({
         lastMessageSenderId: Id<"users"> | null;
         unreadCount: number;
         isShared: boolean | undefined;
+        isEnabled: boolean | undefined;
+        meetingId: Id<"meetings"> | undefined;
+        meetingScheduledAt: number | null;
       }>;
       userRole: "leader" | "member";
     }> = [];
@@ -1293,6 +1317,12 @@ export const getInboxChannels = query({
           lastMessageSenderId: ch.lastMessageSenderId || null,
           unreadCount: unreadCounts.get(ch._id) || 0,
           isShared: ch.isShared || undefined,
+          isEnabled: ch.isEnabled,
+          meetingId: ch.meetingId,
+          meetingScheduledAt:
+            ch.channelType === "event" && ch.meetingId
+              ? eventMeetingMap.get(ch.meetingId) ?? null
+              : null,
         };
       });
 

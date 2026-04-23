@@ -192,6 +192,16 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
       : "skip"
   );
 
+  // Fetch event chat channel state. Returns null if no channel exists yet or
+  // the caller lacks access (not host and no RSVP). We use this for both the
+  // Chat button visibility and the leader-only enable/disable toggle.
+  const eventChannel = useQuery(
+    api.functions.messaging.eventChat.getChannelByMeetingId,
+    eventData?.id && isAuthenticated && authToken
+      ? { meetingId: eventData.id as Id<"meetings">, token: authToken }
+      : "skip"
+  );
+
   // Fetch RSVP list using Convex
   // Pass token if available to get full access (if user has RSVPed), but also works without token
   const rsvpData = useQuery(
@@ -244,6 +254,73 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
     !!(eventData as any)?.createdById &&
     String(user.id) === String((eventData as any).createdById);
   const canEdit = isLeader || isCreator;
+
+  // ============================================================================
+  // Event Chat Mutations
+  // ============================================================================
+
+  const setEventChannelEnabledMutation = useAuthenticatedMutation(
+    api.functions.messaging.eventChat.setEventChannelEnabled
+  );
+
+  // Whether the chat is currently enabled. When the channel row doesn't exist
+  // yet, default to enabled (new channels are created with isEnabled: true).
+  const isChatEnabled = eventChannel ? eventChannel.isEnabled !== false : true;
+
+  // Whether the user can access the event chat at all (host or RSVPer with an
+  // enabled option). Mirrors the backend `canAccessEventChannel` check so the
+  // UI doesn't show a button that would route into a chat the user can't open.
+  const hasRsvp = !!myRsvp?.optionId;
+  const rsvpOptionEnabled = myRsvp?.optionId != null
+    ? ((eventData?.rsvpOptions as unknown as RsvpOption[] | undefined)?.find(
+        (o) => o.id === myRsvp.optionId
+      )?.enabled ?? false)
+    : false;
+  const canAccessChat = isCreator || (hasRsvp && rsvpOptionEnabled);
+
+  const handleOpenChat = () => {
+    if (!eventData?.groupId || !eventData?.shortId) return;
+    if (!isChatEnabled) {
+      Alert.alert(
+        "Chat disabled",
+        "The host turned off this event's chat."
+      );
+      return;
+    }
+    // Route format is /inbox/{groupId}/event-{shortId}. The channel slug is
+    // hard-coded by the backend (ensureEventChannel). The first send will
+    // lazy-create the channel if it doesn't exist yet.
+    router.push(`/inbox/${eventData.groupId}/event-${eventData.shortId}` as any);
+  };
+
+  const handleToggleEventChat = async (enabled: boolean) => {
+    if (!eventData?.id) return;
+    const applyToggle = async () => {
+      try {
+        await setEventChannelEnabledMutation({
+          meetingId: eventData.id as Id<"meetings">,
+          enabled,
+        });
+      } catch (err) {
+        console.error("Failed to toggle event chat:", err);
+        Alert.alert("Error", "Failed to update event chat. Please try again.");
+      }
+    };
+
+    // Confirm before disabling; re-enabling is a straight call.
+    if (!enabled) {
+      Alert.alert(
+        "Disable event chat?",
+        "Attendees won't be able to message the group.",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Disable", style: "destructive", onPress: applyToggle },
+        ]
+      );
+      return;
+    }
+    await applyToggle();
+  };
 
   // ============================================================================
   // Loading & Error States
@@ -769,6 +846,37 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
             />
           )}
 
+          {/* Event Chat button — visible to host + RSVPers with an enabled option.
+              When the channel exists AND isEnabled === false, show a muted
+              "Chat disabled" label that fires an alert instead of navigating.
+              If no channel exists yet, the first send lazy-creates it. */}
+          {canAccessChat && eventData.groupId && eventData.shortId && (
+            <TouchableOpacity
+              style={[
+                styles.messageAttendeesButton,
+                {
+                  backgroundColor: colors.surfaceSecondary,
+                  opacity: isChatEnabled ? 1 : 0.6,
+                },
+              ]}
+              onPress={handleOpenChat}
+            >
+              <Ionicons
+                name="chatbubble-ellipses-outline"
+                size={20}
+                color={isChatEnabled ? DEFAULT_PRIMARY_COLOR : colors.textSecondary}
+              />
+              <Text
+                style={[
+                  styles.messageAttendeesText,
+                  { color: isChatEnabled ? DEFAULT_PRIMARY_COLOR : colors.textSecondary },
+                ]}
+              >
+                {isChatEnabled ? "Chat" : "Chat disabled"}
+              </Text>
+            </TouchableOpacity>
+          )}
+
           {/* Leader: jump into the attendance recorder for past events */}
           {isLeader && isPastEvent && eventData.id && eventData.groupId && eventData.scheduledAt && (
             <TouchableOpacity
@@ -802,6 +910,24 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
                 <Switch
                   value={rsvpNotifyLeaders}
                   onValueChange={handleToggleRsvpNotify}
+                  trackColor={{ false: colors.border, true: DEFAULT_PRIMARY_COLOR }}
+                />
+              </View>
+            </View>
+          )}
+
+          {/* Host/Leader: enable/disable event chat. Backend enforces the same
+              permission (event creator, group leader, or community admin). */}
+          {canEdit && (
+            <View style={[styles.leaderCard, { backgroundColor: colors.surfaceSecondary }]}>
+              <View style={styles.leaderCardRow}>
+                <Ionicons name="chatbubble-ellipses-outline" size={20} color={colors.textSecondary} />
+                <Text style={[styles.leaderCardText, { color: colors.text }]}>
+                  Event chat
+                </Text>
+                <Switch
+                  value={isChatEnabled}
+                  onValueChange={handleToggleEventChat}
                   trackColor={{ false: colors.border, true: DEFAULT_PRIMARY_COLOR }}
                 />
               </View>

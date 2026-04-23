@@ -67,6 +67,8 @@ interface Message {
   reachOutRequestId?: Id<"reachOutRequests">;
   // Canonical task reference for task cards
   taskId?: Id<"tasks">;
+  // Present only on messages mirrored from an event text blast (SMS + push).
+  blastId?: Id<"eventBlasts">;
 }
 
 interface MessageListProps {
@@ -345,6 +347,7 @@ export function MessageList({
             hideLinkPreview: message.hideLinkPreview,
             reachOutRequestId: message.reachOutRequestId,
             taskId: message.taskId,
+            blastId: message.blastId,
           }}
           currentUserId={currentUserId}
           groupId={groupId}
