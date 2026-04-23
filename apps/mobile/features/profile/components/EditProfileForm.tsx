@@ -314,7 +314,7 @@ export function EditProfileForm({ onCancel }: EditProfileFormProps) {
           control={control}
           label="Location"
           error={errors.location}
-          placeholder="City, State"
+          placeholder="Bedstuy"
           maxLength={100}
         />
       </View>
