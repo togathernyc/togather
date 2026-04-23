@@ -47,19 +47,19 @@ export const getMutualGroups = query({
       ctx.db
         .query("groupMembers")
         .withIndex("by_user", (q) => q.eq("userId", viewerId))
-        .filter((q) => q.eq(q.field("leftAt"), undefined))
         .collect(),
       ctx.db
         .query("groupMembers")
         .withIndex("by_user", (q) => q.eq("userId", args.profileUserId))
-        .filter((q) => q.eq(q.field("leftAt"), undefined))
         .collect(),
     ]);
 
-    const viewerGroupIds = new Set(viewerMemberships.map((m) => m.groupId));
+    const viewerGroupIds = new Set(
+      viewerMemberships.filter(isAcceptedMembership).map((m) => m.groupId),
+    );
     const mutualIds = new Set<Id<"groups">>();
     for (const m of profileMemberships) {
-      if (viewerGroupIds.has(m.groupId)) {
+      if (isAcceptedMembership(m) && viewerGroupIds.has(m.groupId)) {
         mutualIds.add(m.groupId);
       }
     }
@@ -85,14 +85,13 @@ export const getMutualGroups = query({
         const members = await ctx.db
           .query("groupMembers")
           .withIndex("by_group", (q) => q.eq("groupId", group._id))
-          .filter((q) => q.eq(q.field("leftAt"), undefined))
           .collect();
         return {
           _id: group._id,
           name: group.name,
           preview: getMediaUrl(group.preview) ?? null,
           shortId: group.shortId ?? null,
-          memberCount: members.length,
+          memberCount: members.filter(isAcceptedMembership).length,
         };
       }),
     );
@@ -264,4 +263,11 @@ async function viewerIsActiveCommunityMember(
     .filter((q) => q.eq(q.field("status"), 1))
     .first();
   return !!membership;
+}
+
+// Matches the accepted-membership predicate used in groupMembers.ts so pending
+// or declined joins don't get counted as mutual groups or inflate member counts.
+function isAcceptedMembership(m: Doc<"groupMembers">): boolean {
+  if (m.leftAt) return false;
+  return !m.requestStatus || m.requestStatus === "accepted";
 }

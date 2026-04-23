@@ -410,29 +410,31 @@ export const update = mutation({
     }
 
     // Birthday M/D: require both together to either be set or cleared as a pair.
+    // The client uses 0 as an explicit "clear" sentinel for either field.
     const bmProvided = args.birthdayMonth !== undefined;
     const bdProvided = args.birthdayDay !== undefined;
     if (bmProvided || bdProvided) {
-      const existing = bmProvided && bdProvided ? null : await ctx.db.get(userId);
-      const month = bmProvided ? args.birthdayMonth! : existing?.birthdayMonth;
-      const day = bdProvided ? args.birthdayDay! : existing?.birthdayDay;
-
-      // Allow clearing by passing 0 or by clearing both.
       const clearing =
-        (bmProvided && (args.birthdayMonth === 0 || args.birthdayMonth === undefined)) ||
-        (bdProvided && (args.birthdayDay === 0 || args.birthdayDay === undefined));
+        (bmProvided && args.birthdayMonth === 0) ||
+        (bdProvided && args.birthdayDay === 0);
 
-      if (clearing && month == null && day == null) {
+      if (clearing) {
         updates.birthdayMonth = undefined;
         updates.birthdayDay = undefined;
-      } else if (month == null || day == null) {
-        // One set, the other missing — ask for both.
-        throw new Error("Birthday must include both month and day");
-      } else if (!isValidMonthDay(month, day)) {
-        throw new Error("Invalid birthday — month must be 1–12 and day must be valid for that month");
       } else {
-        updates.birthdayMonth = month;
-        updates.birthdayDay = day;
+        // Merge with existing so one-sided edits keep the paired value intact.
+        const existing = bmProvided && bdProvided ? null : await ctx.db.get(userId);
+        const month = bmProvided ? args.birthdayMonth! : existing?.birthdayMonth;
+        const day = bdProvided ? args.birthdayDay! : existing?.birthdayDay;
+
+        if (month == null || day == null) {
+          throw new Error("Birthday must include both month and day");
+        } else if (!isValidMonthDay(month, day)) {
+          throw new Error("Invalid birthday — month must be 1–12 and day must be valid for that month");
+        } else {
+          updates.birthdayMonth = month;
+          updates.birthdayDay = day;
+        }
       }
     }
 
