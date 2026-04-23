@@ -31,9 +31,10 @@ import {
 } from "@services/api/convex";
 import { useTheme } from "@hooks/useTheme";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
-import { MessageItem } from "@/features/chat/components/MessageItem";
-import { MessageInput } from "@/features/chat/components/MessageInput";
 import { ReactionsProvider } from "@/features/chat/context/ReactionsContext";
+import { Ionicons } from "@expo/vector-icons";
+import { EventComment } from "./EventComment";
+import { EventCommentSheet } from "./EventCommentSheet";
 
 const PAGE_SIZE = 100;
 
@@ -82,6 +83,7 @@ export function EventActivity({
   const [olderCursor, setOlderCursor] = useState<string | undefined>(undefined);
   const [hasMoreOlder, setHasMoreOlder] = useState(false);
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+  const [showCommentSheet, setShowCommentSheet] = useState(false);
   const [loadOlderCursor, setLoadOlderCursor] = useState<string | undefined>(
     undefined
   );
@@ -164,61 +166,63 @@ export function EventActivity({
   const isLoadingMessages =
     channelId !== null && canAccess && messagesResult === undefined;
 
+  // Partiful-style: newest first. The paginated query returns ascending; reverse
+  // for display without mutating the source array.
+  const displayMessages = [...messages].reverse();
+
   return (
     <View style={styles.root}>
       <View style={styles.headingRow}>
-        <Text style={[styles.heading, { color: colors.text }]}>Activity</Text>
-        {messageCount > 0 && (
-          <Text style={[styles.subLabel, { color: colors.textSecondary }]}>
-            {messageCount} {messageCount === 1 ? "update" : "updates"}
-          </Text>
+        <View style={styles.headingLabelGroup}>
+          <Text style={[styles.heading, { color: colors.text }]}>Activity</Text>
+          {messageCount > 0 && (
+            <Text style={[styles.subLabel, { color: colors.textSecondary }]}>
+              {messageCount} {messageCount === 1 ? "update" : "updates"}
+            </Text>
+          )}
+        </View>
+        {isChatEnabled && (
+          <TouchableOpacity
+            style={[
+              styles.commentButton,
+              { borderColor: colors.border },
+            ]}
+            onPress={() => setShowCommentSheet(true)}
+            accessibilityLabel="Leave a comment"
+          >
+            <Ionicons
+              name="chatbubble-ellipses-outline"
+              size={16}
+              color={colors.text}
+            />
+            <Text style={[styles.commentButtonText, { color: colors.text }]}>
+              Comment
+            </Text>
+          </TouchableOpacity>
         )}
       </View>
 
-      {/* Load earlier */}
-      {hasMoreOlder && !isLoadingMessages && (
-        <TouchableOpacity
-          style={styles.loadEarlierButton}
-          onPress={handleLoadOlder}
-          disabled={isLoadingOlder}
-        >
-          {isLoadingOlder ? (
-            <ActivityIndicator size="small" color={DEFAULT_PRIMARY_COLOR} />
-          ) : (
-            <Text
-              style={[
-                styles.loadEarlierText,
-                { color: DEFAULT_PRIMARY_COLOR },
-              ]}
-            >
-              Load earlier messages
-            </Text>
-          )}
-        </TouchableOpacity>
-      )}
-
-      {/* Messages list (ascending). Wrap in ReactionsProvider so MessageItem's
-          useReactions reads from the batched context (one query for all
-          messages, not one per message). */}
+      {/* Messages list (newest-first). Wrap in ReactionsProvider so
+          EventComment's useReactions reads from the batched context. */}
       <ReactionsProvider messageIds={messageIds} channelId={channelId}>
         {isLoadingMessages ? (
           <View style={styles.loadingBlock}>
             <ActivityIndicator size="small" color={DEFAULT_PRIMARY_COLOR} />
           </View>
-        ) : messages.length === 0 ? (
+        ) : displayMessages.length === 0 ? (
           <View style={styles.emptyBlock}>
             <Text
               style={[styles.emptyText, { color: colors.textSecondary }]}
             >
               {isChatEnabled
-                ? "No messages yet. Be the first to say something."
-                : "Chat is disabled"}
+                ? "No comments yet. Be the first to say something."
+                : "Comments are disabled"}
             </Text>
           </View>
         ) : (
           <View style={styles.messagesList}>
-            {messages.map((msg: any) => (
-              <MessageItem
+            {displayMessages.map((msg: any) => (
+              <EventComment
                 key={msg._id}
                 message={{
                   _id: msg._id,
@@ -234,9 +238,6 @@ export function EventActivity({
                   senderProfilePhoto: msg.senderProfilePhoto,
                   mentionedUserIds: msg.mentionedUserIds,
                   threadReplyCount: msg.threadReplyCount,
-                  hideLinkPreview: msg.hideLinkPreview,
-                  reachOutRequestId: msg.reachOutRequestId,
-                  taskId: msg.taskId,
                   blastId: msg.blastId,
                 }}
                 currentUserId={currentUserId}
@@ -247,55 +248,33 @@ export function EventActivity({
         )}
       </ReactionsProvider>
 
-      {/* Composer rendered inline at the end of the Activity section —
-          scrolls with the page rather than pinning at the viewport bottom.
-          Skipped entirely when chat is disabled. */}
-      {isChatEnabled && (
-        <View style={styles.inlineComposer}>
-          <MessageInput channelId={channelId} />
-        </View>
+      {/* Load earlier — appears at the BOTTOM in newest-first layout. */}
+      {hasMoreOlder && !isLoadingMessages && (
+        <TouchableOpacity
+          style={styles.loadEarlierButton}
+          onPress={handleLoadOlder}
+          disabled={isLoadingOlder}
+        >
+          {isLoadingOlder ? (
+            <ActivityIndicator size="small" color={DEFAULT_PRIMARY_COLOR} />
+          ) : (
+            <Text
+              style={[
+                styles.loadEarlierText,
+                { color: DEFAULT_PRIMARY_COLOR },
+              ]}
+            >
+              Load earlier comments
+            </Text>
+          )}
+        </TouchableOpacity>
       )}
-    </View>
-  );
-}
 
-/**
- * EventActivityComposer
- *
- * Sticky bottom composer for the event chat. Rendered by `EventPageClient`
- * as an absolutely-positioned sibling (not inside the ScrollView) so it
- * stays pinned to the viewport and lifts above the keyboard via the
- * surrounding `KeyboardAvoidingView`.
- *
- * Reuses the full-featured `MessageInput` (images, camera, GIFs, voice,
- * typing indicators, drafts). If the channel hasn't been materialized yet
- * `channelId` will be null — `MessageInput` disables itself in that state.
- */
-export interface EventActivityComposerProps {
-  channelId: Id<"chatChannels"> | null;
-  onLayout?: (height: number) => void;
-  style?: any;
-}
-
-export function EventActivityComposer({
-  channelId,
-  onLayout,
-  style,
-}: EventActivityComposerProps) {
-  const { colors } = useTheme();
-  // MessageInput paints its own surface + top border, so the wrapper just
-  // provides position (via `style` from the parent) and matches the surface
-  // background for the safe-area inset.
-  return (
-    <View
-      style={[{ backgroundColor: colors.surface }, style]}
-      onLayout={
-        onLayout
-          ? (e) => onLayout(e.nativeEvent.layout.height)
-          : undefined
-      }
-    >
-      <MessageInput channelId={channelId} />
+      <EventCommentSheet
+        visible={showCommentSheet}
+        onClose={() => setShowCommentSheet(false)}
+        channelId={channelId}
+      />
     </View>
   );
 }
@@ -306,9 +285,15 @@ const styles = StyleSheet.create({
   },
   headingRow: {
     flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  headingLabelGroup: {
+    flexDirection: "row",
     alignItems: "baseline",
     gap: 8,
-    marginBottom: 12,
+    flexShrink: 1,
   },
   heading: {
     fontSize: 18,
@@ -316,6 +301,19 @@ const styles = StyleSheet.create({
   },
   subLabel: {
     fontSize: 13,
+  },
+  commentButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  commentButtonText: {
+    fontSize: 14,
+    fontWeight: "500",
   },
   loadEarlierButton: {
     paddingVertical: 10,
@@ -338,12 +336,6 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   messagesList: {
-    // Leave MessageItem's own spacing intact. Messages render in ascending
-    // order top-to-bottom (newest at the bottom, like Partiful).
-  },
-  inlineComposer: {
-    // The composer scrolls with the page — breathing room above so it
-    // doesn't hug the last message.
-    marginTop: 16,
+    // EventComment owns its own padding. Newest comment on top.
   },
 });
