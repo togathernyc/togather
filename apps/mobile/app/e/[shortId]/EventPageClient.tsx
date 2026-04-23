@@ -14,6 +14,7 @@ import {
   Alert,
   Share,
   Switch,
+  KeyboardAvoidingView,
 } from "react-native";
 import { useLocalSearchParams, useRouter, useSegments } from "expo-router";
 import { useQuery, useAuthenticatedMutation, api, Id } from "@services/api/convex";
@@ -81,7 +82,7 @@ import { DOMAIN_CONFIG } from "@togather/shared";
 import * as Clipboard from "expo-clipboard";
 import { EventBlastSheet } from "@/features/leader-tools/components/EventBlastSheet";
 import { EventBlastHistory } from "@/features/leader-tools/components/EventBlastHistory";
-import { EventActivity } from "./EventActivity";
+import { EventActivity, EventActivityComposer } from "./EventActivity";
 
 /**
  * Initial event data passed from Server Component
@@ -263,6 +264,20 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
   const setEventChannelEnabledMutation = useAuthenticatedMutation(
     api.functions.messaging.eventChat.setEventChannelEnabled
   );
+  const openEventChatMutation = useAuthenticatedMutation(
+    api.functions.messaging.eventChat.openEventChat
+  );
+
+  // Channel materialization. On mount (or whenever the user becomes chat-
+  // accessible), ensure a channel row exists so the composer can subscribe
+  // and send without a "first-send creates the channel" delay. The backend
+  // is idempotent, so safe to call once per page visit.
+  const [materializedChannelId, setMaterializedChannelId] =
+    useState<Id<"chatChannels"> | null>(null);
+  const resolvedChannelId =
+    (eventChannel?._id as Id<"chatChannels"> | undefined) ??
+    materializedChannelId ??
+    null;
 
   // Whether the chat is currently enabled. When the channel row doesn't exist
   // yet, default to enabled (new channels are created with isEnabled: true).
@@ -278,6 +293,46 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
       )?.enabled ?? false)
     : false;
   const canAccessChat = isCreator || (hasRsvp && rsvpOptionEnabled);
+
+  // Materialize the channel once per page visit when we know the user can
+  // access chat. Skipping until `eventChannel === null` (i.e. the query
+  // resolved with "no channel yet") — `undefined` means still loading. Once
+  // the mutation returns, cache the id locally so the composer can send
+  // immediately without waiting for `getChannelByMeetingId` to re-resolve.
+  const meetingIdForChannel = eventData?.id as Id<"meetings"> | undefined;
+  useEffect(() => {
+    if (!meetingIdForChannel) return;
+    if (!canAccessChat || !isChatEnabled) return;
+    if (eventChannel !== null) return; // still loading, or channel exists
+    if (materializedChannelId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { channelId } = await openEventChatMutation({
+          meetingId: meetingIdForChannel,
+        });
+        if (!cancelled) setMaterializedChannelId(channelId);
+      } catch (err) {
+        // Backend enforces access; a failure here just means the composer
+        // stays disabled. Don't alert — this runs on mount.
+        console.warn("[EventPageClient] openEventChat failed", err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    meetingIdForChannel,
+    canAccessChat,
+    isChatEnabled,
+    eventChannel,
+    materializedChannelId,
+    openEventChatMutation,
+  ]);
+
+  // Measured composer height — used so FloatingRsvpCard can sit above the
+  // composer without overlapping. Default to 0 when composer isn't rendered.
+  const [composerHeight, setComposerHeight] = useState(0);
 
   const handleToggleEventChat = async (enabled: boolean) => {
     if (!eventData?.id) return;
@@ -640,7 +695,21 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
   // Render
   // ============================================================================
 
+  // The composer is only rendered when the user has chat access AND chat is
+  // enabled. When rendered it sits absolutely above the FloatingRsvpCard; the
+  // card's tabBarOffset is pushed up by the measured composer height so they
+  // stack instead of overlapping.
+  const showComposer = canAccessChat && isChatEnabled && !!authToken;
+  const composerBottomOffset = shouldShowTabBar ? 64 : 0;
+  const rsvpStackOffset =
+    composerBottomOffset + (showComposer ? composerHeight : 0);
+
   return (
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      keyboardVerticalOffset={0}
+    >
     <SafeAreaView style={[styles.container, { backgroundColor: colors.surface }]} edges={["top"]}>
       {/* Header */}
       <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
@@ -677,6 +746,9 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
         contentContainerStyle={[
           styles.scrollContent,
           shouldShowTabBar && { paddingBottom: 200 }, // Extra padding for tab bar
+          // Extra bottom padding so the last message isn't hidden behind the
+          // sticky composer. Uses measured composer height when visible.
+          showComposer && { paddingBottom: 200 + composerHeight },
         ]}
       >
         {/* Cover Image - falls back to group image if no event cover */}
@@ -850,7 +922,7 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
                 currentUserId={user.id as Id<"users">}
                 canAccess={canAccessChat}
                 isChatEnabled={isChatEnabled}
-                channelId={(eventChannel?._id ?? null) as Id<"chatChannels"> | null}
+                channelId={resolvedChannelId}
                 authToken={authToken}
               />
             )}
@@ -973,7 +1045,7 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
               onGuestCountChange={handleGuestCountChange}
               maxGuests={maxGuestsPerRsvp}
               insets={insets}
-              tabBarOffset={shouldShowTabBar ? 64 : 0}
+              tabBarOffset={rsvpStackOffset}
             />
           ) : (
             <FloatingRsvpButtons
@@ -981,7 +1053,7 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
               loadingOptionId={loadingOptionId}
               onSelect={handleRsvpSelect}
               insets={insets}
-              tabBarOffset={shouldShowTabBar ? 64 : 0}
+              tabBarOffset={rsvpStackOffset}
             />
           )}
         </>
@@ -1028,7 +1100,27 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
           isAdmin={isAdmin}
         />
       )}
+
+      {/* Sticky event-chat composer. Absolutely positioned above the tab bar
+          so it stays pinned at the viewport bottom; the surrounding
+          KeyboardAvoidingView lifts the whole tree when the keyboard is
+          shown. FloatingRsvpCard/Buttons stack on top of this via the
+          measured composerHeight (see `rsvpStackOffset`). */}
+      {showComposer && (
+        <EventActivityComposer
+          channelId={resolvedChannelId}
+          onLayout={setComposerHeight}
+          style={[
+            styles.stickyComposer,
+            {
+              bottom: composerBottomOffset,
+              paddingBottom: insets.bottom,
+            },
+          ]}
+        />
+      )}
     </SafeAreaView>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -1209,5 +1301,13 @@ const styles = StyleSheet.create({
   messageAttendeesText: {
     fontSize: 16,
     fontWeight: "600",
+  },
+
+  // Sticky composer (absolute bottom bar). `bottom` is set dynamically so the
+  // composer sits above the shared-link tab bar when present.
+  stickyComposer: {
+    position: "absolute",
+    left: 0,
+    right: 0,
   },
 });

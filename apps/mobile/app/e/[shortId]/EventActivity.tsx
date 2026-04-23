@@ -2,18 +2,15 @@
  * EventActivity
  *
  * Inline "Activity" feed that lives on the event page (Partiful-style) —
- * renders chat messages below the event details with a sticky bottom composer.
- * Replaces the previous standalone chat-room route (`/inbox/{groupId}/event-…`).
+ * renders chat messages below the event details. The composer is rendered
+ * separately by the parent (`EventActivityComposer` below) so it can be
+ * sticky at the bottom of the viewport and move with the keyboard via the
+ * parent's `KeyboardAvoidingView`.
  *
  * Embedded inside the event page's ScrollView, so this uses a plain mapped
  * message list (not a virtualized FlatList) to avoid nesting VirtualizedLists.
  * For v1 we cap at 100 messages per page and expose a "Load earlier messages"
  * button when the server reports more.
- *
- * Sending flow:
- *   - If no channel exists yet (getChannelByMeetingId returned null), calls
- *     openEventChat on first send to materialize the channel row, then sends.
- *   - Subsequent sends reuse the channelId.
  *
  * Permission gate: `canAccess` is computed by the parent (host + RSVPer with
  * an enabled option). The backend is authoritative — this is just UI gating.
@@ -23,26 +20,20 @@ import React, { useCallback, useMemo, useState } from "react";
 import {
   View,
   Text,
-  TextInput,
   TouchableOpacity,
   ActivityIndicator,
   StyleSheet,
-  Alert,
-  Platform,
 } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
 import {
   useQuery,
-  useAuthenticatedMutation,
-  useMutation,
   api,
   type Id,
 } from "@services/api/convex";
 import { useTheme } from "@hooks/useTheme";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { MessageItem } from "@/features/chat/components/MessageItem";
+import { MessageInput } from "@/features/chat/components/MessageInput";
 import { ReactionsProvider } from "@/features/chat/context/ReactionsContext";
-import { useAuth } from "@/providers/AuthProvider";
 
 const PAGE_SIZE = 100;
 
@@ -55,37 +46,22 @@ export interface EventActivityProps {
   canAccess: boolean;
   /** From getChannelByMeetingId → channel.isEnabled; defaults true when no channel yet. */
   isChatEnabled: boolean;
-  /** Pre-resolved channel id (if the channel exists). Null = no channel yet; will materialize on first send. */
+  /** Pre-resolved channel id (if the channel exists). Null = still materializing. */
   channelId: Id<"chatChannels"> | null;
   authToken: string;
 }
 
 export function EventActivity({
-  meetingId,
+  meetingId: _meetingId,
   groupId,
   shortId: _shortId,
   currentUserId,
   canAccess,
   isChatEnabled,
-  channelId: initialChannelId,
+  channelId,
   authToken,
 }: EventActivityProps) {
   const { colors } = useTheme();
-  const { user } = useAuth();
-
-  // Locally track the channelId so that after openEventChat materializes a
-  // channel, the message list can start subscribing without waiting for the
-  // parent's getChannelByMeetingId query to re-resolve.
-  const [channelId, setChannelId] = useState<Id<"chatChannels"> | null>(
-    initialChannelId
-  );
-
-  // Keep channelId in sync if the parent's query resolves later.
-  React.useEffect(() => {
-    if (initialChannelId && !channelId) {
-      setChannelId(initialChannelId);
-    }
-  }, [initialChannelId, channelId]);
 
   // Fetch messages (single-page, ascending). Re-queries reactively as new
   // messages come in since we're watching the latest page.
@@ -179,60 +155,6 @@ export function EventActivity({
     setLoadOlderCursor(olderCursor);
   }, [olderCursor, hasMoreOlder, isLoadingOlder]);
 
-  // -------------------- Composer --------------------
-  const [text, setText] = useState("");
-  const [isSending, setIsSending] = useState(false);
-  const openEventChatMutation = useAuthenticatedMutation(
-    api.functions.messaging.eventChat.openEventChat
-  );
-  const sendMessageMutation = useMutation(
-    api.functions.messaging.messages.sendMessage
-  );
-
-  const handleSend = useCallback(async () => {
-    const trimmed = text.trim();
-    if (!trimmed) return;
-    if (isSending) return;
-
-    setIsSending(true);
-    try {
-      // Materialize channel if needed
-      let cid = channelId;
-      if (!cid) {
-        const { channelId: newChannelId } = await openEventChatMutation({
-          meetingId,
-        });
-        cid = newChannelId;
-        setChannelId(newChannelId);
-      }
-
-      await sendMessageMutation({
-        token: authToken,
-        channelId: cid,
-        content: trimmed,
-      });
-      setText("");
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Could not send message";
-      if (Platform.OS === "web") {
-        window.alert(message);
-      } else {
-        Alert.alert("Message failed", message);
-      }
-    } finally {
-      setIsSending(false);
-    }
-  }, [
-    text,
-    isSending,
-    channelId,
-    openEventChatMutation,
-    sendMessageMutation,
-    authToken,
-    meetingId,
-  ]);
-
   // -------------------- Render --------------------
   if (!canAccess) return null;
 
@@ -288,7 +210,9 @@ export function EventActivity({
             <Text
               style={[styles.emptyText, { color: colors.textSecondary }]}
             >
-              No messages yet. Be the first to say something.
+              {isChatEnabled
+                ? "No messages yet. Be the first to say something."
+                : "Chat is disabled"}
             </Text>
           </View>
         ) : (
@@ -322,56 +246,47 @@ export function EventActivity({
           </View>
         )}
       </ReactionsProvider>
+    </View>
+  );
+}
 
-      {/* Composer (hidden when chat disabled). v1: plain text only, no
-          attachments / GIFs / voice — parity with the brief. */}
-      {isChatEnabled ? (
-        <View
-          style={[
-            styles.composer,
-            {
-              backgroundColor: colors.surfaceSecondary,
-              borderColor: colors.border,
-            },
-          ]}
-        >
-          <TextInput
-            value={text}
-            onChangeText={setText}
-            placeholder="Say something…"
-            placeholderTextColor={colors.textSecondary}
-            style={[styles.composerInput, { color: colors.text }]}
-            multiline
-            editable={!isSending}
-          />
-          <TouchableOpacity
-            onPress={handleSend}
-            disabled={!text.trim() || isSending}
-            style={[
-              styles.sendButton,
-              {
-                backgroundColor:
-                  text.trim() && !isSending
-                    ? DEFAULT_PRIMARY_COLOR
-                    : colors.border,
-              },
-            ]}
-            accessibilityLabel="Send message"
-          >
-            {isSending ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Ionicons name="arrow-up" size={20} color="#fff" />
-            )}
-          </TouchableOpacity>
-        </View>
-      ) : (
-        <Text
-          style={[styles.disabledText, { color: colors.textSecondary }]}
-        >
-          Chat is disabled
-        </Text>
-      )}
+/**
+ * EventActivityComposer
+ *
+ * Sticky bottom composer for the event chat. Rendered by `EventPageClient`
+ * as an absolutely-positioned sibling (not inside the ScrollView) so it
+ * stays pinned to the viewport and lifts above the keyboard via the
+ * surrounding `KeyboardAvoidingView`.
+ *
+ * Reuses the full-featured `MessageInput` (images, camera, GIFs, voice,
+ * typing indicators, drafts). If the channel hasn't been materialized yet
+ * `channelId` will be null — `MessageInput` disables itself in that state.
+ */
+export interface EventActivityComposerProps {
+  channelId: Id<"chatChannels"> | null;
+  onLayout?: (height: number) => void;
+  style?: any;
+}
+
+export function EventActivityComposer({
+  channelId,
+  onLayout,
+  style,
+}: EventActivityComposerProps) {
+  const { colors } = useTheme();
+  // MessageInput paints its own surface + top border, so the wrapper just
+  // provides position (via `style` from the parent) and matches the surface
+  // background for the safe-area inset.
+  return (
+    <View
+      style={[{ backgroundColor: colors.surface }, style]}
+      onLayout={
+        onLayout
+          ? (e) => onLayout(e.nativeEvent.layout.height)
+          : undefined
+      }
+    >
+      <MessageInput channelId={channelId} />
     </View>
   );
 }
@@ -416,35 +331,5 @@ const styles = StyleSheet.create({
   messagesList: {
     // Leave MessageItem's own spacing intact. Messages render in ascending
     // order top-to-bottom (newest at the bottom, like Partiful).
-  },
-  composer: {
-    marginTop: 16,
-    flexDirection: "row",
-    alignItems: "flex-end",
-    gap: 8,
-    padding: 8,
-    borderRadius: 24,
-    borderWidth: StyleSheet.hairlineWidth,
-  },
-  composerInput: {
-    flex: 1,
-    fontSize: 15,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    maxHeight: 120,
-    minHeight: 36,
-  },
-  sendButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  disabledText: {
-    marginTop: 16,
-    fontSize: 14,
-    textAlign: "center",
-    fontStyle: "italic",
   },
 });
