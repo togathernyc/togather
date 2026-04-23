@@ -42,6 +42,7 @@ import { ReachOutRequestCardFromMessage } from './ReachOutRequestCardFromMessage
 import { TaskCardFromMessage } from './TaskCardFromMessage';
 import { extractEventShortIds, extractToolShortIds, extractChannelInviteShortIds, stripEventLinksFromText, stripToolLinksFromText, stripChannelInviteLinksFromText, extractFirstExternalUrl } from '../utils/eventLinkUtils';
 import { useLinkPreview } from '../hooks/useLinkPreview';
+import { parseMessageContent } from '@features/shared/utils/linkify';
 import { getMediaUrl } from '@/utils/media';
 import { colors } from '@utils/styles';
 import { useTheme } from '@hooks/useTheme';
@@ -151,79 +152,6 @@ function formatMessageTime(timestamp: number): string {
   }
 
   return `${month} ${day}`;
-}
-
-/**
- * Parse message content and detect @mentions and URLs
- * Mentions use bracketed format: @[Display Name] to support names with spaces
- */
-type ContentPart = { type: 'text' | 'mention' | 'url'; value: string; displayValue?: string };
-
-function parseMessageContent(content: string): ContentPart[] {
-  const parts: ContentPart[] = [];
-
-  // Bracketed mentions: @[Display Name] - supports names with spaces
-  const mentionRegex = /@\[([^\]]+)\]/g;
-  const urlRegex = /(https?:\/\/[^\s]+)/g;
-
-  // Find all matches with their positions
-  const allMatches: Array<{ type: 'mention' | 'url'; value: string; displayValue?: string; index: number }> = [];
-
-  let match: RegExpExecArray | null;
-
-  // Find mentions - capture the display name without brackets
-  while ((match = mentionRegex.exec(content)) !== null) {
-    allMatches.push({
-      type: 'mention',
-      value: match[0], // Full match: @[John Smith]
-      displayValue: `@${match[1]}`, // Display as: @John Smith (without brackets)
-      index: match.index,
-    });
-  }
-
-  // Find URLs
-  while ((match = urlRegex.exec(content)) !== null) {
-    allMatches.push({ type: 'url', value: match[0], index: match.index });
-  }
-
-  // Sort by position
-  allMatches.sort((a, b) => a.index - b.index);
-
-  // Build parts array
-  let lastIndex = 0;
-  for (const m of allMatches) {
-    // Add text before this match
-    if (m.index > lastIndex) {
-      parts.push({
-        type: 'text',
-        value: content.substring(lastIndex, m.index),
-      });
-    }
-
-    // Add the match
-    parts.push({
-      type: m.type,
-      value: m.value,
-      displayValue: m.displayValue,
-    });
-
-    lastIndex = m.index + m.value.length;
-  }
-
-  // Add remaining text
-  if (lastIndex < content.length) {
-    parts.push({
-      type: 'text',
-      value: content.substring(lastIndex),
-    });
-  }
-
-  // If nothing found, return whole content as text
-  if (parts.length === 0) {
-    parts.push({ type: 'text', value: content });
-  }
-
-  return parts;
 }
 
 function MessageItemInner({
