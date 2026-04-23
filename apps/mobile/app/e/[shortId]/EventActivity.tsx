@@ -42,6 +42,9 @@ export interface EventActivityProps {
   meetingId: Id<"meetings">;
   groupId: Id<"groups">;
   shortId: string;
+  /** Event title — threaded down to EventComment so the thread header reads
+   *  "Thread / #My Event" instead of the generic "Thread / #event". */
+  eventTitle: string;
   currentUserId: Id<"users">;
   /** Host + RSVPer-with-enabled-option. Caller computes this. */
   canAccess: boolean;
@@ -56,6 +59,7 @@ export function EventActivity({
   meetingId: _meetingId,
   groupId,
   shortId,
+  eventTitle,
   currentUserId,
   canAccess,
   isChatEnabled,
@@ -243,6 +247,7 @@ export function EventActivity({
                 currentUserId={currentUserId}
                 groupId={groupId}
                 eventShortId={shortId}
+                eventTitle={eventTitle}
               />
             ))}
           </View>

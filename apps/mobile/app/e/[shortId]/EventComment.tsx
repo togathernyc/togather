@@ -59,6 +59,9 @@ export interface EventCommentProps {
   groupId: Id<'groups'>;
   /** Event shortId, used to route Reply to the event-scoped thread page. */
   eventShortId: string;
+  /** Event title, displayed as the thread header (otherwise the header
+   *  would read "Thread / #event" which is meaningless). */
+  eventTitle: string;
 }
 
 /**
@@ -96,7 +99,7 @@ function formatRelativeTime(timestamp: number): string {
   return `${month} ${day_}`;
 }
 
-function EventCommentInner({ message, currentUserId, groupId, eventShortId }: EventCommentProps) {
+function EventCommentInner({ message, currentUserId, groupId, eventShortId, eventTitle }: EventCommentProps) {
   const router = useRouter();
   const { colors: themeColors } = useTheme();
 
@@ -177,9 +180,9 @@ function EventCommentInner({ message, currentUserId, groupId, eventShortId }: Ev
   // component so functionality is identical.
   const handleReplyPress = useCallback(() => {
     router.push(
-      `/e/${eventShortId}/thread/${message._id}?groupId=${groupId}&channelName=event` as any,
+      `/e/${eventShortId}/thread/${message._id}?groupId=${groupId}&channelName=${encodeURIComponent(eventTitle)}` as any,
     );
-  }, [router, eventShortId, groupId, message._id]);
+  }, [router, eventShortId, groupId, message._id, eventTitle]);
 
   // ---- Rendering ----
 

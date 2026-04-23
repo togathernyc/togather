@@ -920,6 +920,7 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
                 meetingId={eventData.id as Id<"meetings">}
                 groupId={eventData.groupId as Id<"groups">}
                 shortId={eventData.shortId}
+                eventTitle={eventData.title || "Event"}
                 currentUserId={user.id as Id<"users">}
                 canAccess={canAccessChat}
                 isChatEnabled={isChatEnabled}
