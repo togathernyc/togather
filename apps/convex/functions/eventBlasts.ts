@@ -392,7 +392,7 @@ export const recordBlast = internalMutation({
       : "Someone";
     const senderProfilePhoto = sender ? getMediaUrl(sender.profilePhoto) : undefined;
 
-    await ctx.db.insert("chatMessages", {
+    const messageId = await ctx.db.insert("chatMessages", {
       channelId,
       senderId: args.sentById,
       content: args.message,
@@ -412,6 +412,16 @@ export const recordBlast = internalMutation({
       lastMessageSenderId: args.sentById,
       lastMessageSenderName: senderName,
       updatedAt: ts,
+    });
+
+    // Run onMessageSent so channel members' unread counts increment and the
+    // Activity feed shows an inbox badge. onMessageSent short-circuits the
+    // push fanout for blast-mirror messages (blastId set), so recipients
+    // don't get a duplicate push after the SMS.
+    await ctx.runMutation(internal.functions.messaging.events.onMessageSent, {
+      messageId,
+      channelId,
+      senderId: args.sentById,
     });
   },
 });

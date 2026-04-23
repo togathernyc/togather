@@ -370,22 +370,21 @@ export const setEventChannelEnabled = mutation({
       );
     }
 
-    const channel = await ctx.db
-      .query("chatChannels")
-      .withIndex("by_meetingId", (q) => q.eq("meetingId", args.meetingId))
-      .first();
+    // Materialize the channel before patching so a host disabling chat
+    // before any message has been sent still persists. Otherwise ensureEventChannel
+    // would lazy-create it with isEnabled: true on the first later send,
+    // silently undoing the host's action.
+    const channelId = await ctx.runMutation(
+      internal.functions.messaging.eventChat.ensureEventChannel,
+      { meetingId: args.meetingId },
+    );
 
-    // Nothing to toggle if the channel hasn't been created yet.
-    if (!channel) {
-      return { channelId: null, enabled: args.enabled };
-    }
-
-    await ctx.db.patch(channel._id, {
+    await ctx.db.patch(channelId, {
       isEnabled: args.enabled,
       disabledByUserId: args.enabled ? undefined : userId,
       updatedAt: now(),
     });
 
-    return { channelId: channel._id, enabled: args.enabled };
+    return { channelId, enabled: args.enabled };
   },
 });

@@ -569,7 +569,7 @@ describe("setEventChannelEnabled", () => {
     expect(channel?.disabledByUserId).toBeUndefined();
   });
 
-  test("returns { channelId: null, enabled } when no channel exists yet", async () => {
+  test("materializes the channel as disabled when the host disables before any messages exist", async () => {
     const t = convexTest(schema, modules);
     const data = await setupTestData(t);
 
@@ -578,8 +578,15 @@ describe("setEventChannelEnabled", () => {
       { token: data.hostToken, meetingId: data.meetingId, enabled: false },
     );
 
-    expect(result.channelId).toBeNull();
+    // Channel is created now so the host's disable persists — the old
+    // early-return-when-missing path silently lost the host's action on the
+    // next lazy create (which would default back to isEnabled: true).
+    expect(result.channelId).not.toBeNull();
     expect(result.enabled).toBe(false);
+
+    const channel = await t.run(async (ctx) => ctx.db.get(result.channelId));
+    expect(channel?.isEnabled).toBe(false);
+    expect(channel?.disabledByUserId).toBe(data.hostId);
   });
 });
 
@@ -1041,12 +1048,25 @@ describe("text blast mirror", () => {
     expect(channel?.lastMessagePreview).toContain("See you at 7pm");
   });
 
-  test("onMessageSent skips push fanout for blast-mirrored messages", async () => {
+  test("onMessageSent increments unread but skips push for blast-mirrored messages", async () => {
     vi.useFakeTimers();
     const t = convexTest(schema, modules);
     const data = await setupTestData(t);
 
-    // Send a blast — this mirrors into the event chat with blastId set.
+    // Seat the Going RSVPer as a channel member so unread-count behavior is
+    // observable. Under the Phase-1 lazy-seat model, this happens when the
+    // user opens the event page via openEventChat.
+    await t.mutation("functions/messaging/eventChat:openEventChat" as any, {
+      token: data.goingToken,
+      meetingId: data.meetingId,
+    });
+
+    const scheduledBeforeBlast = await t.run(async (ctx) => {
+      return await ctx.db.system.query("_scheduled_functions").collect();
+    });
+
+    // Send a blast — this mirrors into the event chat with blastId set and
+    // (under the fix) also runs onMessageSent for unread increments.
     await t.mutation("functions/eventBlasts:initiate" as any, {
       token: data.hostToken,
       meetingId: data.meetingId,
@@ -1074,31 +1094,31 @@ describe("text blast mirror", () => {
     expect(mirrored).toBeDefined();
     expect(mirrored!.blastId).toBeTruthy();
 
-    // Call onMessageSent directly for the mirrored message. Under the fix,
-    // it must short-circuit and not schedule sendMessageNotifications.
-    const scheduledBefore = await t.run(async (ctx) => {
+    // No sendMessageNotifications was scheduled at any point — onMessageSent
+    // short-circuits the push fanout when message.blastId is set. The original
+    // blast "push" channel would normally schedule batch pushes too; verify
+    // specifically that chat-layer push fanout was skipped.
+    const scheduledAfterBlast = await t.run(async (ctx) => {
       return await ctx.db.system.query("_scheduled_functions").collect();
     });
-
-    await t.mutation(
-      (internal as any).functions.messaging.events.onMessageSent,
-      {
-        messageId: mirrored!._id,
-        channelId: channel!._id,
-        senderId: data.hostId,
-      },
-    );
-
-    const scheduledAfter = await t.run(async (ctx) => {
-      return await ctx.db.system.query("_scheduled_functions").collect();
-    });
-
-    // No new scheduled sendMessageNotifications entries — onMessageSent
-    // bails out when message.blastId is set.
-    const newNotifJobs = scheduledAfter
-      .filter((j) => !scheduledBefore.some((b) => b._id === j._id))
+    const newNotifJobs = scheduledAfterBlast
+      .filter((j) => !scheduledBeforeBlast.some((b) => b._id === j._id))
       .filter((j) => String(j.name).includes("sendMessageNotifications"));
     expect(newNotifJobs).toHaveLength(0);
+
+    // Unread count for the seated Going RSVPer was incremented by
+    // onMessageSent — the Activity feed's inbox badge reflects the new
+    // message even though push was skipped.
+    const readState = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("chatReadState")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channel!._id).eq("userId", data.goingId),
+        )
+        .unique();
+    });
+    expect(readState).not.toBeNull();
+    expect(readState!.unreadCount).toBeGreaterThanOrEqual(1);
   });
 });
 
