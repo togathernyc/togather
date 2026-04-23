@@ -72,7 +72,17 @@ export function UserProfileScreen() {
         <Ionicons name="arrow-back" size={24} color={colors.text} />
       </TouchableOpacity>
       <Text style={[styles.headerTitle, { color: colors.text }]}>Profile</Text>
-      <View style={styles.headerSpacer} />
+      {isSelf ? (
+        <TouchableOpacity
+          onPress={() => router.push('/(user)/edit-profile')}
+          style={styles.editButton}
+          accessibilityLabel="Edit profile"
+        >
+          <Text style={[styles.editButtonText, { color: colors.text }]}>Edit</Text>
+        </TouchableOpacity>
+      ) : (
+        <View style={styles.headerSpacer} />
+      )}
     </View>
   );
 
@@ -194,6 +204,16 @@ const styles = StyleSheet.create({
   },
   headerSpacer: {
     width: 40,
+  },
+  editButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    minWidth: 40,
+    alignItems: 'flex-end',
+  },
+  editButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
   },
   scrollView: {
     flex: 1,
