@@ -696,7 +696,7 @@ function EventInboxRowItem({ row, isActive }: EventInboxRowItemProps) {
           {messagePreview}
         </Text>
 
-        {/* Line 3: small muted meta — absolute time + optional location chip. */}
+        {/* Line 3: muted time + prominent Directions button. */}
         <View style={styles.eventMetaRow}>
           <Text
             style={[
@@ -708,42 +708,46 @@ function EventInboxRowItem({ row, isActive }: EventInboxRowItemProps) {
             {eventWhen ? eventWhen.when : "Scheduled"}
           </Text>
           {locationShort ? (
-            <>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Open ${channel.meetingLocation} in Maps`}
+              onPress={(e) => {
+                e.stopPropagation?.();
+                openMapsForLocation(channel.meetingLocation!);
+              }}
+              hitSlop={6}
+              style={({ pressed }) => [
+                styles.directionsButton,
+                {
+                  backgroundColor: isPast
+                    ? colors.surfaceSecondary
+                    : isDark
+                      ? primaryColor + "22"
+                      : primaryColor + "14",
+                  borderColor: isPast
+                    ? colors.border
+                    : isDark
+                      ? primaryColor + "44"
+                      : primaryColor + "33",
+                },
+                pressed && { opacity: 0.65 },
+              ]}
+            >
+              <Ionicons
+                name="navigate"
+                size={14}
+                color={isPast ? colors.textTertiary : primaryColor}
+              />
               <Text
-                style={[styles.eventMetaSeparator, { color: colors.textTertiary }]}
-                accessibilityElementsHidden
-              >
-                {"·"}
-              </Text>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Open ${channel.meetingLocation} in Maps`}
-                onPress={(e) => {
-                  e.stopPropagation?.();
-                  openMapsForLocation(channel.meetingLocation!);
-                }}
-                hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
-                style={({ pressed }) => [
-                  styles.locationChip,
-                  pressed && { opacity: 0.6 },
+                style={[
+                  styles.directionsButtonText,
+                  { color: isPast ? colors.textTertiary : primaryColor },
                 ]}
+                numberOfLines={1}
               >
-                <Ionicons
-                  name="location-outline"
-                  size={12}
-                  color={isPast ? colors.textTertiary : primaryColor}
-                />
-                <Text
-                  style={[
-                    styles.locationChipText,
-                    { color: isPast ? colors.textTertiary : primaryColor },
-                  ]}
-                  numberOfLines={1}
-                >
-                  {locationShort}
-                </Text>
-              </Pressable>
-            </>
+                {locationShort}
+              </Text>
+            </Pressable>
           ) : null}
         </View>
       </View>
@@ -923,7 +927,8 @@ const styles = StyleSheet.create({
   eventMetaRow: {
     flexDirection: "row",
     alignItems: "center",
-    marginTop: 2,
+    marginTop: 6,
+    gap: 10,
   },
   eventMetaText: {
     fontSize: 12,
@@ -932,6 +937,23 @@ const styles = StyleSheet.create({
   eventMetaSeparator: {
     fontSize: 12,
     marginHorizontal: 6,
+  },
+  // Prominent filled pill next to the time — reads as a CTA. Primary-tinted
+  // background so it doesn't blend into the surrounding muted row.
+  directionsButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    borderWidth: 1,
+    flexShrink: 1,
+  },
+  directionsButtonText: {
+    fontSize: 13,
+    fontWeight: "600",
+    flexShrink: 1,
   },
   // Inline location chip — no border, no background, just icon + text tinted
   // with primary color. Reads as "tappable" via the primary tint.
