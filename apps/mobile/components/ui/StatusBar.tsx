@@ -1,12 +1,13 @@
 /**
- * StatusBar - Animated bottom status bar for connection and OTA update state
+ * StatusBar - Animated bottom status bar for connection state
  *
- * Displays a prioritized status overlay at the bottom of the screen:
- * - Connection issues take highest priority (disconnected > no internet > slow > reconnecting > reconnected)
- * - OTA update states shown when connection is healthy (checking > error)
- * - Hidden when everything is nominal (connected + OTA idle)
+ * Displays a prioritized status overlay at the bottom of the screen for
+ * connection issues (disconnected > no internet > slow > reconnecting >
+ * reconnected). Hidden when everything is nominal.
  *
- * Note: OTA "downloading" and "ready" states are handled by OTAUpdateModal instead.
+ * OTA update states are intentionally not shown here — 'downloading' and
+ * 'ready' are handled by OTAUpdateModal, and 'checking' is silent because
+ * the check runs on every foreground.
  *
  * The bar sits at the very bottom of the screen, filling through the safe area.
  * The tab bar uses useStatusBarVisible() to add extra padding when the bar is shown,
@@ -23,7 +24,6 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useConnectionStatus } from '@providers/ConnectionProvider';
-import { useOTAUpdateStatus } from '@providers/OTAUpdateProvider';
 
 /** Height of the status bar content area (excluding safe area padding) */
 export const STATUS_BAR_CONTENT_HEIGHT = 24;
@@ -44,7 +44,6 @@ function getActiveConfig(
     isNetworkAvailable: boolean;
     isInternetReachable: boolean;
   },
-  otaStatus: { status: string },
   themeColors: { error: string; warning: string; success: string; textTertiary: string },
 ): StatusConfig | null {
   // Cold start grace period: suppress all banners while connecting
@@ -98,14 +97,9 @@ function getActiveConfig(
     };
   }
 
-  // Priority 6: OTA checking
-  if (otaStatus.status === 'checking') {
-    return {
-      backgroundColor: themeColors.textTertiary,
-      icon: 'refresh-outline',
-      text: 'Checking for updates...',
-    };
-  }
+  // OTA 'checking' is intentionally not surfaced — checks run on every
+  // foreground and a "Checking for updates..." banner would flicker on
+  // every healthy resume. Downloading/ready are handled by OTAUpdateModal.
 
   // No active status — hide the bar
   return null;
@@ -117,18 +111,16 @@ function getActiveConfig(
  */
 export function useStatusBarVisible(): boolean {
   const connectionStatus = useConnectionStatus();
-  const otaStatus = useOTAUpdateStatus();
   const { colors } = useTheme();
-  return getActiveConfig(connectionStatus, otaStatus, colors) !== null;
+  return getActiveConfig(connectionStatus, colors) !== null;
 }
 
 export function StatusBar() {
   const connectionStatus = useConnectionStatus();
-  const otaStatus = useOTAUpdateStatus();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
 
-  const config = getActiveConfig(connectionStatus, otaStatus, colors);
+  const config = getActiveConfig(connectionStatus, colors);
 
   // Remember the last visible config so the slide-out animation
   // retains the correct colors instead of flashing to a fallback

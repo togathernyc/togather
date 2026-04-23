@@ -136,28 +136,15 @@ describe('StatusBar', () => {
     expect(queryByText('Update ready')).toBeNull();
   });
 
-  it('shows OTA checking state', () => {
+  it('does not show OTA checking state (runs silently on every foreground)', () => {
     mockOTAStatus = { status: 'checking', errorMessage: null };
-    const { getByText, getByTestId } = render(<StatusBar />);
-    expect(getByTestId('status-bar')).toBeTruthy();
-    expect(getByText('Checking for updates...')).toBeTruthy();
+    const { queryByText } = render(<StatusBar />);
+    expect(queryByText('Checking for updates...')).toBeNull();
   });
 
   it('does not show OTA error state (failures are silent)', () => {
     mockOTAStatus = { status: 'error', errorMessage: 'Network error' };
     const { queryByText } = render(<StatusBar />);
     expect(queryByText("Couldn't check for updates")).toBeNull();
-  });
-
-  it('prioritizes connection status over OTA status', () => {
-    mockConnectionStatus = {
-      status: 'disconnected',
-      isNetworkAvailable: false,
-      isInternetReachable: false,
-    };
-    mockOTAStatus = { status: 'checking', errorMessage: null };
-    const { getByText, queryByText } = render(<StatusBar />);
-    expect(getByText('No internet connection')).toBeTruthy();
-    expect(queryByText('Checking for updates...')).toBeNull();
   });
 });
