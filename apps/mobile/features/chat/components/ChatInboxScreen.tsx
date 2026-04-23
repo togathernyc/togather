@@ -377,14 +377,11 @@ interface EventsSectionProps {
 }
 
 function EventsSection({ rows, activeChannelSlug }: EventsSectionProps) {
-  const { colors } = useTheme();
+  // No section header — event rows sit alongside group rows, differentiated by
+  // the small calendar badge on the avatar. A header made everything above it
+  // look generically "event-y" and confused the mix with group rows below.
   return (
     <View>
-      <View style={styles.sectionHeader}>
-        <Text style={[styles.sectionHeaderText, { color: colors.textSecondary }]}>
-          Events
-        </Text>
-      </View>
       {rows.map((row) => (
         <EventInboxRowItem
           key={row.channel._id}
@@ -463,6 +460,16 @@ function EventInboxRowItem({ row, isActive }: EventInboxRowItemProps) {
             backgroundColor: isDark ? "#333" : "#E5E5E5",
           }}
         />
+        {/* Small calendar badge differentiates event rows from group rows
+            now that the Events section header is gone. */}
+        <View
+          style={[
+            styles.eventIconBadge,
+            { backgroundColor: primaryColor, borderColor: colors.surface },
+          ]}
+        >
+          <Ionicons name="calendar" size={12} color="#fff" />
+        </View>
       </View>
 
       <View style={styles.eventContent}>
@@ -475,10 +482,7 @@ function EventInboxRowItem({ row, isActive }: EventInboxRowItemProps) {
             ]}
             numberOfLines={1}
           >
-            <Text style={{ color: colors.textSecondary, fontWeight: "400" }}>
-              {group.name}:{" "}
-            </Text>
-            {channel.name}
+            {group.name}: {channel.name}
           </Text>
         </View>
         <View style={styles.eventBottomRow}>
