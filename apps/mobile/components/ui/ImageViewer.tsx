@@ -185,6 +185,14 @@ export function ImageViewer({
   const [isZoomed, setIsZoomed] = useState(false);
   const insets = useSafeAreaInsets();
 
+  // Reset zoom whenever the visible slide changes. Without this, navigating
+  // past a zoomed slide (via the arrow buttons) leaves `isZoomed` stuck true,
+  // so `scrollEnabled={!isZoomed}` keeps the carousel swipe disabled on the
+  // next slide until the user toggles zoom again or closes the viewer.
+  useEffect(() => {
+    setIsZoomed(false);
+  }, [currentIndex]);
+
   useEffect(() => {
     if (visible) {
       // Reset to initial index when opening
