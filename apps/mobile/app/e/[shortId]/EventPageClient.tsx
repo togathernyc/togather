@@ -293,16 +293,18 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
     : false;
   const canAccessChat = isCreator || (hasRsvp && rsvpOptionEnabled);
 
-  // Materialize the channel once per page visit when we know the user can
-  // access chat. Skipping until `eventChannel === null` (i.e. the query
-  // resolved with "no channel yet") — `undefined` means still loading. Once
-  // the mutation returns, cache the id locally so the composer can send
-  // immediately without waiting for `getChannelByMeetingId` to re-resolve.
+  // Materialize the channel and seat the caller as a member once per page
+  // visit when they have chat access. Skip while `eventChannel === undefined`
+  // (query still loading). When the channel already exists (`eventChannel`
+  // is a doc), we must still call `openEventChat` — attendees who RSVPed
+  // before the channel existed (e.g. host sent a blast first) are never
+  // seated otherwise, and membership-driven paths (inbox rows, push fanout)
+  // would silently skip them.
   const meetingIdForChannel = eventData?.id as Id<"meetings"> | undefined;
   useEffect(() => {
     if (!meetingIdForChannel) return;
     if (!canAccessChat || !isChatEnabled) return;
-    if (eventChannel !== null) return; // still loading, or channel exists
+    if (eventChannel === undefined) return; // still loading
     if (materializedChannelId) return;
     let cancelled = false;
     (async () => {
