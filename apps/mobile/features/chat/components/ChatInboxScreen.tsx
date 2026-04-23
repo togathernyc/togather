@@ -57,6 +57,12 @@ type InboxChannel = {
   isEnabled?: boolean;
   meetingId?: Id<"meetings">;
   meetingScheduledAt?: number | null;
+  /**
+   * For event channels, the owning meeting's shortId. Used by event rows in
+   * the inbox to navigate to `/e/{shortId}` (event page with inline Activity)
+   * rather than the legacy standalone chat room.
+   */
+  meetingShortId?: string | null;
 };
 
 // Type for the grouped inbox data from getInboxChannels query
@@ -400,7 +406,15 @@ function EventInboxRowItem({ row, isActive }: EventInboxRowItemProps) {
   const { channel, group, userRole } = row;
   const hasUnread = channel.unreadCount > 0;
 
+  // Event rows route to the event page with inline Activity (Partiful-style).
+  // The `/inbox/{groupId}/event-{slug}` standalone room was removed — chat
+  // now lives on `/e/{shortId}`. If a channel somehow lacks meetingShortId
+  // (legacy data), fall back to the old route so the row still opens.
   const handlePress = useCallback(() => {
+    if (channel.meetingShortId) {
+      router.push(`/e/${channel.meetingShortId}?source=app` as any);
+      return;
+    }
     router.push({
       pathname: `/inbox/${group._id}/${channel.slug}` as any,
       params: {

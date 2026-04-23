@@ -81,6 +81,7 @@ import { DOMAIN_CONFIG } from "@togather/shared";
 import * as Clipboard from "expo-clipboard";
 import { EventBlastSheet } from "@/features/leader-tools/components/EventBlastSheet";
 import { EventBlastHistory } from "@/features/leader-tools/components/EventBlastHistory";
+import { EventActivity } from "./EventActivity";
 
 /**
  * Initial event data passed from Server Component
@@ -262,10 +263,6 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
   const setEventChannelEnabledMutation = useAuthenticatedMutation(
     api.functions.messaging.eventChat.setEventChannelEnabled
   );
-  const openEventChatMutation = useAuthenticatedMutation(
-    api.functions.messaging.eventChat.openEventChat
-  );
-  const [isOpeningChat, setIsOpeningChat] = useState(false);
 
   // Whether the chat is currently enabled. When the channel row doesn't exist
   // yet, default to enabled (new channels are created with isEnabled: true).
@@ -273,7 +270,7 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
 
   // Whether the user can access the event chat at all (host or RSVPer with an
   // enabled option). Mirrors the backend `canAccessEventChannel` check so the
-  // UI doesn't show a button that would route into a chat the user can't open.
+  // inline Activity feed doesn't render for users the server would reject.
   const hasRsvp = !!myRsvp?.optionId;
   const rsvpOptionEnabled = myRsvp?.optionId != null
     ? ((eventData?.rsvpOptions as unknown as RsvpOption[] | undefined)?.find(
@@ -281,29 +278,6 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
       )?.enabled ?? false)
     : false;
   const canAccessChat = isCreator || (hasRsvp && rsvpOptionEnabled);
-
-  const handleOpenChat = async () => {
-    if (!eventData?.id || !eventData?.groupId || !eventData?.shortId) return;
-    if (!isChatEnabled) {
-      Alert.alert("Chat disabled", "The host turned off this event's chat.");
-      return;
-    }
-    // Materialize the channel row before navigating — the chat room resolves
-    // by (groupId, slug) and can't render for a nonexistent channel. openEventChat
-    // is idempotent; it returns the existing channel if one already exists.
-    setIsOpeningChat(true);
-    try {
-      const { slug } = await openEventChatMutation({
-        meetingId: eventData.id as Id<"meetings">,
-      });
-      router.push(`/inbox/${eventData.groupId}/${slug}` as any);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Could not open chat";
-      Alert.alert("Chat unavailable", message);
-    } finally {
-      setIsOpeningChat(false);
-    }
-  };
 
   const handleToggleEventChat = async (enabled: boolean) => {
     if (!eventData?.id) return;
@@ -858,37 +832,28 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
             />
           )}
 
-          {/* Event Chat button — visible to host + RSVPers with an enabled option.
-              Tapping calls openEventChat which ensures the channel row exists,
-              then navigates. When isEnabled === false, shows a muted
-              "Chat disabled" label that fires an alert instead. */}
-          {canAccessChat && eventData.groupId && eventData.shortId && (
-            <TouchableOpacity
-              style={[
-                styles.messageAttendeesButton,
-                {
-                  backgroundColor: colors.surfaceSecondary,
-                  opacity: isChatEnabled && !isOpeningChat ? 1 : 0.6,
-                },
-              ]}
-              onPress={handleOpenChat}
-              disabled={isOpeningChat}
-            >
-              <Ionicons
-                name="chatbubble-ellipses-outline"
-                size={20}
-                color={isChatEnabled ? DEFAULT_PRIMARY_COLOR : colors.textSecondary}
+          {/* Inline Activity feed (Partiful-style). Replaces the old "Chat"
+              button that routed to a standalone /inbox/{groupId}/event-{slug}
+              room. Messages render below the event details, composer at the
+              bottom of this component. Gated on canAccessChat (host + RSVPer
+              with enabled option). Backend is authoritative. */}
+          {canAccessChat &&
+            eventData.id &&
+            eventData.groupId &&
+            eventData.shortId &&
+            user?.id &&
+            authToken && (
+              <EventActivity
+                meetingId={eventData.id as Id<"meetings">}
+                groupId={eventData.groupId as Id<"groups">}
+                shortId={eventData.shortId}
+                currentUserId={user.id as Id<"users">}
+                canAccess={canAccessChat}
+                isChatEnabled={isChatEnabled}
+                channelId={(eventChannel?._id ?? null) as Id<"chatChannels"> | null}
+                authToken={authToken}
               />
-              <Text
-                style={[
-                  styles.messageAttendeesText,
-                  { color: isChatEnabled ? DEFAULT_PRIMARY_COLOR : colors.textSecondary },
-                ]}
-              >
-                {isOpeningChat ? "Opening…" : isChatEnabled ? "Chat" : "Chat disabled"}
-              </Text>
-            </TouchableOpacity>
-          )}
+            )}
 
           {/* Leader: jump into the attendance recorder for past events */}
           {isLeader && isPastEvent && eventData.id && eventData.groupId && eventData.scheduledAt && (

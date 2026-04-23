@@ -1201,13 +1201,16 @@ export const getInboxChannels = query({
     const eventMeetingDocs = await Promise.all(
       eventMeetingIds.map((id) => ctx.db.get(id)),
     );
-    const eventMeetingMap = new Map<Id<"meetings">, number | null>();
+    const eventMeetingMap = new Map<
+      Id<"meetings">,
+      { scheduledAt: number | null; shortId: string | null }
+    >();
     for (let i = 0; i < eventMeetingIds.length; i++) {
       const m = eventMeetingDocs[i];
-      eventMeetingMap.set(
-        eventMeetingIds[i],
-        m && typeof m.scheduledAt === "number" ? m.scheduledAt : null,
-      );
+      eventMeetingMap.set(eventMeetingIds[i], {
+        scheduledAt: m && typeof m.scheduledAt === "number" ? m.scheduledAt : null,
+        shortId: m && typeof m.shortId === "string" ? m.shortId : null,
+      });
     }
 
     // Build the result grouped by group
@@ -1235,6 +1238,12 @@ export const getInboxChannels = query({
         isEnabled: boolean | undefined;
         meetingId: Id<"meetings"> | undefined;
         meetingScheduledAt: number | null;
+        /**
+         * For event channels, the meeting's shareable shortId. Lets the mobile
+         * inbox route event rows to `/e/{shortId}` (the event page with inline
+         * Activity) instead of the standalone chat room.
+         */
+        meetingShortId: string | null;
       }>;
       userRole: "leader" | "member";
     }> = [];
@@ -1321,7 +1330,11 @@ export const getInboxChannels = query({
           meetingId: ch.meetingId,
           meetingScheduledAt:
             ch.channelType === "event" && ch.meetingId
-              ? eventMeetingMap.get(ch.meetingId) ?? null
+              ? eventMeetingMap.get(ch.meetingId)?.scheduledAt ?? null
+              : null,
+          meetingShortId:
+            ch.channelType === "event" && ch.meetingId
+              ? eventMeetingMap.get(ch.meetingId)?.shortId ?? null
               : null,
         };
       });
