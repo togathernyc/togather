@@ -8,7 +8,6 @@ import {
   ActivityIndicator,
   Alert,
   Modal,
-  Switch,
   KeyboardAvoidingView,
   Platform,
 } from "react-native";
@@ -35,8 +34,6 @@ export function EventBlastSheet({
 }: EventBlastSheetProps) {
   const { colors } = useTheme();
   const [message, setMessage] = useState("");
-  const [pushEnabled, setPushEnabled] = useState(true);
-  const [smsEnabled, setSmsEnabled] = useState(false);
   const [isSending, setIsSending] = useState(false);
 
   const initiateBlast = useAuthenticatedMutation(api.functions.eventBlasts.initiate);
@@ -47,18 +44,9 @@ export function EventBlastSheet({
       return;
     }
 
-    const channels: string[] = [];
-    if (pushEnabled) channels.push("push");
-    if (smsEnabled) channels.push("sms");
-
-    if (channels.length === 0) {
-      Alert.alert("No Channel", "Please select at least one channel (Push or SMS).");
-      return;
-    }
-
     Alert.alert(
-      "Send Message",
-      `Send this message to all attendees via ${channels.join(" & ")}?`,
+      "Send Text Blast",
+      `Text all attendees of ${eventTitle}? The message will also post to the event's Activity feed.`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -69,7 +57,7 @@ export function EventBlastSheet({
               await initiateBlast({
                 meetingId: meetingId as Id<"meetings">,
                 message: message.trim(),
-                channels,
+                channels: ["sms"],
               });
               setMessage("");
               onSent();
@@ -110,7 +98,7 @@ export function EventBlastSheet({
             {/* Header */}
             <View style={[styles.header, { borderBottomColor: colors.border }]}>
               <Text style={[styles.title, { color: colors.text }]}>
-                Message Attendees
+                Text Blast
               </Text>
               <TouchableOpacity onPress={onClose}>
                 <Ionicons name="close" size={24} color={colors.text} />
@@ -119,7 +107,7 @@ export function EventBlastSheet({
 
             <View style={styles.body}>
               <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-                Send a message to everyone going to {eventTitle}
+                Text everyone going to {eventTitle}. The message will also post to the event's Activity feed.
               </Text>
 
               {/* Message Input */}
@@ -144,37 +132,6 @@ export function EventBlastSheet({
                 {message.length}/500
               </Text>
 
-              {/* Channel Selection */}
-              <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
-                SEND VIA
-              </Text>
-              <View style={[styles.channelRow, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
-                <View style={styles.channelInfo}>
-                  <Ionicons name="notifications-outline" size={20} color={colors.text} />
-                  <Text style={[styles.channelLabel, { color: colors.text }]}>
-                    Push Notification
-                  </Text>
-                </View>
-                <Switch
-                  value={pushEnabled}
-                  onValueChange={setPushEnabled}
-                  trackColor={{ false: colors.border, true: DEFAULT_PRIMARY_COLOR }}
-                />
-              </View>
-              <View style={[styles.channelRow, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
-                <View style={styles.channelInfo}>
-                  <Ionicons name="chatbubble-outline" size={20} color={colors.text} />
-                  <Text style={[styles.channelLabel, { color: colors.text }]}>
-                    SMS Text Message
-                  </Text>
-                </View>
-                <Switch
-                  value={smsEnabled}
-                  onValueChange={setSmsEnabled}
-                  trackColor={{ false: colors.border, true: DEFAULT_PRIMARY_COLOR }}
-                />
-              </View>
-
               {/* Send Button */}
               <TouchableOpacity
                 style={[
@@ -188,7 +145,7 @@ export function EventBlastSheet({
                 {isSending ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
-                  <Text style={styles.sendButtonText}>Send Message</Text>
+                  <Text style={styles.sendButtonText}>Send Text Blast</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -239,29 +196,6 @@ const styles = StyleSheet.create({
     textAlign: "right",
     marginTop: 4,
     marginBottom: 16,
-  },
-  sectionLabel: {
-    fontSize: 12,
-    fontWeight: "600",
-    textTransform: "uppercase",
-    marginBottom: 8,
-  },
-  channelRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-    marginBottom: 8,
-  },
-  channelInfo: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  channelLabel: {
-    fontSize: 16,
   },
   sendButton: {
     borderRadius: 12,
