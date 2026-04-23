@@ -143,11 +143,10 @@ describe('StatusBar', () => {
     expect(getByText('Checking for updates...')).toBeTruthy();
   });
 
-  it('shows OTA error state', () => {
+  it('does not show OTA error state (failures are silent)', () => {
     mockOTAStatus = { status: 'error', errorMessage: 'Network error' };
-    const { getByText, getByTestId } = render(<StatusBar />);
-    expect(getByTestId('status-bar')).toBeTruthy();
-    expect(getByText("Couldn't check for updates")).toBeTruthy();
+    const { queryByText } = render(<StatusBar />);
+    expect(queryByText("Couldn't check for updates")).toBeNull();
   });
 
   it('prioritizes connection status over OTA status', () => {

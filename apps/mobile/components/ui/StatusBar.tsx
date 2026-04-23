@@ -107,15 +107,6 @@ function getActiveConfig(
     };
   }
 
-  // Priority 7: OTA error (auto-dismisses via provider transitioning to idle)
-  if (otaStatus.status === 'error') {
-    return {
-      backgroundColor: themeColors.textTertiary,
-      icon: 'alert-circle-outline',
-      text: "Couldn't check for updates",
-    };
-  }
-
   // No active status — hide the bar
   return null;
 }

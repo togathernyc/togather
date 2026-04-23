@@ -1,12 +1,12 @@
 /**
- * OTAUpdateModal - Blocking modal for OTA updates
+ * OTAUpdateModal - Downloading indicator for OTA updates
  *
- * Shows a non-dismissible modal when an OTA update is downloading or ready.
- * This ensures users always run the latest OTA version.
+ * Shows a non-dismissible modal while an OTA update is downloading. Once the
+ * update is ready, OTAUpdateProvider auto-applies it via Updates.reloadAsync,
+ * so there's no "Restart Now" step — the app just refreshes itself.
  *
- * Safety: Only shown when status is 'downloading' or 'ready' — never during
- * 'checking', 'error', or 'idle'. Offline users won't see this modal because
- * the update check fails silently and status stays 'idle'.
+ * Offline users never see this modal because the check fails silently and
+ * status stays 'idle'.
  */
 import React from 'react';
 import {
@@ -14,11 +14,8 @@ import {
   Text,
   StyleSheet,
   Modal,
-  TouchableOpacity,
   ActivityIndicator,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import * as Updates from 'expo-updates';
 import { DEFAULT_PRIMARY_COLOR } from '@utils/styles';
 import { useOTAUpdateStatus } from '@providers/OTAUpdateProvider';
 import { useTheme } from '@hooks/useTheme';
@@ -26,23 +23,10 @@ import { useTheme } from '@hooks/useTheme';
 export function OTAUpdateModal() {
   const { colors } = useTheme();
   const { status } = useOTAUpdateStatus();
-  const [isRestarting, setIsRestarting] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
 
-  // Only block on downloading or ready — never checking, error, or idle
+  // Visible while actively downloading, and during the brief 'ready' tick
+  // before reloadAsync tears the app down.
   const isVisible = !__DEV__ && (status === 'downloading' || status === 'ready');
-  const isReady = status === 'ready';
-
-  const handleInstall = async () => {
-    setError(null);
-    setIsRestarting(true);
-    try {
-      await Updates.reloadAsync();
-    } catch (e) {
-      setIsRestarting(false);
-      setError('Failed to restart. Please close and reopen the app.');
-    }
-  };
 
   if (!isVisible) return null;
 
@@ -56,42 +40,14 @@ export function OTAUpdateModal() {
       <View style={[styles.overlay, { backgroundColor: colors.overlay }]}>
         <View style={[styles.modal, { backgroundColor: colors.modalBackground }]}>
           <View style={[styles.iconContainer, { backgroundColor: colors.surfaceSecondary }]}>
-            {isReady ? (
-              <Ionicons name="checkmark-circle" size={48} color={colors.success} />
-            ) : (
-              <ActivityIndicator size="large" color={DEFAULT_PRIMARY_COLOR} />
-            )}
+            <ActivityIndicator size="large" color={DEFAULT_PRIMARY_COLOR} />
           </View>
 
-          <Text style={[styles.title, { color: colors.text }]}>
-            {isReady ? 'Update Ready' : 'Updating'}
-          </Text>
+          <Text style={[styles.title, { color: colors.text }]}>Updating</Text>
 
           <Text style={[styles.message, { color: colors.textSecondary }]}>
-            {isReady
-              ? 'A new update has been downloaded. Restart to apply it.'
-              : 'Downloading the latest update. This will only take a moment.'}
+            Downloading the latest update. The app will refresh in a moment.
           </Text>
-
-          {error && <Text style={[styles.errorText, { color: colors.error }]}>{error}</Text>}
-
-          {isReady && (
-            <TouchableOpacity
-              style={[styles.installButton, isRestarting && styles.installButtonDisabled]}
-              onPress={handleInstall}
-              activeOpacity={0.8}
-              disabled={isRestarting}
-            >
-              {isRestarting ? (
-                <ActivityIndicator size="small" color={colors.textInverse} />
-              ) : (
-                <>
-                  <Ionicons name="refresh-outline" size={20} color={colors.textInverse} />
-                  <Text style={[styles.installButtonText, { color: colors.textInverse }]}>{error ? 'Retry' : 'Restart Now'}</Text>
-                </>
-              )}
-            </TouchableOpacity>
-          )}
         </View>
       </View>
     </Modal>
@@ -135,29 +91,5 @@ const styles = StyleSheet.create({
     fontSize: 15,
     textAlign: 'center',
     lineHeight: 22,
-    marginBottom: 16,
-  },
-  installButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: DEFAULT_PRIMARY_COLOR,
-    paddingVertical: 14,
-    paddingHorizontal: 24,
-    borderRadius: 12,
-    width: '100%',
-    gap: 8,
-  },
-  installButtonDisabled: {
-    opacity: 0.7,
-  },
-  installButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  errorText: {
-    fontSize: 14,
-    textAlign: 'center',
-    marginBottom: 12,
   },
 });

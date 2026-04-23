@@ -1,6 +1,6 @@
 /**
  * Tests for OTAUpdateProvider
- * Tests the non-blocking OTA update state machine and auto-apply logic.
+ * Tests the auto-applying OTA update state machine.
  */
 import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
@@ -35,13 +35,8 @@ const wrapper = ({ children }: { children: React.ReactNode }) =>
 
 describe('OTAUpdateProvider', () => {
   beforeEach(() => {
-    jest.useFakeTimers();
     jest.clearAllMocks();
     appStateChangeHandler = null;
-  });
-
-  afterEach(() => {
-    jest.useRealTimers();
   });
 
   it('skips update check in dev mode and stays idle', () => {
@@ -52,6 +47,7 @@ describe('OTAUpdateProvider', () => {
     expect(result.current.errorMessage).toBeNull();
     expect(mockCheckForUpdate).not.toHaveBeenCalled();
     expect(mockFetchUpdate).not.toHaveBeenCalled();
+    expect(mockReload).not.toHaveBeenCalled();
   });
 
   describe('with __DEV__ = false', () => {
@@ -79,50 +75,31 @@ describe('OTAUpdateProvider', () => {
 
       expect(mockCheckForUpdate).toHaveBeenCalledTimes(1);
       expect(mockFetchUpdate).not.toHaveBeenCalled();
+      expect(mockReload).not.toHaveBeenCalled();
       expect(result.current.errorMessage).toBeNull();
     });
 
-    it('transitions checking -> downloading -> ready when update is available', async () => {
+    it('auto-applies update when one is available', async () => {
       mockCheckForUpdate.mockResolvedValue({ isAvailable: true });
       mockFetchUpdate.mockResolvedValue({ isNew: true });
+      mockReload.mockResolvedValue(undefined);
 
       const { result } = renderHook(() => useOTAUpdateStatus(), { wrapper });
 
       expect(result.current.status).toBe('checking');
 
       await waitFor(() => {
-        expect(result.current.status).toBe('ready');
+        expect(mockReload).toHaveBeenCalledTimes(1);
       });
 
       expect(mockCheckForUpdate).toHaveBeenCalledTimes(1);
       expect(mockFetchUpdate).toHaveBeenCalledTimes(1);
+      expect(result.current.status).toBe('ready');
       expect(result.current.errorMessage).toBeNull();
     });
 
-    it('transitions to error on failure, then auto-dismisses to idle after 5s', async () => {
+    it('silently returns to idle on check failure (e.g. offline)', async () => {
       mockCheckForUpdate.mockRejectedValue(new Error('Network error'));
-
-      const { result } = renderHook(() => useOTAUpdateStatus(), { wrapper });
-
-      await waitFor(() => {
-        expect(result.current.status).toBe('error');
-      });
-
-      expect(result.current.errorMessage).toBe('Network error');
-
-      // Auto-dismiss after 5 seconds
-      act(() => {
-        jest.advanceTimersByTime(5000);
-      });
-
-      expect(result.current.status).toBe('idle');
-      expect(result.current.errorMessage).toBeNull();
-    });
-
-    it('skips error state for known error codes (ERR_UPDATES_DISABLED)', async () => {
-      const error = new Error('Updates are disabled');
-      (error as any).code = 'ERR_UPDATES_DISABLED';
-      mockCheckForUpdate.mockRejectedValue(error);
 
       const { result } = renderHook(() => useOTAUpdateStatus(), { wrapper });
 
@@ -130,45 +107,52 @@ describe('OTAUpdateProvider', () => {
         expect(result.current.status).toBe('idle');
       });
 
-      // Should never have gone to error
       expect(result.current.errorMessage).toBeNull();
+      expect(mockFetchUpdate).not.toHaveBeenCalled();
+      expect(mockReload).not.toHaveBeenCalled();
     });
 
-    it('auto-applies update when app is backgrounded for 30+ seconds', async () => {
-      mockCheckForUpdate.mockResolvedValue({ isAvailable: true });
-      mockFetchUpdate.mockResolvedValue({ isNew: true });
+    it('re-checks for updates when the app returns to foreground', async () => {
+      mockCheckForUpdate.mockResolvedValue({ isAvailable: false });
 
       renderHook(() => useOTAUpdateStatus(), { wrapper });
 
-      // Wait for update to be ready
       await waitFor(() => {
-        expect(appStateChangeHandler).not.toBeNull();
+        expect(mockCheckForUpdate).toHaveBeenCalledTimes(1);
       });
 
-      // Need to wait for status to become 'ready' so the AppState listener
-      // is registered with the correct status closure
-      await waitFor(() => {
-        // The status should be ready by now
-        expect(mockFetchUpdate).toHaveBeenCalled();
-      });
+      // Ensure the listener was registered.
+      expect(appStateChangeHandler).not.toBeNull();
 
-      // Re-render to pick up the effect with status='ready'
-      // Simulate going to background
+      // Simulate background -> active transition.
       act(() => {
         appStateChangeHandler!('background');
       });
-
-      // Advance past the 30s background timer
-      act(() => {
-        jest.advanceTimersByTime(30000);
-      });
-
-      // Simulate coming back to foreground
       act(() => {
         appStateChangeHandler!('active');
       });
 
-      expect(mockReload).toHaveBeenCalledTimes(1);
+      await waitFor(() => {
+        expect(mockCheckForUpdate).toHaveBeenCalledTimes(2);
+      });
+    });
+
+    it('does not re-enter while a check is already in flight', async () => {
+      // Never resolves — first check stays in flight.
+      mockCheckForUpdate.mockReturnValue(new Promise(() => {}));
+
+      renderHook(() => useOTAUpdateStatus(), { wrapper });
+
+      await waitFor(() => {
+        expect(mockCheckForUpdate).toHaveBeenCalledTimes(1);
+      });
+
+      // Foreground event during the in-flight check should be ignored.
+      act(() => {
+        appStateChangeHandler!('active');
+      });
+
+      expect(mockCheckForUpdate).toHaveBeenCalledTimes(1);
     });
   });
 });
