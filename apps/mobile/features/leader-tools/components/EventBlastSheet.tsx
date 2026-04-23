@@ -44,34 +44,26 @@ export function EventBlastSheet({
       return;
     }
 
-    Alert.alert(
-      "Send Text Blast",
-      `Text all attendees of ${eventTitle}? The message will also post to the event's Activity feed.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Send",
-          onPress: async () => {
-            setIsSending(true);
-            try {
-              await initiateBlast({
-                meetingId: meetingId as Id<"meetings">,
-                message: message.trim(),
-                channels: ["sms"],
-              });
-              setMessage("");
-              onSent();
-              onClose();
-            } catch (error) {
-              Alert.alert("Error", "Failed to send message. Please try again.");
-              console.error("Blast send error:", error);
-            } finally {
-              setIsSending(false);
-            }
-          },
-        },
-      ]
-    );
+    // Note: no confirm dialog. RN Web's Alert.alert is window.alert and does
+    // not support multi-button callbacks, so a second confirm silently no-ops
+    // on web. The sheet + Send button is already the explicit action.
+    setIsSending(true);
+    try {
+      await initiateBlast({
+        meetingId: meetingId as Id<"meetings">,
+        message: message.trim(),
+        channels: ["sms"],
+      });
+      setMessage("");
+      onSent();
+      onClose();
+      Alert.alert("Text blast sent", "Your message is on its way.");
+    } catch (error) {
+      Alert.alert("Error", "Failed to send message. Please try again.");
+      console.error("Blast send error:", error);
+    } finally {
+      setIsSending(false);
+    }
   };
 
   return (
