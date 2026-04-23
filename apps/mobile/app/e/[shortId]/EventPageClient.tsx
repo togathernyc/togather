@@ -81,7 +81,6 @@ import { AttendanceConfirmationModal } from "@/features/events/components/Attend
 import { DOMAIN_CONFIG } from "@togather/shared";
 import * as Clipboard from "expo-clipboard";
 import { EventBlastSheet } from "@/features/leader-tools/components/EventBlastSheet";
-import { EventBlastHistory } from "@/features/leader-tools/components/EventBlastHistory";
 import { EventActivity } from "./EventActivity";
 
 /**
@@ -999,10 +998,6 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
                 Text Blast
               </Text>
             </TouchableOpacity>
-          )}
-
-          {canEdit && eventData.id && (
-            <EventBlastHistory meetingId={eventData.id as string} />
           )}
         </View>
       </ScrollView>
