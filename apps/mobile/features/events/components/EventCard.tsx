@@ -59,6 +59,15 @@ export function EventCard({ event, onPress }: EventCardProps) {
   const visibleGuests = topGoingGuests.slice(0, maxVisibleAvatars);
   const remainingCount = totalGoing > maxVisibleAvatars ? totalGoing - maxVisibleAvatars : 0;
 
+  // When hideRsvpCount is on, non-leaders see avatars + a generic "+ more"
+  // overflow instead of the numeric count. We still hide the whole section
+  // if there isn't a full stack of avatars to show — a single avatar next to
+  // "+ more" would telegraph roughly-how-many as clearly as a number.
+  const countIsHidden = event.hideRsvpCount && !event.viewerIsLeader;
+  const showRsvpSection = countIsHidden
+    ? visibleGuests.length >= maxVisibleAvatars
+    : totalGoing > 0;
+
   return (
     <TouchableOpacity
       style={styles.container}
@@ -133,7 +142,7 @@ export function EventCard({ event, onPress }: EventCardProps) {
         )}
 
         {/* RSVP Summary */}
-        {totalGoing > 0 && (
+        {showRsvpSection && (
           <View style={styles.rsvpSection}>
             <View style={styles.avatarsRow}>
               {visibleGuests.map((guest, index) => (
@@ -151,15 +160,25 @@ export function EventCard({ event, onPress }: EventCardProps) {
                   />
                 </View>
               ))}
-              {remainingCount > 0 && (
+              {remainingCount > 0 && !countIsHidden && (
                 <View style={[styles.avatarWrapper, styles.avatarWrapperOverlap, styles.countBadge]}>
                   <Text style={styles.countText}>+{remainingCount}</Text>
                 </View>
               )}
+              {remainingCount > 0 && countIsHidden && (
+                <Text style={styles.moreText}>and more</Text>
+              )}
             </View>
-            <Text style={styles.rsvpText}>
-              {totalGoing} {totalGoing === 1 ? 'person' : 'people'} going
-            </Text>
+            {!countIsHidden && (
+              <Text style={styles.rsvpText}>
+                {totalGoing} {totalGoing === 1 ? 'person' : 'people'} going
+              </Text>
+            )}
+            {event.hideRsvpCount && event.viewerIsLeader && (
+              <View style={styles.leaderBadge}>
+                <Text style={styles.leaderBadgeText}>Leaders only</Text>
+              </View>
+            )}
           </View>
         )}
       </View>
@@ -309,6 +328,12 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#fff',
   },
+  moreText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: COLORS.textMuted,
+    marginLeft: 8,
+  },
   countText: {
     fontSize: 9,
     fontWeight: '600',
@@ -318,5 +343,19 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: COLORS.textMuted,
     fontWeight: '500',
+  },
+  leaderBadge: {
+    marginLeft: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e5e5e5',
+    backgroundColor: '#f5f5f5',
+  },
+  leaderBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: COLORS.textMuted,
   },
 });

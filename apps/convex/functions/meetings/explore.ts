@@ -10,6 +10,7 @@ import { query } from "../../_generated/server";
 import { Id, Doc } from "../../_generated/dataModel";
 import { now, getMediaUrl } from "../../lib/utils";
 import { getOptionalAuth } from "../../lib/auth";
+import { isLeaderRole } from "../../lib/helpers";
 
 /**
  * Resolve effective cover images for a batch of meetings, using the CWE
@@ -81,6 +82,9 @@ export const communityEvents = query({
 
     // Get user's group memberships for visibility filtering
     const userGroupIds: Set<string> = new Set();
+    // Groups where the viewer has a leader role — used to decide whether they
+    // can see RSVP counts on events with `hideRsvpCount` enabled.
+    const leaderGroupIds: Set<string> = new Set();
     // Get user's community memberships for visibility filtering
     const userCommunityIds: Set<string> = new Set();
     if (userId) {
@@ -100,6 +104,9 @@ export const communityEvents = query({
 
       for (const m of memberships) {
         userGroupIds.add(m.groupId);
+        if (isLeaderRole(m.role)) {
+          leaderGroupIds.add(m.groupId);
+        }
       }
 
       // Get user's community memberships
@@ -321,6 +328,14 @@ export const communityEvents = query({
           totalGoing: goingRsvps.length,
           topGoingGuests,
         },
+        // RSVP count visibility. `hideRsvpCount` is the event-level flag;
+        // `viewerIsLeader` is true when the viewer can see the count/badge
+        // (event creator or a leader of the hosting group).
+        hideRsvpCount: meeting.hideRsvpCount === true,
+        createdById: meeting.createdById ?? null,
+        viewerIsLeader:
+          leaderGroupIds.has(meeting.group._id) ||
+          (!!userId && meeting.createdById === userId),
       };
     });
 

@@ -12,7 +12,7 @@ import { now, normalizePagination, getMediaUrl } from "../../lib/utils";
 import { paginationArgs, meetingStatusValidator } from "../../lib/validators";
 import { getOptionalAuth } from "../../lib/auth";
 import { getSeriesNumber } from "../eventSeries";
-import { isActiveLeader } from "../../lib/helpers";
+import { isActiveLeader, isLeaderRole } from "../../lib/helpers";
 
 /**
  * "Hosted by [name]" (ADR-022) only applies to *member-led* events — i.e.
@@ -152,6 +152,12 @@ export const getByShortId = query({
       };
     }
 
+    // Viewer is treated as a leader (and thus can see the hidden RSVP count)
+    // when they lead the hosting group OR are the event creator.
+    const viewerIsLeader =
+      isLeaderRole(userRole) ||
+      (!!userId && !!meeting.createdById && userId === meeting.createdById);
+
     // Return full meeting data if user has access, limited data otherwise
     return {
       id: meeting._id,
@@ -174,6 +180,11 @@ export const getByShortId = query({
       rsvpEnabled: meeting.rsvpEnabled ?? true,
       rsvpOptions: meeting.rsvpOptions || [],
       rsvpCounts,
+      // When true, attendees can RSVP but the count is hidden from non-leaders.
+      hideRsvpCount: meeting.hideRsvpCount === true,
+      // True when the viewer should see the hidden count (leader of the
+      // hosting group or the event creator).
+      viewerIsLeader,
       // Group info
       groupId: group._id,
       groupName: group.name,

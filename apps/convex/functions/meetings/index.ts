@@ -125,6 +125,7 @@ export const create = mutation({
         })
       )
     ),
+    hideRsvpCount: v.optional(v.boolean()),
     visibility: v.optional(v.string()),
     seriesId: v.optional(v.id("eventSeries")),
   },
@@ -210,6 +211,7 @@ export const create = mutation({
       createdAt: timestamp,
       rsvpEnabled: effectiveRsvpEnabled,
       rsvpOptions: effectiveRsvpOptions,
+      hideRsvpCount: args.hideRsvpCount,
       visibility: args.visibility,
       seriesId: args.seriesId,
       // Scheduled job fields
@@ -302,6 +304,7 @@ export const update = mutation({
         })
       )
     ),
+    hideRsvpCount: v.optional(v.boolean()),
     visibility: v.optional(v.string()),
     scope: v.optional(v.union(v.literal("this_only"), v.literal("all_in_series"))),
   },
@@ -525,6 +528,7 @@ export const update = mutation({
       }
       if (updates.rsvpEnabled !== undefined) seriesUpdates.rsvpEnabled = updates.rsvpEnabled;
       if (updates.rsvpOptions !== undefined) seriesUpdates.rsvpOptions = updates.rsvpOptions;
+      if (updates.hideRsvpCount !== undefined) seriesUpdates.hideRsvpCount = updates.hideRsvpCount;
       if (updates.visibility !== undefined) seriesUpdates.visibility = updates.visibility;
       if (updates.locationOverride !== undefined) seriesUpdates.locationOverride = updates.locationOverride;
 
@@ -695,6 +699,7 @@ export const createSeriesEvents = mutation({
         })
       )
     ),
+    hideRsvpCount: v.optional(v.boolean()),
     visibility: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -764,6 +769,7 @@ export const createSeriesEvents = mutation({
         createdAt: timestamp,
         rsvpEnabled: effectiveRsvpEnabled,
         rsvpOptions: effectiveRsvpOptions,
+        hideRsvpCount: args.hideRsvpCount,
         visibility: args.visibility,
         seriesId,
         reminderAt,

@@ -75,6 +75,9 @@ function toCommunityEvent(child: any): CommunityEvent {
       totalGoing: child.rsvpSummary.totalGoing,
       topGoingGuests: child.rsvpSummary.topGoingGuests,
     },
+    hideRsvpCount: child.hideRsvpCount === true,
+    createdById: child.createdById ?? null,
+    viewerIsLeader: child.viewerIsLeader === true,
   };
 }
 

@@ -40,7 +40,16 @@ interface GuestListPreviewProps {
   rsvpData: RsvpData;
   rsvpOptions: RsvpOption[];
   onViewAll: () => void;
+  /** When true, the RSVP count is considered private. */
+  hideRsvpCount?: boolean;
+  /** When true, the viewer is a leader/host and sees the count + "Leaders only" badge. */
+  canSeeCount?: boolean;
 }
+
+// Threshold: when hideRsvpCount is on, only show the avatar stack to
+// non-leaders if there are at least this many attendees. Below the threshold,
+// a sparse row would telegraph the low count — hide the whole section instead.
+const AVATAR_ROW_MIN_FOR_HIDDEN_COUNT = 5;
 
 // ============================================================================
 // Component
@@ -54,8 +63,15 @@ export function GuestListPreview({
   rsvpData,
   rsvpOptions,
   onViewAll,
+  hideRsvpCount = false,
+  canSeeCount = false,
 }: GuestListPreviewProps) {
   const { colors } = useTheme();
+  // When the flag is on and the viewer isn't a leader/host, suppress the
+  // count/subtitle/view-all button. We still render the avatar stack if
+  // there are enough attendees to fill the row (otherwise the sparse stack
+  // would leak roughly how many RSVP'd).
+  const countIsHidden = hideRsvpCount && !canSeeCount;
   // Find the "Going" option to show those guests. Uses the same heuristic
   // as isGoingOption in apps/convex/lib/rsvpGuests.ts so decline variants
   // ("Not Going") aren't mistakenly treated as Going.
@@ -97,16 +113,34 @@ export function GuestListPreview({
     return null;
   }
 
+  // Non-leaders with hidden count: drop the whole section when we don't have
+  // enough avatars to present a "full" stack without revealing the small
+  // headcount.
+  if (countIsHidden && totalCount < AVATAR_ROW_MIN_FOR_HIDDEN_COUNT) {
+    return null;
+  }
+
   return (
     <View style={[styles.container, { borderTopColor: colors.border }]}>
       <View style={styles.header}>
-        <View>
-          <Text style={[styles.title, { color: colors.text }]}>Guest List</Text>
-          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>{subtitleText}</Text>
+        <View style={{ flex: 1 }}>
+          <View style={styles.titleRow}>
+            <Text style={[styles.title, { color: colors.text }]}>Guest List</Text>
+            {hideRsvpCount && canSeeCount && (
+              <View style={[styles.leaderBadge, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+                <Text style={[styles.leaderBadgeText, { color: colors.textSecondary }]}>Leaders only</Text>
+              </View>
+            )}
+          </View>
+          {!countIsHidden && (
+            <Text style={[styles.subtitle, { color: colors.textSecondary }]}>{subtitleText}</Text>
+          )}
         </View>
-        <TouchableOpacity style={[styles.viewAllButton, { backgroundColor: colors.surfaceSecondary }]} onPress={onViewAll}>
-          <Text style={[styles.viewAllText, { color: colors.text }]}>View all</Text>
-        </TouchableOpacity>
+        {!countIsHidden && (
+          <TouchableOpacity style={[styles.viewAllButton, { backgroundColor: colors.surfaceSecondary }]} onPress={onViewAll}>
+            <Text style={[styles.viewAllText, { color: colors.text }]}>View all</Text>
+          </TouchableOpacity>
+        )}
       </View>
       <View style={styles.avatarStack}>
         {displayUsers.map((user, index) => (
@@ -126,12 +160,15 @@ export function GuestListPreview({
             />
           </View>
         ))}
-        {overflowCount > 0 && (
+        {overflowCount > 0 && !countIsHidden && (
           <View style={[styles.avatarWrapper, { marginLeft: -8 }]}>
             <View style={styles.overflowBadge}>
               <Text style={styles.overflowText}>+{overflowCount}</Text>
             </View>
           </View>
+        )}
+        {overflowCount > 0 && countIsHidden && (
+          <Text style={[styles.moreText, { color: colors.textSecondary }]}>and more</Text>
         )}
       </View>
     </View>
@@ -154,10 +191,26 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     marginBottom: 16,
   },
+  titleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 4,
+    flexWrap: "wrap",
+  },
   title: {
     fontSize: 18,
     fontWeight: "600",
-    marginBottom: 4,
+  },
+  leaderBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  leaderBadgeText: {
+    fontSize: 11,
+    fontWeight: "600",
   },
   subtitle: {
     fontSize: 14,
@@ -195,5 +248,13 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 12,
     fontWeight: "600",
+  },
+  // Inline "and more" label beside the avatar stack when the numeric count is
+  // hidden from the viewer. No chrome — a pill badge next to circular avatars
+  // reads awkwardly.
+  moreText: {
+    fontSize: 14,
+    fontWeight: "500",
+    marginLeft: 10,
   },
 });
