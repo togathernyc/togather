@@ -162,8 +162,12 @@ jest.mock("@services/api/convex", () => ({
       messaging: {
         eventChat: {
           getChannelByMeetingId: "api.functions.messaging.eventChat.getChannelByMeetingId",
+          getChannelStateForEditor: "api.functions.messaging.eventChat.getChannelStateForEditor",
           setEventChannelEnabled: "api.functions.messaging.eventChat.setEventChannelEnabled",
         },
+      },
+      groupMembers: {
+        list: "api.functions.groupMembers.list",
       },
     },
   },
