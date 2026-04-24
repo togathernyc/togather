@@ -106,6 +106,49 @@ export const getChannelByMeetingId = query({
   },
 });
 
+/**
+ * Editor-only view of the channel state. Returns the real `isEnabled`
+ * value regardless of whether the caller can access the chat itself —
+ * leaders/admins who can edit the meeting may not be RSVPers/hosts and
+ * would otherwise see `null` from `getChannelByMeetingId` whether the
+ * channel is disabled or nonexistent. Without this distinction the edit
+ * form defaults to "enabled" and a no-op toggle never fires the persist
+ * mutation, making re-enable impossible from that screen.
+ *
+ * Returns `{ exists: false, isEnabled: true }` when no channel row exists
+ * yet (matches the default state on first materialization).
+ */
+export const getChannelStateForEditor = query({
+  args: {
+    token: v.string(),
+    meetingId: v.id("meetings"),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ exists: boolean; isEnabled: boolean } | null> => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const meeting = await ctx.db.get(args.meetingId);
+    if (!meeting) return null;
+
+    if (!(await canEditMeeting(ctx, userId, meeting))) {
+      return null;
+    }
+
+    const channel = await ctx.db
+      .query("chatChannels")
+      .withIndex("by_meetingId", (q) => q.eq("meetingId", args.meetingId))
+      .first();
+
+    if (!channel) {
+      return { exists: false, isEnabled: true };
+    }
+
+    return { exists: true, isEnabled: channel.isEnabled !== false };
+  },
+});
+
 // ============================================================================
 // Internal mutations
 // ============================================================================

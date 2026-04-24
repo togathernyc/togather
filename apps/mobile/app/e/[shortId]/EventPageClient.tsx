@@ -260,9 +260,6 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
   // Event Chat Mutations
   // ============================================================================
 
-  const setEventChannelEnabledMutation = useAuthenticatedMutation(
-    api.functions.messaging.eventChat.setEventChannelEnabled
-  );
   const openEventChatMutation = useAuthenticatedMutation(
     api.functions.messaging.eventChat.openEventChat
   );
@@ -330,44 +327,6 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
     materializedChannelId,
     openEventChatMutation,
   ]);
-
-  const handleToggleEventChat = async (enabled: boolean) => {
-    if (!eventData?.id) return;
-    const applyToggle = async () => {
-      try {
-        await setEventChannelEnabledMutation({
-          meetingId: eventData.id as Id<"meetings">,
-          enabled,
-        });
-      } catch (err) {
-        console.error("Failed to toggle event chat:", err);
-        Alert.alert("Error", "Failed to update event chat. Please try again.");
-      }
-    };
-
-    // Confirm before disabling; re-enabling is a straight call.
-    // RN Web's Alert.alert is window.alert and can't fire multi-button
-    // callbacks — use window.confirm on web.
-    if (!enabled) {
-      const confirmMessage = "Disable event chat? Attendees won't be able to message the group.";
-      if (Platform.OS === "web") {
-        if (typeof window !== "undefined" && window.confirm(confirmMessage)) {
-          await applyToggle();
-        }
-        return;
-      }
-      Alert.alert(
-        "Disable event chat?",
-        "Attendees won't be able to message the group.",
-        [
-          { text: "Cancel", style: "cancel" },
-          { text: "Disable", style: "destructive", onPress: applyToggle },
-        ]
-      );
-      return;
-    }
-    await applyToggle();
-  };
 
   // ============================================================================
   // Loading & Error States
@@ -912,6 +871,8 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
               rsvpData={rsvpData as RsvpData}
               rsvpOptions={rsvpOptions}
               onViewAll={handleViewGuestList}
+              hideRsvpCount={(eventData as any)?.hideRsvpCount === true}
+              canSeeCount={canEdit}
             />
           )}
 
@@ -972,24 +933,6 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
                 <Switch
                   value={rsvpNotifyLeaders}
                   onValueChange={handleToggleRsvpNotify}
-                  trackColor={{ false: colors.border, true: DEFAULT_PRIMARY_COLOR }}
-                />
-              </View>
-            </View>
-          )}
-
-          {/* Host/Leader: enable/disable event chat. Backend enforces the same
-              permission (event creator, group leader, or community admin). */}
-          {canEdit && (
-            <View style={[styles.leaderCard, { backgroundColor: colors.surfaceSecondary }]}>
-              <View style={styles.leaderCardRow}>
-                <Ionicons name="chatbubble-ellipses-outline" size={20} color={colors.textSecondary} />
-                <Text style={[styles.leaderCardText, { color: colors.text }]}>
-                  Event chat
-                </Text>
-                <Switch
-                  value={isChatEnabled}
-                  onValueChange={handleToggleEventChat}
                   trackColor={{ false: colors.border, true: DEFAULT_PRIMARY_COLOR }}
                 />
               </View>

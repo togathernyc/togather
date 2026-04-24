@@ -74,6 +74,9 @@ type SingleEventCard = {
       profileImage: string | null;
     }>;
   };
+  hideRsvpCount: boolean;
+  createdById: Id<"users"> | null;
+  viewerIsLeader: boolean;
 };
 
 type CommunityWideCard = {
@@ -105,6 +108,7 @@ export const listForEventsTab = query({
 
     const {
       userGroupIds,
+      userLeaderGroupIds,
       isCommunityMember,
       userRsvpMeetingIds,
       userHostedMeetingIds,
@@ -204,7 +208,10 @@ export const listForEventsTab = query({
         )
       ).values()
     );
-    const enrichment = await buildEnrichment(ctx, uniqueForEnrichment);
+    const enrichment = await buildEnrichment(ctx, uniqueForEnrichment, {
+      userId,
+      leaderGroupIds: userLeaderGroupIds,
+    });
 
     return {
       myEvents: myEventsCandidates.map((m) => buildSingleCard(m, enrichment)),
@@ -228,7 +235,7 @@ export const getCommunityWideEventChildren = query({
     const parent = await ctx.db.get(args.parentId);
     if (!parent) return { parent: null, children: [] };
 
-    const { userGroupIds, isCommunityMember } =
+    const { userGroupIds, userLeaderGroupIds, isCommunityMember } =
       await loadVisibilityContext(ctx, userId, parent.communityId);
 
     const children = await ctx.db
@@ -259,7 +266,10 @@ export const getCommunityWideEventChildren = query({
     );
     visible.sort((a, b) => a.scheduledAt - b.scheduledAt);
 
-    const enrichment = await buildEnrichment(ctx, visible);
+    const enrichment = await buildEnrichment(ctx, visible, {
+      userId,
+      leaderGroupIds: userLeaderGroupIds,
+    });
     const cards = visible.map((m) => buildSingleCard(m, enrichment));
 
     return {
@@ -295,11 +305,8 @@ export const listLaterEvents = query({
   },
   handler: async (ctx, args) => {
     const userId = await getOptionalAuth(ctx, args.token);
-    const { userGroupIds, isCommunityMember } = await loadVisibilityContext(
-      ctx,
-      userId,
-      args.communityId
-    );
+    const { userGroupIds, userLeaderGroupIds, isCommunityMember } =
+      await loadVisibilityContext(ctx, userId, args.communityId);
 
     const weekCutoff = args.now + SEVEN_DAYS_MS;
     const page = await ctx.db
@@ -327,7 +334,10 @@ export const listLaterEvents = query({
       isVisible(m, userId, userGroupIds, isCommunityMember)
     );
 
-    const enrichment = await buildEnrichment(ctx, visible);
+    const enrichment = await buildEnrichment(ctx, visible, {
+      userId,
+      leaderGroupIds: userLeaderGroupIds,
+    });
     // Use a limit equal to the fetched count so buildBucket never truncates
     // a page — Convex pagination controls the size upstream.
     const cards = buildBucket(visible, visible.length, enrichment);
@@ -500,11 +510,21 @@ type Enrichment = {
   // Reading this prevents the old bug where a CWE card showed "0 going"
   // when the RSVP'd child was routed to a different section.
   totalGoingByParent: Map<Id<"communityWideEvents">, number>;
+  // Viewer context — used to stamp each SingleEventCard with
+  // `viewerIsLeader` so the client can decide whether to reveal a hidden
+  // RSVP count. Populated only when enrichment is built inside a query
+  // that knows the viewer; defaults to empty sets when not.
+  viewerId?: Id<"users"> | null;
+  viewerLeaderGroupIds?: Set<string>;
 };
 
 export async function buildEnrichment(
   ctx: QueryCtx,
-  meetings: MeetingWithGroup[]
+  meetings: MeetingWithGroup[],
+  viewer?: {
+    userId: Id<"users"> | null;
+    leaderGroupIds: Set<string>;
+  }
 ): Promise<Enrichment> {
   const groupTypeIds = [
     ...new Set(meetings.map((m) => m.group.groupTypeId)),
@@ -606,6 +626,8 @@ export async function buildEnrichment(
     usersMap,
     parentsMap,
     totalGoingByParent,
+    viewerId: viewer?.userId ?? null,
+    viewerLeaderGroupIds: viewer?.leaderGroupIds ?? new Set(),
   };
 }
 
@@ -742,5 +764,10 @@ function buildSingleCard(
       totalGoing: goingRsvps.length,
       topGoingGuests,
     },
+    hideRsvpCount: m.hideRsvpCount === true,
+    createdById: m.createdById ?? null,
+    viewerIsLeader:
+      (e.viewerLeaderGroupIds?.has(m.group._id) ?? false) ||
+      (!!e.viewerId && !!m.createdById && e.viewerId === m.createdById),
   };
 }

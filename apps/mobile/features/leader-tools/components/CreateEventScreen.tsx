@@ -61,6 +61,7 @@ interface CreateMeetingInput {
   posterId?: Id<"posters"> | null;
   rsvpEnabled?: boolean;
   rsvpOptions?: RsvpOption[];
+  hideRsvpCount?: boolean;
   visibility?: VisibilityLevel;
 }
 
@@ -153,6 +154,12 @@ export function CreateEventScreen() {
   const [rsvpEnabled, setRsvpEnabled] = useState(true);
   const [rsvpOptions, setRsvpOptions] =
     useState<RsvpOption[]>(DEFAULT_RSVP_OPTIONS);
+  // When true, RSVP count/list is hidden from non-leaders on the event page
+  // and in chat cards. Leaders still see the count with a "Leaders only" badge.
+  const [hideRsvpCount, setHideRsvpCount] = useState(false);
+  // Event chat lives on the chatChannels doc, not the meeting — loaded/saved
+  // separately from the meeting update mutation below.
+  const [eventChatEnabled, setEventChatEnabled] = useState(true);
   const [visibility, setVisibility] = useState<VisibilityLevel>("public");
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(hostingGroupId || null);
   const [isGroupDropdownOpen, setIsGroupDropdownOpen] = useState(false);
@@ -318,11 +325,35 @@ export function CreateEventScreen() {
       if (meeting.rsvpOptions && Array.isArray(meeting.rsvpOptions)) {
         setRsvpOptions(meeting.rsvpOptions as unknown as RsvpOption[]);
       }
+      setHideRsvpCount((meeting as any).hideRsvpCount === true);
       if (meeting.visibility) {
         setVisibility(meeting.visibility as VisibilityLevel);
       }
     }
   }, [meeting, isEditMode, isCweAdminEdit, parentCweData]);
+
+  // Load event chat on/off state for the edit form. Uses the editor-only
+  // query so leaders/admins who aren't RSVPed still see the real state. The
+  // user-facing `getChannelByMeetingId` returns null both when no channel
+  // exists AND when the caller lacks chat access — conflating those two
+  // would default the toggle to "enabled" for an editor viewing a disabled
+  // channel, and the no-op save path would silently skip the persist.
+  const eventChatState = useConvexQuery(
+    api.functions.messaging.eventChat.getChannelStateForEditor,
+    isEditMode && meetingId && token
+      ? { meetingId: meetingId as Id<"meetings">, token }
+      : "skip"
+  );
+  const initialEventChatEnabled = eventChatState?.isEnabled ?? true;
+  useEffect(() => {
+    if (eventChatState !== undefined && eventChatState !== null) {
+      setEventChatEnabled(initialEventChatEnabled);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventChatState]);
+  const setEventChannelEnabledMutation = useAuthenticatedMutation(
+    api.functions.messaging.eventChat.setEventChannelEnabled
+  );
 
   // Debounced geocoding check for location field
   useEffect(() => {
@@ -390,7 +421,7 @@ export function CreateEventScreen() {
   // Wrapper for create mutation with state tracking
   // Note: useAuthenticatedMutation auto-injects the token
   const createMeeting = {
-    mutate: async (data: { groupId: string; scheduledAt: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; locationMode?: "address" | "online" | "tbd"; note?: string; coverImage?: string; posterId?: Id<"posters"> | null; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; visibility?: VisibilityLevel }) => {
+    mutate: async (data: { groupId: string; scheduledAt: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; locationMode?: "address" | "online" | "tbd"; note?: string; coverImage?: string; posterId?: Id<"posters"> | null; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; hideRsvpCount?: boolean; visibility?: VisibilityLevel }) => {
       setIsCreating(true);
       try {
         const newMeetingId = await createMeetingMutation({
@@ -409,6 +440,7 @@ export function CreateEventScreen() {
           posterId: data.posterId ?? undefined,
           rsvpEnabled: data.rsvpEnabled,
           rsvpOptions: data.rsvpOptions,
+          hideRsvpCount: data.hideRsvpCount,
           visibility: data.visibility,
         });
         // ADR-022 analytics: only fire for non-leader creators so the funnel
@@ -435,7 +467,7 @@ export function CreateEventScreen() {
   // Wrapper for update mutation with state tracking
   // Note: useAuthenticatedMutation auto-injects the token
   const updateMeeting = {
-    mutate: async (data: { meetingId: string; scheduledAt?: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; locationMode?: "address" | "online" | "tbd"; note?: string; coverImage?: string; posterId?: Id<"posters"> | null; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; visibility?: VisibilityLevel; notifyGuests?: boolean }) => {
+    mutate: async (data: { meetingId: string; scheduledAt?: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; locationMode?: "address" | "online" | "tbd"; note?: string; coverImage?: string; posterId?: Id<"posters"> | null; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; hideRsvpCount?: boolean; visibility?: VisibilityLevel; notifyGuests?: boolean }) => {
       setIsUpdating(true);
       try {
         await updateMeetingMutation({
@@ -451,6 +483,7 @@ export function CreateEventScreen() {
           posterId: data.posterId,
           rsvpEnabled: data.rsvpEnabled,
           rsvpOptions: data.rsvpOptions,
+          hideRsvpCount: data.hideRsvpCount,
           visibility: data.visibility,
         });
         // Convex automatically updates queries
@@ -731,6 +764,7 @@ export function CreateEventScreen() {
         posterId: posterId,
         rsvpEnabled: rsvpEnabled,
         rsvpOptions: rsvpOptions.filter((opt) => opt.enabled),
+        hideRsvpCount: hideRsvpCount,
         visibility: visibility,
       };
 
@@ -738,11 +772,43 @@ export function CreateEventScreen() {
         const hasSeries = !!meeting?.seriesId;
         const isCommunityWide = !!meeting?.communityWideEventId;
 
+        // Event chat lives on chatChannels, not on the meeting. Flip it once
+        // up front for the meeting being edited so the state persists no
+        // matter which scope branch runs (single, series, or CWE-wide). The
+        // toggle is inherently per-meeting, so we never cascade it. Running
+        // BEFORE the meeting write means a failure here aborts the save and
+        // no other form changes land — that's intentional, since the
+        // alternative is a silent partial write where the user thinks the
+        // toggle saved but it didn't. The caller alerts on thrown errors.
+        const persistEventChatToggle = async () => {
+          if (
+            eventChatState !== undefined &&
+            eventChatEnabled !== initialEventChatEnabled
+          ) {
+            await setEventChannelEnabledMutation({
+              meetingId: meetingId as Id<"meetings">,
+              enabled: eventChatEnabled,
+            });
+          }
+        };
+
         // Determine edit scope. Cross-cutting scopes on a community-wide
         // event route to `communityWideEvents.update`, which cascades to every
         // sibling. Single-meeting edits (and series-only) stay on
         // `meetings.update`. Matches the cancel flow split.
         const performUpdate = async (scope?: EditScope) => {
+          try {
+            await persistEventChatToggle();
+          } catch (err: any) {
+            Alert.alert(
+              "Error",
+              formatError(
+                err,
+                "Failed to update event chat. Other changes were not saved.",
+              ),
+            );
+            return;
+          }
           if (
             isCommunityWide &&
             (scope === "this_date_all_groups" || scope === "all_in_series") &&
@@ -769,6 +835,7 @@ export function CreateEventScreen() {
                 // cascade across differing group addresses.
                 rsvpEnabled: data.rsvpEnabled,
                 rsvpOptions: data.rsvpOptions,
+                hideRsvpCount: data.hideRsvpCount,
                 visibility: data.visibility,
                 scope,
               });
@@ -837,6 +904,7 @@ export function CreateEventScreen() {
             meetingLink: data.meetingLink,
             note: data.note,
             coverImage: finalCoverImage,
+            hideRsvpCount: data.hideRsvpCount,
           });
           Alert.alert(
             "Series Created",
@@ -870,6 +938,7 @@ export function CreateEventScreen() {
             coverImage: finalCoverImage,
             rsvpEnabled: data.rsvpEnabled,
             rsvpOptions: data.rsvpOptions,
+            hideRsvpCount: data.hideRsvpCount,
             visibility: data.visibility,
           });
           Alert.alert(
@@ -899,6 +968,7 @@ export function CreateEventScreen() {
             coverImage: finalCoverImage,
             rsvpEnabled: data.rsvpEnabled,
             rsvpOptions: data.rsvpOptions,
+            hideRsvpCount: data.hideRsvpCount,
           });
           Alert.alert(
             "Events Created",
@@ -1713,12 +1783,44 @@ export function CreateEventScreen() {
               <Switch value={rsvpEnabled} onValueChange={setRsvpEnabled} />
             </View>
             {rsvpEnabled && (
-              <RsvpOptionsEditor
-                options={rsvpOptions}
-                onChange={setRsvpOptions}
-              />
+              <>
+                <RsvpOptionsEditor
+                  options={rsvpOptions}
+                  onChange={setRsvpOptions}
+                />
+                <View style={styles.toggleRow}>
+                  <View style={{ flex: 1, paddingRight: 12 }}>
+                    <Text style={[styles.toggleLabel, { color: colors.text }]}>Hide RSVP count</Text>
+                    <Text style={[styles.toggleHint, { color: colors.textSecondary }]}>
+                      Attendees can RSVP but won't see totals. Only you and other leaders will.
+                    </Text>
+                  </View>
+                  <Switch value={hideRsvpCount} onValueChange={setHideRsvpCount} />
+                </View>
+              </>
             )}
           </View>
+
+          {/* Event chat toggle — edit mode only. Hidden while the channel
+              query is still loading so the switch doesn't flicker into the
+              wrong position and then snap. A `null` result means the caller
+              isn't an editor (shouldn't happen on this screen, but guard
+              anyway). `setEventChannelEnabled` materializes the channel on
+              first flip, so an `exists: false` state is fine. */}
+          {isEditMode && !!eventChatState && (
+            <View style={styles.section}>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Event Chat</Text>
+              <View style={styles.toggleRow}>
+                <View style={{ flex: 1, paddingRight: 12 }}>
+                  <Text style={[styles.toggleLabel, { color: colors.text }]}>Enable event chat</Text>
+                  <Text style={[styles.toggleHint, { color: colors.textSecondary }]}>
+                    Only RSVP'd attendees can read or post. When off, no one can send messages.
+                  </Text>
+                </View>
+                <Switch value={eventChatEnabled} onValueChange={setEventChatEnabled} />
+              </View>
+            </View>
+          )}
 
           {/* Visibility */}
           <View style={styles.section}>

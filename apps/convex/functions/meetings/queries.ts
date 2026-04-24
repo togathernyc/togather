@@ -12,7 +12,7 @@ import { now, normalizePagination, getMediaUrl } from "../../lib/utils";
 import { paginationArgs, meetingStatusValidator } from "../../lib/validators";
 import { getOptionalAuth } from "../../lib/auth";
 import { getSeriesNumber } from "../eventSeries";
-import { isActiveLeader } from "../../lib/helpers";
+import { isActiveLeader, isLeaderRole } from "../../lib/helpers";
 
 /**
  * "Hosted by [name]" (ADR-022) only applies to *member-led* events — i.e.
@@ -76,6 +76,33 @@ export const getByShortId = query({
     let hasAccess = false;
     let userRole: string | null = null;
 
+    // Look up the viewer's group membership up front so we always know their
+    // role, independent of how access is granted. Without this, leaders who
+    // view public/community events (where hasAccess is granted by visibility
+    // alone) would never populate userRole, and `viewerIsLeader` below would
+    // incorrectly flip to false — causing group leaders to lose hidden-count
+    // visibility on their own group's public events.
+    const groupMembership = userId
+      ? await ctx.db
+          .query("groupMembers")
+          .withIndex("by_group_user", (q) =>
+            q.eq("groupId", meeting.groupId).eq("userId", userId)
+          )
+          .filter((q) =>
+            q.and(
+              q.eq(q.field("leftAt"), undefined),
+              q.or(
+                q.eq(q.field("requestStatus"), undefined),
+                q.eq(q.field("requestStatus"), "accepted")
+              )
+            )
+          )
+          .first()
+      : null;
+    if (groupMembership) {
+      userRole = groupMembership.role || "member";
+    }
+
     // Check visibility-based access
     const visibility = meeting.visibility || "group";
     if (visibility === "public") {
@@ -89,28 +116,8 @@ export const getByShortId = query({
         )
         .first();
       hasAccess = !!communityMembership;
-    } else if (userId) {
-      // Check if user is a member of the group
-      const groupMembership = await ctx.db
-        .query("groupMembers")
-        .withIndex("by_group_user", (q) =>
-          q.eq("groupId", meeting.groupId).eq("userId", userId)
-        )
-        .filter((q) =>
-          q.and(
-            q.eq(q.field("leftAt"), undefined),
-            q.or(
-              q.eq(q.field("requestStatus"), undefined),
-              q.eq(q.field("requestStatus"), "accepted")
-            )
-          )
-        )
-        .first();
-
-      if (groupMembership) {
-        hasAccess = true;
-        userRole = groupMembership.role || "member";
-      }
+    } else if (groupMembership) {
+      hasAccess = true;
     }
 
     // Get group type name
@@ -152,6 +159,12 @@ export const getByShortId = query({
       };
     }
 
+    // Viewer is treated as a leader (and thus can see the hidden RSVP count)
+    // when they lead the hosting group OR are the event creator.
+    const viewerIsLeader =
+      isLeaderRole(userRole) ||
+      (!!userId && !!meeting.createdById && userId === meeting.createdById);
+
     // Return full meeting data if user has access, limited data otherwise
     return {
       id: meeting._id,
@@ -174,6 +187,11 @@ export const getByShortId = query({
       rsvpEnabled: meeting.rsvpEnabled ?? true,
       rsvpOptions: meeting.rsvpOptions || [],
       rsvpCounts,
+      // When true, attendees can RSVP but the count is hidden from non-leaders.
+      hideRsvpCount: meeting.hideRsvpCount === true,
+      // True when the viewer should see the hidden count (leader of the
+      // hosting group or the event creator).
+      viewerIsLeader,
       // Group info
       groupId: group._id,
       groupName: group.name,

@@ -95,6 +95,8 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
       accessPrompt: data.accessPrompt,
       status: data.status as string | undefined,
       cancellationReason: data.cancellationReason as string | undefined,
+      hideRsvpCount: data.hideRsvpCount === true,
+      viewerIsLeader: data.viewerIsLeader === true,
     };
   }, [eventData]);
 
@@ -265,8 +267,10 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
     };
   };
 
-  // Avatar stack component
-  const AvatarStack = ({ users }: { users: RsvpUser[] }) => {
+  // Avatar stack component. When the RSVP count is private (hidden from
+  // non-leaders), render "+ more" instead of a numeric overflow so we don't
+  // leak the headcount through the stack.
+  const AvatarStack = ({ users, hideOverflowCount }: { users: RsvpUser[]; hideOverflowCount?: boolean }) => {
     if (users.length === 0) return null;
 
     const displayUsers = users.slice(0, 3);
@@ -284,7 +288,9 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
           />
         ))}
         {remainingCount > 0 && (
-          <Text style={[styles.remainingCount, { color: colors.textSecondary }]}>+{remainingCount}</Text>
+          <Text style={[styles.remainingCount, { color: colors.textSecondary }]}>
+            {hideOverflowCount ? 'and more' : `+${remainingCount}`}
+          </Text>
         )}
       </View>
     );
@@ -296,6 +302,11 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
       <View style={[styles.progressBar, { width: `${percentage}%` }]} />
     </View>
   );
+
+  // Whether the numeric RSVP count should be suppressed for this viewer.
+  // Avatars stay visible either way so there's still some social proof.
+  const countIsHidden = !!event?.hideRsvpCount && !event?.viewerIsLeader;
+  const showLeaderBadge = !!event?.hideRsvpCount && !!event?.viewerIsLeader;
 
   // RSVP option row
   const RsvpOptionRow = ({ option }: { option: RsvpOption }) => {
@@ -348,11 +359,13 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
             </Text>
           </View>
           <View style={styles.rsvpStats}>
-            <AvatarStack users={stats.users} />
-            <Text style={[styles.rsvpCount, { color: colors.textSecondary }]}>{stats.count}</Text>
+            <AvatarStack users={stats.users} hideOverflowCount={countIsHidden} />
+            {!countIsHidden && (
+              <Text style={[styles.rsvpCount, { color: colors.textSecondary }]}>{stats.count}</Text>
+            )}
           </View>
         </View>
-        <ProgressBar percentage={stats.percentage} />
+        {!countIsHidden && <ProgressBar percentage={stats.percentage} />}
       </TouchableOpacity>
     );
   };
@@ -519,6 +532,14 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
         {/* RSVP Options - hide when cancelled or past */}
         {!isCancelled && !isPastEvent && event.rsvpEnabled && rsvpOptions.length > 0 && (
           <View style={styles.rsvpSection}>
+            {showLeaderBadge && (
+              <View style={[styles.leaderBadge, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+                <Ionicons name="eye-outline" size={12} color={colors.textSecondary} />
+                <Text style={[styles.leaderBadgeText, { color: colors.textSecondary }]}>
+                  RSVP count hidden from attendees · only you see this
+                </Text>
+              </View>
+            )}
             {rsvpsLoading ? (
               <View style={styles.loadingContainer}>
                 <ActivityIndicator size="small" color={DEFAULT_PRIMARY_COLOR} />
@@ -650,6 +671,20 @@ const styles = StyleSheet.create({
   rsvpSection: {
     padding: 16,
     gap: 12,
+  },
+  leaderBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignSelf: 'flex-start',
+  },
+  leaderBadgeText: {
+    fontSize: 11,
+    fontWeight: '500',
   },
   guestStepperRow: {
     paddingTop: 12,

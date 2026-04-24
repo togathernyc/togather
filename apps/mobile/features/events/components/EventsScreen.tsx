@@ -80,6 +80,9 @@ function toCommunityEvent(card: any): CommunityEvent {
       totalGoing: card.rsvpSummary.totalGoing,
       topGoingGuests: card.rsvpSummary.topGoingGuests,
     },
+    hideRsvpCount: card.hideRsvpCount === true,
+    createdById: card.createdById ?? null,
+    viewerIsLeader: card.viewerIsLeader === true,
   };
 }
 

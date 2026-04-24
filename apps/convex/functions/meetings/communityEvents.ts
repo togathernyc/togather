@@ -48,6 +48,7 @@ export const createCommunityWideEvent = mutation({
         })
       )
     ),
+    hideRsvpCount: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -140,6 +141,7 @@ export const createCommunityWideEvent = mutation({
         createdAt: timestamp,
         rsvpEnabled: effectiveRsvpEnabled,
         rsvpOptions: effectiveRsvpOptions,
+        hideRsvpCount: args.hideRsvpCount,
         communityId: args.communityId,
         searchText: buildMeetingSearchText({
           title: args.title,
