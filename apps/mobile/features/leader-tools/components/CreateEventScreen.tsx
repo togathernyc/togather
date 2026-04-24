@@ -487,25 +487,6 @@ export function CreateEventScreen() {
           hideRsvpCount: data.hideRsvpCount,
           visibility: data.visibility,
         });
-        // Persist the event chat toggle separately (it lives on chatChannels,
-        // not on the meeting). Fire the mutation only when the effective
-        // state changed. When no channel exists yet the effective state is
-        // "enabled" (default), so flipping to disabled triggers a
-        // materialize-and-patch via setEventChannelEnabled. Backend enforces
-        // permissions.
-        if (
-          eventChannel !== undefined &&
-          eventChatEnabled !== initialEventChatEnabled
-        ) {
-          try {
-            await setEventChannelEnabledMutation({
-              meetingId: data.meetingId as Id<"meetings">,
-              enabled: eventChatEnabled,
-            });
-          } catch (err) {
-            console.warn("Failed to update event chat toggle:", err);
-          }
-        }
         // Convex automatically updates queries
         router.back();
       } catch (error: any) {
@@ -792,11 +773,32 @@ export function CreateEventScreen() {
         const hasSeries = !!meeting?.seriesId;
         const isCommunityWide = !!meeting?.communityWideEventId;
 
+        // Event chat lives on chatChannels, not on the meeting. Flip it once
+        // up front for the meeting being edited so the state persists no
+        // matter which scope branch runs (single, series, or CWE-wide). The
+        // toggle is inherently per-meeting, so we never cascade it.
+        const persistEventChatToggle = async () => {
+          if (
+            eventChannel !== undefined &&
+            eventChatEnabled !== initialEventChatEnabled
+          ) {
+            try {
+              await setEventChannelEnabledMutation({
+                meetingId: meetingId as Id<"meetings">,
+                enabled: eventChatEnabled,
+              });
+            } catch (err) {
+              console.warn("Failed to update event chat toggle:", err);
+            }
+          }
+        };
+
         // Determine edit scope. Cross-cutting scopes on a community-wide
         // event route to `communityWideEvents.update`, which cascades to every
         // sibling. Single-meeting edits (and series-only) stay on
         // `meetings.update`. Matches the cancel flow split.
         const performUpdate = async (scope?: EditScope) => {
+          await persistEventChatToggle();
           if (
             isCommunityWide &&
             (scope === "this_date_all_groups" || scope === "all_in_series") &&
@@ -823,6 +825,7 @@ export function CreateEventScreen() {
                 // cascade across differing group addresses.
                 rsvpEnabled: data.rsvpEnabled,
                 rsvpOptions: data.rsvpOptions,
+                hideRsvpCount: data.hideRsvpCount,
                 visibility: data.visibility,
                 scope,
               });
@@ -891,6 +894,7 @@ export function CreateEventScreen() {
             meetingLink: data.meetingLink,
             note: data.note,
             coverImage: finalCoverImage,
+            hideRsvpCount: data.hideRsvpCount,
           });
           Alert.alert(
             "Series Created",
@@ -924,6 +928,7 @@ export function CreateEventScreen() {
             coverImage: finalCoverImage,
             rsvpEnabled: data.rsvpEnabled,
             rsvpOptions: data.rsvpOptions,
+            hideRsvpCount: data.hideRsvpCount,
             visibility: data.visibility,
           });
           Alert.alert(
@@ -953,6 +958,7 @@ export function CreateEventScreen() {
             coverImage: finalCoverImage,
             rsvpEnabled: data.rsvpEnabled,
             rsvpOptions: data.rsvpOptions,
+            hideRsvpCount: data.hideRsvpCount,
           });
           Alert.alert(
             "Events Created",

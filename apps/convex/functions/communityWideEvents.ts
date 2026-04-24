@@ -233,6 +233,7 @@ export const update = mutation({
         })
       )
     ),
+    hideRsvpCount: v.optional(v.boolean()),
     visibility: v.optional(v.string()),
     scope: v.optional(v.union(v.literal("this_date_all_groups"), v.literal("all_in_series"))),
   },
@@ -342,6 +343,7 @@ export const update = mutation({
     // cover of its own.
     if (args.rsvpEnabled !== undefined) childUpdates.rsvpEnabled = args.rsvpEnabled;
     if (args.rsvpOptions !== undefined) childUpdates.rsvpOptions = args.rsvpOptions;
+    if (args.hideRsvpCount !== undefined) childUpdates.hideRsvpCount = args.hideRsvpCount;
     if (args.visibility !== undefined) childUpdates.visibility = args.visibility;
 
     // Update all non-overridden child meetings
@@ -592,6 +594,7 @@ export const createSeries = mutation({
     meetingLink: v.optional(v.string()),
     note: v.optional(v.string()),
     coverImage: v.optional(v.string()),
+    hideRsvpCount: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -686,6 +689,7 @@ export const createSeries = mutation({
           visibility: "community",
           rsvpEnabled: true,
           rsvpOptions: DEFAULT_RSVP_OPTIONS,
+          hideRsvpCount: args.hideRsvpCount,
           communityId: args.communityId,
           searchText: buildMeetingSearchText({
             title: args.title,
