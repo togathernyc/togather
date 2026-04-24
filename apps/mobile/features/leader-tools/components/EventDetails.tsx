@@ -409,8 +409,8 @@ export function EventDetails({
             )}
 
             {/* Host Attribution. When the event has explicit hosts we show
-                them; otherwise fall back to the creator (for legacy member-
-                led events where hosts are still unset) or to the group. */}
+                "Hosted by {host}" with the host's avatar; otherwise we just
+                show the group — creator is never surfaced. */}
             {meeting?.group && (() => {
               type HostRow = {
                 id: string;
@@ -420,13 +420,6 @@ export function EventDetails({
               };
               const hosts = ((meeting as any).hosts as HostRow[] | undefined) ?? [];
               const primary = hosts[0];
-              const attributionSource = primary
-                ? {
-                    firstName: primary.firstName,
-                    lastName: primary.lastName,
-                    profilePhoto: primary.profilePhoto,
-                  }
-                : (meeting as any).creator ?? null;
               const extraHostCount = Math.max(0, hosts.length - 1);
 
               const formatDisplay = (
@@ -440,23 +433,23 @@ export function EventDetails({
 
               return (
                 <View style={[styles.groupInfoCard, { backgroundColor: colors.surface }]}>
-                  {attributionSource ? (
+                  {primary ? (
                     <>
                       <Avatar
                         name={
-                          [attributionSource.firstName, attributionSource.lastName]
+                          [primary.firstName, primary.lastName]
                             .filter(Boolean)
                             .join(" ") || meeting.group.name
                         }
-                        imageUrl={attributionSource.profilePhoto || null}
+                        imageUrl={primary.profilePhoto || null}
                         size={48}
                       />
                       <View style={styles.groupInfoText}>
                         <Text style={[styles.groupName, { color: colors.text }]}>
                           {(() => {
                             const display = formatDisplay(
-                              attributionSource.firstName,
-                              attributionSource.lastName,
+                              primary.firstName,
+                              primary.lastName,
                             );
                             if (!display) return "Hosted";
                             if (extraHostCount > 0) {

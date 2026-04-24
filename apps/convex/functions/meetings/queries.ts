@@ -227,17 +227,11 @@ export const getWithDetails = query({
     if (!meeting) return null;
 
     const group = await ctx.db.get(meeting.groupId);
-    // Only surface creator on member-led events — CWE + leader-led events
-    // are attributed to the group/community instead.
-    const surfaceCreator = await shouldSurfaceCreator(ctx, meeting);
-    const creator = surfaceCreator && meeting.createdById
-      ? await ctx.db.get(meeting.createdById)
-      : null;
 
-    // Denormalize hosts for the detail view's "Hosted by" display. Uses
-    // getHostUserIds so legacy meetings (undefined) resolve to an empty
-    // list — UI should fall back to the creator or group attribution when
-    // this is empty.
+    // Denormalize hosts for the detail view's "Hosted by" display. Creator
+    // is intentionally NOT surfaced here — the detail UI attributes the
+    // event to hosts when set and falls back to the group (not the filer)
+    // when empty.
     const hostIds = getHostUserIds(meeting);
     const hostDocs = await Promise.all(hostIds.map((id) => ctx.db.get(id)));
     const hosts = hostDocs
@@ -308,7 +302,6 @@ export const getWithDetails = query({
             preview: getMediaUrl(group.preview),
           }
         : null,
-      creator,
       hosts,
       rsvpCounts,
       // Community-wide event fields
