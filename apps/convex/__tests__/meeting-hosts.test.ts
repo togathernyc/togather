@@ -366,6 +366,56 @@ describe("canEditMeeting (via update mutation)", () => {
       title: "admin-edit",
     });
   });
+
+  test("all_in_series scope cascades host changes to siblings", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    const seriesId = await t.run(async (ctx) =>
+      ctx.db.insert("eventSeries", {
+        groupId: s.groupId,
+        createdById: s.leaderId,
+        name: "Weekly",
+        status: "active",
+        createdAt: Date.now(),
+      }),
+    );
+
+    const anchorId = await insertMeeting(t, {
+      groupId: s.groupId,
+      communityId: s.communityId,
+      createdById: s.leaderId,
+      hostUserIds: [s.leaderId],
+      shortId: "series-anchor",
+    });
+    const siblingId = await insertMeeting(t, {
+      groupId: s.groupId,
+      communityId: s.communityId,
+      createdById: s.leaderId,
+      hostUserIds: [s.leaderId],
+      shortId: "series-sibling",
+    });
+    await t.run(async (ctx) => {
+      await ctx.db.patch(anchorId, { seriesId });
+      await ctx.db.patch(siblingId, { seriesId });
+    });
+
+    // Transfer hosts to a different user via the all_in_series scope.
+    await t.mutation(api.functions.meetings.index.update, {
+      token: s.leaderToken,
+      meetingId: anchorId,
+      hostUserIds: [s.memberId],
+      scope: "all_in_series",
+    });
+
+    await t.run(async (ctx) => {
+      const anchor = await ctx.db.get(anchorId);
+      const sibling = await ctx.db.get(siblingId);
+      expect(anchor?.hostUserIds).toEqual([s.memberId]);
+      // Without the cascade fix the sibling would still hold [s.leaderId].
+      expect(sibling?.hostUserIds).toEqual([s.memberId]);
+    });
+  });
 });
 
 // ============================================================================

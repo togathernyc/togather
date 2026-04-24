@@ -600,6 +600,11 @@ export const update = mutation({
       if (updates.hideRsvpCount !== undefined) seriesUpdates.hideRsvpCount = updates.hideRsvpCount;
       if (updates.visibility !== undefined) seriesUpdates.visibility = updates.visibility;
       if (updates.locationOverride !== undefined) seriesUpdates.locationOverride = updates.locationOverride;
+      // Hosts cascade like any other non-temporal field. Without this, a
+      // "change hosts on all events in series" edit would only touch the
+      // anchor and leave siblings with stale hosts/chat admins/notification
+      // recipients — violating the selected scope.
+      if (updates.hostUserIds !== undefined) seriesUpdates.hostUserIds = updates.hostUserIds;
 
       if (Object.keys(seriesUpdates).length > 0) {
         for (const sibling of seriesMeetings) {
@@ -619,6 +624,17 @@ export const update = mutation({
           }
 
           await ctx.db.patch(sibling._id, seriesUpdates);
+
+          // Reconcile sibling's chat-channel admin seating after host
+          // change so old hosts get demoted/removed and new hosts seated
+          // — same logic the single-meeting path runs above.
+          if (hostsChanged) {
+            await ctx.scheduler.runAfter(
+              0,
+              internal.functions.messaging.eventChat.reconcileEventChannelAdmins,
+              { meetingId: sibling._id }
+            );
+          }
         }
       }
     }

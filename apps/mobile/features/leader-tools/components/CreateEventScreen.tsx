@@ -1691,8 +1691,20 @@ export function CreateEventScreen() {
             />
           </View>
 
-          {/* Hosts */}
-          {effectiveGroupId && (
+          {/* Hosts. Hidden in two CREATE paths where the host picker would
+              be a silent no-op:
+                - Series creation (`createSeriesEvents` / community-wide
+                  series) doesn't accept `hostUserIds` yet, so any picker
+                  selection is dropped.
+                - Community-wide single creation (`createCommunityWideEvent`)
+                  also doesn't take it.
+              In both cases the created meetings default to delegated
+              (group-leaders manage); the user can set hosts per-event
+              afterward via the edit screen. Edit mode always shows the
+              picker — hosts cascade across siblings via the
+              `all_in_series` scope. */}
+          {effectiveGroupId &&
+            !(!isEditMode && (isSeriesMode || isCommunityWideEnabled)) && (
             <View style={styles.section}>
               <HostsPicker
                 groupId={effectiveGroupId as Id<"groups">}
