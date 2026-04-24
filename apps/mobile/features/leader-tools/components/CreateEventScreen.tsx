@@ -162,9 +162,10 @@ export function CreateEventScreen() {
   // Hosts own the event for notifications / chat admin. Defaults to the
   // current user on create (can be edited); in edit mode we read it from
   // the meeting doc. Empty array = "delegated to group leaders."
-  const [hostUserIds, setHostUserIds] = useState<Id<"users">[]>(
-    user?.id ? [user.id as Id<"users">] : [],
-  );
+  const [hostUserIds, setHostUserIds] = useState<Id<"users">[]>([]);
+  // The default-to-current-user seeding effect lives further down, after
+  // `isEditMode` is computed, since `useAuth` is async on first render.
+  const [hostsInitialized, setHostsInitialized] = useState(false);
   // Event chat lives on the chatChannels doc, not the meeting — loaded/saved
   // separately from the meeting update mutation below.
   const [eventChatEnabled, setEventChatEnabled] = useState(true);
@@ -222,6 +223,20 @@ export function CreateEventScreen() {
   }
 
   const isEditMode = !!meetingId;
+
+  // Seed the default host to the current user once auth resolves. `useAuth`
+  // often returns `user === null` on the first render, so initializing
+  // `hostUserIds` straight from `user?.id` in `useState` would leave it
+  // empty (→ delegation mode) even when the user meant to keep themselves
+  // as host. Skipped in edit mode — that path is seeded from the meeting
+  // doc further below.
+  useEffect(() => {
+    if (hostsInitialized) return;
+    if (isEditMode) return;
+    if (!user?.id) return;
+    setHostUserIds([user.id as Id<"users">]);
+    setHostsInitialized(true);
+  }, [hostsInitialized, isEditMode, user?.id]);
 
   // Fetch group details to get group type name
   const { data: groupDetails } = useGroupDetails(effectiveGroupId ?? undefined);
@@ -1803,6 +1818,11 @@ export function CreateEventScreen() {
                 hostUserIds={hostUserIds}
                 onChange={setHostUserIds}
                 currentUserId={(user?.id as Id<"users">) ?? null}
+                currentUserName={
+                  user
+                    ? [user.first_name, user.last_name].filter(Boolean).join(" ")
+                    : null
+                }
                 viewerIsLeader={isLeaderOfSelectedGroup || isAdmin}
               />
             </View>

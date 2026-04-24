@@ -17,6 +17,7 @@ import {
   TextInput,
   ActivityIndicator,
   Alert,
+  Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useQuery, api, type Id } from "@services/api/convex";
@@ -28,6 +29,13 @@ type Props = {
   hostUserIds: Id<"users">[];
   onChange: (next: Id<"users">[]) => void;
   currentUserId: Id<"users"> | null | undefined;
+  /**
+   * Display name for the current user. Used to resolve the "(you)" chip
+   * when the viewer isn't in the paginated group member list (common in
+   * announcement groups with many members, where the creator can be
+   * beyond the page limit) so the chip never falls back to "…".
+   */
+  currentUserName?: string | null;
   viewerIsLeader: boolean;
   disabled?: boolean;
 };
@@ -45,6 +53,7 @@ export function HostsPicker({
   hostUserIds,
   onChange,
   currentUserId,
+  currentUserName,
   viewerIsLeader,
   disabled,
 }: Props) {
@@ -52,10 +61,12 @@ export function HostsPicker({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [search, setSearch] = useState("");
 
-  // Paginated list — 200 is plenty for selection; we don't need to stream.
+  // Higher limit: announcement groups can have hundreds of community members,
+  // and the current user may be outside a 200-row page. Convex queries are
+  // reactive, so the full page only loads once.
   const membersData = useQuery(
     api.functions.groupMembers.list,
-    groupId && token ? { groupId, limit: 200, token } : "skip",
+    groupId && token ? { groupId, limit: 1000, token } : "skip",
   );
 
   const members: MemberRow[] = useMemo(() => {
@@ -104,19 +115,28 @@ export function HostsPicker({
     // permissions on save (canEditMeeting checks host membership OR leader
     // status). Confirm so the user doesn't accidentally lock themselves out.
     if (isSelf && !viewerIsLeader) {
+      const doRemove = () =>
+        onChange(hostUserIds.filter((id) => String(id) !== String(userId)));
+      if (Platform.OS === "web") {
+        // React Native Alert.alert is a no-op on web in this codebase —
+        // use window.confirm, matching the pattern in PosterEditorModal
+        // and EventPageClient.
+        if (
+          typeof window !== "undefined" &&
+          window.confirm(
+            "Remove yourself as host?\n\nYou won't be able to edit this event after saving. Group leaders will manage it instead.",
+          )
+        ) {
+          doRemove();
+        }
+        return;
+      }
       Alert.alert(
         "Remove yourself as host?",
         "You won't be able to edit this event after saving. Group leaders will manage it instead.",
         [
           { text: "Cancel", style: "cancel" },
-          {
-            text: "Remove",
-            style: "destructive",
-            onPress: () =>
-              onChange(
-                hostUserIds.filter((id) => String(id) !== String(userId)),
-              ),
-          },
+          { text: "Remove", style: "destructive", onPress: doRemove },
         ],
       );
       return;
@@ -127,10 +147,15 @@ export function HostsPicker({
   const hostChips = hostUserIds.map((id) => {
     const idStr = String(id);
     const m = membersById.get(idStr);
-    const name = m
-      ? `${m.firstName} ${m.lastName}`.trim() || "Unknown"
-      : "…";
     const isSelf = currentUserId && idStr === String(currentUserId);
+    // Fall back to the auth user's name for the viewer — avoids a "…"
+    // placeholder when the viewer isn't in the paginated member page.
+    const resolvedName = m
+      ? `${m.firstName} ${m.lastName}`.trim()
+      : isSelf
+        ? (currentUserName ?? "").trim()
+        : "";
+    const name = resolvedName || (isSelf ? "You" : "…");
     return { id: idStr, label: isSelf ? `${name} (you)` : name };
   });
 
