@@ -599,11 +599,12 @@ describe("meetings — CWE children + cover", () => {
     expect(id).toBeDefined();
   });
 
-  test("getByShortId surfaces creator only for member-led events", async () => {
+  test("getByShortId surfaces the host list; legacy rows with no hosts show none", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
 
-    // Member-led: non-leader member creates an event.
+    // Member-led: the create mutation defaults hostUserIds to [creator], so
+    // the share page attributes the event to the filer.
     const memberMeetingId = await t.mutation(api.functions.meetings.index.create, {
       token: s.memberToken,
       groupId: s.groupId,
@@ -618,9 +619,10 @@ describe("meetings — CWE children + cover", () => {
       shortId: memberShortId!,
       token: s.memberToken,
     });
-    expect(memberResult?.creatorName).toBeTruthy();
+    expect(memberResult?.hosts).toHaveLength(1);
+    expect(memberResult?.hosts?.[0]?.id).toBe(s.memberId);
 
-    // Leader-led: a group leader creates an event. No host attribution.
+    // Leader-led: same default — leader filed the event, so they're the host.
     const leaderMeetingId = await t.mutation(api.functions.meetings.index.create, {
       token: s.leaderToken,
       groupId: s.groupId,
@@ -635,30 +637,13 @@ describe("meetings — CWE children + cover", () => {
       shortId: leaderShortId!,
       token: s.leaderToken,
     });
-    expect(leaderResult?.creatorName).toBeNull();
+    expect(leaderResult?.hosts).toHaveLength(1);
+    expect(leaderResult?.hosts?.[0]?.id).toBe(s.leaderId);
 
-    // CWE child: admin-created, shared across groups. Even though the admin
-    // is also a group leader, the CWE shortcut fires first.
-    const cweId = await t.run(async (ctx) =>
-      ctx.db.insert("communityWideEvents", {
-        communityId: s.communityId,
-        groupTypeId: await ctx.db.insert("groupTypes", {
-          communityId: s.communityId,
-          name: "Dinner",
-          slug: "dinner",
-          isActive: true,
-          displayOrder: 1,
-          createdAt: Date.now(),
-        }),
-        title: "Community Dinner",
-        scheduledAt: FUTURE() + 2000,
-        status: "scheduled",
-        meetingType: 1,
-        createdById: s.adminId,
-        createdAt: Date.now(),
-      })
-    );
-    const cweChildId = await t.run(async (ctx) =>
+    // Legacy / delegated: meeting written without hostUserIds — `hosts` is
+    // empty so the client falls back to group attribution. Creator is NOT
+    // a fallback anymore.
+    await t.run(async (ctx) =>
       ctx.db.insert("meetings", {
         groupId: s.groupId,
         createdById: s.adminId,
@@ -666,17 +651,15 @@ describe("meetings — CWE children + cover", () => {
         status: "scheduled",
         meetingType: 1,
         communityId: s.communityId,
-        communityWideEventId: cweId,
         createdAt: Date.now(),
-        shortId: "cwehostcheck",
+        shortId: "legacyhostcheck",
       })
     );
-    void cweChildId;
-    const cweResult = await t.query(api.functions.meetings.index.getByShortId, {
-      shortId: "cwehostcheck",
+    const legacyResult = await t.query(api.functions.meetings.index.getByShortId, {
+      shortId: "legacyhostcheck",
       token: s.adminToken,
     });
-    expect(cweResult?.creatorName).toBeNull();
+    expect(legacyResult?.hosts).toEqual([]);
   });
 });
 

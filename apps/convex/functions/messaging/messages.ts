@@ -216,10 +216,14 @@ export const getMessages = query({
     }
 
     // Event channels use meeting-based access (RSVPers may not be group members).
-    // Short-circuit the group-membership gate below.
+    // Short-circuit the group-membership gate below. When the viewer has
+    // lost chat access mid-session (e.g. transferred hosting away without
+    // having an RSVP), return an empty page instead of throwing — callers
+    // are React useQuery hooks, and a hard throw crashes the UI tree via
+    // the error boundary.
     if (channel.channelType === "event") {
       if (!(await canAccessEventChannel(ctx, userId, channel))) {
-        throw new Error("Not a member of this channel");
+        return { messages: [], hasMore: false, cursor: undefined };
       }
     } else {
       // Check channel membership

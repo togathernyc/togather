@@ -39,7 +39,7 @@ import { ConfirmModal } from "@components/ui/ConfirmModal";
 import { getGroupCoordinates, geocodeAddressAsync } from "../../groups/utils/geocodeLocation";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useAuth } from "@providers/AuthProvider";
-import { formatError } from "@/utils/error-handling";
+import { formatError, showAlert } from "@/utils/error-handling";
 import { useGroupTypes } from "../../admin/hooks/useGroupTypes";
 import { DragHandle } from "@components/ui/DragHandle";
 import { useTheme } from "@hooks/useTheme";
@@ -488,7 +488,7 @@ export function CreateEventScreen() {
         // Show the share to chat modal
         showInviteSheetForMeeting(newMeetingId);
       } catch (error: any) {
-        Alert.alert("Error", formatError(error, "Failed to create event"));
+        showAlert("Error", formatError(error, "Failed to create event"));
       } finally {
         setIsCreating(false);
       }
@@ -522,7 +522,7 @@ export function CreateEventScreen() {
         // Convex automatically updates queries
         router.back();
       } catch (error: any) {
-        Alert.alert("Error", formatError(error, "Failed to update event"));
+        showAlert("Error", formatError(error, "Failed to update event"));
       } finally {
         setIsUpdating(false);
       }
@@ -567,7 +567,7 @@ export function CreateEventScreen() {
           [{ text: "OK", onPress: () => router.back() }]
         );
       } catch (error: any) {
-        Alert.alert("Error", formatError(error, "Failed to cancel event"));
+        showAlert("Error", formatError(error, "Failed to cancel event"));
       } finally {
         setIsCancelling(false);
       }
@@ -640,7 +640,7 @@ export function CreateEventScreen() {
                     { text: "OK", onPress: () => router.back() },
                   ]);
                 } catch (error: any) {
-                  Alert.alert("Error", formatError(error, "Failed to cancel"));
+                  showAlert("Error", formatError(error, "Failed to cancel"));
                 } finally {
                   setIsCancelling(false);
                 }
@@ -875,7 +875,7 @@ export function CreateEventScreen() {
               });
               router.back();
             } catch (error: any) {
-              Alert.alert("Error", formatError(error, "Failed to update event"));
+              showAlert("Error", formatError(error, "Failed to update event"));
             } finally {
               setIsUpdating(false);
             }
@@ -946,7 +946,7 @@ export function CreateEventScreen() {
             [{ text: "OK", onPress: () => router.back() }]
           );
         } catch (error: any) {
-          Alert.alert("Error", formatError(error, "Failed to create community-wide series"));
+          showAlert("Error", formatError(error, "Failed to create community-wide series"));
         } finally {
           setIsCreatingCommunityWide(false);
         }
@@ -981,7 +981,7 @@ export function CreateEventScreen() {
             [{ text: "OK", onPress: () => router.back() }]
           );
         } catch (error: any) {
-          Alert.alert("Error", formatError(error, "Failed to create event series"));
+          showAlert("Error", formatError(error, "Failed to create event series"));
         } finally {
           setIsCreating(false);
         }
@@ -1010,7 +1010,7 @@ export function CreateEventScreen() {
             [{ text: "OK", onPress: () => router.back() }]
           );
         } catch (error: any) {
-          Alert.alert("Error", formatError(error, "Failed to create community-wide event"));
+          showAlert("Error", formatError(error, "Failed to create community-wide event"));
         } finally {
           setIsCreatingCommunityWide(false);
         }
@@ -1018,7 +1018,7 @@ export function CreateEventScreen() {
         createMeeting.mutate({ groupId: effectiveGroupId, ...data });
       }
     } catch (error: any) {
-      Alert.alert("Upload Error", formatError(error, "Failed to upload cover image"));
+      showAlert("Upload Error", formatError(error, "Failed to upload cover image"));
     }
   };
 
@@ -1912,7 +1912,7 @@ export function CreateEventScreen() {
                                   meetingId: meetingId as Id<"meetings">,
                                 });
                               } catch (error: any) {
-                                Alert.alert("Error", formatError(error, "Failed to remove from series"));
+                                showAlert("Error", formatError(error, "Failed to remove from series"));
                               } finally {
                                 setIsSeriesLinking(false);
                               }
@@ -1960,7 +1960,7 @@ export function CreateEventScreen() {
                               setNewSeriesNameInput("");
                               setIsCreatingNewSeries(false);
                             } catch (error: any) {
-                              Alert.alert("Error", formatError(error, "Failed to create series"));
+                              showAlert("Error", formatError(error, "Failed to create series"));
                             } finally {
                               setIsSeriesLinking(false);
                             }
@@ -2002,7 +2002,7 @@ export function CreateEventScreen() {
                                         seriesId: s._id as Id<"eventSeries">,
                                       });
                                     } catch (error: any) {
-                                      Alert.alert("Error", formatError(error, "Failed to add to series"));
+                                      showAlert("Error", formatError(error, "Failed to add to series"));
                                     } finally {
                                       setIsSeriesLinking(false);
                                     }

@@ -5,37 +5,14 @@
  */
 
 import { v } from "convex/values";
-import type { QueryCtx } from "../../_generated/server";
 import { query } from "../../_generated/server";
 import type { Doc } from "../../_generated/dataModel";
 import { now, normalizePagination, getMediaUrl } from "../../lib/utils";
 import { paginationArgs, meetingStatusValidator } from "../../lib/validators";
 import { getOptionalAuth } from "../../lib/auth";
 import { getSeriesNumber } from "../eventSeries";
-import { isActiveLeader, isLeaderRole } from "../../lib/helpers";
+import { isLeaderRole } from "../../lib/helpers";
 import { getHostUserIds, isMeetingHost } from "../../lib/meetingPermissions";
-
-/**
- * "Hosted by [name]" (ADR-022) only applies to *member-led* events — i.e.
- * an event a non-leader member created in a group they don't lead. CWE
- * events are admin-created and share a single parent across groups, so
- * surfacing the admin's name on every group's copy reads as noise. Leader-
- * led events are already implicitly attributed via the group itself.
- */
-async function shouldSurfaceCreator(
-  ctx: QueryCtx,
-  meeting: Doc<"meetings">
-): Promise<boolean> {
-  if (meeting.communityWideEventId) return false;
-  if (!meeting.createdById) return false;
-  const membership = await ctx.db
-    .query("groupMembers")
-    .withIndex("by_group_user", (q: any) =>
-      q.eq("groupId", meeting.groupId).eq("userId", meeting.createdById)
-    )
-    .first();
-  return !isActiveLeader(membership);
-}
 
 /**
  * Get meeting by short ID (for public sharing URLs)
@@ -133,21 +110,21 @@ export const getByShortId = query({
       effectiveCoverImage = (parent as any)?.coverImage ?? null;
     }
 
-    // Creator display only surfaces for member-led events (see
-    // `shouldSurfaceCreator`). Leader-led and CWE events intentionally omit
-    // the "Hosted by" attribution so the group/community reads as the host.
-    // Name is rendered "First L." — short, identity-preserving, and safe to
-    // load on public share pages where non-members may land.
-    const surfaceCreator = await shouldSurfaceCreator(ctx, meeting);
-    const creator = surfaceCreator && meeting.createdById
-      ? await ctx.db.get(meeting.createdById)
-      : null;
-    const creatorName = creator
-      ? [creator.firstName, creator.lastName?.[0] ? `${creator.lastName[0]}.` : ""]
-          .filter(Boolean)
-          .join(" ")
-          .trim() || null
-      : null;
+    // Denormalize hosts for the share page's "Hosted by" display. Creator
+    // is intentionally NOT surfaced — the event attributes to its hosts when
+    // set, and to the group (rendered client-side) when empty. Public share
+    // pages only load this for non-members, so we keep the payload tight:
+    // id + first name + last-initial string + profile photo URL.
+    const hostIds = getHostUserIds(meeting);
+    const hostDocs = await Promise.all(hostIds.map((id) => ctx.db.get(id)));
+    const hosts = hostDocs
+      .filter((u): u is NonNullable<typeof u> => u != null)
+      .map((u) => ({
+        id: u._id,
+        firstName: u.firstName ?? null,
+        lastName: u.lastName ?? null,
+        profilePhoto: getMediaUrl(u.profilePhoto),
+      }));
 
     // Build access prompt for users without access
     let accessPrompt = null;
@@ -204,10 +181,9 @@ export const getByShortId = query({
       communityId: community?._id || null,
       communityName: community?.name || null,
       communityLogo: getMediaUrl(community?.logo),
-      // Creator info (ADR-022: distinguishes member-led from leader-led)
-      createdById: meeting.createdById ?? null,
-      creatorName,
-      creatorImage: creator ? getMediaUrl(creator.profilePhoto) : null,
+      // Host info. `hosts` is the canonical attribution; share page UI
+      // shows "Hosted by {primary}" when non-empty, group fallback otherwise.
+      hosts,
       // Access info
       hasAccess,
       accessPrompt,

@@ -248,13 +248,14 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
 
   const isLeader = leaderStatus?.isLeader ?? false;
 
-  // Creators can edit their own event even if they aren't group leaders
-  // (ADR-022). Backend enforces authoritatively; this just shows the button.
-  const isCreator =
-    !!user?.id &&
-    !!(eventData as any)?.createdById &&
-    String(user.id) === String((eventData as any).createdById);
-  const canEdit = isLeader || isCreator;
+  // Hosts can edit their own event even if they aren't group leaders.
+  // Backend enforces authoritatively via canEditMeeting; this just shows
+  // the button. Creator is intentionally NOT surfaced anymore.
+  const isHost = !!user?.id && (() => {
+    const hosts = ((eventData as any)?.hosts as Array<{ id: string }> | undefined) ?? [];
+    return hosts.some((h) => String(h.id) === String(user.id));
+  })();
+  const canEdit = isLeader || isHost;
 
   // ============================================================================
   // Event Chat Mutations
@@ -288,7 +289,7 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
         (o) => o.id === myRsvp.optionId
       )?.enabled ?? false)
     : false;
-  const canAccessChat = isCreator || (hasRsvp && rsvpOptionEnabled);
+  const canAccessChat = isHost || (hasRsvp && rsvpOptionEnabled);
 
   // Materialize the channel and seat the caller as a member once per page
   // visit when they have chat access. Skip while `eventChannel === undefined`
@@ -735,51 +736,72 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
         />
 
         <View style={styles.content}>
-          {/* Host Attribution. ADR-022 member-led events must visibly read
-              "Hosted by [creator]" so attendees don't mistake them for
-              official community posts. We show the creator's name as the
-              primary line with the hosting group (or community for
-              announcement-group events) as the secondary line. Falls back
-              to the old group/community display for legacy rows where
-              `createdById` is missing. */}
+          {/* Host Attribution. Shows "Hosted by {primary host} + N others"
+              when the event has explicit hosts; otherwise attributes to the
+              group. Creator is never surfaced — hosts are the canonical
+              owner per the host-decoupling change. */}
           <View style={[styles.organizerRow, { borderBottomColor: colors.surfaceSecondary }]}>
-            {(eventData as any).creatorName ? (
-              <>
-                <AppImage
-                  source={(eventData as any).creatorImage}
-                  style={styles.groupAvatar}
-                  placeholder={{
-                    type: 'initials',
-                    name: (eventData as any).creatorName,
-                  }}
-                />
-                <View style={styles.organizerInfo}>
-                  <Text style={[styles.organizerName, { color: colors.text }]}>
-                    {`Hosted by ${(eventData as any).creatorName}`}
-                  </Text>
-                  <Text style={[styles.communityName, { color: colors.textSecondary }]}>
-                    {(eventData as any).isAnnouncementGroup
-                      ? eventData.communityName
-                      : `${eventData.groupName}${eventData.communityName ? ' · ' + eventData.communityName : ''}`}
-                  </Text>
-                </View>
-              </>
-            ) : (
-              <>
-                <AppImage
-                  source={eventData.groupImage}
-                  style={styles.groupAvatar}
-                  placeholder={{
-                    type: 'initials',
-                    name: (eventData.groupName || eventData.communityName) ?? undefined,
-                  }}
-                />
-                <View style={styles.organizerInfo}>
-                  <Text style={[styles.organizerName, { color: colors.text }]}>{eventData.groupName}</Text>
-                  <Text style={[styles.communityName, { color: colors.textSecondary }]}>{eventData.communityName}</Text>
-                </View>
-              </>
-            )}
+            {(() => {
+              type HostRow = {
+                id: string;
+                firstName: string | null;
+                lastName: string | null;
+                profilePhoto: string | null;
+              };
+              const hosts =
+                ((eventData as any).hosts as HostRow[] | undefined) ?? [];
+              const primary = hosts[0];
+              const extraHostCount = Math.max(0, hosts.length - 1);
+
+              if (!primary) {
+                return (
+                  <>
+                    <AppImage
+                      source={eventData.groupImage}
+                      style={styles.groupAvatar}
+                      placeholder={{
+                        type: 'initials',
+                        name: (eventData.groupName || eventData.communityName) ?? undefined,
+                      }}
+                    />
+                    <View style={styles.organizerInfo}>
+                      <Text style={[styles.organizerName, { color: colors.text }]}>{eventData.groupName}</Text>
+                      <Text style={[styles.communityName, { color: colors.textSecondary }]}>{eventData.communityName}</Text>
+                    </View>
+                  </>
+                );
+              }
+
+              const firstName = primary.firstName || "";
+              const lastInitial = primary.lastName?.[0] ? `${primary.lastName[0]}.` : "";
+              const display = [firstName, lastInitial].filter(Boolean).join(" ").trim();
+              const hostLine = display
+                ? extraHostCount > 0
+                  ? `Hosted by ${display} + ${extraHostCount} other${extraHostCount === 1 ? "" : "s"}`
+                  : `Hosted by ${display}`
+                : "Hosted";
+
+              return (
+                <>
+                  <AppImage
+                    source={primary.profilePhoto ?? undefined}
+                    style={styles.groupAvatar}
+                    placeholder={{
+                      type: 'initials',
+                      name: display || (eventData.groupName ?? undefined),
+                    }}
+                  />
+                  <View style={styles.organizerInfo}>
+                    <Text style={[styles.organizerName, { color: colors.text }]}>{hostLine}</Text>
+                    <Text style={[styles.communityName, { color: colors.textSecondary }]}>
+                      {(eventData as any).isAnnouncementGroup
+                        ? eventData.communityName
+                        : `${eventData.groupName}${eventData.communityName ? ' · ' + eventData.communityName : ''}`}
+                    </Text>
+                  </View>
+                </>
+              );
+            })()}
           </View>
 
           {/* Date */}

@@ -5,7 +5,23 @@
  * All features should use this utility instead of custom error formatters.
  */
 
+import { Alert, Platform } from 'react-native';
 import { extractApiError } from './api-response';
+
+/**
+ * Show a user-facing alert on any platform. React Native's `Alert.alert`
+ * is a no-op on React Native Web, so features using it directly silently
+ * fail on web. Callers should prefer this helper for error notices.
+ */
+export function showAlert(title: string, message: string): void {
+  if (Platform.OS === 'web') {
+    if (typeof window !== 'undefined' && typeof window.alert === 'function') {
+      window.alert(`${title}\n\n${message}`);
+    }
+    return;
+  }
+  Alert.alert(title, message);
+}
 
 /**
  * Map of known error messages to user-friendly versions
