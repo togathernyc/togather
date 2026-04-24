@@ -331,8 +331,10 @@ export const communityEvents = query({
         },
         // RSVP count visibility. `hideRsvpCount` is the event-level flag;
         // `viewerIsLeader` is true when the viewer can see the count/badge
-        // (event host or a leader of the hosting group). Hosts fall back to
-        // [createdById] for legacy rows, so this still covers classic events.
+        // (event host or a leader of the hosting group). `isMeetingHost`
+        // returns false for legacy rows with no `hostUserIds` set — that's
+        // the intended outcome of the host-decoupling change; classic
+        // events without explicit hosts read as group-attributed.
         hideRsvpCount: meeting.hideRsvpCount === true,
         createdById: meeting.createdById ?? null,
         viewerIsLeader:

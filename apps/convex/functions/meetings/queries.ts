@@ -139,7 +139,8 @@ export const getByShortId = query({
 
     // Viewer is treated as a leader (and thus can see the hidden RSVP count)
     // when they lead the hosting group OR host the event. `isMeetingHost`
-    // falls back to the creator when no hosts are set.
+    // returns false for legacy rows with no `hostUserIds` — that's the
+    // intended outcome of the host-decoupling change.
     const viewerIsLeader =
       isLeaderRole(userRole) ||
       (!!userId && isMeetingHost(meeting, userId));
