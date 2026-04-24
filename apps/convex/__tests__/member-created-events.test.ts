@@ -932,7 +932,37 @@ describe("meetingReports", () => {
         meetingId,
         reason: "spam",
       })
-    ).rejects.toThrow(/you host/i);
+    ).rejects.toThrow(/you host or filed/i);
+  });
+
+  test("filer cannot report a delegated event they filed (hostUserIds empty)", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    // Insert directly so hostUserIds stays empty (delegated/legacy state).
+    // `createdById === memberId` should still block self-reporting even
+    // though the meeting has no explicit hosts.
+    const meetingId = await t.run(async (ctx) =>
+      ctx.db.insert("meetings", {
+        groupId: s.groupId,
+        createdById: s.memberId,
+        hostUserIds: [],
+        scheduledAt: FUTURE(),
+        status: "scheduled",
+        meetingType: 1,
+        communityId: s.communityId,
+        createdAt: Date.now(),
+        shortId: "delegatedreport",
+      })
+    );
+
+    await expect(
+      t.mutation(api.functions.meetings.reports.createReport, {
+        token: s.memberToken,
+        meetingId,
+        reason: "spam",
+      })
+    ).rejects.toThrow(/you host or filed/i);
   });
 
   test("rejects invalid reason", async () => {

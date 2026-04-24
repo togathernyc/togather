@@ -43,13 +43,20 @@ export const createReport = mutation({
       throw new Error("Event not found");
     }
 
-    // Hosts can't report their own event. The client shows the flag icon
-    // uniformly (we don't want to special-case the UI for hosts), but we
-    // reject here so self-reports don't pollute the moderation queue or the
-    // `event_reported` analytics signal. Uses the host list with creator
-    // fallback — if no hosts are set, the creator still can't self-report.
-    if (isMeetingHost(meeting, reportedById)) {
-      throw new Error("You can't report an event you host");
+    // The person who filed the event and any current host can't report
+    // their own meeting. The client shows the flag icon uniformly (we don't
+    // want to special-case the UI), but we reject here so self-reports
+    // don't pollute the moderation queue or the `event_reported` analytics
+    // signal. Both checks matter:
+    //   - `createdById` blocks the original filer regardless of host
+    //     transfers, including delegated/legacy events where
+    //     `hostUserIds` is empty.
+    //   - `isMeetingHost` blocks anyone explicitly added as a host on a
+    //     transferred event.
+    const isFiler =
+      !!meeting.createdById && meeting.createdById === reportedById;
+    if (isFiler || isMeetingHost(meeting, reportedById)) {
+      throw new Error("You can't report an event you host or filed");
     }
 
     // Caller must be an active member of the event's community (we gate on

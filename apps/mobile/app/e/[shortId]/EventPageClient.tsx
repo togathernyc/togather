@@ -289,7 +289,18 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
         (o) => o.id === myRsvp.optionId
       )?.enabled ?? false)
     : false;
-  const canAccessChat = isHost || (hasRsvp && rsvpOptionEnabled);
+  // Mirror `canAccessEventChannel` on the backend so the share page UI
+  // doesn't render an empty chat for users the server would actually
+  // authorize. Hosts always have access; in delegated mode (no explicit
+  // hosts) leaders of the hosting group are the effective host and also
+  // get access; otherwise the user must have a valid RSVP.
+  const isDelegated =
+    (((eventData as any)?.hosts as Array<{ id: string }> | undefined) ?? [])
+      .length === 0;
+  const canAccessChat =
+    isHost ||
+    (isDelegated && isLeader) ||
+    (hasRsvp && rsvpOptionEnabled);
 
   // Materialize the channel and seat the caller as a member once per page
   // visit when they have chat access. Skip while `eventChannel === undefined`
