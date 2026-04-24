@@ -76,6 +76,33 @@ export const getByShortId = query({
     let hasAccess = false;
     let userRole: string | null = null;
 
+    // Look up the viewer's group membership up front so we always know their
+    // role, independent of how access is granted. Without this, leaders who
+    // view public/community events (where hasAccess is granted by visibility
+    // alone) would never populate userRole, and `viewerIsLeader` below would
+    // incorrectly flip to false — causing group leaders to lose hidden-count
+    // visibility on their own group's public events.
+    const groupMembership = userId
+      ? await ctx.db
+          .query("groupMembers")
+          .withIndex("by_group_user", (q) =>
+            q.eq("groupId", meeting.groupId).eq("userId", userId)
+          )
+          .filter((q) =>
+            q.and(
+              q.eq(q.field("leftAt"), undefined),
+              q.or(
+                q.eq(q.field("requestStatus"), undefined),
+                q.eq(q.field("requestStatus"), "accepted")
+              )
+            )
+          )
+          .first()
+      : null;
+    if (groupMembership) {
+      userRole = groupMembership.role || "member";
+    }
+
     // Check visibility-based access
     const visibility = meeting.visibility || "group";
     if (visibility === "public") {
@@ -89,28 +116,8 @@ export const getByShortId = query({
         )
         .first();
       hasAccess = !!communityMembership;
-    } else if (userId) {
-      // Check if user is a member of the group
-      const groupMembership = await ctx.db
-        .query("groupMembers")
-        .withIndex("by_group_user", (q) =>
-          q.eq("groupId", meeting.groupId).eq("userId", userId)
-        )
-        .filter((q) =>
-          q.and(
-            q.eq(q.field("leftAt"), undefined),
-            q.or(
-              q.eq(q.field("requestStatus"), undefined),
-              q.eq(q.field("requestStatus"), "accepted")
-            )
-          )
-        )
-        .first();
-
-      if (groupMembership) {
-        hasAccess = true;
-        userRole = groupMembership.role || "member";
-      }
+    } else if (groupMembership) {
+      hasAccess = true;
     }
 
     // Get group type name
