@@ -1218,124 +1218,6 @@ export function CreateEventScreen() {
           contentContainerStyle={styles.contentContainer}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Community-Wide Event Toggle - only show for admins in unified mode */}
-          {canCreateCommunityWide && !isEditMode && (
-            <View style={[styles.communityWideSection, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
-              <View style={styles.communityWideToggleRow}>
-                <View style={styles.communityWideToggleLabel}>
-                  <Text style={[styles.label, { color: colors.text }]}>Create for all</Text>
-                </View>
-                <Switch
-                  value={isCommunityWideEnabled}
-                  onValueChange={(value) => {
-                    setIsCommunityWideEnabled(value);
-                    // Reset selections when toggling
-                    if (value) {
-                      setSelectedGroupId(null);
-                      setIsGroupDropdownOpen(false);
-                    } else {
-                      setSelectedGroupTypeId(null);
-                      setIsGroupTypeDropdownOpen(false);
-                    }
-                    setErrors({});
-                  }}
-                  trackColor={{ false: colors.border, true: primaryColor }}
-                  thumbColor={colors.textInverse}
-                  disabled={isSubmitting}
-                />
-              </View>
-
-              {/* Group Type Selector - only show when toggle is ON */}
-              {isCommunityWideEnabled && (
-                <View style={styles.groupTypeSelector}>
-                  {isLoadingGroupTypes ? (
-                    <View style={[styles.loadingDropdown, { backgroundColor: colors.surfaceSecondary }]}>
-                      <ActivityIndicator size="small" color={primaryColor} />
-                      <Text style={[styles.loadingDropdownText, { color: colors.textSecondary }]}>Loading group types...</Text>
-                    </View>
-                  ) : !groupTypes || groupTypes.length === 0 ? (
-                    <View style={[styles.noGroupsContainer, { backgroundColor: colors.surfaceSecondary }]}>
-                      <Text style={[styles.noGroupsText, { color: colors.destructive }]}>
-                        No group types available.
-                      </Text>
-                    </View>
-                  ) : (
-                    <>
-                      <TouchableOpacity
-                        style={[
-                          styles.dropdownButton,
-                          { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground },
-                          errors.groupType && styles.dropdownButtonError,
-                        ]}
-                        onPress={() => setIsGroupTypeDropdownOpen(!isGroupTypeDropdownOpen)}
-                        disabled={isSubmitting}
-                      >
-                        {selectedGroupType ? (
-                          <Text style={[styles.selectedGroupName, { color: colors.text }]}>{selectedGroupType.name}</Text>
-                        ) : (
-                          <Text style={[styles.dropdownPlaceholder, { color: colors.inputPlaceholder }]}>Select group type</Text>
-                        )}
-                        <Ionicons
-                          name={isGroupTypeDropdownOpen ? "chevron-up" : "chevron-down"}
-                          size={20}
-                          color={colors.textSecondary}
-                        />
-                      </TouchableOpacity>
-                      {isGroupTypeDropdownOpen && (
-                        <View style={[styles.dropdownList, { borderColor: colors.inputBorder, backgroundColor: colors.surface }]}>
-                          {groupTypes.map((gt) => (
-                            <TouchableOpacity
-                              key={gt.id}
-                              style={[
-                                styles.dropdownItem,
-                                { borderBottomColor: colors.borderLight },
-                                selectedGroupTypeId === gt.id && [styles.dropdownItemSelected, { backgroundColor: colors.selectedBackground }],
-                              ]}
-                              onPress={() => {
-                                setSelectedGroupTypeId(gt.id);
-                                setIsGroupTypeDropdownOpen(false);
-                                setErrors((prev) => ({ ...prev, groupType: undefined }));
-                              }}
-                            >
-                              <Text
-                                style={[
-                                  styles.dropdownItemText,
-                                  { color: colors.text },
-                                  selectedGroupTypeId === gt.id && [styles.dropdownItemTextSelected, { color: primaryColor }],
-                                ]}
-                              >
-                                {gt.name}
-                              </Text>
-                              <Text style={[styles.dropdownItemSubtext, { color: colors.textSecondary }]}>
-                                {gt.groupCount} {gt.groupCount === 1 ? "group" : "groups"}
-                              </Text>
-                              {selectedGroupTypeId === gt.id && (
-                                <Ionicons name="checkmark" size={18} color={primaryColor} />
-                              )}
-                            </TouchableOpacity>
-                          ))}
-                        </View>
-                      )}
-                      {errors.groupType && (
-                        <Text style={styles.fieldErrorText}>{errors.groupType}</Text>
-                      )}
-                    </>
-                  )}
-
-                  {/* Show count of groups that will receive the event */}
-                  {selectedGroupTypeId && groupCountForType !== undefined && (
-                    <View style={[styles.groupCountInfo, { backgroundColor: colors.surfaceSecondary }]}>
-                      <Ionicons name="information-circle" size={16} color={colors.link} />
-                      <Text style={[styles.groupCountText, { color: colors.link }]}>
-                        This will create events for {groupCountForType} {selectedGroupType?.name || "group"} groups
-                      </Text>
-                    </View>
-                  )}
-                </View>
-              )}
-            </View>
-          )}
-
           {/* Community-Wide Event Edit Warning */}
           {isEditMode && meeting?.communityWideEventId && !meeting?.isOverridden && (
             <View style={[styles.communityWideWarning, { backgroundColor: colors.surfaceSecondary, borderColor: colors.warning }]}>
@@ -2051,6 +1933,132 @@ export function CreateEventScreen() {
                 You already have an upcoming event. Cancel or wait for it to
                 pass before creating another.
               </Text>
+            </View>
+          )}
+
+          {/* Community-Wide Event Toggle. Parked at the bottom of the form
+              to discourage casual use — this duplicates the event across
+              every group of the chosen type. Admins only, create mode only
+              (gated by `canCreateCommunityWide && !isEditMode`). */}
+          {canCreateCommunityWide && !isEditMode && (
+            <View style={[styles.communityWideSection, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border, marginTop: 24 }]}>
+              <View style={styles.communityWideToggleRow}>
+                <View style={styles.communityWideToggleLabel}>
+                  <Text style={[styles.label, { color: colors.text }]}>
+                    Create for multiple groups (community-wide event)
+                  </Text>
+                  <Text style={[styles.toggleHint, { color: colors.textSecondary, marginTop: 4 }]}>
+                    Admins only — use this to create the same event across many locations, like a recurring dinner party in every city group.
+                  </Text>
+                </View>
+                <Switch
+                  value={isCommunityWideEnabled}
+                  onValueChange={(value) => {
+                    setIsCommunityWideEnabled(value);
+                    // Reset selections when toggling
+                    if (value) {
+                      setSelectedGroupId(null);
+                      setIsGroupDropdownOpen(false);
+                    } else {
+                      setSelectedGroupTypeId(null);
+                      setIsGroupTypeDropdownOpen(false);
+                    }
+                    setErrors({});
+                  }}
+                  trackColor={{ false: colors.border, true: primaryColor }}
+                  thumbColor={colors.textInverse}
+                  disabled={isSubmitting}
+                />
+              </View>
+
+              {/* Group Type Selector - only show when toggle is ON */}
+              {isCommunityWideEnabled && (
+                <View style={styles.groupTypeSelector}>
+                  {isLoadingGroupTypes ? (
+                    <View style={[styles.loadingDropdown, { backgroundColor: colors.surfaceSecondary }]}>
+                      <ActivityIndicator size="small" color={primaryColor} />
+                      <Text style={[styles.loadingDropdownText, { color: colors.textSecondary }]}>Loading group types...</Text>
+                    </View>
+                  ) : !groupTypes || groupTypes.length === 0 ? (
+                    <View style={[styles.noGroupsContainer, { backgroundColor: colors.surfaceSecondary }]}>
+                      <Text style={[styles.noGroupsText, { color: colors.destructive }]}>
+                        No group types available.
+                      </Text>
+                    </View>
+                  ) : (
+                    <>
+                      <TouchableOpacity
+                        style={[
+                          styles.dropdownButton,
+                          { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground },
+                          errors.groupType && styles.dropdownButtonError,
+                        ]}
+                        onPress={() => setIsGroupTypeDropdownOpen(!isGroupTypeDropdownOpen)}
+                        disabled={isSubmitting}
+                      >
+                        {selectedGroupType ? (
+                          <Text style={[styles.selectedGroupName, { color: colors.text }]}>{selectedGroupType.name}</Text>
+                        ) : (
+                          <Text style={[styles.dropdownPlaceholder, { color: colors.inputPlaceholder }]}>Select group type</Text>
+                        )}
+                        <Ionicons
+                          name={isGroupTypeDropdownOpen ? "chevron-up" : "chevron-down"}
+                          size={20}
+                          color={colors.textSecondary}
+                        />
+                      </TouchableOpacity>
+                      {isGroupTypeDropdownOpen && (
+                        <View style={[styles.dropdownList, { borderColor: colors.inputBorder, backgroundColor: colors.surface }]}>
+                          {groupTypes.map((gt) => (
+                            <TouchableOpacity
+                              key={gt.id}
+                              style={[
+                                styles.dropdownItem,
+                                { borderBottomColor: colors.borderLight },
+                                selectedGroupTypeId === gt.id && [styles.dropdownItemSelected, { backgroundColor: colors.selectedBackground }],
+                              ]}
+                              onPress={() => {
+                                setSelectedGroupTypeId(gt.id);
+                                setIsGroupTypeDropdownOpen(false);
+                                setErrors((prev) => ({ ...prev, groupType: undefined }));
+                              }}
+                            >
+                              <Text
+                                style={[
+                                  styles.dropdownItemText,
+                                  { color: colors.text },
+                                  selectedGroupTypeId === gt.id && [styles.dropdownItemTextSelected, { color: primaryColor }],
+                                ]}
+                              >
+                                {gt.name}
+                              </Text>
+                              <Text style={[styles.dropdownItemSubtext, { color: colors.textSecondary }]}>
+                                {gt.groupCount} {gt.groupCount === 1 ? "group" : "groups"}
+                              </Text>
+                              {selectedGroupTypeId === gt.id && (
+                                <Ionicons name="checkmark" size={18} color={primaryColor} />
+                              )}
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      )}
+                      {errors.groupType && (
+                        <Text style={styles.fieldErrorText}>{errors.groupType}</Text>
+                      )}
+                    </>
+                  )}
+
+                  {/* Show count of groups that will receive the event */}
+                  {selectedGroupTypeId && groupCountForType !== undefined && (
+                    <View style={[styles.groupCountInfo, { backgroundColor: colors.surfaceSecondary }]}>
+                      <Ionicons name="information-circle" size={16} color={colors.link} />
+                      <Text style={[styles.groupCountText, { color: colors.link }]}>
+                        This will create events for {groupCountForType} {selectedGroupType?.name || "group"} groups
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              )}
             </View>
           )}
 
