@@ -159,6 +159,12 @@ jest.mock("@services/api/convex", () => ({
       posters: {
         search: "api.functions.posters.search",
       },
+      messaging: {
+        eventChat: {
+          getChannelByMeetingId: "api.functions.messaging.eventChat.getChannelByMeetingId",
+          setEventChannelEnabled: "api.functions.messaging.eventChat.setEventChannelEnabled",
+        },
+      },
     },
   },
   useQuery: (...args: any[]) => mockUseQuery(...args),
