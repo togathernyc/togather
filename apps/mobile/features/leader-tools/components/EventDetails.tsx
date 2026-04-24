@@ -408,64 +408,89 @@ export function EventDetails({
               </View>
             )}
 
-            {/* Host Attribution (ADR-022). When there's a creator, surface
-                "Hosted by [name]" so the viewer can tell a member event
-                apart from an official/community event. */}
-            {meeting?.group && (
-              <View style={[styles.groupInfoCard, { backgroundColor: colors.surface }]}>
-                {(meeting as any).creator ? (
-                  <>
-                    <Avatar
-                      name={
-                        [
-                          (meeting as any).creator.firstName,
-                          (meeting as any).creator.lastName,
-                        ]
-                          .filter(Boolean)
-                          .join(" ") || meeting.group.name
-                      }
-                      imageUrl={
-                        (meeting as any).creator.profilePhoto || null
-                      }
-                      size={48}
-                    />
-                    <View style={styles.groupInfoText}>
-                      <Text style={[styles.groupName, { color: colors.text }]}>
-                        {(() => {
-                          const firstName = (meeting as any).creator.firstName || "";
-                          const lastInitial = (meeting as any).creator.lastName?.[0]
-                            ? `${(meeting as any).creator.lastName[0]}.`
-                            : "";
-                          const display = [firstName, lastInitial]
+            {/* Host Attribution. When the event has explicit hosts we show
+                them; otherwise fall back to the creator (for legacy member-
+                led events where hosts are still unset) or to the group. */}
+            {meeting?.group && (() => {
+              type HostRow = {
+                id: string;
+                firstName: string | null;
+                lastName: string | null;
+                profilePhoto: string | null;
+              };
+              const hosts = ((meeting as any).hosts as HostRow[] | undefined) ?? [];
+              const primary = hosts[0];
+              const attributionSource = primary
+                ? {
+                    firstName: primary.firstName,
+                    lastName: primary.lastName,
+                    profilePhoto: primary.profilePhoto,
+                  }
+                : (meeting as any).creator ?? null;
+              const extraHostCount = Math.max(0, hosts.length - 1);
+
+              const formatDisplay = (
+                first: string | null | undefined,
+                last: string | null | undefined,
+              ) => {
+                const firstName = first || "";
+                const lastInitial = last?.[0] ? `${last[0]}.` : "";
+                return [firstName, lastInitial].filter(Boolean).join(" ").trim();
+              };
+
+              return (
+                <View style={[styles.groupInfoCard, { backgroundColor: colors.surface }]}>
+                  {attributionSource ? (
+                    <>
+                      <Avatar
+                        name={
+                          [attributionSource.firstName, attributionSource.lastName]
                             .filter(Boolean)
-                            .join(" ")
-                            .trim();
-                          return display ? `Hosted by ${display}` : "Hosted";
-                        })()}
-                      </Text>
-                      <Text
-                        style={[styles.groupName, { color: colors.textSecondary, fontSize: 13, fontWeight: "400", marginTop: 2 }]}
-                      >
-                        {(meeting as any).group?.isAnnouncementGroup
-                          ? "Community"
-                          : meeting.group.name}
-                      </Text>
-                    </View>
-                  </>
-                ) : (
-                  <>
-                    <Avatar
-                      name={meeting.group.name}
-                      imageUrl={meeting.group.preview || null}
-                      size={48}
-                    />
-                    <View style={styles.groupInfoText}>
-                      <Text style={[styles.groupName, { color: colors.text }]}>{meeting.group.name}</Text>
-                    </View>
-                  </>
-                )}
-              </View>
-            )}
+                            .join(" ") || meeting.group.name
+                        }
+                        imageUrl={attributionSource.profilePhoto || null}
+                        size={48}
+                      />
+                      <View style={styles.groupInfoText}>
+                        <Text style={[styles.groupName, { color: colors.text }]}>
+                          {(() => {
+                            const display = formatDisplay(
+                              attributionSource.firstName,
+                              attributionSource.lastName,
+                            );
+                            if (!display) return "Hosted";
+                            if (extraHostCount > 0) {
+                              return `Hosted by ${display} + ${extraHostCount} other${
+                                extraHostCount === 1 ? "" : "s"
+                              }`;
+                            }
+                            return `Hosted by ${display}`;
+                          })()}
+                        </Text>
+                        <Text
+                          style={[styles.groupName, { color: colors.textSecondary, fontSize: 13, fontWeight: "400", marginTop: 2 }]}
+                        >
+                          {(meeting as any).group?.isAnnouncementGroup
+                            ? "Community"
+                            : meeting.group.name}
+                        </Text>
+                      </View>
+                    </>
+                  ) : (
+                    <>
+                      <Avatar
+                        name={meeting.group.name}
+                        imageUrl={meeting.group.preview || null}
+                        size={48}
+                      />
+                      <View style={styles.groupInfoText}>
+                        <Text style={[styles.groupName, { color: colors.text }]}>{meeting.group.name}</Text>
+                      </View>
+                    </>
+                  )}
+                </View>
+              );
+            })()}
 
             {/* Community-Wide Event Badge */}
             {meeting?.communityWideEventId && (

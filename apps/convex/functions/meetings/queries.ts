@@ -13,7 +13,7 @@ import { paginationArgs, meetingStatusValidator } from "../../lib/validators";
 import { getOptionalAuth } from "../../lib/auth";
 import { getSeriesNumber } from "../eventSeries";
 import { isActiveLeader, isLeaderRole } from "../../lib/helpers";
-import { isMeetingHost } from "../../lib/meetingPermissions";
+import { getHostUserIds, isMeetingHost } from "../../lib/meetingPermissions";
 
 /**
  * "Hosted by [name]" (ADR-022) only applies to *member-led* events — i.e.
@@ -234,6 +234,21 @@ export const getWithDetails = query({
       ? await ctx.db.get(meeting.createdById)
       : null;
 
+    // Denormalize hosts for the detail view's "Hosted by" display. Uses
+    // getHostUserIds so legacy meetings (undefined) resolve to an empty
+    // list — UI should fall back to the creator or group attribution when
+    // this is empty.
+    const hostIds = getHostUserIds(meeting);
+    const hostDocs = await Promise.all(hostIds.map((id) => ctx.db.get(id)));
+    const hosts = hostDocs
+      .filter((u): u is NonNullable<typeof u> => u != null)
+      .map((u) => ({
+        id: u._id,
+        firstName: u.firstName ?? null,
+        lastName: u.lastName ?? null,
+        profilePhoto: getMediaUrl(u.profilePhoto),
+      }));
+
     // Get RSVP counts by option
     const rsvps = await ctx.db
       .query("meetingRsvps")
@@ -294,6 +309,7 @@ export const getWithDetails = query({
           }
         : null,
       creator,
+      hosts,
       rsvpCounts,
       // Community-wide event fields
       communityWideEventId: meeting.communityWideEventId,
