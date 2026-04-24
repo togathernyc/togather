@@ -1313,6 +1313,16 @@ export const getInboxChannels = query({
           ) {
             return false;
           }
+          // Event channels: apply the same activity gate used for the
+          // chatChannelMembers path above. Without this, group members of the
+          // owning group would still see seeded-but-silent event channels in
+          // their inbox, defeating the "first message" rule.
+          if (ch.channelType === "event") {
+            if (ch.isEnabled === false) return false;
+            const lastMessageAt = ch.lastMessageAt ?? 0;
+            if (lastMessageAt <= 0) return false;
+            if (lastMessageAt < inboxQueryNow - INBOX_EVENT_HIDE_AFTER_MS) return false;
+          }
           return true;
         }
         // Shared channel from another group: check if this group is in sharedGroups
