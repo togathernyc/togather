@@ -9,7 +9,7 @@ import { query, mutation } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import { now, generateShortId, getDisplayName, getMediaUrl } from "../../lib/utils";
 import { requireAuth } from "../../lib/auth";
-import { isActiveLeader } from "../../lib/helpers";
+import { isActiveLeader, isActiveMembership } from "../../lib/helpers";
 import {
   canCreateInGroup,
   canEditMeeting,
@@ -128,6 +128,10 @@ export const create = mutation({
     hideRsvpCount: v.optional(v.boolean()),
     visibility: v.optional(v.string()),
     seriesId: v.optional(v.id("eventSeries")),
+    // Hosts own the event. When omitted on create we default to
+    // [createdById] so the filer is seated as host; pass `[]` to explicitly
+    // delegate to group leaders (the "no host" state) at create time.
+    hostUserIds: v.optional(v.array(v.id("users"))),
   },
   handler: async (ctx, args) => {
     const createdById = await requireAuth(ctx, args.token);
@@ -140,6 +144,27 @@ export const create = mutation({
     );
     if (!allowed) {
       throw new Error("You must be a member of this group to create events");
+    }
+
+    // Validate hosts are active members of the target group. Deduplicate
+    // so a client sending [userA, userA] doesn't double-seat.
+    const rawHostUserIds = args.hostUserIds ?? [createdById];
+    const hostUserIds: typeof rawHostUserIds = [];
+    const seenHosts = new Set<string>();
+    for (const hostId of rawHostUserIds) {
+      const key = String(hostId);
+      if (seenHosts.has(key)) continue;
+      seenHosts.add(key);
+      const membership = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q) =>
+          q.eq("groupId", args.groupId).eq("userId", hostId)
+        )
+        .first();
+      if (!isActiveMembership(membership)) {
+        throw new Error("Hosts must be active members of the group");
+      }
+      hostUserIds.push(hostId);
     }
 
     // Series creation remains leader-only.
@@ -208,6 +233,7 @@ export const create = mutation({
       posterId: args.posterId,
       status: "scheduled",
       createdById,
+      hostUserIds,
       createdAt: timestamp,
       rsvpEnabled: effectiveRsvpEnabled,
       rsvpOptions: effectiveRsvpOptions,
@@ -307,6 +333,9 @@ export const update = mutation({
     hideRsvpCount: v.optional(v.boolean()),
     visibility: v.optional(v.string()),
     scope: v.optional(v.union(v.literal("this_only"), v.literal("all_in_series"))),
+    // Pass an array (including `[]` to delegate to group leaders) to change
+    // hosts; omit to leave unchanged.
+    hostUserIds: v.optional(v.array(v.id("users"))),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -319,9 +348,39 @@ export const update = mutation({
       throw new Error("Meeting not found");
     }
 
-    // Per ADR-022: creator, group leaders, and community admins can update.
+    // Per ADR-022: host, group leaders, and community admins can update.
     if (!(await canEditMeeting(ctx, userId, meeting))) {
       throw new Error("You do not have permission to update this event");
+    }
+
+    // Validate host changes before applying. Hosts must be active members of
+    // the hosting group. Empty array is allowed — it delegates the event
+    // back to the group's leaders. Deduplicate defensively.
+    let hostsChanged = false;
+    if (updates.hostUserIds !== undefined) {
+      const seen = new Set<string>();
+      const validated: typeof updates.hostUserIds = [];
+      for (const hostId of updates.hostUserIds) {
+        const key = String(hostId);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const membership = await ctx.db
+          .query("groupMembers")
+          .withIndex("by_group_user", (q) =>
+            q.eq("groupId", meeting.groupId).eq("userId", hostId)
+          )
+          .first();
+        if (!isActiveMembership(membership)) {
+          throw new Error("Hosts must be active members of the group");
+        }
+        validated.push(hostId);
+      }
+      updates.hostUserIds = validated;
+
+      const prev = meeting.hostUserIds ?? [];
+      hostsChanged =
+        prev.length !== validated.length ||
+        prev.some((id, i) => id !== validated[i]);
     }
 
     // Series-wide scope can cascade writes to siblings the caller may not own
@@ -467,6 +526,16 @@ export const update = mutation({
 
     // Apply updates
     await ctx.db.patch(meetingId, cleanedUpdates);
+
+    // Reconcile chat channel admin seating when hosts change. Safe to call
+    // even if no channel exists — the internal mutation no-ops in that case.
+    if (hostsChanged) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.messaging.eventChat.reconcileEventChannelAdmins,
+        { meetingId }
+      );
+    }
 
     // Trigger followup score recomputation when meeting completion status changes
     if (

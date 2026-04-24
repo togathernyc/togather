@@ -730,6 +730,7 @@ describe("meetings.update/cancel — perms", () => {
       ctx.db.insert("meetings", {
         groupId: s.groupId,
         createdById: s.memberId,
+        hostUserIds: [s.memberId],
         scheduledAt: FUTURE(),
         status: "scheduled",
         meetingType: 1,
@@ -739,14 +740,14 @@ describe("meetings.update/cancel — perms", () => {
       })
     );
 
-    // Single-meeting edit by creator: allowed.
+    // Single-meeting edit by host: allowed.
     await t.mutation(api.functions.meetings.index.update, {
       token: s.memberToken,
       meetingId,
       title: "local-only edit",
     });
 
-    // Series-wide edit by creator: blocked — they aren't a leader.
+    // Series-wide edit by host: blocked — they aren't a leader.
     await expect(
       t.mutation(api.functions.meetings.index.update, {
         token: s.memberToken,
@@ -757,7 +758,7 @@ describe("meetings.update/cancel — perms", () => {
     ).rejects.toThrow(/series/i);
   });
 
-  test("leader can apply series-wide cancel; bare creator cannot", async () => {
+  test("leader can apply series-wide cancel; bare host cannot", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
 
@@ -775,6 +776,7 @@ describe("meetings.update/cancel — perms", () => {
       ctx.db.insert("meetings", {
         groupId: s.groupId,
         createdById: s.memberId,
+        hostUserIds: [s.memberId],
         scheduledAt: FUTURE(),
         status: "scheduled",
         meetingType: 1,
@@ -927,10 +929,12 @@ describe("meetingReports", () => {
     expect(list[0]._id).toBe(reportId);
   });
 
-  test("creator cannot report their own event", async () => {
+  test("host cannot report their own event", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
 
+    // `create` defaults hostUserIds to [creator], so the filer is seated
+    // as host and therefore can't self-report.
     const meetingId = await t.mutation(api.functions.meetings.index.create, {
       token: s.memberToken,
       groupId: s.groupId,
@@ -941,11 +945,11 @@ describe("meetingReports", () => {
 
     await expect(
       t.mutation(api.functions.meetings.reports.createReport, {
-        token: s.memberToken, // the creator
+        token: s.memberToken, // the host
         meetingId,
         reason: "spam",
       })
-    ).rejects.toThrow(/you created/i);
+    ).rejects.toThrow(/you host/i);
   });
 
   test("rejects invalid reason", async () => {

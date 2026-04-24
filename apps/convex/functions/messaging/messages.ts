@@ -11,6 +11,7 @@ import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import {
+  isActiveLeader,
   isCustomChannel,
   channelIsLeaderEnabled,
   channelEffectiveEnabledForGroup,
@@ -18,6 +19,10 @@ import {
 } from "../../lib/helpers";
 import { getDisplayName, getMediaUrl } from "../../lib/utils";
 import { isCommunityAdmin } from "../../lib/permissions";
+import {
+  getHostUserIds,
+  isMeetingHost,
+} from "../../lib/meetingPermissions";
 import { checkRateLimit } from "../../lib/rateLimit";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
 import { canAccessEventChannel } from "./eventChat";
@@ -32,7 +37,19 @@ async function canAccessMeetingChat(
   userId: Id<"users">,
   meeting: Doc<"meetings">,
 ): Promise<boolean> {
-  if (meeting.createdById && userId === meeting.createdById) return true;
+  if (isMeetingHost(meeting, userId)) return true;
+
+  // Delegated (no explicit host): leaders of the hosting group are the
+  // effective host. Matches canAccessEventChannel.
+  if (getHostUserIds(meeting).length === 0) {
+    const membership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", meeting.groupId).eq("userId", userId),
+      )
+      .first();
+    if (isActiveLeader(membership)) return true;
+  }
 
   const rsvp = await ctx.db
     .query("meetingRsvps")

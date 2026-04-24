@@ -244,6 +244,7 @@ export const getMeetingInfo = internalQuery({
       shortId: meeting.shortId,
       rsvpNotifyLeaders: meeting.rsvpNotifyLeaders,
       createdById: meeting.createdById,
+      hostUserIds: meeting.hostUserIds,
     };
   },
 });

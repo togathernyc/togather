@@ -22,7 +22,13 @@ import type { QueryCtx, MutationCtx } from "../../_generated/server";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { internal } from "../../_generated/api";
 import { requireAuth } from "../../lib/auth";
-import { canEditMeeting } from "../../lib/meetingPermissions";
+import {
+  canEditMeeting,
+  getHostUserIds,
+  isMeetingHost,
+  resolveEventAdmins,
+} from "../../lib/meetingPermissions";
+import { isActiveLeader } from "../../lib/helpers";
 import { now } from "../../lib/utils";
 
 // ============================================================================
@@ -56,8 +62,21 @@ export async function canAccessEventChannel(
   const meeting = await ctx.db.get(channel.meetingId);
   if (!meeting) return false;
 
-  // Host (event creator) always has access.
-  if (meeting.createdById && userId === meeting.createdById) return true;
+  // Hosts always have access. When the event is delegated (hostUserIds is
+  // explicitly empty), leaders of the hosting group are the effective host
+  // and also get auto-access. When there's an explicit host, leaders must
+  // RSVP or add themselves as a host to join the channel.
+  if (isMeetingHost(meeting, userId)) return true;
+
+  if (getHostUserIds(meeting).length === 0) {
+    const membership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", meeting.groupId).eq("userId", userId),
+      )
+      .first();
+    if (isActiveLeader(membership)) return true;
+  }
 
   // Otherwise, the user must have an RSVP row whose option is still enabled
   // on the meeting. v1: treat any RSVP row (with an enabled option) as chat
@@ -154,15 +173,16 @@ export const getChannelStateForEditor = query({
 // ============================================================================
 
 /**
- * Idempotently create the chat channel for an event and seat the host.
+ * Idempotently create the chat channel for an event and seat its admins.
  *
- * Call this the first time we need a channel for a meeting (e.g. when a
- * host opens the chat UI, or on the first blast). Safe to call repeatedly —
+ * Call this the first time we need a channel for a meeting (e.g. when an
+ * admin opens the chat UI, or on the first blast). Safe to call repeatedly —
  * if a channel already exists for the meeting, the existing id is returned.
  *
- * Seating model: only the host is seated here. Non-host members are added
- * lazily by `openEventChat` (they only become subscribers after explicitly
- * opening the chat), which prevents unrelated-to-them push notifications
+ * Seating model: admins (hosts when set, otherwise the group's active
+ * leaders — see `resolveEventAdmins`) are seated here. RSVPer members are
+ * added lazily by `openEventChat` (they only become subscribers after
+ * explicitly opening the chat), which prevents unrelated push notifications
  * and caps the write set for this mutation regardless of RSVP scale.
  */
 export const ensureEventChannel = internalMutation({
@@ -184,12 +204,14 @@ export const ensureEventChannel = internalMutation({
       throw new Error("Event is missing shortId — cannot create chat channel");
     }
 
-    if (!meeting.createdById) {
-      // createdById is optional in the schema but every modern meeting has one;
-      // without it we can't seat a host and later permission checks break.
-      throw new Error("Event is missing createdById — cannot create chat channel");
+    const admins = await resolveEventAdmins(ctx, meeting);
+    if (admins.length === 0) {
+      // No hosts AND no active leaders — we'd create a channel with no
+      // admin, which can't be moderated. Refuse rather than orphan it.
+      throw new Error(
+        "Event has no host and the hosting group has no active leaders — cannot create chat channel",
+      );
     }
-    const hostUserId = meeting.createdById;
 
     const ts = now();
 
@@ -198,25 +220,29 @@ export const ensureEventChannel = internalMutation({
       slug: `event-${meeting.shortId}`,
       channelType: "event",
       name: meeting.title || "Event chat",
-      createdById: hostUserId,
+      // `createdById` on the channel is metadata — set to the first admin so
+      // existing UI that reads it has a real user to surface. Authority lives
+      // on `chatChannelMembers.role === "admin"`.
+      createdById: admins[0],
       createdAt: ts,
       updatedAt: ts,
       isArchived: false,
       isEnabled: true,
       meetingId: args.meetingId,
-      memberCount: 1,
+      memberCount: admins.length,
     });
 
-    // Seat the host as admin. Non-host RSVPers are seated lazily when they
-    // call openEventChat — see the comment at the top of this mutation.
-    await ctx.db.insert("chatChannelMembers", {
-      channelId,
-      userId: hostUserId,
-      role: "admin",
-      syncSource: "event_rsvp",
-      joinedAt: ts,
-      isMuted: false,
-    });
+    // Seat every admin. RSVPer members are seated lazily by openEventChat.
+    for (const userId of admins) {
+      await ctx.db.insert("chatChannelMembers", {
+        channelId,
+        userId,
+        role: "admin",
+        syncSource: "event_rsvp",
+        joinedAt: ts,
+        isMuted: false,
+      });
+    }
 
     return channelId;
   },
@@ -263,7 +289,9 @@ export const addEventChannelMember = internalMutation({
 
 /**
  * Remove a user from the event chat for a meeting (e.g. when they un-RSVP).
- * The host is never removed. No-op when the channel or membership doesn't exist.
+ * Admins (hosts / leaders in delegated mode) are never removed — un-RSVP
+ * only drops "member"-role seats. No-op when the channel or membership
+ * doesn't exist.
  */
 export const removeEventChannelMember = internalMutation({
   args: {
@@ -277,9 +305,6 @@ export const removeEventChannelMember = internalMutation({
       .first();
     if (!channel) return;
 
-    // Host always stays in the event chat.
-    if (channel.createdById === args.userId) return;
-
     const member = await ctx.db
       .query("chatChannelMembers")
       .withIndex("by_channel_user", (q) =>
@@ -288,10 +313,104 @@ export const removeEventChannelMember = internalMutation({
       .first();
     if (!member) return;
 
+    // Admins stay — un-RSVP only removes "member"-role seats.
+    if (member.role === "admin") return;
+
     await ctx.db.delete(member._id);
     await ctx.db.patch(channel._id, {
       memberCount: Math.max(0, channel.memberCount - 1),
     });
+  },
+});
+
+/**
+ * Reconcile the event chat's admin seating after hosts change. Called from
+ * updateMeeting when `hostUserIds` is modified. No-op when the channel
+ * doesn't exist yet (the next `ensureEventChannel` will use current hosts).
+ *
+ * Reconciliation:
+ *   - Users who are now admins but missing → seat as admin.
+ *   - Users who are now admins but already present as "member" → promote.
+ *   - Users who are no longer admins but remain in the channel:
+ *     - If they have a valid RSVP → demote to "member".
+ *     - Otherwise → remove from channel.
+ */
+export const reconcileEventChannelAdmins = internalMutation({
+  args: {
+    meetingId: v.id("meetings"),
+  },
+  handler: async (ctx, args) => {
+    const channel = await ctx.db
+      .query("chatChannels")
+      .withIndex("by_meetingId", (q) => q.eq("meetingId", args.meetingId))
+      .first();
+    if (!channel) return;
+
+    const meeting = await ctx.db.get(args.meetingId);
+    if (!meeting) return;
+
+    const targetAdmins = await resolveEventAdmins(ctx, meeting);
+    const targetSet = new Set(targetAdmins.map((id) => String(id)));
+
+    const members = await ctx.db
+      .query("chatChannelMembers")
+      .withIndex("by_channel", (q) => q.eq("channelId", channel._id))
+      .collect();
+    const currentById = new Map(members.map((m) => [String(m.userId), m]));
+
+    const rsvpOptions = meeting.rsvpOptions ?? [];
+    const ts = now();
+    let memberDelta = 0;
+
+    // Seat missing admins; promote existing members.
+    for (const userId of targetAdmins) {
+      const existing = currentById.get(String(userId));
+      if (!existing) {
+        await ctx.db.insert("chatChannelMembers", {
+          channelId: channel._id,
+          userId,
+          role: "admin",
+          syncSource: "event_rsvp",
+          joinedAt: ts,
+          isMuted: false,
+        });
+        memberDelta += 1;
+      } else if (existing.role !== "admin") {
+        await ctx.db.patch(existing._id, { role: "admin" });
+      }
+    }
+
+    // Demote or remove users who are no longer admins.
+    for (const member of members) {
+      if (member.role !== "admin") continue;
+      if (targetSet.has(String(member.userId))) continue;
+
+      const rsvp = await ctx.db
+        .query("meetingRsvps")
+        .withIndex("by_meeting_user", (q) =>
+          q.eq("meetingId", args.meetingId).eq("userId", member.userId),
+        )
+        .first();
+      const hasActiveRsvp = rsvp
+        ? Boolean(
+            rsvpOptions.find((opt) => opt.id === rsvp.rsvpOptionId && opt.enabled),
+          )
+        : false;
+
+      if (hasActiveRsvp) {
+        await ctx.db.patch(member._id, { role: "member" });
+      } else {
+        await ctx.db.delete(member._id);
+        memberDelta -= 1;
+      }
+    }
+
+    if (memberDelta !== 0) {
+      await ctx.db.patch(channel._id, {
+        memberCount: Math.max(0, channel.memberCount + memberDelta),
+        updatedAt: ts,
+      });
+    }
   },
 });
 
@@ -328,8 +447,24 @@ export const openEventChat = mutation({
 
     // Access check — same rule as canAccessEventChannel but keyed off the
     // meeting since the channel may not exist yet.
-    const isHost = meeting.createdById && meeting.createdById === userId;
-    let hasAccess = Boolean(isHost);
+    const isHost = isMeetingHost(meeting, userId);
+    let isAdmin = isHost;
+
+    // In delegated mode (no explicit host), leaders are the effective host
+    // and get admin access — mirror the seating logic in ensureEventChannel.
+    if (!isAdmin && getHostUserIds(meeting).length === 0) {
+      const membership = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q) =>
+          q.eq("groupId", meeting.groupId).eq("userId", userId),
+        )
+        .first();
+      if (isActiveLeader(membership)) {
+        isAdmin = true;
+      }
+    }
+
+    let hasAccess = isAdmin;
     if (!hasAccess) {
       const rsvp = await ctx.db
         .query("meetingRsvps")
@@ -353,11 +488,12 @@ export const openEventChat = mutation({
       { meetingId: args.meetingId },
     );
 
-    // Lazily seat the caller as a channel member if they aren't already
-    // (the host was seated by ensureEventChannel; non-host RSVPers are
-    // seated only on their first openEventChat so they don't start
-    // receiving push notifications for events they haven't looked at).
-    if (!isHost) {
+    // Lazily seat the caller as a channel member if they aren't already.
+    // Admins (hosts / delegated-mode leaders) were seated by
+    // ensureEventChannel; RSVPers are seated only on their first
+    // openEventChat so they don't start receiving push notifications for
+    // events they haven't looked at.
+    if (!isAdmin) {
       const existingMembership = await ctx.db
         .query("chatChannelMembers")
         .withIndex("by_channel_user", (q) =>

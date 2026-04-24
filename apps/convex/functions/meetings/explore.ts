@@ -11,6 +11,7 @@ import { Id, Doc } from "../../_generated/dataModel";
 import { now, getMediaUrl } from "../../lib/utils";
 import { getOptionalAuth } from "../../lib/auth";
 import { isLeaderRole } from "../../lib/helpers";
+import { isMeetingHost } from "../../lib/meetingPermissions";
 
 /**
  * Resolve effective cover images for a batch of meetings, using the CWE
@@ -330,12 +331,13 @@ export const communityEvents = query({
         },
         // RSVP count visibility. `hideRsvpCount` is the event-level flag;
         // `viewerIsLeader` is true when the viewer can see the count/badge
-        // (event creator or a leader of the hosting group).
+        // (event host or a leader of the hosting group). Hosts fall back to
+        // [createdById] for legacy rows, so this still covers classic events.
         hideRsvpCount: meeting.hideRsvpCount === true,
         createdById: meeting.createdById ?? null,
         viewerIsLeader:
           leaderGroupIds.has(meeting.group._id) ||
-          (!!userId && meeting.createdById === userId),
+          (!!userId && isMeetingHost(meeting, userId)),
       };
     });
 

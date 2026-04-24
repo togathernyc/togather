@@ -386,7 +386,7 @@ export const notifyRsvpReceived = internalAction({
   handler: async (ctx, args): Promise<{ success: boolean; error?: string; sent?: number }> => {
     try {
       // Get meeting info
-      const meeting: { title?: string; groupId: Id<"groups">; shortId?: string; rsvpNotifyLeaders?: boolean; createdById?: Id<"users"> } | null = await ctx.runQuery(internal.functions.notifications.internal.getMeetingInfo, {
+      const meeting: { title?: string; groupId: Id<"groups">; shortId?: string; rsvpNotifyLeaders?: boolean; createdById?: Id<"users">; hostUserIds?: Id<"users">[] } | null = await ctx.runQuery(internal.functions.notifications.internal.getMeetingInfo, {
         meetingId: args.meetingId,
       });
       if (!meeting) {
@@ -408,22 +408,25 @@ export const notifyRsvpReceived = internalAction({
         userId: args.userId,
       });
 
-      // Recipients: the `rsvpNotifyLeaders` toggle (leader-only; see
-      // `toggleRsvpLeaderNotifications`) controls whether GROUP LEADERS get
-      // pinged. The creator always gets notified about RSVPs to their own
-      // event — ADR-022: the host wants to know without being able to
-      // override the leader-level preference.
-      const leaderNotificationsEnabled = meeting.rsvpNotifyLeaders !== false;
-      const leaderIds: Id<"users">[] = leaderNotificationsEnabled
-        ? await ctx.runQuery(internal.functions.notifications.internal.getGroupMembersForNotification, {
-            groupId: meeting.groupId,
-            filter: "leaders",
-          })
-        : [];
-      const recipientSet = new Set<string>(leaderIds.map((id) => String(id)));
-      if (meeting.createdById) {
-        recipientSet.add(String(meeting.createdById));
+      // Recipients: hosts when the event has any; otherwise group leaders
+      // are the effective host and get pinged (subject to the
+      // `rsvpNotifyLeaders` toggle — see `toggleRsvpLeaderNotifications`).
+      // The creator has no special status anymore — `createdById` is just a
+      // record of who filed the event.
+      const hostUserIds = meeting.hostUserIds ?? [];
+      let recipientIdsRaw: Id<"users">[];
+      if (hostUserIds.length > 0) {
+        recipientIdsRaw = hostUserIds;
+      } else {
+        const leaderNotificationsEnabled = meeting.rsvpNotifyLeaders !== false;
+        recipientIdsRaw = leaderNotificationsEnabled
+          ? await ctx.runQuery(internal.functions.notifications.internal.getGroupMembersForNotification, {
+              groupId: meeting.groupId,
+              filter: "leaders",
+            })
+          : [];
       }
+      const recipientSet = new Set<string>(recipientIdsRaw.map((id) => String(id)));
       // Exclude the RSVPing user so they don't get notified about their own RSVP.
       recipientSet.delete(String(args.userId));
       const recipientIds = [...recipientSet] as Id<"users">[];

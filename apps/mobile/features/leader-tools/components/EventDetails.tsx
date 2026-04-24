@@ -86,12 +86,14 @@ export function EventDetails({
   const meeting = meetingData ?? undefined;
   const isLoadingMeeting = groupId && meetingId && meetingData === undefined;
 
-  // ADR-022: creators can edit their own events even when they aren't
-  // leaders of the group.
-  const isCreator =
-    !!user?.id &&
-    !!(meeting as any)?.createdById &&
-    String(user.id) === String((meeting as any).createdById);
+  // The viewer can edit/moderate when they're a host of this event.
+  // Hosts replace the old creator-gated access per the host-decoupling
+  // change — backend authority is `canEditMeeting`, which checks the
+  // host list (falling back to an empty list, not to createdById).
+  const isCreator = !!user?.id && (() => {
+    const hosts = ((meeting as any)?.hostUserIds as string[] | undefined) ?? [];
+    return hosts.some((id) => String(id) === String(user.id));
+  })();
 
   // Fetch RSVPs for the meeting (using Convex)
   const rsvpsRaw = useQuery(

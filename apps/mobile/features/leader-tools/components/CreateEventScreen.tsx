@@ -45,6 +45,7 @@ import { DragHandle } from "@components/ui/DragHandle";
 import { useTheme } from "@hooks/useTheme";
 import { showEditScopePrompt, type EditScope } from "@components/ui/EditScopeModal";
 import { SeriesBadge } from "@components/ui/SeriesBadge";
+import { HostsPicker } from "./HostsPicker";
 
 interface CreateMeetingInput {
   scheduledAt: string;
@@ -63,6 +64,7 @@ interface CreateMeetingInput {
   rsvpOptions?: RsvpOption[];
   hideRsvpCount?: boolean;
   visibility?: VisibilityLevel;
+  hostUserIds?: Id<"users">[];
 }
 
 export function CreateEventScreen() {
@@ -157,6 +159,12 @@ export function CreateEventScreen() {
   // When true, RSVP count/list is hidden from non-leaders on the event page
   // and in chat cards. Leaders still see the count with a "Leaders only" badge.
   const [hideRsvpCount, setHideRsvpCount] = useState(false);
+  // Hosts own the event for notifications / chat admin. Defaults to the
+  // current user on create (can be edited); in edit mode we read it from
+  // the meeting doc. Empty array = "delegated to group leaders."
+  const [hostUserIds, setHostUserIds] = useState<Id<"users">[]>(
+    user?.id ? [user.id as Id<"users">] : [],
+  );
   // Event chat lives on the chatChannels doc, not the meeting — loaded/saved
   // separately from the meeting update mutation below.
   const [eventChatEnabled, setEventChatEnabled] = useState(true);
@@ -329,6 +337,14 @@ export function CreateEventScreen() {
       if (meeting.visibility) {
         setVisibility(meeting.visibility as VisibilityLevel);
       }
+      // Hosts: honor the stored value (including an explicit empty array,
+      // which means "delegated to leaders"). Undefined on legacy rows maps
+      // to [] since creator is no longer a fallback — an admin can then
+      // pick a host explicitly, or leave it delegated.
+      const storedHosts = (meeting as any).hostUserIds as
+        | Id<"users">[]
+        | undefined;
+      setHostUserIds(storedHosts ?? []);
     }
   }, [meeting, isEditMode, isCweAdminEdit, parentCweData]);
 
@@ -421,7 +437,7 @@ export function CreateEventScreen() {
   // Wrapper for create mutation with state tracking
   // Note: useAuthenticatedMutation auto-injects the token
   const createMeeting = {
-    mutate: async (data: { groupId: string; scheduledAt: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; locationMode?: "address" | "online" | "tbd"; note?: string; coverImage?: string; posterId?: Id<"posters"> | null; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; hideRsvpCount?: boolean; visibility?: VisibilityLevel }) => {
+    mutate: async (data: { groupId: string; scheduledAt: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; locationMode?: "address" | "online" | "tbd"; note?: string; coverImage?: string; posterId?: Id<"posters"> | null; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; hideRsvpCount?: boolean; visibility?: VisibilityLevel; hostUserIds?: Id<"users">[] }) => {
       setIsCreating(true);
       try {
         const newMeetingId = await createMeetingMutation({
@@ -442,6 +458,7 @@ export function CreateEventScreen() {
           rsvpOptions: data.rsvpOptions,
           hideRsvpCount: data.hideRsvpCount,
           visibility: data.visibility,
+          hostUserIds: data.hostUserIds,
         });
         // ADR-022 analytics: only fire for non-leader creators so the funnel
         // is clean (leaders creating events is the baseline, not the signal).
@@ -467,7 +484,7 @@ export function CreateEventScreen() {
   // Wrapper for update mutation with state tracking
   // Note: useAuthenticatedMutation auto-injects the token
   const updateMeeting = {
-    mutate: async (data: { meetingId: string; scheduledAt?: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; locationMode?: "address" | "online" | "tbd"; note?: string; coverImage?: string; posterId?: Id<"posters"> | null; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; hideRsvpCount?: boolean; visibility?: VisibilityLevel; notifyGuests?: boolean }) => {
+    mutate: async (data: { meetingId: string; scheduledAt?: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; locationMode?: "address" | "online" | "tbd"; note?: string; coverImage?: string; posterId?: Id<"posters"> | null; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; hideRsvpCount?: boolean; visibility?: VisibilityLevel; notifyGuests?: boolean; hostUserIds?: Id<"users">[] }) => {
       setIsUpdating(true);
       try {
         await updateMeetingMutation({
@@ -485,6 +502,7 @@ export function CreateEventScreen() {
           rsvpOptions: data.rsvpOptions,
           hideRsvpCount: data.hideRsvpCount,
           visibility: data.visibility,
+          hostUserIds: data.hostUserIds,
         });
         // Convex automatically updates queries
         router.back();
@@ -766,6 +784,7 @@ export function CreateEventScreen() {
         rsvpOptions: rsvpOptions.filter((opt) => opt.enabled),
         hideRsvpCount: hideRsvpCount,
         visibility: visibility,
+        hostUserIds: hostUserIds,
       };
 
       if (isEditMode && meetingId) {
@@ -1774,6 +1793,20 @@ export function CreateEventScreen() {
               editable={!isSubmitting}
             />
           </View>
+
+          {/* Hosts */}
+          {effectiveGroupId && (
+            <View style={styles.section}>
+              <HostsPicker
+                groupId={effectiveGroupId as Id<"groups">}
+                token={token ?? null}
+                hostUserIds={hostUserIds}
+                onChange={setHostUserIds}
+                currentUserId={(user?.id as Id<"users">) ?? null}
+                viewerIsLeader={isLeaderOfSelectedGroup || isAdmin}
+              />
+            </View>
+          )}
 
           {/* RSVP Options */}
           <View style={styles.section}>

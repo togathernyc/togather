@@ -11,6 +11,7 @@ import { v } from "convex/values";
 import { mutation, query } from "../../_generated/server";
 import { requireAuth } from "../../lib/auth";
 import { isActiveLeader } from "../../lib/helpers";
+import { isMeetingHost } from "../../lib/meetingPermissions";
 import { isCommunityAdmin } from "../../lib/permissions";
 import { now } from "../../lib/utils";
 
@@ -42,12 +43,13 @@ export const createReport = mutation({
       throw new Error("Event not found");
     }
 
-    // Creators can't report their own event. The client shows the flag icon
-    // uniformly (we don't want to special-case the UI for creators), but we
+    // Hosts can't report their own event. The client shows the flag icon
+    // uniformly (we don't want to special-case the UI for hosts), but we
     // reject here so self-reports don't pollute the moderation queue or the
-    // `event_reported` analytics signal.
-    if (meeting.createdById && meeting.createdById === reportedById) {
-      throw new Error("You can't report an event you created");
+    // `event_reported` analytics signal. Uses the host list with creator
+    // fallback — if no hosts are set, the creator still can't self-report.
+    if (isMeetingHost(meeting, reportedById)) {
+      throw new Error("You can't report an event you host");
     }
 
     // Caller must be an active member of the event's community (we gate on
