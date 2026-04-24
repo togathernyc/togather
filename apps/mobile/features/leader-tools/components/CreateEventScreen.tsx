@@ -1943,12 +1943,12 @@ export function CreateEventScreen() {
           {canCreateCommunityWide && !isEditMode && (
             <View style={[styles.communityWideSection, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border, marginTop: 24 }]}>
               <View style={styles.communityWideToggleRow}>
-                <View style={styles.communityWideToggleLabel}>
+                <View style={[styles.communityWideToggleLabel, { paddingRight: 12 }]}>
                   <Text style={[styles.label, { color: colors.text }]}>
-                    Create for multiple groups (community-wide event)
+                    Create for multiple groups
                   </Text>
                   <Text style={[styles.toggleHint, { color: colors.textSecondary, marginTop: 4 }]}>
-                    Admins only — use this to create the same event across many locations, like a recurring dinner party in every city group.
+                    Community-wide event — admins only. Use this to create the same event across many locations, like a recurring dinner party in every city group.
                   </Text>
                 </View>
                 <Switch
