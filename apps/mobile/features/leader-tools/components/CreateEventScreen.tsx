@@ -332,26 +332,25 @@ export function CreateEventScreen() {
     }
   }, [meeting, isEditMode, isCweAdminEdit, parentCweData]);
 
-  // Load event chat on/off state from the chat channel (edit mode only).
-  // Chat state lives on chatChannels, not the meeting, so we fetch and save it
-  // independently of the meeting update mutation. A `null` channel means no
-  // channel row exists yet — in that case the effective state is "enabled"
-  // (channels default to isEnabled: true on materialization).
-  const eventChannel = useConvexQuery(
-    api.functions.messaging.eventChat.getChannelByMeetingId,
+  // Load event chat on/off state for the edit form. Uses the editor-only
+  // query so leaders/admins who aren't RSVPed still see the real state. The
+  // user-facing `getChannelByMeetingId` returns null both when no channel
+  // exists AND when the caller lacks chat access — conflating those two
+  // would default the toggle to "enabled" for an editor viewing a disabled
+  // channel, and the no-op save path would silently skip the persist.
+  const eventChatState = useConvexQuery(
+    api.functions.messaging.eventChat.getChannelStateForEditor,
     isEditMode && meetingId && token
       ? { meetingId: meetingId as Id<"meetings">, token }
       : "skip"
   );
-  const initialEventChatEnabled = eventChannel
-    ? eventChannel.isEnabled !== false
-    : true; // null channel or still loading → default enabled
+  const initialEventChatEnabled = eventChatState?.isEnabled ?? true;
   useEffect(() => {
-    if (eventChannel !== undefined) {
+    if (eventChatState !== undefined && eventChatState !== null) {
       setEventChatEnabled(initialEventChatEnabled);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eventChannel]);
+  }, [eventChatState]);
   const setEventChannelEnabledMutation = useAuthenticatedMutation(
     api.functions.messaging.eventChat.setEventChannelEnabled
   );
@@ -776,20 +775,20 @@ export function CreateEventScreen() {
         // Event chat lives on chatChannels, not on the meeting. Flip it once
         // up front for the meeting being edited so the state persists no
         // matter which scope branch runs (single, series, or CWE-wide). The
-        // toggle is inherently per-meeting, so we never cascade it.
+        // toggle is inherently per-meeting, so we never cascade it. Running
+        // BEFORE the meeting write means a failure here aborts the save and
+        // no other form changes land — that's intentional, since the
+        // alternative is a silent partial write where the user thinks the
+        // toggle saved but it didn't. The caller alerts on thrown errors.
         const persistEventChatToggle = async () => {
           if (
-            eventChannel !== undefined &&
+            eventChatState !== undefined &&
             eventChatEnabled !== initialEventChatEnabled
           ) {
-            try {
-              await setEventChannelEnabledMutation({
-                meetingId: meetingId as Id<"meetings">,
-                enabled: eventChatEnabled,
-              });
-            } catch (err) {
-              console.warn("Failed to update event chat toggle:", err);
-            }
+            await setEventChannelEnabledMutation({
+              meetingId: meetingId as Id<"meetings">,
+              enabled: eventChatEnabled,
+            });
           }
         };
 
@@ -798,7 +797,18 @@ export function CreateEventScreen() {
         // sibling. Single-meeting edits (and series-only) stay on
         // `meetings.update`. Matches the cancel flow split.
         const performUpdate = async (scope?: EditScope) => {
-          await persistEventChatToggle();
+          try {
+            await persistEventChatToggle();
+          } catch (err: any) {
+            Alert.alert(
+              "Error",
+              formatError(
+                err,
+                "Failed to update event chat. Other changes were not saved.",
+              ),
+            );
+            return;
+          }
           if (
             isCommunityWide &&
             (scope === "this_date_all_groups" || scope === "all_in_series") &&
@@ -1793,10 +1803,11 @@ export function CreateEventScreen() {
 
           {/* Event chat toggle — edit mode only. Hidden while the channel
               query is still loading so the switch doesn't flicker into the
-              wrong position and then snap. `setEventChannelEnabled`
-              materializes the channel on first flip, so a null channel here
-              is fine. */}
-          {isEditMode && eventChannel !== undefined && (
+              wrong position and then snap. A `null` result means the caller
+              isn't an editor (shouldn't happen on this screen, but guard
+              anyway). `setEventChannelEnabled` materializes the channel on
+              first flip, so an `exists: false` state is fine. */}
+          {isEditMode && !!eventChatState && (
             <View style={styles.section}>
               <Text style={[styles.sectionTitle, { color: colors.text }]}>Event Chat</Text>
               <View style={styles.toggleRow}>
