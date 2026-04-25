@@ -3,7 +3,7 @@
  *
  * Centralizes the "who can edit/cancel/create this meeting" logic that
  * ADR-022 introduces. Before PR 2, only group leaders could touch meetings;
- * now the creator of the meeting + group leaders + community admins can.
+ * now the hosts of the meeting + group leaders + community admins can.
  */
 
 import type { Doc, Id } from "../_generated/dataModel";
@@ -11,6 +11,47 @@ import { isActiveLeader, isActiveMember } from "./helpers";
 import { isCommunityAdmin } from "./permissions";
 
 type Ctx = { db: any };
+
+/**
+ * The users who host an event. Returns an empty list when no hosts are set —
+ * in that case the event is "delegated" and group leaders are the effective
+ * host (see `canEditMeeting`, chat seating in `eventChat.ts`, and RSVP
+ * notifications in `senders.ts`). Creator is intentionally NOT a fallback:
+ * `createdById` is just a record of who filed the event, not a permission.
+ */
+export function getHostUserIds(meeting: Doc<"meetings">): Id<"users">[] {
+  return meeting.hostUserIds ?? [];
+}
+
+/** True when the user is one of the meeting's hosts. */
+export function isMeetingHost(
+  meeting: Doc<"meetings">,
+  userId: Id<"users">,
+): boolean {
+  return getHostUserIds(meeting).some((id) => id === userId);
+}
+
+/**
+ * The users who should be seated as admins of the event chat and notified on
+ * RSVP. Returns hosts when set, otherwise the group's active leaders. Single
+ * source of truth — keep in sync with the edit-access rule in
+ * `canEditMeeting` and the chat-access rule in `canAccessEventChannel`.
+ */
+export async function resolveEventAdmins(
+  ctx: Ctx,
+  meeting: Doc<"meetings">,
+): Promise<Id<"users">[]> {
+  const hosts = getHostUserIds(meeting);
+  if (hosts.length > 0) return hosts;
+
+  const memberships = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_group", (q: any) => q.eq("groupId", meeting.groupId))
+    .collect();
+  return memberships
+    .filter((m: any) => isActiveLeader(m))
+    .map((m: any) => m.userId as Id<"users">);
+}
 
 /**
  * Can this user create an event in this group?
@@ -38,14 +79,15 @@ export async function canCreateInGroup(
 
 /**
  * Can this user edit/cancel this meeting?
- * Per ADR-022: creator OR group leader OR community admin.
+ * Per ADR-022 + hosts: host OR group leader OR community admin. When
+ * `hostUserIds` is empty, falls back to the creator.
  */
 export async function canEditMeeting(
   ctx: Ctx,
   userId: Id<"users">,
   meeting: Doc<"meetings">
 ): Promise<boolean> {
-  if (meeting.createdById && meeting.createdById === userId) {
+  if (isMeetingHost(meeting, userId)) {
     return true;
   }
 

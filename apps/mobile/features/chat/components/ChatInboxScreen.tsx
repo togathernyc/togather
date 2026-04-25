@@ -34,15 +34,10 @@ import { GroupedInboxItem } from "./GroupedInboxItem";
 import { useExpandedGroups } from "../hooks/useExpandedGroups";
 import { useInboxCache } from "../../../stores/inboxCache";
 
-/**
- * How long after an event's scheduledAt AND lastMessageAt before the channel
- * is hidden from the inbox. Kept in sync with the backend source of truth at
- * `apps/convex/functions/messaging/eventChat.ts` (exported as HIDE_AFTER_MS).
- * Duplicated here (rather than imported across the mobile/convex package
- * boundary) so the mobile bundle doesn't pull in convex server code. If you
- * change one, change the other.
- */
-const HIDE_AFTER_MS = 2 * 24 * 60 * 60 * 1000;
+// Inbox event visibility is now driven server-side by
+// `INBOX_EVENT_HIDE_AFTER_MS` in apps/convex/functions/messaging/channels.ts
+// (channels without a first message or quiet for >2 days are omitted from
+// the payload), so the client no longer duplicates that constant.
 
 // Type for a channel as returned by getInboxChannels
 type InboxChannel = {
@@ -158,27 +153,48 @@ export function ChatInboxScreen({
     }
   }, [inboxChannels, communityId, setInboxChannels]);
 
-  // Render a single grouped inbox item
+  // Inbox list entries are either a grouped item (group + its channels) or a
+  // standalone event row. They're interleaved so activity, not type, drives
+  // recency — a group with a fresh message sits above an event with a
+  // week-old one (and vice versa). Announcement group stays pinned on top.
+  type InboxListItem =
+    | { kind: "group"; item: InboxGroup }
+    | { kind: "event"; item: EventInboxRow };
+
+  // Render a single inbox row (group or event)
   const renderItem = useCallback(
-    ({ item }: { item: InboxGroup }) => (
-      <GroupedInboxItem
-        group={item.group}
-        channels={item.channels}
-        userRole={item.userRole}
-        isExpanded={isGroupExpanded(item.group._id)}
-        onToggleExpand={() => toggleGroupExpanded(item.group._id)}
-        activeGroupId={sidebarMode ? activeGroupId : undefined}
-        activeChannelSlug={sidebarMode ? activeChannelSlug : undefined}
-      />
-    ),
+    ({ item }: { item: InboxListItem }) => {
+      if (item.kind === "event") {
+        return (
+          <EventInboxRowItem
+            row={item.item}
+            isActive={Boolean(
+              sidebarMode && activeChannelSlug === item.item.channel.slug,
+            )}
+          />
+        );
+      }
+      return (
+        <GroupedInboxItem
+          group={item.item.group}
+          channels={item.item.channels}
+          userRole={item.item.userRole}
+          isExpanded={isGroupExpanded(item.item.group._id)}
+          onToggleExpand={() => toggleGroupExpanded(item.item.group._id)}
+          activeGroupId={sidebarMode ? activeGroupId : undefined}
+          activeChannelSlug={sidebarMode ? activeChannelSlug : undefined}
+        />
+      );
+    },
     [isGroupExpanded, toggleGroupExpanded, sidebarMode, activeGroupId, activeChannelSlug]
   );
 
   // Key extractor for FlatList
-  const keyExtractor = useCallback(
-    (item: InboxGroup) => item.group._id,
-    []
-  );
+  const keyExtractor = useCallback((item: InboxListItem) => {
+    return item.kind === "event"
+      ? `event:${item.item.channel._id}`
+      : `group:${item.item.group._id}`;
+  }, []);
 
   const Wrapper = React.Fragment;
   const headerPaddingTop = sidebarMode ? 16 : insets.top + 16;
@@ -224,16 +240,16 @@ export function ChatInboxScreen({
     }
   }
 
-  // Partition inbox channels into a flat "Events" list and the normal groups
-  // list. This must run before any early returns to keep hook order stable.
-  const now = Date.now();
-  const { eventRows, groupsForList } = useMemo(() => {
-    const eventRowsAcc: EventInboxRow[] = [];
-    const groupsAcc: InboxGroup[] = [];
+  // Interleave group and event rows by recency. Server already hides event
+  // channels without a first message and those quiet for >2 days (see
+  // INBOX_EVENT_HIDE_AFTER_MS in channels.ts), so the client just splits the
+  // events off their owning-group entries and drops them back into the list
+  // sorted by lastMessageAt. Announcement group stays pinned on top.
+  const listItems = useMemo<InboxListItem[]>(() => {
+    if (!displayChannels) return [];
 
-    if (!displayChannels) {
-      return { eventRows: eventRowsAcc, groupsForList: groupsAcc };
-    }
+    const groupItems: InboxListItem[] = [];
+    const eventItems: InboxListItem[] = [];
 
     for (const g of displayChannels) {
       const nonEventChannels: InboxChannel[] = [];
@@ -242,19 +258,9 @@ export function ChatInboxScreen({
         if (ch.isEnabled === false) continue;
 
         if (ch.channelType === "event") {
-          // Hide stale event channels: both the event is >2d past AND the chat
-          // has been quiet for >2d. A new message bumps lastMessageAt and the
-          // row reappears automatically.
-          const scheduledAt = ch.meetingScheduledAt ?? 0;
-          const lastMessageAt = ch.lastMessageAt ?? 0;
-          const eventIsStale = scheduledAt + HIDE_AFTER_MS < now;
-          const chatIsStale = lastMessageAt + HIDE_AFTER_MS < now;
-          if (eventIsStale && chatIsStale) continue;
-
-          eventRowsAcc.push({
-            channel: ch,
-            group: g.group,
-            userRole: g.userRole,
+          eventItems.push({
+            kind: "event",
+            item: { channel: ch, group: g.group, userRole: g.userRole },
           });
         } else {
           nonEventChannels.push(ch);
@@ -262,22 +268,44 @@ export function ChatInboxScreen({
       }
 
       if (nonEventChannels.length > 0) {
-        groupsAcc.push({ ...g, channels: nonEventChannels });
+        groupItems.push({
+          kind: "group",
+          item: { ...g, channels: nonEventChannels },
+        });
       }
     }
 
-    // Sort events by lastMessageAt desc; if neither side has a last message,
-    // fall back to meeting scheduledAt; no-data rows sink to the bottom.
-    eventRowsAcc.sort((a, b) => {
-      const aTime =
-        a.channel.lastMessageAt ?? a.channel.meetingScheduledAt ?? 0;
-      const bTime =
-        b.channel.lastMessageAt ?? b.channel.meetingScheduledAt ?? 0;
-      return bTime - aTime;
+    const effectiveTime = (entry: InboxListItem): number => {
+      if (entry.kind === "event") {
+        return (
+          entry.item.channel.lastMessageAt ??
+          entry.item.channel.meetingScheduledAt ??
+          0
+        );
+      }
+      return Math.max(
+        0,
+        ...entry.item.channels.map((c) => c.lastMessageAt ?? 0),
+      );
+    };
+
+    const combined = [...groupItems, ...eventItems];
+    combined.sort((a, b) => {
+      // Announcement groups anchor the top regardless of activity.
+      const aAnnouncement =
+        a.kind === "group" && a.item.group.isAnnouncementGroup;
+      const bAnnouncement =
+        b.kind === "group" && b.item.group.isAnnouncementGroup;
+      if (aAnnouncement && !bAnnouncement) return -1;
+      if (!aAnnouncement && bAnnouncement) return 1;
+
+      // Otherwise newest activity wins. Ties fall through to a stable order.
+      return effectiveTime(b) - effectiveTime(a);
     });
 
-    return { eventRows: eventRowsAcc, groupsForList: groupsAcc };
-  }, [displayChannels, now]);
+    return combined;
+  }, [displayChannels]);
+  const hasInboxItems = listItems.length > 0;
 
   // Show message when user has no community context
   if (!hasCommunity) {
@@ -322,9 +350,7 @@ export function ChatInboxScreen({
     );
   }
 
-  const hasAnyContent = eventRows.length > 0 || groupsForList.length > 0;
-
-  if (!hasAnyContent) {
+  if (!hasInboxItems) {
     return (
       <Wrapper>
         <View style={[styles.container, { backgroundColor: colors.surface }]}>
@@ -355,19 +381,11 @@ export function ChatInboxScreen({
           <Text style={[styles.headerTitle, { color: colors.text }]}>Inbox</Text>
         </View>
         <FlatList
-          data={groupsForList}
+          data={listItems}
           renderItem={renderItem}
           keyExtractor={keyExtractor}
           contentContainerStyle={styles.listContainer}
           style={styles.list}
-          ListHeaderComponent={
-            eventRows.length > 0 ? (
-              <EventsSection
-                rows={eventRows}
-                activeChannelSlug={sidebarMode ? activeChannelSlug : undefined}
-              />
-            ) : null
-          }
         />
       </View>
     </Wrapper>

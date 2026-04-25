@@ -39,12 +39,13 @@ import { ConfirmModal } from "@components/ui/ConfirmModal";
 import { getGroupCoordinates, geocodeAddressAsync } from "../../groups/utils/geocodeLocation";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useAuth } from "@providers/AuthProvider";
-import { formatError } from "@/utils/error-handling";
+import { formatError, showAlert } from "@/utils/error-handling";
 import { useGroupTypes } from "../../admin/hooks/useGroupTypes";
 import { DragHandle } from "@components/ui/DragHandle";
 import { useTheme } from "@hooks/useTheme";
 import { showEditScopePrompt, type EditScope } from "@components/ui/EditScopeModal";
 import { SeriesBadge } from "@components/ui/SeriesBadge";
+import { HostsPicker } from "./HostsPicker";
 
 interface CreateMeetingInput {
   scheduledAt: string;
@@ -63,6 +64,7 @@ interface CreateMeetingInput {
   rsvpOptions?: RsvpOption[];
   hideRsvpCount?: boolean;
   visibility?: VisibilityLevel;
+  hostUserIds?: Id<"users">[];
 }
 
 export function CreateEventScreen() {
@@ -157,6 +159,13 @@ export function CreateEventScreen() {
   // When true, RSVP count/list is hidden from non-leaders on the event page
   // and in chat cards. Leaders still see the count with a "Leaders only" badge.
   const [hideRsvpCount, setHideRsvpCount] = useState(false);
+  // Hosts own the event for notifications / chat admin. Defaults to the
+  // current user on create (can be edited); in edit mode we read it from
+  // the meeting doc. Empty array = "delegated to group leaders."
+  const [hostUserIds, setHostUserIds] = useState<Id<"users">[]>([]);
+  // The default-to-current-user seeding effect lives further down, after
+  // `isEditMode` is computed, since `useAuth` is async on first render.
+  const [hostsInitialized, setHostsInitialized] = useState(false);
   // Event chat lives on the chatChannels doc, not the meeting — loaded/saved
   // separately from the meeting update mutation below.
   const [eventChatEnabled, setEventChatEnabled] = useState(true);
@@ -214,6 +223,20 @@ export function CreateEventScreen() {
   }
 
   const isEditMode = !!meetingId;
+
+  // Seed the default host to the current user once auth resolves. `useAuth`
+  // often returns `user === null` on the first render, so initializing
+  // `hostUserIds` straight from `user?.id` in `useState` would leave it
+  // empty (→ delegation mode) even when the user meant to keep themselves
+  // as host. Skipped in edit mode — that path is seeded from the meeting
+  // doc further below.
+  useEffect(() => {
+    if (hostsInitialized) return;
+    if (isEditMode) return;
+    if (!user?.id) return;
+    setHostUserIds([user.id as Id<"users">]);
+    setHostsInitialized(true);
+  }, [hostsInitialized, isEditMode, user?.id]);
 
   // Fetch group details to get group type name
   const { data: groupDetails } = useGroupDetails(effectiveGroupId ?? undefined);
@@ -329,6 +352,14 @@ export function CreateEventScreen() {
       if (meeting.visibility) {
         setVisibility(meeting.visibility as VisibilityLevel);
       }
+      // Hosts: honor the stored value (including an explicit empty array,
+      // which means "delegated to leaders"). Undefined on legacy rows maps
+      // to [] since creator is no longer a fallback — an admin can then
+      // pick a host explicitly, or leave it delegated.
+      const storedHosts = (meeting as any).hostUserIds as
+        | Id<"users">[]
+        | undefined;
+      setHostUserIds(storedHosts ?? []);
     }
   }, [meeting, isEditMode, isCweAdminEdit, parentCweData]);
 
@@ -421,7 +452,7 @@ export function CreateEventScreen() {
   // Wrapper for create mutation with state tracking
   // Note: useAuthenticatedMutation auto-injects the token
   const createMeeting = {
-    mutate: async (data: { groupId: string; scheduledAt: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; locationMode?: "address" | "online" | "tbd"; note?: string; coverImage?: string; posterId?: Id<"posters"> | null; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; hideRsvpCount?: boolean; visibility?: VisibilityLevel }) => {
+    mutate: async (data: { groupId: string; scheduledAt: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; locationMode?: "address" | "online" | "tbd"; note?: string; coverImage?: string; posterId?: Id<"posters"> | null; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; hideRsvpCount?: boolean; visibility?: VisibilityLevel; hostUserIds?: Id<"users">[] }) => {
       setIsCreating(true);
       try {
         const newMeetingId = await createMeetingMutation({
@@ -442,6 +473,7 @@ export function CreateEventScreen() {
           rsvpOptions: data.rsvpOptions,
           hideRsvpCount: data.hideRsvpCount,
           visibility: data.visibility,
+          hostUserIds: data.hostUserIds,
         });
         // ADR-022 analytics: only fire for non-leader creators so the funnel
         // is clean (leaders creating events is the baseline, not the signal).
@@ -456,7 +488,7 @@ export function CreateEventScreen() {
         // Show the share to chat modal
         showInviteSheetForMeeting(newMeetingId);
       } catch (error: any) {
-        Alert.alert("Error", formatError(error, "Failed to create event"));
+        showAlert("Error", formatError(error, "Failed to create event"));
       } finally {
         setIsCreating(false);
       }
@@ -467,7 +499,7 @@ export function CreateEventScreen() {
   // Wrapper for update mutation with state tracking
   // Note: useAuthenticatedMutation auto-injects the token
   const updateMeeting = {
-    mutate: async (data: { meetingId: string; scheduledAt?: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; locationMode?: "address" | "online" | "tbd"; note?: string; coverImage?: string; posterId?: Id<"posters"> | null; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; hideRsvpCount?: boolean; visibility?: VisibilityLevel; notifyGuests?: boolean }) => {
+    mutate: async (data: { meetingId: string; scheduledAt?: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; locationMode?: "address" | "online" | "tbd"; note?: string; coverImage?: string; posterId?: Id<"posters"> | null; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; hideRsvpCount?: boolean; visibility?: VisibilityLevel; notifyGuests?: boolean; hostUserIds?: Id<"users">[] }) => {
       setIsUpdating(true);
       try {
         await updateMeetingMutation({
@@ -485,11 +517,12 @@ export function CreateEventScreen() {
           rsvpOptions: data.rsvpOptions,
           hideRsvpCount: data.hideRsvpCount,
           visibility: data.visibility,
+          hostUserIds: data.hostUserIds,
         });
         // Convex automatically updates queries
         router.back();
       } catch (error: any) {
-        Alert.alert("Error", formatError(error, "Failed to update event"));
+        showAlert("Error", formatError(error, "Failed to update event"));
       } finally {
         setIsUpdating(false);
       }
@@ -534,7 +567,7 @@ export function CreateEventScreen() {
           [{ text: "OK", onPress: () => router.back() }]
         );
       } catch (error: any) {
-        Alert.alert("Error", formatError(error, "Failed to cancel event"));
+        showAlert("Error", formatError(error, "Failed to cancel event"));
       } finally {
         setIsCancelling(false);
       }
@@ -607,7 +640,7 @@ export function CreateEventScreen() {
                     { text: "OK", onPress: () => router.back() },
                   ]);
                 } catch (error: any) {
-                  Alert.alert("Error", formatError(error, "Failed to cancel"));
+                  showAlert("Error", formatError(error, "Failed to cancel"));
                 } finally {
                   setIsCancelling(false);
                 }
@@ -766,6 +799,7 @@ export function CreateEventScreen() {
         rsvpOptions: rsvpOptions.filter((opt) => opt.enabled),
         hideRsvpCount: hideRsvpCount,
         visibility: visibility,
+        hostUserIds: hostUserIds,
       };
 
       if (isEditMode && meetingId) {
@@ -841,7 +875,7 @@ export function CreateEventScreen() {
               });
               router.back();
             } catch (error: any) {
-              Alert.alert("Error", formatError(error, "Failed to update event"));
+              showAlert("Error", formatError(error, "Failed to update event"));
             } finally {
               setIsUpdating(false);
             }
@@ -912,7 +946,7 @@ export function CreateEventScreen() {
             [{ text: "OK", onPress: () => router.back() }]
           );
         } catch (error: any) {
-          Alert.alert("Error", formatError(error, "Failed to create community-wide series"));
+          showAlert("Error", formatError(error, "Failed to create community-wide series"));
         } finally {
           setIsCreatingCommunityWide(false);
         }
@@ -947,7 +981,7 @@ export function CreateEventScreen() {
             [{ text: "OK", onPress: () => router.back() }]
           );
         } catch (error: any) {
-          Alert.alert("Error", formatError(error, "Failed to create event series"));
+          showAlert("Error", formatError(error, "Failed to create event series"));
         } finally {
           setIsCreating(false);
         }
@@ -976,7 +1010,7 @@ export function CreateEventScreen() {
             [{ text: "OK", onPress: () => router.back() }]
           );
         } catch (error: any) {
-          Alert.alert("Error", formatError(error, "Failed to create community-wide event"));
+          showAlert("Error", formatError(error, "Failed to create community-wide event"));
         } finally {
           setIsCreatingCommunityWide(false);
         }
@@ -984,7 +1018,7 @@ export function CreateEventScreen() {
         createMeeting.mutate({ groupId: effectiveGroupId, ...data });
       }
     } catch (error: any) {
-      Alert.alert("Upload Error", formatError(error, "Failed to upload cover image"));
+      showAlert("Upload Error", formatError(error, "Failed to upload cover image"));
     }
   };
 
@@ -1184,124 +1218,6 @@ export function CreateEventScreen() {
           contentContainerStyle={styles.contentContainer}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Community-Wide Event Toggle - only show for admins in unified mode */}
-          {canCreateCommunityWide && !isEditMode && (
-            <View style={[styles.communityWideSection, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
-              <View style={styles.communityWideToggleRow}>
-                <View style={styles.communityWideToggleLabel}>
-                  <Text style={[styles.label, { color: colors.text }]}>Create for all</Text>
-                </View>
-                <Switch
-                  value={isCommunityWideEnabled}
-                  onValueChange={(value) => {
-                    setIsCommunityWideEnabled(value);
-                    // Reset selections when toggling
-                    if (value) {
-                      setSelectedGroupId(null);
-                      setIsGroupDropdownOpen(false);
-                    } else {
-                      setSelectedGroupTypeId(null);
-                      setIsGroupTypeDropdownOpen(false);
-                    }
-                    setErrors({});
-                  }}
-                  trackColor={{ false: colors.border, true: primaryColor }}
-                  thumbColor={colors.textInverse}
-                  disabled={isSubmitting}
-                />
-              </View>
-
-              {/* Group Type Selector - only show when toggle is ON */}
-              {isCommunityWideEnabled && (
-                <View style={styles.groupTypeSelector}>
-                  {isLoadingGroupTypes ? (
-                    <View style={[styles.loadingDropdown, { backgroundColor: colors.surfaceSecondary }]}>
-                      <ActivityIndicator size="small" color={primaryColor} />
-                      <Text style={[styles.loadingDropdownText, { color: colors.textSecondary }]}>Loading group types...</Text>
-                    </View>
-                  ) : !groupTypes || groupTypes.length === 0 ? (
-                    <View style={[styles.noGroupsContainer, { backgroundColor: colors.surfaceSecondary }]}>
-                      <Text style={[styles.noGroupsText, { color: colors.destructive }]}>
-                        No group types available.
-                      </Text>
-                    </View>
-                  ) : (
-                    <>
-                      <TouchableOpacity
-                        style={[
-                          styles.dropdownButton,
-                          { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground },
-                          errors.groupType && styles.dropdownButtonError,
-                        ]}
-                        onPress={() => setIsGroupTypeDropdownOpen(!isGroupTypeDropdownOpen)}
-                        disabled={isSubmitting}
-                      >
-                        {selectedGroupType ? (
-                          <Text style={[styles.selectedGroupName, { color: colors.text }]}>{selectedGroupType.name}</Text>
-                        ) : (
-                          <Text style={[styles.dropdownPlaceholder, { color: colors.inputPlaceholder }]}>Select group type</Text>
-                        )}
-                        <Ionicons
-                          name={isGroupTypeDropdownOpen ? "chevron-up" : "chevron-down"}
-                          size={20}
-                          color={colors.textSecondary}
-                        />
-                      </TouchableOpacity>
-                      {isGroupTypeDropdownOpen && (
-                        <View style={[styles.dropdownList, { borderColor: colors.inputBorder, backgroundColor: colors.surface }]}>
-                          {groupTypes.map((gt) => (
-                            <TouchableOpacity
-                              key={gt.id}
-                              style={[
-                                styles.dropdownItem,
-                                { borderBottomColor: colors.borderLight },
-                                selectedGroupTypeId === gt.id && [styles.dropdownItemSelected, { backgroundColor: colors.selectedBackground }],
-                              ]}
-                              onPress={() => {
-                                setSelectedGroupTypeId(gt.id);
-                                setIsGroupTypeDropdownOpen(false);
-                                setErrors((prev) => ({ ...prev, groupType: undefined }));
-                              }}
-                            >
-                              <Text
-                                style={[
-                                  styles.dropdownItemText,
-                                  { color: colors.text },
-                                  selectedGroupTypeId === gt.id && [styles.dropdownItemTextSelected, { color: primaryColor }],
-                                ]}
-                              >
-                                {gt.name}
-                              </Text>
-                              <Text style={[styles.dropdownItemSubtext, { color: colors.textSecondary }]}>
-                                {gt.groupCount} {gt.groupCount === 1 ? "group" : "groups"}
-                              </Text>
-                              {selectedGroupTypeId === gt.id && (
-                                <Ionicons name="checkmark" size={18} color={primaryColor} />
-                              )}
-                            </TouchableOpacity>
-                          ))}
-                        </View>
-                      )}
-                      {errors.groupType && (
-                        <Text style={styles.fieldErrorText}>{errors.groupType}</Text>
-                      )}
-                    </>
-                  )}
-
-                  {/* Show count of groups that will receive the event */}
-                  {selectedGroupTypeId && groupCountForType !== undefined && (
-                    <View style={[styles.groupCountInfo, { backgroundColor: colors.surfaceSecondary }]}>
-                      <Ionicons name="information-circle" size={16} color={colors.link} />
-                      <Text style={[styles.groupCountText, { color: colors.link }]}>
-                        This will create events for {groupCountForType} {selectedGroupType?.name || "group"} groups
-                      </Text>
-                    </View>
-                  )}
-                </View>
-              )}
-            </View>
-          )}
-
           {/* Community-Wide Event Edit Warning */}
           {isEditMode && meeting?.communityWideEventId && !meeting?.isOverridden && (
             <View style={[styles.communityWideWarning, { backgroundColor: colors.surfaceSecondary, borderColor: colors.warning }]}>
@@ -1775,6 +1691,37 @@ export function CreateEventScreen() {
             />
           </View>
 
+          {/* Hosts. Hidden in two CREATE paths where the host picker would
+              be a silent no-op:
+                - Series creation (`createSeriesEvents` / community-wide
+                  series) doesn't accept `hostUserIds` yet, so any picker
+                  selection is dropped.
+                - Community-wide single creation (`createCommunityWideEvent`)
+                  also doesn't take it.
+              In both cases the created meetings default to delegated
+              (group-leaders manage); the user can set hosts per-event
+              afterward via the edit screen. Edit mode always shows the
+              picker — hosts cascade across siblings via the
+              `all_in_series` scope. */}
+          {effectiveGroupId &&
+            !(!isEditMode && (isSeriesMode || isCommunityWideEnabled)) && (
+            <View style={styles.section}>
+              <HostsPicker
+                groupId={effectiveGroupId as Id<"groups">}
+                token={token ?? null}
+                hostUserIds={hostUserIds}
+                onChange={setHostUserIds}
+                currentUserId={(user?.id as Id<"users">) ?? null}
+                currentUserName={
+                  user
+                    ? [user.first_name, user.last_name].filter(Boolean).join(" ")
+                    : null
+                }
+                viewerIsLeader={isLeaderOfSelectedGroup || isAdmin}
+              />
+            </View>
+          )}
+
           {/* RSVP Options */}
           <View style={styles.section}>
             <Text style={[styles.sectionTitle, { color: colors.text }]}>RSVP Options</Text>
@@ -1859,7 +1806,7 @@ export function CreateEventScreen() {
                                   meetingId: meetingId as Id<"meetings">,
                                 });
                               } catch (error: any) {
-                                Alert.alert("Error", formatError(error, "Failed to remove from series"));
+                                showAlert("Error", formatError(error, "Failed to remove from series"));
                               } finally {
                                 setIsSeriesLinking(false);
                               }
@@ -1907,7 +1854,7 @@ export function CreateEventScreen() {
                               setNewSeriesNameInput("");
                               setIsCreatingNewSeries(false);
                             } catch (error: any) {
-                              Alert.alert("Error", formatError(error, "Failed to create series"));
+                              showAlert("Error", formatError(error, "Failed to create series"));
                             } finally {
                               setIsSeriesLinking(false);
                             }
@@ -1949,7 +1896,7 @@ export function CreateEventScreen() {
                                         seriesId: s._id as Id<"eventSeries">,
                                       });
                                     } catch (error: any) {
-                                      Alert.alert("Error", formatError(error, "Failed to add to series"));
+                                      showAlert("Error", formatError(error, "Failed to add to series"));
                                     } finally {
                                       setIsSeriesLinking(false);
                                     }
@@ -1998,6 +1945,132 @@ export function CreateEventScreen() {
                 You already have an upcoming event. Cancel or wait for it to
                 pass before creating another.
               </Text>
+            </View>
+          )}
+
+          {/* Community-Wide Event Toggle. Parked at the bottom of the form
+              to discourage casual use — this duplicates the event across
+              every group of the chosen type. Admins only, create mode only
+              (gated by `canCreateCommunityWide && !isEditMode`). */}
+          {canCreateCommunityWide && !isEditMode && (
+            <View style={[styles.communityWideSection, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border, marginTop: 24 }]}>
+              <View style={styles.communityWideToggleRow}>
+                <View style={[styles.communityWideToggleLabel, { paddingRight: 12 }]}>
+                  <Text style={[styles.label, { color: colors.text }]}>
+                    Create for multiple groups
+                  </Text>
+                  <Text style={[styles.toggleHint, { color: colors.textSecondary, marginTop: 4 }]}>
+                    Community-wide event — admins only. Use this to create the same event across many locations, like a recurring dinner party in every city group.
+                  </Text>
+                </View>
+                <Switch
+                  value={isCommunityWideEnabled}
+                  onValueChange={(value) => {
+                    setIsCommunityWideEnabled(value);
+                    // Reset selections when toggling
+                    if (value) {
+                      setSelectedGroupId(null);
+                      setIsGroupDropdownOpen(false);
+                    } else {
+                      setSelectedGroupTypeId(null);
+                      setIsGroupTypeDropdownOpen(false);
+                    }
+                    setErrors({});
+                  }}
+                  trackColor={{ false: colors.border, true: primaryColor }}
+                  thumbColor={colors.textInverse}
+                  disabled={isSubmitting}
+                />
+              </View>
+
+              {/* Group Type Selector - only show when toggle is ON */}
+              {isCommunityWideEnabled && (
+                <View style={styles.groupTypeSelector}>
+                  {isLoadingGroupTypes ? (
+                    <View style={[styles.loadingDropdown, { backgroundColor: colors.surfaceSecondary }]}>
+                      <ActivityIndicator size="small" color={primaryColor} />
+                      <Text style={[styles.loadingDropdownText, { color: colors.textSecondary }]}>Loading group types...</Text>
+                    </View>
+                  ) : !groupTypes || groupTypes.length === 0 ? (
+                    <View style={[styles.noGroupsContainer, { backgroundColor: colors.surfaceSecondary }]}>
+                      <Text style={[styles.noGroupsText, { color: colors.destructive }]}>
+                        No group types available.
+                      </Text>
+                    </View>
+                  ) : (
+                    <>
+                      <TouchableOpacity
+                        style={[
+                          styles.dropdownButton,
+                          { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground },
+                          errors.groupType && styles.dropdownButtonError,
+                        ]}
+                        onPress={() => setIsGroupTypeDropdownOpen(!isGroupTypeDropdownOpen)}
+                        disabled={isSubmitting}
+                      >
+                        {selectedGroupType ? (
+                          <Text style={[styles.selectedGroupName, { color: colors.text }]}>{selectedGroupType.name}</Text>
+                        ) : (
+                          <Text style={[styles.dropdownPlaceholder, { color: colors.inputPlaceholder }]}>Select group type</Text>
+                        )}
+                        <Ionicons
+                          name={isGroupTypeDropdownOpen ? "chevron-up" : "chevron-down"}
+                          size={20}
+                          color={colors.textSecondary}
+                        />
+                      </TouchableOpacity>
+                      {isGroupTypeDropdownOpen && (
+                        <View style={[styles.dropdownList, { borderColor: colors.inputBorder, backgroundColor: colors.surface }]}>
+                          {groupTypes.map((gt) => (
+                            <TouchableOpacity
+                              key={gt.id}
+                              style={[
+                                styles.dropdownItem,
+                                { borderBottomColor: colors.borderLight },
+                                selectedGroupTypeId === gt.id && [styles.dropdownItemSelected, { backgroundColor: colors.selectedBackground }],
+                              ]}
+                              onPress={() => {
+                                setSelectedGroupTypeId(gt.id);
+                                setIsGroupTypeDropdownOpen(false);
+                                setErrors((prev) => ({ ...prev, groupType: undefined }));
+                              }}
+                            >
+                              <Text
+                                style={[
+                                  styles.dropdownItemText,
+                                  { color: colors.text },
+                                  selectedGroupTypeId === gt.id && [styles.dropdownItemTextSelected, { color: primaryColor }],
+                                ]}
+                              >
+                                {gt.name}
+                              </Text>
+                              <Text style={[styles.dropdownItemSubtext, { color: colors.textSecondary }]}>
+                                {gt.groupCount} {gt.groupCount === 1 ? "group" : "groups"}
+                              </Text>
+                              {selectedGroupTypeId === gt.id && (
+                                <Ionicons name="checkmark" size={18} color={primaryColor} />
+                              )}
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      )}
+                      {errors.groupType && (
+                        <Text style={styles.fieldErrorText}>{errors.groupType}</Text>
+                      )}
+                    </>
+                  )}
+
+                  {/* Show count of groups that will receive the event */}
+                  {selectedGroupTypeId && groupCountForType !== undefined && (
+                    <View style={[styles.groupCountInfo, { backgroundColor: colors.surfaceSecondary }]}>
+                      <Ionicons name="information-circle" size={16} color={colors.link} />
+                      <Text style={[styles.groupCountText, { color: colors.link }]}>
+                        This will create events for {groupCountForType} {selectedGroupType?.name || "group"} groups
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              )}
             </View>
           )}
 

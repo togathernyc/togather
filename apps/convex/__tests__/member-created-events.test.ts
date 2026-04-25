@@ -599,11 +599,12 @@ describe("meetings — CWE children + cover", () => {
     expect(id).toBeDefined();
   });
 
-  test("getByShortId surfaces creator only for member-led events", async () => {
+  test("getByShortId surfaces the host list; legacy rows with no hosts show none", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
 
-    // Member-led: non-leader member creates an event.
+    // Member-led: the create mutation defaults hostUserIds to [creator], so
+    // the share page attributes the event to the filer.
     const memberMeetingId = await t.mutation(api.functions.meetings.index.create, {
       token: s.memberToken,
       groupId: s.groupId,
@@ -618,9 +619,10 @@ describe("meetings — CWE children + cover", () => {
       shortId: memberShortId!,
       token: s.memberToken,
     });
-    expect(memberResult?.creatorName).toBeTruthy();
+    expect(memberResult?.hosts).toHaveLength(1);
+    expect(memberResult?.hosts?.[0]?.id).toBe(s.memberId);
 
-    // Leader-led: a group leader creates an event. No host attribution.
+    // Leader-led: same default — leader filed the event, so they're the host.
     const leaderMeetingId = await t.mutation(api.functions.meetings.index.create, {
       token: s.leaderToken,
       groupId: s.groupId,
@@ -635,30 +637,13 @@ describe("meetings — CWE children + cover", () => {
       shortId: leaderShortId!,
       token: s.leaderToken,
     });
-    expect(leaderResult?.creatorName).toBeNull();
+    expect(leaderResult?.hosts).toHaveLength(1);
+    expect(leaderResult?.hosts?.[0]?.id).toBe(s.leaderId);
 
-    // CWE child: admin-created, shared across groups. Even though the admin
-    // is also a group leader, the CWE shortcut fires first.
-    const cweId = await t.run(async (ctx) =>
-      ctx.db.insert("communityWideEvents", {
-        communityId: s.communityId,
-        groupTypeId: await ctx.db.insert("groupTypes", {
-          communityId: s.communityId,
-          name: "Dinner",
-          slug: "dinner",
-          isActive: true,
-          displayOrder: 1,
-          createdAt: Date.now(),
-        }),
-        title: "Community Dinner",
-        scheduledAt: FUTURE() + 2000,
-        status: "scheduled",
-        meetingType: 1,
-        createdById: s.adminId,
-        createdAt: Date.now(),
-      })
-    );
-    const cweChildId = await t.run(async (ctx) =>
+    // Legacy / delegated: meeting written without hostUserIds — `hosts` is
+    // empty so the client falls back to group attribution. Creator is NOT
+    // a fallback anymore.
+    await t.run(async (ctx) =>
       ctx.db.insert("meetings", {
         groupId: s.groupId,
         createdById: s.adminId,
@@ -666,17 +651,15 @@ describe("meetings — CWE children + cover", () => {
         status: "scheduled",
         meetingType: 1,
         communityId: s.communityId,
-        communityWideEventId: cweId,
         createdAt: Date.now(),
-        shortId: "cwehostcheck",
+        shortId: "legacyhostcheck",
       })
     );
-    void cweChildId;
-    const cweResult = await t.query(api.functions.meetings.index.getByShortId, {
-      shortId: "cwehostcheck",
+    const legacyResult = await t.query(api.functions.meetings.index.getByShortId, {
+      shortId: "legacyhostcheck",
       token: s.adminToken,
     });
-    expect(cweResult?.creatorName).toBeNull();
+    expect(legacyResult?.hosts).toEqual([]);
   });
 });
 
@@ -730,6 +713,7 @@ describe("meetings.update/cancel — perms", () => {
       ctx.db.insert("meetings", {
         groupId: s.groupId,
         createdById: s.memberId,
+        hostUserIds: [s.memberId],
         scheduledAt: FUTURE(),
         status: "scheduled",
         meetingType: 1,
@@ -739,14 +723,14 @@ describe("meetings.update/cancel — perms", () => {
       })
     );
 
-    // Single-meeting edit by creator: allowed.
+    // Single-meeting edit by host: allowed.
     await t.mutation(api.functions.meetings.index.update, {
       token: s.memberToken,
       meetingId,
       title: "local-only edit",
     });
 
-    // Series-wide edit by creator: blocked — they aren't a leader.
+    // Series-wide edit by host: blocked — they aren't a leader.
     await expect(
       t.mutation(api.functions.meetings.index.update, {
         token: s.memberToken,
@@ -757,7 +741,7 @@ describe("meetings.update/cancel — perms", () => {
     ).rejects.toThrow(/series/i);
   });
 
-  test("leader can apply series-wide cancel; bare creator cannot", async () => {
+  test("leader can apply series-wide cancel; bare host cannot", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
 
@@ -775,6 +759,7 @@ describe("meetings.update/cancel — perms", () => {
       ctx.db.insert("meetings", {
         groupId: s.groupId,
         createdById: s.memberId,
+        hostUserIds: [s.memberId],
         scheduledAt: FUTURE(),
         status: "scheduled",
         meetingType: 1,
@@ -927,10 +912,12 @@ describe("meetingReports", () => {
     expect(list[0]._id).toBe(reportId);
   });
 
-  test("creator cannot report their own event", async () => {
+  test("host cannot report their own event", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
 
+    // `create` defaults hostUserIds to [creator], so the filer is seated
+    // as host and therefore can't self-report.
     const meetingId = await t.mutation(api.functions.meetings.index.create, {
       token: s.memberToken,
       groupId: s.groupId,
@@ -941,11 +928,41 @@ describe("meetingReports", () => {
 
     await expect(
       t.mutation(api.functions.meetings.reports.createReport, {
-        token: s.memberToken, // the creator
+        token: s.memberToken, // the host
         meetingId,
         reason: "spam",
       })
-    ).rejects.toThrow(/you created/i);
+    ).rejects.toThrow(/you host or filed/i);
+  });
+
+  test("filer cannot report a delegated event they filed (hostUserIds empty)", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    // Insert directly so hostUserIds stays empty (delegated/legacy state).
+    // `createdById === memberId` should still block self-reporting even
+    // though the meeting has no explicit hosts.
+    const meetingId = await t.run(async (ctx) =>
+      ctx.db.insert("meetings", {
+        groupId: s.groupId,
+        createdById: s.memberId,
+        hostUserIds: [],
+        scheduledAt: FUTURE(),
+        status: "scheduled",
+        meetingType: 1,
+        communityId: s.communityId,
+        createdAt: Date.now(),
+        shortId: "delegatedreport",
+      })
+    );
+
+    await expect(
+      t.mutation(api.functions.meetings.reports.createReport, {
+        token: s.memberToken,
+        meetingId,
+        reason: "spam",
+      })
+    ).rejects.toThrow(/you host or filed/i);
   });
 
   test("rejects invalid reason", async () => {

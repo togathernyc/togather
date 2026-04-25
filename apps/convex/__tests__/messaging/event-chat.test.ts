@@ -200,6 +200,7 @@ async function setupTestData(t: ReturnType<typeof convexTest>): Promise<TestData
       visibility: "public",
       shortId: "dinner123",
       createdById: hostId,
+      hostUserIds: [hostId],
       rsvpOptions: [
         { id: 1, label: "Going", enabled: true },
         { id: 2, label: "Not Going", enabled: true },

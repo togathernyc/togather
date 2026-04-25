@@ -583,6 +583,13 @@ export default defineSchema({
     groupId: v.id("groups"),
     createdById: v.optional(v.id("users")),
 
+    // Hosts own the event for permissions, event chat, and RSVP notifications.
+    // When undefined/empty, the backend falls back to [createdById] via
+    // getHostUserIds() in lib/meetingPermissions.ts. New events always write
+    // this field explicitly (defaulting to [creator]); undefined only appears
+    // on legacy rows created before hosts existed.
+    hostUserIds: v.optional(v.array(v.id("users"))),
+
     title: v.optional(v.string()),
     scheduledAt: v.number(), // Unix timestamp ms
     actualEnd: v.optional(v.number()), // Unix timestamp ms

@@ -11,6 +11,7 @@ import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import {
+  isActiveLeader,
   isCustomChannel,
   channelIsLeaderEnabled,
   channelEffectiveEnabledForGroup,
@@ -18,6 +19,10 @@ import {
 } from "../../lib/helpers";
 import { getDisplayName, getMediaUrl } from "../../lib/utils";
 import { isCommunityAdmin } from "../../lib/permissions";
+import {
+  getHostUserIds,
+  isMeetingHost,
+} from "../../lib/meetingPermissions";
 import { checkRateLimit } from "../../lib/rateLimit";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
 import { canAccessEventChannel } from "./eventChat";
@@ -32,7 +37,19 @@ async function canAccessMeetingChat(
   userId: Id<"users">,
   meeting: Doc<"meetings">,
 ): Promise<boolean> {
-  if (meeting.createdById && userId === meeting.createdById) return true;
+  if (isMeetingHost(meeting, userId)) return true;
+
+  // Delegated (no explicit host): leaders of the hosting group are the
+  // effective host. Matches canAccessEventChannel.
+  if (getHostUserIds(meeting).length === 0) {
+    const membership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", meeting.groupId).eq("userId", userId),
+      )
+      .first();
+    if (isActiveLeader(membership)) return true;
+  }
 
   const rsvp = await ctx.db
     .query("meetingRsvps")
@@ -199,10 +216,14 @@ export const getMessages = query({
     }
 
     // Event channels use meeting-based access (RSVPers may not be group members).
-    // Short-circuit the group-membership gate below.
+    // Short-circuit the group-membership gate below. When the viewer has
+    // lost chat access mid-session (e.g. transferred hosting away without
+    // having an RSVP), return an empty page instead of throwing — callers
+    // are React useQuery hooks, and a hard throw crashes the UI tree via
+    // the error boundary.
     if (channel.channelType === "event") {
       if (!(await canAccessEventChannel(ctx, userId, channel))) {
-        throw new Error("Not a member of this channel");
+        return { messages: [], hasMore: false, cursor: undefined };
       }
     } else {
       // Check channel membership
