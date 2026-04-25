@@ -69,8 +69,17 @@ export function useEventsByTimeWindow(options?: { enabled?: boolean }) {
     shouldSkip ? 'skip' : { communityId: communityId!, now }
   );
 
-  const isLoading = result === undefined;
-  const data = (result ?? EMPTY_DATA) as EventsTabData;
+  // Hold onto the last successful payload so a transient `undefined` from the
+  // Convex subscription (e.g. a websocket reconnect) doesn't flash the screen
+  // back to a loading spinner. `isLoading` only flips back to true on a fresh
+  // mount or a hard skip → re-enable transition.
+  const lastDataRef = useRef<EventsTabData | null>(null);
+  if (result !== undefined) {
+    lastDataRef.current = result as EventsTabData;
+  }
+
+  const data = (lastDataRef.current ?? EMPTY_DATA) as EventsTabData;
+  const isLoading = result === undefined && lastDataRef.current === null;
 
   return { data, isLoading };
 }
