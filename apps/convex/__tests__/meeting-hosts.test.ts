@@ -418,6 +418,7 @@ describe("canEditMeeting (via update mutation)", () => {
   });
 
   test("all_in_series reconciles siblings that diverged even when the anchor didn't change", async () => {
+    vi.useFakeTimers();
     const t = convexTest(schema, modules);
     const s = await seed(t);
 
@@ -455,6 +456,25 @@ describe("canEditMeeting (via update mutation)", () => {
       await ctx.db.patch(siblingId, { seriesId });
     });
 
+    // Materialize the sibling's chat channel so we can verify admin
+    // seating actually changes after reconcile. Without this step the
+    // test would assert only the host-id patch — the reconcile call is
+    // the thing that was being skipped pre-fix, so we have to observe
+    // its effect on chatChannelMembers, not just on the meeting doc.
+    const siblingChannelId = await t.mutation(
+      (internal as any).functions.messaging.eventChat.ensureEventChannel,
+      { meetingId: siblingId },
+    );
+
+    // Pre-condition: sibling chat is seated with [otherLeaderId] as admin.
+    const preAdmins = await t.run(async (ctx) =>
+      ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel", (q) => q.eq("channelId", siblingChannelId))
+        .collect(),
+    );
+    expect(preAdmins.map((m) => String(m.userId))).toEqual([String(s.otherLeaderId)]);
+
     // Send `hostUserIds: [memberId]` for the whole series. Anchor is
     // unchanged; sibling should still get patched AND reconciled.
     await t.mutation(api.functions.meetings.index.update, {
@@ -463,10 +483,29 @@ describe("canEditMeeting (via update mutation)", () => {
       hostUserIds: [s.memberId],
       scope: "all_in_series",
     });
+    // Drain the reconcileEventChannelAdmins runAfter(0) — that scheduled
+    // mutation is exactly what the round-3 fix re-enables for diverged
+    // siblings, and is what this test is meant to prove.
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
 
     await t.run(async (ctx) => {
       const sibling = await ctx.db.get(siblingId);
       expect(sibling?.hostUserIds).toEqual([s.memberId]);
+
+      const postRows = await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel", (q) => q.eq("channelId", siblingChannelId))
+        .collect();
+      const admins = postRows
+        .filter((m) => m.role === "admin")
+        .map((m) => String(m.userId));
+      // Pre-fix: admins still [otherLeaderId] because reconcile was
+      // skipped. Post-fix: admins should be [memberId].
+      expect(admins).toEqual([String(s.memberId)]);
+      // The departing host had no RSVP, so they're fully removed.
+      expect(postRows.map((m) => String(m.userId))).not.toContain(
+        String(s.otherLeaderId),
+      );
     });
   });
 });
