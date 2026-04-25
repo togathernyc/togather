@@ -37,8 +37,9 @@ const EMPTY_DATA: EventsTabData = {
 };
 
 export function useEventsByTimeWindow(options?: { enabled?: boolean }) {
-  const { community } = useAuth();
+  const { community, user } = useAuth();
   const communityId = community?.id as Id<'communities'> | undefined;
+  const userId = user?.id ?? null;
 
   // `now` advances only when the user leaves the Events tab and comes back
   // — NOT on initial mount (the useState initializer already set a fresh
@@ -69,8 +70,31 @@ export function useEventsByTimeWindow(options?: { enabled?: boolean }) {
     shouldSkip ? 'skip' : { communityId: communityId!, now }
   );
 
-  const isLoading = result === undefined;
-  const data = (result ?? EMPTY_DATA) as EventsTabData;
+  // Hold onto the last successful payload so a transient `undefined` from the
+  // Convex subscription (e.g. a websocket reconnect) doesn't flash the screen
+  // back to a loading spinner. `isLoading` only flips back to true on a fresh
+  // mount or a hard skip → re-enable transition.
+  //
+  // The cache is keyed by (skip-state, userId, communityId): when the user
+  // switches communities, signs out, swaps accounts, or the hook is disabled,
+  // we drop the previous payload so the next consumer doesn't briefly render
+  // events from the old context — including another user's events during an
+  // account-switch token rotation. `now` is intentionally NOT part of the
+  // key: it advances on focus and we want the prior data to stay on screen
+  // during the refetch.
+  const cacheKey = shouldSkip ? 'skip' : `u:${userId}|c:${communityId}`;
+  const lastDataRef = useRef<EventsTabData | null>(null);
+  const lastKeyRef = useRef<string>(cacheKey);
+  if (lastKeyRef.current !== cacheKey) {
+    lastDataRef.current = null;
+    lastKeyRef.current = cacheKey;
+  }
+  if (result !== undefined) {
+    lastDataRef.current = result as EventsTabData;
+  }
+
+  const data = (lastDataRef.current ?? EMPTY_DATA) as EventsTabData;
+  const isLoading = result === undefined && lastDataRef.current === null;
 
   return { data, isLoading };
 }

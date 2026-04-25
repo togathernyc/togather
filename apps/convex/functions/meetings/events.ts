@@ -21,6 +21,7 @@ import { Id, Doc } from "../../_generated/dataModel";
 import { getMediaUrl } from "../../lib/utils";
 import { getOptionalAuth } from "../../lib/auth";
 import { PAST_EVENT_BUFFER_MS } from "../../lib/meetingConfig";
+import { getHostUserIds, isMeetingHost } from "../../lib/meetingPermissions";
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000;
@@ -111,7 +112,6 @@ export const listForEventsTab = query({
       userLeaderGroupIds,
       isCommunityMember,
       userRsvpMeetingIds,
-      userHostedMeetingIds,
     } = await loadVisibilityContext(ctx, userId, args.communityId);
 
     const communityGroups = await ctx.db
@@ -177,8 +177,9 @@ export const listForEventsTab = query({
       userId,
       args.communityId,
       currentTime,
-      userRsvpMeetingIds,
-      userHostedMeetingIds
+      userGroupIds,
+      userLeaderGroupIds,
+      userRsvpMeetingIds
     );
     const myEventsVisible = myEventsMeetings.filter((m) =>
       isVisible(m, userId, userGroupIds, isCommunityMember)
@@ -362,7 +363,6 @@ async function loadVisibilityContext(
   const userGroupIds = new Set<string>();
   const userLeaderGroupIds = new Set<string>();
   const userRsvpMeetingIds = new Set<Id<"meetings">>();
-  const userHostedMeetingIds = new Set<Id<"meetings">>();
   let isCommunityMember = false;
 
   if (!userId) {
@@ -371,7 +371,6 @@ async function loadVisibilityContext(
       userLeaderGroupIds,
       isCommunityMember,
       userRsvpMeetingIds,
-      userHostedMeetingIds,
     };
   }
 
@@ -414,61 +413,114 @@ async function loadVisibilityContext(
     .collect();
   for (const r of rsvps) userRsvpMeetingIds.add(r.meetingId);
 
-  // "Hosting" for My Events:
-  //   - A standalone meeting the user created → host of that meeting.
-  //   - A CWE child the user created → only counts as hosting if the user
-  //     is a leader of that child's group. Creating a CWE across N groups
-  //     spawns N children, but you're not meaningfully hosting a meeting
-  //     in a group you don't lead.
-  const hosted = await ctx.db
-    .query("meetings")
-    .withIndex("by_createdBy", (q) => q.eq("createdById", userId))
-    .collect();
-  for (const m of hosted) {
-    if (m.communityId !== communityId) continue;
-    if (m.status === "cancelled") continue;
-    if (m.communityWideEventId && !userLeaderGroupIds.has(m.groupId)) continue;
-    userHostedMeetingIds.add(m._id);
-  }
-
   return {
     userGroupIds,
     userLeaderGroupIds,
     isCommunityMember,
     userRsvpMeetingIds,
-    userHostedMeetingIds,
   };
 }
 
-// Load meetings for the "My Events" section — RSVP'd or hosted, upcoming,
-// scoped to this community. Not window-bounded since a far-future RSVP
-// still belongs here. Returns meetings with their group attached so the
-// caller can run the shared visibility filter.
+// Load meetings for the "My Events" section. A meeting belongs here when:
+//   1. The user RSVP'd (going/interested), OR
+//   2. The user is in `hostUserIds` (an explicit host), OR
+//   3. `hostUserIds` is empty AND the user is a leader of the hosting group
+//      (delegated event — leaders are the effective host per
+//      `resolveEventAdmins` in lib/meetingPermissions.ts).
+//
+// Creator (`createdById`) is NOT a signal: per the host-decoupling work
+// (commit c7fcf32), creator is metadata only — a filer who removed
+// themselves from `hostUserIds` should not see the event in My Events
+// unless they're also a leader of the now-delegated group.
+//
+// Hosting/delegated detection iterates the user's groups and pulls upcoming
+// meetings via `by_group_scheduledAt`. There's no array-element index on
+// `hostUserIds`, and a typical user is in a small handful of groups, so
+// the fan-out is bounded. Not window-bounded on the upper end since a
+// far-future RSVP'd or hosted event still belongs here.
 async function loadMyEventsMeetings(
   ctx: QueryCtx,
   userId: Id<"users"> | null,
   communityId: Id<"communities">,
   now: number,
-  userRsvpMeetingIds: Set<Id<"meetings">>,
-  userHostedMeetingIds: Set<Id<"meetings">>
+  userGroupIds: Set<string>,
+  userLeaderGroupIds: Set<string>,
+  userRsvpMeetingIds: Set<Id<"meetings">>
 ): Promise<MeetingWithGroup[]> {
   if (!userId) return [];
 
-  const allIds = new Set<Id<"meetings">>([
-    ...userRsvpMeetingIds,
-    ...userHostedMeetingIds,
-  ]);
-  if (allIds.size === 0) return [];
+  const pastFloor = now - PAST_EVENT_BUFFER_MS;
 
-  const meetings = (
-    await Promise.all([...allIds].map((id) => ctx.db.get(id)))
+  const rsvpMeetings = (
+    await Promise.all([...userRsvpMeetingIds].map((id) => ctx.db.get(id)))
   ).filter((m): m is Doc<"meetings"> => m !== null);
 
-  const upcoming = meetings.filter(
+  // Scope the per-group fan-out to groups in the requested community only.
+  // For users who belong to multiple communities, iterating every membership
+  // would scan future meetings across unrelated communities just to drop
+  // them in the in-memory `communityId === communityId` filter below.
+  // Fetching the user's group docs first is cheap (indexed by id) and lets
+  // us skip those reads.
+  const userGroupDocs = await Promise.all(
+    [...userGroupIds].map((gid) => ctx.db.get(gid as Id<"groups">))
+  );
+  const userGroupIdsInCommunity = userGroupDocs
+    .filter((g): g is Doc<"groups"> => g !== null && g.communityId === communityId)
+    .map((g) => g._id);
+
+  const groupMeetingsArrays = await Promise.all(
+    userGroupIdsInCommunity.map((gid) =>
+      ctx.db
+        .query("meetings")
+        .withIndex("by_group_scheduledAt", (q) =>
+          q.eq("groupId", gid).gte("scheduledAt", pastFloor)
+        )
+        .filter((q) => q.neq(q.field("status"), "cancelled"))
+        .collect()
+    )
+  );
+
+  // Catch the "host but no longer a group member" case: a user who created
+  // (and was defaulted as host of) a meeting and then left the group should
+  // still see it in My Events while they're listed in `hostUserIds` —
+  // matches the behavior of `isMeetingHost` / `canAccessEventChannel`.
+  // `by_createdBy` covers the most common path (user creates → user is the
+  // default host → user leaves the group). It does not cover the rarer
+  // case of "I was added as host of someone else's event and never joined
+  // the group" — there's no `hostUserIds` array index, so that gap stays.
+  const createdMeetings = await ctx.db
+    .query("meetings")
+    .withIndex("by_createdBy", (q) => q.eq("createdById", userId))
+    .filter((q) => q.neq(q.field("status"), "cancelled"))
+    .collect();
+
+  // Mirrors the host/delegated rule in `canAccessEventChannel` (event chat
+  // access) and `canEditMeeting` — keep these in sync via the shared helpers
+  // in lib/meetingPermissions.ts. The leader check uses the precomputed
+  // `userLeaderGroupIds` set instead of a per-meeting groupMembers lookup;
+  // the set is built from the same active-leader filter.
+  const allCandidates = [...groupMeetingsArrays.flat(), ...createdMeetings];
+  const hostedOrDelegated = allCandidates.filter((m) => {
+    if (isMeetingHost(m, userId)) return true;
+    if (
+      getHostUserIds(m).length === 0 &&
+      userLeaderGroupIds.has(m.groupId)
+    ) {
+      return true;
+    }
+    return false;
+  });
+
+  const byId = new Map<Id<"meetings">, Doc<"meetings">>();
+  for (const m of [...rsvpMeetings, ...hostedOrDelegated]) {
+    byId.set(m._id, m);
+  }
+
+  const upcoming = [...byId.values()].filter(
     (m) =>
       m.status !== "cancelled" &&
       m.communityId === communityId &&
-      m.scheduledAt > now - PAST_EVENT_BUFFER_MS
+      m.scheduledAt > pastFloor
   );
 
   const groupIds = [...new Set(upcoming.map((m) => m.groupId))];
