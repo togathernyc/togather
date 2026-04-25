@@ -73,7 +73,19 @@ export function useEventsByTimeWindow(options?: { enabled?: boolean }) {
   // Convex subscription (e.g. a websocket reconnect) doesn't flash the screen
   // back to a loading spinner. `isLoading` only flips back to true on a fresh
   // mount or a hard skip → re-enable transition.
+  //
+  // The cache is keyed by (skip-state, communityId): when the user switches
+  // communities, signs out, or the hook is disabled, we drop the previous
+  // payload so the next consumer doesn't briefly render events from the old
+  // context. `now` is intentionally NOT part of the key — it advances on
+  // focus and we want the prior data to stay on screen during the refetch.
+  const cacheKey = shouldSkip ? 'skip' : `c:${communityId}`;
   const lastDataRef = useRef<EventsTabData | null>(null);
+  const lastKeyRef = useRef<string>(cacheKey);
+  if (lastKeyRef.current !== cacheKey) {
+    lastDataRef.current = null;
+    lastKeyRef.current = cacheKey;
+  }
   if (result !== undefined) {
     lastDataRef.current = result as EventsTabData;
   }

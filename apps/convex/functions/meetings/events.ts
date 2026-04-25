@@ -466,12 +466,28 @@ async function loadMyEventsMeetings(
         .collect()
     )
   );
+
+  // Catch the "host but no longer a group member" case: a user who created
+  // (and was defaulted as host of) a meeting and then left the group should
+  // still see it in My Events while they're listed in `hostUserIds` —
+  // matches the behavior of `isMeetingHost` / `canAccessEventChannel`.
+  // `by_createdBy` covers the most common path (user creates → user is the
+  // default host → user leaves the group). It does not cover the rarer
+  // case of "I was added as host of someone else's event and never joined
+  // the group" — there's no `hostUserIds` array index, so that gap stays.
+  const createdMeetings = await ctx.db
+    .query("meetings")
+    .withIndex("by_createdBy", (q) => q.eq("createdById", userId))
+    .filter((q) => q.neq(q.field("status"), "cancelled"))
+    .collect();
+
   // Mirrors the host/delegated rule in `canAccessEventChannel` (event chat
   // access) and `canEditMeeting` — keep these in sync via the shared helpers
   // in lib/meetingPermissions.ts. The leader check uses the precomputed
   // `userLeaderGroupIds` set instead of a per-meeting groupMembers lookup;
   // the set is built from the same active-leader filter.
-  const hostedOrDelegated = groupMeetingsArrays.flat().filter((m) => {
+  const allCandidates = [...groupMeetingsArrays.flat(), ...createdMeetings];
+  const hostedOrDelegated = allCandidates.filter((m) => {
     if (isMeetingHost(m, userId)) return true;
     if (
       getHostUserIds(m).length === 0 &&
