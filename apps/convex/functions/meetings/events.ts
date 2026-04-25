@@ -455,12 +455,25 @@ async function loadMyEventsMeetings(
     await Promise.all([...userRsvpMeetingIds].map((id) => ctx.db.get(id)))
   ).filter((m): m is Doc<"meetings"> => m !== null);
 
+  // Scope the per-group fan-out to groups in the requested community only.
+  // For users who belong to multiple communities, iterating every membership
+  // would scan future meetings across unrelated communities just to drop
+  // them in the in-memory `communityId === communityId` filter below.
+  // Fetching the user's group docs first is cheap (indexed by id) and lets
+  // us skip those reads.
+  const userGroupDocs = await Promise.all(
+    [...userGroupIds].map((gid) => ctx.db.get(gid as Id<"groups">))
+  );
+  const userGroupIdsInCommunity = userGroupDocs
+    .filter((g): g is Doc<"groups"> => g !== null && g.communityId === communityId)
+    .map((g) => g._id);
+
   const groupMeetingsArrays = await Promise.all(
-    [...userGroupIds].map((gid) =>
+    userGroupIdsInCommunity.map((gid) =>
       ctx.db
         .query("meetings")
         .withIndex("by_group_scheduledAt", (q) =>
-          q.eq("groupId", gid as Id<"groups">).gte("scheduledAt", pastFloor)
+          q.eq("groupId", gid).gte("scheduledAt", pastFloor)
         )
         .filter((q) => q.neq(q.field("status"), "cancelled"))
         .collect()
