@@ -416,6 +416,59 @@ describe("canEditMeeting (via update mutation)", () => {
       expect(sibling?.hostUserIds).toEqual([s.memberId]);
     });
   });
+
+  test("all_in_series reconciles siblings that diverged even when the anchor didn't change", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    const seriesId = await t.run(async (ctx) =>
+      ctx.db.insert("eventSeries", {
+        groupId: s.groupId,
+        createdById: s.leaderId,
+        name: "Weekly",
+        status: "active",
+        createdAt: Date.now(),
+      }),
+    );
+
+    // Anchor already has [memberId] as host — this matches the payload we
+    // send below so the anchor's own hostsChanged reads false. A prior
+    // per-meeting edit diverged the sibling to [otherLeaderId]. Without
+    // per-sibling change detection, reconciliation would be skipped and
+    // the sibling's chat admins would stay stale.
+    const anchorId = await insertMeeting(t, {
+      groupId: s.groupId,
+      communityId: s.communityId,
+      createdById: s.leaderId,
+      hostUserIds: [s.memberId],
+      shortId: "series-anchor-2",
+    });
+    const siblingId = await insertMeeting(t, {
+      groupId: s.groupId,
+      communityId: s.communityId,
+      createdById: s.leaderId,
+      hostUserIds: [s.otherLeaderId],
+      shortId: "series-sibling-2",
+    });
+    await t.run(async (ctx) => {
+      await ctx.db.patch(anchorId, { seriesId });
+      await ctx.db.patch(siblingId, { seriesId });
+    });
+
+    // Send `hostUserIds: [memberId]` for the whole series. Anchor is
+    // unchanged; sibling should still get patched AND reconciled.
+    await t.mutation(api.functions.meetings.index.update, {
+      token: s.leaderToken,
+      meetingId: anchorId,
+      hostUserIds: [s.memberId],
+      scope: "all_in_series",
+    });
+
+    await t.run(async (ctx) => {
+      const sibling = await ctx.db.get(siblingId);
+      expect(sibling?.hostUserIds).toEqual([s.memberId]);
+    });
+  });
 });
 
 // ============================================================================

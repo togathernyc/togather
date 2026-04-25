@@ -623,12 +623,27 @@ export const update = mutation({
             });
           }
 
+          // Compare the sibling's pre-patch hosts to the incoming value
+          // so we only reconcile when *this sibling* actually changed.
+          // The anchor-based `hostsChanged` isn't enough: a sibling could
+          // have diverged from a prior per-meeting edit and still need
+          // reconciliation even when the anchor's hosts look the same on
+          // this save.
+          let siblingHostsChanged = false;
+          if (updates.hostUserIds !== undefined) {
+            const prev = sibling.hostUserIds ?? [];
+            const next = updates.hostUserIds;
+            siblingHostsChanged =
+              prev.length !== next.length ||
+              prev.some((id, i) => id !== next[i]);
+          }
+
           await ctx.db.patch(sibling._id, seriesUpdates);
 
           // Reconcile sibling's chat-channel admin seating after host
           // change so old hosts get demoted/removed and new hosts seated
           // — same logic the single-meeting path runs above.
-          if (hostsChanged) {
+          if (siblingHostsChanged) {
             await ctx.scheduler.runAfter(
               0,
               internal.functions.messaging.eventChat.reconcileEventChannelAdmins,
