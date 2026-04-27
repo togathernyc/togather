@@ -395,6 +395,7 @@ export const update = mutation({
           if (!channel.isShared) {
             continue;
           }
+          if (!channel.groupId) continue; // Skip ad-hoc channels (DM/group_dm)
 
           const sharedGroups = channel.sharedGroups ?? [];
           const entryIndex = sharedGroups.findIndex(

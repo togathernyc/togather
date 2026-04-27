@@ -43,9 +43,13 @@ export const inviteGroupToChannel = mutation({
     if (!channel) {
       throw new ConvexError("Channel not found");
     }
+    if (!channel.groupId) {
+      throw new ConvexError("This operation is only valid for group channels");
+    }
+    const channelGroupId = channel.groupId;
 
     // Cannot invite the channel's own group
-    if (args.groupId === channel.groupId) {
+    if (args.groupId === channelGroupId) {
       throw new ConvexError("Cannot invite the channel's own group");
     }
 
@@ -53,7 +57,7 @@ export const inviteGroupToChannel = mutation({
     const primaryGroupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId)
+        q.eq("groupId", channelGroupId).eq("userId", userId)
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -70,7 +74,7 @@ export const inviteGroupToChannel = mutation({
 
     // Enforce same-community sharing boundaries.
     // Shared channels are scoped to groups within the same community.
-    const primaryGroup = await ctx.db.get(channel.groupId);
+    const primaryGroup = await ctx.db.get(channelGroupId);
     if (!primaryGroup) {
       throw new ConvexError("Primary group not found");
     }
@@ -112,7 +116,7 @@ export const inviteGroupToChannel = mutation({
       internal.functions.notifications.senders.notifySharedChannelInvite,
       {
         invitedGroupId: args.groupId,
-        primaryGroupId: channel.groupId,
+        primaryGroupId: channelGroupId,
         inviterId: userId,
         channelName: channel.name,
       }
@@ -224,12 +228,16 @@ export const removeGroupFromChannel = mutation({
     if (!channel) {
       throw new ConvexError("Channel not found");
     }
+    if (!channel.groupId) {
+      throw new ConvexError("This operation is only valid for group channels");
+    }
+    const channelGroupId = channel.groupId;
 
     // Authorization: user must be a leader of either the primary group or the group being removed
     const primaryGroupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId)
+        q.eq("groupId", channelGroupId).eq("userId", userId)
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -273,7 +281,7 @@ export const removeGroupFromChannel = mutation({
 
     // Determine the set of remaining group IDs (primary + other accepted secondary groups)
     const remainingGroupIds = new Set<string>();
-    remainingGroupIds.add(channel.groupId); // primary group always remains
+    remainingGroupIds.add(channelGroupId); // primary group always remains
     for (const sg of updatedSharedGroups) {
       if (sg.status === "accepted") {
         remainingGroupIds.add(sg.groupId);
@@ -455,6 +463,7 @@ export const listPendingInvitesForGroup = query({
     const results = [];
 
     for (const channel of sharedChannels) {
+      if (!channel.groupId) continue; // Skip ad-hoc channels (DM/group_dm)
       const sharedGroups = channel.sharedGroups ?? [];
       const pendingEntry = sharedGroups.find(
         (sg) => sg.groupId === args.groupId && sg.status === "pending"
@@ -528,6 +537,7 @@ export const listActiveSharedChannelsForGroup = query({
     const results = [];
 
     for (const channel of sharedChannels) {
+      if (!channel.groupId) continue; // Skip ad-hoc channels (DM/group_dm)
       const sharedGroups = channel.sharedGroups ?? [];
       const acceptedEntry = sharedGroups.find(
         (sg) => sg.groupId === args.groupId && sg.status === "accepted"
@@ -578,12 +588,16 @@ export const cancelChannelInvite = mutation({
     if (!channel) {
       throw new ConvexError("Channel not found");
     }
+    if (!channel.groupId) {
+      throw new ConvexError("This operation is only valid for group channels");
+    }
+    const channelGroupId = channel.groupId;
 
     // Check that the user is a leader of the primary group
     const primaryGroupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId)
+        q.eq("groupId", channelGroupId).eq("userId", userId)
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();

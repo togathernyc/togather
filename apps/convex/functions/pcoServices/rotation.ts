@@ -242,13 +242,17 @@ export const addChannelMember = internalMutation({
     if (!channel) {
       return { success: false, reason: "channel_not_found" };
     }
+    if (!channel.groupId) {
+      return { success: false, reason: "channel_not_found" }; // Skip ad-hoc channels (DM/group_dm)
+    }
+    const groupId = channel.groupId;
 
     // SAFEGUARD: Verify user is an active member of the primary group
     // or any accepted secondary group before adding to channel
     const primaryGroupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", args.userId)
+        q.eq("groupId", groupId).eq("userId", args.userId)
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();

@@ -168,7 +168,7 @@ export function channelIsLeaderEnabled(channel: { isEnabled?: boolean }): boolea
  */
 export function channelEffectiveEnabledForGroup(
   channel: {
-    groupId: Id<"groups">;
+    groupId?: Id<"groups">;
     isEnabled?: boolean;
     isShared?: boolean;
     sharedGroups?: Array<{

@@ -216,9 +216,13 @@ export const verifyChannelAccess = internalMutation({
     if (!channel) {
       throw new Error("Channel not found");
     }
+    if (!channel.groupId) {
+      throw new Error("This operation is only valid for group channels");
+    }
+    const groupId = channel.groupId;
 
     // Get the group to find the community
-    const group = await ctx.db.get(channel.groupId);
+    const group = await ctx.db.get(groupId);
     if (!group) {
       throw new Error("Group not found");
     }
@@ -248,7 +252,7 @@ export const verifyChannelAccess = internalMutation({
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId)
+        q.eq("groupId", groupId).eq("userId", userId)
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();

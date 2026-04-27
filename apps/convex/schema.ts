@@ -1429,19 +1429,32 @@ export default defineSchema({
 
   /**
    * Chat Channels
-   * Represents a chat channel (group chat, leaders chat, or DM).
+   * Represents a chat channel (group chat, leaders chat, DM, or ad-hoc group chat).
    * Channel types:
    *   - "main" - Default channel for a group
    *   - "leaders" - Leaders-only channel
-   *   - "dm" - Direct message
+   *   - "dm" - 1:1 direct message (ad-hoc, not tied to a group)
+   *   - "group_dm" - Ad-hoc group chat (not tied to a group)
    *   - "custom" - Custom channel with manual membership
    *   - "pco_services" - Auto channel synced from PCO Services
+   *   - "event" - Event-tied channel scoped to a meeting
    *   - Future: "elvanto", "ccb", etc.
+   *
+   * Invariant: exactly one of `groupId` or `communityId` is set.
+   *   - groupId set: traditional group-channel ("main" | "leaders" | "custom" | "pco_services" | "event" | "reach_out")
+   *   - communityId set: ad-hoc channel ("dm" | "group_dm"), with `isAdHoc: true`
+   * Enforced in mutations, not at the DB level (Convex has no constraints).
    */
   chatChannels: defineTable({
-    groupId: v.id("groups"),
+    groupId: v.optional(v.id("groups")),
+    /** Set for ad-hoc channels (dm, group_dm) that are not bound to a group. */
+    communityId: v.optional(v.id("communities")),
+    /** Convenience flag: true for ad-hoc dm/group_dm channels. */
+    isAdHoc: v.optional(v.boolean()),
+    /** For 1:1 DMs: deterministic key for dedup, sorted "userIdA::userIdB". */
+    dmPairKey: v.optional(v.string()),
     slug: v.optional(v.string()), // URL-friendly, unique per group, immutable (optional for migration)
-    channelType: v.string(), // "main" | "leaders" | "dm" | "custom" | "pco_services" | "event"
+    channelType: v.string(), // "main" | "leaders" | "dm" | "group_dm" | "custom" | "pco_services" | "event" | "reach_out"
     name: v.string(),
     description: v.optional(v.string()),
     createdById: v.id("users"),
@@ -1491,7 +1504,9 @@ export default defineSchema({
     .index("by_archived", ["isArchived"])
     .index("by_isShared", ["isShared"])
     .index("by_inviteShortId", ["inviteShortId"])
-    .index("by_meetingId", ["meetingId"]),
+    .index("by_meetingId", ["meetingId"])
+    .index("by_dmPairKey", ["dmPairKey"])
+    .index("by_community_isAdHoc", ["communityId", "isAdHoc"]),
 
   /**
    * Chat Channel Members
@@ -1522,12 +1537,24 @@ export default defineSchema({
         serviceName: v.optional(v.string()), // e.g. "Sunday Service"
       }),
     ),
+    /**
+     * Per-user request state for ad-hoc channels (dm, group_dm).
+     *   - "pending": user was added but has not accepted; messages held from their view, no read-receipt/typing leakage
+     *   - "accepted": full access
+     *   - "declined": user rejected the chat; row treated as soft-deleted (creator not notified)
+     * Undefined for legacy/group-channel members → treated as "accepted".
+     */
+    requestState: v.optional(v.string()),
+    requestRespondedAt: v.optional(v.number()), // Unix timestamp ms; for analytics + 30d expiry
+    /** Who added this user to the channel (for ad-hoc invites). */
+    invitedById: v.optional(v.id("users")),
   })
     .index("by_channel", ["channelId"])
     .index("by_user", ["userId"])
     .index("by_channel_user", ["channelId", "userId"])
     .index("by_channel_syncSource", ["channelId", "syncSource"])
-    .index("by_role", ["role"]),
+    .index("by_role", ["role"])
+    .index("by_user_requestState", ["userId", "requestState"]),
 
   /**
    * Channel Join Requests
@@ -1730,6 +1757,27 @@ export default defineSchema({
     .index("by_channel", ["channelId"])
     .index("by_status", ["status"])
     .index("by_reviewedBy", ["reviewedById"]),
+
+  /**
+   * Direct Message Rate Limits
+   * Per-(sender, channel, recipient) counter for messages sent while a recipient is still
+   * in `pending` requestState. Enforces the 1-message-per-pending-pair-per-24h rule that
+   * prevents a single sender from spamming a not-yet-accepted DM/group_dm. Hourly cron
+   * cleans up rows older than 24h.
+   */
+  directMessageRateLimits: defineTable({
+    userId: v.id("users"), // sender
+    channelId: v.id("chatChannels"),
+    recipientUserId: v.id("users"),
+    windowStartedAt: v.number(), // Unix timestamp ms
+    messageCount: v.number(),
+  })
+    .index("by_user_channel_recipient", [
+      "userId",
+      "channelId",
+      "recipientUserId",
+    ])
+    .index("by_windowStartedAt", ["windowStartedAt"]),
 
   /**
    * Chat Push Notification Queue

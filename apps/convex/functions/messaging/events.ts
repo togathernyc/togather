@@ -126,9 +126,10 @@ export const onMessageSent = internalMutation({
         (sg) => sg.status === "accepted"
       );
 
-      if (isSharedChannel && channel) {
+      if (isSharedChannel && channel && channel.groupId) {
         // Collect all group IDs: primary + accepted shared groups
-        const allGroupIds: Id<"groups">[] = [channel.groupId];
+        const channelGroupId = channel.groupId;
+        const allGroupIds: Id<"groups">[] = [channelGroupId];
         for (const sg of channel.sharedGroups || []) {
           if (sg.status === "accepted") {
             allGroupIds.push(sg.groupId);
@@ -167,7 +168,7 @@ export const onMessageSent = internalMutation({
           }
 
           // Fallback to primary group if membership lookup fails
-          const effectiveGroupId = memberGroupId || channel.groupId;
+          const effectiveGroupId = memberGroupId || channelGroupId;
           const key = effectiveGroupId;
 
           if (!groupBuckets.has(key)) {

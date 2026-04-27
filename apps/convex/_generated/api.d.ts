@@ -74,6 +74,7 @@ import type * as functions_memberFollowups from "../functions/memberFollowups.js
 import type * as functions_messaging_blocking from "../functions/messaging/blocking.js";
 import type * as functions_messaging_channelInvites from "../functions/messaging/channelInvites.js";
 import type * as functions_messaging_channels from "../functions/messaging/channels.js";
+import type * as functions_messaging_directMessages from "../functions/messaging/directMessages.js";
 import type * as functions_messaging_eventChat from "../functions/messaging/eventChat.js";
 import type * as functions_messaging_events from "../functions/messaging/events.js";
 import type * as functions_messaging_flagging from "../functions/messaging/flagging.js";
@@ -244,6 +245,7 @@ declare const fullApi: ApiFromModules<{
   "functions/messaging/blocking": typeof functions_messaging_blocking;
   "functions/messaging/channelInvites": typeof functions_messaging_channelInvites;
   "functions/messaging/channels": typeof functions_messaging_channels;
+  "functions/messaging/directMessages": typeof functions_messaging_directMessages;
   "functions/messaging/eventChat": typeof functions_messaging_eventChat;
   "functions/messaging/events": typeof functions_messaging_events;
   "functions/messaging/flagging": typeof functions_messaging_flagging;

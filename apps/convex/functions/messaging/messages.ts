@@ -226,6 +226,10 @@ export const getMessages = query({
         return { messages: [], hasMore: false, cursor: undefined };
       }
     } else {
+      if (!channel.groupId) {
+        throw new Error("This operation is only valid for group channels");
+      }
+      const channelGroupId = channel.groupId;
       // Check channel membership
       const channelMembership = await ctx.db
         .query("chatChannelMembers")
@@ -236,9 +240,9 @@ export const getMessages = query({
         .first();
 
       // Validate viewingGroupId is actually related to this channel
-      let contextGroupId = channel.groupId;
+      let contextGroupId: Id<"groups"> = channelGroupId;
       if (args.viewingGroupId) {
-        const isOwningGroup = args.viewingGroupId === channel.groupId;
+        const isOwningGroup = args.viewingGroupId === channelGroupId;
         const isAcceptedSharedGroup = channel.sharedGroups?.some(
           (sg) => sg.groupId === args.viewingGroupId && sg.status === "accepted"
         );
@@ -265,7 +269,7 @@ export const getMessages = query({
         ? await ctx.db
             .query("groupMembers")
             .withIndex("by_group_user", (q) =>
-              q.eq("groupId", channel.groupId).eq("userId", userId)
+              q.eq("groupId", channelGroupId).eq("userId", userId)
             )
             .filter((q) => q.eq(q.field("leftAt"), undefined))
             .first()
@@ -273,7 +277,7 @@ export const getMessages = query({
       const isOwningGroupLeader = isLeaderRole(owningGroupMembership?.role);
       // Also check linked group leadership when viewing from a linked group
       const isLinkedGroupLeader =
-        args.viewingGroupId && args.viewingGroupId !== channel.groupId
+        args.viewingGroupId && args.viewingGroupId !== channelGroupId
           ? isLeaderRole(groupMembership?.role)
           : false;
 
@@ -752,10 +756,11 @@ export const deleteMessage = mutation({
     let isCommunityAdminUser = false;
 
     if (channel?.groupId) {
+      const groupId = channel.groupId;
       const groupMembership = await ctx.db
         .query("groupMembers")
         .withIndex("by_group_user", (q) =>
-          q.eq("groupId", channel.groupId).eq("userId", userId)
+          q.eq("groupId", groupId).eq("userId", userId)
         )
         .filter((q) => q.eq(q.field("leftAt"), undefined))
         .first();
@@ -763,7 +768,7 @@ export const deleteMessage = mutation({
       isGroupLeader = isLeaderRole(groupMembership?.role);
 
       // Community admins (ADMIN or PRIMARY_ADMIN) can delete any message in groups within their community
-      const group = await ctx.db.get(channel.groupId);
+      const group = await ctx.db.get(groupId);
       if (group?.communityId) {
         isCommunityAdminUser = await isCommunityAdmin(ctx, group.communityId, userId);
       }

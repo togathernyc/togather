@@ -19,6 +19,7 @@ export const addSlugsToExistingChannels = internalMutation({
 
     // Initialize with existing slugs from DB
     for (const channel of channels) {
+      if (!channel.groupId) continue; // Skip ad-hoc channels (DM/group_dm)
       if (channel.slug) {
         const groupSlugs = assignedSlugsPerGroup.get(channel.groupId) || new Set();
         groupSlugs.add(channel.slug);
@@ -27,6 +28,10 @@ export const addSlugsToExistingChannels = internalMutation({
     }
 
     for (const channel of channels) {
+      if (!channel.groupId) {
+        skippedCount++;
+        continue; // Skip ad-hoc channels (DM/group_dm)
+      }
       // Skip if already has slug
       if (channel.slug) {
         skippedCount++;
