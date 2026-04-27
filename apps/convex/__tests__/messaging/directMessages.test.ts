@@ -11,7 +11,7 @@ import { convexTest } from "convex-test";
 import { expect, test, describe } from "vitest";
 import schema from "../../schema";
 import { modules } from "../../test.setup";
-import { api } from "../../_generated/api";
+import { api, internal } from "../../_generated/api";
 import { generateTokens } from "../../lib/auth";
 import type { Id } from "../../_generated/dataModel";
 
@@ -466,5 +466,280 @@ describe("blockUser auto-declines pending requests", () => {
     const aMember = await getMember(t, channelId, aId);
     expect(aMember?.requestState).toBe("accepted");
     expect(aMember?.leftAt).toBeUndefined();
+  });
+});
+
+// ============================================================================
+// createGroupChat
+// ============================================================================
+
+describe("createGroupChat", () => {
+  test("creates a group chat with multiple recipients in the same community", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Group Chat Community");
+    const { userId: aId, accessToken: aToken } = await createUserInCommunity(
+      t,
+      communityId,
+      { firstName: "Alice" },
+    );
+    const { userId: bId } = await createUserInCommunity(t, communityId, {
+      firstName: "Bob",
+    });
+    const { userId: cId } = await createUserInCommunity(t, communityId, {
+      firstName: "Carol",
+    });
+    const { userId: dId } = await createUserInCommunity(t, communityId, {
+      firstName: "Dan",
+    });
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.directMessages.createGroupChat,
+      {
+        token: aToken,
+        recipientUserIds: [bId, cId, dId],
+        name: "Friends",
+      },
+    );
+
+    const channel = await t.run(async (ctx) => ctx.db.get(channelId));
+    expect(channel?.channelType).toBe("group_dm");
+    expect(channel?.isAdHoc).toBe(true);
+    expect(channel?.name).toBe("Friends");
+    expect(channel?.memberCount).toBe(4);
+    expect(channel?.dmPairKey).toBeUndefined();
+
+    const aMember = await getMember(t, channelId, aId);
+    expect(aMember?.requestState).toBe("accepted");
+    expect(aMember?.role).toBe("admin");
+
+    for (const rid of [bId, cId, dId]) {
+      const m = await getMember(t, channelId, rid);
+      expect(m?.requestState).toBe("pending");
+      expect(m?.role).toBe("member");
+      expect(m?.invitedById).toBe(aId);
+    }
+  });
+
+  test("rejects more than 19 recipients", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Big Group Community");
+    const { accessToken: aToken } = await createUserInCommunity(t, communityId, {
+      firstName: "Alice",
+    });
+
+    const recipientIds: Id<"users">[] = [];
+    for (let i = 0; i < 20; i++) {
+      const { userId } = await createUserInCommunity(t, communityId, {
+        firstName: `User${i}`,
+      });
+      recipientIds.push(userId);
+    }
+
+    await expect(
+      t.mutation(api.functions.messaging.directMessages.createGroupChat, {
+        token: aToken,
+        recipientUserIds: recipientIds,
+      }),
+    ).rejects.toThrow(/at most 19|too many/i);
+  });
+});
+
+// ============================================================================
+// searchUsersInSharedCommunities
+// ============================================================================
+
+describe("searchUsersInSharedCommunities", () => {
+  test("returns shared-community members and excludes blocked users", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Search Community");
+    const { userId: aId, accessToken: aToken } = await createUserInCommunity(
+      t,
+      communityId,
+      { firstName: "Alice" },
+    );
+    const { userId: bId } = await createUserInCommunity(t, communityId, {
+      firstName: "Bob",
+      lastName: "Brown",
+    });
+    const { userId: cId } = await createUserInCommunity(t, communityId, {
+      firstName: "Carol",
+      lastName: "Coleman",
+    });
+    const { userId: dId } = await createUserInOtherCommunity(t, {
+      firstName: "Daniel",
+      lastName: "Dawson",
+    });
+
+    // A blocks B.
+    await t.run(async (ctx) => {
+      await ctx.db.insert("chatUserBlocks", {
+        blockerId: aId,
+        blockedId: bId,
+        createdAt: Date.now(),
+      });
+    });
+
+    const results = await t.query(
+      api.functions.messaging.directMessages.searchUsersInSharedCommunities,
+      { token: aToken, query: "" },
+    );
+
+    const ids = results.map((r) => r.userId);
+    expect(ids).toContain(cId);
+    expect(ids).not.toContain(bId);
+    expect(ids).not.toContain(dId);
+    expect(ids).not.toContain(aId);
+
+    const carolRow = results.find((r) => r.userId === cId);
+    expect(carolRow).toBeDefined();
+    expect(carolRow?.displayName).toBeDefined();
+    expect(carolRow?.displayName.length).toBeGreaterThan(0);
+    expect(Array.isArray(carolRow?.sharedCommunityNames)).toBe(true);
+    expect(carolRow?.sharedCommunityNames.length).toBeGreaterThan(0);
+    expect(carolRow?.sharedCommunityNames).toContain("Search Community");
+  });
+});
+
+// ============================================================================
+// getDirectInbox
+// ============================================================================
+
+describe("getDirectInbox", () => {
+  test("returns accepted ad-hoc channels with last-message metadata", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Inbox Direct Community");
+    const { userId: aId, accessToken: aToken } = await createUserInCommunity(
+      t,
+      communityId,
+      { firstName: "Alice", lastName: "Anderson" },
+    );
+    const { userId: bId, accessToken: bToken } = await createUserInCommunity(
+      t,
+      communityId,
+      { firstName: "Bob", lastName: "Brown" },
+    );
+    const { userId: cId, accessToken: cToken } = await createUserInCommunity(
+      t,
+      communityId,
+      { firstName: "Carol" },
+    );
+
+    // A creates DM with B, sends "hello", B accepts.
+    const { channelId: abChannelId } = await t.mutation(
+      api.functions.messaging.directMessages.createOrGetDirectChannel,
+      { token: aToken, recipientUserId: bId },
+    );
+    await t.mutation(api.functions.messaging.messages.sendMessage, {
+      token: aToken,
+      channelId: abChannelId,
+      content: "hello",
+    });
+    await t.finishAllScheduledFunctions(() => {});
+    await t.mutation(
+      api.functions.messaging.directMessages.respondToChatRequest,
+      { token: bToken, channelId: abChannelId, response: "accept" },
+    );
+
+    const inbox = await t.query(
+      api.functions.messaging.directMessages.getDirectInbox,
+      { token: aToken },
+    );
+
+    expect(inbox).toHaveLength(1);
+    expect(inbox[0].channelId).toBe(abChannelId);
+    expect(inbox[0].channelType).toBe("dm");
+    expect(inbox[0].lastMessagePreview).toBe("hello");
+    const aDoc = await t.run(async (ctx) => ctx.db.get(aId));
+    const expectedAName = `${aDoc?.firstName ?? ""} ${aDoc?.lastName ?? ""}`.trim();
+    expect(inbox[0].lastMessageSenderName).toBe(expectedAName);
+
+    const otherIds = inbox[0].otherMembers.map((m) => m.userId);
+    expect(otherIds).toEqual([bId]);
+    const bDoc = await t.run(async (ctx) => ctx.db.get(bId));
+    const expectedBName = `${bDoc?.firstName ?? ""} ${bDoc?.lastName ?? ""}`.trim();
+    expect(inbox[0].otherMembers[0].displayName).toBe(expectedBName);
+
+    // Now create a SECOND DM from A to C — C is still pending. Pending DMs
+    // should NOT appear in C's inbox (C is the pending recipient). Querying
+    // C's inbox should return zero accepted channels.
+    await t.mutation(
+      api.functions.messaging.directMessages.createOrGetDirectChannel,
+      { token: aToken, recipientUserId: cId },
+    );
+
+    const cInbox = await t.query(
+      api.functions.messaging.directMessages.getDirectInbox,
+      { token: cToken },
+    );
+    expect(cInbox).toHaveLength(0);
+  });
+});
+
+// ============================================================================
+// expireOldChatRequests cron
+// ============================================================================
+
+describe("expireOldChatRequests cron", () => {
+  test("marks pending requests older than 30 days as declined", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Expire Community");
+    const { accessToken: aToken } = await createUserInCommunity(t, communityId, {
+      firstName: "Alice",
+    });
+    const { userId: bId } = await createUserInCommunity(t, communityId, {
+      firstName: "Bob",
+    });
+    const { userId: cId, accessToken: cToken } = await createUserInCommunity(
+      t,
+      communityId,
+      { firstName: "Carol" },
+    );
+
+    // A creates DM with B → B is pending.
+    const { channelId: abChannelId } = await t.mutation(
+      api.functions.messaging.directMessages.createOrGetDirectChannel,
+      { token: aToken, recipientUserId: bId },
+    );
+
+    const bMemberRowBefore = await getMember(t, abChannelId, bId);
+    expect(bMemberRowBefore?.requestState).toBe("pending");
+    const bMemberRowId = bMemberRowBefore!._id;
+
+    // Backdate B's pending row to 31 days old.
+    const thirtyOneDaysMs = 31 * 24 * 60 * 60 * 1000;
+    await t.run(async (ctx) => {
+      await ctx.db.patch(bMemberRowId, {
+        joinedAt: Date.now() - thirtyOneDaysMs,
+      });
+    });
+
+    // C creates a SECOND DM with B (recent — should NOT be expired). Note: we
+    // need a different inviter so the dmPairKey is different. C invites B.
+    const { channelId: cbChannelId } = await t.mutation(
+      api.functions.messaging.directMessages.createOrGetDirectChannel,
+      { token: cToken, recipientUserId: bId },
+    );
+    const cbBMemberBefore = await getMember(t, cbChannelId, bId);
+    expect(cbBMemberBefore?.requestState).toBe("pending");
+
+    // Run the cron.
+    const beforeRun = Date.now();
+    await t.mutation(
+      internal.functions.messaging.directMessages.expireOldChatRequests,
+      {},
+    );
+    const afterRun = Date.now();
+
+    // Old pending row was expired.
+    const bMemberAfter = await getMember(t, abChannelId, bId);
+    expect(bMemberAfter?.requestState).toBe("declined");
+    expect(bMemberAfter?.leftAt).toBeDefined();
+    expect(bMemberAfter?.leftAt!).toBeGreaterThanOrEqual(beforeRun);
+    expect(bMemberAfter?.leftAt!).toBeLessThanOrEqual(afterRun);
+
+    // Recent pending row was NOT expired.
+    const cbBMemberAfter = await getMember(t, cbChannelId, bId);
+    expect(cbBMemberAfter?.requestState).toBe("pending");
+    expect(cbBMemberAfter?.leftAt).toBeUndefined();
   });
 });
