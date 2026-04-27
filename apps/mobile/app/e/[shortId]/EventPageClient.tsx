@@ -15,6 +15,7 @@ import {
   Share,
   Switch,
   KeyboardAvoidingView,
+  Image,
 } from "react-native";
 import { useLocalSearchParams, useRouter, useSegments } from "expo-router";
 import { useQuery, useAuthenticatedMutation, api, Id } from "@services/api/convex";
@@ -62,6 +63,7 @@ function TextWithLinks({ text, style }: { text: string; style?: any }) {
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppImage } from "@components/ui";
+import { getMediaUrl } from "@/utils/media";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useTheme } from "@hooks/useTheme";
 import {
@@ -176,6 +178,37 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
   const eventData = event ?? (initialEventData as typeof event);
   const isLoading = event === undefined && !initialEventData;
   const error = event === null;
+
+  // Render the cover image in its natural aspect ratio so portrait/square
+  // posters aren't cropped. Default to 1:1 while loading; once Image.getSize
+  // resolves, switch to the real ratio.
+  const coverImagePath =
+    (eventData?.coverImage as string | null | undefined) ||
+    ((eventData as any)?.groupImage as string | null | undefined) ||
+    null;
+  const [coverAspectRatio, setCoverAspectRatio] = useState(1);
+  useEffect(() => {
+    // Reset to the 1:1 fallback whenever the cover source changes so a new
+    // image is never laid out with the previous image's ratio while
+    // Image.getSize is in flight (or if it fails for the new URL). Without
+    // this, host edits or fallback switches (coverImage ↔ groupImage) can
+    // leave stale dimensions in place.
+    setCoverAspectRatio(1);
+    if (!coverImagePath) return;
+    const url = getMediaUrl(coverImagePath);
+    if (!url || !(url.startsWith("http://") || url.startsWith("https://"))) return;
+    let cancelled = false;
+    Image.getSize(
+      url,
+      (w, h) => {
+        if (!cancelled && w > 0 && h > 0) setCoverAspectRatio(w / h);
+      },
+      () => {}
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [coverImagePath]);
 
   // Leader status using Convex
   const leaderStatus = useQuery(
@@ -736,7 +769,7 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
         {/* Cover Image - falls back to group image if no event cover */}
         <AppImage
           source={eventData.coverImage || eventData.groupImage}
-          style={[styles.coverImage, { backgroundColor: colors.surfaceSecondary }]}
+          style={[styles.coverImage, { backgroundColor: colors.surfaceSecondary, aspectRatio: coverAspectRatio }]}
           resizeMode="cover"
           placeholder={{
             type: 'icon',
@@ -1156,7 +1189,9 @@ const styles = StyleSheet.create({
   // Cover Image
   coverImage: {
     width: "100%",
-    aspectRatio: 16 / 9,
+    // Default 1:1 — overridden inline with the image's natural aspect ratio
+    // once Image.getSize resolves.
+    aspectRatio: 1,
   },
 
   // Content

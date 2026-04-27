@@ -5,11 +5,12 @@
  * Fetches live event data using the shortId.
  */
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, TouchableOpacity, Pressable, StyleSheet, ActivityIndicator, Platform, Dimensions, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, Pressable, StyleSheet, ActivityIndicator, Platform, Dimensions, Alert, Image } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { format, parseISO, isPast } from 'date-fns';
 import { Avatar } from '@components/ui/Avatar';
 import { AppImage } from '@components/ui/AppImage';
+import { getMediaUrl } from '@/utils/media';
 import { useQuery, useMutation, api, useStoredAuthToken } from '@services/api/convex';
 import type { Id } from '@services/api/convex';
 import { useRouter } from 'expo-router';
@@ -120,9 +121,32 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
   // Submit RSVP mutation using Convex
   const submitRsvpMutation = useMutation(api.functions.meetingRsvps.submit);
 
-  // Note: We use a fixed 16:9 aspect ratio for the cover image to prevent layout shifts.
-  // Previously we calculated the actual image ratio, but this caused content to jump
-  // when the image loaded. Using a consistent aspect ratio is better UX.
+  // Render the cover image in its natural aspect ratio so portrait/square
+  // posters aren't cropped. Default to 1:1 while loading; once Image.getSize
+  // resolves, switch to the real ratio. The brief layout shift is preferable
+  // to permanently cropping the top/bottom of the artwork.
+  const coverImagePath = (eventData as { coverImage?: string | null } | null | undefined)?.coverImage ?? null;
+  const [coverAspectRatio, setCoverAspectRatio] = useState(1);
+  useEffect(() => {
+    // Reset to the 1:1 fallback whenever the cover source changes so a new
+    // image is never laid out with the previous image's ratio while
+    // Image.getSize is in flight (or if it fails for the new URL).
+    setCoverAspectRatio(1);
+    if (!coverImagePath) return;
+    const url = getMediaUrl(coverImagePath);
+    if (!url || !(url.startsWith('http://') || url.startsWith('https://'))) return;
+    let cancelled = false;
+    Image.getSize(
+      url,
+      (w, h) => {
+        if (!cancelled && w > 0 && h > 0) setCoverAspectRatio(w / h);
+      },
+      () => {}
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [coverImagePath]);
 
   // Unified submit queue shared by BOTH the option-change handler and the
   // guest-stepper handler. Previously each handler had its own in-flight
@@ -414,7 +438,7 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
             >
               <AppImage
                 source={event.coverImage}
-                style={[styles.coverImage, { backgroundColor: colors.surfaceSecondary }]}
+                style={[styles.coverImage, { backgroundColor: colors.surfaceSecondary, aspectRatio: coverAspectRatio }]}
                 resizeMode="cover"
                 placeholder={{ type: 'icon', icon: 'calendar-outline', iconSize: 48, iconColor: colors.iconSecondary }}
               />
@@ -497,7 +521,7 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
           >
             <AppImage
               source={event.coverImage}
-              style={[styles.coverImage, { backgroundColor: colors.surfaceSecondary }]}
+              style={[styles.coverImage, { backgroundColor: colors.surfaceSecondary, aspectRatio: coverAspectRatio }]}
               resizeMode="cover"
               placeholder={{ type: 'icon', icon: 'calendar-outline', iconSize: 48, iconColor: colors.iconSecondary }}
             />
@@ -623,13 +647,16 @@ const styles = StyleSheet.create({
   },
   coverImage: {
     width: '100%',
-    aspectRatio: 16 / 9,
+    // Default 1:1 — overridden inline with the image's natural aspect ratio
+    // once Image.getSize resolves. Square is a good fallback because most
+    // event posters are square or portrait.
+    aspectRatio: 1,
     borderTopLeftRadius: 12,
     borderTopRightRadius: 12,
   },
   coverImagePlaceholder: {
     width: '100%',
-    aspectRatio: 16 / 9,
+    aspectRatio: 1,
     justifyContent: 'center',
     alignItems: 'center',
     borderTopLeftRadius: 12,
@@ -814,7 +841,7 @@ const styles = StyleSheet.create({
   // Skeleton loading styles
   skeletonCoverImage: {
     width: '100%',
-    aspectRatio: 16 / 9,
+    aspectRatio: 1,
     borderTopLeftRadius: 12,
     borderTopRightRadius: 12,
   },
