@@ -188,6 +188,12 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
     null;
   const [coverAspectRatio, setCoverAspectRatio] = useState(1);
   useEffect(() => {
+    // Reset to the 1:1 fallback whenever the cover source changes so a new
+    // image is never laid out with the previous image's ratio while
+    // Image.getSize is in flight (or if it fails for the new URL). Without
+    // this, host edits or fallback switches (coverImage ↔ groupImage) can
+    // leave stale dimensions in place.
+    setCoverAspectRatio(1);
     if (!coverImagePath) return;
     const url = getMediaUrl(coverImagePath);
     if (!url || !(url.startsWith("http://") || url.startsWith("https://"))) return;

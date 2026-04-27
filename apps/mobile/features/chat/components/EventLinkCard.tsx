@@ -128,6 +128,10 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
   const coverImagePath = (eventData as { coverImage?: string | null } | null | undefined)?.coverImage ?? null;
   const [coverAspectRatio, setCoverAspectRatio] = useState(1);
   useEffect(() => {
+    // Reset to the 1:1 fallback whenever the cover source changes so a new
+    // image is never laid out with the previous image's ratio while
+    // Image.getSize is in flight (or if it fails for the new URL).
+    setCoverAspectRatio(1);
     if (!coverImagePath) return;
     const url = getMediaUrl(coverImagePath);
     if (!url || !(url.startsWith('http://') || url.startsWith('https://'))) return;
