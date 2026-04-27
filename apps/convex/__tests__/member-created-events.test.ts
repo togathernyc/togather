@@ -254,6 +254,60 @@ describe("meetings.create — member flow", () => {
   // "test began while previous transaction was still open". The cap
   // guarantee comes from the runtime invariant, not from a racy test.
 
+  test("non-leader can file event for someone else without hitting cap", async () => {
+    // Cap counts events the user is *hosting* (in hostUserIds), not events
+    // they merely created. A member who already hosts one future event can
+    // still file a separate event for someone else as long as they don't
+    // include themselves in the new event's hostUserIds.
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    // Member hosts their own future event (default hostUserIds = [creator]).
+    await t.mutation(api.functions.meetings.index.create, {
+      token: s.memberToken,
+      groupId: s.groupId,
+      scheduledAt: FUTURE(),
+      meetingType: 1,
+      locationMode: "tbd",
+    });
+
+    // Member files a second event with someone else as host — should succeed.
+    await t.mutation(api.functions.meetings.index.create, {
+      token: s.memberToken,
+      groupId: s.groupId,
+      scheduledAt: FUTURE() + 1000,
+      meetingType: 1,
+      locationMode: "tbd",
+      hostUserIds: [s.otherMemberId],
+    });
+  });
+
+  test("non-leader is capped when adding self as co-host on second event", async () => {
+    // The cap counts hostUserIds — if the new event includes the creator as
+    // a host alongside someone else, it still counts.
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    await t.mutation(api.functions.meetings.index.create, {
+      token: s.memberToken,
+      groupId: s.groupId,
+      scheduledAt: FUTURE(),
+      meetingType: 1,
+      locationMode: "tbd",
+    });
+
+    await expect(
+      t.mutation(api.functions.meetings.index.create, {
+        token: s.memberToken,
+        groupId: s.groupId,
+        scheduledAt: FUTURE() + 1000,
+        meetingType: 1,
+        locationMode: "tbd",
+        hostUserIds: [s.memberId, s.otherMemberId],
+      })
+    ).rejects.toThrow(/upcoming event/i);
+  });
+
   test("leaders are unthrottled by the cap", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);

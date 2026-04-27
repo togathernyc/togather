@@ -132,27 +132,36 @@ export async function canEditSeriesWide(
 }
 
 /**
- * Count a user's current "future events" for the non-leader cap.
- * Future event = status ∈ {scheduled, confirmed} AND scheduledAt > now.
- * Cancelled and completed don't count. Scoped to a community so a user
- * with hosted events in community A isn't throttled when creating in
- * community B. See ADR-022.
+ * Count a user's current "future events being hosted" for the non-leader cap.
+ * Future event = status ∈ {scheduled, confirmed} AND scheduledAt > now AND
+ * the user is in `hostUserIds`. Cancelled and completed don't count. Scoped
+ * to a community so a user hosting in community A isn't throttled when
+ * creating in community B. See ADR-022.
+ *
+ * Counts by `hostUserIds`, not `createdById`, so the cap matches what the
+ * user sees as "their" upcoming events (Events tab → "My Events" carousel,
+ * Profile → My Events Hosted). Creating an event for someone else doesn't
+ * count against your cap — only events you're actually hosting do.
  */
-export async function countFutureEventsCreatedBy(
+export async function countFutureEventsHostedBy(
   ctx: Ctx,
   userId: Id<"users">,
   nowMs: number,
   communityId: Id<"communities">
 ): Promise<number> {
+  // No multi-value index on hostUserIds, so we scan future meetings in the
+  // community via the (communityId, scheduledAt) compound index and filter
+  // host membership in memory. Bounded by future events in this community.
   const rows = await ctx.db
     .query("meetings")
-    .withIndex("by_createdBy", (q: any) => q.eq("createdById", userId))
+    .withIndex("by_community_scheduledAt", (q: any) =>
+      q.eq("communityId", communityId).gt("scheduledAt", nowMs)
+    )
     .collect();
   return rows.filter(
     (m: Doc<"meetings">) =>
-      m.communityId === communityId &&
       (m.status === "scheduled" || m.status === "confirmed") &&
-      m.scheduledAt > nowMs
+      isMeetingHost(m, userId)
   ).length;
 }
 

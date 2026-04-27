@@ -276,11 +276,17 @@ export function CreateEventScreen() {
   // Non-leader 1-future-event cap enforcement (client gate — the backend
   // enforces authoritatively). We only query when the user is actually at
   // risk of hitting the cap (non-leader, not editing) so leaders don't pay
-  // the query cost.
+  // the query cost. Cap counts events the user is hosting (not just creating)
+  // — matches the backend rule, so filing an event for someone else doesn't
+  // count against your own hosting load.
   const capGateEnabled = !isAdmin && !isEditMode && !isLeaderOfSelectedGroup;
   const { data: myHosted } = useMyHostedEvents({ enabled: capGateEnabled });
   const futureHostedCount = (myHosted?.upcoming?.length ?? 0) as number;
-  const capReached = capGateEnabled && futureHostedCount >= 1;
+  // Cap fires only when the new event will list the user as a host. If the
+  // user has chosen to delegate hosting (their id isn't in `hostUserIds`),
+  // they're not adding to their own hosting load and the cap shouldn't gate.
+  const userWillHost = !!user?.id && hostUserIds.some((id) => id === user.id);
+  const capReached = capGateEnabled && userWillHost && futureHostedCount >= 1;
 
   // Fetch existing meeting data if editing (using Convex)
   const meetingData = useConvexQuery(
@@ -1942,8 +1948,8 @@ export function CreateEventScreen() {
             >
               <Ionicons name="information-circle" size={20} color={colors.link} />
               <Text style={[styles.locationWarningText, { color: colors.textSecondary }]}>
-                You already have an upcoming event. Cancel or wait for it to
-                pass before creating another.
+                You're already hosting an upcoming event. Cancel or wait for
+                it to pass before hosting another.
               </Text>
             </View>
           )}

@@ -11,6 +11,7 @@ import { v } from "convex/values";
 import { query } from "../../_generated/server";
 import { Doc } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
+import { isMeetingHost } from "../../lib/meetingPermissions";
 import {
   buildBucket,
   buildEnrichment,
@@ -59,8 +60,14 @@ function splitByTime(
 }
 
 /**
- * Events this user created. Excludes cancelled. Split into upcoming and past
- * sections, both in the grouped-CWE shape.
+ * Events this user is hosting (in `hostUserIds`). Excludes cancelled. Split
+ * into upcoming and past sections, both in the grouped-CWE shape.
+ *
+ * Filters by `hostUserIds`, not `createdById`, so this matches "what events
+ * am I hosting" — events the user filed for someone else are excluded, and
+ * events the user was added to as a co-host (without creating them) are
+ * included. Aligned with the Events tab "My Events" carousel and the
+ * non-leader hosting cap on `meetings.create`.
  */
 export const myHostedEvents = query({
   args: {
@@ -75,13 +82,28 @@ export const myHostedEvents = query({
   ): Promise<{ upcoming: EventCard[]; past: EventCard[] }> => {
     const userId = await requireAuth(ctx, args.token);
 
-    const rows = await ctx.db
+    // No multi-value index on hostUserIds — scan by (communityId, scheduledAt)
+    // and filter host membership in memory. Two range queries (future, past)
+    // bound the work; past is only scanned when `includePast` is set.
+    const futureRows = await ctx.db
       .query("meetings")
-      .withIndex("by_createdBy", (q) => q.eq("createdById", userId))
+      .withIndex("by_community_scheduledAt", (q) =>
+        q.eq("communityId", args.communityId).gt("scheduledAt", args.now)
+      )
       .collect();
+    const pastRows = args.includePast
+      ? await ctx.db
+          .query("meetings")
+          .withIndex("by_community_scheduledAt", (q) =>
+            q
+              .eq("communityId", args.communityId)
+              .lte("scheduledAt", args.now)
+          )
+          .collect()
+      : [];
 
-    const live = rows.filter(
-      (m) => m.status !== "cancelled" && m.communityId === args.communityId
+    const live: Doc<"meetings">[] = [...futureRows, ...pastRows].filter(
+      (m) => m.status !== "cancelled" && isMeetingHost(m, userId)
     );
     const withGroupDocs = await withGroups(ctx, live);
     const { upcoming, past } = splitByTime(withGroupDocs, args.now);
@@ -134,7 +156,11 @@ export const myAttendedEvents = query({
     const meetings = (await Promise.all(meetingIds.map((id) => ctx.db.get(id))))
       .filter((m): m is Doc<"meetings"> => m !== null)
       .filter((m) => m.status !== "cancelled")
-      .filter((m) => m.createdById !== userId)
+      // Dedupe with myHostedEvents by host membership, not creator — matches
+      // the new "hosted = in hostUserIds" semantic so an event the user RSVPs
+      // to but doesn't host shows here even if they happened to file it for
+      // someone else.
+      .filter((m) => !isMeetingHost(m, userId))
       .filter((m) => m.communityId === args.communityId);
 
     const withGroupDocs = await withGroups(ctx, meetings);
