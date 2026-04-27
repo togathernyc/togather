@@ -13,7 +13,7 @@
  */
 
 import { v, ConvexError } from "convex/values";
-import { query, mutation } from "../../_generated/server";
+import { query, mutation, internalMutation } from "../../_generated/server";
 import type { QueryCtx } from "../../_generated/server";
 import type { Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
@@ -720,5 +720,164 @@ export const searchUsersInSharedCommunities = query({
         .map((cId) => communityNameById.get(cId))
         .filter((n): n is string => Boolean(n)),
     }));
+  },
+});
+
+/**
+ * List the caller's accepted ad-hoc channels (DMs and group_dms). Powers the
+ * "Direct messages" section of the inbox. Does NOT include pending requests —
+ * those are surfaced separately by `listChatRequests`. Sorted most-recent
+ * activity first.
+ */
+export const getDirectInbox = query({
+  args: {
+    token: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const acceptedRows = await ctx.db
+      .query("chatChannelMembers")
+      .withIndex("by_user_requestState", (q) =>
+        q.eq("userId", userId).eq("requestState", "accepted"),
+      )
+      .collect();
+
+    const results: Array<{
+      channelId: Id<"chatChannels">;
+      channelType: "dm" | "group_dm";
+      channelName: string;
+      memberCount: number;
+      otherMembers: Array<{
+        userId: Id<"users">;
+        displayName: string;
+        profilePhoto: string | null;
+      }>;
+      lastMessageAt: number | null;
+      lastMessagePreview: string | null;
+      lastMessageSenderName: string | null;
+      unreadCount: number;
+      isMuted: boolean;
+    }> = [];
+
+    for (const row of acceptedRows) {
+      if (row.leftAt !== undefined) continue;
+      const channel = await ctx.db.get(row.channelId);
+      if (!channel || !channel.isAdHoc || channel.isArchived) continue;
+
+      const channelType = channel.channelType as "dm" | "group_dm";
+
+      // Other accepted/pending members for display (creator may still be
+      // surfacing the chat to a recipient who hasn't responded — that recipient
+      // shows in the member list with their pending state, but for inbox
+      // display we only need name+photo).
+      const otherMemberRows = await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel", (q) => q.eq("channelId", channel._id))
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .collect();
+      const otherMembers = otherMemberRows
+        .filter((m) => m.userId !== userId)
+        .map((m) => ({
+          userId: m.userId,
+          displayName: m.displayName ?? "",
+          profilePhoto: getMediaUrl(m.profilePhoto) ?? null,
+        }));
+
+      // Read state → unread count.
+      const readState = await ctx.db
+        .query("chatReadState")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channel._id).eq("userId", userId),
+        )
+        .first();
+      const unreadCount = readState?.unreadCount ?? 0;
+
+      results.push({
+        channelId: channel._id,
+        channelType,
+        channelName: channel.name,
+        memberCount: channel.memberCount,
+        otherMembers,
+        lastMessageAt: channel.lastMessageAt ?? null,
+        lastMessagePreview: channel.lastMessagePreview ?? null,
+        lastMessageSenderName: channel.lastMessageSenderName ?? null,
+        unreadCount,
+        isMuted: row.isMuted,
+      });
+    }
+
+    results.sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0));
+    return results;
+  },
+});
+
+// ============================================================================
+// Cron handlers
+// ============================================================================
+
+/**
+ * Daily cron: expire pending chat requests older than 30 days.
+ *
+ * Sets `requestState: "declined"` and `leftAt: now` on stale `pending` rows so
+ * the recipient's inbox is cleaned up. The inviter is never notified (silent
+ * decline matches the on-demand decline behavior). Bounded by an explicit
+ * cutoff plus a `take()` cap so a backlog doesn't blow the per-mutation budget.
+ */
+export const expireOldChatRequests = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const PENDING_REQUEST_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+    const MAX_PER_RUN = 500;
+    const cutoff = now - PENDING_REQUEST_TTL_MS;
+
+    const candidates = await ctx.db
+      .query("chatChannelMembers")
+      .withIndex("by_requestState_joinedAt", (q) =>
+        q.eq("requestState", "pending").lt("joinedAt", cutoff),
+      )
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .take(MAX_PER_RUN);
+
+    let expired = 0;
+    for (const row of candidates) {
+      await ctx.db.patch(row._id, {
+        requestState: "declined",
+        requestRespondedAt: now,
+        leftAt: now,
+      });
+      expired++;
+    }
+    return { expired };
+  },
+});
+
+/**
+ * Hourly cron: delete `directMessageRateLimits` rows older than 24h.
+ *
+ * Pending-pair rate-limit rows have a 24h window. Old rows have no further
+ * effect, but accumulating them would waste storage and slow scans. Bounded
+ * per-run for the same reasons as `expireOldChatRequests`.
+ */
+export const cleanupOldDmRateLimits = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const RATE_LIMIT_TTL_MS = 24 * 60 * 60 * 1000;
+    const MAX_PER_RUN = 1000;
+    const cutoff = now - RATE_LIMIT_TTL_MS;
+
+    const stale = await ctx.db
+      .query("directMessageRateLimits")
+      .withIndex("by_windowStartedAt", (q) => q.lt("windowStartedAt", cutoff))
+      .take(MAX_PER_RUN);
+
+    let deleted = 0;
+    for (const row of stale) {
+      await ctx.db.delete(row._id);
+      deleted++;
+    }
+    return { deleted };
   },
 });

@@ -615,6 +615,78 @@ export const sendMessage = mutation({
 
     const now = Date.now();
 
+    // Ad-hoc DM/group_dm gating: while ANY recipient is still in `requestState: "pending"`,
+    // restrict the sender to text-only, ≤1000 chars, and 1 message per 24h per pending pair.
+    // Sender themselves must be in `requestState: "accepted"` (declined/leftAt rows already
+    // bounced by the membership check above). `pendingOthers` is reused after insert to
+    // upsert the rate-limit rows.
+    let pendingOthersForRateLimit: Array<{ userId: Id<"users"> }> = [];
+    if (channel.isAdHoc) {
+      const senderMembership = await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", userId),
+        )
+        .first();
+      if (
+        !senderMembership ||
+        senderMembership.leftAt !== undefined ||
+        senderMembership.requestState !== "accepted"
+      ) {
+        throw new Error("Accept the request before replying");
+      }
+
+      const otherMembers = await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel", (q) => q.eq("channelId", channelId))
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .collect();
+      const pendingOthers = otherMembers.filter(
+        (m) => m.userId !== userId && m.requestState === "pending",
+      );
+
+      if (pendingOthers.length > 0) {
+        const PENDING_RATE_LIMIT_WINDOW_MS = 24 * 60 * 60 * 1000;
+        const PENDING_MAX_TEXT_LENGTH = 1000;
+
+        if (args.attachments && args.attachments.length > 0) {
+          throw new Error(
+            "Cannot send attachments until the recipient accepts the request",
+          );
+        }
+        if (args.content.length > PENDING_MAX_TEXT_LENGTH) {
+          throw new Error(
+            `First message must be ${PENDING_MAX_TEXT_LENGTH} characters or fewer until accepted`,
+          );
+        }
+
+        for (const r of pendingOthers) {
+          const rl = await ctx.db
+            .query("directMessageRateLimits")
+            .withIndex("by_user_channel_recipient", (q) =>
+              q
+                .eq("userId", userId)
+                .eq("channelId", channelId)
+                .eq("recipientUserId", r.userId),
+            )
+            .first();
+          if (
+            rl &&
+            rl.windowStartedAt > now - PENDING_RATE_LIMIT_WINDOW_MS &&
+            rl.messageCount >= 1
+          ) {
+            throw new Error(
+              "You can send only 1 message until the recipient accepts the request",
+            );
+          }
+        }
+
+        pendingOthersForRateLimit = pendingOthers.map((r) => ({
+          userId: r.userId,
+        }));
+      }
+    }
+
     // Determine content type
     let contentType = "text";
     if (args.attachments && args.attachments.length > 0) {
@@ -663,6 +735,34 @@ export const sendMessage = mutation({
         await ctx.db.patch(args.parentMessageId, {
           threadReplyCount: (parentMessage.threadReplyCount || 0) + 1,
           lastActivityAt: now,
+        });
+      }
+    }
+
+    // Upsert rate-limit rows for each pending recipient. Done after a successful
+    // insert so a thrown rate-limit error doesn't leave stray counters behind.
+    for (const r of pendingOthersForRateLimit) {
+      const existingRl = await ctx.db
+        .query("directMessageRateLimits")
+        .withIndex("by_user_channel_recipient", (q) =>
+          q
+            .eq("userId", userId)
+            .eq("channelId", channelId)
+            .eq("recipientUserId", r.userId),
+        )
+        .first();
+      if (existingRl) {
+        await ctx.db.patch(existingRl._id, {
+          windowStartedAt: now,
+          messageCount: 1,
+        });
+      } else {
+        await ctx.db.insert("directMessageRateLimits", {
+          userId,
+          channelId,
+          recipientUserId: r.userId,
+          windowStartedAt: now,
+          messageCount: 1,
         });
       }
     }

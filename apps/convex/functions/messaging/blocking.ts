@@ -116,12 +116,33 @@ export const blockUser = mutation({
       return;
     }
 
+    const now = Date.now();
     await ctx.db.insert("chatUserBlocks", {
       blockerId: userId,
       blockedId: args.blockedId,
-      createdAt: Date.now(),
+      createdAt: now,
       reason: args.reason,
     });
+
+    // Auto-decline any pending ad-hoc chat request between the blocker and the blocked.
+    // Only the blocker's own membership row is touched — the blocked user's view is
+    // unaffected (silent block). Without this, pending requests would linger in the
+    // blocker's inbox after they explicitly opted out of further contact.
+    const myMemberships = await ctx.db
+      .query("chatChannelMembers")
+      .withIndex("by_user_requestState", (q) =>
+        q.eq("userId", userId).eq("requestState", "pending"),
+      )
+      .collect();
+    for (const m of myMemberships) {
+      if (m.invitedById !== args.blockedId) continue;
+      if (m.leftAt !== undefined) continue;
+      await ctx.db.patch(m._id, {
+        requestState: "declined",
+        requestRespondedAt: now,
+        leftAt: now,
+      });
+    }
   },
 });
 

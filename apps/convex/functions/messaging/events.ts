@@ -212,9 +212,15 @@ export const onMessageSent = internalMutation({
           });
         }
       } else {
-        // Non-shared channel: original single-group path
+        // Non-shared channel: original single-group path. For ad-hoc DMs/group_dms,
+        // channel.groupId is undefined so we fall back to channel.communityId directly
+        // (the channel is the unit of routing here, not a group).
         const group = channel?.groupId ? await ctx.db.get(channel.groupId) : null;
-        const community = group?.communityId ? await ctx.db.get(group.communityId) : null;
+        const community = group?.communityId
+          ? await ctx.db.get(group.communityId)
+          : channel?.communityId
+            ? await ctx.db.get(channel.communityId)
+            : null;
 
         const mentionRecipients: Id<"users">[] = [];
         const regularRecipients: Id<"users">[] = [];
@@ -237,7 +243,7 @@ export const onMessageSent = internalMutation({
           messagePreview: preview,
           senderAvatarUrl,
           groupId: group?._id,
-          groupName: group?.name || 'Group Chat',
+          groupName: group?.name || channel?.name || 'Group Chat',
           communityId: community?._id,
           channelName: channel?.name,
           channelType: channel?.channelType || "main",

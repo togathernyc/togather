@@ -1554,7 +1554,9 @@ export default defineSchema({
     .index("by_channel_user", ["channelId", "userId"])
     .index("by_channel_syncSource", ["channelId", "syncSource"])
     .index("by_role", ["role"])
-    .index("by_user_requestState", ["userId", "requestState"]),
+    .index("by_user_requestState", ["userId", "requestState"])
+    // Cross-user index used by the daily cron to expire stale pending requests.
+    .index("by_requestState_joinedAt", ["requestState", "joinedAt"]),
 
   /**
    * Channel Join Requests
