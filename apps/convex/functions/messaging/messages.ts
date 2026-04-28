@@ -225,10 +225,22 @@ export const getMessages = query({
       if (!(await canAccessEventChannel(ctx, userId, channel))) {
         return { messages: [], hasMore: false, cursor: undefined };
       }
-    } else {
-      if (!channel.groupId) {
-        throw new Error("This operation is only valid for group channels");
+    } else if (channel.isAdHoc || !channel.groupId) {
+      // Ad-hoc DM/group_dm — no group to gate on. Caller must have an active
+      // membership row (any requestState). Pending recipients can read the
+      // first message preview that's already in the channel; the chat-room
+      // banner gates replies until they accept, but they need to see the
+      // history to make that choice.
+      const adHocMembership = await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", args.channelId).eq("userId", userId),
+        )
+        .first();
+      if (!adHocMembership || adHocMembership.leftAt !== undefined) {
+        return { messages: [], hasMore: false, cursor: undefined };
       }
+    } else {
       const channelGroupId = channel.groupId;
       // Check channel membership
       const channelMembership = await ctx.db
@@ -641,6 +653,26 @@ export const sendMessage = mutation({
         .withIndex("by_channel", (q) => q.eq("channelId", channelId))
         .filter((q) => q.eq(q.field("leftAt"), undefined))
         .collect();
+
+      // Block enforcement on ad-hoc channels: if ANY active recipient has
+      // blocked the sender, the send is rejected. The message would otherwise
+      // be inserted (the existing notification path silences blocked users,
+      // but the message stays in the channel doc and stays visible to the
+      // blocker if they reopen the chat). A generic error keeps the block
+      // silent — the sender doesn't learn who blocked them.
+      for (const m of otherMembers) {
+        if (m.userId === userId) continue;
+        const block = await ctx.db
+          .query("chatUserBlocks")
+          .withIndex("by_blocker_blocked", (q) =>
+            q.eq("blockerId", m.userId).eq("blockedId", userId),
+          )
+          .first();
+        if (block) {
+          throw new Error("Cannot send message in this chat");
+        }
+      }
+
       const pendingOthers = otherMembers.filter(
         (m) => m.userId !== userId && m.requestState === "pending",
       );
