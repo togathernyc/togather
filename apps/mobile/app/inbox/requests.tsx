@@ -73,9 +73,11 @@ export default function ChatRequestsRoute() {
 function ChatRequestsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { token } = useAuth();
+  const { token, community } = useAuth();
   const { primaryColor } = useCommunityTheme();
   const { colors } = useTheme();
+
+  const communityId = community?.id as Id<"communities"> | undefined;
 
   const [selectedRequest, setSelectedRequest] = useState<ChatRequestRow | null>(
     null
@@ -86,7 +88,7 @@ function ChatRequestsScreen() {
 
   const requests = useQuery(
     api.functions.messaging.directMessages.listChatRequests,
-    token ? { token } : "skip"
+    token && communityId ? { token, communityId } : "skip"
   );
 
   const respondToChatRequest = useMutation(

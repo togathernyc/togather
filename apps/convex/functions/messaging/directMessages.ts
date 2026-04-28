@@ -40,11 +40,20 @@ const NEW_REQUEST_WINDOW_MS = 24 * 60 * 60 * 1000;
 // ============================================================================
 
 /**
- * Compute the deterministic dedup key for a 1:1 DM channel.
- * Sorted lexicographically so that (a, b) and (b, a) produce the same key.
+ * Compute the deterministic dedup key for a 1:1 DM channel within a community.
+ *
+ * DMs are scoped per-community (Slack-workspace model): if Alice and Bob share
+ * Community 1 and Community 2, they get a separate DM thread in each. The
+ * communityId is folded into the dedup key so the lookup matches the visibility
+ * boundary — without it, a DM created in Community 1 would surface to the same
+ * user pair when one of them switches to Community 2's inbox.
  */
-function computeDmPairKey(a: Id<"users">, b: Id<"users">): string {
-  return [a, b].sort().join("::");
+function computeDmPairKey(
+  communityId: Id<"communities">,
+  a: Id<"users">,
+  b: Id<"users">,
+): string {
+  return `${communityId}::${[a, b].sort().join("::")}`;
 }
 
 /**
@@ -73,37 +82,24 @@ async function isBlockedEitherDirection(
   return bBlockedA !== null;
 }
 
-/**
- * Return the set of community IDs that both users are members of.
- * Skips memberships with status === 3 (deactivated) — undefined status
- * is treated as active for legacy rows.
- */
-async function getSharedCommunityIds(
-  ctx: QueryCtx,
-  userIdA: Id<"users">,
-  userIdB: Id<"users">,
-): Promise<Id<"communities">[]> {
-  const [aMemberships, bMemberships] = await Promise.all([
-    ctx.db
-      .query("userCommunities")
-      .withIndex("by_user", (q) => q.eq("userId", userIdA))
-      .collect(),
-    ctx.db
-      .query("userCommunities")
-      .withIndex("by_user", (q) => q.eq("userId", userIdB))
-      .collect(),
-  ]);
+const isActiveMembership = (status: number | undefined) => status !== 3;
 
-  const isActive = (status: number | undefined) => status !== 3;
-  const aSet = new Set(
-    aMemberships.filter((m) => isActive(m.status)).map((m) => m.communityId),
-  );
-  const shared: Id<"communities">[] = [];
-  for (const m of bMemberships) {
-    if (!isActive(m.status)) continue;
-    if (aSet.has(m.communityId)) shared.push(m.communityId);
-  }
-  return shared;
+/**
+ * Return true iff `userId` is an active member of `communityId`.
+ * Active = `userCommunities.status !== 3` (3 means deactivated).
+ */
+async function isCommunityMember(
+  ctx: QueryCtx,
+  userId: Id<"users">,
+  communityId: Id<"communities">,
+): Promise<boolean> {
+  const membership = await ctx.db
+    .query("userCommunities")
+    .withIndex("by_user_community", (q) =>
+      q.eq("userId", userId).eq("communityId", communityId),
+    )
+    .first();
+  return membership ? isActiveMembership(membership.status) : false;
 }
 
 // ============================================================================
@@ -117,14 +113,21 @@ async function getSharedCommunityIds(
  *
  * Rejects if:
  *   - Caller is the recipient
- *   - The two users share no community
+ *   - Either user is not an active member of `communityId`
  *   - Either party has blocked the other
  *   - Caller has already initiated 5 new pending DMs in the last 24h
+ *
+ * DMs are scoped per-community. The same user pair sharing two communities
+ * gets two distinct DM threads — one per community — by design (Slack-style
+ * isolation). The channel's `communityId` is the boundary the inbox query
+ * filters by, so a thread created in Community A never surfaces while the
+ * caller is viewing Community B.
  */
 export const createOrGetDirectChannel = mutation({
   args: {
     token: v.string(),
     recipientUserId: v.id("users"),
+    communityId: v.id("communities"),
   },
   handler: async (ctx, args): Promise<{ channelId: Id<"chatChannels">; isNew: boolean }> => {
     const senderId = await requireAuth(ctx, args.token);
@@ -133,7 +136,11 @@ export const createOrGetDirectChannel = mutation({
       throw new Error("Cannot DM yourself");
     }
 
-    const dmPairKey = computeDmPairKey(senderId, args.recipientUserId);
+    const dmPairKey = computeDmPairKey(
+      args.communityId,
+      senderId,
+      args.recipientUserId,
+    );
 
     // Existing channel? Return it without rate-limit (already-known pair).
     const existing = await ctx.db
@@ -144,16 +151,14 @@ export const createOrGetDirectChannel = mutation({
       return { channelId: existing._id, isNew: false };
     }
 
-    // Verify shared community.
-    const sharedCommunityIds = await getSharedCommunityIds(
-      ctx,
-      senderId,
-      args.recipientUserId,
-    );
-    if (sharedCommunityIds.length === 0) {
-      throw new Error("You can only message members of your communities");
+    // Both users must be active members of THIS specific community.
+    const [senderIn, recipientIn] = await Promise.all([
+      isCommunityMember(ctx, senderId, args.communityId),
+      isCommunityMember(ctx, args.recipientUserId, args.communityId),
+    ]);
+    if (!senderIn || !recipientIn) {
+      throw new Error("You can only message members of this community");
     }
-    const communityId = sharedCommunityIds[0]!;
 
     // Verify neither party has blocked the other (generic error — don't leak who).
     if (await isBlockedEitherDirection(ctx, senderId, args.recipientUserId)) {
@@ -179,7 +184,7 @@ export const createOrGetDirectChannel = mutation({
 
     const now = Date.now();
     const channelId = await ctx.db.insert("chatChannels", {
-      communityId,
+      communityId: args.communityId,
       isAdHoc: true,
       dmPairKey,
       channelType: "dm",
@@ -222,21 +227,22 @@ export const createOrGetDirectChannel = mutation({
  * Create an ad-hoc group chat with the caller plus 1-19 recipients (≤ 20 total).
  * Returns `{ channelId }`. All recipients start in `requestState: "pending"`.
  *
- * Channel `communityId` is the community most-shared between the creator and
- * recipients (mode of intersected memberships; ties broken arbitrarily).
+ * Channel `communityId` is the community the caller is currently viewing —
+ * the same community-scoping rule as 1:1 DMs (Slack-workspace model).
  *
  * Group chats are NOT deduped — two calls with the same recipient set produce
  * two distinct channels.
  *
  * Rejects if:
  *   - Recipient list (after de-dupe) is empty or > 19
- *   - Any recipient shares no community with the creator
+ *   - Any recipient is not an active member of `communityId`
  *   - Any recipient is blocked-with or has blocked the creator
  *   - Caller has already initiated 5 new pending requests in the last 24h
  */
 export const createGroupChat = mutation({
   args: {
     token: v.string(),
+    communityId: v.id("communities"),
     recipientUserIds: v.array(v.id("users")),
     name: v.optional(v.string()),
   },
@@ -256,39 +262,20 @@ export const createGroupChat = mutation({
       );
     }
 
-    // For each recipient, get their shared communities with the creator and
-    // count community-IDs across the group. Recipients with no overlap fail
-    // the request entirely.
-    const sharedPerRecipient = await Promise.all(
-      uniqueRecipients.map((id) => getSharedCommunityIds(ctx, creatorId, id)),
+    // Creator + every recipient must be an active member of this community.
+    // Generic error message — we don't enumerate which recipients failed
+    // (avoid leaking community-membership details).
+    const creatorIn = await isCommunityMember(ctx, creatorId, args.communityId);
+    if (!creatorIn) {
+      throw new Error("You can only message members of this community");
+    }
+    const recipientMembershipChecks = await Promise.all(
+      uniqueRecipients.map((id) =>
+        isCommunityMember(ctx, id, args.communityId),
+      ),
     );
-    const missingShared: Id<"users">[] = [];
-    const communityCounts = new Map<Id<"communities">, number>();
-    for (let i = 0; i < uniqueRecipients.length; i++) {
-      const shared = sharedPerRecipient[i]!;
-      if (shared.length === 0) {
-        missingShared.push(uniqueRecipients[i]!);
-        continue;
-      }
-      for (const cId of shared) {
-        communityCounts.set(cId, (communityCounts.get(cId) ?? 0) + 1);
-      }
-    }
-    if (missingShared.length > 0) {
-      throw new Error("You can only message members of your communities");
-    }
-
-    // Pick the most-shared community.
-    let communityId: Id<"communities"> | null = null;
-    let bestCount = 0;
-    for (const [cId, count] of communityCounts) {
-      if (count > bestCount) {
-        bestCount = count;
-        communityId = cId;
-      }
-    }
-    if (!communityId) {
-      throw new Error("You can only message members of your communities");
+    if (recipientMembershipChecks.some((ok) => !ok)) {
+      throw new Error("You can only message members of this community");
     }
 
     // Block-check every recipient. Generic message; do not enumerate.
@@ -319,7 +306,7 @@ export const createGroupChat = mutation({
     const trimmedName = (args.name ?? "").trim().slice(0, MAX_GROUP_NAME_LENGTH);
 
     const channelId = await ctx.db.insert("chatChannels", {
-      communityId,
+      communityId: args.communityId,
       isAdHoc: true,
       channelType: "group_dm",
       name: trimmedName,
@@ -478,15 +465,18 @@ export const respondToChatRequest = mutation({
 // ============================================================================
 
 /**
- * List the caller's pending chat requests (DMs and group_dms where the caller's
- * `requestState === "pending"`). Returns enough metadata to render an inbox row:
- * inviter info, shared-community attribution, member count, and a first-message
- * preview. Sorted most-recent-invite first. Returns an empty array when there
- * are no pending requests — never throws on empty.
+ * List the caller's pending chat requests in a specific community (DMs and
+ * group_dms where the caller's `requestState === "pending"` and the channel's
+ * `communityId === args.communityId`). Returns enough metadata to render an
+ * inbox row: inviter info, the channel's community name (single, since the
+ * thread is community-scoped), member count, and a first-message preview.
+ * Sorted most-recent-invite first. Returns an empty array when there are no
+ * pending requests — never throws on empty.
  */
 export const listChatRequests = query({
   args: {
     token: v.string(),
+    communityId: v.id("communities"),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -498,16 +488,10 @@ export const listChatRequests = query({
       )
       .collect();
 
-    // Pre-fetch caller's communities for shared-community resolution.
-    const callerMemberships = await ctx.db
-      .query("userCommunities")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
-      .collect();
-    const callerCommunityIds = new Set(
-      callerMemberships
-        .filter((m) => m.status !== 3)
-        .map((m) => m.communityId),
-    );
+    // Resolve the community name once — every request in this list belongs to
+    // it (thread is community-scoped) so the attribution is identical per row.
+    const community = await ctx.db.get(args.communityId);
+    const communityName = community?.name ?? "";
 
     const results: Array<{
       channelId: Id<"chatChannels">;
@@ -527,35 +511,13 @@ export const listChatRequests = query({
       if (row.leftAt !== undefined) continue;
       const channel = await ctx.db.get(row.channelId);
       if (!channel || !channel.isAdHoc || channel.isArchived) continue;
+      // Strict community-scoping: channels in other communities don't appear
+      // in this community's request inbox even though the membership row
+      // belongs to the caller (the very leak this fix addresses).
+      if (channel.communityId !== args.communityId) continue;
       if (!row.invitedById) continue;
       const inviter = await ctx.db.get(row.invitedById);
       if (!inviter) continue;
-
-      // Shared communities = (channel community ∪ inviter communities) ∩ caller communities.
-      const inviterMemberships = await ctx.db
-        .query("userCommunities")
-        .withIndex("by_user", (q) => q.eq("userId", row.invitedById!))
-        .collect();
-      const inviterActive = inviterMemberships
-        .filter((m) => m.status !== 3)
-        .map((m) => m.communityId);
-      const sharedIds: Id<"communities">[] = [];
-      for (const cId of inviterActive) {
-        if (callerCommunityIds.has(cId)) sharedIds.push(cId);
-      }
-      // Always surface the channel's community first if it's shared with the caller.
-      if (channel.communityId && callerCommunityIds.has(channel.communityId)) {
-        sharedIds.sort((a, b) => {
-          if (a === channel.communityId) return -1;
-          if (b === channel.communityId) return 1;
-          return 0;
-        });
-      }
-      const sharedCommunityNames: string[] = [];
-      for (const cId of sharedIds.slice(0, 2)) {
-        const community = await ctx.db.get(cId);
-        if (community?.name) sharedCommunityNames.push(community.name);
-      }
 
       // First non-deleted message preview.
       const firstMessage = await ctx.db
@@ -568,14 +530,15 @@ export const listChatRequests = query({
         .first();
 
       const channelType = channel.channelType as "dm" | "group_dm";
+      const inviterName = getDisplayName(inviter.firstName, inviter.lastName);
       results.push({
         channelId: channel._id,
         channelType,
         channelName: channel.name,
         inviterUserId: inviter._id,
-        inviterDisplayName: getDisplayName(inviter.firstName, inviter.lastName),
+        inviterDisplayName: inviterName.trim().length > 0 ? inviterName : "Someone",
         inviterProfilePhoto: getMediaUrl(inviter.profilePhoto) ?? null,
-        sharedCommunityNames,
+        sharedCommunityNames: communityName ? [communityName] : [],
         memberCount: channel.memberCount,
         firstMessagePreview: firstMessage?.content ?? null,
         firstMessageSenderName: firstMessage?.senderName ?? null,
@@ -598,6 +561,13 @@ export const listChatRequests = query({
 export const searchUsersInSharedCommunities = query({
   args: {
     token: v.string(),
+    /**
+     * Community to search within. Search is strictly scoped — users in the
+     * caller's other communities are NOT included even when the same caller
+     * could DM them from those other communities. This keeps the picker
+     * aligned with the inbox the caller is currently viewing.
+     */
+    communityId: v.id("communities"),
     query: v.string(),
     excludeUserIds: v.optional(v.array(v.id("users"))),
     limit: v.optional(v.number()),
@@ -613,51 +583,30 @@ export const searchUsersInSharedCommunities = query({
     excludeIds.add(callerId);
     const trimmedQuery = args.query.trim().toLowerCase();
 
-    // Caller's communities.
-    const callerMemberships = await ctx.db
+    // Caller must themselves be an active member of this community.
+    const callerIn = await isCommunityMember(ctx, callerId, args.communityId);
+    if (!callerIn) return [];
+
+    const community = await ctx.db.get(args.communityId);
+    const communityName = community?.name ?? "";
+
+    // Members of this single community only — search does not cross
+    // community boundaries.
+    const memberships = await ctx.db
       .query("userCommunities")
-      .withIndex("by_user", (q) => q.eq("userId", callerId))
-      .collect();
-    const callerCommunityIds = callerMemberships
-      .filter((m) => m.status !== 3)
-      .map((m) => m.communityId);
-    if (callerCommunityIds.length === 0) {
-      return [];
-    }
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .filter((q) => q.neq(q.field("status"), 3))
+      .take(2000);
 
-    // Collect candidate user IDs and the community-IDs they share with the caller.
-    const sharedByUser = new Map<Id<"users">, Set<Id<"communities">>>();
-    for (const communityId of callerCommunityIds) {
-      const memberships = await ctx.db
-        .query("userCommunities")
-        .withIndex("by_community", (q) => q.eq("communityId", communityId))
-        .filter((q) => q.neq(q.field("status"), 3))
-        .take(2000);
-      for (const m of memberships) {
-        if (excludeIds.has(m.userId)) continue;
-        let set = sharedByUser.get(m.userId);
-        if (!set) {
-          set = new Set();
-          sharedByUser.set(m.userId, set);
-        }
-        set.add(communityId);
-      }
-    }
-
-    if (sharedByUser.size === 0) {
-      return [];
-    }
-
-    // Resolve user docs, filter by name match, and filter out blocks.
     type Candidate = {
       user: NonNullable<Awaited<ReturnType<typeof ctx.db.get<"users">>>>;
-      sharedCommunityIds: Id<"communities">[];
       isFullNameMatch: boolean;
     };
     const candidates: Candidate[] = [];
-    for (const [candidateId, sharedSet] of sharedByUser) {
+    for (const m of memberships) {
+      if (excludeIds.has(m.userId)) continue;
       if (candidates.length >= limit * 4) break; // bound work; we'll filter & cap later
-      const user = await ctx.db.get(candidateId);
+      const user = await ctx.db.get(m.userId);
       if (!user) continue;
 
       const fullName = `${user.firstName ?? ""} ${user.lastName ?? ""}`
@@ -678,11 +627,7 @@ export const searchUsersInSharedCommunities = query({
         continue;
       }
 
-      candidates.push({
-        user,
-        sharedCommunityIds: Array.from(sharedSet),
-        isFullNameMatch,
-      });
+      candidates.push({ user, isFullNameMatch });
     }
 
     // Sort: full-name matches first, then alphabetical by last/first.
@@ -699,39 +644,31 @@ export const searchUsersInSharedCommunities = query({
       return aName.localeCompare(bName);
     });
 
-    const capped = candidates.slice(0, limit);
-
-    // Resolve shared community names.
-    const allCommunityIds = new Set<Id<"communities">>();
-    for (const c of capped) {
-      for (const cId of c.sharedCommunityIds) allCommunityIds.add(cId);
-    }
-    const communityNameById = new Map<Id<"communities">, string>();
-    for (const cId of allCommunityIds) {
-      const community = await ctx.db.get(cId);
-      if (community?.name) communityNameById.set(cId, community.name);
-    }
-
-    return capped.map((c) => ({
+    return candidates.slice(0, limit).map((c) => ({
       userId: c.user._id,
       displayName: getDisplayName(c.user.firstName, c.user.lastName),
       profilePhoto: getMediaUrl(c.user.profilePhoto) ?? null,
-      sharedCommunityNames: c.sharedCommunityIds
-        .map((cId) => communityNameById.get(cId))
-        .filter((n): n is string => Boolean(n)),
+      // Single-community attribution mirrors the new scoping. Returned as
+      // an array for backward compatibility with the existing picker UI,
+      // which already renders an array.
+      sharedCommunityNames: communityName ? [communityName] : [],
     }));
   },
 });
 
 /**
- * List the caller's accepted ad-hoc channels (DMs and group_dms). Powers the
- * "Direct messages" section of the inbox. Does NOT include pending requests —
- * those are surfaced separately by `listChatRequests`. Sorted most-recent
- * activity first.
+ * List the caller's accepted ad-hoc channels (DMs and group_dms) within a
+ * specific community. Powers the "Direct messages" section of the inbox.
+ *
+ * Strictly community-scoped: a thread the caller has in another community
+ * does not appear here. Switching the community context shows that
+ * community's threads. Pending requests are surfaced separately by
+ * `listChatRequests`. Sorted most-recent activity first.
  */
 export const getDirectInbox = query({
   args: {
     token: v.string(),
+    communityId: v.id("communities"),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -764,6 +701,9 @@ export const getDirectInbox = query({
       if (row.leftAt !== undefined) continue;
       const channel = await ctx.db.get(row.channelId);
       if (!channel || !channel.isAdHoc || channel.isArchived) continue;
+      // Strict community-scoping (Slack-workspace model): a thread in
+      // another community does not surface in this community's inbox.
+      if (channel.communityId !== args.communityId) continue;
 
       const channelType = channel.channelType as "dm" | "group_dm";
 
