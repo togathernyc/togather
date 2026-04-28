@@ -893,7 +893,16 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   // Don't render the full UI until essential data is ready. Without this gate,
   // the toolbar and message list flash empty then populate, causing visible jitter.
   // The inbox flow resolves quickly (prefetch + params), notifications may take longer.
-  const isEssentialDataReady = resolvedGroupId && activeChannelId != null;
+  //
+  // Ad-hoc DM/group_dm channels have no `groupId` — once the channel doc has
+  // loaded and confirmed `isAdHoc`, the group-shaped data we'd normally wait
+  // on (group details, channel-tab list, leaders/main IDs) doesn't apply, so
+  // we let the screen render as soon as `activeChannelId` resolves. The
+  // toolbar falls back to URL params (`groupName`, `imageUrl`) for the
+  // recipient's name + avatar.
+  const isAdHocChannel = channelData?.isAdHoc === true;
+  const isEssentialDataReady =
+    (resolvedGroupId || isAdHocChannel) && activeChannelId != null;
 
   // Loading state: show placeholder while essential data resolves
   if (!isEssentialDataReady) {
@@ -1095,7 +1104,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
           onClose={() => setMembersModalChannel(null)}
           channelId={membersModalChannel?.channelId}
           channelName={membersModalChannel?.name ?? ""}
-          groupId={resolvedGroupId}
+          groupId={resolvedGroupId ?? undefined}
           channelSlug={membersModalChannel?.slug}
         />
 

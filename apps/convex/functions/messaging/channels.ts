@@ -228,8 +228,24 @@ export const getChannel = query({
       };
     }
 
-    if (!channel.groupId) {
-      return null; // Skip ad-hoc channels (DM/group_dm) - handled separately
+    // Ad-hoc channels (dm, group_dm) — caller must have a member row. The
+    // request-state gate (showing the chat as accepted vs pending) is handled
+    // in the UI; this query just exposes the channel doc to anyone who's been
+    // added. Declined / left rows (leftAt set) lose access.
+    if (channel.isAdHoc || !channel.groupId) {
+      const adHocMembership = await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", args.channelId).eq("userId", userId),
+        )
+        .first();
+      if (!adHocMembership || adHocMembership.leftAt !== undefined) {
+        return null;
+      }
+      return {
+        ...channel,
+        slug: getChannelSlug(channel),
+      };
     }
     const groupId = channel.groupId;
 

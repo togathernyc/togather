@@ -926,7 +926,7 @@ export default function ChannelMembersScreen() {
         presentationStyle="pageSheet"
         onRequestClose={() => setShowShareModal(false)}
       >
-        {channelData && (
+        {channelData && channelData.groupId && (
           <ShareWithGroupModal
             channelId={channelData._id}
             channelName={channelData.name}
