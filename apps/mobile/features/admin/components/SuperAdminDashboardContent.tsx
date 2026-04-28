@@ -209,16 +209,20 @@ export function SuperAdminDashboardContent() {
             </View>
           </View>
 
-          {/* Top Channels */}
-          {data.topChannels.length > 0 && (
+          {/* Top Channels — group channels only. Backend exposes a
+              new `topGroupChannels` field for the split; fall back to the
+              legacy combined `topChannels` for older API responses. */}
+          {(() => {
+            const groupChannels = data.topGroupChannels ?? data.topChannels ?? [];
+            return groupChannels.length > 0 && (
             <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
               <Text style={[styles.sectionTitle, { color: colors.text }]}>Top Channels</Text>
-              {data.topChannels.map((channel: any, index: number) => (
+              {groupChannels.map((channel: any, index: number) => (
                 <View
                   key={channel.channelId}
                   style={[
                     styles.channelRow,
-                    index < data.topChannels.length - 1 && {
+                    index < groupChannels.length - 1 && {
                       borderBottomWidth: 1,
                       borderBottomColor: colors.borderLight,
                     },
@@ -255,7 +259,8 @@ export function SuperAdminDashboardContent() {
                 </View>
               ))}
             </View>
-          )}
+            );
+          })()}
 
           {/* Top Direct Messages — separate card from group channels so DM
               noise doesn't drown out group activity admins want to scan. */}

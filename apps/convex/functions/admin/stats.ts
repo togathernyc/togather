@@ -1413,14 +1413,19 @@ export const getDailySummary = query({
       };
     };
 
-    const topChannels = await Promise.all(topGroupScored.map(resolveChannelRow));
+    // Resolve names for each split + the legacy combined list. The
+    // combined `topChannels` is preserved as the API contract older
+    // client builds rely on (a single "Top Channels" list). New clients
+    // read `topGroupChannels` + `topDirectChannels` to render the split
+    // cards. Switching `topChannels` to groups-only would silently drop
+    // DM rows for any old build still in the field.
+    const topGroupChannels = await Promise.all(
+      topGroupScored.map(resolveChannelRow),
+    );
     const topDirectChannels = await Promise.all(
       topDirectScored.map(resolveChannelRow),
     );
-    // Keep `topScored` (combined) referenced so the legacy variable doesn't
-    // dangle if anything else in this file consumed it. Callers should
-    // migrate to `topChannels` (groups) + `topDirectChannels` (DMs).
-    void topScored;
+    const topChannels = await Promise.all(topScored.map(resolveChannelRow));
 
     // Top users — messages + reactions (2 reactions = 1 message equivalent)
     const userMessageCounts = new Map<string, number>();
@@ -1472,6 +1477,7 @@ export const getDailySummary = query({
       totalReactions: dayReactions.length,
       appOpens,
       topChannels,
+      topGroupChannels,
       topDirectChannels,
       topSenders,
     };
