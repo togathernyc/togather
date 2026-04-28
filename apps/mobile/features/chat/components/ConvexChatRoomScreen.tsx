@@ -1097,12 +1097,49 @@ const ConvexChatRoomScreenInner: React.FC = () => {
             {/* Typing Indicator */}
             <TypingIndicator typingUsers={typingUsers} />
 
-            {/* Message Input — or request banner if the caller is still
-                pending acceptance on an ad-hoc channel. The banner replaces the
-                composer entirely so the user can't bypass the gate; the
-                backend enforces the same rule (`sendMessage` rejects pending
-                senders) but UI-side gating is the better UX. */}
-            {channelData?.myRequestState === "pending" && activeChannelId ? (
+            {/* Message Input — or banner. Banner branches in priority order:
+                  1) ad-hoc channel + caller has no profile photo → photo
+                     banner. Profile photos are required to use ad-hoc chats
+                     (ditto backend; `sendMessage` rejects with
+                     PROFILE_PHOTO_REQUIRED when the photo is missing).
+                  2) caller is still pending → request banner.
+                  3) otherwise composer / read-only banner. */}
+            {isAdHocChannel &&
+            (!user?.profile_photo || user.profile_photo.trim() === "") &&
+            activeChannelId ? (
+              <View
+                style={[
+                  styles.readOnlyBanner,
+                  {
+                    backgroundColor: colors.surfaceSecondary,
+                    borderTopColor: colors.border,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.readOnlyText,
+                    { color: colors.textSecondary, marginBottom: 8 },
+                  ]}
+                >
+                  Add a profile photo to message in this chat.
+                </Text>
+                <TouchableOpacity
+                  onPress={() => router.push("/(user)/edit-profile" as any)}
+                  style={{
+                    backgroundColor: primaryColor,
+                    paddingHorizontal: 16,
+                    paddingVertical: 10,
+                    borderRadius: 10,
+                    alignSelf: "center",
+                  }}
+                >
+                  <Text style={{ color: "#fff", fontWeight: "600" }}>
+                    Add photo
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            ) : channelData?.myRequestState === "pending" && activeChannelId ? (
               <ChatRequestBanner
                 channelId={activeChannelId}
                 inviterDisplayName={channelData.inviterDisplayName ?? "Someone"}

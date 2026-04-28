@@ -1331,9 +1331,30 @@ export const getDailySummary = query({
       return { channelId: chId, messages, reactions, score: messages + reactions * 0.5 };
     });
 
-    // Sort by engagement score descending and take top 10
+    // Sort by engagement score descending. Two separate top-20 windows:
+    // one for group channels, one for direct (1:1 DMs + ad-hoc group_dms).
+    // Mixing them was cluttering the admin dashboard since DMs are noisy
+    // and crowded out the group activity admins actually need to scan.
     channelScores.sort((a, b) => b.score - a.score);
-    const topScored = channelScores.slice(0, 10);
+
+    const topGroupScored: typeof channelScores = [];
+    const topDirectScored: typeof channelScores = [];
+    for (const score of channelScores) {
+      if (topGroupScored.length >= 20 && topDirectScored.length >= 20) break;
+      const channel = await ctx.db.get(score.channelId as Id<"chatChannels">);
+      if (!channel) continue;
+      if (channel.groupId) {
+        if (topGroupScored.length < 20) topGroupScored.push(score);
+      } else {
+        if (topDirectScored.length < 20) topDirectScored.push(score);
+      }
+    }
+    // Legacy combined `topChannels` field — must be the GLOBAL top 20 by
+    // engagement score, not group-then-dm concatenation. Otherwise older
+    // client builds that still read `topChannels` see a biased list (e.g.
+    // a high-engagement DM excluded behind 20 lower-scoring group rows),
+    // breaking the original "top channels by engagement" contract.
+    const topScored = channelScores.slice(0, 20);
 
     // Count users active that day via users.lastActiveAt index
     const activeUsers = await ctx.db
@@ -1344,27 +1365,70 @@ export const getDailySummary = query({
       .collect();
     const appOpens = activeUsers.length;
 
-    // Resolve channel and group names + group photo for top channels
-    const topChannels = await Promise.all(
-      topScored.map(async ({ channelId, messages, reactions }) => {
-        const channel = await ctx.db.get(channelId as Id<"chatChannels">);
-        let groupName = "";
-        let groupPhoto: string | undefined;
-        if (channel?.groupId) {
-          const group = await ctx.db.get(channel.groupId);
-          groupName = group?.name ?? "";
-          groupPhoto = getMediaUrl(group?.preview);
-        }
-        return {
-          channelId,
-          channelName: channel?.name ?? "",
-          groupName,
-          groupPhoto,
-          messages,
-          reactions,
-        };
-      })
+    // Resolve channel and group names + group photo. For ad-hoc channels
+    // (DMs and group_dms — no groupId) the channel name is empty for
+    // 1:1s and often empty for group_dms; fall back to a comma-list of
+    // the first few member display names so the row isn't blank in the
+    // dashboard.
+    const resolveChannelRow = async ({
+      channelId,
+      messages,
+      reactions,
+    }: { channelId: string; messages: number; reactions: number }) => {
+      const channel = await ctx.db.get(channelId as Id<"chatChannels">);
+      let groupName = "";
+      let groupPhoto: string | undefined;
+      let displayName = channel?.name ?? "";
+      if (channel?.groupId) {
+        const group = await ctx.db.get(channel.groupId);
+        groupName = group?.name ?? "";
+        groupPhoto = getMediaUrl(group?.preview);
+      } else if (channel) {
+        const memberRows = await ctx.db
+          .query("chatChannelMembers")
+          .withIndex("by_channel", (q) => q.eq("channelId", channel._id))
+          .filter((q) => q.eq(q.field("leftAt"), undefined))
+          .collect();
+        const names = memberRows
+          .map((m) => (m.displayName ?? "").trim())
+          .filter((n) => n.length > 0)
+          .slice(0, 4);
+        const fallback =
+          names.length > 0
+            ? names.join(", ") +
+              (memberRows.length > names.length
+                ? ` +${memberRows.length - names.length}`
+                : "")
+            : channel.channelType === "dm"
+              ? "Direct message"
+              : "Group chat";
+        displayName = displayName.trim().length > 0 ? displayName : fallback;
+        groupName =
+          channel.channelType === "dm" ? "Direct message" : "Group chat";
+      }
+      return {
+        channelId,
+        channelName: displayName,
+        groupName,
+        groupPhoto,
+        messages,
+        reactions,
+      };
+    };
+
+    // Resolve names for each split + the legacy combined list. The
+    // combined `topChannels` is preserved as the API contract older
+    // client builds rely on (a single "Top Channels" list). New clients
+    // read `topGroupChannels` + `topDirectChannels` to render the split
+    // cards. Switching `topChannels` to groups-only would silently drop
+    // DM rows for any old build still in the field.
+    const topGroupChannels = await Promise.all(
+      topGroupScored.map(resolveChannelRow),
     );
+    const topDirectChannels = await Promise.all(
+      topDirectScored.map(resolveChannelRow),
+    );
+    const topChannels = await Promise.all(topScored.map(resolveChannelRow));
 
     // Top users — messages + reactions (2 reactions = 1 message equivalent)
     const userMessageCounts = new Map<string, number>();
@@ -1416,6 +1480,8 @@ export const getDailySummary = query({
       totalReactions: dayReactions.length,
       appOpens,
       topChannels,
+      topGroupChannels,
+      topDirectChannels,
       topSenders,
     };
   },

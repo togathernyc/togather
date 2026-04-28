@@ -990,7 +990,14 @@ export const listChatRequests = query({
       const inviter = await ctx.db.get(row.invitedById);
       if (!inviter) continue;
 
-      // First non-deleted message preview.
+      // First non-deleted message preview. Hide requests where the
+      // channel has NEVER had a message — that's clutter from
+      // createOrGetDirectChannel calls the sender backed out of. But
+      // keep requests where the inviter sent a message that was later
+      // deleted: the recipient still has a pending row and needs to be
+      // able to accept / decline / block from their inbox. Distinguish
+      // by checking the raw chatMessages table — if any row exists
+      // (deleted or not), it's a real request.
       const firstMessage = await ctx.db
         .query("chatMessages")
         .withIndex("by_channel_createdAt", (q) =>
@@ -999,6 +1006,15 @@ export const listChatRequests = query({
         .order("asc")
         .filter((q) => q.eq(q.field("isDeleted"), false))
         .first();
+      if (!firstMessage) {
+        const anyMessage = await ctx.db
+          .query("chatMessages")
+          .withIndex("by_channel_createdAt", (q) =>
+            q.eq("channelId", channel._id),
+          )
+          .first();
+        if (!anyMessage) continue;
+      }
 
       const channelType = channel.channelType as "dm" | "group_dm";
       const inviterName = getDisplayName(inviter.firstName, inviter.lastName);
@@ -1301,6 +1317,23 @@ export const getDirectInbox = query({
       // Strict community-scoping (Slack-workspace model): a thread in
       // another community does not surface in this community's inbox.
       if (channel.communityId !== args.communityId) continue;
+      // Hide channels that were created but never written to (clutter
+      // from `createOrGetDirectChannel` calls where the user backed out).
+      // BUT distinguish "never sent" from "sent then all messages
+      // deleted" — the latter is still a real conversation the user
+      // expects to see. Delete-last-message clears `lastMessageAt`, so
+      // we can't rely on it alone. Peek at chatMessages for the
+      // channel; if any row exists (even soft-deleted), keep the
+      // channel in the inbox.
+      if (!channel.lastMessageAt) {
+        const anyMessage = await ctx.db
+          .query("chatMessages")
+          .withIndex("by_channel_createdAt", (q) =>
+            q.eq("channelId", channel._id),
+          )
+          .first();
+        if (!anyMessage) continue;
+      }
 
       const channelType = channel.channelType as "dm" | "group_dm";
 

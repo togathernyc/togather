@@ -209,16 +209,20 @@ export function SuperAdminDashboardContent() {
             </View>
           </View>
 
-          {/* Top Channels */}
-          {data.topChannels.length > 0 && (
+          {/* Top Channels — group channels only. Backend exposes a
+              new `topGroupChannels` field for the split; fall back to the
+              legacy combined `topChannels` for older API responses. */}
+          {(() => {
+            const groupChannels = data.topGroupChannels ?? data.topChannels ?? [];
+            return groupChannels.length > 0 && (
             <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
               <Text style={[styles.sectionTitle, { color: colors.text }]}>Top Channels</Text>
-              {data.topChannels.map((channel: any, index: number) => (
+              {groupChannels.map((channel: any, index: number) => (
                 <View
                   key={channel.channelId}
                   style={[
                     styles.channelRow,
-                    index < data.topChannels.length - 1 && {
+                    index < groupChannels.length - 1 && {
                       borderBottomWidth: 1,
                       borderBottomColor: colors.borderLight,
                     },
@@ -234,6 +238,49 @@ export function SuperAdminDashboardContent() {
                       <Ionicons name="people" size={14} color={colors.textTertiary} />
                     </View>
                   )}
+                  <View style={styles.channelInfo}>
+                    <Text style={[styles.channelName, { color: colors.text }]} numberOfLines={1}>
+                      {channel.channelName}
+                    </Text>
+                    <Text style={[styles.groupName, { color: colors.textTertiary }]} numberOfLines={1}>
+                      {channel.groupName}
+                    </Text>
+                  </View>
+                  <View style={styles.channelStats}>
+                    <Text style={[styles.messageCount, { color: primaryColor }]}>
+                      {channel.messages} msg
+                    </Text>
+                    {channel.reactions > 0 && (
+                      <Text style={[styles.reactionCount, { color: colors.textSecondary }]}>
+                        {channel.reactions} rxn
+                      </Text>
+                    )}
+                  </View>
+                </View>
+              ))}
+            </View>
+            );
+          })()}
+
+          {/* Top Direct Messages — separate card from group channels so DM
+              noise doesn't drown out group activity admins want to scan. */}
+          {data.topDirectChannels && data.topDirectChannels.length > 0 && (
+            <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Top Direct Messages</Text>
+              {data.topDirectChannels.map((channel: any, index: number) => (
+                <View
+                  key={channel.channelId}
+                  style={[
+                    styles.channelRow,
+                    index < data.topDirectChannels.length - 1 && {
+                      borderBottomWidth: 1,
+                      borderBottomColor: colors.borderLight,
+                    },
+                  ]}
+                >
+                  <View style={[styles.groupAvatarPlaceholder, { backgroundColor: colors.surfaceSecondary }]}>
+                    <Ionicons name="chatbubbles-outline" size={14} color={colors.textTertiary} />
+                  </View>
                   <View style={styles.channelInfo}>
                     <Text style={[styles.channelName, { color: colors.text }]} numberOfLines={1}>
                       {channel.channelName}

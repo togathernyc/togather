@@ -205,7 +205,15 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   content: {
-    flex: 1,
+    // `flexShrink: 1` (not `flex: 1`) — when the parent uses
+    // `alignItems: "center"` AND we apply width:"90%" + maxHeight:"90%" on
+    // the modal content, `flex: 1` on the ScrollView has nothing to fill
+    // (no flex-distributed height available). The ScrollView would
+    // collapse to 0pt, hiding the modal body. Children of the ScrollView
+    // (the inner View with minHeight, the form, etc.) drive its height
+    // naturally, while flexShrink lets it shrink to fit within the
+    // modal's maxHeight.
+    flexShrink: 1,
   },
   contentContainer: {
     flexGrow: 1,

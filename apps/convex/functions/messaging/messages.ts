@@ -648,6 +648,19 @@ export const sendMessage = mutation({
         throw new Error("Accept the request before replying");
       }
 
+      // Profile photo is a hard requirement on every send to an ad-hoc
+      // channel — not just at create / accept time. Without this re-check,
+      // a user who had a photo at request-accept time could remove it later
+      // and keep messaging. Frontend mirrors this with a sticky banner
+      // that blocks the composer when the local user has no photo.
+      const sender = await ctx.db.get(userId);
+      if (
+        !sender?.profilePhoto ||
+        sender.profilePhoto.trim() === ""
+      ) {
+        throw new Error("PROFILE_PHOTO_REQUIRED");
+      }
+
       const otherMembers = await ctx.db
         .query("chatChannelMembers")
         .withIndex("by_channel", (q) => q.eq("channelId", channelId))
