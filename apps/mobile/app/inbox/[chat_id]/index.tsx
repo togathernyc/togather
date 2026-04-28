@@ -103,6 +103,17 @@ export default function LegacyChatIdRoute() {
       return;
     }
 
+    // Ad-hoc DM/group_dm channels have no `groupId` — redirect to the
+    // dedicated `/inbox/dm/{channelId}` route instead. Without this branch,
+    // legacy `/inbox/{channelId}` deep links to ad-hoc channels (notifications,
+    // saved bookmarks) render the loading spinner forever because none of the
+    // group-channel branches above match.
+    if (channelData && (channelData as { isAdHoc?: boolean }).isAdHoc) {
+      hasRedirected.current = true;
+      router.replace(`/inbox/dm/${channelData._id}` as any);
+      return;
+    }
+
     // If groupIdParam is provided but chat_id is a Convex channel ID,
     // we need to wait for channelData to determine the correct channel type.
     // Only redirect immediately if we can't get channel type from query.
