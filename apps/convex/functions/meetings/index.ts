@@ -14,7 +14,7 @@ import {
   canCreateInGroup,
   canEditMeeting,
   canEditSeriesWide,
-  countFutureEventsCreatedBy,
+  countFutureEventsHostedBy,
   NON_LEADER_FUTURE_EVENT_CAP,
 } from "../../lib/meetingPermissions";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
@@ -172,17 +172,24 @@ export const create = mutation({
       throw new Error("Only group leaders can add events to a series");
     }
 
-    // 1-future-event cap for non-leaders (ADR-022). Convex mutations are
-    // serialized per-document; a concurrent second create reads the just-inserted
-    // row and this check rejects it. Scoped to the target group's community —
-    // events in a different community don't count against this one.
-    if (!isLeader) {
+    // 1-future-event cap for non-leaders (ADR-022). Counts future events the
+    // creator is *hosting* (in `hostUserIds`), not events they merely created
+    // for someone else — matches "My Events" semantics so users see what's
+    // counting against them. Convex mutations are serialized per-document; a
+    // concurrent second create reads the just-inserted row and this check
+    // rejects it. Scoped to the target group's community — events in a
+    // different community don't count against this one.
+    //
+    // Note: the cap fires only when the creator is also in the new event's
+    // hostUserIds. Creating an event for someone else does not count against
+    // the creator's own hosting load.
+    if (!isLeader && hostUserIds.some((id) => id === createdById)) {
       // Look ahead to the target group so we know the community scope.
       const targetGroup = await ctx.db.get(args.groupId);
       if (!targetGroup?.communityId) {
         throw new Error("Group is not linked to a community");
       }
-      const futureCount = await countFutureEventsCreatedBy(
+      const futureCount = await countFutureEventsHostedBy(
         ctx,
         createdById,
         now(),
@@ -190,7 +197,7 @@ export const create = mutation({
       );
       if (futureCount >= NON_LEADER_FUTURE_EVENT_CAP) {
         throw new Error(
-          "You already have an upcoming event. Cancel or finish it before creating another."
+          "You're already hosting an upcoming event. Cancel or finish it before hosting another."
         );
       }
     }
