@@ -17,6 +17,7 @@ export default function DmChannelLayout() {
       }}
     >
       <Stack.Screen name="index" options={{ animation: "none" }} />
+      <Stack.Screen name="info" options={{ animation: "slide_from_right" }} />
     </Stack>
   );
 }

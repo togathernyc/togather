@@ -10,6 +10,7 @@ import {
   Modal,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { SearchBar } from "@components/ui/SearchBar";
 import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
@@ -452,6 +453,7 @@ function MemberActionsModal({
 }: MemberActionsModalProps) {
   const { colors } = useTheme();
   const { user } = useAuth();
+  const router = useRouter();
 
   if (!member || !visible) {
     return null;
@@ -465,6 +467,15 @@ function MemberActionsModal({
   const isCurrentUser = user?.id === member?.id;
   // Show promote/demote if user can manage members AND we have group role data
   const canPromoteDemote = canManageMembers && memberRole !== undefined;
+
+  // Visible to ANY caller — non-admin members can still view profiles.
+  const handleViewProfile = () => {
+    const userId = member?.id ?? member?._id ?? member?.user?.id;
+    onClose();
+    if (userId) {
+      router.push(`/profile/${userId}` as any);
+    }
+  };
 
   return (
     <Modal
@@ -490,6 +501,16 @@ function MemberActionsModal({
           </View>
 
           <View style={styles.modalActions}>
+            {/* View profile is always available — non-admins included. */}
+            <TouchableOpacity
+              style={[styles.modalActionButton, { borderBottomColor: colors.border }]}
+              onPress={handleViewProfile}
+            >
+              <Ionicons name="person-circle-outline" size={20} color={colors.text} />
+              <Text style={[styles.modalActionText, { color: colors.text }]}>
+                View profile
+              </Text>
+            </TouchableOpacity>
             {canPromoteDemote && !isCurrentUser && (
               <>
                 {isLeader ? (

@@ -312,6 +312,83 @@ export const getMemberPreview = query({
   },
 });
 
+/**
+ * Get a public preview of group leaders.
+ *
+ * Returns the active leaders (role === "leader") for a group, so non-members
+ * can see who to reach out to before joining. The standard `getLeaders` query
+ * is gated to members + community admins; this variant intentionally exposes
+ * leader name + avatar publicly so non-members can DM a leader before joining.
+ *
+ * Capped at `limit` (default 8) leaders. Sorted by joinedAt for stability.
+ */
+export const getLeaderPreview = query({
+  args: {
+    groupId: v.id("groups"),
+    limit: v.optional(v.number()), // How many leaders to show (default 8)
+  },
+  handler: async (ctx, args) => {
+    const previewLimit = args.limit ?? 8;
+
+    // Get group to verify it exists
+    const group = await ctx.db.get(args.groupId);
+    if (!group) {
+      return { leaders: [], totalCount: 0 };
+    }
+
+    // Fetch leader memberships only (filter at the DB layer where possible)
+    let leaderMemberships = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("leftAt"), undefined),
+          q.eq(q.field("role"), "leader")
+        )
+      )
+      .collect();
+
+    // Exclude any pending/declined join requests defensively (leftAt + role
+    // already filter most of the noise, but a row with role="leader" and
+    // requestStatus="pending" should not be exposed publicly).
+    leaderMemberships = leaderMemberships.filter(
+      (m) =>
+        !m.requestStatus ||
+        m.requestStatus === "accepted" ||
+        m.requestStatus === "approved"
+    );
+
+    const totalCount = leaderMemberships.length;
+
+    // Stable order: oldest leader first (matches member preview convention)
+    leaderMemberships.sort((a, b) => a.joinedAt - b.joinedAt);
+
+    const slice = leaderMemberships.slice(0, previewLimit);
+
+    // Batch fetch users
+    const users = await Promise.all(slice.map((m) => ctx.db.get(m.userId)));
+
+    const leadersPreview = slice
+      .map((membership, i) => {
+        const user = users[i];
+        if (!user) return null;
+        return {
+          id: user._id,
+          firstName: user.firstName || "",
+          lastName: user.lastName || "",
+          profileImage: getMediaUrl(user.profilePhoto),
+          role: membership.role,
+        };
+      })
+      .filter(Boolean);
+
+    return {
+      leaders: leadersPreview,
+      totalCount,
+    };
+  },
+});
+
 // ============================================================================
 // Member Mutations
 // ============================================================================

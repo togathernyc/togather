@@ -37,6 +37,8 @@ import { useQuery, api, useStoredAuthToken } from "@services/api/convex";
 
 // Local components
 import { ChatHeader, ChatHeaderPlaceholder } from "./ChatHeader";
+import { ChatRoomHeader } from "./ChatRoomHeader";
+import { ChatPrivacyCard } from "./ChatPrivacyCard";
 import { ChatNavigation, type ChannelTab } from "./ChatNavigation";
 import { ChatMenuModal } from "./ChatMenuModal";
 import { ExternalChatModal } from "./ExternalChatModal";
@@ -90,8 +92,9 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   const params = useLocalSearchParams() as ChatRoomParams;
   const router = useRouter();
   const pathname = usePathname();
-  const { user } = useAuth();
+  const { user, community } = useAuth();
   const token = useStoredAuthToken();
+  const adHocCommunityId = community?.id as Id<"communities"> | undefined;
   const { primaryColor } = useCommunityTheme();
   const { colors } = useTheme();
 
@@ -902,6 +905,42 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   // toolbar falls back to URL params (`groupName`, `imageUrl`) for the
   // recipient's name + avatar.
   const isAdHocChannel = channelData?.isAdHoc === true;
+  const adHocChannelType =
+    isAdHocChannel && (channelData?.channelType === "dm" || channelData?.channelType === "group_dm")
+      ? (channelData.channelType as "dm" | "group_dm")
+      : null;
+
+  // Ad-hoc channels need other-member metadata for the stacked-avatar header
+  // and the chat-info screen. `getDirectInbox` already returns this in the
+  // exact shape we need; reusing it avoids a second query path while the
+  // channel doc itself is being kept lean.
+  const directInboxForHeader = useQuery(
+    api.functions.messaging.directMessages.getDirectInbox,
+    isAdHocChannel && token && adHocCommunityId
+      ? { token, communityId: adHocCommunityId }
+      : "skip",
+  );
+  const adHocInboxRow = useMemo(() => {
+    if (!isAdHocChannel || !directInboxForHeader || !activeChannelId) return null;
+    return (
+      directInboxForHeader.find((row) => row.channelId === activeChannelId) ??
+      null
+    );
+  }, [isAdHocChannel, directInboxForHeader, activeChannelId]);
+  const adHocOtherMembers = useMemo(
+    () =>
+      (adHocInboxRow?.otherMembers ?? []).map((m) => ({
+        name: m.displayName,
+        imageUrl: m.profilePhoto,
+      })),
+    [adHocInboxRow],
+  );
+
+  const handleOpenChatInfo = useCallback(() => {
+    if (!activeChannelId) return;
+    router.push(`/inbox/dm/${activeChannelId}/info` as any);
+  }, [router, activeChannelId]);
+
   const isEssentialDataReady =
     (resolvedGroupId || isAdHocChannel) && activeChannelId != null;
 
@@ -944,38 +983,53 @@ const ConvexChatRoomScreenInner: React.FC = () => {
       keyboardVerticalOffset={0}
     >
       <Pressable style={[styles.container, { backgroundColor: colors.surface }]} onPress={Platform.OS === 'web' ? undefined : dismissKeyboard}>
-        <ChatHeader
-          displayName={displayName}
-          displayType={displayType}
-          displayImage={displayImage}
-          groupTypeId={groupTypeId}
-          // Announcement groups auto-include everyone in the community, so
-          // surfacing a count next to them reads as noise ("9225 members" on
-          // every post) rather than signal. Hide for those only.
-          memberCount={
-            isAnnouncementGroup ? undefined : groupDetails?.memberCount
-          }
-          onBack={handleBack}
-          onMenuPress={() => setMenuVisible(true)}
-          onGroupPagePress={handleGoToGroupPage}
-          onMembersPress={handleGoToMembers}
-        />
-        <ChatNavigation
-          activeSlug={activeSlug}
-          channels={channelTabs}
-          showLeaderTools={showLeaderTools}
-          externalChatLink={externalChatLink}
-          onTabChange={handleTabChange}
-          onTabLongPress={handleTabLongPress}
-          onExternalChatPress={() => setExternalChatModalVisible(true)}
-          tools={(groupDetails as { leaderToolbarTools?: string[] } | undefined)?.leaderToolbarTools}
-          hasPcoChannels={hasPcoChannels ?? false}
-          toolVisibility={groupWithVisibility?.toolVisibility}
-          toolDisplayNames={groupWithVisibility?.toolDisplayNames}
-          userRole={userRole}
-          groupId={resolvedGroupId ?? undefined}
-          onToolPress={handleToolPress}
-        />
+        {isAdHocChannel && adHocChannelType ? (
+          <ChatRoomHeader
+            channelType={adHocChannelType}
+            channelName={(channelData as { name?: string } | null)?.name ?? ""}
+            otherMembers={adHocOtherMembers}
+            onBack={handleBack}
+            onPressTitle={handleOpenChatInfo}
+          />
+        ) : (
+          <ChatHeader
+            displayName={displayName}
+            displayType={displayType}
+            displayImage={displayImage}
+            groupTypeId={groupTypeId}
+            // Announcement groups auto-include everyone in the community, so
+            // surfacing a count next to them reads as noise ("9225 members" on
+            // every post) rather than signal. Hide for those only.
+            memberCount={
+              isAnnouncementGroup ? undefined : groupDetails?.memberCount
+            }
+            onBack={handleBack}
+            onMenuPress={() => setMenuVisible(true)}
+            onGroupPagePress={handleGoToGroupPage}
+            onMembersPress={handleGoToMembers}
+          />
+        )}
+        {/* ChatNavigation drives the channel-tab bar for group channels.
+            Ad-hoc DMs have no tabs — skip the row entirely so the message
+            list sits directly under the header. */}
+        {!isAdHocChannel && (
+          <ChatNavigation
+            activeSlug={activeSlug}
+            channels={channelTabs}
+            showLeaderTools={showLeaderTools}
+            externalChatLink={externalChatLink}
+            onTabChange={handleTabChange}
+            onTabLongPress={handleTabLongPress}
+            onExternalChatPress={() => setExternalChatModalVisible(true)}
+            tools={(groupDetails as { leaderToolbarTools?: string[] } | undefined)?.leaderToolbarTools}
+            hasPcoChannels={hasPcoChannels ?? false}
+            toolVisibility={groupWithVisibility?.toolVisibility}
+            toolDisplayNames={groupWithVisibility?.toolDisplayNames}
+            userRole={userRole}
+            groupId={resolvedGroupId ?? undefined}
+            onToolPress={handleToolPress}
+          />
+        )}
         <ChatMenuModal
           visible={menuVisible}
           hasGroup={hasGroup}
@@ -1004,6 +1058,12 @@ const ConvexChatRoomScreenInner: React.FC = () => {
           />
         ) : (
           <>
+            {/* Privacy notice for ad-hoc DM/group_dm threads. Sits above the
+                message list as a subtle reminder that ad-hoc chats aren't
+                end-to-end encrypted and admins can request access. Sticky
+                position above the list (not in the inverted FlatList) avoids
+                upending the chat scroll behavior. */}
+            {isAdHocChannel && <ChatPrivacyCard />}
             {/* Message List - handles its own loading state when channelId is null */}
             <View style={styles.chatContainer}>
               <MessageList

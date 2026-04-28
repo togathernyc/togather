@@ -35,6 +35,7 @@ import { useExpandedGroups } from "../hooks/useExpandedGroups";
 import { useInboxCache } from "../../../stores/inboxCache";
 import { Avatar } from "@components/ui/Avatar";
 import { useConvexFeatureFlag } from "@hooks/useConvexFeatureFlag";
+import { StackedMemberAvatars } from "./StackedMemberAvatars";
 
 // Inbox event visibility is now driven server-side by
 // `INBOX_EVENT_HIDE_AFTER_MS` in apps/convex/functions/messaging/channels.ts
@@ -1038,48 +1039,6 @@ interface DirectMessageRowProps {
   };
 }
 
-/**
- * iMessage-style stacked avatar pair for multi-member DMs. Two overlapping
- * circles inside a 56×56 bounding box so the row's vertical rhythm matches
- * the single-avatar 1:1 DM rows and the group rows from `GroupedInboxItem`.
- *
- *   - Back avatar: 40×40, top-left
- *   - Front avatar: 36×36, bottom-right, with a 2px ring in `surface` color
- *     so it visually separates from the back avatar (matches the inbox row
- *     background — same trick iMessage uses).
- */
-function StackedAvatars({
-  back,
-  front,
-  surfaceColor,
-}: {
-  back: { name: string; imageUrl: string | null };
-  front: { name: string; imageUrl: string | null };
-  surfaceColor: string;
-}) {
-  return (
-    <View style={styles.dmStackedAvatarContainer}>
-      <Avatar
-        name={back.name}
-        imageUrl={back.imageUrl ?? undefined}
-        size={40}
-        style={styles.dmStackedAvatarBack}
-      />
-      <View
-        style={[
-          styles.dmStackedAvatarFrontWrapper,
-          { backgroundColor: surfaceColor },
-        ]}
-      >
-        <Avatar
-          name={front.name}
-          imageUrl={front.imageUrl ?? undefined}
-          size={36}
-        />
-      </View>
-    </View>
-  );
-}
 
 function DirectMessageRow({ row, primaryColor, colors }: DirectMessageRowProps) {
   const router = useRouter();
@@ -1101,8 +1060,8 @@ function DirectMessageRow({ row, primaryColor, colors }: DirectMessageRowProps) 
           .filter(Boolean)
           .join(", ") || "Chat";
 
-  // Stack two avatars when this is a true multi-member group_dm with at least
-  // two visible others. iMessage doesn't try to fit three — neither do we.
+  // Stack avatars when this is a true multi-member group_dm with at least two
+  // visible others. The cluster scales 2/3/4+ — see `StackedMemberAvatars`.
   const useStackedAvatars = !isOneOnOne && row.otherMembers.length >= 2;
   const primaryAvatar = row.otherMembers[0];
 
@@ -1126,15 +1085,11 @@ function DirectMessageRow({ row, primaryColor, colors }: DirectMessageRowProps) 
   return (
     <Pressable onPress={onPress} style={styles.dmRow}>
       {useStackedAvatars ? (
-        <StackedAvatars
-          back={{
-            name: row.otherMembers[0].displayName,
-            imageUrl: row.otherMembers[0].profilePhoto,
-          }}
-          front={{
-            name: row.otherMembers[1].displayName,
-            imageUrl: row.otherMembers[1].profilePhoto,
-          }}
+        <StackedMemberAvatars
+          members={row.otherMembers.map((m) => ({
+            name: m.displayName,
+            imageUrl: m.profilePhoto,
+          }))}
           surfaceColor={colors.surface}
         />
       ) : (
@@ -1229,33 +1184,6 @@ const styles = StyleSheet.create({
     flex: 1,
     marginLeft: 12,
     minWidth: 0,
-  },
-  // Stacked-avatar bounding box: 56×56 so multi-member DM rows have the same
-  // height + horizontal alignment as 1:1 DM rows and group rows. Absolute
-  // positioning inside; the back avatar anchors top-left and the front
-  // avatar bottom-right with a ~12pt overlap.
-  dmStackedAvatarContainer: {
-    width: 56,
-    height: 56,
-    position: "relative",
-  },
-  dmStackedAvatarBack: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-  },
-  // The front avatar wears a 2pt ring in the inbox row's surface color so the
-  // two circles read as separate at a glance. Wrapping the Avatar in a padded,
-  // rounded View is the cleanest way to draw that ring without poking at
-  // Avatar internals.
-  dmStackedAvatarFrontWrapper: {
-    position: "absolute",
-    bottom: 0,
-    right: 0,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    padding: 2,
   },
   dmRowTopLine: {
     flexDirection: "row",

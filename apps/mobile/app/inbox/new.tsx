@@ -38,6 +38,10 @@ import { useTheme } from "@hooks/useTheme";
 import { useQuery, useMutation, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { DmFeatureGate } from "@features/chat/components/DmFeatureGate";
+import {
+  RequireProfilePhotoSheet,
+  classifyProfilePhotoError,
+} from "@features/chat/components/RequireProfilePhotoSheet";
 
 type SearchResult = {
   userId: Id<"users">;
@@ -75,7 +79,7 @@ if (
 function StartChatScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { token, community } = useAuth();
+  const { token, community, user } = useAuth();
   const { primaryColor, accentLight } = useCommunityTheme();
   const { colors, isDark } = useTheme();
   const communityId = community?.id as Id<"communities"> | undefined;
@@ -91,6 +95,15 @@ function StartChatScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isFocused, setIsFocused] = useState(false);
+  const [photoSheetVisible, setPhotoSheetVisible] = useState(false);
+
+  // Local check; backend re-validates with PROFILE_PHOTO_REQUIRED. Treats an
+  // empty/whitespace string as "no photo" so legacy data with empty values
+  // doesn't slip through.
+  const hasOwnProfilePhoto = (() => {
+    const photo = user?.profile_photo;
+    return typeof photo === "string" && photo.trim().length > 0;
+  })();
 
   useEffect(() => {
     const handle = setTimeout(() => {
@@ -188,6 +201,13 @@ function StartChatScreen() {
   const handleSubmit = async () => {
     if (!token || !communityId || isSubmitting || selectedCount === 0) return;
     setErrorMessage(null);
+    // Local profile-photo gate. The backend re-validates with
+    // PROFILE_PHOTO_REQUIRED so the catch below still surfaces the sheet for
+    // edge cases (e.g. user object is stale).
+    if (!hasOwnProfilePhoto) {
+      setPhotoSheetVisible(true);
+      return;
+    }
     setIsSubmitting(true);
     try {
       if (selectedCount === 1) {
@@ -234,6 +254,19 @@ function StartChatScreen() {
         },
       });
     } catch (e) {
+      const photoError = classifyProfilePhotoError(e);
+      if (photoError === "self") {
+        setPhotoSheetVisible(true);
+        setIsSubmitting(false);
+        return;
+      }
+      if (photoError === "recipient") {
+        setErrorMessage(
+          "One of the people you selected hasn't added a profile photo yet. Ask them to add one first.",
+        );
+        setIsSubmitting(false);
+        return;
+      }
       const message = e instanceof Error ? e.message : "Something went wrong";
       setErrorMessage(message);
       setIsSubmitting(false);
@@ -516,6 +549,11 @@ function StartChatScreen() {
           </TouchableOpacity>
         </View>
       ) : null}
+
+      <RequireProfilePhotoSheet
+        visible={photoSheetVisible}
+        onClose={() => setPhotoSheetVisible(false)}
+      />
     </KeyboardAvoidingView>
   );
 }

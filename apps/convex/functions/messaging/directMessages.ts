@@ -26,8 +26,12 @@ import { getDisplayName, getMediaUrl } from "../../lib/utils";
 
 /** Max number of recipients in a `group_dm` (creator excluded). Total cap is 20. */
 const MAX_GROUP_DM_RECIPIENTS = 19;
+/** Hard cap on total members in an ad-hoc group_dm (including creator). */
+const MAX_GROUP_DM_TOTAL = 20;
 /** Cap on group chat name length. */
 const MAX_GROUP_NAME_LENGTH = 100;
+/** Cap on rename length for ad-hoc group_dm channels (shorter than create cap to keep titles tight). */
+const MAX_GROUP_DM_RENAME_LENGTH = 60;
 /** Cap on member-search result list length. */
 const DEFAULT_SEARCH_LIMIT = 30;
 const MAX_SEARCH_LIMIT = 50;
@@ -83,6 +87,24 @@ async function isBlockedEitherDirection(
 }
 
 const isActiveMembership = (status: number | undefined) => status !== 3;
+
+/**
+ * Hard requirement: chats are restricted to people who have a profile photo.
+ *
+ * Throws `PROFILE_PHOTO_REQUIRED` if `userId` lacks one. Caller-side; if the
+ * gate needs to surface a specific recipient userId, the caller throws
+ * `RECIPIENT_PROFILE_PHOTO_REQUIRED:<userId>` instead so the frontend can
+ * format a per-user prompt.
+ */
+async function requireProfilePhoto(
+  ctx: QueryCtx,
+  userId: Id<"users">,
+): Promise<void> {
+  const user = await ctx.db.get(userId);
+  if (!user?.profilePhoto || user.profilePhoto.trim() === "") {
+    throw new Error("PROFILE_PHOTO_REQUIRED");
+  }
+}
 
 /**
  * Return true iff `userId` is an active member of `communityId`.
@@ -165,6 +187,20 @@ export const createOrGetDirectChannel = mutation({
       throw new Error("Cannot start chat");
     }
 
+    // Profile photo gate: caller must have one; recipient must have one. We
+    // check after auth + community + block resolution so we never leak that a
+    // recipient exists when the caller couldn't message them anyway.
+    await requireProfilePhoto(ctx, senderId);
+    const recipientUser = await ctx.db.get(args.recipientUserId);
+    if (
+      !recipientUser?.profilePhoto ||
+      recipientUser.profilePhoto.trim() === ""
+    ) {
+      // Include the recipient userId so the frontend can format a per-user
+      // prompt (e.g. "Bob hasn't added a profile photo yet").
+      throw new Error(`RECIPIENT_PROFILE_PHOTO_REQUIRED:${args.recipientUserId}`);
+    }
+
     // Rate-limit new pending DM requests.
     await checkRateLimit(
       ctx,
@@ -173,10 +209,7 @@ export const createOrGetDirectChannel = mutation({
       NEW_REQUEST_WINDOW_MS,
     );
 
-    const recipient = await ctx.db.get(args.recipientUserId);
-    if (!recipient) {
-      throw new Error("Recipient not found");
-    }
+    const recipient = recipientUser;
     const sender = await ctx.db.get(senderId);
     if (!sender) {
       throw new Error("Sender not found");
@@ -286,6 +319,21 @@ export const createGroupChat = mutation({
       throw new Error("Cannot include some users in this chat");
     }
 
+    // Profile photo gate: creator AND every recipient must have one. Surface
+    // the first failing recipient userId so the frontend can pinpoint who.
+    await requireProfilePhoto(ctx, creatorId);
+    const recipientDocs = await Promise.all(
+      uniqueRecipients.map((id) => ctx.db.get(id)),
+    );
+    for (let i = 0; i < uniqueRecipients.length; i++) {
+      const u = recipientDocs[i];
+      if (!u?.profilePhoto || u.profilePhoto.trim() === "") {
+        throw new Error(
+          `RECIPIENT_PROFILE_PHOTO_REQUIRED:${uniqueRecipients[i]}`,
+        );
+      }
+    }
+
     // Rate-limit new pending requests.
     await checkRateLimit(
       ctx,
@@ -298,9 +346,7 @@ export const createGroupChat = mutation({
     if (!creator) {
       throw new Error("Sender not found");
     }
-    const recipients = await Promise.all(
-      uniqueRecipients.map((id) => ctx.db.get(id)),
-    );
+    const recipients = recipientDocs;
 
     const now = Date.now();
     const trimmedName = (args.name ?? "").trim().slice(0, MAX_GROUP_NAME_LENGTH);
@@ -403,6 +449,10 @@ export const respondToChatRequest = mutation({
     const now = Date.now();
 
     if (args.response === "accept") {
+      // Profile photo gate: accepting a chat is treated as opting in to the
+      // DM/group surface. Require the responder to have a profile photo so
+      // every accepted member of every ad-hoc channel has one.
+      await requireProfilePhoto(ctx, userId);
       await ctx.db.patch(membership._id, {
         requestState: "accepted",
         requestRespondedAt: now,
@@ -455,6 +505,365 @@ export const respondToChatRequest = mutation({
       status: "pending",
       createdAt: now,
     });
+
+    return { ok: true };
+  },
+});
+
+/**
+ * Rename an ad-hoc `group_dm` channel.
+ *
+ * Authorization: any accepted member can rename. 1:1 `dm` channels can NOT
+ * be renamed (their display name is auto-derived from the other member);
+ * a rename attempt on a `dm` is rejected. Trims whitespace and caps to
+ * `MAX_GROUP_DM_RENAME_LENGTH`. Rejects blank names for `group_dm`.
+ */
+export const renameAdHocChannel = mutation({
+  args: {
+    token: v.string(),
+    channelId: v.id("chatChannels"),
+    name: v.string(),
+  },
+  handler: async (ctx, args): Promise<{ ok: true }> => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const channel = await ctx.db.get(args.channelId);
+    if (!channel) {
+      throw new Error("Channel not found");
+    }
+    if (!channel.isAdHoc) {
+      throw new Error("Only ad-hoc chats can be renamed");
+    }
+    // 1:1 DMs derive their display label from the other member; renaming
+    // would silently lie about who's on the other side.
+    if (channel.channelType === "dm") {
+      throw new Error("1:1 chats cannot be renamed");
+    }
+    if (channel.channelType !== "group_dm") {
+      throw new Error("Only group chats can be renamed");
+    }
+
+    const membership = await ctx.db
+      .query("chatChannelMembers")
+      .withIndex("by_channel_user", (q) =>
+        q.eq("channelId", args.channelId).eq("userId", userId),
+      )
+      .first();
+    if (
+      !membership ||
+      membership.leftAt !== undefined ||
+      membership.requestState !== "accepted"
+    ) {
+      throw new Error("Not a member of this channel");
+    }
+
+    const trimmed = args.name.trim().slice(0, MAX_GROUP_DM_RENAME_LENGTH);
+    if (trimmed.length === 0) {
+      throw new Error("Group chat name cannot be blank");
+    }
+
+    await ctx.db.patch(args.channelId, {
+      name: trimmed,
+      updatedAt: Date.now(),
+    });
+    return { ok: true };
+  },
+});
+
+/**
+ * Add new members to an existing ad-hoc channel.
+ *
+ * Only accepted members may add. New members start in `requestState: "pending"`
+ * with `invitedById` = caller, mirroring `createGroupChat`. Existing members
+ * (active or pending) are skipped silently — the call is idempotent. Caps the
+ * total accepted+pending member count at `MAX_GROUP_DM_TOTAL` (20).
+ *
+ * Re-validates the per-community-member invariant for every new userId so
+ * that ad-hoc channels can't grow to include strangers from other communities.
+ * Profile-photo gate applies to each new invitee for parity with create.
+ */
+export const addAdHocMembers = mutation({
+  args: {
+    token: v.string(),
+    channelId: v.id("chatChannels"),
+    userIds: v.array(v.id("users")),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ added: number; skipped: number }> => {
+    const callerId = await requireAuth(ctx, args.token);
+
+    const channel = await ctx.db.get(args.channelId);
+    if (!channel) {
+      throw new Error("Channel not found");
+    }
+    if (!channel.isAdHoc) {
+      throw new Error("Only ad-hoc chats support adding members");
+    }
+    // Adding to a 1:1 DM would convert it to a group; require an explicit
+    // group_dm channel for that flow.
+    if (channel.channelType !== "group_dm") {
+      throw new Error("Only group chats support adding members");
+    }
+    if (!channel.communityId) {
+      throw new Error("Channel has no community context");
+    }
+
+    const callerMembership = await ctx.db
+      .query("chatChannelMembers")
+      .withIndex("by_channel_user", (q) =>
+        q.eq("channelId", args.channelId).eq("userId", callerId),
+      )
+      .first();
+    if (
+      !callerMembership ||
+      callerMembership.leftAt !== undefined ||
+      callerMembership.requestState !== "accepted"
+    ) {
+      throw new Error("Not a member of this channel");
+    }
+
+    // De-dupe + drop the caller (can't re-invite yourself).
+    const uniqueUserIds = Array.from(
+      new Set(args.userIds.filter((id) => id !== callerId)),
+    );
+    if (uniqueUserIds.length === 0) {
+      return { added: 0, skipped: 0 };
+    }
+
+    // Existing channel members (active rows). Used for idempotency + cap.
+    const existingMembers = await ctx.db
+      .query("chatChannelMembers")
+      .withIndex("by_channel", (q) => q.eq("channelId", args.channelId))
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .collect();
+    const existingUserIds = new Set(existingMembers.map((m) => m.userId));
+
+    let skipped = 0;
+    let added = 0;
+    const now = Date.now();
+
+    for (const newUserId of uniqueUserIds) {
+      if (existingUserIds.has(newUserId)) {
+        skipped++;
+        continue;
+      }
+
+      // Cap total members (existing + freshly added so far) at 20.
+      if (existingMembers.length + added + 1 > MAX_GROUP_DM_TOTAL) {
+        throw new Error(
+          `Group chat can include at most ${MAX_GROUP_DM_TOTAL} members`,
+        );
+      }
+
+      // Per-community-member invariant: every new addition must be an active
+      // member of the channel's community.
+      const inCommunity = await isCommunityMember(
+        ctx,
+        newUserId,
+        channel.communityId,
+      );
+      if (!inCommunity) {
+        throw new Error("You can only add members of this community");
+      }
+
+      // Block-check both directions.
+      if (await isBlockedEitherDirection(ctx, callerId, newUserId)) {
+        throw new Error("Cannot add some users to this chat");
+      }
+
+      const newUser = await ctx.db.get(newUserId);
+      if (!newUser) {
+        throw new Error("User not found");
+      }
+      // Profile photo gate.
+      if (!newUser.profilePhoto || newUser.profilePhoto.trim() === "") {
+        throw new Error(`RECIPIENT_PROFILE_PHOTO_REQUIRED:${newUserId}`);
+      }
+
+      await ctx.db.insert("chatChannelMembers", {
+        channelId: args.channelId,
+        userId: newUserId,
+        role: "member",
+        joinedAt: now,
+        isMuted: false,
+        requestState: "pending",
+        invitedById: callerId,
+        displayName: getDisplayName(newUser.firstName, newUser.lastName),
+        profilePhoto: newUser.profilePhoto,
+      });
+      added++;
+    }
+
+    if (added > 0) {
+      await ctx.db.patch(args.channelId, {
+        memberCount: (channel.memberCount ?? existingMembers.length) + added,
+        updatedAt: now,
+      });
+    }
+
+    return { added, skipped };
+  },
+});
+
+/**
+ * Find the original inviter of an ad-hoc channel: the earliest accepted member
+ * by `joinedAt` who has no `invitedById` (i.e. the channel creator). Falls back
+ * to the channel's `createdById` when the row can't be found.
+ */
+async function getAdHocInviter(
+  ctx: QueryCtx,
+  channelId: Id<"chatChannels">,
+): Promise<Id<"users"> | null> {
+  const members = await ctx.db
+    .query("chatChannelMembers")
+    .withIndex("by_channel", (q) => q.eq("channelId", channelId))
+    .filter((q) => q.eq(q.field("leftAt"), undefined))
+    .collect();
+  const accepted = members
+    .filter((m) => m.requestState === "accepted" && !m.invitedById)
+    .sort((a, b) => a.joinedAt - b.joinedAt);
+  if (accepted.length > 0) return accepted[0]!.userId;
+
+  const channel = await ctx.db.get(channelId);
+  return channel?.createdById ?? null;
+}
+
+/**
+ * Remove a member from an ad-hoc channel.
+ *
+ * Authorization:
+ *   - A user can always pass their own `userId` to leave.
+ *   - Otherwise, only the original inviter (channel creator) can remove others.
+ *
+ * Soft-deletes via `chatChannelMembers.leftAt` rather than deleting the row,
+ * matching the same pattern used by `respondToChatRequest` decline + the
+ * `expireOldChatRequests` cron.
+ */
+export const removeAdHocMember = mutation({
+  args: {
+    token: v.string(),
+    channelId: v.id("chatChannels"),
+    userId: v.id("users"),
+  },
+  handler: async (ctx, args): Promise<{ ok: true }> => {
+    const callerId = await requireAuth(ctx, args.token);
+
+    const channel = await ctx.db.get(args.channelId);
+    if (!channel) {
+      throw new Error("Channel not found");
+    }
+    if (!channel.isAdHoc) {
+      throw new Error("Only ad-hoc chats support removing members");
+    }
+
+    // Self-remove is always allowed; otherwise require inviter privileges
+    // AND that the caller is still an active accepted member of the channel.
+    // Without the active-membership gate, a creator who has already left
+    // (leftAt set) could keep ejecting members from outside the chat.
+    const isSelf = args.userId === callerId;
+    if (!isSelf) {
+      const inviterId = await getAdHocInviter(ctx, args.channelId);
+      if (!inviterId || inviterId !== callerId) {
+        throw new Error("Only the chat creator can remove other members");
+      }
+      const callerMembership = await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", args.channelId).eq("userId", callerId),
+        )
+        .first();
+      if (
+        !callerMembership ||
+        callerMembership.leftAt !== undefined ||
+        callerMembership.requestState !== "accepted"
+      ) {
+        throw new Error("Only an active member can remove other members");
+      }
+    }
+
+    const target = await ctx.db
+      .query("chatChannelMembers")
+      .withIndex("by_channel_user", (q) =>
+        q.eq("channelId", args.channelId).eq("userId", args.userId),
+      )
+      .first();
+    if (!target || target.leftAt !== undefined) {
+      // Idempotent: already gone.
+      return { ok: true };
+    }
+
+    const now = Date.now();
+    await ctx.db.patch(target._id, { leftAt: now });
+
+    // Decrement member count; cap at 0 to avoid negative due to drift.
+    const newCount = Math.max(0, (channel.memberCount ?? 1) - 1);
+    await ctx.db.patch(args.channelId, {
+      memberCount: newCount,
+      updatedAt: now,
+    });
+
+    return { ok: true };
+  },
+});
+
+/**
+ * Convenience wrapper: caller leaves the channel. If the caller is the last
+ * accepted member, the channel is archived (soft-closed) so it stops surfacing
+ * in anyone's inbox.
+ */
+export const leaveAdHocChannel = mutation({
+  args: {
+    token: v.string(),
+    channelId: v.id("chatChannels"),
+  },
+  handler: async (ctx, args): Promise<{ ok: true }> => {
+    const callerId = await requireAuth(ctx, args.token);
+
+    const channel = await ctx.db.get(args.channelId);
+    if (!channel) {
+      throw new Error("Channel not found");
+    }
+    if (!channel.isAdHoc) {
+      throw new Error("Only ad-hoc chats support leaving");
+    }
+
+    const membership = await ctx.db
+      .query("chatChannelMembers")
+      .withIndex("by_channel_user", (q) =>
+        q.eq("channelId", args.channelId).eq("userId", callerId),
+      )
+      .first();
+    if (!membership || membership.leftAt !== undefined) {
+      // Idempotent: already gone.
+      return { ok: true };
+    }
+
+    const now = Date.now();
+    await ctx.db.patch(membership._id, { leftAt: now });
+
+    const newCount = Math.max(0, (channel.memberCount ?? 1) - 1);
+    await ctx.db.patch(args.channelId, {
+      memberCount: newCount,
+      updatedAt: now,
+    });
+
+    // If the leaver was the last active accepted member, archive the channel.
+    const remainingAccepted = await ctx.db
+      .query("chatChannelMembers")
+      .withIndex("by_channel", (q) => q.eq("channelId", args.channelId))
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .collect();
+    const stillAccepted = remainingAccepted.filter(
+      (m) => m.requestState === "accepted",
+    );
+    if (stillAccepted.length === 0) {
+      await ctx.db.patch(args.channelId, {
+        isArchived: true,
+        archivedAt: now,
+      });
+    }
 
     return { ok: true };
   },

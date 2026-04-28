@@ -6,7 +6,7 @@
  * Route: /profile/[userId]
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -14,6 +14,7 @@ import {
   ScrollView,
   ActivityIndicator,
   TouchableOpacity,
+  Pressable,
   Platform,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -22,7 +23,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuth } from '@providers/AuthProvider';
 import { useTheme } from '@hooks/useTheme';
+import { useCommunityTheme } from '@hooks/useCommunityTheme';
+import { useConvexFeatureFlag } from '@hooks/useConvexFeatureFlag';
 import type { Id } from '@services/api/convex';
+import { useStartDirectMessage } from '@features/chat/hooks/useStartDirectMessage';
+import { RequireProfilePhotoSheet } from '@features/chat/components/RequireProfilePhotoSheet';
 
 import { useUserProfile } from '../hooks/useUserProfile';
 import { UserProfileHeader } from './UserProfileHeader';
@@ -56,6 +61,35 @@ export function UserProfileScreen() {
     // the dedicated self profile screen already owns that view.
     skipViewerScopedQueries: isSelf,
   });
+
+  // DM entry point. Hidden behind the `direct-messages` feature flag; while
+  // the flag is hydrating we render nothing so the button doesn't flicker in.
+  const { enabled: dmsEnabled, loaded: dmsFlagLoaded } =
+    useConvexFeatureFlag('direct-messages');
+  const { messageUser, isStarting, canMessage } = useStartDirectMessage();
+  const [photoSheetVisible, setPhotoSheetVisible] = useState(false);
+
+  const showMessageButton =
+    dmsFlagLoaded &&
+    dmsEnabled &&
+    !isSelf &&
+    !!profile &&
+    canMessage;
+
+  const handleMessagePress = async () => {
+    if (!profile || !userId) return;
+    const displayName =
+      [profile.firstName, profile.lastName].filter(Boolean).join(' ').trim();
+    const outcome = await messageUser({
+      otherUserId: userId,
+      firstName: profile.firstName ?? null,
+      displayName: displayName.length > 0 ? displayName : null,
+      profilePhoto: profile.profilePhoto ?? null,
+    });
+    if (outcome.kind === 'needs_self_photo') {
+      setPhotoSheetVisible(true);
+    }
+  };
 
   const headerBar = (
     <View
@@ -149,6 +183,12 @@ export function UserProfileScreen() {
       >
         <UserProfileHeader profile={profile} />
         <UserProfileBadges profile={profile} />
+        {showMessageButton ? (
+          <MessageButton
+            onPress={handleMessagePress}
+            disabled={isStarting}
+          />
+        ) : null}
         <UserProfileBio bio={profile.bio} />
         <UserProfileSocials
           instagramHandle={profile.instagramHandle}
@@ -166,7 +206,45 @@ export function UserProfileScreen() {
           <UserProfileUpcomingEvents events={upcomingEvents ?? []} />
         )}
       </ScrollView>
+      <RequireProfilePhotoSheet
+        visible={photoSheetVisible}
+        onClose={() => setPhotoSheetVisible(false)}
+      />
     </View>
+  );
+}
+
+interface MessageButtonProps {
+  onPress: () => void;
+  disabled?: boolean;
+}
+
+function MessageButton({ onPress, disabled }: MessageButtonProps) {
+  const { primaryColor } = useCommunityTheme();
+  // Web RN ignores layout styles passed via Pressable's function-style prop —
+  // keep all layout on the inner View and only use the function form to dim
+  // the press state on native.
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel="Message"
+      style={({ pressed }) => ({
+        opacity: disabled ? 0.6 : pressed ? 0.85 : 1,
+      })}
+    >
+      <View style={[styles.messageButton, { backgroundColor: primaryColor }]}>
+        {disabled ? (
+          <ActivityIndicator size="small" color="#fff" />
+        ) : (
+          <>
+            <Ionicons name="chatbubble-outline" size={18} color="#fff" />
+            <Text style={styles.messageButtonText}>Message</Text>
+          </>
+        )}
+      </View>
+    </Pressable>
   );
 }
 
@@ -237,5 +315,20 @@ const styles = StyleSheet.create({
   missingText: {
     fontSize: 14,
     textAlign: 'center',
+  },
+  messageButton: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    gap: 8,
+  },
+  messageButtonText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '600',
   },
 });
