@@ -16,6 +16,7 @@ import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import { getChannelSlug } from "../../lib/slugs";
 import { notifyBatch } from "../../lib/notifications/send";
+import { chatRequestEmail } from "../../lib/notifications/emailTemplates";
 
 // ============================================================================
 // Constants
@@ -490,16 +491,40 @@ export const sendAdHocMessageNotifications = internalAction({
     };
 
     // Pending recipients: first-message-of-a-request copy.
+    // For each recipient, build a personalized email-fallback payload so that
+    // recipients without a live push token still hear about the request.
     if (args.pendingRecipients.length > 0) {
       const pendingTitle = args.senderName;
       const pendingBody = `would like to chat: ${previewBody}`;
+      const isGroupChat = channelType === "group_dm";
       for (const userId of args.pendingRecipients) {
+        const userInfo = await ctx.runQuery(
+          internal.functions.notifications.internal.getUserEmailInfo,
+          { userId },
+        );
+        const emailHtml = chatRequestEmail({
+          senderName: args.senderName,
+          isGroupChat,
+          channelName: isGroupChat ? channelName : undefined,
+          messagePreview: args.messagePreview,
+          firstName: userInfo?.firstName,
+        });
+        const emailSubject = isGroupChat
+          ? channelName.trim().length > 0
+            ? `${args.senderName} added you to ${channelName.trim()}`
+            : `${args.senderName} added you to a group chat`
+          : `${args.senderName} would like to chat`;
         await sendAdHocPushToUser(ctx, {
           userId,
           title: pendingTitle,
           body: pendingBody,
           data: { ...baseData, requestState: "pending" },
           communityId: args.communityId,
+          emailFallback: {
+            subject: emailSubject,
+            htmlBody: emailHtml,
+            notificationType: "chat_request",
+          },
         });
       }
     }
@@ -563,18 +588,22 @@ async function sendAdHocPushToUser(
     body: string;
     data: Record<string, unknown>;
     communityId?: Id<"communities">;
+    /**
+     * Optional email fallback fired when the recipient has no active push
+     * tokens, OR when the push send fails. Used for chat requests so a
+     * recipient who isn't reachable via push still hears about the request.
+     */
+    emailFallback?: {
+      subject: string;
+      htmlBody: string;
+      notificationType: string;
+    };
   },
 ): Promise<void> {
   const tokens = await ctx.runQuery(
     internal.functions.notifications.tokens.getActiveTokensForUser,
     { userId: args.userId },
   );
-  if (tokens.length === 0) {
-    console.log(
-      `[sendAdHocMessageNotifications] No active push tokens for user ${args.userId} — skipping`,
-    );
-    return;
-  }
 
   const trackingId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
   const notificationData = {
@@ -582,21 +611,53 @@ async function sendAdHocPushToUser(
     trackingId,
   };
 
-  const notifications = tokens.map((t: { token: string }) => ({
-    token: t.token,
-    title: args.title,
-    body: args.body,
-    data: notificationData,
-    imageUrl:
-      typeof args.data.senderAvatarUrl === "string"
-        ? args.data.senderAvatarUrl
-        : undefined,
-  }));
+  let pushOk = false;
+  if (tokens.length > 0) {
+    const notifications = tokens.map((t: { token: string }) => ({
+      token: t.token,
+      title: args.title,
+      body: args.body,
+      data: notificationData,
+      imageUrl:
+        typeof args.data.senderAvatarUrl === "string"
+          ? args.data.senderAvatarUrl
+          : undefined,
+    }));
 
-  const result = await ctx.runAction(
-    internal.functions.notifications.internal.sendBatchPushNotifications,
-    { notifications },
-  );
+    const result = await ctx.runAction(
+      internal.functions.notifications.internal.sendBatchPushNotifications,
+      { notifications },
+    );
+    pushOk = result.success;
+  } else {
+    console.log(
+      `[sendAdHocMessageNotifications] No active push tokens for user ${args.userId}`,
+    );
+  }
+
+  // Cascade to email when push is unreachable (no tokens or send failed).
+  // Only requests get an email fallback — accepted-chat messages stay
+  // push-only so the inbox doesn't double-notify on every reply.
+  if (!pushOk && args.emailFallback) {
+    const userInfo = await ctx.runQuery(
+      internal.functions.notifications.internal.getUserEmailInfo,
+      { userId: args.userId },
+    );
+    if (userInfo?.email && userInfo.emailNotificationsEnabled) {
+      await ctx.runAction(
+        internal.functions.notifications.internal.sendEmailNotification,
+        {
+          to: userInfo.email,
+          subject: args.emailFallback.subject,
+          htmlBody: args.emailFallback.htmlBody,
+          notificationType: args.emailFallback.notificationType,
+        },
+      );
+      console.log(
+        `[sendAdHocMessageNotifications] Email fallback sent to ${userInfo.email} (push unreachable)`,
+      );
+    }
+  }
 
   await ctx.runMutation(
     internal.functions.notifications.mutations.createNotification,
@@ -607,7 +668,7 @@ async function sendAdHocPushToUser(
       title: args.title,
       body: args.body,
       data: notificationData,
-      status: result.success ? "sent" : "failed",
+      status: pushOk || args.emailFallback ? "sent" : "failed",
       trackingId,
     },
   );

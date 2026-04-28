@@ -173,6 +173,44 @@ export function joinRequestApprovedEmail(data: { groupName: string }): string {
 }
 
 /**
+ * Chat request email — fired when a user receives a DM or group-chat request
+ * and has no active push tokens. Mirrors the in-app request banner copy.
+ */
+export function chatRequestEmail(data: {
+  senderName: string;
+  isGroupChat: boolean;
+  channelName?: string;
+  messagePreview: string;
+  firstName?: string;
+}): string {
+  const greeting = data.firstName
+    ? `Hi ${escapeHtml(data.firstName)},`
+    : "Hi there,";
+  const channelLine = data.isGroupChat
+    ? data.channelName && data.channelName.trim().length > 0
+      ? `added you to <strong>${escapeHtml(data.channelName)}</strong>`
+      : `added you to a group chat`
+    : `would like to chat with you`;
+  const content = `
+    <p style="${baseStyles.text}">${greeting}</p>
+    <h1 style="${baseStyles.heading}">${escapeHtml(data.senderName)} ${channelLine}</h1>
+    <div style="${baseStyles.messageBox}">
+      <p style="color: #1a1a1a; font-size: 15px; line-height: 24px; margin: 0;">
+        "${escapeHtml(data.messagePreview)}"
+      </p>
+    </div>
+    <p style="${baseStyles.text}">
+      Open Togather to accept the chat, reply, or block. Until you accept,
+      read receipts and typing indicators stay hidden.
+    </p>
+    <div style="${baseStyles.buttonContainer}">
+      <a href="${DOMAIN_CONFIG.appUrl}" style="${baseStyles.button}">Open Togather</a>
+    </div>
+  `;
+  return wrapInLayout(content);
+}
+
+/**
  * Mention notification email
  */
 export function mentionEmail(data: {
