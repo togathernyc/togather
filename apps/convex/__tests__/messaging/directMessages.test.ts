@@ -124,7 +124,7 @@ describe("createOrGetDirectChannel", () => {
 
     const result = await t.mutation(
       api.functions.messaging.directMessages.createOrGetDirectChannel,
-      { token: aToken, recipientUserId: bId },
+      { token: aToken, communityId, recipientUserId: bId },
     );
 
     expect(result.isNew).toBe(true);
@@ -159,11 +159,11 @@ describe("createOrGetDirectChannel", () => {
 
     const first = await t.mutation(
       api.functions.messaging.directMessages.createOrGetDirectChannel,
-      { token: aToken, recipientUserId: bId },
+      { token: aToken, communityId, recipientUserId: bId },
     );
     const second = await t.mutation(
       api.functions.messaging.directMessages.createOrGetDirectChannel,
-      { token: aToken, recipientUserId: bId },
+      { token: aToken, communityId, recipientUserId: bId },
     );
 
     expect(first.isNew).toBe(true);
@@ -181,12 +181,79 @@ describe("createOrGetDirectChannel", () => {
       firstName: "Bob",
     });
 
+    // Bob is not a member of community1, so messaging him scoped to
+    // community1 must be rejected.
     await expect(
       t.mutation(
         api.functions.messaging.directMessages.createOrGetDirectChannel,
-        { token: aToken, recipientUserId: bId },
+        { token: aToken, communityId: community1, recipientUserId: bId },
       ),
-    ).rejects.toThrow(/communities/i);
+    ).rejects.toThrow(/community/i);
+  });
+
+  test("strictly scopes the channel to the requested community even when users share multiple", async () => {
+    const t = convexTest(schema, modules);
+    const comm1 = await createCommunity(t, "Comm One");
+    const comm2 = await createCommunity(t, "Comm Two");
+
+    // Create A and B as members of comm1 (createUserInCommunity inserts the
+    // user + a userCommunities row for comm1).
+    const { userId: aId, accessToken: aToken } = await createUserInCommunity(
+      t,
+      comm1,
+      { firstName: "Alice" },
+    );
+    const { userId: bId } = await createUserInCommunity(t, comm1, {
+      firstName: "Bob",
+    });
+
+    // Add a SECOND userCommunities row for each user, joining them to comm2
+    // as well — both users now share both communities.
+    await t.run(async (ctx) => {
+      await ctx.db.insert("userCommunities", {
+        userId: aId,
+        communityId: comm2,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert("userCommunities", {
+        userId: bId,
+        communityId: comm2,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+
+    // First call: scope to comm1.
+    const first = await t.mutation(
+      api.functions.messaging.directMessages.createOrGetDirectChannel,
+      { token: aToken, communityId: comm1, recipientUserId: bId },
+    );
+    expect(first.isNew).toBe(true);
+    const firstChannel = await t.run(async (ctx) => ctx.db.get(first.channelId));
+    expect(firstChannel?.communityId).toBe(comm1);
+
+    // Repeat call with the same comm1 → should dedup, NOT create a new one.
+    const firstAgain = await t.mutation(
+      api.functions.messaging.directMessages.createOrGetDirectChannel,
+      { token: aToken, communityId: comm1, recipientUserId: bId },
+    );
+    expect(firstAgain.isNew).toBe(false);
+    expect(firstAgain.channelId).toBe(first.channelId);
+
+    // Now scope to comm2 — must create a SEPARATE channel even though A and
+    // B are also both members of comm2. This is the regression test for the
+    // cross-community leak.
+    const second = await t.mutation(
+      api.functions.messaging.directMessages.createOrGetDirectChannel,
+      { token: aToken, communityId: comm2, recipientUserId: bId },
+    );
+    expect(second.isNew).toBe(true);
+    expect(second.channelId).not.toBe(first.channelId);
+    const secondChannel = await t.run(async (ctx) =>
+      ctx.db.get(second.channelId),
+    );
+    expect(secondChannel?.communityId).toBe(comm2);
   });
 });
 
@@ -209,7 +276,7 @@ describe("respondToChatRequest", () => {
 
     const { channelId } = await t.mutation(
       api.functions.messaging.directMessages.createOrGetDirectChannel,
-      { token: aToken, recipientUserId: bId },
+      { token: aToken, communityId, recipientUserId: bId },
     );
 
     await t.mutation(
@@ -239,7 +306,7 @@ describe("respondToChatRequest", () => {
 
     const { channelId } = await t.mutation(
       api.functions.messaging.directMessages.createOrGetDirectChannel,
-      { token: aToken, recipientUserId: bId },
+      { token: aToken, communityId, recipientUserId: bId },
     );
 
     await t.mutation(
@@ -272,7 +339,7 @@ describe("respondToChatRequest", () => {
 
     const { channelId } = await t.mutation(
       api.functions.messaging.directMessages.createOrGetDirectChannel,
-      { token: aToken, recipientUserId: bId },
+      { token: aToken, communityId, recipientUserId: bId },
     );
 
     await t.mutation(
@@ -331,7 +398,7 @@ describe("sendMessage gating on pending channels", () => {
 
     const { channelId } = await t.mutation(
       api.functions.messaging.directMessages.createOrGetDirectChannel,
-      { token: aToken, recipientUserId: bId },
+      { token: aToken, communityId, recipientUserId: bId },
     );
 
     // First message succeeds.
@@ -371,7 +438,7 @@ describe("sendMessage gating on pending channels", () => {
 
     const { channelId } = await t.mutation(
       api.functions.messaging.directMessages.createOrGetDirectChannel,
-      { token: aToken, recipientUserId: bId },
+      { token: aToken, communityId, recipientUserId: bId },
     );
 
     await expect(
@@ -413,7 +480,7 @@ describe("listChatRequests", () => {
 
     const { channelId } = await t.mutation(
       api.functions.messaging.directMessages.createOrGetDirectChannel,
-      { token: aToken, recipientUserId: bId },
+      { token: aToken, communityId, recipientUserId: bId },
     );
 
     await t.mutation(api.functions.messaging.messages.sendMessage, {
@@ -425,7 +492,7 @@ describe("listChatRequests", () => {
 
     const requests = await t.query(
       api.functions.messaging.directMessages.listChatRequests,
-      { token: bToken },
+      { token: bToken, communityId },
     );
 
     expect(requests).toHaveLength(1);
@@ -460,7 +527,7 @@ describe("blockUser auto-declines pending requests", () => {
 
     const { channelId } = await t.mutation(
       api.functions.messaging.directMessages.createOrGetDirectChannel,
-      { token: aToken, recipientUserId: bId },
+      { token: aToken, communityId, recipientUserId: bId },
     );
 
     await t.mutation(api.functions.messaging.blocking.blockUser, {
@@ -505,6 +572,7 @@ describe("createGroupChat", () => {
       api.functions.messaging.directMessages.createGroupChat,
       {
         token: aToken,
+        communityId,
         recipientUserIds: [bId, cId, dId],
         name: "Friends",
       },
@@ -547,6 +615,7 @@ describe("createGroupChat", () => {
     await expect(
       t.mutation(api.functions.messaging.directMessages.createGroupChat, {
         token: aToken,
+        communityId,
         recipientUserIds: recipientIds,
       }),
     ).rejects.toThrow(/at most 19|too many/i);
@@ -590,7 +659,7 @@ describe("searchUsersInSharedCommunities", () => {
 
     const results = await t.query(
       api.functions.messaging.directMessages.searchUsersInSharedCommunities,
-      { token: aToken, query: "" },
+      { token: aToken, communityId, query: "" },
     );
 
     const ids = results.map((r) => r.userId);
@@ -636,7 +705,7 @@ describe("getDirectInbox", () => {
     // A creates DM with B, sends "hello", B accepts.
     const { channelId: abChannelId } = await t.mutation(
       api.functions.messaging.directMessages.createOrGetDirectChannel,
-      { token: aToken, recipientUserId: bId },
+      { token: aToken, communityId, recipientUserId: bId },
     );
     await t.mutation(api.functions.messaging.messages.sendMessage, {
       token: aToken,
@@ -651,7 +720,7 @@ describe("getDirectInbox", () => {
 
     const inbox = await t.query(
       api.functions.messaging.directMessages.getDirectInbox,
-      { token: aToken },
+      { token: aToken, communityId },
     );
 
     expect(inbox).toHaveLength(1);
@@ -673,12 +742,12 @@ describe("getDirectInbox", () => {
     // C's inbox should return zero accepted channels.
     await t.mutation(
       api.functions.messaging.directMessages.createOrGetDirectChannel,
-      { token: aToken, recipientUserId: cId },
+      { token: aToken, communityId, recipientUserId: cId },
     );
 
     const cInbox = await t.query(
       api.functions.messaging.directMessages.getDirectInbox,
-      { token: cToken },
+      { token: cToken, communityId },
     );
     expect(cInbox).toHaveLength(0);
 
@@ -709,7 +778,7 @@ describe("expireOldChatRequests cron", () => {
     // A creates DM with B → B is pending.
     const { channelId: abChannelId } = await t.mutation(
       api.functions.messaging.directMessages.createOrGetDirectChannel,
-      { token: aToken, recipientUserId: bId },
+      { token: aToken, communityId, recipientUserId: bId },
     );
 
     const bMemberRowBefore = await getMember(t, abChannelId, bId);
@@ -728,7 +797,7 @@ describe("expireOldChatRequests cron", () => {
     // need a different inviter so the dmPairKey is different. C invites B.
     const { channelId: cbChannelId } = await t.mutation(
       api.functions.messaging.directMessages.createOrGetDirectChannel,
-      { token: cToken, recipientUserId: bId },
+      { token: cToken, communityId, recipientUserId: bId },
     );
     const cbBMemberBefore = await getMember(t, cbChannelId, bId);
     expect(cbBMemberBefore?.requestState).toBe("pending");

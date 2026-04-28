@@ -57,9 +57,10 @@ export default function StartChatScreenRoute() {
 function StartChatScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { token } = useAuth();
+  const { token, community } = useAuth();
   const { primaryColor } = useCommunityTheme();
   const { colors } = useTheme();
+  const communityId = community?.id as Id<"communities"> | undefined;
 
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
@@ -90,9 +91,10 @@ function StartChatScreen() {
 
   const results = useQuery(
     api.functions.messaging.directMessages.searchUsersInSharedCommunities,
-    token
+    token && communityId
       ? {
           token,
+          communityId,
           query: debouncedQuery,
           excludeUserIds,
           limit: SEARCH_LIMIT,
@@ -152,7 +154,7 @@ function StartChatScreen() {
   };
 
   const handleSubmit = async () => {
-    if (!token || isSubmitting || selectedCount === 0) return;
+    if (!token || !communityId || isSubmitting || selectedCount === 0) return;
     setErrorMessage(null);
     setIsSubmitting(true);
     try {
@@ -160,6 +162,7 @@ function StartChatScreen() {
         const only = Array.from(selected.values())[0]!;
         const { channelId } = await createOrGetDirectChannel({
           token,
+          communityId,
           recipientUserId: only.userId,
         });
         router.replace({
@@ -176,6 +179,7 @@ function StartChatScreen() {
       const trimmedName = groupName.trim();
       const { channelId } = await createGroupChat({
         token,
+        communityId,
         recipientUserIds,
         ...(trimmedName.length > 0 ? { name: trimmedName } : {}),
       });

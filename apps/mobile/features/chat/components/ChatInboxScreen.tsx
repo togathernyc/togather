@@ -158,11 +158,11 @@ export function ChatInboxScreen({
   const { enabled: dmsEnabled } = useConvexFeatureFlag("direct-messages");
   const directInbox = useQuery(
     api.functions.messaging.directMessages.getDirectInbox,
-    token && dmsEnabled ? { token } : "skip",
+    token && dmsEnabled && communityId ? { token, communityId } : "skip",
   );
   const chatRequests = useQuery(
     api.functions.messaging.directMessages.listChatRequests,
-    token && dmsEnabled ? { token } : "skip",
+    token && dmsEnabled && communityId ? { token, communityId } : "skip",
   );
 
   // Cache inbox data for offline use
