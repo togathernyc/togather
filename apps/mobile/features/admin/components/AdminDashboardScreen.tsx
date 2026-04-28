@@ -97,6 +97,13 @@ export function AdminDashboardScreen() {
             <Text style={[styles.actionTitle, { color: colors.text }]}>Duplicate Accounts</Text>
             <Text style={[styles.actionSubtext, { color: colors.textSecondary }]}>Merge duplicate users</Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.actionCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
+            onPress={() => router.push("/(user)/admin/features" as any)}
+          >
+            <Text style={[styles.actionTitle, { color: colors.text }]}>Feature Flags</Text>
+            <Text style={[styles.actionSubtext, { color: colors.textSecondary }]}>Toggle staged rollouts</Text>
+          </TouchableOpacity>
           <View style={[styles.actionCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
             <Text style={[styles.actionTitle, { color: colors.text }]}>Groups</Text>
             <Text style={[styles.actionSubtext, { color: colors.textSecondary }]}>Manage small groups</Text>

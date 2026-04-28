@@ -34,7 +34,7 @@ import { GroupedInboxItem } from "./GroupedInboxItem";
 import { useExpandedGroups } from "../hooks/useExpandedGroups";
 import { useInboxCache } from "../../../stores/inboxCache";
 import { Avatar } from "@components/ui/Avatar";
-import { useFeatureFlag } from "@hooks/useFeatureFlag";
+import { useConvexFeatureFlag } from "@hooks/useConvexFeatureFlag";
 
 // Inbox event visibility is now driven server-side by
 // `INBOX_EVENT_HIDE_AFTER_MS` in apps/convex/functions/messaging/channels.ts
@@ -155,7 +155,7 @@ export function ChatInboxScreen({
   // The whole DM surface is behind a PostHog flag for staged rollout. When
   // the flag is off we skip the queries entirely (no spurious subscriptions
   // for users who don't have the feature) and hide every entry point below.
-  const dmsEnabled = useFeatureFlag("direct-messages");
+  const { enabled: dmsEnabled } = useConvexFeatureFlag("direct-messages");
   const directInbox = useQuery(
     api.functions.messaging.directMessages.getDirectInbox,
     token && dmsEnabled ? { token } : "skip",

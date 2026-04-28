@@ -94,3 +94,10 @@ export {
 export {
   upsertGroupTypeFromLegacy,
 } from "./migrations";
+
+// Feature Flags - DB-backed global on/off switches for staged rollouts
+export {
+  getFeatureFlag,
+  listFeatureFlags,
+  setFeatureFlag,
+} from "./featureFlags";

@@ -1,12 +1,13 @@
 /**
  * DmFeatureGate
  *
- * Wraps screens that exist only when the `direct-messages` PostHog flag is on.
- * Routes stay registered (so deep links don't 404) but the body shows a
+ * Wraps screens that exist only when the `direct-messages` feature flag is
+ * on. Routes stay registered (so deep links don't 404) but the body shows a
  * placeholder when the flag is off rather than rendering the feature.
  *
- * Renders a lightweight loading skeleton while the flag value is hydrating
- * from AsyncStorage / PostHog so we don't briefly flash the placeholder.
+ * The flag is a row in the Convex `featureFlags` table flipped from
+ * `/(user)/admin/features`. Renders a lightweight spinner while the query
+ * hydrates so rollout-cohort users don't see the disabled UI on cold start.
  */
 import React from "react";
 import {
@@ -21,14 +22,14 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
-import { useFeatureFlagState } from "@hooks/useFeatureFlag";
+import { useConvexFeatureFlag } from "@hooks/useConvexFeatureFlag";
 
 interface DmFeatureGateProps {
   children: React.ReactNode;
 }
 
 export function DmFeatureGate({ children }: DmFeatureGateProps) {
-  const { enabled, loaded } = useFeatureFlagState("direct-messages");
+  const { enabled, loaded } = useConvexFeatureFlag("direct-messages");
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();

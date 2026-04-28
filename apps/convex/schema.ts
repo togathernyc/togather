@@ -1802,6 +1802,26 @@ export default defineSchema({
     .index("by_message", ["messageId"]),
 
   // =============================================================================
+  // FEATURE FLAGS
+  // =============================================================================
+  // Global on/off switches for staged feature rollouts, flipped by primary
+  // admins from /(user)/admin/features. One row per flag key. The frontend
+  // gates render a brief loading state while the query hydrates, then either
+  // the feature or the disabled placeholder.
+  //
+  // Intentionally simple: single boolean for all users, no per-cohort
+  // targeting (we have PostHog for that and Seyi finds it too complex for
+  // these rollouts). When a feature flag has fully ramped to 100%, the row +
+  // the gate code are removed together.
+  featureFlags: defineTable({
+    key: v.string(), // canonical identifier, e.g. "direct-messages"
+    enabled: v.boolean(),
+    description: v.optional(v.string()),
+    updatedAt: v.number(), // Unix timestamp ms
+    updatedById: v.optional(v.id("users")),
+  }).index("by_key", ["key"]),
+
+  // =============================================================================
 
   // =============================================================================
   // SLACK SERVICE BOT THREADS
