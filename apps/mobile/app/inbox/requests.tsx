@@ -73,9 +73,15 @@ export default function ChatRequestsRoute() {
 function ChatRequestsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { token, community } = useAuth();
+  const { token, community, user } = useAuth();
   const { primaryColor } = useCommunityTheme();
   const { colors } = useTheme();
+
+  // Profile-photo gate mirrors the chat-room composer (`ConvexChatRoomScreen`).
+  // Backend `respondToChatRequest` enforces it on accept; surfacing a clear
+  // CTA here avoids a useless "Server Error" alert when the user lacks a photo.
+  const needsProfilePhoto =
+    !user?.profile_photo || user.profile_photo.trim() === "";
 
   const communityId = community?.id as Id<"communities"> | undefined;
 
@@ -309,8 +315,13 @@ function ChatRequestsScreen() {
             primaryColor={primaryColor}
             colors={colors}
             pendingAction={pendingAction}
+            needsProfilePhoto={needsProfilePhoto}
             onClose={closeSheet}
             onAccept={handleAccept}
+            onAddPhoto={() => {
+              setSelectedRequest(null);
+              router.push("/(user)/edit-profile" as any);
+            }}
             onDecline={handleDecline}
             onBlock={handleBlock}
           />
@@ -325,8 +336,10 @@ function RequestSheetContent({
   primaryColor,
   colors,
   pendingAction,
+  needsProfilePhoto,
   onClose,
   onAccept,
+  onAddPhoto,
   onDecline,
   onBlock,
 }: {
@@ -334,8 +347,10 @@ function RequestSheetContent({
   primaryColor: string;
   colors: ReturnType<typeof useTheme>["colors"];
   pendingAction: "accept" | "decline" | "block" | null;
+  needsProfilePhoto: boolean;
   onClose: () => void;
   onAccept: () => void;
+  onAddPhoto: () => void;
   onDecline: () => void;
   onBlock: () => void;
 }) {
@@ -436,19 +451,41 @@ function RequestSheetContent({
           { paddingBottom: insets.bottom + 16 },
         ]}
       >
-        <TouchableOpacity
-          style={[styles.actionButton, { backgroundColor: primaryColor }]}
-          onPress={onAccept}
-          disabled={isBusy}
-        >
-          {pendingAction === "accept" ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
-            <Text style={[styles.actionButtonText, { color: "#fff" }]}>
-              Accept
+        {needsProfilePhoto ? (
+          <>
+            <Text
+              style={[
+                styles.gateHelpText,
+                { color: colors.textSecondary },
+              ]}
+            >
+              Add a profile photo to accept this chat.
             </Text>
-          )}
-        </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.actionButton, { backgroundColor: primaryColor }]}
+              onPress={onAddPhoto}
+              disabled={isBusy}
+            >
+              <Text style={[styles.actionButtonText, { color: "#fff" }]}>
+                Add photo
+              </Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          <TouchableOpacity
+            style={[styles.actionButton, { backgroundColor: primaryColor }]}
+            onPress={onAccept}
+            disabled={isBusy}
+          >
+            {pendingAction === "accept" ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Text style={[styles.actionButtonText, { color: "#fff" }]}>
+                Accept
+              </Text>
+            )}
+          </TouchableOpacity>
+        )}
 
         <TouchableOpacity
           style={[
@@ -655,5 +692,10 @@ const styles = StyleSheet.create({
   actionButtonText: {
     fontSize: 16,
     fontWeight: "600",
+  },
+  gateHelpText: {
+    fontSize: 14,
+    textAlign: "center",
+    marginBottom: 4,
   },
 });

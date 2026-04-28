@@ -4,7 +4,7 @@
  * Send, edit, delete, and list messages with pagination.
  */
 
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 import { query, mutation, internalMutation } from "../../_generated/server";
 import type { QueryCtx, MutationCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
@@ -658,7 +658,7 @@ export const sendMessage = mutation({
         !sender?.profilePhoto ||
         sender.profilePhoto.trim() === ""
       ) {
-        throw new Error("PROFILE_PHOTO_REQUIRED");
+        throw new ConvexError("PROFILE_PHOTO_REQUIRED");
       }
 
       const otherMembers = await ctx.db
