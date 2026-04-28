@@ -17,6 +17,7 @@ import type * as crons from "../crons.js";
 import type * as functions_admin_auth from "../functions/admin/auth.js";
 import type * as functions_admin_cleanup from "../functions/admin/cleanup.js";
 import type * as functions_admin_duplicates from "../functions/admin/duplicates.js";
+import type * as functions_admin_featureFlags from "../functions/admin/featureFlags.js";
 import type * as functions_admin_index from "../functions/admin/index.js";
 import type * as functions_admin_members from "../functions/admin/members.js";
 import type * as functions_admin_migrations from "../functions/admin/migrations.js";
@@ -188,6 +189,7 @@ declare const fullApi: ApiFromModules<{
   "functions/admin/auth": typeof functions_admin_auth;
   "functions/admin/cleanup": typeof functions_admin_cleanup;
   "functions/admin/duplicates": typeof functions_admin_duplicates;
+  "functions/admin/featureFlags": typeof functions_admin_featureFlags;
   "functions/admin/index": typeof functions_admin_index;
   "functions/admin/members": typeof functions_admin_members;
   "functions/admin/migrations": typeof functions_admin_migrations;

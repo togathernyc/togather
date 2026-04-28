@@ -33,6 +33,7 @@ import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
 import { useQuery, useMutation, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
+import { DmFeatureGate } from "@features/chat/components/DmFeatureGate";
 
 type SearchResult = {
   userId: Id<"users">;
@@ -45,7 +46,15 @@ const SEARCH_DEBOUNCE_MS = 200;
 const SEARCH_LIMIT = 30;
 const MAX_GROUP_RECIPIENTS = 19; // matches MAX_GROUP_DM_RECIPIENTS in directMessages.ts
 
-export default function StartChatScreen() {
+export default function StartChatScreenRoute() {
+  return (
+    <DmFeatureGate>
+      <StartChatScreen />
+    </DmFeatureGate>
+  );
+}
+
+function StartChatScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { token } = useAuth();

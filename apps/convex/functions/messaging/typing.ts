@@ -57,9 +57,33 @@ export const getTypingUsers = query({
       )
       .collect();
 
-    // Get user info for each typing user
+    if (indicators.length === 0) return [];
+
+    // Drop indicators from members whose `requestState` is still "pending" —
+    // typing should not leak to the channel until they've accepted the
+    // request (Signal-style protection). Legacy / group-channel members have
+    // undefined `requestState` and are treated as accepted.
     const userIds = indicators.map((i) => i.userId);
-    const users = await Promise.all(userIds.map((id) => ctx.db.get(id)));
+    const memberships = await Promise.all(
+      userIds.map((uid) =>
+        ctx.db
+          .query("chatChannelMembers")
+          .withIndex("by_channel_user", (q) =>
+            q.eq("channelId", args.channelId).eq("userId", uid),
+          )
+          .first(),
+      ),
+    );
+    const acceptedUserIds = new Set(
+      indicators
+        .filter((_, i) => memberships[i]?.requestState !== "pending")
+        .map((indicator) => indicator.userId),
+    );
+
+    // Get user info for each accepted typing user
+    const users = await Promise.all(
+      Array.from(acceptedUserIds).map((id) => ctx.db.get(id)),
+    );
 
     // Return transformed data with expected shape
     return users

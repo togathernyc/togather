@@ -33,6 +33,7 @@ import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
 import { useQuery, useMutation, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
+import { DmFeatureGate } from "@features/chat/components/DmFeatureGate";
 
 type ChatRequestRow = {
   channelId: Id<"chatChannels">;
@@ -61,7 +62,15 @@ function formatRelativeShort(timestamp: number): string {
   return `${Math.floor(diffSec / 604800)}w`;
 }
 
-export default function ChatRequestsScreen() {
+export default function ChatRequestsRoute() {
+  return (
+    <DmFeatureGate>
+      <ChatRequestsScreen />
+    </DmFeatureGate>
+  );
+}
+
+function ChatRequestsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { token } = useAuth();
