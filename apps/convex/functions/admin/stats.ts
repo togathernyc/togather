@@ -1349,9 +1349,12 @@ export const getDailySummary = query({
         if (topDirectScored.length < 20) topDirectScored.push(score);
       }
     }
-    // Backwards-compat alias for the original combined `topChannels` field
-    // returned to clients that haven't picked up the split yet.
-    const topScored = [...topGroupScored, ...topDirectScored].slice(0, 20);
+    // Legacy combined `topChannels` field — must be the GLOBAL top 20 by
+    // engagement score, not group-then-dm concatenation. Otherwise older
+    // client builds that still read `topChannels` see a biased list (e.g.
+    // a high-engagement DM excluded behind 20 lower-scoring group rows),
+    // breaking the original "top channels by engagement" contract.
+    const topScored = channelScores.slice(0, 20);
 
     // Count users active that day via users.lastActiveAt index
     const activeUsers = await ctx.db
