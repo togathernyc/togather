@@ -408,7 +408,13 @@ describe("respondToChatRequest", () => {
 // ============================================================================
 
 describe("sendMessage gating on pending channels", () => {
-  test("rate limit: sender can only send 1 message to a pending recipient per 24h", async () => {
+  test("inviter can send multiple messages while a recipient is still pending", async () => {
+    // Regression: a 1-message-per-24h cap used to fire here as a stranger-spam
+    // defense, but ad-hoc channels are scoped to shared community membership
+    // (recipient and sender aren't strangers) and the cap surfaced as an
+    // unactionable "failed" error on legitimate follow-ups before acceptance.
+    // Multiple sends are now allowed; only the per-message length cap and the
+    // attachments restriction remain active until acceptance.
     const t = convexTest(schema, modules);
     const communityId = await createCommunity(t, "Rate Community");
     const { accessToken: aToken } = await createUserInCommunity(t, communityId, {
@@ -431,14 +437,31 @@ describe("sendMessage gating on pending channels", () => {
     });
     await t.finishInProgressScheduledFunctions();
 
-    // Second send should be rate-limited.
-    await expect(
-      t.mutation(api.functions.messaging.messages.sendMessage, {
-        token: aToken,
-        channelId,
-        content: "hello again",
-      }),
-    ).rejects.toThrow(/1 message|accept/i);
+    // Subsequent messages also succeed while Bob is still pending.
+    await t.mutation(api.functions.messaging.messages.sendMessage, {
+      token: aToken,
+      channelId,
+      content: "hello again",
+    });
+    await t.finishInProgressScheduledFunctions();
+
+    await t.mutation(api.functions.messaging.messages.sendMessage, {
+      token: aToken,
+      channelId,
+      content: "and once more",
+    });
+    await t.finishInProgressScheduledFunctions();
+
+    // Verify all three landed in the channel.
+    const stored = await t.run(async (ctx) =>
+      ctx.db
+        .query("chatMessages")
+        .withIndex("by_channel", (q) => q.eq("channelId", channelId))
+        .collect(),
+    );
+    expect(stored.map((m) => m.content).sort()).toEqual(
+      ["and once more", "hello", "hello again"].sort(),
+    );
 
     // Drain again at end-of-test — `finishInProgressScheduledFunctions` only
     // runs ONE round, but the notification chain (onMessageSent →
