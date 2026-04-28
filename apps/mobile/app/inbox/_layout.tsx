@@ -63,6 +63,7 @@ export default function InboxLayout() {
             <Stack.Screen name="[chat_id]" options={{ animation: "none" }} />
             <Stack.Screen name="dm" options={{ animation: "none" }} />
             <Stack.Screen name="new" options={{ animation: "none" }} />
+            <Stack.Screen name="requests" options={{ animation: "none" }} />
           </Stack>
         </View>
       </View>
@@ -86,6 +87,8 @@ export default function InboxLayout() {
       <Stack.Screen name="dm" options={{ animation: "slide_from_right" }} />
       {/* New-chat picker - modal-style entry from the bottom */}
       <Stack.Screen name="new" options={{ animation: "slide_from_bottom" }} />
+      {/* Pending chat requests inbox */}
+      <Stack.Screen name="requests" options={{ animation: "slide_from_right" }} />
     </Stack>
   );
 }

@@ -225,13 +225,16 @@ export const getChannel = query({
       return {
         ...channel,
         slug: getChannelSlug(channel),
+        myRequestState: undefined as string | undefined,
+        inviterDisplayName: undefined as string | undefined,
       };
     }
 
     // Ad-hoc channels (dm, group_dm) — caller must have a member row. The
     // request-state gate (showing the chat as accepted vs pending) is handled
-    // in the UI; this query just exposes the channel doc to anyone who's been
-    // added. Declined / left rows (leftAt set) lose access.
+    // in the UI; this query just exposes the channel doc + the caller's
+    // request state so the chat room knows whether to show the accept banner.
+    // Declined / left rows (leftAt set) lose access.
     if (channel.isAdHoc || !channel.groupId) {
       const adHocMembership = await ctx.db
         .query("chatChannelMembers")
@@ -242,9 +245,20 @@ export const getChannel = query({
       if (!adHocMembership || adHocMembership.leftAt !== undefined) {
         return null;
       }
+      // Resolve inviter info for the request banner — only relevant when the
+      // caller is still in `pending`; cheap enough to always include.
+      let inviterDisplayName: string | undefined;
+      if (adHocMembership.invitedById) {
+        const inviter = await ctx.db.get(adHocMembership.invitedById);
+        if (inviter) {
+          inviterDisplayName = `${inviter.firstName ?? ""} ${inviter.lastName ?? ""}`.trim();
+        }
+      }
       return {
         ...channel,
         slug: getChannelSlug(channel),
+        myRequestState: adHocMembership.requestState ?? "accepted",
+        inviterDisplayName,
       };
     }
     const groupId = channel.groupId;
@@ -299,6 +313,8 @@ export const getChannel = query({
     return {
       ...channel,
       slug: getChannelSlug(channel),
+      myRequestState: undefined as string | undefined,
+      inviterDisplayName: undefined as string | undefined,
     };
   },
 });

@@ -42,6 +42,7 @@ import { ChatMenuModal } from "./ChatMenuModal";
 import { ExternalChatModal } from "./ExternalChatModal";
 import { MessageList } from "./MessageList";
 import { MessageInput } from "./MessageInput";
+import { ChatRequestBanner } from "./ChatRequestBanner";
 import { TypingIndicator } from "./TypingIndicator";
 import { MessageActionsOverlay } from "./MessageActionsOverlay";
 import { ChannelMembersModal } from "@features/channels";
@@ -1032,8 +1033,18 @@ const ConvexChatRoomScreenInner: React.FC = () => {
             {/* Typing Indicator */}
             <TypingIndicator typingUsers={typingUsers} />
 
-            {/* Message Input */}
-            {canSendMessages ? (
+            {/* Message Input — or request banner if the caller is still
+                pending acceptance on an ad-hoc channel. The banner replaces the
+                composer entirely so the user can't bypass the gate; the
+                backend enforces the same rule (`sendMessage` rejects pending
+                senders) but UI-side gating is the better UX. */}
+            {channelData?.myRequestState === "pending" && activeChannelId ? (
+              <ChatRequestBanner
+                channelId={activeChannelId}
+                inviterDisplayName={channelData.inviterDisplayName ?? "Someone"}
+                onResolved={handleBack}
+              />
+            ) : canSendMessages ? (
               <MessageInput
                 channelId={activeChannelId ?? null}
                 replyToMessage={replyToMessageId ? { _id: replyToMessageId, content: "", senderName: "" } : null}
