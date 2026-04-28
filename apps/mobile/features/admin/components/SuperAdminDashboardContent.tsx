@@ -257,6 +257,48 @@ export function SuperAdminDashboardContent() {
             </View>
           )}
 
+          {/* Top Direct Messages — separate card from group channels so DM
+              noise doesn't drown out group activity admins want to scan. */}
+          {data.topDirectChannels && data.topDirectChannels.length > 0 && (
+            <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Top Direct Messages</Text>
+              {data.topDirectChannels.map((channel: any, index: number) => (
+                <View
+                  key={channel.channelId}
+                  style={[
+                    styles.channelRow,
+                    index < data.topDirectChannels.length - 1 && {
+                      borderBottomWidth: 1,
+                      borderBottomColor: colors.borderLight,
+                    },
+                  ]}
+                >
+                  <View style={[styles.groupAvatarPlaceholder, { backgroundColor: colors.surfaceSecondary }]}>
+                    <Ionicons name="chatbubbles-outline" size={14} color={colors.textTertiary} />
+                  </View>
+                  <View style={styles.channelInfo}>
+                    <Text style={[styles.channelName, { color: colors.text }]} numberOfLines={1}>
+                      {channel.channelName}
+                    </Text>
+                    <Text style={[styles.groupName, { color: colors.textTertiary }]} numberOfLines={1}>
+                      {channel.groupName}
+                    </Text>
+                  </View>
+                  <View style={styles.channelStats}>
+                    <Text style={[styles.messageCount, { color: primaryColor }]}>
+                      {channel.messages} msg
+                    </Text>
+                    {channel.reactions > 0 && (
+                      <Text style={[styles.reactionCount, { color: colors.textSecondary }]}>
+                        {channel.reactions} rxn
+                      </Text>
+                    )}
+                  </View>
+                </View>
+              ))}
+            </View>
+          )}
+
           {/* Top Senders */}
           {data.topSenders && data.topSenders.length > 0 && (
             <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
