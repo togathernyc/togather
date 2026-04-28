@@ -62,25 +62,40 @@ export function useGroupDetails(groupId: string | null | undefined) {
     enabled && convexGroupId ? { groupId: convexGroupId, limit: 5 } : "skip"
   );
 
+  // Fetch leader preview (public data — intentionally exposed to non-members
+  // so they can DM a leader before joining the group). Capped at 8.
+  const leaderPreview = useQuery(
+    api.functions.groupMembers.getLeaderPreview,
+    enabled && convexGroupId ? { groupId: convexGroupId, limit: 8 } : "skip"
+  );
+
   // Fetch group type details if we have the group
   const groupTypeId = group?.groupTypeId;
   // Note: Group type info is included in the group query via groupTypeName, groupTypeSlug
 
   // Cache live data when all queries resolve
   useEffect(() => {
-    if (group && members !== undefined && leaders !== undefined && memberPreview !== undefined && groupId) {
+    if (
+      group &&
+      members !== undefined &&
+      leaders !== undefined &&
+      memberPreview !== undefined &&
+      leaderPreview !== undefined &&
+      groupId
+    ) {
       setFullGroupData(groupId, {
         details: group,
         members: members,
         leaders: leaders,
         memberPreview: memberPreview,
+        leaderPreview: leaderPreview,
       });
     }
-  }, [group, members, leaders, memberPreview, groupId, setFullGroupData]);
+  }, [group, members, leaders, memberPreview, leaderPreview, groupId, setFullGroupData]);
 
   // Determine loading state
   const isLoading =
-    enabled && (group === undefined || membersResponse === undefined || leaders === undefined || memberPreview === undefined);
+    enabled && (group === undefined || membersResponse === undefined || leaders === undefined || memberPreview === undefined || leaderPreview === undefined);
 
   // Check cache for stale-while-revalidate
   const cached = isLoading && groupId ? getFullGroupData(groupId) : null;
@@ -91,6 +106,7 @@ export function useGroupDetails(groupId: string | null | undefined) {
   const effectiveMembers = members ?? cached?.members;
   const effectiveLeaders = leaders ?? cached?.leaders;
   const effectiveMemberPreview = memberPreview ?? cached?.memberPreview;
+  const effectiveLeaderPreview = leaderPreview ?? cached?.leaderPreview;
 
   // Transform to snake_case format for compatibility with existing components
   // Note: Using `as any` casts where needed for Convex ID types to match legacy number types
@@ -173,6 +189,16 @@ export function useGroupDetails(groupId: string | null | undefined) {
           profile_photo: m.profileImage || undefined,
           role: m.role || "member",
         })) || [],
+        // Leader preview — intentionally exposed to non-members so they can
+        // DM a leader before joining the group. Capped at 8 by the backend.
+        leader_preview: effectiveLeaderPreview?.leaders?.map((l: any) => ({
+          id: l.id || "",
+          first_name: l.firstName || "",
+          last_name: l.lastName || "",
+          profile_photo: l.profileImage || undefined,
+          role: l.role || "leader",
+        })) || [],
+        leader_preview_total_count: effectiveLeaderPreview?.totalCount || 0,
       }
     : undefined;
 

@@ -23,6 +23,10 @@ import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
 import { useMutation, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
+import {
+  RequireProfilePhotoSheet,
+  classifyProfilePhotoError,
+} from "./RequireProfilePhotoSheet";
 
 export interface ChatRequestBannerProps {
   channelId: Id<"chatChannels">;
@@ -39,13 +43,23 @@ export function ChatRequestBanner({
   onAccepted,
   onResolved,
 }: ChatRequestBannerProps) {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const { primaryColor } = useCommunityTheme();
   const { colors } = useTheme();
 
   const [pendingAction, setPendingAction] = useState<
     "accept" | "decline" | "block" | null
   >(null);
+  const [photoSheetVisible, setPhotoSheetVisible] = useState(false);
+
+  // Gate Accept on the responder having a profile photo. Recipients of a
+  // chat request are unbounded — they could be anyone with a community
+  // overlap — so we enforce the photo at the moment of acceptance rather
+  // than at chat creation. Backend re-validates server-side.
+  const hasOwnProfilePhoto = (() => {
+    const photo = user?.profile_photo;
+    return typeof photo === "string" && photo.trim().length > 0;
+  })();
 
   const respondToChatRequest = useMutation(
     api.functions.messaging.directMessages.respondToChatRequest
@@ -55,6 +69,12 @@ export function ChatRequestBanner({
 
   const handleAccept = async () => {
     if (!token || isBusy) return;
+    if (!hasOwnProfilePhoto) {
+      // Local check matches the backend's PROFILE_PHOTO_REQUIRED guard.
+      // The user uploads a photo, returns, and re-taps Accept.
+      setPhotoSheetVisible(true);
+      return;
+    }
     setPendingAction("accept");
     try {
       await respondToChatRequest({
@@ -66,6 +86,11 @@ export function ChatRequestBanner({
       onAccepted?.();
     } catch (e) {
       setPendingAction(null);
+      const photoError = classifyProfilePhotoError(e);
+      if (photoError === "self") {
+        setPhotoSheetVisible(true);
+        return;
+      }
       const message = e instanceof Error ? e.message : "Failed to accept";
       Alert.alert("Couldn't accept", message);
     }
@@ -110,6 +135,7 @@ export function ChatRequestBanner({
   };
 
   return (
+    <>
     <View
       style={[
         styles.container,
@@ -183,6 +209,11 @@ export function ChatRequestBanner({
         </TouchableOpacity>
       </View>
     </View>
+    <RequireProfilePhotoSheet
+      visible={photoSheetVisible}
+      onClose={() => setPhotoSheetVisible(false)}
+    />
+    </>
   );
 }
 

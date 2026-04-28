@@ -52,6 +52,9 @@ jest.mock('@services/api/convex', () => ({
           listGroupChannels: 'api.functions.messaging.channels.listGroupChannels',
           hasAutoChannels: 'api.functions.messaging.channels.hasAutoChannels',
         },
+        directMessages: {
+          getDirectInbox: 'api.functions.messaging.directMessages.getDirectInbox',
+        },
         readState: {
           getUnreadCounts: 'api.functions.messaging.readState.getUnreadCounts',
         },

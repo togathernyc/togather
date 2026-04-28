@@ -3,6 +3,8 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from "rea
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@hooks/useTheme";
+import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { Avatar } from "@components/ui";
 import { GroupHeader } from "./GroupHeader";
 import { MembersRow } from "./MembersRow";
 import { HighlightsGrid } from "./HighlightsGrid";
@@ -32,7 +34,27 @@ export function GroupNonMemberView({
   const { user } = useAuth();
   const router = useRouter();
   const { colors } = useTheme();
+  const { primaryColor } = useCommunityTheme();
   const [showOptionsModal, setShowOptionsModal] = useState(false);
+
+  // Leaders are intentionally exposed to non-members so they can reach out
+  // before joining. Provided publicly by groupMembers.getLeaderPreview.
+  const leaderPreview =
+    ((group as any).leader_preview as
+      | Array<{
+          id: string;
+          first_name: string;
+          last_name: string;
+          profile_photo?: string;
+        }>
+      | undefined) ?? [];
+
+  const handleLeaderPress = (userId: string) => {
+    if (!userId) return;
+    // Use the canonical profile route pattern shared across the app
+    // (see chat/MessageItem, EventComment, ChatInfoScreen, etc.)
+    router.push(`/profile/${userId}` as any);
+  };
 
   // Check if user is a community admin - admins should see the menu even if not a member
   const isAdmin = user?.is_admin === true;
@@ -96,6 +118,63 @@ export function GroupNonMemberView({
         {/* Map Section - Only shown to admins for non-members
             SECURITY: Location data should not be shown to non-members */}
         {isAdmin && <GroupMapSection group={group} />}
+
+        {/* Leaders Section — exposed to non-members so they can DM a leader
+            before joining the group. Tap a leader card to open their profile,
+            where the Message button initiates a DM. */}
+        {leaderPreview.length > 0 && (
+          <View style={[styles.leadersContainer, { backgroundColor: colors.surfaceSecondary }]}>
+            <Text style={[styles.leadersTitle, { color: colors.text }]}>LEADERS</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.leadersScrollContent}
+            >
+              {leaderPreview.map((leader) => {
+                const fullName = `${leader.first_name || ""} ${leader.last_name || ""}`.trim();
+                const displayName =
+                  leader.first_name ||
+                  fullName ||
+                  "Leader";
+                return (
+                  <TouchableOpacity
+                    key={leader.id}
+                    onPress={() => handleLeaderPress(leader.id)}
+                    activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel={`View ${displayName}'s profile`}
+                    style={styles.leaderCardTouchable}
+                  >
+                    {/* Layout styles live on this inner View so they apply on
+                        React Native Web (Pressable/Touchable function-style
+                        is silently ignored on web). */}
+                    <View style={styles.leaderCard}>
+                      <View style={[styles.leaderAvatarWrapper, { borderColor: primaryColor }]}>
+                        <Avatar
+                          name={fullName || displayName}
+                          imageUrl={leader.profile_photo}
+                          size={56}
+                        />
+                        <View
+                          style={[
+                            styles.leaderBadge,
+                            { backgroundColor: primaryColor, borderColor: colors.surfaceSecondary },
+                          ]}
+                        />
+                      </View>
+                      <Text
+                        style={[styles.leaderName, { color: colors.text }]}
+                        numberOfLines={1}
+                      >
+                        {displayName}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        )}
 
         {/* Members Section */}
         {/* Admins can see full member list and navigate to members page */}
@@ -304,6 +383,56 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 16,
     marginTop: -8,
+  },
+  // Leaders section (non-members can tap a leader to message them)
+  leadersContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+  },
+  leadersTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    marginBottom: 12,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  leadersScrollContent: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+  leaderCardTouchable: {
+    // 44pt+ tap target enforced via inner padding/sizing below
+  },
+  leaderCard: {
+    alignItems: "center",
+    width: 72,
+    paddingVertical: 4,
+    paddingHorizontal: 4,
+    minHeight: 88,
+  },
+  leaderAvatarWrapper: {
+    position: "relative",
+    borderRadius: 32,
+    borderWidth: 3,
+    padding: 2,
+    marginBottom: 6,
+  },
+  leaderBadge: {
+    position: "absolute",
+    top: -2,
+    right: -2,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    borderWidth: 2,
+    zIndex: 1,
+  },
+  leaderName: {
+    fontSize: 13,
+    fontWeight: "500",
+    textAlign: "center",
+    maxWidth: 72,
   },
 });
 

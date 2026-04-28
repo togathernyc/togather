@@ -6,7 +6,12 @@
  */
 
 import { v } from "convex/values";
-import { internalMutation, internalAction } from "../../_generated/server";
+import {
+  internalMutation,
+  internalAction,
+  internalQuery,
+} from "../../_generated/server";
+import type { ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import { getChannelSlug } from "../../lib/slugs";
@@ -211,6 +216,47 @@ export const onMessageSent = internalMutation({
             regularRecipients: bucket.regularRecipients,
           });
         }
+      } else if (channel?.isAdHoc) {
+        // Ad-hoc DM / group_dm channels have their own notification copy:
+        // no "Group Chat: <name>" subtitle, and pending requests get a
+        // "would like to chat:" prefix. Routed through a dedicated action so
+        // the standard formatter (which always includes "groupName: channel")
+        // doesn't run for these channels.
+        //
+        // We separate recipients into:
+        //   - "pending" recipients (their membership row is still pending) →
+        //     first-message-of-request copy
+        //   - "accepted" recipients → standard accepted-chat copy
+        // The split is done here (per-recipient) so we can render different
+        // bodies in a single fanout pass.
+        const pendingRecipients: Id<"users">[] = [];
+        const acceptedRecipients: Id<"users">[] = [];
+        for (const member of members) {
+          if (member.requestState === "pending") {
+            pendingRecipients.push(member.userId);
+          } else {
+            acceptedRecipients.push(member.userId);
+          }
+        }
+
+        console.log(
+          `[onMessageSent] Scheduling ad-hoc notifications: ${pendingRecipients.length} pending, ${acceptedRecipients.length} accepted`,
+        );
+
+        await ctx.scheduler.runAfter(
+          0,
+          internal.functions.messaging.events.sendAdHocMessageNotifications,
+          {
+            channelId: args.channelId,
+            messageId: args.messageId,
+            senderName,
+            messagePreview: preview,
+            senderAvatarUrl,
+            communityId: channel.communityId,
+            pendingRecipients,
+            acceptedRecipients,
+          },
+        );
       } else {
         // Non-shared channel: original single-group path. For ad-hoc DMs/group_dms,
         // channel.groupId is undefined so we fall back to channel.communityId directly
@@ -354,6 +400,218 @@ export const sendMessageNotifications = internalAction({
     );
   },
 });
+
+/**
+ * Truncate a string to `max` chars, suffixing "…" if truncation occurred.
+ */
+function truncateForBody(text: string, max: number): string {
+  if (text.length <= max) return text;
+  return text.slice(0, Math.max(0, max - 1)) + "…";
+}
+
+/**
+ * Send push notifications for a new message in an ad-hoc DM / group_dm channel.
+ *
+ * Distinct from `sendMessageNotifications` because:
+ *   - Body never includes the legacy "Group Chat: General" subtitle that the
+ *     standard formatter always emits.
+ *   - "Pending" recipients (whose membership row is still pending) get a
+ *     "would like to chat:" prefix on the body.
+ *   - Group_dms render the channel name (or first 2 other-member names) into
+ *     the title so multi-person threads are distinguishable from 1:1 DMs.
+ *
+ * The push payload `data` carries `requestState` so the client can route the
+ * tap correctly (request inbox vs. accepted thread).
+ */
+export const sendAdHocMessageNotifications = internalAction({
+  args: {
+    channelId: v.id("chatChannels"),
+    messageId: v.id("chatMessages"),
+    senderName: v.string(),
+    messagePreview: v.string(),
+    senderAvatarUrl: v.optional(v.string()),
+    communityId: v.optional(v.id("communities")),
+    /** Members whose membership row is still in `requestState: "pending"`. */
+    pendingRecipients: v.array(v.id("users")),
+    /** Members whose membership row is `accepted` (or legacy/undefined). */
+    acceptedRecipients: v.array(v.id("users")),
+  },
+  handler: async (ctx, args) => {
+    console.log(
+      `[sendAdHocMessageNotifications] channelId=${args.channelId}, pending=${args.pendingRecipients.length}, accepted=${args.acceptedRecipients.length}`,
+    );
+
+    // Truncate the body's message excerpt. Match the previous fanout's
+    // ~120-char ceiling so iOS/Android push surfaces don't ellipsize twice.
+    const MAX_BODY_PREVIEW = 120;
+    const previewBody = truncateForBody(args.messagePreview, MAX_BODY_PREVIEW);
+
+    // Resolve channel + non-sender accepted member names so group_dms can
+    // render "<sender> in <channelName | first-two-others>" titles when
+    // there's no explicit channel name.
+    const channelInfo = await ctx.runQuery(
+      internal.functions.messaging.events.getAdHocChannelInfo,
+      { channelId: args.channelId },
+    );
+    const channelType: "dm" | "group_dm" =
+      (channelInfo?.channelType as "dm" | "group_dm") ?? "dm";
+    const channelName = channelInfo?.channelName ?? "";
+
+    // Build the accepted-recipient title once. For group_dms with no name we
+    // fall back to listing up to the first 2 other-member display names so
+    // the recipient sees who else is in the thread.
+    let acceptedTitle: string;
+    if (channelType === "group_dm") {
+      if (channelName.trim().length > 0) {
+        acceptedTitle = `${args.senderName} in ${channelName.trim()}`;
+      } else {
+        const others = (channelInfo?.otherDisplayNames ?? []).slice(0, 2);
+        acceptedTitle =
+          others.length > 0
+            ? `${args.senderName} in ${others.join(", ")}`
+            : args.senderName;
+      }
+    } else {
+      // 1:1 dm — title is just the sender name; body is the message text.
+      acceptedTitle = args.senderName;
+    }
+
+    const baseData = {
+      type: "new_message" as const,
+      channelId: args.channelId,
+      channelType,
+      channelName,
+      communityId: args.communityId,
+      senderAvatarUrl: args.senderAvatarUrl,
+      isAdHoc: true,
+      // Pre-computed deep link for ad-hoc threads. The client routes pending
+      // recipients to the requests inbox via `requestState` below.
+      url: `/inbox/dm/${args.channelId}`,
+    };
+
+    // Pending recipients: first-message-of-a-request copy.
+    if (args.pendingRecipients.length > 0) {
+      const pendingTitle = args.senderName;
+      const pendingBody = `would like to chat: ${previewBody}`;
+      for (const userId of args.pendingRecipients) {
+        await sendAdHocPushToUser(ctx, {
+          userId,
+          title: pendingTitle,
+          body: pendingBody,
+          data: { ...baseData, requestState: "pending" },
+          communityId: args.communityId,
+        });
+      }
+    }
+
+    // Accepted recipients: standard accepted-chat copy.
+    if (args.acceptedRecipients.length > 0) {
+      for (const userId of args.acceptedRecipients) {
+        await sendAdHocPushToUser(ctx, {
+          userId,
+          title: acceptedTitle,
+          body: previewBody,
+          data: { ...baseData, requestState: "accepted" },
+          communityId: args.communityId,
+        });
+      }
+    }
+  },
+});
+
+/**
+ * Internal query: minimal channel info needed by the ad-hoc push fanout.
+ * Returns `channelType`, the channel name, and up to a handful of accepted
+ * member display names for the title fallback.
+ */
+export const getAdHocChannelInfo = internalQuery({
+  args: { channelId: v.id("chatChannels") },
+  handler: async (ctx, args) => {
+    const channel = await ctx.db.get(args.channelId);
+    if (!channel) return null;
+
+    const members = await ctx.db
+      .query("chatChannelMembers")
+      .withIndex("by_channel", (q) => q.eq("channelId", args.channelId))
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .collect();
+
+    const otherDisplayNames = members
+      .map((m) => m.displayName ?? "")
+      .filter((n) => n.trim().length > 0);
+
+    return {
+      channelType: channel.channelType,
+      channelName: channel.name ?? "",
+      otherDisplayNames,
+    };
+  },
+});
+
+/**
+ * Send a single push to one user with custom title/body. Mirrors the
+ * essentials of `sendPushChannel` (token lookup → batch push → notification
+ * record) without invoking the standard formatter, which always emits the
+ * "groupName: channelLabel" subtitle that we want to suppress for ad-hoc
+ * channels.
+ */
+async function sendAdHocPushToUser(
+  ctx: ActionCtx,
+  args: {
+    userId: Id<"users">;
+    title: string;
+    body: string;
+    data: Record<string, unknown>;
+    communityId?: Id<"communities">;
+  },
+): Promise<void> {
+  const tokens = await ctx.runQuery(
+    internal.functions.notifications.tokens.getActiveTokensForUser,
+    { userId: args.userId },
+  );
+  if (tokens.length === 0) {
+    console.log(
+      `[sendAdHocMessageNotifications] No active push tokens for user ${args.userId} — skipping`,
+    );
+    return;
+  }
+
+  const trackingId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  const notificationData = {
+    ...args.data,
+    trackingId,
+  };
+
+  const notifications = tokens.map((t: { token: string }) => ({
+    token: t.token,
+    title: args.title,
+    body: args.body,
+    data: notificationData,
+    imageUrl:
+      typeof args.data.senderAvatarUrl === "string"
+        ? args.data.senderAvatarUrl
+        : undefined,
+  }));
+
+  const result = await ctx.runAction(
+    internal.functions.notifications.internal.sendBatchPushNotifications,
+    { notifications },
+  );
+
+  await ctx.runMutation(
+    internal.functions.notifications.mutations.createNotification,
+    {
+      userId: args.userId,
+      communityId: args.communityId,
+      notificationType: "new_message",
+      title: args.title,
+      body: args.body,
+      data: notificationData,
+      status: result.success ? "sent" : "failed",
+      trackingId,
+    },
+  );
+}
 
 /**
  * Handle member added to channel.

@@ -49,7 +49,16 @@ async function createCommunity(
 async function createUserInCommunity(
   t: ReturnType<typeof convexTest>,
   communityId: Id<"communities">,
-  opts: { firstName: string; lastName?: string },
+  opts: {
+    firstName: string;
+    lastName?: string;
+    /**
+     * Override the default test profile photo. Pass `null` to omit the photo
+     * entirely (used by the profile-photo gate tests). When omitted, a
+     * non-empty placeholder photo is set so the photo gate is satisfied.
+     */
+    profilePhoto?: string | null;
+  },
 ): Promise<{ userId: Id<"users">; accessToken: string }> {
   const userId = await t.run(async (ctx) => {
     const uId = await ctx.db.insert("users", {
@@ -58,6 +67,10 @@ async function createUserInCommunity(
       phone: uniquePhone(),
       phoneVerified: true,
       activeCommunityId: communityId,
+      profilePhoto:
+        opts.profilePhoto === null
+          ? undefined
+          : (opts.profilePhoto ?? "https://example.com/avatar.png"),
       createdAt: Date.now(),
       updatedAt: Date.now(),
     });
@@ -76,7 +89,7 @@ async function createUserInCommunity(
 
 async function createUserInOtherCommunity(
   t: ReturnType<typeof convexTest>,
-  opts: { firstName: string; lastName?: string },
+  opts: { firstName: string; lastName?: string; profilePhoto?: string | null },
 ): Promise<{
   userId: Id<"users">;
   accessToken: string;
@@ -821,5 +834,448 @@ describe("expireOldChatRequests cron", () => {
     const cbBMemberAfter = await getMember(t, cbChannelId, bId);
     expect(cbBMemberAfter?.requestState).toBe("pending");
     expect(cbBMemberAfter?.leftAt).toBeUndefined();
+  });
+});
+
+// ============================================================================
+// Profile photo gate
+// ============================================================================
+
+describe("profile photo gate", () => {
+  test("createOrGetDirectChannel rejects when caller lacks profilePhoto", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Photo Caller Community");
+    const { accessToken: aToken } = await createUserInCommunity(t, communityId, {
+      firstName: "Alice",
+      profilePhoto: null,
+    });
+    const { userId: bId } = await createUserInCommunity(t, communityId, {
+      firstName: "Bob",
+    });
+
+    await expect(
+      t.mutation(
+        api.functions.messaging.directMessages.createOrGetDirectChannel,
+        { token: aToken, communityId, recipientUserId: bId },
+      ),
+    ).rejects.toThrow(/PROFILE_PHOTO_REQUIRED/);
+  });
+
+  test("createOrGetDirectChannel rejects when recipient lacks profilePhoto", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Photo Recipient Community");
+    const { accessToken: aToken } = await createUserInCommunity(t, communityId, {
+      firstName: "Alice",
+    });
+    const { userId: bId } = await createUserInCommunity(t, communityId, {
+      firstName: "Bob",
+      profilePhoto: null,
+    });
+
+    await expect(
+      t.mutation(
+        api.functions.messaging.directMessages.createOrGetDirectChannel,
+        { token: aToken, communityId, recipientUserId: bId },
+      ),
+    ).rejects.toThrow(/RECIPIENT_PROFILE_PHOTO_REQUIRED:/);
+  });
+
+  test("createOrGetDirectChannel succeeds when both have profilePhoto", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Photo OK Community");
+    const { accessToken: aToken } = await createUserInCommunity(t, communityId, {
+      firstName: "Alice",
+    });
+    const { userId: bId } = await createUserInCommunity(t, communityId, {
+      firstName: "Bob",
+    });
+
+    const result = await t.mutation(
+      api.functions.messaging.directMessages.createOrGetDirectChannel,
+      { token: aToken, communityId, recipientUserId: bId },
+    );
+    expect(result.isNew).toBe(true);
+  });
+
+  test("respondToChatRequest accept rejects when caller lacks profilePhoto", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Accept Photo Community");
+    // Sender has a photo (so the request can be created), responder will get
+    // their photo cleared before accepting.
+    const { accessToken: aToken } = await createUserInCommunity(t, communityId, {
+      firstName: "Alice",
+    });
+    const { userId: bId, accessToken: bToken } = await createUserInCommunity(
+      t,
+      communityId,
+      { firstName: "Bob" },
+    );
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.directMessages.createOrGetDirectChannel,
+      { token: aToken, communityId, recipientUserId: bId },
+    );
+
+    // Clear B's profile photo so the accept-path gate fires.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(bId, { profilePhoto: undefined });
+    });
+
+    await expect(
+      t.mutation(
+        api.functions.messaging.directMessages.respondToChatRequest,
+        { token: bToken, channelId, response: "accept" },
+      ),
+    ).rejects.toThrow(/PROFILE_PHOTO_REQUIRED/);
+  });
+});
+
+// ============================================================================
+// renameAdHocChannel
+// ============================================================================
+
+describe("renameAdHocChannel", () => {
+  test("works for an accepted member of a group_dm", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Rename Community");
+    const { accessToken: aToken } = await createUserInCommunity(t, communityId, {
+      firstName: "Alice",
+    });
+    const { userId: bId } = await createUserInCommunity(t, communityId, {
+      firstName: "Bob",
+    });
+    const { userId: cId } = await createUserInCommunity(t, communityId, {
+      firstName: "Carol",
+    });
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.directMessages.createGroupChat,
+      {
+        token: aToken,
+        communityId,
+        recipientUserIds: [bId, cId],
+        name: "Old name",
+      },
+    );
+
+    await t.mutation(
+      api.functions.messaging.directMessages.renameAdHocChannel,
+      { token: aToken, channelId, name: "New name" },
+    );
+
+    const channel = await t.run(async (ctx) => ctx.db.get(channelId));
+    expect(channel?.name).toBe("New name");
+  });
+
+  test("rejects rename for 1:1 dm channels", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Rename DM Community");
+    const { accessToken: aToken } = await createUserInCommunity(t, communityId, {
+      firstName: "Alice",
+    });
+    const { userId: bId } = await createUserInCommunity(t, communityId, {
+      firstName: "Bob",
+    });
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.directMessages.createOrGetDirectChannel,
+      { token: aToken, communityId, recipientUserId: bId },
+    );
+
+    await expect(
+      t.mutation(
+        api.functions.messaging.directMessages.renameAdHocChannel,
+        { token: aToken, channelId, name: "Nope" },
+      ),
+    ).rejects.toThrow(/1:1|cannot be renamed/i);
+  });
+
+  test("rejects rename by a non-member", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Rename Outsider Community");
+    const { accessToken: aToken } = await createUserInCommunity(t, communityId, {
+      firstName: "Alice",
+    });
+    const { userId: bId } = await createUserInCommunity(t, communityId, {
+      firstName: "Bob",
+    });
+    const { accessToken: outsiderToken } = await createUserInCommunity(
+      t,
+      communityId,
+      { firstName: "Outsider" },
+    );
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.directMessages.createGroupChat,
+      {
+        token: aToken,
+        communityId,
+        recipientUserIds: [bId],
+        name: "Original",
+      },
+    );
+
+    await expect(
+      t.mutation(
+        api.functions.messaging.directMessages.renameAdHocChannel,
+        { token: outsiderToken, channelId, name: "Hijacked" },
+      ),
+    ).rejects.toThrow(/not a member/i);
+  });
+
+  test("rejects blank rename for group_dm", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Rename Blank Community");
+    const { accessToken: aToken } = await createUserInCommunity(t, communityId, {
+      firstName: "Alice",
+    });
+    const { userId: bId } = await createUserInCommunity(t, communityId, {
+      firstName: "Bob",
+    });
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.directMessages.createGroupChat,
+      {
+        token: aToken,
+        communityId,
+        recipientUserIds: [bId],
+        name: "Original",
+      },
+    );
+
+    await expect(
+      t.mutation(
+        api.functions.messaging.directMessages.renameAdHocChannel,
+        { token: aToken, channelId, name: "   " },
+      ),
+    ).rejects.toThrow(/blank/i);
+  });
+});
+
+// ============================================================================
+// addAdHocMembers
+// ============================================================================
+
+describe("addAdHocMembers", () => {
+  test("marks new members pending and respects the 20-member cap", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Add Members Community");
+    const { userId: aId, accessToken: aToken } = await createUserInCommunity(
+      t,
+      communityId,
+      { firstName: "Alice" },
+    );
+
+    // Create initial group with 1 recipient (2 total members).
+    const { userId: b0Id } = await createUserInCommunity(t, communityId, {
+      firstName: "Bob0",
+    });
+    const { channelId } = await t.mutation(
+      api.functions.messaging.directMessages.createGroupChat,
+      {
+        token: aToken,
+        communityId,
+        recipientUserIds: [b0Id],
+        name: "Cap test",
+      },
+    );
+
+    // Add 18 more — total becomes 20 (at cap).
+    const cappedIds: Id<"users">[] = [];
+    for (let i = 1; i <= 18; i++) {
+      const { userId } = await createUserInCommunity(t, communityId, {
+        firstName: `Bob${i}`,
+      });
+      cappedIds.push(userId);
+    }
+    const result = await t.mutation(
+      api.functions.messaging.directMessages.addAdHocMembers,
+      { token: aToken, channelId, userIds: cappedIds },
+    );
+    expect(result.added).toBe(18);
+    expect(result.skipped).toBe(0);
+
+    // Each new member should be pending and invitedById == aId.
+    for (const uId of cappedIds) {
+      const m = await getMember(t, channelId, uId);
+      expect(m?.requestState).toBe("pending");
+      expect(m?.invitedById).toBe(aId);
+    }
+
+    // Adding a 21st member must throw at the cap.
+    const { userId: extraId } = await createUserInCommunity(t, communityId, {
+      firstName: "Extra",
+    });
+    await expect(
+      t.mutation(api.functions.messaging.directMessages.addAdHocMembers, {
+        token: aToken,
+        channelId,
+        userIds: [extraId],
+      }),
+    ).rejects.toThrow(/at most 20|too many/i);
+  });
+
+  test("rejects adding a non-community-member", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Add Outsider Community");
+    const { accessToken: aToken } = await createUserInCommunity(t, communityId, {
+      firstName: "Alice",
+    });
+    const { userId: bId } = await createUserInCommunity(t, communityId, {
+      firstName: "Bob",
+    });
+    const { userId: outsiderId } = await createUserInOtherCommunity(t, {
+      firstName: "Outsider",
+    });
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.directMessages.createGroupChat,
+      {
+        token: aToken,
+        communityId,
+        recipientUserIds: [bId],
+        name: "Outsider test",
+      },
+    );
+
+    await expect(
+      t.mutation(api.functions.messaging.directMessages.addAdHocMembers, {
+        token: aToken,
+        channelId,
+        userIds: [outsiderId],
+      }),
+    ).rejects.toThrow(/community/i);
+  });
+
+  test("idempotent for users already in the channel", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Add Idempotent Community");
+    const { accessToken: aToken } = await createUserInCommunity(t, communityId, {
+      firstName: "Alice",
+    });
+    const { userId: bId } = await createUserInCommunity(t, communityId, {
+      firstName: "Bob",
+    });
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.directMessages.createGroupChat,
+      {
+        token: aToken,
+        communityId,
+        recipientUserIds: [bId],
+        name: "Idem test",
+      },
+    );
+
+    const result = await t.mutation(
+      api.functions.messaging.directMessages.addAdHocMembers,
+      { token: aToken, channelId, userIds: [bId] },
+    );
+    expect(result.added).toBe(0);
+    expect(result.skipped).toBe(1);
+  });
+});
+
+// ============================================================================
+// removeAdHocMember
+// ============================================================================
+
+describe("removeAdHocMember", () => {
+  test("self-remove always works", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Self Remove Community");
+    const { accessToken: aToken } = await createUserInCommunity(t, communityId, {
+      firstName: "Alice",
+    });
+    const { userId: bId, accessToken: bToken } = await createUserInCommunity(
+      t,
+      communityId,
+      { firstName: "Bob" },
+    );
+    const { userId: cId } = await createUserInCommunity(t, communityId, {
+      firstName: "Carol",
+    });
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.directMessages.createGroupChat,
+      {
+        token: aToken,
+        communityId,
+        recipientUserIds: [bId, cId],
+        name: "Self remove",
+      },
+    );
+
+    // B accepts so they're a real accepted member, then self-removes.
+    await t.mutation(
+      api.functions.messaging.directMessages.respondToChatRequest,
+      { token: bToken, channelId, response: "accept" },
+    );
+
+    await t.mutation(
+      api.functions.messaging.directMessages.removeAdHocMember,
+      { token: bToken, channelId, userId: bId },
+    );
+
+    const bMember = await getMember(t, channelId, bId);
+    expect(bMember?.leftAt).toBeDefined();
+  });
+
+  test("non-creator cannot remove other members; creator can", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Remove Creator Community");
+    const { userId: aId, accessToken: aToken } = await createUserInCommunity(
+      t,
+      communityId,
+      { firstName: "Alice" },
+    );
+    const { userId: bId, accessToken: bToken } = await createUserInCommunity(
+      t,
+      communityId,
+      { firstName: "Bob" },
+    );
+    const { userId: cId, accessToken: cToken } = await createUserInCommunity(
+      t,
+      communityId,
+      { firstName: "Carol" },
+    );
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.directMessages.createGroupChat,
+      {
+        token: aToken,
+        communityId,
+        recipientUserIds: [bId, cId],
+        name: "Creator privilege",
+      },
+    );
+
+    await t.mutation(
+      api.functions.messaging.directMessages.respondToChatRequest,
+      { token: bToken, channelId, response: "accept" },
+    );
+    await t.mutation(
+      api.functions.messaging.directMessages.respondToChatRequest,
+      { token: cToken, channelId, response: "accept" },
+    );
+
+    // B (non-creator) tries to remove C.
+    await expect(
+      t.mutation(api.functions.messaging.directMessages.removeAdHocMember, {
+        token: bToken,
+        channelId,
+        userId: cId,
+      }),
+    ).rejects.toThrow(/creator|only/i);
+
+    // A (creator) removes C — succeeds.
+    await t.mutation(
+      api.functions.messaging.directMessages.removeAdHocMember,
+      { token: aToken, channelId, userId: cId },
+    );
+    const cMember = await getMember(t, channelId, cId);
+    expect(cMember?.leftAt).toBeDefined();
+    // Sanity: aId is the creator we asserted privileges for.
+    expect(aId).toBeDefined();
   });
 });

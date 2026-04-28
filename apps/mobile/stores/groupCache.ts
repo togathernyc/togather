@@ -23,6 +23,7 @@ interface CachedGroup {
   members?: any[]; // From groupMembers.list (group detail page only)
   leaders?: any[]; // From getLeaders (group detail page only)
   memberPreview?: any; // From getMemberPreview (group detail page only)
+  leaderPreview?: any; // From getLeaderPreview (public — used by non-members)
   timestamp: number;
 }
 
@@ -36,6 +37,7 @@ interface GroupCacheState {
       members?: any[];
       leaders?: any[];
       memberPreview?: any;
+      leaderPreview?: any;
     }
   ) => void;
   getGroupDetails: (groupId: string) => any | null;
@@ -85,6 +87,7 @@ export const useGroupCache = create<GroupCacheState>()(
               members: data.members,
               leaders: data.leaders,
               memberPreview: data.memberPreview,
+              leaderPreview: data.leaderPreview,
               timestamp: Date.now(),
             },
           });
