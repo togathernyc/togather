@@ -34,6 +34,7 @@ import { GroupedInboxItem } from "./GroupedInboxItem";
 import { useExpandedGroups } from "../hooks/useExpandedGroups";
 import { useInboxCache } from "../../../stores/inboxCache";
 import { Avatar } from "@components/ui/Avatar";
+import { useFeatureFlag } from "@hooks/useFeatureFlag";
 
 // Inbox event visibility is now driven server-side by
 // `INBOX_EVENT_HIDE_AFTER_MS` in apps/convex/functions/messaging/channels.ts
@@ -150,13 +151,18 @@ export function ChatInboxScreen({
   // Direct-message inbox is a separate subscription so the existing
   // `getInboxChannels` query (and its 4222-line file) stays untouched. Convex
   // multi-subscription cost is negligible.
+  //
+  // The whole DM surface is behind a PostHog flag for staged rollout. When
+  // the flag is off we skip the queries entirely (no spurious subscriptions
+  // for users who don't have the feature) and hide every entry point below.
+  const dmsEnabled = useFeatureFlag("direct-messages");
   const directInbox = useQuery(
     api.functions.messaging.directMessages.getDirectInbox,
-    token ? { token } : "skip",
+    token && dmsEnabled ? { token } : "skip",
   );
   const chatRequests = useQuery(
     api.functions.messaging.directMessages.listChatRequests,
-    token ? { token } : "skip",
+    token && dmsEnabled ? { token } : "skip",
   );
 
   // Cache inbox data for offline use
@@ -280,11 +286,12 @@ export function ChatInboxScreen({
   // The same header is rendered above the list and the three empty/loading
   // states below; centralizing it here keeps the "+" button placement (and the
   // tap target that opens the new-chat picker) in one place. Hidden in the
-  // "no community" empty state since the picker has nothing to search.
+  // "no community" empty state since the picker has nothing to search, and
+  // hidden entirely when the DM feature flag is off.
   const renderHeader = (showCompose: boolean) => (
     <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
       <Text style={[styles.headerTitle, { color: colors.text }]}>Inbox</Text>
-      {showCompose && (
+      {showCompose && dmsEnabled && (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Start a new chat"

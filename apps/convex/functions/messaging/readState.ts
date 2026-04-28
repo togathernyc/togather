@@ -154,7 +154,11 @@ export const getMessageReadBy = query({
       throw new Error("Message does not belong to this channel");
     }
 
-    // Get all active members of the channel (excluding the sender)
+    // Get all active members of the channel (excluding the sender). Members
+    // whose `requestState` is still "pending" are excluded — read receipts
+    // shouldn't leak whether they've seen a message until they've accepted
+    // the chat (Signal-style protection). Legacy/group members have undefined
+    // `requestState` and are treated as accepted.
     const allMembers = await ctx.db
       .query("chatChannelMembers")
       .withIndex("by_channel", (q) => q.eq("channelId", args.channelId))
@@ -165,15 +169,22 @@ export const getMessageReadBy = query({
         )
       )
       .collect();
+    const acceptedMembers = allMembers.filter(
+      (m) => m.requestState !== "pending",
+    );
+    const acceptedMemberIds = new Set(acceptedMembers.map((m) => m.userId));
 
-    const totalMembers = allMembers.length;
+    const totalMembers = acceptedMembers.length;
 
-    // Get all read states for this channel
-    const allReadStates = await ctx.db
-      .query("chatReadState")
-      .withIndex("by_channel", (q) => q.eq("channelId", args.channelId))
-      .filter((q) => q.neq(q.field("userId"), message.senderId))
-      .collect();
+    // Get all read states for this channel — only count those from accepted
+    // members so a pending recipient's read state doesn't leak.
+    const allReadStates = (
+      await ctx.db
+        .query("chatReadState")
+        .withIndex("by_channel", (q) => q.eq("channelId", args.channelId))
+        .filter((q) => q.neq(q.field("userId"), message.senderId))
+        .collect()
+    ).filter((rs) => acceptedMemberIds.has(rs.userId));
 
     // Count users who have read this message
     // A user has read this message if:
