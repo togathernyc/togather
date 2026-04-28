@@ -37,13 +37,25 @@ import { MessageActionsOverlay } from "./MessageActionsOverlay";
 
 interface ThreadPageProps {
   messageId: Id<"chatMessages">;
-  groupId: Id<"groups">;
+  /**
+   * Group context for group-channel threads. Mutually exclusive with
+   * `dmChannelId` — exactly one is required. When set, the page uses
+   * group leader/admin checks and routes back-nav to the group channel.
+   */
+  groupId?: Id<"groups">;
+  /**
+   * Ad-hoc channel context for DM/group_dm threads. Set when threading
+   * inside a `/inbox/dm/[channelId]` flow. There's no leader/admin role
+   * concept for DMs; back-nav returns to the DM channel.
+   */
+  dmChannelId?: Id<"chatChannels">;
   channelName?: string;
 }
 
 export function ThreadPage({
   messageId,
   groupId,
+  dmChannelId,
   channelName,
 }: ThreadPageProps) {
   const insets = useSafeAreaInsets();
@@ -55,7 +67,9 @@ export function ThreadPage({
   const currentUserId = user?.id as Id<"users"> | undefined;
   const flashListRef = useRef<FlashListRef<any>>(null);
 
-  // Fetch group details to determine if user is a leader
+  // Fetch group details to determine if user is a leader. DMs have no
+  // leader/admin role concept — `useGroupDetails` is called with undefined
+  // (skipped inside the hook) and `isUserLeader` stays false.
   const { data: groupDetails } = useGroupDetails(groupId);
   const isUserLeader =
     groupDetails?.user_role === "leader" ||
@@ -98,10 +112,19 @@ export function ThreadPage({
   const handleBack = useCallback(() => {
     if (router.canGoBack()) {
       router.back();
-    } else {
-      router.replace(`/inbox/${groupId}/general`);
+      return;
     }
-  }, [router, groupId]);
+    // Fallback when there's no back stack (deep-link / restored state).
+    // Group threads return to the group's general channel; DM threads
+    // return to the DM channel surface.
+    if (groupId) {
+      router.replace(`/inbox/${groupId}/general`);
+    } else if (dmChannelId) {
+      router.replace(`/inbox/dm/${dmChannelId}` as any);
+    } else {
+      router.replace("/(tabs)/chat");
+    }
+  }, [router, groupId, dmChannelId]);
 
   // Message action handlers
   const handleLongPressMessage = useCallback((
