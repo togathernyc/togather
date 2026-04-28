@@ -241,6 +241,22 @@ export const markAsRead = mutation({
       throw new Error("Not a member of this channel");
     }
 
+    // Ad-hoc channels (DM, group_dm) require an active profile photo on
+    // every interaction — silently no-op rather than throw, so the chat
+    // room's auto-mount markAsRead doesn't crash when the user has
+    // removed their photo. The frontend banner gates the composer; this
+    // is just defense-in-depth.
+    const channel = await ctx.db.get(args.channelId);
+    if (channel?.isAdHoc) {
+      const callerUser = await ctx.db.get(userId);
+      if (
+        !callerUser?.profilePhoto ||
+        callerUser.profilePhoto.trim() === ""
+      ) {
+        return;
+      }
+    }
+
     const now = Date.now();
 
     // Get or create read state

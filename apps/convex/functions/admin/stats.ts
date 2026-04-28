@@ -1331,9 +1331,11 @@ export const getDailySummary = query({
       return { channelId: chId, messages, reactions, score: messages + reactions * 0.5 };
     });
 
-    // Sort by engagement score descending and take top 10
+    // Sort by engagement score descending and take the top channels.
+    // 20 instead of 10 — DMs and group_dms now show up here too, so a
+    // larger window gives a fuller view of what's busy.
     channelScores.sort((a, b) => b.score - a.score);
-    const topScored = channelScores.slice(0, 10);
+    const topScored = channelScores.slice(0, 20);
 
     // Count users active that day via users.lastActiveAt index
     const activeUsers = await ctx.db
@@ -1344,20 +1346,48 @@ export const getDailySummary = query({
       .collect();
     const appOpens = activeUsers.length;
 
-    // Resolve channel and group names + group photo for top channels
+    // Resolve channel and group names + group photo for top channels.
+    // For ad-hoc channels (DMs and group_dms — no groupId) the channel
+    // name is empty for 1:1s and often empty for group_dms. Fall back to
+    // a comma-list of the first few member display names so the row
+    // isn't blank in the dashboard.
     const topChannels = await Promise.all(
       topScored.map(async ({ channelId, messages, reactions }) => {
         const channel = await ctx.db.get(channelId as Id<"chatChannels">);
         let groupName = "";
         let groupPhoto: string | undefined;
+        let displayName = channel?.name ?? "";
         if (channel?.groupId) {
           const group = await ctx.db.get(channel.groupId);
           groupName = group?.name ?? "";
           groupPhoto = getMediaUrl(group?.preview);
+        } else if (channel) {
+          // Ad-hoc DM / group_dm — derive a name from active member rows.
+          const memberRows = await ctx.db
+            .query("chatChannelMembers")
+            .withIndex("by_channel", (q) => q.eq("channelId", channel._id))
+            .filter((q) => q.eq(q.field("leftAt"), undefined))
+            .collect();
+          const names = memberRows
+            .map((m) => (m.displayName ?? "").trim())
+            .filter((n) => n.length > 0)
+            .slice(0, 4);
+          const fallback =
+            names.length > 0
+              ? names.join(", ") +
+                (memberRows.length > names.length
+                  ? ` +${memberRows.length - names.length}`
+                  : "")
+              : channel.channelType === "dm"
+                ? "Direct message"
+                : "Group chat";
+          displayName = displayName.trim().length > 0 ? displayName : fallback;
+          groupName =
+            channel.channelType === "dm" ? "Direct message" : "Group chat";
         }
         return {
           channelId,
-          channelName: channel?.name ?? "",
+          channelName: displayName,
           groupName,
           groupPhoto,
           messages,
