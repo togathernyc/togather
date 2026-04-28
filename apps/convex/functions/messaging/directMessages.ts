@@ -44,22 +44,20 @@ const NEW_REQUEST_WINDOW_MS = 24 * 60 * 60 * 1000;
 // ============================================================================
 
 /**
- * Re-activate an ad-hoc channel member row that had previously been left.
- * Used by `createOrGetDirectChannel` so a user who left a 1:1 DM and then
- * restarts the conversation gets back into the channel — without this, their
- * row keeps `leftAt` set and downstream calls (`markAsRead`, `sendMessage`)
+ * Re-activate an ad-hoc channel member row that had previously left as
+ * an accepted member (e.g. via `leaveAdHocChannel`). Used by
+ * `createOrGetDirectChannel` so a user who left a 1:1 DM and then restarts
+ * the conversation gets back into the channel — without this, their row
+ * keeps `leftAt` set and downstream calls (`markAsRead`, `sendMessage`)
  * reject "Not a member of this channel".
  *
- * IMPORTANT: this only un-leaves a row that has `leftAt` set. It does NOT
- * promote a still-pending recipient to accepted — that would bypass the
- * explicit `respondToChatRequest` accept flow, auto-accepting a message
- * request via a normal "Message" entry point. Recipients with a pending row
- * stay pending; declined rows stay declined; only `leftAt`-set rows are
- * reactivated.
- *
- * The new requestState is preserved if it was already accepted; otherwise
- * it falls back to `finalState` (which the caller picks based on context —
- * `"accepted"` for the original inviter restoring themselves).
+ * IMPORTANT — only reactivates rows whose previous `requestState` was
+ * `"accepted"`. Declined rows (which `respondToChatRequest` stores as
+ * `leftAt` + `requestState: "declined"`) and pending rows are NEVER
+ * touched, because flipping them back to active would silently undo a
+ * deliberate user choice (decline / block / pending awaiting accept) via a
+ * normal "Message" entry point. Re-engaging after a decline must go
+ * through the explicit accept path.
  *
  * Returns true when the row was reactivated so callers can adjust
  * memberCount.
@@ -68,7 +66,6 @@ async function reactivateAdHocMembership(
   ctx: { db: { query: any; patch: any } },
   channelId: Id<"chatChannels">,
   userId: Id<"users">,
-  finalState: "accepted" | "pending",
 ): Promise<boolean> {
   const row = await ctx.db
     .query("chatChannelMembers")
@@ -77,14 +74,11 @@ async function reactivateAdHocMembership(
     )
     .first();
   if (!row) return false;
-  // Only un-leave; don't touch still-pending or declined rows.
-  if (row.leftAt === undefined) return false;
-  const restoredState =
-    row.requestState === "accepted" ? "accepted" : finalState;
+  // Only restore left-as-accepted rows. Declined / pending stay as-is.
+  if (row.leftAt === undefined || row.requestState !== "accepted") return false;
   await ctx.db.patch(row._id, {
     leftAt: undefined,
-    requestState: restoredState,
-    requestRespondedAt: restoredState === "accepted" ? Date.now() : undefined,
+    requestRespondedAt: Date.now(),
   });
   return true;
 }
@@ -224,7 +218,6 @@ export const createOrGetDirectChannel = mutation({
         ctx,
         existing._id,
         senderId,
-        "accepted",
       );
       // When reactivation actually flipped a `leftAt`-set row, also restore
       // memberCount (`leaveAdHocChannel` decrements it on departure). If we

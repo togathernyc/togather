@@ -1019,6 +1019,56 @@ describe("profile photo gate", () => {
     expect(channelAfter?.memberCount).toBe(2);
   });
 
+  test("createOrGetDirectChannel does not auto-restore a declined recipient (preserves decline)", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Decline Stays Community");
+    const { userId: aId, accessToken: aToken } = await createUserInCommunity(
+      t,
+      communityId,
+      { firstName: "Alice" },
+    );
+    const { userId: bId, accessToken: bToken } = await createUserInCommunity(
+      t,
+      communityId,
+      { firstName: "Bob" },
+    );
+
+    // A creates a DM, B declines.
+    const { channelId } = await t.mutation(
+      api.functions.messaging.directMessages.createOrGetDirectChannel,
+      { token: aToken, communityId, recipientUserId: bId },
+    );
+    await t.mutation(
+      api.functions.messaging.directMessages.respondToChatRequest,
+      { token: bToken, channelId, response: "decline" },
+    );
+
+    const bRowDeclined = await t.run((ctx) =>
+      ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", bId),
+        )
+        .first(),
+    );
+    expect(bRowDeclined?.requestState).toBe("declined");
+
+    // B uses a Message entry point on A — must NOT silently un-decline.
+    await t.mutation(
+      api.functions.messaging.directMessages.createOrGetDirectChannel,
+      { token: bToken, communityId, recipientUserId: aId },
+    );
+    const bRowAfter = await t.run((ctx) =>
+      ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", bId),
+        )
+        .first(),
+    );
+    expect(bRowAfter?.requestState).toBe("declined");
+  });
+
   test("createOrGetDirectChannel does not auto-promote a pending recipient (preserves accept flow)", async () => {
     const t = convexTest(schema, modules);
     const communityId = await createCommunity(
