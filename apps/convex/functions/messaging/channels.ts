@@ -251,7 +251,11 @@ export const getChannel = query({
       if (adHocMembership.invitedById) {
         const inviter = await ctx.db.get(adHocMembership.invitedById);
         if (inviter) {
-          inviterDisplayName = `${inviter.firstName ?? ""} ${inviter.lastName ?? ""}`.trim();
+          // Use the shared `getDisplayName` helper so unset firstName +
+          // lastName don't produce an empty string that would render as
+          // " would like to chat with you." in the request banner.
+          const resolved = getDisplayName(inviter.firstName, inviter.lastName);
+          inviterDisplayName = resolved.trim().length > 0 ? resolved : "Someone";
         }
       }
       return {

@@ -113,11 +113,21 @@ export default function ChatRequestsScreen() {
       setPendingAction(null);
       // Replace, not push, so back from the chat goes to the inbox — not
       // back to the requests list (which will likely be empty/stale).
+      // For 1:1 DMs the chat header should show the inviter; for group_dms
+      // it should show the group's name + a generic group avatar so users
+      // recognize which thread they entered, not the inviter's identity.
+      const isGroup = row.channelType === "group_dm";
+      const headerName = isGroup
+        ? row.channelName.trim().length > 0
+          ? row.channelName
+          : `Group chat (${row.memberCount})`
+        : row.inviterDisplayName;
+      const headerImage = isGroup ? "" : row.inviterProfilePhoto ?? "";
       router.replace({
         pathname: `/inbox/dm/${row.channelId}` as any,
         params: {
-          groupName: row.inviterDisplayName,
-          imageUrl: row.inviterProfilePhoto ?? "",
+          groupName: headerName,
+          imageUrl: headerImage,
         },
       });
     } catch (e) {
