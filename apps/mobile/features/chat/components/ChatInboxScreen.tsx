@@ -154,6 +154,10 @@ export function ChatInboxScreen({
     api.functions.messaging.directMessages.getDirectInbox,
     token ? { token } : "skip",
   );
+  const chatRequests = useQuery(
+    api.functions.messaging.directMessages.listChatRequests,
+    token ? { token } : "skip",
+  );
 
   // Cache inbox data for offline use
   useEffect(() => {
@@ -172,11 +176,53 @@ export function ChatInboxScreen({
     | { kind: "group"; item: InboxGroup }
     | { kind: "event"; item: EventInboxRow }
     | { kind: "dm"; item: DirectInboxRow }
-    | { kind: "section"; key: string; title: string };
+    | { kind: "section"; key: string; title: string }
+    | { kind: "requests-link"; count: number };
 
-  // Render a single inbox row (group, event, dm, or a section header)
+  // Render a single inbox row (group, event, dm, section header, or
+  // requests-link). The requests-link is always a single tappable row that
+  // navigates to the dedicated requests inbox — keeping pending senders out
+  // of the active conversation list is the whole point of the Message
+  // Request flow, so we deliberately do NOT interleave them.
   const renderItem = useCallback(
     ({ item }: { item: InboxListItem }) => {
+      if (item.kind === "requests-link") {
+        return (
+          <Pressable
+            onPress={() => router.push("/inbox/requests" as any)}
+            style={styles.requestsLinkRow}
+            accessibilityRole="button"
+            accessibilityLabel={`${item.count} message request${item.count === 1 ? "" : "s"}`}
+          >
+            <View
+              style={[
+                styles.requestsLinkIcon,
+                { backgroundColor: primaryColor },
+              ]}
+            >
+              <Ionicons name="mail-unread-outline" size={20} color="#ffffff" />
+            </View>
+            <View style={styles.requestsLinkContent}>
+              <Text style={[styles.requestsLinkTitle, { color: colors.text }]}>
+                Message Requests
+              </Text>
+              <Text
+                style={[
+                  styles.requestsLinkSubtitle,
+                  { color: colors.textSecondary },
+                ]}
+              >
+                {item.count} pending
+              </Text>
+            </View>
+            <Ionicons
+              name="chevron-forward"
+              size={18}
+              color={colors.textSecondary}
+            />
+          </Pressable>
+        );
+      }
       if (item.kind === "section") {
         return (
           <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
@@ -215,11 +261,12 @@ export function ChatInboxScreen({
         />
       );
     },
-    [isGroupExpanded, toggleGroupExpanded, sidebarMode, activeGroupId, activeChannelSlug, primaryColor, colors]
+    [isGroupExpanded, toggleGroupExpanded, sidebarMode, activeGroupId, activeChannelSlug, primaryColor, colors, router]
   );
 
   // Key extractor for FlatList
   const keyExtractor = useCallback((item: InboxListItem) => {
+    if (item.kind === "requests-link") return "requests-link";
     if (item.kind === "section") return `section:${item.key}`;
     if (item.kind === "dm") return `dm:${item.item.channelId}`;
     return item.kind === "event"
@@ -366,18 +413,26 @@ export function ChatInboxScreen({
   }, [displayChannels]);
 
   // Prepend the Direct messages section when the user has any accepted DMs.
-  // Pending requests live in their own surface (PR 3) — not folded in here.
+  // Pending requests are surfaced as a single tappable header row above the
+  // section that routes to /inbox/requests; they're not interleaved into
+  // either DMs or groups so unaccepted senders can't sneak into the active
+  // chat list.
   const dmRows = directInbox ?? [];
+  const requestCount = chatRequests?.length ?? 0;
   const listItemsWithDm = useMemo<InboxListItem[]>(() => {
-    if (dmRows.length === 0) return listItems;
-    return [
-      { kind: "section", key: "dm-header", title: "Direct messages" },
-      ...dmRows.map(
-        (row) => ({ kind: "dm" as const, item: row }),
-      ),
-      ...listItems,
-    ];
-  }, [dmRows, listItems]);
+    const items: InboxListItem[] = [];
+    if (requestCount > 0) {
+      items.push({ kind: "requests-link", count: requestCount });
+    }
+    if (dmRows.length > 0) {
+      items.push({ kind: "section", key: "dm-header", title: "Direct messages" });
+      items.push(
+        ...dmRows.map((row) => ({ kind: "dm" as const, item: row })),
+      );
+    }
+    items.push(...listItems);
+    return items;
+  }, [requestCount, dmRows, listItems]);
   const hasInboxItems = listItemsWithDm.length > 0;
 
   // Show message when user has no community context
@@ -1040,6 +1095,31 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 8,
     paddingBottom: 6,
+  },
+  requestsLinkRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  requestsLinkIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  requestsLinkContent: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  requestsLinkTitle: {
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  requestsLinkSubtitle: {
+    fontSize: 13,
+    marginTop: 2,
   },
   dmRow: {
     flexDirection: "row",
