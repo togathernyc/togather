@@ -148,6 +148,55 @@ export function useFeatureFlag(flagKey: string): boolean {
 }
 
 /**
+ * Same as `useFeatureFlag` but distinguishes "feature is off" from "we don't
+ * yet know whether the feature is on" — the latter happens briefly on cold
+ * starts while AsyncStorage / PostHog are hydrating. Callers that want to
+ * render a loading state (rather than flashing the disabled UI on rollout
+ * users) should use this instead.
+ */
+export function useFeatureFlagState(flagKey: string): {
+  enabled: boolean;
+  loaded: boolean;
+} {
+  const posthog = usePostHog();
+  const [override, setOverride] = useState<boolean | undefined>(undefined);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    loadOverrides().then((overrides) => {
+      setOverride(overrides[flagKey]);
+      setLoaded(true);
+    });
+  }, [flagKey]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToOverrideChanges(() => {
+      loadOverrides().then((overrides) => {
+        setOverride(overrides[flagKey]);
+      });
+    });
+    return unsubscribe;
+  }, [flagKey]);
+
+  // Hydration order matches `useFeatureFlag`. We're "loaded" once both the
+  // local override has been read from AsyncStorage AND PostHog has produced
+  // a definitive value (or we hit a URL override, which is synchronous on
+  // web and bypasses both async sources).
+  const urlOverride = getUrlParamOverride(flagKey);
+  if (urlOverride !== undefined) {
+    return { enabled: urlOverride, loaded: true };
+  }
+  if (loaded && override !== undefined) {
+    return { enabled: override, loaded: true };
+  }
+  const posthogValue = posthog?.isFeatureEnabled(flagKey);
+  if (posthogValue !== undefined) {
+    return { enabled: posthogValue, loaded: true };
+  }
+  return { enabled: false, loaded: false };
+}
+
+/**
  * Get the variant value of a multivariate feature flag.
  *
  * @param flagKey - The feature flag key

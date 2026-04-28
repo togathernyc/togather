@@ -9,25 +9,51 @@
  * from AsyncStorage / PostHog so we don't briefly flash the placeholder.
  */
 import React from "react";
-import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  ActivityIndicator,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@hooks/useTheme";
-import { useFeatureFlag } from "@hooks/useFeatureFlag";
+import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useFeatureFlagState } from "@hooks/useFeatureFlag";
 
 interface DmFeatureGateProps {
   children: React.ReactNode;
 }
 
 export function DmFeatureGate({ children }: DmFeatureGateProps) {
-  const enabled = useFeatureFlag("direct-messages");
+  const { enabled, loaded } = useFeatureFlagState("direct-messages");
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
+  const { primaryColor } = useCommunityTheme();
 
   if (enabled) {
     return <>{children}</>;
+  }
+
+  // Render a spinner — not the disabled placeholder — while the flag value
+  // is still hydrating from AsyncStorage / PostHog. Otherwise rollout-cohort
+  // users briefly see "Direct messages aren't available yet" on cold starts
+  // and could navigate away before the flag resolves to enabled.
+  if (!loaded) {
+    return (
+      <View
+        style={[
+          styles.container,
+          styles.loading,
+          { backgroundColor: colors.surface },
+        ]}
+      >
+        <ActivityIndicator size="small" color={primaryColor} />
+      </View>
+    );
   }
 
   const handleClose = () => {
@@ -79,6 +105,10 @@ export function DmFeatureGate({ children }: DmFeatureGateProps) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  loading: {
+    alignItems: "center",
+    justifyContent: "center",
   },
   header: {
     flexDirection: "row",
