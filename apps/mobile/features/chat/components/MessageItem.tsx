@@ -786,7 +786,9 @@ function MessageItemInner({
   };
 
 
-  // Handle thread press - navigate to thread page
+  // Handle thread press — navigate to thread page. Group channels and DMs
+  // have parallel routes (`/inbox/[groupId]/thread/...` vs
+  // `/inbox/dm/[channelId]/thread/...`); pick by which context we're in.
   const handleThreadPress = useCallback(() => {
     if (groupId) {
       router.push({
@@ -795,8 +797,12 @@ function MessageItemInner({
           channelName: channelName || 'general',
         },
       });
+    } else {
+      router.push({
+        pathname: `/inbox/dm/${message.channelId}/thread/${message._id}` as any,
+      });
     }
-  }, [router, groupId, message._id, channelName]);
+  }, [router, groupId, message._id, message.channelId, channelName]);
 
   // Render reach-out request card (embedded in normal message layout)
   const renderReachOutCard = () => {
@@ -825,7 +831,7 @@ function MessageItemInner({
         parentMessageId={message._id}
         channelId={message.channelId}
         replyCount={replyCount}
-        onPress={groupId ? handleThreadPress : undefined}
+        onPress={handleThreadPress}
       />
     );
   };

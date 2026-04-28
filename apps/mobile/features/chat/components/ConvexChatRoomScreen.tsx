@@ -56,6 +56,7 @@ import { useConvexChannelFromGroup } from "../hooks/useConvexChannelFromGroup";
 import { useReadState } from "../hooks/useReadState";
 import { useTypingIndicators } from "../hooks/useTypingIndicators";
 import { useSendMessage } from "../hooks/useConvexSendMessage";
+import { useParentMessage } from "../hooks/useParentMessage";
 import { BlockedUsersProvider, useBlockedUsersContext } from "../context/BlockedUsersContext";
 import { useMutation, useAction } from "@services/api/convex";
 import { useGroupCache } from "@/stores/groupCache";
@@ -399,6 +400,11 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   const [selectedMessageSenderPhoto, setSelectedMessageSenderPhoto] = useState<string | undefined>();
   const [selectedMessageAttachments, setSelectedMessageAttachments] = useState<Array<{ type: string; url: string }> | undefined>();
   const [replyToMessageId, setReplyToMessageId] = useState<Id<"chatMessages"> | null>(null);
+
+  // Load the parent message when a reply is in progress so the composer can
+  // show a real "Replying to <name>: <preview>" banner instead of the empty
+  // placeholder it used to render.
+  const { message: replyParentMessage } = useParentMessage(replyToMessageId);
 
   // Sync modal state
   const [syncModalVisible, setSyncModalVisible] = useState(false);
@@ -1148,7 +1154,15 @@ const ConvexChatRoomScreenInner: React.FC = () => {
             ) : canSendMessages ? (
               <MessageInput
                 channelId={activeChannelId ?? null}
-                replyToMessage={replyToMessageId ? { _id: replyToMessageId, content: "", senderName: "" } : null}
+                replyToMessage={
+                  replyToMessageId
+                    ? {
+                        _id: replyToMessageId,
+                        content: replyParentMessage?.content ?? "",
+                        senderName: replyParentMessage?.senderName ?? "",
+                      }
+                    : null
+                }
                 onCancelReply={handleCancelReply}
                 externalSendMessage={sendMessage}
                 externalIsSending={isSending}
