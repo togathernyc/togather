@@ -44,20 +44,30 @@ const NEW_REQUEST_WINDOW_MS = 24 * 60 * 60 * 1000;
 // ============================================================================
 
 /**
- * Re-activate an ad-hoc channel member row that had previously been left or
- * declined. Used by `createOrGetDirectChannel` so a user who left a 1:1 DM
- * and then restarts the conversation gets back into the channel — without
- * this, their row keeps `leftAt` set and downstream calls (like
- * `markAsRead`, `sendMessage`) reject "Not a member of this channel".
+ * Re-activate an ad-hoc channel member row that had previously been left.
+ * Used by `createOrGetDirectChannel` so a user who left a 1:1 DM and then
+ * restarts the conversation gets back into the channel — without this, their
+ * row keeps `leftAt` set and downstream calls (`markAsRead`, `sendMessage`)
+ * reject "Not a member of this channel".
  *
- * Idempotent: if the row is already active and accepted, it's a no-op.
- * Returns true when something changed so callers can adjust memberCount.
+ * IMPORTANT: this only un-leaves a row that has `leftAt` set. It does NOT
+ * promote a still-pending recipient to accepted — that would bypass the
+ * explicit `respondToChatRequest` accept flow, auto-accepting a message
+ * request via a normal "Message" entry point. Recipients with a pending row
+ * stay pending; declined rows stay declined; only `leftAt`-set rows are
+ * reactivated.
+ *
+ * The new requestState is preserved if it was already accepted; otherwise
+ * it falls back to `finalState` (which the caller picks based on context —
+ * `"accepted"` for the original inviter restoring themselves).
+ *
+ * Returns true when the row was reactivated so callers can adjust
+ * memberCount.
  */
 async function reactivateAdHocMembership(
   ctx: { db: { query: any; patch: any } },
   channelId: Id<"chatChannels">,
   userId: Id<"users">,
-  /** Final requestState — typically "accepted" for the inviter, "pending" for invitees. */
   finalState: "accepted" | "pending",
 ): Promise<boolean> {
   const row = await ctx.db
@@ -67,14 +77,14 @@ async function reactivateAdHocMembership(
     )
     .first();
   if (!row) return false;
-  const needsRejoin =
-    row.leftAt !== undefined ||
-    (finalState === "accepted" && row.requestState !== "accepted");
-  if (!needsRejoin) return false;
+  // Only un-leave; don't touch still-pending or declined rows.
+  if (row.leftAt === undefined) return false;
+  const restoredState =
+    row.requestState === "accepted" ? "accepted" : finalState;
   await ctx.db.patch(row._id, {
     leftAt: undefined,
-    requestState: finalState,
-    requestRespondedAt: finalState === "accepted" ? Date.now() : undefined,
+    requestState: restoredState,
+    requestRespondedAt: restoredState === "accepted" ? Date.now() : undefined,
   });
   return true;
 }
@@ -210,22 +220,31 @@ export const createOrGetDirectChannel = mutation({
       .withIndex("by_dmPairKey", (q) => q.eq("dmPairKey", dmPairKey))
       .first();
     if (existing) {
-      await reactivateAdHocMembership(
+      const reactivated = await reactivateAdHocMembership(
         ctx,
         existing._id,
         senderId,
         "accepted",
       );
+      // When reactivation actually flipped a `leftAt`-set row, also restore
+      // memberCount (`leaveAdHocChannel` decrements it on departure). If we
+      // skipped this, a 1:1 DM after leave→restart would persistently report
+      // memberCount=1, drifting metadata in inbox surfaces.
       // If the channel was archived (e.g. via `leaveAdHocChannel` when the
       // caller was the last active member), unarchive it now that the
       // caller is rejoining — otherwise `getDirectInbox` would still hide
       // the thread and the user would only reach it via direct nav.
+      const patches: Record<string, unknown> = {};
+      if (reactivated) {
+        patches.memberCount = (existing.memberCount ?? 0) + 1;
+      }
       if (existing.isArchived) {
-        await ctx.db.patch(existing._id, {
-          isArchived: false,
-          archivedAt: undefined,
-          updatedAt: Date.now(),
-        });
+        patches.isArchived = false;
+        patches.archivedAt = undefined;
+      }
+      if (Object.keys(patches).length > 0) {
+        patches.updatedAt = Date.now();
+        await ctx.db.patch(existing._id, patches);
       }
       return { channelId: existing._id, isNew: false };
     }

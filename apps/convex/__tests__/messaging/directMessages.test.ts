@@ -1014,6 +1014,54 @@ describe("profile photo gate", () => {
     // nav and missing from inbox surfaces.
     const channelAfter = await t.run((ctx) => ctx.db.get(channelId));
     expect(channelAfter?.isArchived).toBe(false);
+    // memberCount restored after rejoin (leaveAdHocChannel decremented it
+    // — without restore the 1:1 channel would persistently report 1).
+    expect(channelAfter?.memberCount).toBe(2);
+  });
+
+  test("createOrGetDirectChannel does not auto-promote a pending recipient (preserves accept flow)", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(
+      t,
+      "No Auto Accept Community",
+    );
+    const { userId: aId, accessToken: aToken } = await createUserInCommunity(
+      t,
+      communityId,
+      { firstName: "Alice" },
+    );
+    const { userId: bId, accessToken: bToken } = await createUserInCommunity(
+      t,
+      communityId,
+      { firstName: "Bob" },
+    );
+
+    // A creates the DM — B's row starts pending.
+    await t.mutation(
+      api.functions.messaging.directMessages.createOrGetDirectChannel,
+      { token: aToken, communityId, recipientUserId: bId },
+    );
+
+    // B uses a Message entry point (e.g. tapping Message on A's profile)
+    // before explicitly accepting via respondToChatRequest. The lookup
+    // returns the existing channel BUT must not auto-flip B from pending
+    // to accepted — that would bypass the deliberate accept action.
+    const result = await t.mutation(
+      api.functions.messaging.directMessages.createOrGetDirectChannel,
+      { token: bToken, communityId, recipientUserId: aId },
+    );
+    expect(result.isNew).toBe(false);
+
+    const bRow = await t.run((ctx) =>
+      ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", result.channelId).eq("userId", bId),
+        )
+        .first(),
+    );
+    expect(bRow?.requestState).toBe("pending");
+    expect(bRow?.leftAt).toBeUndefined();
   });
 });
 
