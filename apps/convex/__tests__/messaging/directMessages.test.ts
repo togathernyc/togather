@@ -340,7 +340,7 @@ describe("sendMessage gating on pending channels", () => {
       channelId,
       content: "hello",
     });
-    await t.finishAllScheduledFunctions(() => {});
+    await t.finishInProgressScheduledFunctions();
 
     // Second send should be rate-limited.
     await expect(
@@ -350,6 +350,13 @@ describe("sendMessage gating on pending channels", () => {
         content: "hello again",
       }),
     ).rejects.toThrow(/1 message|accept/i);
+
+    // Drain again at end-of-test — `finishInProgressScheduledFunctions` only
+    // runs ONE round, but the notification chain (onMessageSent →
+    // sendMessageNotifications) schedules transitively. Without this, the
+    // tail-end of the chain leaks into the next test as a "test began while
+    // previous transaction was still open" error.
+    await t.finishInProgressScheduledFunctions();
   });
 
   test("attachments are rejected while a recipient is pending", async () => {
@@ -414,7 +421,7 @@ describe("listChatRequests", () => {
       channelId,
       content: "hi",
     });
-    await t.finishAllScheduledFunctions(() => {});
+    await t.finishInProgressScheduledFunctions();
 
     const requests = await t.query(
       api.functions.messaging.directMessages.listChatRequests,
@@ -427,6 +434,8 @@ describe("listChatRequests", () => {
     expect(requests[0].inviterUserId).toBe(aId);
     expect(requests[0].firstMessagePreview).toBe("hi");
     expect(requests[0].inviterDisplayName.toLowerCase()).toContain("alice");
+
+    await t.finishInProgressScheduledFunctions();
   });
 });
 
@@ -634,7 +643,7 @@ describe("getDirectInbox", () => {
       channelId: abChannelId,
       content: "hello",
     });
-    await t.finishAllScheduledFunctions(() => {});
+    await t.finishInProgressScheduledFunctions();
     await t.mutation(
       api.functions.messaging.directMessages.respondToChatRequest,
       { token: bToken, channelId: abChannelId, response: "accept" },
@@ -672,6 +681,8 @@ describe("getDirectInbox", () => {
       { token: cToken },
     );
     expect(cInbox).toHaveLength(0);
+
+    await t.finishInProgressScheduledFunctions();
   });
 });
 
