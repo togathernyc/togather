@@ -92,9 +92,8 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   const params = useLocalSearchParams() as ChatRoomParams;
   const router = useRouter();
   const pathname = usePathname();
-  const { user, community } = useAuth();
+  const { user } = useAuth();
   const token = useStoredAuthToken();
-  const adHocCommunityId = community?.id as Id<"communities"> | undefined;
   const { primaryColor } = useCommunityTheme();
   const { colors } = useTheme();
 
@@ -910,30 +909,35 @@ const ConvexChatRoomScreenInner: React.FC = () => {
       ? (channelData.channelType as "dm" | "group_dm")
       : null;
 
-  // Ad-hoc channels need other-member metadata for the stacked-avatar header
-  // and the chat-info screen. `getDirectInbox` already returns this in the
-  // exact shape we need; reusing it avoids a second query path while the
-  // channel doc itself is being kept lean.
-  const directInboxForHeader = useQuery(
-    api.functions.messaging.directMessages.getDirectInbox,
-    isAdHocChannel && token && adHocCommunityId
-      ? { token, communityId: adHocCommunityId }
+  // Ad-hoc channels: fetch JUST the members for THIS channel. Previously we
+  // reused `getDirectInbox` (community-wide), which re-fired on every other
+  // DM channel's activity and was implicated in a "Maximum update depth
+  // exceeded" crash that fired right after sending a message in a DM —
+  // every send invalidated the inbox query, which produced a new array
+  // reference for `otherMembers` and cascaded re-renders through the
+  // header/avatars. The tight per-channel query only re-fires when this
+  // channel's member list actually changes.
+  const adHocChannelMembers = useQuery(
+    api.functions.messaging.directMessages.getAdHocChannelMembers,
+    isAdHocChannel && token && activeChannelId
+      ? { token, channelId: activeChannelId }
       : "skip",
   );
-  const adHocInboxRow = useMemo(() => {
-    if (!isAdHocChannel || !directInboxForHeader || !activeChannelId) return null;
-    return (
-      directInboxForHeader.find((row) => row.channelId === activeChannelId) ??
-      null
-    );
-  }, [isAdHocChannel, directInboxForHeader, activeChannelId]);
+  // Stabilise the member array reference: the query result is a fresh
+  // object on every Convex push, but if the underlying data hasn't changed,
+  // downstream consumers (StackedMemberAvatars, ChatRoomHeader) shouldn't
+  // see a new prop reference. Key on the userId+photo+name tuple.
+  const adHocOtherMembersKey = (adHocChannelMembers?.otherMembers ?? [])
+    .map((m) => `${m.userId}|${m.profilePhoto ?? ""}|${m.displayName}`)
+    .join("\n");
   const adHocOtherMembers = useMemo(
     () =>
-      (adHocInboxRow?.otherMembers ?? []).map((m) => ({
+      (adHocChannelMembers?.otherMembers ?? []).map((m) => ({
         name: m.displayName,
         imageUrl: m.profilePhoto,
       })),
-    [adHocInboxRow],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [adHocOtherMembersKey],
   );
 
   const handleOpenChatInfo = useCallback(() => {

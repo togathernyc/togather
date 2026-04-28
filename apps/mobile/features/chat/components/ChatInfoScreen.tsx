@@ -74,30 +74,38 @@ const MAX_TOTAL_MEMBERS = 20;
 export function ChatInfoScreen({ channelId }: Props) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { user, community } = useAuth();
+  const { user } = useAuth();
   const token = useStoredAuthToken();
   const { colors } = useTheme();
   const { primaryColor, accentLight } = useCommunityTheme();
-  const communityId = community?.id as Id<"communities"> | undefined;
 
   const channel = useQuery(
     api.functions.messaging.channels.getChannel,
     token ? { token, channelId } : "skip",
   );
-  // The inbox query is the simplest source of `otherMembers` for the
-  // current user's ad-hoc channels; it filters by request state already.
-  const directInbox = useQuery(
-    api.functions.messaging.directMessages.getDirectInbox,
-    token && communityId ? { token, communityId } : "skip",
+  // Tight per-channel query — replaces the previous `getDirectInbox`
+  // (community-wide) usage so this screen only re-renders when THIS
+  // channel's members change. Previously, opening the info sheet would
+  // refetch whenever any other DM channel's lastMessageAt updated.
+  const channelMembers = useQuery(
+    api.functions.messaging.directMessages.getAdHocChannelMembers,
+    token ? { token, channelId } : "skip",
   );
 
   const { rename, addMembers, removeMember, leave } =
     useAdHocChannelManagement(channelId);
 
+  // Adapt to the previous shape so the rest of this screen keeps working.
   const inboxRow = useMemo(() => {
-    if (!directInbox) return null;
-    return directInbox.find((row) => row.channelId === channelId) ?? null;
-  }, [directInbox, channelId]);
+    if (!channelMembers) return null;
+    return {
+      channelId,
+      channelType: channelMembers.channelType,
+      channelName: channelMembers.channelName,
+      memberCount: channelMembers.memberCount,
+      otherMembers: channelMembers.otherMembers,
+    };
+  }, [channelMembers, channelId]);
 
   const isGroupDm = channel?.channelType === "group_dm";
   const isAdHoc = channel?.isAdHoc === true;
@@ -291,7 +299,7 @@ export function ChatInfoScreen({ channelId }: Props) {
   );
 
   // -- Rendering --
-  if (channel === undefined || directInbox === undefined) {
+  if (channel === undefined || channelMembers === undefined) {
     return (
       <View
         style={[

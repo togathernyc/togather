@@ -1176,6 +1176,92 @@ export const searchUsersInSharedCommunities = query({
  * community's threads. Pending requests are surfaced separately by
  * `listChatRequests`. Sorted most-recent activity first.
  */
+/**
+ * Tight per-channel query that returns just the metadata the chat-room
+ * header and chat-info screen need. Use this instead of `getDirectInbox`
+ * when you only care about ONE channel — `getDirectInbox` re-fires on every
+ * change to ANY of the caller's DM channels, which produces unnecessary
+ * re-renders (and was implicated in a "Maximum update depth exceeded"
+ * crash that fired right after sending a message in a DM).
+ *
+ * Returns null when the caller has no active membership in the channel,
+ * so the UI can render the loading / not-found state cleanly.
+ */
+export const getAdHocChannelMembers = query({
+  args: {
+    token: v.string(),
+    channelId: v.id("chatChannels"),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    channelType: "dm" | "group_dm";
+    channelName: string;
+    memberCount: number;
+    otherMembers: Array<{
+      userId: Id<"users">;
+      displayName: string;
+      profilePhoto: string | null;
+    }>;
+  } | null> => {
+    const userId = await requireAuth(ctx, args.token);
+    const channel = await ctx.db.get(args.channelId);
+    if (
+      !channel ||
+      !channel.isAdHoc ||
+      (channel.channelType !== "dm" && channel.channelType !== "group_dm")
+    ) {
+      return null;
+    }
+
+    const callerRow = await ctx.db
+      .query("chatChannelMembers")
+      .withIndex("by_channel_user", (q) =>
+        q.eq("channelId", args.channelId).eq("userId", userId),
+      )
+      .first();
+    if (!callerRow || callerRow.leftAt !== undefined) {
+      return null;
+    }
+
+    const memberRows = await ctx.db
+      .query("chatChannelMembers")
+      .withIndex("by_channel", (q) => q.eq("channelId", args.channelId))
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .collect();
+
+    const others = memberRows.filter((m) => m.userId !== userId);
+    // Resolve profilePhoto + displayName from each user doc — denormalized
+    // values on the member row may be stale when the user updates their
+    // profile, so prefer the live user record.
+    const otherUsers = await Promise.all(
+      others.map((m) => ctx.db.get(m.userId)),
+    );
+    const otherMembers = others
+      .map((m, i) => {
+        const u = otherUsers[i];
+        if (!u) return null;
+        return {
+          userId: m.userId,
+          displayName:
+            getDisplayName(u.firstName, u.lastName) ||
+            m.displayName ||
+            "Member",
+          profilePhoto: getMediaUrl(u.profilePhoto ?? m.profilePhoto) ?? null,
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
+
+    return {
+      channelType: channel.channelType as "dm" | "group_dm",
+      channelName: channel.name ?? "",
+      memberCount: memberRows.length,
+      otherMembers,
+    };
+  },
+});
+
 export const getDirectInbox = query({
   args: {
     token: v.string(),
