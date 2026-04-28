@@ -131,7 +131,9 @@ const isActiveMembership = (status: number | undefined) => status !== 3;
 /**
  * Hard requirement: chats are restricted to people who have a profile photo.
  *
- * Throws `PROFILE_PHOTO_REQUIRED` if `userId` lacks one. Caller-side; if the
+ * Throws `ConvexError("PROFILE_PHOTO_REQUIRED")` if `userId` lacks one — using
+ * `ConvexError` so the message reaches the client in production (Convex
+ * sanitizes `new Error(...)` messages to "Server Error"). Caller-side; if the
  * gate needs to surface a specific recipient userId, the caller throws
  * `RECIPIENT_PROFILE_PHOTO_REQUIRED:<userId>` instead so the frontend can
  * format a per-user prompt.
@@ -142,7 +144,7 @@ async function requireProfilePhoto(
 ): Promise<void> {
   const user = await ctx.db.get(userId);
   if (!user?.profilePhoto || user.profilePhoto.trim() === "") {
-    throw new Error("PROFILE_PHOTO_REQUIRED");
+    throw new ConvexError("PROFILE_PHOTO_REQUIRED");
   }
 }
 
@@ -492,15 +494,15 @@ export const respondToChatRequest = mutation({
       )
       .first();
     if (!membership) {
-      throw new Error("Not a member of this channel");
+      throw new ConvexError("Not a member of this channel");
     }
     if (membership.requestState !== "pending") {
-      throw new Error("This chat is not pending response");
+      throw new ConvexError("This chat is not pending response");
     }
 
     const channel = await ctx.db.get(args.channelId);
     if (!channel) {
-      throw new Error("Channel not found");
+      throw new ConvexError("Channel not found");
     }
     if (!channel.isAdHoc) {
       throw new ConvexError({
@@ -535,7 +537,7 @@ export const respondToChatRequest = mutation({
     // response === "block"
     const inviterId = membership.invitedById;
     if (!inviterId) {
-      throw new Error("Cannot block: inviter unknown");
+      throw new ConvexError("Cannot block: inviter unknown");
     }
 
     await ctx.db.patch(membership._id, {
