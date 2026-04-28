@@ -1,16 +1,21 @@
 /**
  * FeatureFlagsContent
  *
- * Primary-admin-only screen for flipping the global feature flags stored
+ * Superuser-only screen for flipping the APP-WIDE feature flags stored
  * in the Convex `featureFlags` table. One row per flag, each with:
  *   - the flag key + optional description
  *   - a Switch that calls `setFeatureFlag` on change
  *   - the last-updated timestamp
  *
+ * Flags are global, not community-scoped — community primary admins
+ * cannot see or flip them. The route is gated on `user.is_superuser ||
+ * user.is_staff`; non-superusers see a permission-denied state.
+ *
  * Flags are created lazily — the first call to `setFeatureFlag(key, ...)`
  * inserts the row. To show a flag here before it's been flipped for the
  * first time, the `KNOWN_FLAGS` table below seeds the list with metadata
- * so admins can see what flags exist even when they're still default-off.
+ * so superusers can see what flags exist even when they're still
+ * default-off.
  */
 import React, { useMemo, useState } from "react";
 import {
@@ -67,23 +72,23 @@ function formatRelative(ts: number): string {
 
 export function FeatureFlagsContent() {
   const insets = useSafeAreaInsets();
-  const { token, community } = useAuth();
+  const { token, user } = useAuth();
   const { primaryColor } = useCommunityTheme();
   const { colors } = useTheme();
 
-  const communityId = community?.id as Id<"communities"> | undefined;
+  const isSuperuser = user?.is_superuser === true || user?.is_staff === true;
 
   const flags = useQuery(
     api.functions.admin.featureFlags.listFeatureFlags,
-    token && communityId ? { token, communityId } : "skip",
+    token && isSuperuser ? { token } : "skip",
   ) as FlagRow[] | undefined;
 
   const setFlag = useMutation(api.functions.admin.featureFlags.setFeatureFlag);
 
   const [pendingKey, setPendingKey] = useState<string | null>(null);
 
-  // Merge backend rows with the KNOWN_FLAGS catalog so admins see flags that
-  // haven't been flipped yet.
+  // Merge backend rows with the KNOWN_FLAGS catalog so superusers see flags
+  // that haven't been flipped yet.
   const merged = useMemo(() => {
     const byKey = new Map<string, FlagRow & { isSeed: boolean }>();
     for (const known of KNOWN_FLAGS) {
@@ -113,12 +118,11 @@ export function FeatureFlagsContent() {
   }, [flags]);
 
   const onToggle = async (row: (typeof merged)[number], next: boolean) => {
-    if (!token || !communityId || pendingKey) return;
+    if (!token || !isSuperuser || pendingKey) return;
     setPendingKey(row.key);
     try {
       await setFlag({
         token,
-        communityId,
         key: row.key,
         enabled: next,
         ...(row.description ? { description: row.description } : {}),
@@ -131,7 +135,7 @@ export function FeatureFlagsContent() {
     }
   };
 
-  if (!communityId) {
+  if (!isSuperuser) {
     return (
       <View
         style={[
@@ -141,7 +145,7 @@ export function FeatureFlagsContent() {
         ]}
       >
         <Text style={[styles.empty, { color: colors.textSecondary }]}>
-          Select a community to manage feature flags.
+          Feature flags are managed by Togather staff. You don't have access.
         </Text>
       </View>
     );
@@ -173,8 +177,8 @@ export function FeatureFlagsContent() {
       }
     >
       <Text style={[styles.intro, { color: colors.textSecondary }]}>
-        Toggle features on or off for everyone in this community. Changes take
-        effect immediately for any client with the chat tab open.
+        App-wide feature flags. Changes take effect immediately for every
+        user across every community.
       </Text>
       {merged.map((row) => (
         <View
