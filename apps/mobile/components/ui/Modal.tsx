@@ -85,17 +85,21 @@ export function CustomModal({
             style={[
               styles.modalContent,
               { backgroundColor: colors.surface },
-              Platform.OS === "web"
-                ? {
-                    width: width as any,
-                    ...(fixedHeight ? { height: fixedHeight as any } : {}),
-                  }
-                : {
-                    width: typeof width === "number" ? width : undefined,
-                    ...(fixedHeight && typeof fixedHeight === "number"
-                      ? { height: fixedHeight }
-                      : {}),
-                  },
+              // React Native accepts both numeric and percent-string widths
+              // (e.g. "90%"). The previous native branch used a `typeof
+              // === "number"` guard and silently dropped string widths to
+              // `undefined`, which collapsed the modal to its intrinsic
+              // content width and produced a narrow column on iOS — visible
+              // in the Add People / Rename Chat sheets that take the default
+              // "90%" width. Pass the width through directly on every
+              // platform; cast for TS because RN's style types disallow
+              // percent strings even though the runtime supports them.
+              {
+                width: width as any,
+                ...(fixedHeight !== undefined
+                  ? { height: fixedHeight as any }
+                  : {}),
+              },
               Platform.select({
                 web: {
                   boxShadow: "0px 4px 20px rgba(0, 0, 0, 0.15)",
