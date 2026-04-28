@@ -225,7 +225,23 @@ export const getMessages = query({
       if (!(await canAccessEventChannel(ctx, userId, channel))) {
         return { messages: [], hasMore: false, cursor: undefined };
       }
+    } else if (channel.isAdHoc || !channel.groupId) {
+      // Ad-hoc DM/group_dm — no group to gate on. Caller must have an active
+      // membership row (any requestState). Pending recipients can read the
+      // first message preview that's already in the channel; the chat-room
+      // banner gates replies until they accept, but they need to see the
+      // history to make that choice.
+      const adHocMembership = await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", args.channelId).eq("userId", userId),
+        )
+        .first();
+      if (!adHocMembership || adHocMembership.leftAt !== undefined) {
+        return { messages: [], hasMore: false, cursor: undefined };
+      }
     } else {
+      const channelGroupId = channel.groupId;
       // Check channel membership
       const channelMembership = await ctx.db
         .query("chatChannelMembers")
@@ -236,9 +252,9 @@ export const getMessages = query({
         .first();
 
       // Validate viewingGroupId is actually related to this channel
-      let contextGroupId = channel.groupId;
+      let contextGroupId: Id<"groups"> = channelGroupId;
       if (args.viewingGroupId) {
-        const isOwningGroup = args.viewingGroupId === channel.groupId;
+        const isOwningGroup = args.viewingGroupId === channelGroupId;
         const isAcceptedSharedGroup = channel.sharedGroups?.some(
           (sg) => sg.groupId === args.viewingGroupId && sg.status === "accepted"
         );
@@ -265,7 +281,7 @@ export const getMessages = query({
         ? await ctx.db
             .query("groupMembers")
             .withIndex("by_group_user", (q) =>
-              q.eq("groupId", channel.groupId).eq("userId", userId)
+              q.eq("groupId", channelGroupId).eq("userId", userId)
             )
             .filter((q) => q.eq(q.field("leftAt"), undefined))
             .first()
@@ -273,7 +289,7 @@ export const getMessages = query({
       const isOwningGroupLeader = isLeaderRole(owningGroupMembership?.role);
       // Also check linked group leadership when viewing from a linked group
       const isLinkedGroupLeader =
-        args.viewingGroupId && args.viewingGroupId !== channel.groupId
+        args.viewingGroupId && args.viewingGroupId !== channelGroupId
           ? isLeaderRole(groupMembership?.role)
           : false;
 
@@ -611,6 +627,98 @@ export const sendMessage = mutation({
 
     const now = Date.now();
 
+    // Ad-hoc DM/group_dm gating: while ANY recipient is still in `requestState: "pending"`,
+    // restrict the sender to text-only, ≤1000 chars, and 1 message per 24h per pending pair.
+    // Sender themselves must be in `requestState: "accepted"` (declined/leftAt rows already
+    // bounced by the membership check above). `pendingOthers` is reused after insert to
+    // upsert the rate-limit rows.
+    let pendingOthersForRateLimit: Array<{ userId: Id<"users"> }> = [];
+    if (channel.isAdHoc) {
+      const senderMembership = await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", userId),
+        )
+        .first();
+      if (
+        !senderMembership ||
+        senderMembership.leftAt !== undefined ||
+        senderMembership.requestState !== "accepted"
+      ) {
+        throw new Error("Accept the request before replying");
+      }
+
+      const otherMembers = await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel", (q) => q.eq("channelId", channelId))
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .collect();
+
+      // Block enforcement on ad-hoc channels: if ANY active recipient has
+      // blocked the sender, the send is rejected. The message would otherwise
+      // be inserted (the existing notification path silences blocked users,
+      // but the message stays in the channel doc and stays visible to the
+      // blocker if they reopen the chat). A generic error keeps the block
+      // silent — the sender doesn't learn who blocked them.
+      for (const m of otherMembers) {
+        if (m.userId === userId) continue;
+        const block = await ctx.db
+          .query("chatUserBlocks")
+          .withIndex("by_blocker_blocked", (q) =>
+            q.eq("blockerId", m.userId).eq("blockedId", userId),
+          )
+          .first();
+        if (block) {
+          throw new Error("Cannot send message in this chat");
+        }
+      }
+
+      const pendingOthers = otherMembers.filter(
+        (m) => m.userId !== userId && m.requestState === "pending",
+      );
+
+      if (pendingOthers.length > 0) {
+        const PENDING_RATE_LIMIT_WINDOW_MS = 24 * 60 * 60 * 1000;
+        const PENDING_MAX_TEXT_LENGTH = 1000;
+
+        if (args.attachments && args.attachments.length > 0) {
+          throw new Error(
+            "Cannot send attachments until the recipient accepts the request",
+          );
+        }
+        if (args.content.length > PENDING_MAX_TEXT_LENGTH) {
+          throw new Error(
+            `First message must be ${PENDING_MAX_TEXT_LENGTH} characters or fewer until accepted`,
+          );
+        }
+
+        for (const r of pendingOthers) {
+          const rl = await ctx.db
+            .query("directMessageRateLimits")
+            .withIndex("by_user_channel_recipient", (q) =>
+              q
+                .eq("userId", userId)
+                .eq("channelId", channelId)
+                .eq("recipientUserId", r.userId),
+            )
+            .first();
+          if (
+            rl &&
+            rl.windowStartedAt > now - PENDING_RATE_LIMIT_WINDOW_MS &&
+            rl.messageCount >= 1
+          ) {
+            throw new Error(
+              "You can send only 1 message until the recipient accepts the request",
+            );
+          }
+        }
+
+        pendingOthersForRateLimit = pendingOthers.map((r) => ({
+          userId: r.userId,
+        }));
+      }
+    }
+
     // Determine content type
     let contentType = "text";
     if (args.attachments && args.attachments.length > 0) {
@@ -659,6 +767,34 @@ export const sendMessage = mutation({
         await ctx.db.patch(args.parentMessageId, {
           threadReplyCount: (parentMessage.threadReplyCount || 0) + 1,
           lastActivityAt: now,
+        });
+      }
+    }
+
+    // Upsert rate-limit rows for each pending recipient. Done after a successful
+    // insert so a thrown rate-limit error doesn't leave stray counters behind.
+    for (const r of pendingOthersForRateLimit) {
+      const existingRl = await ctx.db
+        .query("directMessageRateLimits")
+        .withIndex("by_user_channel_recipient", (q) =>
+          q
+            .eq("userId", userId)
+            .eq("channelId", channelId)
+            .eq("recipientUserId", r.userId),
+        )
+        .first();
+      if (existingRl) {
+        await ctx.db.patch(existingRl._id, {
+          windowStartedAt: now,
+          messageCount: 1,
+        });
+      } else {
+        await ctx.db.insert("directMessageRateLimits", {
+          userId,
+          channelId,
+          recipientUserId: r.userId,
+          windowStartedAt: now,
+          messageCount: 1,
         });
       }
     }
@@ -752,10 +888,11 @@ export const deleteMessage = mutation({
     let isCommunityAdminUser = false;
 
     if (channel?.groupId) {
+      const groupId = channel.groupId;
       const groupMembership = await ctx.db
         .query("groupMembers")
         .withIndex("by_group_user", (q) =>
-          q.eq("groupId", channel.groupId).eq("userId", userId)
+          q.eq("groupId", groupId).eq("userId", userId)
         )
         .filter((q) => q.eq(q.field("leftAt"), undefined))
         .first();
@@ -763,7 +900,7 @@ export const deleteMessage = mutation({
       isGroupLeader = isLeaderRole(groupMembership?.role);
 
       // Community admins (ADMIN or PRIMARY_ADMIN) can delete any message in groups within their community
-      const group = await ctx.db.get(channel.groupId);
+      const group = await ctx.db.get(groupId);
       if (group?.communityId) {
         isCommunityAdminUser = await isCommunityAdmin(ctx, group.communityId, userId);
       }

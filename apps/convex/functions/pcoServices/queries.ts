@@ -58,9 +58,13 @@ export const getAutoChannelConfigByChannel = query({
     if (!channel) {
       return null;
     }
+    if (!channel.groupId) {
+      return null; // Skip ad-hoc channels (DM/group_dm)
+    }
+    const groupId = channel.groupId;
 
     // Get the group to find the community
-    const group = await ctx.db.get(channel.groupId);
+    const group = await ctx.db.get(groupId);
     if (!group) {
       return null;
     }
@@ -82,7 +86,7 @@ export const getAutoChannelConfigByChannel = query({
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId)
+        q.eq("groupId", groupId).eq("userId", userId)
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();

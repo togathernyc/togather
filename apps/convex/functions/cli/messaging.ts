@@ -67,6 +67,7 @@ export const getUserChannels = mutation({
     return channels
       .filter((c): c is NonNullable<typeof c> => {
         if (c === null || c.isArchived) return false;
+        if (!c.groupId) return false; // Skip ad-hoc channels (DM/group_dm)
         const role = roleByGroupId.get(c.groupId);
         const isLeader = isLeaderRole(role);
         if (
@@ -109,6 +110,10 @@ export const getMessages = mutation({
     if (!channel) {
       throw new Error("Channel not found");
     }
+    if (!channel.groupId) {
+      throw new Error("This operation is only valid for group channels");
+    }
+    const groupId = channel.groupId;
 
     // Check channel membership
     const channelMembership = await ctx.db
@@ -122,7 +127,7 @@ export const getMessages = mutation({
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId)
+        q.eq("groupId", groupId).eq("userId", userId)
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();

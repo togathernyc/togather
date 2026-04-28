@@ -17,7 +17,10 @@ import { generateShortId, getDisplayName, getMediaUrl } from "../../lib/utils";
  * Build the set of group IDs whose members are eligible to use a channel's invite link.
  * Includes the primary group and all accepted secondary groups for shared channels.
  */
-function getEligibleGroupIds(channel: { groupId: Id<"groups">; isShared?: boolean; sharedGroups?: Array<{ groupId: Id<"groups">; status: string }> }): Set<Id<"groups">> {
+function getEligibleGroupIds(channel: { groupId?: Id<"groups">; isShared?: boolean; sharedGroups?: Array<{ groupId: Id<"groups">; status: string }> }): Set<Id<"groups">> {
+  if (!channel.groupId) {
+    throw new Error("This operation is only valid for group channels");
+  }
   const ids = new Set<Id<"groups">>([channel.groupId]);
   if (channel.isShared) {
     for (const sg of channel.sharedGroups ?? []) {
@@ -52,6 +55,7 @@ export const getByShortId = query({
     if (!channel || !channel.inviteEnabled || channel.isArchived || !channelIsLeaderEnabled(channel)) {
       return null;
     }
+    if (!channel.groupId) return null; // Skip ad-hoc channels (DM/group_dm)
 
     // Get group info
     const group = await ctx.db.get(channel.groupId);
@@ -160,12 +164,14 @@ export const getInviteInfo = query({
     const userId = await requireAuth(ctx, args.token);
     const channel = await ctx.db.get(args.channelId);
     if (!channel) return null;
+    if (!channel.groupId) return null; // Skip ad-hoc channels (DM/group_dm)
+    const groupId = channel.groupId;
 
     // Verify user is a group leader
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId),
+        q.eq("groupId", groupId).eq("userId", userId),
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -194,12 +200,14 @@ export const getPendingRequests = query({
     const userId = await requireAuth(ctx, args.token);
     const channel = await ctx.db.get(args.channelId);
     if (!channel) return [];
+    if (!channel.groupId) return []; // Skip ad-hoc channels (DM/group_dm)
+    const groupId = channel.groupId;
 
     // Verify user is a group leader
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId),
+        q.eq("groupId", groupId).eq("userId", userId),
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -294,6 +302,8 @@ export const enableInviteLink = mutation({
     const userId = await requireAuth(ctx, args.token);
     const channel = await ctx.db.get(args.channelId);
     if (!channel) throw new ConvexError("Channel not found");
+    if (!channel.groupId) throw new ConvexError("This operation is only valid for group channels");
+    const groupId = channel.groupId;
 
     // Only custom channels
     if (channel.channelType !== "custom") {
@@ -306,7 +316,7 @@ export const enableInviteLink = mutation({
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId),
+        q.eq("groupId", groupId).eq("userId", userId),
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -338,11 +348,13 @@ export const disableInviteLink = mutation({
     const userId = await requireAuth(ctx, args.token);
     const channel = await ctx.db.get(args.channelId);
     if (!channel) throw new ConvexError("Channel not found");
+    if (!channel.groupId) throw new ConvexError("This operation is only valid for group channels");
+    const groupId = channel.groupId;
 
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId),
+        q.eq("groupId", groupId).eq("userId", userId),
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -371,11 +383,13 @@ export const regenerateInviteLink = mutation({
     const userId = await requireAuth(ctx, args.token);
     const channel = await ctx.db.get(args.channelId);
     if (!channel) throw new ConvexError("Channel not found");
+    if (!channel.groupId) throw new ConvexError("This operation is only valid for group channels");
+    const groupId = channel.groupId;
 
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId),
+        q.eq("groupId", groupId).eq("userId", userId),
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -408,6 +422,8 @@ export const updateJoinMode = mutation({
     const userId = await requireAuth(ctx, args.token);
     const channel = await ctx.db.get(args.channelId);
     if (!channel) throw new ConvexError("Channel not found");
+    if (!channel.groupId) throw new ConvexError("This operation is only valid for group channels");
+    const groupId = channel.groupId;
 
     if (channel.channelType !== "custom") {
       throw new ConvexError("Join mode can only be set on custom channels.");
@@ -416,7 +432,7 @@ export const updateJoinMode = mutation({
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId),
+        q.eq("groupId", groupId).eq("userId", userId),
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -458,6 +474,9 @@ export const joinViaInviteLink = mutation({
 
     if (!channel || !channel.inviteEnabled || channel.isArchived || !channelIsLeaderEnabled(channel)) {
       throw new ConvexError("This invite link is no longer valid.");
+    }
+    if (!channel.groupId) {
+      throw new ConvexError("This operation is only valid for group channels");
     }
 
     // Verify user is a member of any eligible group (primary + accepted shared groups)
@@ -650,12 +669,14 @@ export const approveJoinRequest = mutation({
 
     const channel = await ctx.db.get(request.channelId);
     if (!channel) throw new ConvexError("Channel not found.");
+    if (!channel.groupId) throw new ConvexError("This operation is only valid for group channels");
+    const groupId = channel.groupId;
 
     // Verify user is a group leader
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId),
+        q.eq("groupId", groupId).eq("userId", userId),
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -758,11 +779,13 @@ export const declineJoinRequest = mutation({
 
     const channel = await ctx.db.get(request.channelId);
     if (!channel) throw new ConvexError("Channel not found.");
+    if (!channel.groupId) throw new ConvexError("This operation is only valid for group channels");
+    const groupId = channel.groupId;
 
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId),
+        q.eq("groupId", groupId).eq("userId", userId),
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -804,11 +827,13 @@ export const bulkApproveRequests = mutation({
     const userId = await requireAuth(ctx, args.token);
     const channel = await ctx.db.get(args.channelId);
     if (!channel) throw new ConvexError("Channel not found");
+    if (!channel.groupId) throw new ConvexError("This operation is only valid for group channels");
+    const groupId = channel.groupId;
 
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId),
+        q.eq("groupId", groupId).eq("userId", userId),
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();

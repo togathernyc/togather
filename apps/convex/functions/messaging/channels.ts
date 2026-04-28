@@ -228,6 +228,11 @@ export const getChannel = query({
       };
     }
 
+    if (!channel.groupId) {
+      return null; // Skip ad-hoc channels (DM/group_dm) - handled separately
+    }
+    const groupId = channel.groupId;
+
     // Check channel membership
     const membership = await ctx.db
       .query("chatChannelMembers")
@@ -241,7 +246,7 @@ export const getChannel = query({
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId)
+        q.eq("groupId", groupId).eq("userId", userId)
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -556,6 +561,7 @@ export const getUserChannels = query({
     return channels
       .filter((c): c is NonNullable<typeof c> => {
         if (c === null || c.isArchived) return false;
+        if (!c.groupId) return false; // Skip ad-hoc channels (DM/group_dm)
         const role = roleByGroupId.get(c.groupId);
         const isLeader = isLeaderRole(role);
         if (
@@ -596,6 +602,10 @@ export const getChannelMembers = query({
     if (!channel) {
       return { members: [], nextCursor: null, totalCount: 0 };
     }
+    if (!channel.groupId) {
+      return { members: [], nextCursor: null, totalCount: 0 }; // Skip ad-hoc channels (DM/group_dm)
+    }
+    const groupId = channel.groupId;
 
     // Check membership
     const membership = await ctx.db
@@ -613,7 +623,7 @@ export const getChannelMembers = query({
       const groupMembership = await ctx.db
         .query("groupMembers")
         .withIndex("by_group_user", (q) =>
-          q.eq("groupId", channel.groupId).eq("userId", userId)
+          q.eq("groupId", groupId).eq("userId", userId)
         )
         .filter((q) =>
           q.and(
@@ -626,7 +636,7 @@ export const getChannelMembers = query({
         )
         .first();
 
-      const group = await ctx.db.get(channel.groupId);
+      const group = await ctx.db.get(groupId);
       const isCommAdmin = group
         ? await isCommunityAdmin(ctx, group.communityId, userId)
         : false;
@@ -1189,8 +1199,10 @@ export const getInboxChannels = query({
     // owning group (and its group type) on demand and add it to validGroups
     // so the normal grouping step picks the channel up.
     for (const eventChannel of eventChannelsToInclude) {
-      const owningGroup = allGroups.find((g) => g && g._id === eventChannel.groupId)
-        ?? (await ctx.db.get(eventChannel.groupId));
+      if (!eventChannel.groupId) continue; // Skip ad-hoc channels (DM/group_dm)
+      const ecGroupId = eventChannel.groupId;
+      const owningGroup = allGroups.find((g) => g && g._id === ecGroupId)
+        ?? (await ctx.db.get(ecGroupId));
       if (!owningGroup || owningGroup.isArchived) continue;
       if (args.communityId && owningGroup.communityId !== args.communityId) continue;
 
@@ -1576,6 +1588,10 @@ export const updateChannel = mutation({
     if (!channel) {
       throw new Error("Channel not found");
     }
+    if (!channel.groupId) {
+      throw new Error("This operation is only valid for group channels");
+    }
+    const groupId = channel.groupId;
 
     // Check if user is admin of channel or group leader
     const membership = await ctx.db
@@ -1589,7 +1605,7 @@ export const updateChannel = mutation({
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId)
+        q.eq("groupId", groupId).eq("userId", userId)
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -1635,12 +1651,16 @@ export const archiveChannel = mutation({
     if (!channel) {
       throw new Error("Channel not found");
     }
+    if (!channel.groupId) {
+      throw new Error("This operation is only valid for group channels");
+    }
+    const groupId = channel.groupId;
 
     // Only group leaders/admins can archive
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId)
+        q.eq("groupId", groupId).eq("userId", userId)
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -1686,6 +1706,10 @@ export const archiveCustomChannel = mutation({
     if (!channel) {
       throw new ConvexError({ code: "NOT_FOUND", message: "Channel not found" });
     }
+    if (!channel.groupId) {
+      throw new ConvexError({ code: "INVALID_OPERATION", message: "This operation is only valid for group channels" });
+    }
+    const groupId = channel.groupId;
 
     // 3. If not custom channel, throw error
     if (!isCustomChannel(channel.channelType)) {
@@ -1709,7 +1733,7 @@ export const archiveCustomChannel = mutation({
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId)
+        q.eq("groupId", groupId).eq("userId", userId)
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -1775,6 +1799,10 @@ export const unarchiveCustomChannel = mutation({
     if (!channel) {
       throw new ConvexError({ code: "NOT_FOUND", message: "Channel not found" });
     }
+    if (!channel.groupId) {
+      throw new ConvexError({ code: "INVALID_OPERATION", message: "This operation is only valid for group channels" });
+    }
+    const groupId = channel.groupId;
 
     if (!isCustomChannel(channel.channelType)) {
       throw new ConvexError({
@@ -1793,7 +1821,7 @@ export const unarchiveCustomChannel = mutation({
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId)
+        q.eq("groupId", groupId).eq("userId", userId)
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -1840,6 +1868,10 @@ export const setCustomChannelLeaderEnabled = mutation({
     if (!channel) {
       throw new ConvexError({ code: "NOT_FOUND", message: "Channel not found" });
     }
+    if (!channel.groupId) {
+      throw new ConvexError({ code: "INVALID_OPERATION", message: "This operation is only valid for group channels" });
+    }
+    const groupId = channel.groupId;
 
     if (!isCustomChannel(channel.channelType)) {
       throw new ConvexError({
@@ -1848,7 +1880,7 @@ export const setCustomChannelLeaderEnabled = mutation({
       });
     }
 
-    const managingGroupId = args.managingGroupId ?? channel.groupId;
+    const managingGroupId = args.managingGroupId ?? groupId;
 
     const linkedResult = await handleLinkedGroupToggle(
       ctx,
@@ -1865,7 +1897,7 @@ export const setCustomChannelLeaderEnabled = mutation({
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId)
+        q.eq("groupId", groupId).eq("userId", userId)
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -1978,6 +2010,10 @@ export const archivePcoChannel = mutation({
     if (!channel) {
       throw new ConvexError({ code: "NOT_FOUND", message: "Channel not found" });
     }
+    if (!channel.groupId) {
+      throw new ConvexError({ code: "INVALID_OPERATION", message: "This operation is only valid for group channels" });
+    }
+    const groupId = channel.groupId;
 
     // 3. Verify this is a PCO channel
     if (channel.channelType !== "pco_services") {
@@ -1991,7 +2027,7 @@ export const archivePcoChannel = mutation({
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId)
+        q.eq("groupId", groupId).eq("userId", userId)
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -2033,6 +2069,10 @@ export const togglePcoChannel = mutation({
     if (!channel) {
       throw new ConvexError({ code: "NOT_FOUND", message: "Channel not found" });
     }
+    if (!channel.groupId) {
+      throw new ConvexError({ code: "INVALID_OPERATION", message: "This operation is only valid for group channels" });
+    }
+    const groupId = channel.groupId;
 
     if (channel.channelType !== "pco_services") {
       throw new ConvexError({
@@ -2041,7 +2081,7 @@ export const togglePcoChannel = mutation({
       });
     }
 
-    const managingGroupId = args.managingGroupId ?? channel.groupId;
+    const managingGroupId = args.managingGroupId ?? groupId;
 
     const linkedResult = await handleLinkedGroupToggle(
       ctx,
@@ -2058,7 +2098,7 @@ export const togglePcoChannel = mutation({
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId)
+        q.eq("groupId", groupId).eq("userId", userId)
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -2142,12 +2182,16 @@ export const addMember = mutation({
     if (!channel) {
       throw new Error("Channel not found");
     }
+    if (!channel.groupId) {
+      throw new Error("This operation is only valid for group channels");
+    }
+    const groupId = channel.groupId;
 
     // Check if the user to be added is a group member
     const targetGroupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", args.userId)
+        q.eq("groupId", groupId).eq("userId", args.userId)
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -2250,6 +2294,10 @@ export const updateMemberRole = mutation({
     if (!channel) {
       throw new Error("Channel not found");
     }
+    if (!channel.groupId) {
+      throw new Error("This operation is only valid for group channels");
+    }
+    const groupId = channel.groupId;
 
     // Check if requester is admin
     const requesterMembership = await ctx.db
@@ -2263,7 +2311,7 @@ export const updateMemberRole = mutation({
     const requesterGroupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", requestingUserId)
+        q.eq("groupId", groupId).eq("userId", requestingUserId)
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -2751,6 +2799,10 @@ export const addChannelMembers = mutation({
     if (!channel) {
       throw new Error("Channel not found");
     }
+    if (!channel.groupId) {
+      throw new Error("This operation is only valid for group channels");
+    }
+    const groupId = channel.groupId;
 
     if (!isCustomChannel(channel.channelType)) {
       throw new Error("You can only add members to custom channels.");
@@ -2776,7 +2828,7 @@ export const addChannelMembers = mutation({
     const callerGroupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", callerId)
+        q.eq("groupId", groupId).eq("userId", callerId)
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -2792,7 +2844,7 @@ export const addChannelMembers = mutation({
     const userDataMap = new Map<Id<"users">, { displayName: string; profilePhoto: string | undefined }>();
     const timestamp = Date.now();
     const isSharedChannel = channel.isShared === true;
-    const eligibleGroupIds = new Set<Id<"groups">>([channel.groupId]);
+    const eligibleGroupIds = new Set<Id<"groups">>([groupId]);
     const ineligibleUserDisplayNames: string[] = [];
 
     if (isSharedChannel) {
@@ -2842,7 +2894,7 @@ export const addChannelMembers = mutation({
         const existingGroupMembership = await ctx.db
           .query("groupMembers")
           .withIndex("by_group_user", (q) =>
-            q.eq("groupId", channel.groupId).eq("userId", userId)
+            q.eq("groupId", groupId).eq("userId", userId)
           )
           .first();
 
@@ -2861,7 +2913,7 @@ export const addChannelMembers = mutation({
           } else {
             // Create new group membership
             await ctx.db.insert("groupMembers", {
-              groupId: channel.groupId,
+              groupId,
               userId,
               role: "member",
               joinedAt: timestamp,
@@ -2873,14 +2925,14 @@ export const addChannelMembers = mutation({
               0,
               internal.functions.scheduledJobs.sendWelcomeMessage,
               {
-                groupId: channel.groupId,
+                groupId,
                 userId,
               }
             );
           }
 
           // Sync channel memberships for the newly added group member
-          await syncUserChannelMembershipsLogic(ctx, userId, channel.groupId);
+          await syncUserChannelMembershipsLogic(ctx, userId, groupId);
         }
       }
 
@@ -2978,6 +3030,13 @@ export const removeChannelMember = mutation({
         message: "Channel not found",
       });
     }
+    if (!channel.groupId) {
+      throw new ConvexError({
+        code: "INVALID_CHANNEL_TYPE",
+        message: "This operation is only valid for group channels",
+      });
+    }
+    const groupId = channel.groupId;
 
     if (!isCustomChannel(channel.channelType)) {
       throw new ConvexError({
@@ -3002,7 +3061,7 @@ export const removeChannelMember = mutation({
     const callerGroupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", callerId)
+        q.eq("groupId", groupId).eq("userId", callerId)
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -3830,6 +3889,7 @@ export const syncUserChannelMemberships = internalMutation({
 
     // Sync each channel
     for (const channel of channels) {
+      if (!channel.groupId) continue; // Skip ad-hoc channels (DM/group_dm)
       const groupRole = groupRoleMap.get(channel.groupId);
       const isActiveGroupMember = groupRole !== undefined;
       const isLeaderOrAdmin = groupRole === "leader" || groupRole === "admin";
@@ -3961,6 +4021,13 @@ export const updateAutoChannelConfig = mutation({
         message: "Channel not found",
       });
     }
+    if (!channel.groupId) {
+      throw new ConvexError({
+        code: "INVALID_OPERATION",
+        message: "This operation is only valid for group channels",
+      });
+    }
+    const groupId = channel.groupId;
 
     // 3. Verify channel is an auto channel (pco_services type)
     if (channel.channelType !== "pco_services") {
@@ -3974,7 +4041,7 @@ export const updateAutoChannelConfig = mutation({
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId)
+        q.eq("groupId", groupId).eq("userId", userId)
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -4104,6 +4171,13 @@ export const disableAutoChannel = mutation({
         message: "Channel not found",
       });
     }
+    if (!channel.groupId) {
+      throw new ConvexError({
+        code: "INVALID_OPERATION",
+        message: "This operation is only valid for group channels",
+      });
+    }
+    const groupId = channel.groupId;
 
     // 3. Verify channel is an auto channel
     if (channel.channelType !== "pco_services") {
@@ -4117,7 +4191,7 @@ export const disableAutoChannel = mutation({
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId).eq("userId", userId)
+        q.eq("groupId", groupId).eq("userId", userId)
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();

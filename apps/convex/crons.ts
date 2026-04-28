@@ -167,4 +167,29 @@ crons.daily(
   internal.functions.communityScoreComputation.dailyRefreshAllCommunityScores
 );
 
+// =============================================================================
+// CHAT REQUEST EXPIRY
+// =============================================================================
+// Runs daily at 8:00 UTC to expire pending DM/group_dm chat requests older than
+// 30 days. Marks them declined silently (the inviter is not notified).
+
+crons.daily(
+  "chat-request-expiry",
+  { hourUTC: 8, minuteUTC: 0 },
+  internal.functions.messaging.directMessages.expireOldChatRequests
+);
+
+// =============================================================================
+// DM RATE-LIMIT CLEANUP
+// =============================================================================
+// Runs hourly to delete `directMessageRateLimits` rows older than 24h. Old rows
+// have no further effect on the 1-msg-per-pending-pair-per-24h rule but would
+// otherwise accumulate forever.
+
+crons.hourly(
+  "dm-rate-limit-cleanup",
+  { minuteUTC: 40 },
+  internal.functions.messaging.directMessages.cleanupOldDmRateLimits
+);
+
 export default crons;
