@@ -33,6 +33,7 @@ import { useTheme } from "@hooks/useTheme";
 import { GroupedInboxItem } from "./GroupedInboxItem";
 import { useExpandedGroups } from "../hooks/useExpandedGroups";
 import { useInboxCache } from "../../../stores/inboxCache";
+import { Avatar } from "@components/ui/Avatar";
 
 // Inbox event visibility is now driven server-side by
 // `INBOX_EVENT_HIDE_AFTER_MS` in apps/convex/functions/messaging/channels.ts
@@ -146,6 +147,14 @@ export function ChatInboxScreen({
     inboxQueryArgs
   );
 
+  // Direct-message inbox is a separate subscription so the existing
+  // `getInboxChannels` query (and its 4222-line file) stays untouched. Convex
+  // multi-subscription cost is negligible.
+  const directInbox = useQuery(
+    api.functions.messaging.directMessages.getDirectInbox,
+    token ? { token } : "skip",
+  );
+
   // Cache inbox data for offline use
   useEffect(() => {
     if (inboxChannels && inboxChannels.length > 0 && communityId) {
@@ -153,17 +162,37 @@ export function ChatInboxScreen({
     }
   }, [inboxChannels, communityId, setInboxChannels]);
 
-  // Inbox list entries are either a grouped item (group + its channels) or a
-  // standalone event row. They're interleaved so activity, not type, drives
-  // recency — a group with a fresh message sits above an event with a
-  // week-old one (and vice versa). Announcement group stays pinned on top.
+  // Inbox list entries are a grouped item (group + its channels), an event row,
+  // a direct-message row, or a section divider. Groups + events interleave by
+  // recency; direct messages sit in their own section at the top so the user
+  // can scan them at a glance (the iMessage layout). Announcement group stays
+  // pinned on top of the groups+events block.
+  type DirectInboxRow = NonNullable<typeof directInbox>[number];
   type InboxListItem =
     | { kind: "group"; item: InboxGroup }
-    | { kind: "event"; item: EventInboxRow };
+    | { kind: "event"; item: EventInboxRow }
+    | { kind: "dm"; item: DirectInboxRow }
+    | { kind: "section"; key: string; title: string };
 
-  // Render a single inbox row (group or event)
+  // Render a single inbox row (group, event, dm, or a section header)
   const renderItem = useCallback(
     ({ item }: { item: InboxListItem }) => {
+      if (item.kind === "section") {
+        return (
+          <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
+            {item.title}
+          </Text>
+        );
+      }
+      if (item.kind === "dm") {
+        return (
+          <DirectMessageRow
+            row={item.item}
+            primaryColor={primaryColor}
+            colors={colors}
+          />
+        );
+      }
       if (item.kind === "event") {
         return (
           <EventInboxRowItem
@@ -186,11 +215,13 @@ export function ChatInboxScreen({
         />
       );
     },
-    [isGroupExpanded, toggleGroupExpanded, sidebarMode, activeGroupId, activeChannelSlug]
+    [isGroupExpanded, toggleGroupExpanded, sidebarMode, activeGroupId, activeChannelSlug, primaryColor, colors]
   );
 
   // Key extractor for FlatList
   const keyExtractor = useCallback((item: InboxListItem) => {
+    if (item.kind === "section") return `section:${item.key}`;
+    if (item.kind === "dm") return `dm:${item.item.channelId}`;
     return item.kind === "event"
       ? `event:${item.item.channel._id}`
       : `group:${item.item.group._id}`;
@@ -198,6 +229,31 @@ export function ChatInboxScreen({
 
   const Wrapper = React.Fragment;
   const headerPaddingTop = sidebarMode ? 16 : insets.top + 16;
+
+  // The same header is rendered above the list and the three empty/loading
+  // states below; centralizing it here keeps the "+" button placement (and the
+  // tap target that opens the new-chat picker) in one place. Hidden in the
+  // "no community" empty state since the picker has nothing to search.
+  const renderHeader = (showCompose: boolean) => (
+    <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
+      <Text style={[styles.headerTitle, { color: colors.text }]}>Inbox</Text>
+      {showCompose && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Start a new chat"
+          onPress={() => router.push("/inbox/new" as any)}
+          style={styles.headerActionButton}
+          hitSlop={12}
+        >
+          <Ionicons
+            name="create-outline"
+            size={24}
+            color={colors.text}
+          />
+        </Pressable>
+      )}
+    </View>
+  );
 
   // Auto-select first conversation when in sidebar mode and no conversation is active
   useEffect(() => {
@@ -248,8 +304,11 @@ export function ChatInboxScreen({
   const listItems = useMemo<InboxListItem[]>(() => {
     if (!displayChannels) return [];
 
-    const groupItems: InboxListItem[] = [];
-    const eventItems: InboxListItem[] = [];
+    type GroupOrEventItem =
+      | { kind: "group"; item: InboxGroup }
+      | { kind: "event"; item: EventInboxRow };
+    const groupItems: GroupOrEventItem[] = [];
+    const eventItems: GroupOrEventItem[] = [];
 
     for (const g of displayChannels) {
       const nonEventChannels: InboxChannel[] = [];
@@ -275,7 +334,7 @@ export function ChatInboxScreen({
       }
     }
 
-    const effectiveTime = (entry: InboxListItem): number => {
+    const effectiveTime = (entry: GroupOrEventItem): number => {
       if (entry.kind === "event") {
         return (
           entry.item.channel.lastMessageAt ??
@@ -305,16 +364,28 @@ export function ChatInboxScreen({
 
     return combined;
   }, [displayChannels]);
-  const hasInboxItems = listItems.length > 0;
+
+  // Prepend the Direct messages section when the user has any accepted DMs.
+  // Pending requests live in their own surface (PR 3) — not folded in here.
+  const dmRows = directInbox ?? [];
+  const listItemsWithDm = useMemo<InboxListItem[]>(() => {
+    if (dmRows.length === 0) return listItems;
+    return [
+      { kind: "section", key: "dm-header", title: "Direct messages" },
+      ...dmRows.map(
+        (row) => ({ kind: "dm" as const, item: row }),
+      ),
+      ...listItems,
+    ];
+  }, [dmRows, listItems]);
+  const hasInboxItems = listItemsWithDm.length > 0;
 
   // Show message when user has no community context
   if (!hasCommunity) {
     return (
       <Wrapper>
         <View style={[styles.container, { backgroundColor: colors.surface }]}>
-          <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
-            <Text style={[styles.headerTitle, { color: colors.text }]}>Inbox</Text>
-          </View>
+          {renderHeader(false)}
           <View style={styles.centered}>
             <Ionicons
               name="chatbubbles-outline"
@@ -338,9 +409,7 @@ export function ChatInboxScreen({
     return (
       <Wrapper>
         <View style={[styles.container, { backgroundColor: colors.surface }]}>
-          <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
-            <Text style={[styles.headerTitle, { color: colors.text }]}>Inbox</Text>
-          </View>
+          {renderHeader(true)}
           <View style={styles.centered}>
             <ActivityIndicator size="large" color={primaryColor} />
             <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading your chats...</Text>
@@ -354,9 +423,7 @@ export function ChatInboxScreen({
     return (
       <Wrapper>
         <View style={[styles.container, { backgroundColor: colors.surface }]}>
-          <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
-            <Text style={[styles.headerTitle, { color: colors.text }]}>Inbox</Text>
-          </View>
+          {renderHeader(true)}
           <ScrollView contentContainerStyle={styles.centeredScrollContent}>
             <Ionicons
               name="chatbubbles-outline"
@@ -377,11 +444,9 @@ export function ChatInboxScreen({
   return (
     <Wrapper>
       <View style={[styles.container, { backgroundColor: colors.surface }]}>
-        <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
-          <Text style={[styles.headerTitle, { color: colors.text }]}>Inbox</Text>
-        </View>
+        {renderHeader(true)}
         <FlatList
-          data={listItems}
+          data={listItemsWithDm}
           renderItem={renderItem}
           keyExtractor={keyExtractor}
           contentContainerStyle={styles.listContainer}
@@ -845,6 +910,107 @@ function EventInboxRowItem({ row, isActive }: EventInboxRowItemProps) {
   );
 }
 
+// ============================================================================
+// Direct Messages section
+// ============================================================================
+
+type DirectInboxRowData = {
+  channelId: Id<"chatChannels">;
+  channelType: "dm" | "group_dm";
+  channelName: string;
+  memberCount: number;
+  otherMembers: Array<{
+    userId: Id<"users">;
+    displayName: string;
+    profilePhoto: string | null;
+  }>;
+  lastMessageAt: number | null;
+  lastMessagePreview: string | null;
+  lastMessageSenderName: string | null;
+  unreadCount: number;
+  isMuted: boolean;
+};
+
+interface DirectMessageRowProps {
+  row: DirectInboxRowData;
+  primaryColor: string;
+  colors: {
+    text: string;
+    textSecondary: string;
+  };
+}
+
+function DirectMessageRow({ row, primaryColor, colors }: DirectMessageRowProps) {
+  const router = useRouter();
+
+  // Display name: for 1:1, the other member; for group_dm, the channel name
+  // (or a comma-separated member list as a fallback when no name is set —
+  // group_dm with empty name renders client-side from the member list).
+  const isOneOnOne = row.channelType === "dm";
+  const headerName = isOneOnOne
+    ? row.otherMembers[0]?.displayName ?? "Conversation"
+    : row.channelName.trim().length > 0
+      ? row.channelName
+      : row.otherMembers
+          .slice(0, 3)
+          .map((m) => m.displayName.split(" ")[0])
+          .filter(Boolean)
+          .join(", ") || "Group chat";
+
+  // Avatar: for 1:1, the other person; for group_dm, the first member.
+  const avatarSource = row.otherMembers[0];
+
+  // Compose preview line. Mute icon takes precedence when muted.
+  const preview = row.lastMessagePreview ?? "No messages yet";
+  const previewWithSender =
+    isOneOnOne || !row.lastMessageSenderName
+      ? preview
+      : `${row.lastMessageSenderName.split(" ")[0]}: ${preview}`;
+
+  const onPress = () => {
+    router.push({
+      pathname: `/inbox/dm/${row.channelId}` as any,
+      params: {
+        groupName: headerName,
+        imageUrl: avatarSource?.profilePhoto ?? "",
+      },
+    });
+  };
+
+  return (
+    <Pressable onPress={onPress} style={styles.dmRow}>
+      <Avatar
+        name={avatarSource?.displayName ?? headerName}
+        imageUrl={avatarSource?.profilePhoto ?? undefined}
+        size={48}
+      />
+      <View style={styles.dmRowContent}>
+        <View style={styles.dmRowTopLine}>
+          <Text
+            numberOfLines={1}
+            style={[styles.dmRowName, { color: colors.text }]}
+          >
+            {headerName}
+          </Text>
+          {row.unreadCount > 0 && (
+            <View style={[styles.dmUnreadBadge, { backgroundColor: primaryColor }]}>
+              <Text style={styles.dmUnreadBadgeText}>
+                {row.unreadCount > 99 ? "99+" : row.unreadCount}
+              </Text>
+            </View>
+          )}
+        </View>
+        <Text
+          numberOfLines={1}
+          style={[styles.dmRowPreview, { color: colors.textSecondary }]}
+        >
+          {previewWithSender}
+        </Text>
+      </View>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -852,10 +1018,71 @@ const styles = StyleSheet.create({
   header: {
     paddingHorizontal: 16,
     paddingBottom: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
   },
   headerTitle: {
     fontSize: 28,
     fontWeight: "bold",
+  },
+  headerActionButton: {
+    width: 32,
+    height: 32,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sectionLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 6,
+  },
+  dmRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  dmRowContent: {
+    flex: 1,
+    marginLeft: 12,
+    minWidth: 0,
+  },
+  dmRowTopLine: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  dmRowName: {
+    fontSize: 16,
+    fontWeight: "600",
+    flexShrink: 1,
+  },
+  dmRowTimestamp: {
+    fontSize: 12,
+    marginLeft: 8,
+  },
+  dmRowPreview: {
+    fontSize: 14,
+    marginTop: 2,
+  },
+  dmUnreadBadge: {
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    marginLeft: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dmUnreadBadgeText: {
+    color: "#ffffff",
+    fontSize: 11,
+    fontWeight: "700",
   },
   centered: {
     flex: 1,

@@ -61,6 +61,8 @@ export default function InboxLayout() {
             <Stack.Screen name="index" options={{ animation: "none" }} />
             <Stack.Screen name="[groupId]" options={{ animation: "none" }} />
             <Stack.Screen name="[chat_id]" options={{ animation: "none" }} />
+            <Stack.Screen name="dm" options={{ animation: "none" }} />
+            <Stack.Screen name="new" options={{ animation: "none" }} />
           </Stack>
         </View>
       </View>
@@ -80,6 +82,10 @@ export default function InboxLayout() {
       <Stack.Screen name="[groupId]" options={{ animation: "slide_from_right" }} />
       {/* Direct messages - slide in from right */}
       <Stack.Screen name="[chat_id]" options={{ animation: "slide_from_right" }} />
+      {/* Ad-hoc direct messages (1:1 + group_dm) */}
+      <Stack.Screen name="dm" options={{ animation: "slide_from_right" }} />
+      {/* New-chat picker - modal-style entry from the bottom */}
+      <Stack.Screen name="new" options={{ animation: "slide_from_bottom" }} />
     </Stack>
   );
 }
