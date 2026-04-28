@@ -8,8 +8,9 @@
  * → `group_dm` via `createGroupChat`, with an optional name input. Both
  * flows navigate to `/inbox/dm/{channelId}`.
  *
- * iMessage-style UX: tap to toggle selection, chips at the top show who's
- * selected, the bottom CTA reflects the current count.
+ * iMessage-style UX: empty by default — start typing to find someone. Selected
+ * recipients render as primary-tinted pills above the search field. The bottom
+ * CTA reflects the current count.
  */
 import React, { useEffect, useMemo, useState } from "react";
 import {
@@ -23,7 +24,10 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  LayoutAnimation,
+  UIManager,
 } from "react-native";
+import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -54,12 +58,26 @@ export default function StartChatScreenRoute() {
   );
 }
 
+// Spring-y feel without bringing in Reanimated. LayoutAnimation handles the
+// chip-row height changing when chips are added/removed and the chat-name
+// field appearing once we cross the 2-selection threshold.
+function configureNextLayoutAnimation() {
+  LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+}
+
+if (
+  Platform.OS === "android" &&
+  UIManager.setLayoutAnimationEnabledExperimental
+) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+
 function StartChatScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { token, community } = useAuth();
-  const { primaryColor } = useCommunityTheme();
-  const { colors } = useTheme();
+  const { primaryColor, accentLight } = useCommunityTheme();
+  const { colors, isDark } = useTheme();
   const communityId = community?.id as Id<"communities"> | undefined;
 
   const [query, setQuery] = useState("");
@@ -69,7 +87,7 @@ function StartChatScreen() {
   const [selected, setSelected] = useState<Map<Id<"users">, SearchResult>>(
     new Map(),
   );
-  const [groupName, setGroupName] = useState("");
+  const [chatName, setChatName] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isFocused, setIsFocused] = useState(false);
@@ -89,9 +107,14 @@ function StartChatScreen() {
     [selected],
   );
 
+  const trimmedQuery = debouncedQuery.trim();
+  const hasQuery = trimmedQuery.length > 0;
+
+  // iMessage's "To:" field shows nothing until you type. Skipping the query
+  // when there's nothing to search for also saves a database read per render.
   const results = useQuery(
     api.functions.messaging.directMessages.searchUsersInSharedCommunities,
-    token && communityId
+    token && communityId && hasQuery
       ? {
           token,
           communityId,
@@ -109,9 +132,7 @@ function StartChatScreen() {
     api.functions.messaging.directMessages.createGroupChat,
   );
 
-  const trimmedQuery = debouncedQuery.trim();
-  const hasQuery = trimmedQuery.length > 0;
-  const isLoadingResults = results === undefined && token != null;
+  const isLoadingResults = hasQuery && results === undefined && token != null;
   const selectedCount = selected.size;
   const isGroupMode = selectedCount >= 2;
 
@@ -133,12 +154,20 @@ function StartChatScreen() {
       } else {
         if (next.size >= MAX_GROUP_RECIPIENTS) {
           setErrorMessage(
-            `You can include up to ${MAX_GROUP_RECIPIENTS} other people in a group chat.`,
+            `You can include up to ${MAX_GROUP_RECIPIENTS} other people in a chat.`,
           );
+          // Soft warning haptic on cap-reached.
+          Haptics.notificationAsync(
+            Haptics.NotificationFeedbackType.Warning,
+          ).catch(() => {});
           return prev;
         }
         next.set(row.userId, row);
       }
+      // Selecting/deselecting changes the chip row height and may toggle
+      // the chat-name field. Animate the layout change.
+      configureNextLayoutAnimation();
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
       return next;
     });
   };
@@ -148,7 +177,10 @@ function StartChatScreen() {
     setErrorMessage(null);
     setSelected((prev) => {
       const next = new Map(prev);
+      if (!next.has(userId)) return prev;
       next.delete(userId);
+      configureNextLayoutAnimation();
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
       return next;
     });
   };
@@ -176,7 +208,7 @@ function StartChatScreen() {
       }
 
       const recipientUserIds = Array.from(selected.keys());
-      const trimmedName = groupName.trim();
+      const trimmedName = chatName.trim();
       const { channelId } = await createGroupChat({
         token,
         communityId,
@@ -261,6 +293,8 @@ function StartChatScreen() {
   };
 
   const emptyState = useMemo(() => {
+    // Mid-flight search: a small spinner near the top so the page doesn't
+    // jump between empty and filled states.
     if (isLoadingResults) {
       return (
         <View style={styles.emptyContainer}>
@@ -268,11 +302,11 @@ function StartChatScreen() {
         </View>
       );
     }
-    if (!hasQuery && (results?.length ?? 0) === 0) {
+    if (!hasQuery) {
       return (
         <View style={styles.emptyContainer}>
           <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-            Type to find someone in your communities.
+            Search for someone in your community{"\n"}to start a chat.
           </Text>
         </View>
       );
@@ -281,20 +315,35 @@ function StartChatScreen() {
       return (
         <View style={styles.emptyContainer}>
           <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-            No matches in your communities.
+            No matches in your community.
+          </Text>
+          <Text
+            style={[styles.emptySubText, { color: colors.textTertiary }]}
+          >
+            Make sure they&apos;re a member.
           </Text>
         </View>
       );
     }
     return null;
-  }, [hasQuery, isLoadingResults, results, colors.textSecondary, primaryColor]);
+  }, [
+    hasQuery,
+    isLoadingResults,
+    results,
+    colors.textSecondary,
+    colors.textTertiary,
+    primaryColor,
+  ]);
 
+  // Always "New chat" — multi-recipient is just a chat with more people.
+  const headerTitle = "New chat";
   const ctaLabel =
-    selectedCount === 0
-      ? "Select someone"
-      : selectedCount === 1
-        ? "Start chat"
-        : "Create group";
+    selectedCount === 1 ? "Start chat" : "Create chat";
+
+  // Pill chip — primary-tinted background using the community theme's
+  // accentLight (10% opacity of primaryColor). On dark themes the body
+  // text reads better as `colors.text` than as the primary hue.
+  const chipTextColor = isDark ? colors.text : primaryColor;
 
   return (
     <KeyboardAvoidingView
@@ -314,12 +363,14 @@ function StartChatScreen() {
         <TouchableOpacity
           onPress={handleClose}
           style={styles.headerSide}
+          hitSlop={12}
           accessibilityLabel="Close"
+          accessibilityRole="button"
         >
           <Ionicons name="close" size={26} color={colors.text} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.text }]}>
-          {isGroupMode ? "New group chat" : "New chat"}
+          {headerTitle}
         </Text>
         <View style={styles.headerSide} />
       </View>
@@ -338,19 +389,16 @@ function StartChatScreen() {
               key={row.userId}
               style={[
                 styles.chip,
-                {
-                  backgroundColor: colors.surfaceSecondary,
-                  borderColor: colors.border,
-                },
+                { backgroundColor: accentLight },
               ]}
             >
               <Avatar
                 name={row.displayName}
                 imageUrl={row.profilePhoto}
-                size={20}
+                size={24}
               />
               <Text
-                style={[styles.chipText, { color: colors.text }]}
+                style={[styles.chipText, { color: chipTextColor }]}
                 numberOfLines={1}
               >
                 {row.displayName.split(" ")[0]}
@@ -358,11 +406,13 @@ function StartChatScreen() {
               <TouchableOpacity
                 onPress={() => removeSelected(row.userId)}
                 accessibilityLabel={`Remove ${row.displayName}`}
-                hitSlop={8}
+                accessibilityRole="button"
+                hitSlop={12}
+                style={styles.chipRemoveHit}
               >
                 <Ionicons
                   name="close-circle"
-                  size={16}
+                  size={18}
                   color={colors.textSecondary}
                 />
               </TouchableOpacity>
@@ -371,13 +421,13 @@ function StartChatScreen() {
         </ScrollView>
       ) : null}
 
-      {/* Optional group name (only when 2+ selected) */}
+      {/* Optional chat name (only when 2+ selected) */}
       {isGroupMode ? (
         <View style={styles.searchContainer}>
           <TextInput
-            value={groupName}
-            onChangeText={setGroupName}
-            placeholder="Group name (optional)"
+            value={chatName}
+            onChangeText={setChatName}
+            placeholder="Chat name (optional)"
             placeholderTextColor={colors.textSecondary}
             maxLength={100}
             style={[
@@ -421,13 +471,16 @@ function StartChatScreen() {
 
       {/* Results */}
       <FlatList
-        data={results ?? []}
+        data={hasQuery ? results ?? [] : []}
         keyExtractor={(item) => item.userId}
         renderItem={renderItem}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         ListEmptyComponent={emptyState}
         contentContainerStyle={
-          (results?.length ?? 0) === 0 ? styles.emptyListContent : undefined
+          !hasQuery || (results?.length ?? 0) === 0
+            ? styles.emptyListContent
+            : undefined
         }
       />
 
@@ -440,6 +493,7 @@ function StartChatScreen() {
               backgroundColor: colors.surface,
               borderTopColor: colors.border,
               paddingBottom: insets.bottom + 12,
+              shadowColor: colors.shadow,
             },
           ]}
         >
@@ -452,6 +506,7 @@ function StartChatScreen() {
               isSubmitting && styles.rowDimmed,
             ]}
             accessibilityRole="button"
+            accessibilityLabel={ctaLabel}
           >
             {isSubmitting ? (
               <ActivityIndicator size="small" color="#ffffff" />
@@ -473,43 +528,48 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
     paddingBottom: 12,
-    borderBottomWidth: 1,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   headerSide: {
-    width: 40,
-    height: 32,
+    width: 44,
+    height: 44,
+    alignItems: "center",
     justifyContent: "center",
   },
   headerTitle: {
     fontSize: 17,
-    fontWeight: "500",
+    fontWeight: "600",
   },
   chipsRow: {
-    maxHeight: 48,
     flexGrow: 0,
   },
   chipsContent: {
     paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingVertical: 10,
     gap: 8,
     alignItems: "center",
   },
   chip: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
+    gap: 8,
     paddingLeft: 4,
-    paddingRight: 8,
+    paddingRight: 6,
     paddingVertical: 4,
-    borderRadius: 16,
-    borderWidth: 1,
+    borderRadius: 999,
   },
   chipText: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: "500",
-    maxWidth: 120,
+    maxWidth: 140,
+  },
+  chipRemoveHit: {
+    width: 28,
+    height: 28,
+    alignItems: "center",
+    justifyContent: "center",
   },
   searchContainer: {
     paddingHorizontal: 16,
@@ -519,8 +579,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 10,
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingVertical: 12,
     fontSize: 16,
+    minHeight: 44,
   },
   errorText: {
     marginTop: 8,
@@ -531,6 +592,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 16,
     paddingVertical: 10,
+    minHeight: 64,
     borderBottomWidth: StyleSheet.hairlineWidth,
     gap: 12,
   },
@@ -543,10 +605,11 @@ const styles = StyleSheet.create({
   },
   rowName: {
     fontSize: 16,
-    fontWeight: "500",
+    fontWeight: "600",
   },
   rowSubtitle: {
     fontSize: 13,
+    fontWeight: "400",
     marginTop: 2,
   },
   checkmark: {
@@ -559,11 +622,19 @@ const styles = StyleSheet.create({
   },
   emptyContainer: {
     paddingHorizontal: 24,
-    paddingTop: 40,
+    paddingTop: 80,
     alignItems: "center",
+    gap: 6,
   },
   emptyText: {
+    fontSize: 16,
+    fontWeight: "400",
+    lineHeight: 22,
+    textAlign: "center",
+  },
+  emptySubText: {
     fontSize: 14,
+    fontWeight: "400",
     textAlign: "center",
   },
   emptyListContent: {
@@ -572,11 +643,28 @@ const styles = StyleSheet.create({
   ctaBar: {
     paddingHorizontal: 16,
     paddingTop: 12,
-    borderTopWidth: 1,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    // Subtle separation from list content. iOS/web pick up the shadow,
+    // Android falls back to elevation.
+    ...Platform.select({
+      ios: {
+        shadowOffset: { width: 0, height: -2 },
+        shadowOpacity: 0.06,
+        shadowRadius: 6,
+      },
+      android: {
+        elevation: 8,
+      },
+      default: {
+        // RN Web honors `boxShadow` as a CSS string.
+        boxShadow: "0 -2px 8px rgba(0, 0, 0, 0.06)",
+      },
+    }),
   },
   ctaButton: {
     paddingVertical: 14,
-    borderRadius: 10,
+    borderRadius: 12,
+    minHeight: 50,
     alignItems: "center",
     justifyContent: "center",
   },

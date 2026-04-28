@@ -173,16 +173,15 @@ export function ChatInboxScreen({
   }, [inboxChannels, communityId, setInboxChannels]);
 
   // Inbox list entries are a grouped item (group + its channels), an event row,
-  // a direct-message row, or a section divider. Groups + events interleave by
-  // recency; direct messages sit in their own section at the top so the user
-  // can scan them at a glance (the iMessage layout). Announcement group stays
-  // pinned on top of the groups+events block.
+  // a direct-message row, or the requests-link header. Groups, events, and DMs
+  // all blend into a single inbox stream — no section divider — so the surface
+  // reads like iMessage rather than a categorized list. Announcement group
+  // stays pinned on top of the groups+events block.
   type DirectInboxRow = NonNullable<typeof directInbox>[number];
   type InboxListItem =
     | { kind: "group"; item: InboxGroup }
     | { kind: "event"; item: EventInboxRow }
     | { kind: "dm"; item: DirectInboxRow }
-    | { kind: "section"; key: string; title: string }
     | { kind: "requests-link"; count: number };
 
   // Render a single inbox row (group, event, dm, section header, or
@@ -229,13 +228,6 @@ export function ChatInboxScreen({
           </Pressable>
         );
       }
-      if (item.kind === "section") {
-        return (
-          <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
-            {item.title}
-          </Text>
-        );
-      }
       if (item.kind === "dm") {
         return (
           <DirectMessageRow
@@ -273,7 +265,6 @@ export function ChatInboxScreen({
   // Key extractor for FlatList
   const keyExtractor = useCallback((item: InboxListItem) => {
     if (item.kind === "requests-link") return "requests-link";
-    if (item.kind === "section") return `section:${item.key}`;
     if (item.kind === "dm") return `dm:${item.item.channelId}`;
     return item.kind === "event"
       ? `event:${item.item.channel._id}`
@@ -419,25 +410,69 @@ export function ChatInboxScreen({
     return combined;
   }, [displayChannels]);
 
-  // Prepend the Direct messages section when the user has any accepted DMs.
-  // Pending requests are surfaced as a single tappable header row above the
-  // section that routes to /inbox/requests; they're not interleaved into
-  // either DMs or groups so unaccepted senders can't sneak into the active
-  // chat list.
+  // Blend direct messages into the same inbox stream as groups + events so the
+  // surface reads like iMessage — no category divider, no "Direct messages"
+  // header. Pending requests still surface as a single tappable row pinned at
+  // the very top (above the announcement group) so unaccepted senders can't
+  // sneak into the active chat list.
   const dmRows = directInbox ?? [];
   const requestCount = chatRequests?.length ?? 0;
   const listItemsWithDm = useMemo<InboxListItem[]>(() => {
+    const dmItems: InboxListItem[] = dmRows.map((row) => ({
+      kind: "dm" as const,
+      item: row,
+    }));
+
+    // Recency-sort DMs against groups + events. Announcement-group ordering
+    // (already enforced inside `listItems`) is preserved by treating that
+    // entry as a fixed top anchor and only sorting the rest.
+    const dmTime = (entry: { kind: "dm"; item: DirectInboxRow }) =>
+      entry.item.lastMessageAt ?? 0;
+    const otherTime = (entry: InboxListItem) => {
+      if (entry.kind === "event") {
+        return (
+          entry.item.channel.lastMessageAt ??
+          entry.item.channel.meetingScheduledAt ??
+          0
+        );
+      }
+      if (entry.kind === "group") {
+        return Math.max(
+          0,
+          ...entry.item.channels.map((c) => c.lastMessageAt ?? 0),
+        );
+      }
+      return 0;
+    };
+
+    // Pull the pinned announcement group off the front (if present) so DMs
+    // can't displace it.
+    const pinned: InboxListItem[] = [];
+    const rest: InboxListItem[] = [];
+    for (const entry of listItems) {
+      if (
+        entry.kind === "group" &&
+        entry.item.group.isAnnouncementGroup &&
+        pinned.length === 0
+      ) {
+        pinned.push(entry);
+      } else {
+        rest.push(entry);
+      }
+    }
+
+    const merged = [...rest, ...dmItems];
+    merged.sort((a, b) => {
+      const aT = a.kind === "dm" ? dmTime(a) : otherTime(a);
+      const bT = b.kind === "dm" ? dmTime(b) : otherTime(b);
+      return bT - aT;
+    });
+
     const items: InboxListItem[] = [];
     if (requestCount > 0) {
       items.push({ kind: "requests-link", count: requestCount });
     }
-    if (dmRows.length > 0) {
-      items.push({ kind: "section", key: "dm-header", title: "Direct messages" });
-      items.push(
-        ...dmRows.map((row) => ({ kind: "dm" as const, item: row })),
-      );
-    }
-    items.push(...listItems);
+    items.push(...pinned, ...merged);
     return items;
   }, [requestCount, dmRows, listItems]);
   const hasInboxItems = listItemsWithDm.length > 0;
@@ -999,7 +1034,51 @@ interface DirectMessageRowProps {
   colors: {
     text: string;
     textSecondary: string;
+    surface: string;
   };
+}
+
+/**
+ * iMessage-style stacked avatar pair for multi-member DMs. Two overlapping
+ * circles inside a 56×56 bounding box so the row's vertical rhythm matches
+ * the single-avatar 1:1 DM rows and the group rows from `GroupedInboxItem`.
+ *
+ *   - Back avatar: 40×40, top-left
+ *   - Front avatar: 36×36, bottom-right, with a 2px ring in `surface` color
+ *     so it visually separates from the back avatar (matches the inbox row
+ *     background — same trick iMessage uses).
+ */
+function StackedAvatars({
+  back,
+  front,
+  surfaceColor,
+}: {
+  back: { name: string; imageUrl: string | null };
+  front: { name: string; imageUrl: string | null };
+  surfaceColor: string;
+}) {
+  return (
+    <View style={styles.dmStackedAvatarContainer}>
+      <Avatar
+        name={back.name}
+        imageUrl={back.imageUrl ?? undefined}
+        size={40}
+        style={styles.dmStackedAvatarBack}
+      />
+      <View
+        style={[
+          styles.dmStackedAvatarFrontWrapper,
+          { backgroundColor: surfaceColor },
+        ]}
+      >
+        <Avatar
+          name={front.name}
+          imageUrl={front.imageUrl ?? undefined}
+          size={36}
+        />
+      </View>
+    </View>
+  );
 }
 
 function DirectMessageRow({ row, primaryColor, colors }: DirectMessageRowProps) {
@@ -1008,6 +1087,9 @@ function DirectMessageRow({ row, primaryColor, colors }: DirectMessageRowProps) 
   // Display name: for 1:1, the other member; for group_dm, the channel name
   // (or a comma-separated member list as a fallback when no name is set —
   // group_dm with empty name renders client-side from the member list).
+  // "Chat" — not "Group chat" — is the fallback when no members are present:
+  // the product surface drops "group" language; multi-recipient threads are
+  // just chats with more people.
   const isOneOnOne = row.channelType === "dm";
   const headerName = isOneOnOne
     ? row.otherMembers[0]?.displayName ?? "Conversation"
@@ -1017,12 +1099,14 @@ function DirectMessageRow({ row, primaryColor, colors }: DirectMessageRowProps) 
           .slice(0, 3)
           .map((m) => m.displayName.split(" ")[0])
           .filter(Boolean)
-          .join(", ") || "Group chat";
+          .join(", ") || "Chat";
 
-  // Avatar: for 1:1, the other person; for group_dm, the first member.
-  const avatarSource = row.otherMembers[0];
+  // Stack two avatars when this is a true multi-member group_dm with at least
+  // two visible others. iMessage doesn't try to fit three — neither do we.
+  const useStackedAvatars = !isOneOnOne && row.otherMembers.length >= 2;
+  const primaryAvatar = row.otherMembers[0];
 
-  // Compose preview line. Mute icon takes precedence when muted.
+  // Compose preview line.
   const preview = row.lastMessagePreview ?? "No messages yet";
   const previewWithSender =
     isOneOnOne || !row.lastMessageSenderName
@@ -1034,18 +1118,32 @@ function DirectMessageRow({ row, primaryColor, colors }: DirectMessageRowProps) 
       pathname: `/inbox/dm/${row.channelId}` as any,
       params: {
         groupName: headerName,
-        imageUrl: avatarSource?.profilePhoto ?? "",
+        imageUrl: primaryAvatar?.profilePhoto ?? "",
       },
     });
   };
 
   return (
     <Pressable onPress={onPress} style={styles.dmRow}>
-      <Avatar
-        name={avatarSource?.displayName ?? headerName}
-        imageUrl={avatarSource?.profilePhoto ?? undefined}
-        size={48}
-      />
+      {useStackedAvatars ? (
+        <StackedAvatars
+          back={{
+            name: row.otherMembers[0].displayName,
+            imageUrl: row.otherMembers[0].profilePhoto,
+          }}
+          front={{
+            name: row.otherMembers[1].displayName,
+            imageUrl: row.otherMembers[1].profilePhoto,
+          }}
+          surfaceColor={colors.surface}
+        />
+      ) : (
+        <Avatar
+          name={primaryAvatar?.displayName ?? headerName}
+          imageUrl={primaryAvatar?.profilePhoto ?? undefined}
+          size={56}
+        />
+      )}
       <View style={styles.dmRowContent}>
         <View style={styles.dmRowTopLine}>
           <Text
@@ -1094,15 +1192,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  sectionLabel: {
-    fontSize: 13,
-    fontWeight: "600",
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 6,
-  },
   requestsLinkRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1132,12 +1221,41 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    // 12pt vertical padding matches GroupedInboxItem.groupItem so DMs and
+    // group rows share the same vertical rhythm in the blended inbox.
+    paddingVertical: 12,
   },
   dmRowContent: {
     flex: 1,
     marginLeft: 12,
     minWidth: 0,
+  },
+  // Stacked-avatar bounding box: 56×56 so multi-member DM rows have the same
+  // height + horizontal alignment as 1:1 DM rows and group rows. Absolute
+  // positioning inside; the back avatar anchors top-left and the front
+  // avatar bottom-right with a ~12pt overlap.
+  dmStackedAvatarContainer: {
+    width: 56,
+    height: 56,
+    position: "relative",
+  },
+  dmStackedAvatarBack: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+  },
+  // The front avatar wears a 2pt ring in the inbox row's surface color so the
+  // two circles read as separate at a glance. Wrapping the Avatar in a padded,
+  // rounded View is the cleanest way to draw that ring without poking at
+  // Avatar internals.
+  dmStackedAvatarFrontWrapper: {
+    position: "absolute",
+    bottom: 0,
+    right: 0,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    padding: 2,
   },
   dmRowTopLine: {
     flexDirection: "row",
