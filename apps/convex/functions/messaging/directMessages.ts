@@ -758,12 +758,28 @@ export const removeAdHocMember = mutation({
       throw new Error("Only ad-hoc chats support removing members");
     }
 
-    // Self-remove is always allowed; otherwise require inviter privileges.
+    // Self-remove is always allowed; otherwise require inviter privileges
+    // AND that the caller is still an active accepted member of the channel.
+    // Without the active-membership gate, a creator who has already left
+    // (leftAt set) could keep ejecting members from outside the chat.
     const isSelf = args.userId === callerId;
     if (!isSelf) {
       const inviterId = await getAdHocInviter(ctx, args.channelId);
       if (!inviterId || inviterId !== callerId) {
         throw new Error("Only the chat creator can remove other members");
+      }
+      const callerMembership = await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", args.channelId).eq("userId", callerId),
+        )
+        .first();
+      if (
+        !callerMembership ||
+        callerMembership.leftAt !== undefined ||
+        callerMembership.requestState !== "accepted"
+      ) {
+        throw new Error("Only an active member can remove other members");
       }
     }
 

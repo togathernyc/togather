@@ -435,8 +435,11 @@ export function ChatInfoScreen({ channelId }: Props) {
           ))}
         </View>
 
-        {/* Add people */}
-        {remainingSlots > 0 ? (
+        {/* Add people — only group chats support adding members. The backend
+            rejects 1:1 DMs ("Only group chats support adding members"), so
+            hide the row entirely on `dm` channels rather than showing a
+            dead-end action. */}
+        {isGroupDm && remainingSlots > 0 ? (
           <Pressable
             onPress={() => setAddPeopleVisible(true)}
             style={({ pressed }) => [

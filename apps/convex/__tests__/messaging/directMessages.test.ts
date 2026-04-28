@@ -1278,4 +1278,60 @@ describe("removeAdHocMember", () => {
     // Sanity: aId is the creator we asserted privileges for.
     expect(aId).toBeDefined();
   });
+
+  test("creator who has left cannot remove other members (stale-privilege guard)", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Stale Privilege Community");
+    const { accessToken: aToken } = await createUserInCommunity(t, communityId, {
+      firstName: "Alice",
+    });
+    const { userId: bId, accessToken: bToken } = await createUserInCommunity(
+      t,
+      communityId,
+      { firstName: "Bob" },
+    );
+    const { userId: cId, accessToken: cToken } = await createUserInCommunity(
+      t,
+      communityId,
+      { firstName: "Carol" },
+    );
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.directMessages.createGroupChat,
+      {
+        token: aToken,
+        communityId,
+        recipientUserIds: [bId, cId],
+        name: "Stale privilege",
+      },
+    );
+    await t.mutation(
+      api.functions.messaging.directMessages.respondToChatRequest,
+      { token: bToken, channelId, response: "accept" },
+    );
+    await t.mutation(
+      api.functions.messaging.directMessages.respondToChatRequest,
+      { token: cToken, channelId, response: "accept" },
+    );
+
+    // Creator A leaves the channel.
+    await t.mutation(
+      api.functions.messaging.directMessages.leaveAdHocChannel,
+      { token: aToken, channelId },
+    );
+
+    // After leaving, A still holds the channelId but should not be able to
+    // remove other members from outside the chat.
+    await expect(
+      t.mutation(api.functions.messaging.directMessages.removeAdHocMember, {
+        token: aToken,
+        channelId,
+        userId: bId,
+      }),
+    ).rejects.toThrow(/active member/i);
+
+    // B is still active — sanity: their membership is intact.
+    const bMember = await getMember(t, channelId, bId);
+    expect(bMember?.leftAt).toBeUndefined();
+  });
 });
