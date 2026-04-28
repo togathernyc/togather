@@ -1007,6 +1007,13 @@ describe("profile photo gate", () => {
     );
     expect(aRowAfterRestart?.leftAt).toBeUndefined();
     expect(aRowAfterRestart?.requestState).toBe("accepted");
+
+    // The leave path archived the channel (Alice was the last accepted
+    // member). Reactivation must unarchive it so the thread reappears in
+    // getDirectInbox — otherwise the chat is reachable only via direct
+    // nav and missing from inbox surfaces.
+    const channelAfter = await t.run((ctx) => ctx.db.get(channelId));
+    expect(channelAfter?.isArchived).toBe(false);
   });
 });
 

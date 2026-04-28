@@ -216,6 +216,17 @@ export const createOrGetDirectChannel = mutation({
         senderId,
         "accepted",
       );
+      // If the channel was archived (e.g. via `leaveAdHocChannel` when the
+      // caller was the last active member), unarchive it now that the
+      // caller is rejoining — otherwise `getDirectInbox` would still hide
+      // the thread and the user would only reach it via direct nav.
+      if (existing.isArchived) {
+        await ctx.db.patch(existing._id, {
+          isArchived: false,
+          archivedAt: undefined,
+          updatedAt: Date.now(),
+        });
+      }
       return { channelId: existing._id, isNew: false };
     }
 
@@ -1041,15 +1052,19 @@ export const searchUsersInSharedCommunities = query({
     const communityName = community?.name ?? "";
 
     // Use the `search_users` full-text index instead of scanning every
-    // community member. This matches first/last/email through the user's
-    // denormalized `searchText` and is dramatically faster than the
-    // 2000-membership-then-fetch loop the previous implementation used.
+    // community member. The index is GLOBAL (not community-scoped), so we
+    // pull a generous batch of top-ranked hits and post-filter to the
+    // current community below. The cap mirrors the admin search (500) so
+    // common terms don't get truncated by users outside the current
+    // community dominating the top hits — without this, valid in-community
+    // matches could be dropped and the picker would return too few
+    // results in larger deployments.
     const searchHits = await ctx.db
       .query("users")
       .withSearchIndex("search_users", (q) =>
         q.search("searchText", trimmedQuery),
       )
-      .take(limit * 4);
+      .take(500);
 
     // Phone-number match: full-text search struggles with formatted phone
     // numbers (parens, dashes), so do a separate phone scan over community
