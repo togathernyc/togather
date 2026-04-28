@@ -61,16 +61,25 @@ async function createUserInCommunity(
   },
 ): Promise<{ userId: Id<"users">; accessToken: string }> {
   const userId = await t.run(async (ctx) => {
+    const lastName = opts.lastName ?? "Tester";
+    const phoneVal = uniquePhone();
+    // searchText must be populated for the search index to be queryable in
+    // tests — production denormalizes this on user write. Mirror the same
+    // shape the index expects (firstName + lastName + email + phone).
+    const searchText = `${opts.firstName} ${lastName} ${phoneVal}`
+      .toLowerCase()
+      .trim();
     const uId = await ctx.db.insert("users", {
       firstName: opts.firstName,
-      lastName: opts.lastName ?? "Tester",
-      phone: uniquePhone(),
+      lastName,
+      phone: phoneVal,
       phoneVerified: true,
       activeCommunityId: communityId,
       profilePhoto:
         opts.profilePhoto === null
           ? undefined
           : (opts.profilePhoto ?? "https://example.com/avatar.png"),
+      searchText,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     });
@@ -670,9 +679,18 @@ describe("searchUsersInSharedCommunities", () => {
       });
     });
 
-    const results = await t.query(
+    // Empty query returns no results — the picker shows nothing until the
+    // user starts typing. Search the community by name to exercise the
+    // search-index path.
+    const empty = await t.query(
       api.functions.messaging.directMessages.searchUsersInSharedCommunities,
       { token: aToken, communityId, query: "" },
+    );
+    expect(empty).toEqual([]);
+
+    const results = await t.query(
+      api.functions.messaging.directMessages.searchUsersInSharedCommunities,
+      { token: aToken, communityId, query: "Carol" },
     );
 
     const ids = results.map((r) => r.userId);
@@ -861,7 +879,7 @@ describe("profile photo gate", () => {
     ).rejects.toThrow(/PROFILE_PHOTO_REQUIRED/);
   });
 
-  test("createOrGetDirectChannel rejects when recipient lacks profilePhoto", async () => {
+  test("createOrGetDirectChannel succeeds even when recipient lacks profilePhoto (gate moves to accept)", async () => {
     const t = convexTest(schema, modules);
     const communityId = await createCommunity(t, "Photo Recipient Community");
     const { accessToken: aToken } = await createUserInCommunity(t, communityId, {
@@ -872,12 +890,15 @@ describe("profile photo gate", () => {
       profilePhoto: null,
     });
 
-    await expect(
-      t.mutation(
-        api.functions.messaging.directMessages.createOrGetDirectChannel,
-        { token: aToken, communityId, recipientUserId: bId },
-      ),
-    ).rejects.toThrow(/RECIPIENT_PROFILE_PHOTO_REQUIRED:/);
+    // Request goes through. The recipient is gated at accept-time, not
+    // create-time — they can still receive the request and be prompted to
+    // add a photo before they can read or reply.
+    const result = await t.mutation(
+      api.functions.messaging.directMessages.createOrGetDirectChannel,
+      { token: aToken, communityId, recipientUserId: bId },
+    );
+    expect(result.channelId).toBeDefined();
+    expect(result.isNew).toBe(true);
   });
 
   test("createOrGetDirectChannel succeeds when both have profilePhoto", async () => {
@@ -927,6 +948,170 @@ describe("profile photo gate", () => {
         { token: bToken, channelId, response: "accept" },
       ),
     ).rejects.toThrow(/PROFILE_PHOTO_REQUIRED/);
+  });
+
+  test("createOrGetDirectChannel re-activates membership after the caller has left", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(
+      t,
+      "Leave Then Restart Community",
+    );
+    const { userId: aId, accessToken: aToken } = await createUserInCommunity(
+      t,
+      communityId,
+      { firstName: "Alice" },
+    );
+    const { userId: bId } = await createUserInCommunity(t, communityId, {
+      firstName: "Bob",
+    });
+
+    // Initial DM
+    const { channelId } = await t.mutation(
+      api.functions.messaging.directMessages.createOrGetDirectChannel,
+      { token: aToken, communityId, recipientUserId: bId },
+    );
+
+    // Alice leaves the channel — her row gets `leftAt` set.
+    await t.mutation(
+      api.functions.messaging.directMessages.leaveAdHocChannel,
+      { token: aToken, channelId },
+    );
+
+    const aRowAfterLeave = await t.run((ctx) =>
+      ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", aId),
+        )
+        .first(),
+    );
+    expect(aRowAfterLeave?.leftAt).toBeDefined();
+
+    // Alice re-initiates the conversation. createOrGetDirectChannel should
+    // return the same channel AND clear her `leftAt` so downstream calls
+    // (markAsRead, sendMessage) don't reject "Not a member of this channel".
+    const second = await t.mutation(
+      api.functions.messaging.directMessages.createOrGetDirectChannel,
+      { token: aToken, communityId, recipientUserId: bId },
+    );
+    expect(second.channelId).toBe(channelId);
+    expect(second.isNew).toBe(false);
+
+    const aRowAfterRestart = await t.run((ctx) =>
+      ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", aId),
+        )
+        .first(),
+    );
+    expect(aRowAfterRestart?.leftAt).toBeUndefined();
+    expect(aRowAfterRestart?.requestState).toBe("accepted");
+
+    // The leave path archived the channel (Alice was the last accepted
+    // member). Reactivation must unarchive it so the thread reappears in
+    // getDirectInbox — otherwise the chat is reachable only via direct
+    // nav and missing from inbox surfaces.
+    const channelAfter = await t.run((ctx) => ctx.db.get(channelId));
+    expect(channelAfter?.isArchived).toBe(false);
+    // memberCount restored after rejoin (leaveAdHocChannel decremented it
+    // — without restore the 1:1 channel would persistently report 1).
+    expect(channelAfter?.memberCount).toBe(2);
+  });
+
+  test("createOrGetDirectChannel does not auto-restore a declined recipient (preserves decline)", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Decline Stays Community");
+    const { userId: aId, accessToken: aToken } = await createUserInCommunity(
+      t,
+      communityId,
+      { firstName: "Alice" },
+    );
+    const { userId: bId, accessToken: bToken } = await createUserInCommunity(
+      t,
+      communityId,
+      { firstName: "Bob" },
+    );
+
+    // A creates a DM, B declines.
+    const { channelId } = await t.mutation(
+      api.functions.messaging.directMessages.createOrGetDirectChannel,
+      { token: aToken, communityId, recipientUserId: bId },
+    );
+    await t.mutation(
+      api.functions.messaging.directMessages.respondToChatRequest,
+      { token: bToken, channelId, response: "decline" },
+    );
+
+    const bRowDeclined = await t.run((ctx) =>
+      ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", bId),
+        )
+        .first(),
+    );
+    expect(bRowDeclined?.requestState).toBe("declined");
+
+    // B uses a Message entry point on A — must NOT silently un-decline.
+    await t.mutation(
+      api.functions.messaging.directMessages.createOrGetDirectChannel,
+      { token: bToken, communityId, recipientUserId: aId },
+    );
+    const bRowAfter = await t.run((ctx) =>
+      ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", bId),
+        )
+        .first(),
+    );
+    expect(bRowAfter?.requestState).toBe("declined");
+  });
+
+  test("createOrGetDirectChannel does not auto-promote a pending recipient (preserves accept flow)", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(
+      t,
+      "No Auto Accept Community",
+    );
+    const { userId: aId, accessToken: aToken } = await createUserInCommunity(
+      t,
+      communityId,
+      { firstName: "Alice" },
+    );
+    const { userId: bId, accessToken: bToken } = await createUserInCommunity(
+      t,
+      communityId,
+      { firstName: "Bob" },
+    );
+
+    // A creates the DM — B's row starts pending.
+    await t.mutation(
+      api.functions.messaging.directMessages.createOrGetDirectChannel,
+      { token: aToken, communityId, recipientUserId: bId },
+    );
+
+    // B uses a Message entry point (e.g. tapping Message on A's profile)
+    // before explicitly accepting via respondToChatRequest. The lookup
+    // returns the existing channel BUT must not auto-flip B from pending
+    // to accepted — that would bypass the deliberate accept action.
+    const result = await t.mutation(
+      api.functions.messaging.directMessages.createOrGetDirectChannel,
+      { token: bToken, communityId, recipientUserId: aId },
+    );
+    expect(result.isNew).toBe(false);
+
+    const bRow = await t.run((ctx) =>
+      ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", result.channelId).eq("userId", bId),
+        )
+        .first(),
+    );
+    expect(bRow?.requestState).toBe("pending");
+    expect(bRow?.leftAt).toBeUndefined();
   });
 });
 

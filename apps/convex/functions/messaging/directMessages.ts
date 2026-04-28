@@ -18,7 +18,7 @@ import type { QueryCtx } from "../../_generated/server";
 import type { Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { checkRateLimit } from "../../lib/rateLimit";
-import { getDisplayName, getMediaUrl } from "../../lib/utils";
+import { getDisplayName, getMediaUrl, normalizePhone } from "../../lib/utils";
 
 // ============================================================================
 // Constants
@@ -42,6 +42,46 @@ const NEW_REQUEST_WINDOW_MS = 24 * 60 * 60 * 1000;
 // ============================================================================
 // Internal Helpers
 // ============================================================================
+
+/**
+ * Re-activate an ad-hoc channel member row that had previously left as
+ * an accepted member (e.g. via `leaveAdHocChannel`). Used by
+ * `createOrGetDirectChannel` so a user who left a 1:1 DM and then restarts
+ * the conversation gets back into the channel — without this, their row
+ * keeps `leftAt` set and downstream calls (`markAsRead`, `sendMessage`)
+ * reject "Not a member of this channel".
+ *
+ * IMPORTANT — only reactivates rows whose previous `requestState` was
+ * `"accepted"`. Declined rows (which `respondToChatRequest` stores as
+ * `leftAt` + `requestState: "declined"`) and pending rows are NEVER
+ * touched, because flipping them back to active would silently undo a
+ * deliberate user choice (decline / block / pending awaiting accept) via a
+ * normal "Message" entry point. Re-engaging after a decline must go
+ * through the explicit accept path.
+ *
+ * Returns true when the row was reactivated so callers can adjust
+ * memberCount.
+ */
+async function reactivateAdHocMembership(
+  ctx: { db: { query: any; patch: any } },
+  channelId: Id<"chatChannels">,
+  userId: Id<"users">,
+): Promise<boolean> {
+  const row = await ctx.db
+    .query("chatChannelMembers")
+    .withIndex("by_channel_user", (q: any) =>
+      q.eq("channelId", channelId).eq("userId", userId),
+    )
+    .first();
+  if (!row) return false;
+  // Only restore left-as-accepted rows. Declined / pending stay as-is.
+  if (row.leftAt === undefined || row.requestState !== "accepted") return false;
+  await ctx.db.patch(row._id, {
+    leftAt: undefined,
+    requestRespondedAt: Date.now(),
+  });
+  return true;
+}
 
 /**
  * Compute the deterministic dedup key for a 1:1 DM channel within a community.
@@ -164,12 +204,41 @@ export const createOrGetDirectChannel = mutation({
       args.recipientUserId,
     );
 
-    // Existing channel? Return it without rate-limit (already-known pair).
+    // Existing channel? Re-activate the caller's membership if they've left
+    // and return the channelId. The caller has explicitly chosen to restart
+    // the conversation, so a stale `leftAt` row would just produce a "Not a
+    // member of this channel" error on every read/write. Re-activating is
+    // idempotent for never-left rows.
     const existing = await ctx.db
       .query("chatChannels")
       .withIndex("by_dmPairKey", (q) => q.eq("dmPairKey", dmPairKey))
       .first();
     if (existing) {
+      const reactivated = await reactivateAdHocMembership(
+        ctx,
+        existing._id,
+        senderId,
+      );
+      // When reactivation actually flipped a `leftAt`-set row, also restore
+      // memberCount (`leaveAdHocChannel` decrements it on departure). If we
+      // skipped this, a 1:1 DM after leave→restart would persistently report
+      // memberCount=1, drifting metadata in inbox surfaces.
+      // If the channel was archived (e.g. via `leaveAdHocChannel` when the
+      // caller was the last active member), unarchive it now that the
+      // caller is rejoining — otherwise `getDirectInbox` would still hide
+      // the thread and the user would only reach it via direct nav.
+      const patches: Record<string, unknown> = {};
+      if (reactivated) {
+        patches.memberCount = (existing.memberCount ?? 0) + 1;
+      }
+      if (existing.isArchived) {
+        patches.isArchived = false;
+        patches.archivedAt = undefined;
+      }
+      if (Object.keys(patches).length > 0) {
+        patches.updatedAt = Date.now();
+        await ctx.db.patch(existing._id, patches);
+      }
       return { channelId: existing._id, isNew: false };
     }
 
@@ -187,18 +256,15 @@ export const createOrGetDirectChannel = mutation({
       throw new Error("Cannot start chat");
     }
 
-    // Profile photo gate: caller must have one; recipient must have one. We
-    // check after auth + community + block resolution so we never leak that a
-    // recipient exists when the caller couldn't message them anyway.
+    // Profile photo gate: caller must have one. Recipients are NOT gated at
+    // create time — they can be invited without a photo and the request flow
+    // proceeds. The accept path in `respondToChatRequest` enforces the photo
+    // requirement before the recipient can read messages or reply, which is
+    // when it actually matters that everyone in the conversation has a face.
     await requireProfilePhoto(ctx, senderId);
     const recipientUser = await ctx.db.get(args.recipientUserId);
-    if (
-      !recipientUser?.profilePhoto ||
-      recipientUser.profilePhoto.trim() === ""
-    ) {
-      // Include the recipient userId so the frontend can format a per-user
-      // prompt (e.g. "Bob hasn't added a profile photo yet").
-      throw new Error(`RECIPIENT_PROFILE_PHOTO_REQUIRED:${args.recipientUserId}`);
+    if (!recipientUser) {
+      throw new Error("Recipient not found");
     }
 
     // Rate-limit new pending DM requests.
@@ -319,19 +385,16 @@ export const createGroupChat = mutation({
       throw new Error("Cannot include some users in this chat");
     }
 
-    // Profile photo gate: creator AND every recipient must have one. Surface
-    // the first failing recipient userId so the frontend can pinpoint who.
+    // Profile photo gate: creator must have one. Recipients are NOT gated at
+    // create time — they can be invited without a photo and the request flow
+    // proceeds. The accept path in `respondToChatRequest` enforces the photo
+    // requirement before the recipient can read messages or reply.
     await requireProfilePhoto(ctx, creatorId);
     const recipientDocs = await Promise.all(
       uniqueRecipients.map((id) => ctx.db.get(id)),
     );
-    for (let i = 0; i < uniqueRecipients.length; i++) {
-      const u = recipientDocs[i];
-      if (!u?.profilePhoto || u.profilePhoto.trim() === "") {
-        throw new Error(
-          `RECIPIENT_PROFILE_PHOTO_REQUIRED:${uniqueRecipients[i]}`,
-        );
-      }
+    if (recipientDocs.some((u) => !u)) {
+      throw new Error("One or more recipients not found");
     }
 
     // Rate-limit new pending requests.
@@ -677,10 +740,9 @@ export const addAdHocMembers = mutation({
       if (!newUser) {
         throw new Error("User not found");
       }
-      // Profile photo gate.
-      if (!newUser.profilePhoto || newUser.profilePhoto.trim() === "") {
-        throw new Error(`RECIPIENT_PROFILE_PHOTO_REQUIRED:${newUserId}`);
-      }
+      // Profile photo is enforced at accept-time (respondToChatRequest), not
+      // at invite-time. New invitees can be added without a photo and will be
+      // prompted to add one before they can read or reply in the chat.
 
       await ctx.db.insert("chatChannelMembers", {
         channelId: args.channelId,
@@ -990,56 +1052,99 @@ export const searchUsersInSharedCommunities = query({
     );
     const excludeIds = new Set<Id<"users">>(args.excludeUserIds ?? []);
     excludeIds.add(callerId);
-    const trimmedQuery = args.query.trim().toLowerCase();
+    const trimmedQuery = args.query.trim();
 
     // Caller must themselves be an active member of this community.
     const callerIn = await isCommunityMember(ctx, callerId, args.communityId);
     if (!callerIn) return [];
 
+    if (trimmedQuery.length === 0) return [];
+
     const community = await ctx.db.get(args.communityId);
     const communityName = community?.name ?? "";
 
-    // Members of this single community only — search does not cross
-    // community boundaries.
-    const memberships = await ctx.db
-      .query("userCommunities")
-      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
-      .filter((q) => q.neq(q.field("status"), 3))
-      .take(2000);
+    // Use the `search_users` full-text index instead of scanning every
+    // community member. The index is GLOBAL (not community-scoped), so we
+    // pull a generous batch of top-ranked hits and post-filter to the
+    // current community below. The cap mirrors the admin search (500) so
+    // common terms don't get truncated by users outside the current
+    // community dominating the top hits — without this, valid in-community
+    // matches could be dropped and the picker would return too few
+    // results in larger deployments.
+    const searchHits = await ctx.db
+      .query("users")
+      .withSearchIndex("search_users", (q) =>
+        q.search("searchText", trimmedQuery),
+      )
+      .take(500);
+
+    // Phone-number match: full-text search struggles with formatted phone
+    // numbers (parens, dashes), so do a separate phone scan over community
+    // members when the query is digit-heavy. Mirrors the admin search.
+    const normalizedPhone = normalizePhone(trimmedQuery).replace(/\D/g, "");
+    let phoneHits: typeof searchHits = [];
+    if (normalizedPhone.length >= 4) {
+      const memberships = await ctx.db
+        .query("userCommunities")
+        .withIndex("by_community", (q) =>
+          q.eq("communityId", args.communityId),
+        )
+        .filter((q) => q.neq(q.field("status"), 3))
+        .take(2000);
+      const phoneCandidates = await Promise.all(
+        memberships.map((m) => ctx.db.get(m.userId)),
+      );
+      phoneHits = phoneCandidates.filter(
+        (u): u is NonNullable<typeof u> =>
+          !!u && !!u.phone && u.phone.includes(normalizedPhone),
+      );
+    }
+
+    // Merge by userId.
+    const seen = new Set<Id<"users">>();
+    const merged = [...searchHits, ...phoneHits].filter((u) => {
+      if (seen.has(u._id)) return false;
+      seen.add(u._id);
+      return true;
+    });
+
+    // Confirm community membership for each search hit (the search index is
+    // global — restrict the returned set to this community).
+    const membershipChecks = await Promise.all(
+      merged.map((u) =>
+        ctx.db
+          .query("userCommunities")
+          .withIndex("by_user_community", (q) =>
+            q.eq("userId", u._id).eq("communityId", args.communityId),
+          )
+          .first(),
+      ),
+    );
+
+    const blockChecks = await Promise.all(
+      merged.map((u) => isBlockedEitherDirection(ctx, callerId, u._id)),
+    );
 
     type Candidate = {
       user: NonNullable<Awaited<ReturnType<typeof ctx.db.get<"users">>>>;
       isFullNameMatch: boolean;
     };
     const candidates: Candidate[] = [];
-    for (const m of memberships) {
-      if (excludeIds.has(m.userId)) continue;
-      if (candidates.length >= limit * 4) break; // bound work; we'll filter & cap later
-      const user = await ctx.db.get(m.userId);
-      if (!user) continue;
+    const lower = trimmedQuery.toLowerCase();
+    for (let i = 0; i < merged.length; i++) {
+      const user = merged[i]!;
+      if (excludeIds.has(user._id)) continue;
+      const membership = membershipChecks[i];
+      if (!membership || membership.status === 3) continue;
+      if (blockChecks[i]) continue;
 
       const fullName = `${user.firstName ?? ""} ${user.lastName ?? ""}`
         .trim()
         .toLowerCase();
-      const searchText = (user.searchText ?? "").toLowerCase();
-
-      let isFullNameMatch = false;
-      if (trimmedQuery.length > 0) {
-        if (fullName.includes(trimmedQuery)) {
-          isFullNameMatch = true;
-        } else if (!searchText.includes(trimmedQuery)) {
-          continue;
-        }
-      }
-
-      if (await isBlockedEitherDirection(ctx, callerId, user._id)) {
-        continue;
-      }
-
+      const isFullNameMatch = lower.length > 0 && fullName.includes(lower);
       candidates.push({ user, isFullNameMatch });
     }
 
-    // Sort: full-name matches first, then alphabetical by last/first.
     candidates.sort((a, b) => {
       if (a.isFullNameMatch !== b.isFullNameMatch) {
         return a.isFullNameMatch ? -1 : 1;
@@ -1057,9 +1162,6 @@ export const searchUsersInSharedCommunities = query({
       userId: c.user._id,
       displayName: getDisplayName(c.user.firstName, c.user.lastName),
       profilePhoto: getMediaUrl(c.user.profilePhoto) ?? null,
-      // Single-community attribution mirrors the new scoping. Returned as
-      // an array for backward compatibility with the existing picker UI,
-      // which already renders an array.
       sharedCommunityNames: communityName ? [communityName] : [],
     }));
   },

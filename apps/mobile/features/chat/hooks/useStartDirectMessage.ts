@@ -65,6 +65,14 @@ export function useStartDirectMessage() {
           communityId,
           recipientUserId: otherUserId,
         });
+        // The Message button typically lives inside a modal-presented
+        // profile screen (the (user) route group is `presentation: "modal"`
+        // in `app/_layout.tsx`). Pushing without dismissing first lands the
+        // chat *behind* the modal on iOS — broken navigation. Dismiss the
+        // modal stack first, then push to the chat.
+        if (router.canDismiss?.()) {
+          router.dismissAll();
+        }
         router.push({
           pathname: `/inbox/dm/${channelId}` as any,
           params: {
