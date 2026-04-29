@@ -100,12 +100,13 @@ export function GroupNonMemberView({
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
       >
-        {/* Header with image, name, and cadence */}
-        {/* Show 3-dots menu for everyone (Share Group) and admins (Edit, Archive, etc.) */}
+        {/* Header with image, name, and cadence. Tapping the share icon
+            opens the GroupOptionsModal which non-members rely on for
+            "Share Group" + admin "Edit/Archive". The (i) icon was retired
+            — you're already on the info surface. */}
         <GroupHeader
           group={group}
-          showMenu={true}
-          onMenuPress={() => setShowOptionsModal(true)}
+          onSharePress={() => setShowOptionsModal(true)}
         />
 
         {/* Description */}

@@ -685,6 +685,31 @@ const ConvexChatRoomScreenInner: React.FC = () => {
     }
   }, [router, getGroupIdForNavigation]);
 
+  /**
+   * Handler for the (i) icon in the chat header (replaced the old 3-dot
+   * menu opener). Routes:
+   *   - General (channelType === "main"): → /groups/{id}  (group page IS
+   *     the channel info for General)
+   *   - Other channels: → /inbox/{groupId}/{slug}/info
+   *
+   * `ChatMenuModal` stays mounted because other components rely on its
+   * handlers; we just stopped opening it from the (i).
+   */
+  const handleOpenChannelInfo = useCallback(() => {
+    const id = getGroupIdForNavigation();
+    if (!id) return;
+    // Determine channel type from the active tab. Fall back to "main" if
+    // we can't resolve — the General -> group page route is the safest
+    // default.
+    const activeTab = channelTabs.find((t) => t.slug === activeSlug);
+    const isMain = !activeTab || activeTab.channelType === "main";
+    if (isMain) {
+      router.push(`/groups/${id}`);
+    } else {
+      router.push(`/inbox/${id}/${activeSlug}/info` as any);
+    }
+  }, [router, getGroupIdForNavigation, channelTabs, activeSlug]);
+
   const handleShareGroup = useCallback(() => {
     setMenuVisible(false);
     runAfterChatMenuDismiss(() => {
@@ -1014,9 +1039,8 @@ const ConvexChatRoomScreenInner: React.FC = () => {
               isAnnouncementGroup ? undefined : groupDetails?.memberCount
             }
             onBack={handleBack}
-            onMenuPress={() => setMenuVisible(true)}
+            onInfoPress={handleOpenChannelInfo}
             onGroupPagePress={handleGoToGroupPage}
-            onMembersPress={handleGoToMembers}
           />
         )}
         {/* ChatNavigation drives the channel-tab bar for group channels.

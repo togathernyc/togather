@@ -332,19 +332,31 @@ export const getChannelBySlug = query({
     token: v.string(),
     groupId: v.id("groups"),
     slug: v.string(),
+    /**
+     * Include channels that are leader-disabled or archived. The channel info
+     * screen (`/info` route) sets this so a leader can land on a disabled
+     * Leaders / Reach Out channel and re-enable it from the Active state row.
+     * For Leaders / Reach Out / main, `isArchived` is the legacy-disable flag
+     * (NOT a tombstone) — without this flag the row is silently filtered out
+     * and the screen shows "no longer available." Defaults to false.
+     */
+    includeArchived: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     // 1. Authenticate user
     const userId = await requireAuth(ctx, args.token);
 
-    // 2. Query by_group_slug index for the channel (exclude archived channels)
-    const channel = await ctx.db
+    const archiveFilter = args.includeArchived === true;
+
+    // 2. Query by_group_slug index for the channel
+    const channelQuery = ctx.db
       .query("chatChannels")
       .withIndex("by_group_slug", (q) =>
         q.eq("groupId", args.groupId).eq("slug", args.slug)
-      )
-      .filter((q) => q.eq(q.field("isArchived"), false))
-      .first();
+      );
+    const channel = archiveFilter
+      ? await channelQuery.first()
+      : await channelQuery.filter((q) => q.eq(q.field("isArchived"), false)).first();
 
     // Also try matching by channelType for backwards compatibility
     // (e.g., "general" might be stored as slug, but "main" is channelType)
@@ -357,15 +369,14 @@ export const getChannelBySlug = query({
       };
       const channelType = slugToType[args.slug];
       if (channelType) {
-        // Filter out archived channels in the query to avoid returning archived
-        // channels when multiple channels of the same type exist
-        resolvedChannel = await ctx.db
+        const typeQuery = ctx.db
           .query("chatChannels")
           .withIndex("by_group_type", (q) =>
             q.eq("groupId", args.groupId).eq("channelType", channelType)
-          )
-          .filter((q) => q.eq(q.field("isArchived"), false))
-          .first();
+          );
+        resolvedChannel = archiveFilter
+          ? await typeQuery.first()
+          : await typeQuery.filter((q) => q.eq(q.field("isArchived"), false)).first();
       }
     }
 

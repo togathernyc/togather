@@ -313,14 +313,20 @@ describe("ChannelMembersScreen", () => {
       expect(removeIcons.length).toBe(2);
     });
 
-    it("shows archive button for custom channel owner", () => {
-      const { getByText } = render(<ChannelMembersScreen />);
-      expect(getByText("Archive Channel")).toBeTruthy();
+    // Archive button moved to the channel info screen (Leader Controls).
+    // The /members surface is now focused on member management only.
+    it("does NOT show archive button for custom channel owner", () => {
+      const { queryByText } = render(<ChannelMembersScreen />);
+      expect(queryByText("Archive Channel")).toBeNull();
     });
 
-    it("renders bottom actions container when actions are available", () => {
-      const { getByTestId } = render(<ChannelMembersScreen />);
+    it("renders bottom actions container with Share with Groups for owner", () => {
+      // Archive button moved off this surface; the bottom actions
+      // container is still rendered for primary-group leaders because
+      // "Share with Groups" lives there.
+      const { getByTestId, getByText } = render(<ChannelMembersScreen />);
       expect(getByTestId("bottom-actions")).toBeTruthy();
+      expect(getByText("Share with Groups")).toBeTruthy();
     });
   });
 
@@ -469,96 +475,9 @@ describe("ChannelMembersScreen", () => {
     });
   });
 
-  describe("Archive Channel", () => {
-    it("shows confirmation dialog when archiving", () => {
-      const { getByText } = render(<ChannelMembersScreen />);
-      const archiveButton = getByText("Archive Channel");
-
-      act(() => {
-        fireEvent.press(archiveButton.parent!);
-      });
-
-      expect(Alert.alert).toHaveBeenCalledWith(
-        "Archive Channel",
-        expect.stringContaining("Test Channel"),
-        expect.any(Array)
-      );
-    });
-
-    it("calls archiveChannelMutation after confirmation", async () => {
-      mockArchiveChannelMutation.mockResolvedValueOnce(undefined);
-
-      const { getByText } = render(<ChannelMembersScreen />);
-      const archiveButton = getByText("Archive Channel");
-
-      act(() => {
-        fireEvent.press(archiveButton.parent!);
-      });
-
-      const alertCalls = (Alert.alert as jest.Mock).mock.calls;
-      const alertButtons = alertCalls[0][2];
-      const confirmButton = alertButtons.find((b: any) => b.text === "Archive");
-
-      await act(async () => {
-        await confirmButton.onPress();
-      });
-
-      expect(mockArchiveChannelMutation).toHaveBeenCalledWith({
-        token: "mock-token",
-        channelId: "channel-1",
-      });
-    });
-
-    it("shows success alert and navigates after archiving", async () => {
-      mockArchiveChannelMutation.mockResolvedValueOnce(undefined);
-
-      const { getByText } = render(<ChannelMembersScreen />);
-      const archiveButton = getByText("Archive Channel");
-
-      act(() => {
-        fireEvent.press(archiveButton.parent!);
-      });
-
-      const alertCalls = (Alert.alert as jest.Mock).mock.calls;
-      const confirmButton = alertCalls[0][2].find((b: any) => b.text === "Archive");
-
-      await act(async () => {
-        await confirmButton.onPress();
-      });
-
-      await waitFor(() => {
-        expect(Alert.alert).toHaveBeenCalledWith(
-          "Channel Archived",
-          "The channel has been archived.",
-          expect.any(Array)
-        );
-      });
-    });
-
-    it("shows error alert on archive failure", async () => {
-      mockArchiveChannelMutation.mockRejectedValueOnce(
-        new Error("Archive failed")
-      );
-
-      const { getByText } = render(<ChannelMembersScreen />);
-      const archiveButton = getByText("Archive Channel");
-
-      act(() => {
-        fireEvent.press(archiveButton.parent!);
-      });
-
-      const alertCalls = (Alert.alert as jest.Mock).mock.calls;
-      const confirmButton = alertCalls[0][2].find((b: any) => b.text === "Archive");
-
-      await act(async () => {
-        await confirmButton.onPress();
-      });
-
-      await waitFor(() => {
-        expect(Alert.alert).toHaveBeenCalledWith("Error", "Archive failed");
-      });
-    });
-  });
+  // Archive Channel surface moved to the channel info screen
+  // (ChannelInfoScreen.tsx → Leader Controls › Archive channel). Tests
+  // for that flow now live alongside the info screen, not here.
 
   describe("Add Members Modal", () => {
     it("opens add member modal when add button is pressed", () => {

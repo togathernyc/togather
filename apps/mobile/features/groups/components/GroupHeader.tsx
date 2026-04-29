@@ -1,36 +1,48 @@
+/**
+ * GroupHeader (sleek, DM-style hero)
+ *
+ * Centered presentation on white:
+ *   - back chevron top-left
+ *   - share icon top-right (no info icon — you're already on the info)
+ *   - circular group avatar (~120px), tappable to view full-size
+ *   - centered group name with optional pencil-edit icon for leaders/admins
+ *   - centered cadence subtitle
+ *   - optional centered description (rendered when non-empty)
+ *
+ * Match-list with `apps/mobile/features/chat/components/ChatInfoScreen.tsx`
+ * to keep DM/info parity. The full-bleed grey hero with a left-aligned
+ * title was retired in favour of this layout.
+ */
 import React from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  Platform,
-  Dimensions,
-} from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, Pressable } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Group } from "../types";
 import { formatCadence } from "../utils";
-import { AppImageBackground } from "@components/ui/AppImageBackground";
+import { Avatar } from "@components/ui";
 import { useTheme } from "@hooks/useTheme";
-
-const { width: SCREEN_WIDTH } = Dimensions.get("window");
-const HEADER_HEIGHT = SCREEN_WIDTH * 0.6; // 60% of screen width for aspect ratio
+import { ImageViewerManager } from "@/providers/ImageViewerProvider";
 
 interface GroupHeaderProps {
   group: Group;
-  onMenuPress?: () => void;
-  showMenu?: boolean;
+  /** Tap handler for the share icon. Hidden when not provided. */
+  onSharePress?: () => void;
+  /** When true, the user can edit this group; renders a pencil next to the title. */
+  canEdit?: boolean;
 }
 
-export function GroupHeader({ group, onMenuPress, showMenu = true }: GroupHeaderProps) {
+export function GroupHeader({
+  group,
+  onSharePress,
+  canEdit = false,
+}: GroupHeaderProps) {
   const router = useRouter();
   const { colors } = useTheme();
-  const previewUrl = group.preview || group.image_url;
-  const hasImage = !!previewUrl;
-  // Ensure group name always has a value
+  const previewUrl = group.preview || group.image_url || null;
   const groupName = group?.title || group?.name || "Group";
   const cadence = formatCadence(group);
+  const description = group.description?.trim() || "";
+  const hasDescription = description.length > 0;
 
   const handleBack = () => {
     if (router.canGoBack()) {
@@ -40,80 +52,88 @@ export function GroupHeader({ group, onMenuPress, showMenu = true }: GroupHeader
     }
   };
 
-  const iconColor = hasImage ? "#ffffff" : colors.text;
-  const textColor = hasImage ? "#ffffff" : colors.text;
+  const handleEdit = () => {
+    if (!group?._id) return;
+    router.push(`/groups/${group._id}/edit`);
+  };
 
-  const content = (
-    <View style={styles.contentContainer}>
-      {/* Top bar with back button and menu */}
+  const handleAvatarPress = () => {
+    if (!previewUrl) return;
+    ImageViewerManager.show([previewUrl], 0);
+  };
+
+  return (
+    <View style={[styles.container, { backgroundColor: colors.surface }]}>
       <View style={styles.topBar}>
         <TouchableOpacity
-          style={styles.backButton}
+          style={styles.iconButton}
           onPress={handleBack}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          accessibilityLabel="Back"
         >
-          <Ionicons name="arrow-back" size={24} color={iconColor} />
+          <Ionicons name="chevron-back" size={28} color={colors.text} />
         </TouchableOpacity>
-        <View style={styles.topBarSpacer} />
-        {showMenu && onMenuPress && (
+        <View style={styles.spacer} />
+        {!!onSharePress && (
           <TouchableOpacity
-            style={styles.menuButton}
-            onPress={onMenuPress}
+            style={styles.iconButton}
+            onPress={onSharePress}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityLabel="Share group"
           >
-            <Ionicons name="ellipsis-vertical" size={24} color={iconColor} />
+            <Ionicons
+              name="share-outline"
+              size={24}
+              color={colors.text}
+            />
           </TouchableOpacity>
         )}
       </View>
 
-      {/* Group name and cadence */}
-      <View style={styles.textContainer}>
-        <Text 
-          style={[
-            styles.groupName, 
-            { color: textColor },
-            !hasImage && styles.groupNameNoImage
-          ]} 
-          numberOfLines={2}
+      <View style={styles.heroContent}>
+        <Pressable
+          onPress={handleAvatarPress}
+          disabled={!previewUrl}
+          style={({ pressed }) => [pressed && previewUrl && { opacity: 0.85 }]}
+          accessibilityRole={previewUrl ? "button" : undefined}
+          accessibilityLabel={previewUrl ? "View group photo" : undefined}
         >
-          {groupName}
-        </Text>
-        {cadence && (
-          <Text 
-            style={[
-              styles.cadence, 
-              { color: textColor },
-              !hasImage && styles.cadenceNoImage
-            ]} 
-            numberOfLines={1}
-          >
+          <Avatar name={groupName} imageUrl={previewUrl} size={120} />
+        </Pressable>
+        <Pressable
+          onPress={canEdit ? handleEdit : undefined}
+          disabled={!canEdit}
+          style={({ pressed }) => [
+            styles.titleRow,
+            pressed && canEdit && { opacity: 0.7 },
+          ]}
+        >
+          <Text style={[styles.groupName, { color: colors.text }]} numberOfLines={2}>
+            {groupName}
+          </Text>
+          {canEdit && (
+            <Ionicons
+              name="pencil"
+              size={16}
+              color={colors.textSecondary}
+              style={styles.pencilIcon}
+            />
+          )}
+        </Pressable>
+        {cadence ? (
+          <Text style={[styles.cadence, { color: colors.textSecondary }]} numberOfLines={1}>
             {cadence}
           </Text>
-        )}
+        ) : null}
+        {hasDescription ? (
+          <Text
+            style={[styles.description, { color: colors.textSecondary }]}
+            numberOfLines={3}
+          >
+            {description}
+          </Text>
+        ) : null}
       </View>
-    </View>
-  );
-
-  return (
-    <View style={styles.container}>
-      {hasImage ? (
-        <AppImageBackground
-          source={previewUrl}
-          style={styles.imageBackground}
-          imageStyle={styles.imageStyle}
-          optimizedWidth={800}
-        >
-          <View style={styles.gradientOverlay}>
-            {content}
-          </View>
-        </AppImageBackground>
-      ) : (
-        <View style={[styles.placeholderContainer, { backgroundColor: colors.border }]}>
-          <View style={styles.gradient}>
-            {content}
-          </View>
-        </View>
-      )}
     </View>
   );
 }
@@ -121,82 +141,49 @@ export function GroupHeader({ group, onMenuPress, showMenu = true }: GroupHeader
 const styles = StyleSheet.create({
   container: {
     width: "100%",
-    height: HEADER_HEIGHT,
-  },
-  imageBackground: {
-    width: "100%",
-    height: "100%",
-  },
-  imageStyle: {
-    resizeMode: "cover",
-  },
-  placeholderContainer: {
-    width: "100%",
-    height: "100%",
-    backgroundColor: "#E0E0E0", // Placeholder gradient - stays as design constant
-  },
-  gradient: {
-    flex: 1,
-    justifyContent: "space-between",
-    paddingTop: Platform.OS === "ios" ? 50 : 20,
-    paddingBottom: 20,
-    paddingHorizontal: 16,
-  },
-  gradientOverlay: {
-    flex: 1,
-    justifyContent: "space-between",
-    paddingTop: Platform.OS === "ios" ? 50 : 20,
-    paddingBottom: 20,
-    paddingHorizontal: 16,
-    backgroundColor: "rgba(0, 0, 0, 0.4)",
-  },
-  contentContainer: {
-    flex: 1,
-    justifyContent: "space-between",
+    paddingBottom: 24,
   },
   topBar: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    paddingHorizontal: 8,
+    paddingVertical: 8,
   },
-  backButton: {
-    padding: 8,
+  iconButton: {
+    padding: 4,
   },
-  topBarSpacer: {
+  spacer: {
     flex: 1,
   },
-  menuButton: {
-    padding: 8,
+  heroContent: {
+    alignItems: "center",
+    paddingHorizontal: 24,
+    paddingTop: 8,
   },
-  textContainer: {
-    paddingBottom: 8,
+  titleRow: {
+    marginTop: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
   },
   groupName: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: "700",
-    color: "#ffffff",
-    marginBottom: 8,
-    textShadowColor: "rgba(0, 0, 0, 0.3)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
+    textAlign: "center",
   },
-  groupNameNoImage: {
-    textShadowColor: "transparent",
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 0,
+  pencilIcon: {
+    marginTop: 4,
   },
   cadence: {
-    fontSize: 16,
+    marginTop: 4,
+    fontSize: 14,
     fontWeight: "500",
-    color: "#ffffff",
-    textShadowColor: "rgba(0, 0, 0, 0.3)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
+    textAlign: "center",
   },
-  cadenceNoImage: {
-    textShadowColor: "transparent",
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 0,
+  description: {
+    marginTop: 8,
+    fontSize: 13,
+    lineHeight: 18,
+    textAlign: "center",
   },
 });
-

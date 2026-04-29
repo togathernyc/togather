@@ -175,10 +175,14 @@ jest.mock("@/providers/ImageViewerProvider", () => ({
 jest.mock("../GroupHeader", () => {
   const { View, Text, Pressable } = require("react-native");
   return {
-    GroupHeader: ({ group, onMenuPress }: any) => (
+    GroupHeader: ({ group, onSharePress }: any) => (
       <View testID="group-header">
         <Text testID="group-header-title">{group?.title || group?.name}</Text>
-        <Pressable testID="menu-button" onPress={onMenuPress}><Text>Menu</Text></Pressable>
+        {onSharePress && (
+          <Pressable testID="share-button" onPress={onSharePress}>
+            <Text>Share</Text>
+          </Pressable>
+        )}
       </View>
     ),
   };
@@ -338,7 +342,9 @@ describe("GroupDetailScreen", () => {
     render(<GroupDetailScreen />, { wrapper: createWrapper() });
 
     expect(screen.queryByTestId("non-member-view")).toBeNull();
-    expect(screen.getByText("Test description")).toBeTruthy();
+    // Description is now rendered inside GroupHeader (centered, under
+    // schedule). The mock surfaces the title via testID instead.
+    expect(screen.getByTestId("group-header-title")).toBeTruthy();
   });
 
   it("calls join group mutation when join button is pressed", async () => {
@@ -671,7 +677,9 @@ describe("GroupDetailScreen", () => {
       // Member (even if admin) should NOT see non-member view
       expect(screen.queryByTestId("non-member-view")).toBeNull();
       // Should see the member view content instead
-      expect(screen.getByText("Test description")).toBeTruthy();
+      // Description is now rendered inside GroupHeader (centered, under
+    // schedule). The mock surfaces the title via testID instead.
+    expect(screen.getByTestId("group-header-title")).toBeTruthy();
     });
   });
 });

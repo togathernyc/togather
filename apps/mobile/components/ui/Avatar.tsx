@@ -11,6 +11,10 @@ interface AvatarProps {
   style?: StyleProp<ImageStyle>;
   /** Disable image optimization (for debugging) */
   disableOptimization?: boolean;
+  /** Background color for the initials placeholder. Defaults to a hashed
+   *  color tied to the name. Pass a flat color (e.g. theme `border`) for
+   *  contexts that want a neutral preview row. */
+  placeholderBackgroundColor?: string;
 }
 
 export function Avatar({
@@ -19,6 +23,7 @@ export function Avatar({
   size = 48,
   style,
   disableOptimization = false,
+  placeholderBackgroundColor,
 }: AvatarProps) {
   const safeSize = size && size > 0 ? size : 48;
 
@@ -45,6 +50,7 @@ export function Avatar({
       placeholder={{
         type: 'initials',
         name: name,
+        ...(placeholderBackgroundColor ? { backgroundColor: placeholderBackgroundColor } : {}),
       }}
     />
   );

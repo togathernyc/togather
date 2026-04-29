@@ -1,44 +1,40 @@
 /**
- * ChannelsSection Component
+ * ChannelsSection (clean, DM-style)
  *
- * Displays all channels for a group with management options.
- * Part of the Group Detail screen.
+ * Single CHANNELS card on the group page. Each row is icon + name +
+ * subtitle + chevron — no toggles, no trailing icon clusters. Per-channel
+ * configuration (active/disabled state, share-with-groups, archive,
+ * leave) lives on the per-channel info screen at
+ * `/inbox/[groupId]/[channelSlug]/info`.
  *
- * Features:
- * - Shows "Auto Channels" section (General and Leaders channels)
- * - Shows "Custom Channels" section with user's custom channels
- * - Leaders can toggle any channel on/off (General, Leaders, Reach Out, PCO, custom)
- * - Leaders can manage custom channel members
- * - Leaders can create new custom channels
- * - Users can leave custom channels
- * - Pin indicators for pinned channels
+ * Order:
+ *   1. CHANNELS card (general → leaders → reach_out → pco → custom)
+ *   2. Solid "Create Channel" affordance (leaders only)
+ *   3. SHARED CHANNEL INVITATIONS card (leaders only, when present)
+ *
+ * Navigation:
+ *   - General (channelType === "main"): → /inbox/{groupId}/{slug} (chat)
+ *   - Everything else: → /inbox/{groupId}/{slug}/info
+ *
+ * The Pin Channels / Toolbar Settings buttons that used to float at the
+ * bottom of this section now live in GROUP ACTIONS on
+ * GroupDetailScreen.
  */
-import React, { useState, useCallback, useMemo } from "react";
+import React, { useCallback, useMemo } from "react";
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
-  Alert,
-  Switch,
   ActivityIndicator,
-  Share,
-  ActionSheetIOS,
-  Platform,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import {
-  useAuthenticatedMutation,
-  useQuery,
-  api,
-} from "@services/api/convex";
+import { useQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
-import { DOMAIN_CONFIG } from "@togather/shared";
-import * as Clipboard from "expo-clipboard";
 import { useGroupChannels } from "../hooks/useGroupChannels";
 import { useRespondToChannelInvite } from "../hooks/useRespondToChannelInvite";
 import { ChannelJoinRequestsBanner } from "./ChannelJoinRequestsBanner";
@@ -71,15 +67,9 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
   const { token } = useAuth();
   const { primaryColor } = useCommunityTheme();
   const { colors } = useTheme();
-  const [togglingLeaders, setTogglingLeaders] = useState(false);
-  const [togglingReachOut, setTogglingReachOut] = useState(false);
-  const [togglingChannelId, setTogglingChannelId] = useState<string | null>(null);
-  const [leavingChannelId, setLeavingChannelId] = useState<string | null>(null);
 
-  // Determine if user is a leader
   const isLeader = userRole === "leader" || userRole === "admin";
 
-  // Query pending shared channel invites for this group (leaders only)
   const pendingInvites = useQuery(
     api.functions.messaging.sharedChannels.listPendingInvitesForGroup,
     token && isLeader ? { token, groupId: groupId as Id<"groups"> } : "skip"
@@ -88,571 +78,293 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
   const { respondingTo, handleRespond: handleRespondToInvite } =
     useRespondToChannelInvite({ token, groupId });
 
-  // Fetch channels for this group (with offline cache support)
-  const { channels: rawChannels } = useGroupChannels(groupId, { includeArchived: isLeader });
+  const { channels: rawChannels } = useGroupChannels(groupId, {
+    includeArchived: isLeader,
+  });
 
-  // Defense in depth: never show leader-disabled channels to non-leaders (group page)
   const channels = useMemo(() => {
     if (rawChannels === undefined) return undefined;
     if (isLeader) return rawChannels;
     return rawChannels.filter((c: Channel) => c.isEnabled !== false);
   }, [rawChannels, isLeader]);
 
-  // Mutations
-  const leaveChannelMutation = useAuthenticatedMutation(
-    api.functions.messaging.channels.leaveChannel
-  );
-  const toggleLeadersChannelMutation = useAuthenticatedMutation(
-    api.functions.messaging.channels.toggleLeadersChannel
-  );
-  const toggleReachOutChannelMutation = useAuthenticatedMutation(
-    api.functions.messaging.channels.toggleReachOutChannel
-  );
-  const toggleMainChannelMutation = useAuthenticatedMutation(
-    api.functions.messaging.channels.toggleMainChannel
-  );
-  const togglePcoChannelMutation = useAuthenticatedMutation(
-    api.functions.messaging.channels.togglePcoChannel
-  );
-  const setCustomChannelLeaderEnabledMutation = useAuthenticatedMutation(
-    api.functions.messaging.channels.setCustomChannelLeaderEnabled
-  );
-  const enableInviteLinkMutation = useAuthenticatedMutation(
-    api.functions.messaging.channelInvites.enableInviteLink
-  );
-
-  // Filter channels by type
   const mainChannel = channels?.find((c: Channel) => c.channelType === "main");
   const leadersChannel = channels?.find((c: Channel) => c.channelType === "leaders");
+  const reachOutChannel = channels?.find((c: Channel) => c.channelType === "reach_out");
   const pcoSyncedChannels = channels?.filter((c: Channel) => c.channelType === "pco_services") ?? [];
   const customChannels = channels?.filter((c: Channel) => c.channelType === "custom") ?? [];
 
-  // Check if leaders channel is enabled (exists and not archived)
-  const leadersChannelEnabled = leadersChannel && !leadersChannel.isArchived;
+  const leadersEnabled = !!leadersChannel && !leadersChannel.isArchived;
+  const mainEnabled = !!mainChannel && !mainChannel.isArchived;
+  const reachOutEnabled = !!reachOutChannel && !reachOutChannel.isArchived;
 
-  const mainChannelEnabled = mainChannel ? !mainChannel.isArchived : false;
-
-  // Check if reach out channel exists and is enabled
-  const reachOutChannel = channels?.find((c: Channel) => c.channelType === "reach_out");
-  const reachOutEnabled = reachOutChannel ? !reachOutChannel.isArchived : false;
-
-  // Navigate to channel chat
-  const handleChannelPress = useCallback(
-    (channel: Channel) => {
-      router.push(`/inbox/${groupId}/${channel.slug}`);
-    },
+  const navigateToChannelChat = useCallback(
+    (slug: string) => router.push(`/inbox/${groupId}/${slug}` as any),
     [router, groupId]
   );
 
-  // Leave a custom channel
-  const handleLeaveChannel = useCallback(
-    (channel: Channel) => {
-      Alert.alert(
-        "Leave Channel",
-        `Are you sure you want to leave "${channel.name}"?`,
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Leave",
-            style: "destructive",
-            onPress: async () => {
-              setLeavingChannelId(channel._id);
-              try {
-                await leaveChannelMutation({ channelId: channel._id });
-              } catch (error: any) {
-                Alert.alert(
-                  "Error",
-                  error?.message || "Failed to leave channel"
-                );
-              } finally {
-                setLeavingChannelId(null);
-              }
-            },
-          },
-        ]
-      );
-    },
-    [leaveChannelMutation]
-  );
-
-  // Navigate to manage members screen
-  const handleManageMembers = useCallback(
-    (channel: Channel) => {
-      router.push(`/inbox/${groupId}/${channel.slug}/members`);
-    },
+  const navigateToChannelInfo = useCallback(
+    (slug: string) => router.push(`/inbox/${groupId}/${slug}/info` as any),
     [router, groupId]
   );
 
-  // Toggle leaders channel on/off
-  const handleToggleLeadersChannel = useCallback(
-    async (enabled: boolean) => {
-      setTogglingLeaders(true);
-      try {
-        await toggleLeadersChannelMutation({
-          groupId: groupId as Id<"groups">,
-          enabled,
-        });
-      } catch (error: any) {
-        Alert.alert(
-          "Error",
-          error?.message || "Failed to toggle leaders channel"
-        );
-      } finally {
-        setTogglingLeaders(false);
-      }
-    },
-    [toggleLeadersChannelMutation, groupId]
-  );
-
-  // Toggle reach out channel on/off
-  const handleToggleReachOutChannel = useCallback(async (enabled: boolean) => {
-    setTogglingReachOut(true);
-    try {
-      await toggleReachOutChannelMutation({ groupId: groupId as Id<"groups">, enabled });
-    } catch (error: any) {
-      Alert.alert("Error", error?.message || "Failed to toggle reach out channel");
-    } finally {
-      setTogglingReachOut(false);
-    }
-  }, [toggleReachOutChannelMutation, groupId]);
-
-  const handleToggleMainChannel = useCallback(
-    async (enabled: boolean) => {
-      if (!enabled) {
-        Alert.alert(
-          "Disable General channel?",
-          "Members will not be able to use General until you turn it back on.",
-          [
-            { text: "Cancel", style: "cancel" },
-            {
-              text: "Disable",
-              style: "destructive",
-              onPress: async () => {
-                setTogglingChannelId("main");
-                try {
-                  await toggleMainChannelMutation({
-                    groupId: groupId as Id<"groups">,
-                    enabled: false,
-                  });
-                } catch (error: any) {
-                  Alert.alert(
-                    "Error",
-                    error?.message || "Failed to update General channel"
-                  );
-                } finally {
-                  setTogglingChannelId(null);
-                }
-              },
-            },
-          ]
-        );
-        return;
-      }
-      setTogglingChannelId("main");
-      try {
-        await toggleMainChannelMutation({
-          groupId: groupId as Id<"groups">,
-          enabled: true,
-        });
-      } catch (error: any) {
-        Alert.alert("Error", error?.message || "Failed to update General channel");
-      } finally {
-        setTogglingChannelId(null);
-      }
-    },
-    [toggleMainChannelMutation, groupId]
-  );
-
-  const handleTogglePcoChannel = useCallback(
-    async (channel: Channel, enabled: boolean) => {
-      setTogglingChannelId(channel._id);
-      try {
-        await togglePcoChannelMutation({
-          channelId: channel._id,
-          enabled,
-          managingGroupId: groupId as Id<"groups">,
-        });
-      } catch (error: any) {
-        Alert.alert("Error", error?.message || "Failed to update channel");
-      } finally {
-        setTogglingChannelId(null);
-      }
-    },
-    [togglePcoChannelMutation, groupId]
-  );
-
-  const handleToggleCustomChannel = useCallback(
-    async (channel: Channel, enabled: boolean) => {
-      if (!enabled) {
-        Alert.alert(
-          "Hide channel from members?",
-          `Members will not see "${channel.name}" until you turn it back on. No one is removed from the channel.`,
-          [
-            { text: "Cancel", style: "cancel" },
-            {
-              text: "Hide",
-              style: "destructive",
-              onPress: async () => {
-                setTogglingChannelId(channel._id);
-                try {
-                  await setCustomChannelLeaderEnabledMutation({
-                    channelId: channel._id,
-                    enabled: false,
-                    managingGroupId: groupId as Id<"groups">,
-                  });
-                } catch (error: any) {
-                  Alert.alert("Error", error?.message || "Failed to update channel");
-                } finally {
-                  setTogglingChannelId(null);
-                }
-              },
-            },
-          ]
-        );
-        return;
-      }
-      setTogglingChannelId(channel._id);
-      try {
-        await setCustomChannelLeaderEnabledMutation({
-          channelId: channel._id,
-          enabled: true,
-          managingGroupId: groupId as Id<"groups">,
-        });
-      } catch (error: any) {
-        Alert.alert("Error", error?.message || "Failed to enable channel");
-      } finally {
-        setTogglingChannelId(null);
-      }
-    },
-    [setCustomChannelLeaderEnabledMutation, groupId]
-  );
-
-  // Navigate to create channel screen
   const handleCreateChannel = useCallback(() => {
-    router.push(`/inbox/${groupId}/create`);
+    router.push(`/inbox/${groupId}/create` as any);
   }, [router, groupId]);
 
-  // Share channel invite link
-  const handleShareChannel = useCallback(async (channel: Channel) => {
-    try {
-      const result = await enableInviteLinkMutation({
-        channelId: channel._id,
-      });
-      const url = DOMAIN_CONFIG.channelInviteUrl(result.shortId);
-
-      if (Platform.OS === "ios") {
-        ActionSheetIOS.showActionSheetWithOptions(
-          {
-            options: ["Cancel", "Copy Link", "Share Link"],
-            cancelButtonIndex: 0,
-          },
-          async (buttonIndex) => {
-            if (buttonIndex === 1) {
-              await Clipboard.setStringAsync(url);
-              Alert.alert("Copied!", "Invite link copied to clipboard.");
-            } else if (buttonIndex === 2) {
-              Share.share({ url, message: `Join #${channel.name}: ${url}` });
-            }
-          }
-        );
-      } else {
-        Share.share({ message: `Join #${channel.name}: ${url}` });
-      }
-    } catch (error: any) {
-      Alert.alert("Error", error?.message || "Failed to share channel");
-    }
-  }, [enableInviteLinkMutation]);
-
-  // Navigate to pin channels screen (dedicated route)
-  const handlePinChannels = useCallback(() => {
-    router.push(`/(user)/leader-tools/${groupId}/pin-channels`);
-  }, [router, groupId]);
-
-  // Navigate to toolbar settings screen
-  const handleToolbarSettings = useCallback(() => {
-    router.push(`/(user)/leader-tools/${groupId}/toolbar-settings`);
-  }, [router, groupId]);
-
-  // Loading state
   if (channels === undefined) {
     return (
-      <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
-        <Text style={[styles.header, { color: colors.text }]}>CHANNELS</Text>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="small" color={primaryColor} />
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
+        <Text style={[styles.header, { color: colors.textSecondary }]}>CHANNELS</Text>
+        <View style={[styles.card, { backgroundColor: colors.surfaceSecondary }]}>
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="small" color={primaryColor} />
+          </View>
         </View>
       </View>
     );
   }
 
-  // No channels case (shouldn't happen normally)
   if (channels.length === 0) {
     return null;
   }
 
+  // Build the row list in canonical order so renderers don't have to think
+  // about dividers — we draw a hairline between rows by index.
+  type Row = {
+    key: string;
+    icon: React.ComponentProps<typeof Ionicons>["name"];
+    iconColor: string;
+    iconBg: string;
+    name: string;
+    subtitle: string;
+    enabled: boolean;
+    /** Omit for placeholder rows (e.g. Leaders/Reach Out shown to a leader
+     *  before the channel record exists). When set, the row is tappable —
+     *  even if `enabled === false`, since "tap a disabled channel to
+     *  re-enable" is the primary recovery path. */
+    onPress?: () => void;
+    unreadCount?: number;
+    pinned?: boolean;
+  };
+
+  const rows: Row[] = [];
+
+  if (mainChannel) {
+    rows.push({
+      key: mainChannel._id,
+      icon: "chatbubbles",
+      iconColor: primaryColor,
+      iconBg: primaryColor + "15",
+      name: "General",
+      subtitle: mainEnabled ? "All members" : "Disabled",
+      enabled: mainEnabled,
+      // General opens the chat directly. The group page IS its info screen.
+      onPress: () => navigateToChannelChat(mainChannel.slug),
+      unreadCount: mainChannel.unreadCount,
+      pinned: mainChannel.isPinned,
+    });
+  }
+
+  if (leadersChannel || isLeader) {
+    rows.push({
+      key: leadersChannel?._id ?? "leaders-placeholder",
+      icon: "star",
+      iconColor: "#FFA500",
+      iconBg: "#FFA50015",
+      name: "Leaders",
+      subtitle: leadersChannel
+        ? leadersEnabled
+          ? `${leadersChannel.memberCount} leader${leadersChannel.memberCount !== 1 ? "s" : ""}`
+          : "Disabled"
+        : "Disabled",
+      enabled: !!leadersChannel && leadersEnabled,
+      onPress: leadersChannel
+        ? () => navigateToChannelInfo(leadersChannel.slug)
+        : undefined,
+      unreadCount: leadersChannel?.unreadCount,
+      pinned: leadersChannel?.isPinned,
+    });
+  }
+
+  if (isLeader) {
+    rows.push({
+      key: reachOutChannel?._id ?? "reach-out-placeholder",
+      icon: "hand-left",
+      iconColor: "#8E44AD",
+      iconBg: "#8E44AD15",
+      name: "Reach Out",
+      subtitle: !leadersEnabled
+        ? "Requires Leaders channel"
+        : reachOutChannel && reachOutEnabled
+          ? `${reachOutChannel.memberCount} member${reachOutChannel.memberCount !== 1 ? "s" : ""}`
+          : "Disabled",
+      enabled: !!reachOutChannel && reachOutEnabled && leadersEnabled,
+      onPress: reachOutChannel
+        ? () => navigateToChannelInfo(reachOutChannel.slug)
+        : undefined,
+      unreadCount: reachOutChannel?.unreadCount,
+      pinned: reachOutChannel?.isPinned,
+    });
+  }
+
+  pcoSyncedChannels.forEach((channel: Channel) => {
+    const enabled = channel.isEnabled && !channel.isArchived;
+    rows.push({
+      key: channel._id,
+      icon: "sync",
+      iconColor: "#2196F3",
+      iconBg: "#2196F315",
+      name: channel.name,
+      subtitle: enabled
+        ? `${channel.memberCount} member${channel.memberCount !== 1 ? "s" : ""} · PCO Synced`
+        : "Disabled",
+      enabled,
+      onPress: () => navigateToChannelInfo(channel.slug),
+      unreadCount: channel.unreadCount,
+      pinned: channel.isPinned,
+    });
+  });
+
+  customChannels.forEach((channel: Channel) => {
+    const enabled = channel.isEnabled && !channel.isArchived;
+    rows.push({
+      key: channel._id,
+      icon: "chatbubble",
+      iconColor: "#00BCD4",
+      iconBg: "#00BCD415",
+      name: channel.name,
+      subtitle: enabled
+        ? `${channel.memberCount} member${channel.memberCount !== 1 ? "s" : ""}`
+        : "Hidden from members",
+      enabled,
+      onPress: () => navigateToChannelInfo(channel.slug),
+      unreadCount: channel.unreadCount,
+      pinned: channel.isPinned,
+    });
+  });
+
   return (
-    <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
-      {/* AUTO CHANNELS Section */}
-      <Text style={[styles.header, { color: colors.text }]}>AUTO CHANNELS</Text>
-      <View style={[styles.channelList, { backgroundColor: colors.surface }]}>
-        {/* General Channel */}
-        {mainChannel && (
-          <View style={[styles.channelRow, { borderBottomColor: colors.border }]}>
-            <TouchableOpacity
-              style={styles.channelContent}
-              onPress={() =>
-                mainChannelEnabled ? handleChannelPress(mainChannel) : undefined
-              }
-              activeOpacity={mainChannelEnabled ? 0.7 : 1}
-              disabled={!mainChannelEnabled}
-            >
-              <View style={[styles.channelIcon, { backgroundColor: primaryColor + "15" }]}>
-                <Ionicons name="chatbubbles" size={20} color={primaryColor} />
-              </View>
-              <View style={styles.channelInfo}>
-                <Text
-                  style={[
-                    styles.channelName,
-                    { color: colors.text },
-                    !mainChannelEnabled && { color: colors.textTertiary },
-                  ]}
-                >
-                  General
-                </Text>
-                <Text style={[styles.channelSubtitle, { color: colors.textSecondary }]}>
-                  {mainChannelEnabled ? "All members" : "Disabled"}
-                </Text>
-              </View>
-              {mainChannelEnabled && mainChannel.unreadCount > 0 && (
-                <View style={[styles.unreadBadge, { backgroundColor: primaryColor }]}>
-                  <Text style={styles.unreadText}>
-                    {mainChannel.unreadCount > 99 ? "99+" : mainChannel.unreadCount}
-                  </Text>
-                </View>
-              )}
-            </TouchableOpacity>
-            {isLeader ? (
-              <View style={styles.toggleContainer}>
-                {togglingChannelId === "main" ? (
-                  <ActivityIndicator size="small" color={primaryColor} />
-                ) : (
-                  <Switch
-                    testID="channel-toggle-general"
-                    value={mainChannelEnabled}
-                    onValueChange={handleToggleMainChannel}
-                    trackColor={{ false: colors.border, true: primaryColor + "80" }}
-                    thumbColor={mainChannelEnabled ? primaryColor : colors.surfaceSecondary}
-                  />
-                )}
-              </View>
-            ) : (
-              mainChannelEnabled && (
-                <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
-              )
-            )}
-          </View>
-        )}
-
-        {/* Leaders Channel */}
-        {(leadersChannel || isLeader) && (
-          <View style={[styles.channelRow, { borderBottomColor: colors.border }]}>
-            <TouchableOpacity
-              style={styles.channelContent}
-              onPress={() => leadersChannel && leadersChannelEnabled && handleChannelPress(leadersChannel)}
-              activeOpacity={leadersChannelEnabled ? 0.7 : 1}
-              disabled={!leadersChannelEnabled}
-            >
-              <View style={[styles.channelIcon, { backgroundColor: "#FFA50015" }]}>
-                <Ionicons name="star" size={20} color="#FFA500" />
-              </View>
-              <View style={styles.channelInfo}>
-                <Text style={[styles.channelName, { color: colors.text }, !leadersChannelEnabled && { color: colors.textTertiary }]}>
-                  Leaders
-                </Text>
-                <Text style={[styles.channelSubtitle, { color: colors.textSecondary }]}>
-                  {leadersChannel
-                    ? `${leadersChannel.memberCount} leader${leadersChannel.memberCount !== 1 ? "s" : ""}`
-                    : "Disabled"}
-                </Text>
-                {leadersChannel && leadersChannelEnabled && (
-                  <Text style={[styles.channelNote, { color: colors.textTertiary }]}>
-                    You're here because you're a leader
-                  </Text>
-                )}
-              </View>
-              {leadersChannel && leadersChannelEnabled && leadersChannel.unreadCount > 0 && (
-                <View style={[styles.unreadBadge, { backgroundColor: "#FFA500" }]}>
-                  <Text style={styles.unreadText}>
-                    {leadersChannel.unreadCount > 99 ? "99+" : leadersChannel.unreadCount}
-                  </Text>
-                </View>
-              )}
-            </TouchableOpacity>
-            {isLeader && (
-              <View style={styles.toggleContainer}>
-                {togglingLeaders ? (
-                  <ActivityIndicator size="small" color={primaryColor} />
-                ) : (
-                  <Switch
-                    testID="channel-toggle-leaders"
-                    value={leadersChannelEnabled}
-                    onValueChange={handleToggleLeadersChannel}
-                    trackColor={{ false: colors.border, true: primaryColor + "80" }}
-                    thumbColor={leadersChannelEnabled ? primaryColor : colors.surfaceSecondary}
-                  />
-                )}
-              </View>
-            )}
-            {!isLeader && leadersChannelEnabled && (
-              <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
-            )}
-          </View>
-        )}
-
-        {/* Reach Out Channel */}
-        {isLeader && (
-          <View style={[styles.channelRow, { borderBottomColor: colors.border }]}>
-            <View style={styles.channelContent}>
-              <View style={[styles.channelIcon, { backgroundColor: "#8E44AD15" }]}>
-                <Ionicons name="hand-left" size={20} color="#8E44AD" />
-              </View>
-              <View style={styles.channelInfo}>
-                <Text style={[styles.channelName, { color: colors.text }, (!reachOutEnabled || !leadersChannelEnabled) && { color: colors.textTertiary }]}>
-                  Reach Out
-                </Text>
-                <Text style={[styles.channelSubtitle, { color: colors.textSecondary }]}>
-                  {!leadersChannelEnabled
-                    ? "Requires Leaders channel"
-                    : reachOutChannel
-                      ? `${reachOutChannel.memberCount} member(s)`
-                      : "Disabled"}
-                </Text>
-              </View>
-            </View>
-            <View style={styles.toggleContainer}>
-              {togglingReachOut ? (
-                <ActivityIndicator size="small" color={primaryColor} />
-              ) : (
-                <Switch
-                  testID="channel-toggle-reach-out"
-                  value={reachOutEnabled}
-                  onValueChange={handleToggleReachOutChannel}
-                  trackColor={{ false: colors.border, true: primaryColor + "80" }}
-                  thumbColor={reachOutEnabled ? primaryColor : colors.surfaceSecondary}
-                  disabled={!leadersChannelEnabled}
-                />
-              )}
-            </View>
-          </View>
-        )}
-
-        {/* PCO Synced Channels */}
-        {pcoSyncedChannels.map((channel: Channel) => {
-          const pcoEnabled = channel.isEnabled && !channel.isArchived;
-          const canTogglePco = isLeader;
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <Text style={[styles.header, { color: colors.textSecondary }]}>CHANNELS</Text>
+      <View style={[styles.card, { backgroundColor: colors.surfaceSecondary }]}>
+        {rows.map((row, idx) => {
+          const isFirst = idx === 0;
+          const dimmed = !row.enabled;
+          // Disabled channels stay tappable so a leader can re-enable from
+          // the info screen's Active state. Placeholder rows with no
+          // onPress fall through to disabled.
+          const tappable = !!row.onPress;
           return (
-            <View key={channel._id} style={[styles.channelRow, { borderBottomColor: colors.border }]}>
-              <TouchableOpacity
-                style={styles.channelContent}
-                onPress={() =>
-                  pcoEnabled && channel.isMember
-                    ? handleChannelPress(channel)
-                    : pcoEnabled
-                      ? handleManageMembers(channel)
-                      : undefined
-                }
-                activeOpacity={pcoEnabled ? 0.7 : 1}
-                disabled={!pcoEnabled}
-              >
-                <View style={[styles.channelIcon, { backgroundColor: "#2196F315" }]}>
-                  <Ionicons name="sync" size={20} color="#2196F3" />
-                </View>
-                <View style={styles.channelInfo}>
-                  <View style={styles.channelNameRow}>
-                    <Text
-                      style={[
-                        styles.channelName,
-                        { color: colors.text },
-                        (!channel.isMember || !pcoEnabled) && { color: colors.textTertiary },
-                      ]}
-                    >
-                      {channel.name}
-                    </Text>
-                    {channel.isPinned && (
-                      <Ionicons name="pin" size={14} color={colors.iconSecondary} style={styles.pinIcon} />
-                    )}
-                  </View>
-                  <Text style={[styles.channelSubtitle, { color: colors.textSecondary }]}>
-                    {pcoEnabled
-                      ? `${channel.memberCount} member${channel.memberCount !== 1 ? "s" : ""} · PCO Synced`
-                      : "Disabled"}
+            <TouchableOpacity
+              key={row.key}
+              activeOpacity={0.7}
+              onPress={row.onPress}
+              disabled={!tappable}
+              style={[
+                styles.row,
+                !isFirst && {
+                  borderTopWidth: StyleSheet.hairlineWidth,
+                  borderTopColor: colors.border,
+                },
+              ]}
+            >
+              <View style={[styles.iconContainer, { backgroundColor: row.iconBg }]}>
+                <Ionicons name={row.icon} size={20} color={row.iconColor} />
+              </View>
+              <View style={styles.rowInfo}>
+                <View style={styles.rowNameLine}>
+                  <Text
+                    style={[
+                      styles.rowName,
+                      { color: dimmed ? colors.textTertiary : colors.text },
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {row.name}
                   </Text>
-                  {!channel.isMember && isLeader && pcoEnabled && (
-                    <Text style={[styles.channelNote, { color: colors.textTertiary }]}>
-                      You're not in this channel
-                    </Text>
-                  )}
-                </View>
-                {pcoEnabled && channel.isMember && channel.unreadCount > 0 && (
-                  <View style={[styles.unreadBadge, { backgroundColor: "#2196F3" }]}>
-                    <Text style={styles.unreadText}>
-                      {channel.unreadCount > 99 ? "99+" : channel.unreadCount}
-                    </Text>
-                  </View>
-                )}
-              </TouchableOpacity>
-              {canTogglePco && (
-                <View style={styles.toggleContainer}>
-                  {togglingChannelId === channel._id ? (
-                    <ActivityIndicator size="small" color={primaryColor} />
-                  ) : (
-                    <Switch
-                      testID={`channel-toggle-pco-${channel.slug}`}
-                      value={pcoEnabled}
-                      onValueChange={(on) => handleTogglePcoChannel(channel, on)}
-                      trackColor={{ false: colors.border, true: primaryColor + "80" }}
-                      thumbColor={pcoEnabled ? primaryColor : colors.surfaceSecondary}
+                  {row.pinned && (
+                    <Ionicons
+                      name="pin"
+                      size={13}
+                      color={colors.iconSecondary}
+                      style={styles.pinIcon}
                     />
                   )}
                 </View>
-              )}
-              {isLeader && (
-                <TouchableOpacity
-                  style={[styles.actionButton, { backgroundColor: colors.surfaceSecondary }]}
-                  onPress={() => handleManageMembers(channel)}
-                  activeOpacity={0.7}
+                <Text
+                  style={[styles.rowSubtitle, { color: colors.textSecondary }]}
+                  numberOfLines={1}
                 >
-                  <Ionicons name="settings-outline" size={18} color={colors.icon} />
-                </TouchableOpacity>
+                  {row.subtitle}
+                </Text>
+              </View>
+              {row.enabled && row.unreadCount && row.unreadCount > 0 ? (
+                <View style={[styles.unreadBadge, { backgroundColor: row.iconColor }]}>
+                  <Text style={styles.unreadText}>
+                    {row.unreadCount > 99 ? "99+" : row.unreadCount}
+                  </Text>
+                </View>
+              ) : null}
+              {tappable && (
+                <Ionicons
+                  name="chevron-forward"
+                  size={18}
+                  color={colors.textTertiary}
+                />
               )}
-              {!isLeader && channel.isMember && (
-                <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
-              )}
-            </View>
+            </TouchableOpacity>
           );
         })}
       </View>
 
-      {/* PENDING SHARED CHANNEL INVITATIONS Section */}
+      {/* Solid Create Channel affordance — matches the DM "Add people"
+          card. Replaces the dashed-border button. */}
+      {isLeader && (
+        <TouchableOpacity
+          style={[styles.createCard, { backgroundColor: colors.surfaceSecondary }]}
+          onPress={handleCreateChannel}
+          activeOpacity={0.7}
+        >
+          <View style={[styles.createIcon, { backgroundColor: primaryColor + "15" }]}>
+            <Ionicons name="add" size={20} color={primaryColor} />
+          </View>
+          <Text style={[styles.createLabel, { color: colors.text }]}>
+            Create Channel
+          </Text>
+        </TouchableOpacity>
+      )}
+
       {isLeader && pendingInvites && pendingInvites.length > 0 && (
         <>
-          <Text style={[styles.header, styles.customHeader, { color: colors.text }]}>SHARED CHANNEL INVITATIONS</Text>
-          <View style={[styles.channelList, { backgroundColor: colors.surface }]}>
-            {pendingInvites.map((invite) => (
-              <View key={invite.channelId} style={[styles.channelRow, { borderBottomColor: colors.border }]}>
-                <View style={styles.channelContent}>
-                  <View style={[styles.channelIcon, { backgroundColor: "#8B5CF615" }]}>
-                    <Ionicons name="link" size={20} color="#8B5CF6" />
-                  </View>
-                  <View style={styles.channelInfo}>
-                    <Text style={[styles.channelName, { color: colors.text }]}>#{invite.channelName}</Text>
-                    <Text style={[styles.channelSubtitle, { color: colors.textSecondary }]}>
-                      From {invite.primaryGroupName}
-                    </Text>
-                    <Text style={[styles.channelNote, { color: colors.textTertiary }]}>
-                      Invited by {invite.invitedByName}
-                    </Text>
-                  </View>
+          <Text style={[styles.header, styles.subSectionHeader, { color: colors.textSecondary }]}>
+            SHARED CHANNEL INVITATIONS
+          </Text>
+          <View style={[styles.card, { backgroundColor: colors.surfaceSecondary }]}>
+            {pendingInvites.map((invite, idx) => (
+              <View
+                key={invite.channelId}
+                style={[
+                  styles.row,
+                  idx > 0 && {
+                    borderTopWidth: StyleSheet.hairlineWidth,
+                    borderTopColor: colors.border,
+                  },
+                ]}
+              >
+                <View style={[styles.iconContainer, { backgroundColor: "#8B5CF615" }]}>
+                  <Ionicons name="link" size={20} color="#8B5CF6" />
+                </View>
+                <View style={styles.rowInfo}>
+                  <Text style={[styles.rowName, { color: colors.text }]}>
+                    #{invite.channelName}
+                  </Text>
+                  <Text style={[styles.rowSubtitle, { color: colors.textSecondary }]}>
+                    From {invite.primaryGroupName}
+                  </Text>
+                  <Text style={[styles.rowNote, { color: colors.textTertiary }]}>
+                    Invited by {invite.invitedByName}
+                  </Text>
                 </View>
                 <View style={styles.inviteActions}>
                   <TouchableOpacity
@@ -684,234 +396,70 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
         </>
       )}
 
-      {/* CUSTOM CHANNELS Section */}
-      {(customChannels.length > 0 || isLeader) && (
-        <>
-          <Text style={[styles.header, styles.customHeader, { color: colors.text }]}>CUSTOM CHANNELS</Text>
-          {isLeader && <ChannelJoinRequestsBanner groupId={groupId} />}
-          <View style={[styles.channelList, { backgroundColor: colors.surface }]}>
-            {customChannels.map((channel: Channel) => {
-              const customEnabled = channel.isEnabled && !channel.isArchived;
-              const canToggleCustom = isLeader;
-              return (
-                <View key={channel._id} style={[styles.channelRow, { borderBottomColor: colors.border }]}>
-                  <TouchableOpacity
-                    style={styles.channelContent}
-                    onPress={() =>
-                      customEnabled && channel.isMember
-                        ? handleChannelPress(channel)
-                        : customEnabled
-                          ? handleManageMembers(channel)
-                          : undefined
-                    }
-                    activeOpacity={customEnabled ? 0.7 : 1}
-                    disabled={!customEnabled}
-                  >
-                    <View style={[styles.channelIcon, { backgroundColor: "#00BCD415" }]}>
-                      <Ionicons name="chatbubble" size={20} color="#00BCD4" />
-                    </View>
-                    <View style={styles.channelInfo}>
-                      <View style={styles.channelNameRow}>
-                        <Text
-                          style={[
-                            styles.channelName,
-                            { color: colors.text },
-                            (!channel.isMember || !customEnabled) && { color: colors.textTertiary },
-                          ]}
-                        >
-                          {channel.name}
-                        </Text>
-                        {channel.isPinned && (
-                          <Ionicons name="pin" size={14} color={colors.iconSecondary} style={styles.pinIcon} />
-                        )}
-                      </View>
-                      <Text style={[styles.channelSubtitle, { color: colors.textSecondary }]}>
-                        {customEnabled
-                          ? `${channel.memberCount} member${channel.memberCount !== 1 ? "s" : ""}`
-                          : "Hidden from members"}
-                      </Text>
-                      {!channel.isMember && isLeader && customEnabled && (
-                        <Text style={[styles.channelNote, { color: colors.textTertiary }]}>
-                          You're not in this channel
-                        </Text>
-                      )}
-                    </View>
-                    {customEnabled && channel.isMember && channel.unreadCount > 0 && (
-                      <View style={[styles.unreadBadge, { backgroundColor: "#00BCD4" }]}>
-                        <Text style={styles.unreadText}>
-                          {channel.unreadCount > 99 ? "99+" : channel.unreadCount}
-                        </Text>
-                      </View>
-                    )}
-                  </TouchableOpacity>
-                  {canToggleCustom && (
-                    <View style={styles.toggleContainer}>
-                      {togglingChannelId === channel._id ? (
-                        <ActivityIndicator size="small" color={primaryColor} />
-                      ) : (
-                        <Switch
-                          testID={`channel-toggle-custom-${channel.slug}`}
-                          value={customEnabled}
-                          onValueChange={(on) => handleToggleCustomChannel(channel, on)}
-                          trackColor={{ false: colors.border, true: primaryColor + "80" }}
-                          thumbColor={customEnabled ? primaryColor : colors.surfaceSecondary}
-                        />
-                      )}
-                    </View>
-                  )}
-                  <View style={styles.actionButtons}>
-                    {isLeader && customEnabled && (
-                      <TouchableOpacity
-                        style={[styles.actionButton, { backgroundColor: colors.surfaceSecondary }]}
-                        onPress={() => handleManageMembers(channel)}
-                        activeOpacity={0.7}
-                      >
-                        <Ionicons name="people-outline" size={18} color={colors.icon} />
-                      </TouchableOpacity>
-                    )}
-                    {isLeader && customEnabled && (
-                      <TouchableOpacity
-                        style={[styles.actionButton, { backgroundColor: colors.surfaceSecondary }]}
-                        onPress={() => handleShareChannel(channel)}
-                        activeOpacity={0.7}
-                      >
-                        <Ionicons name="share-outline" size={18} color={colors.icon} />
-                      </TouchableOpacity>
-                    )}
-                    {channel.isMember && customEnabled && (
-                      <TouchableOpacity
-                        style={[styles.actionButton, { backgroundColor: colors.surfaceSecondary }]}
-                        onPress={() => handleLeaveChannel(channel)}
-                        activeOpacity={0.7}
-                        disabled={leavingChannelId === channel._id}
-                      >
-                        {leavingChannelId === channel._id ? (
-                          <ActivityIndicator size="small" color={colors.destructive} />
-                        ) : (
-                          <Ionicons name="exit-outline" size={18} color={colors.destructive} />
-                        )}
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                </View>
-              );
-            })}
-
-            {/* Empty state for custom channels */}
-            {customChannels.length === 0 && isLeader && (
-              <View style={styles.emptyState}>
-                <Text style={[styles.emptyStateText, { color: colors.textTertiary }]}>
-                  No custom channels yet
-                </Text>
-              </View>
-            )}
-          </View>
-
-          {/* Create Channel Button (Leaders only) */}
-          {isLeader && (
-            <TouchableOpacity
-              style={[styles.createButton, { borderColor: primaryColor, backgroundColor: colors.surface }]}
-              onPress={handleCreateChannel}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="add" size={20} color={primaryColor} />
-              <Text style={[styles.createButtonText, { color: primaryColor }]}>
-                Create Channel
-              </Text>
-            </TouchableOpacity>
-          )}
-
-          {/* Pin Channels Button (Leaders only) */}
-          {isLeader && (
-            <TouchableOpacity
-              style={styles.pinChannelsButton}
-              onPress={handlePinChannels}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="pin-outline" size={18} color={colors.icon} />
-              <Text style={[styles.pinChannelsButtonText, { color: colors.icon }]}>Pin Channels</Text>
-            </TouchableOpacity>
-          )}
-
-          {/* Toolbar Settings Button (Leaders only) */}
-          {isLeader && (
-            <TouchableOpacity
-              style={styles.pinChannelsButton}
-              onPress={handleToolbarSettings}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="options-outline" size={18} color={colors.icon} />
-              <Text style={[styles.pinChannelsButtonText, { color: colors.icon }]}>Toolbar Settings</Text>
-            </TouchableOpacity>
-          )}
-        </>
-      )}
+      {isLeader && <ChannelJoinRequestsBanner groupId={groupId} />}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    paddingHorizontal: 16,
-    paddingVertical: 16,
+    paddingHorizontal: 12,
+    paddingTop: 16,
+    paddingBottom: 8,
   },
   header: {
-    fontSize: 14,
+    fontSize: 11,
     fontWeight: "600",
-    marginBottom: 12,
-    letterSpacing: 0.5,
+    letterSpacing: 0.6,
+    marginBottom: 8,
+    paddingHorizontal: 8,
   },
-  customHeader: {
-    marginTop: 20,
+  subSectionHeader: {
+    marginTop: 24,
   },
-  loadingContainer: {
-    paddingVertical: 20,
-    alignItems: "center",
-  },
-  channelList: {
+  card: {
     borderRadius: 12,
     overflow: "hidden",
   },
-  channelRow: {
+  loadingContainer: {
+    paddingVertical: 24,
+    alignItems: "center",
+  },
+  row: {
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 12,
     paddingVertical: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    minHeight: 56,
+    gap: 12,
   },
-  channelContent: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  channelIcon: {
+  iconContainer: {
     width: 40,
     height: 40,
     borderRadius: 20,
     justifyContent: "center",
     alignItems: "center",
-    marginRight: 12,
   },
-  channelInfo: {
+  rowInfo: {
     flex: 1,
+    minWidth: 0,
   },
-  channelNameRow: {
+  rowNameLine: {
     flexDirection: "row",
     alignItems: "center",
   },
-  channelName: {
+  rowName: {
     fontSize: 16,
     fontWeight: "600",
-    marginBottom: 2,
   },
   pinIcon: {
     marginLeft: 6,
-    marginBottom: 2,
   },
-  channelSubtitle: {
+  rowSubtitle: {
+    marginTop: 2,
     fontSize: 13,
   },
-  channelNote: {
+  rowNote: {
     fontSize: 11,
     fontStyle: "italic",
     marginTop: 2,
@@ -923,63 +471,32 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     paddingHorizontal: 6,
-    marginRight: 8,
+    marginRight: 4,
   },
   unreadText: {
     fontSize: 11,
     fontWeight: "700",
     color: "#fff",
   },
-  toggleContainer: {
-    marginLeft: 8,
-    width: 51, // Standard Switch width
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  actionButtons: {
+  createCard: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-  },
-  actionButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  emptyState: {
-    paddingVertical: 16,
-    alignItems: "center",
-  },
-  emptyStateText: {
-    fontSize: 14,
-  },
-  createButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 12,
+    gap: 12,
+    marginTop: 8,
+    paddingHorizontal: 12,
     paddingVertical: 12,
     borderRadius: 12,
-    borderWidth: 2,
-    borderStyle: "dashed",
+    minHeight: 48,
   },
-  createButtonText: {
-    fontSize: 16,
-    fontWeight: "600",
-    marginLeft: 8,
-  },
-  pinChannelsButton: {
-    flexDirection: "row",
+  createIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 12,
-    paddingVertical: 10,
-    gap: 6,
   },
-  pinChannelsButtonText: {
-    fontSize: 14,
+  createLabel: {
+    fontSize: 16,
     fontWeight: "500",
   },
   inviteActions: {

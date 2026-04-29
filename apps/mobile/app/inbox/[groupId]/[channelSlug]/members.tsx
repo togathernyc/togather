@@ -226,41 +226,21 @@ export default function ChannelMembersScreen() {
     return autoChannelConfig.lastSyncResults.unmatchedPeople;
   }, [autoChannelConfig]);
 
-  // Create unified list with pending requests first, then synced members, then unsynced at bottom
+  // Member list. Pending join requests now live on the channel info screen
+  // (Leader Controls › REQUESTS), so this list is just synced + unsynced
+  // members. Avoids the prior split where requests, sync info, archive, and
+  // join-mode all lived on this same surface.
   const unifiedList = useMemo((): ListItem[] => {
-    const items: ListItem[] = [];
-
-    // Add pending requests section (leaders only, when there are pending requests)
-    if (canManage && pendingRequests && pendingRequests.length > 0) {
-      items.push({ type: "pending-header" as const });
-      for (const req of pendingRequests) {
-        items.push({
-          type: "pending-request" as const,
-          data: {
-            _id: req._id,
-            userId: req.userId,
-            displayName: req.displayName,
-            profilePhoto: req.profilePhoto,
-            requestedAt: req.requestedAt,
-          },
-        });
-      }
-    }
-
-    // Add synced members
     const syncedItems: ListItem[] = (membersData?.members || []).map((m) => ({
       type: "synced" as const,
       data: m,
     }));
-
-    // Add unsynced people
     const unsyncedItems: ListItem[] = unsyncedPeople.map((p) => ({
       type: "unsynced" as const,
       data: p,
     }));
-
-    return [...items, ...syncedItems, ...unsyncedItems];
-  }, [canManage, pendingRequests, membersData?.members, unsyncedPeople]);
+    return [...syncedItems, ...unsyncedItems];
+  }, [membersData?.members, unsyncedPeople]);
 
   // Total member count including unsynced
   const totalMemberCount = useMemo(() => {
@@ -269,10 +249,13 @@ export default function ChannelMembersScreen() {
     return syncedCount + unsyncedCount;
   }, [membersData?.totalCount, unsyncedPeople.length]);
 
+  // Archive lives on the channel info screen (Leader Controls › Archive
+  // channel) — keep this surface focused on member management. Leaving the
+  // shared-channel "leave" exit for secondary group leaders here since
+  // that's a per-membership action distinct from archive.
   const showLeaveSharedChannelAction = isSecondaryGroup && canManage;
-  const showArchiveChannelAction =
-    canManage && isPrimaryGroup && (isCustomChannel || isPcoAutoChannel);
-  const hasBottomActions = showLeaveSharedChannelAction || showArchiveChannelAction || canShare;
+  const showArchiveChannelAction = false;
+  const hasBottomActions = showLeaveSharedChannelAction || canShare;
 
   const handleBack = () => {
     if (router.canGoBack()) {
@@ -767,32 +750,10 @@ export default function ChannelMembersScreen() {
         </View>
       )}
 
-      {/* Join mode info (custom channels, leaders only) */}
-      {canManage && isCustomChannel && inviteInfo && (
-        <View style={[styles.sharedBanner, {
-          backgroundColor: isDark ? 'rgba(0,188,212,0.1)' : '#E0F7FA',
-          borderBottomColor: isDark ? 'rgba(0,188,212,0.2)' : '#B2EBF2',
-        }]}>
-          <Ionicons name="link" size={16} color="#00BCD4" />
-          <View style={styles.sharedBannerContent}>
-            <Text style={[styles.sharedBannerTitle, { color: isDark ? '#80DEEA' : '#006064' }]}>
-              Invite Link {inviteInfo.inviteEnabled ? "Active" : "Disabled"}
-            </Text>
-            <Text style={[styles.sharedBannerText, { color: colors.textSecondary }]}>
-              Join mode: {(inviteInfo.joinMode || "open") === "open" ? "Open" : "Approval Required"}
-            </Text>
-          </View>
-          <TouchableOpacity
-            onPress={() => {
-              const currentMode = inviteInfo.joinMode || "open";
-              const newMode = currentMode === "open" ? "approval_required" : "open";
-              handleUpdateJoinMode(newMode);
-            }}
-          >
-            <Ionicons name="swap-horizontal" size={20} color="#00BCD4" />
-          </TouchableOpacity>
-        </View>
-      )}
+      {/* Join mode and pending join requests live on the channel info
+          screen now — this page is focused on member management only.
+          See `apps/mobile/features/chat/components/ChannelInfoScreen.tsx`
+          (Leader Controls › Join mode + REQUESTS section). */}
 
       {/* Member count */}
       <View style={[styles.memberCount, { backgroundColor: colors.surfaceSecondary }]}>
@@ -804,25 +765,9 @@ export default function ChannelMembersScreen() {
         </Text>
       </View>
 
-      {/* Auto channel info banner */}
-      {isPcoAutoChannel && (!isSharedChannel || isPrimaryGroup) && (
-        <TouchableOpacity
-          style={[styles.autoChannelBanner, {
-            backgroundColor: isDark ? 'rgba(33,150,243,0.1)' : '#F0F7FF',
-            borderBottomColor: colors.border,
-          }]}
-          onPress={() => setShowAutoChannelSettings(true)}
-        >
-          <Ionicons name="sync" size={16} color={primaryColor} />
-          <View style={styles.autoChannelBannerContent}>
-            <Text style={[styles.autoChannelBannerTitle, { color: colors.text }]}>PCO Auto Channel</Text>
-            <Text style={[styles.autoChannelBannerText, { color: colors.textSecondary }]}>
-              Members are automatically synced from Planning Center Services
-            </Text>
-          </View>
-          <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
-        </TouchableOpacity>
-      )}
+      {/* PCO sync info / settings live on the channel info screen now
+          (Leader Controls › PCO sync settings). Skipping the banner keeps
+          this surface focused on member management. */}
 
       {/* Members list (unified: synced members first, unsynced at bottom) */}
       {unifiedList.length === 0 ? (

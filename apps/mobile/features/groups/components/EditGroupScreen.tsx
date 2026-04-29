@@ -26,6 +26,7 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@providers/AuthProvider";
+import { useTheme } from "@hooks/useTheme";
 import { uploadAsync, FileSystemUploadType } from "expo-file-system/legacy";
 import {
   FormInput,
@@ -121,6 +122,7 @@ export function EditGroupScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
+  const { colors } = useTheme();
   const { group_id } = useLocalSearchParams<{ group_id: string }>();
 
   const { data: group, isLoading } = useGroupDetails(group_id);
@@ -402,7 +404,7 @@ export function EditGroupScreen() {
   if (isLoading) {
     return (
       <>
-        <View style={[styles.container, { paddingTop: insets.top }]}>
+        <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.background }]}>
           <View style={styles.header}>
             <SkeletonCard style={{ height: 44 }} />
           </View>
@@ -422,19 +424,24 @@ export function EditGroupScreen() {
   if (!canEditGroup) {
     return (
       <>
-        <View style={[styles.container, { paddingTop: insets.top }]}>
-          <View style={styles.header}>
+        <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.background }]}>
+          <View
+            style={[
+              styles.header,
+              { backgroundColor: colors.surface, borderBottomColor: colors.border },
+            ]}
+          >
             <TouchableOpacity
               onPress={() => router.back()}
               style={styles.backButton}
             >
-              <Ionicons name="arrow-back" size={24} color="#000" />
+              <Ionicons name="arrow-back" size={24} color={colors.text} />
             </TouchableOpacity>
-            <Text style={styles.headerTitle}>Edit Group</Text>
+            <Text style={[styles.headerTitle, { color: colors.text }]}>Edit Group</Text>
             <View style={styles.headerRight} />
           </View>
           <View style={styles.centerContainer}>
-            <Text style={styles.errorText}>
+            <Text style={[styles.errorText, { color: colors.destructive }]}>
               You must be a group leader or community admin to edit this group.
             </Text>
           </View>
@@ -446,18 +453,25 @@ export function EditGroupScreen() {
   return (
     <>
       <KeyboardAvoidingView
-        style={[styles.container, { paddingTop: insets.top }]}
+        style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.background }]}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
         {/* Header */}
-        <View style={styles.header}>
+        <View
+          style={[
+            styles.header,
+            { backgroundColor: colors.surface, borderBottomColor: colors.border },
+          ]}
+        >
           <TouchableOpacity
             onPress={() => router.back()}
             style={styles.backButton}
           >
-            <Ionicons name="arrow-back" size={24} color="#000" />
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Edit Group</Text>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>
+            Edit Group
+          </Text>
           <View style={styles.headerRight} />
         </View>
 
@@ -468,12 +482,12 @@ export function EditGroupScreen() {
           keyboardShouldPersistTaps="handled"
         >
           {/* Basic Information Section */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Basic Information</Text>
+          <View style={[styles.section, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Basic Information</Text>
 
             {/* Group Picture Upload */}
             <View style={styles.imagePickerContainer}>
-              <Text style={styles.imagePickerLabel}>Group Picture</Text>
+              <Text style={[styles.imagePickerLabel, { color: colors.text }]}>Group Picture</Text>
               <ImagePicker
                 onImageSelected={handleImageSelected}
                 onImageRemoved={handleImageRemoved}
@@ -523,8 +537,8 @@ export function EditGroupScreen() {
           </View>
 
           {/* Location Section */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Location</Text>
+          <View style={[styles.section, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Location</Text>
 
             <FormInput
               name="address_line1"
@@ -573,9 +587,14 @@ export function EditGroupScreen() {
 
             {/* Geocoding warning */}
             {hasAddressWithoutZip && (
-              <View style={styles.locationWarning}>
-                <Ionicons name="warning" size={20} color="#F59E0B" />
-                <Text style={styles.locationWarningText}>
+              <View
+                style={[
+                  styles.locationWarning,
+                  { backgroundColor: colors.warning + "1F" },
+                ]}
+              >
+                <Ionicons name="warning" size={20} color={colors.warning} />
+                <Text style={[styles.locationWarningText, { color: colors.warning }]}>
                   Add a valid ZIP code so this group appears on the map
                 </Text>
               </View>
@@ -583,8 +602,8 @@ export function EditGroupScreen() {
           </View>
 
           {/* Meeting Schedule Section */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Meeting Schedule</Text>
+          <View style={[styles.section, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Meeting Schedule</Text>
 
             <Controller
               name="default_day"
@@ -720,9 +739,9 @@ export function EditGroupScreen() {
           </View>
 
           {/* External Chat Section */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>External Chat</Text>
-            <Text style={styles.sectionDescription}>
+          <View style={[styles.section, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>External Chat</Text>
+            <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>
               If your group also communicates on another platform like WhatsApp, Slack, Telegram, or Discord, add the invite link here. Members will see a "Join" button in the chat to join your external group.
             </Text>
 
@@ -740,12 +759,12 @@ export function EditGroupScreen() {
 
           {/* Visibility Section — community admins only */}
           {isCommunityAdmin && (
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Visibility</Text>
+            <View style={[styles.section, { backgroundColor: colors.surface }]}>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Visibility</Text>
               <View style={styles.toggleRow}>
                 <View style={styles.toggleTextWrap}>
-                  <Text style={styles.toggleLabel}>Hide from discovery</Text>
-                  <Text style={styles.toggleDescription}>
+                  <Text style={[styles.toggleLabel, { color: colors.text }]}>Hide from discovery</Text>
+                  <Text style={[styles.toggleDescription, { color: colors.textSecondary }]}>
                     When on, this group won't appear on the map, near-me page,
                     or community group browse. People with a direct share link
                     can still view and request to join.
