@@ -425,8 +425,11 @@ describe('ChatNavigation - Full Component', () => {
     expect(getByText('Attendance')).toBeTruthy();
     expect(getByText('People')).toBeTruthy();
     expect(queryByText('Tasks')).toBeNull();
-    expect(getByText('Events')).toBeTruthy();
-    expect(getByText('Bots')).toBeTruthy();
+    // Events and Bots chips were retired from the toolbar — those
+    // sections live on the group page (UpcomingEventsSection,
+    // GroupBotsSection).
+    expect(queryByText('Events')).toBeNull();
+    expect(queryByText('Bots')).toBeNull();
   });
 
   it('should hide leader toolbar when showLeaderTools is false', () => {
