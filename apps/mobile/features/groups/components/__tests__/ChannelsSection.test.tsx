@@ -1,41 +1,50 @@
 /**
- * Tests for ChannelsSection Component
+ * Tests for the redesigned ChannelsSection.
  *
- * Component: ChannelsSection
- * Location: /features/groups/components/ChannelsSection.tsx
+ * The single CHANNELS card replaced the AUTO/CUSTOM split. Each row is
+ * navigation-only — no toggles, no trailing icon clusters. Per-channel
+ * configuration moved to /inbox/[groupId]/[channelSlug]/info, so tap
+ * targets here just route there.
  *
- * Tests the channels display on the group detail page including:
- * - Auto channels section (General, Leaders)
- * - Custom channels section
- * - Leader toggle for leaders channel
- * - Create channel button for leaders
- * - Leave channel functionality
- * - Unread badges
- * - Navigation
+ * Removed (covered by the new info screen tests once they exist):
+ *   - Leaders Channel Toggle
+ *   - Manage members button
+ *   - Leave Channel from row
+ *   - "AUTO CHANNELS" / "CUSTOM CHANNELS" headers
  */
 import React from "react";
-import { render, fireEvent, waitFor, act } from "@testing-library/react-native";
+import { render, fireEvent, act } from "@testing-library/react-native";
 import { Alert } from "react-native";
 
-// Mock Alert
 jest.spyOn(Alert, "alert");
 
-// Mock router
 const mockPush = jest.fn();
 jest.mock("expo-router", () => ({
-  useRouter: () => ({
-    push: mockPush,
-  }),
+  useRouter: () => ({ push: mockPush }),
 }));
 
-// Mock useCommunityTheme
 jest.mock("@hooks/useCommunityTheme", () => ({
-  useCommunityTheme: () => ({
-    primaryColor: "#007AFF",
+  useCommunityTheme: () => ({ primaryColor: "#007AFF" }),
+}));
+
+jest.mock("@hooks/useTheme", () => ({
+  useTheme: () => ({
+    colors: {
+      background: "#fff",
+      surface: "#fff",
+      surfaceSecondary: "#f5f5f5",
+      text: "#000",
+      textSecondary: "#666",
+      textTertiary: "#999",
+      border: "#e5e5e5",
+      iconSecondary: "#666",
+      destructive: "#FF3B30",
+      textInverse: "#fff",
+    },
+    isDark: false,
   }),
 }));
 
-// Mock channel data
 const mockMainChannel = {
   _id: "channel-main",
   slug: "general",
@@ -89,35 +98,38 @@ const mockCustomChannels = [
   },
 ];
 
-// Mock Convex hooks
 let mockChannelsData: any[] | undefined = undefined;
-const mockLeaveChannelMutation = jest.fn();
-const mockToggleLeadersChannelMutation = jest.fn();
 
 jest.mock("@providers/AuthProvider", () => ({
   useAuth: () => ({ token: "test-token", user: { id: "test-user" }, community: null }),
 }));
 
+// Mock the useGroupChannels hook directly — that's the source of truth
+// the component reads from, and this avoids us having to model the
+// authenticated-query plumbing inside this test.
+jest.mock("../../hooks/useGroupChannels", () => ({
+  useGroupChannels: () => ({
+    channels: mockChannelsData,
+    isLoading: mockChannelsData === undefined,
+    isStale: false,
+  }),
+}));
+
+jest.mock("../../hooks/useRespondToChannelInvite", () => ({
+  useRespondToChannelInvite: () => ({
+    respondingTo: null,
+    handleRespond: jest.fn(),
+  }),
+}));
+
 jest.mock("@services/api/convex", () => ({
-  useAuthenticatedQuery: () => mockChannelsData,
-  useAuthenticatedMutation: (fn: any) => {
-    if (fn === "leaveChannel") return mockLeaveChannelMutation;
-    if (fn === "toggleLeadersChannel") return mockToggleLeadersChannelMutation;
-    return jest.fn();
-  },
-  useQuery: () => undefined,
+  useAuthenticatedMutation: () => jest.fn(),
+  useQuery: () => undefined, // pendingInvites
   useMutation: () => jest.fn(),
   api: {
     functions: {
       messaging: {
-        channels: {
-          listGroupChannels: "listGroupChannels",
-          leaveChannel: "leaveChannel",
-          toggleLeadersChannel: "toggleLeadersChannel",
-          toggleMainChannel: "toggleMainChannel",
-          togglePcoChannel: "togglePcoChannel",
-          setCustomChannelLeaderEnabled: "setCustomChannelLeaderEnabled",
-        },
+        channels: { listGroupChannels: "listGroupChannels" },
         channelInvites: {
           enableInviteLink: "enableInviteLink",
           getPendingRequestCountByGroup: "getPendingRequestCountByGroup",
@@ -131,10 +143,15 @@ jest.mock("@services/api/convex", () => ({
   },
 }));
 
-// Import component AFTER mocks
+// Mock the join-requests banner so we don't have to set up its query
+// dependencies for these tests.
+jest.mock("../ChannelJoinRequestsBanner", () => ({
+  ChannelJoinRequestsBanner: () => null,
+}));
+
 import { ChannelsSection } from "../ChannelsSection";
 
-describe("ChannelsSection", () => {
+describe("ChannelsSection (redesigned)", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockChannelsData = [
@@ -144,7 +161,7 @@ describe("ChannelsSection", () => {
     ];
   });
 
-  describe("Loading State", () => {
+  describe("Loading state", () => {
     it("shows loading indicator when channels are undefined", () => {
       mockChannelsData = undefined;
 
@@ -153,11 +170,10 @@ describe("ChannelsSection", () => {
       );
 
       expect(getByText("CHANNELS")).toBeTruthy();
-      // ActivityIndicator should be present
     });
   });
 
-  describe("Empty State", () => {
+  describe("Empty state", () => {
     it("returns null when no channels exist", () => {
       mockChannelsData = [];
 
@@ -169,16 +185,18 @@ describe("ChannelsSection", () => {
     });
   });
 
-  describe("Auto Channels Section", () => {
-    it("renders AUTO CHANNELS header", () => {
-      const { getByText } = render(
+  describe("Single CHANNELS section", () => {
+    it("renders one CHANNELS header (no AUTO/CUSTOM split)", () => {
+      const { getByText, queryByText } = render(
         <ChannelsSection groupId="test-group" userRole="member" />
       );
 
-      expect(getByText("AUTO CHANNELS")).toBeTruthy();
+      expect(getByText("CHANNELS")).toBeTruthy();
+      expect(queryByText("AUTO CHANNELS")).toBeNull();
+      expect(queryByText("CUSTOM CHANNELS")).toBeNull();
     });
 
-    it("renders General channel for all users", () => {
+    it("renders General row with 'All members' subtitle", () => {
       const { getByText } = render(
         <ChannelsSection groupId="test-group" userRole="member" />
       );
@@ -187,7 +205,7 @@ describe("ChannelsSection", () => {
       expect(getByText("All members")).toBeTruthy();
     });
 
-    it("renders Leaders channel for leaders", () => {
+    it("renders Leaders row for leaders", () => {
       const { getByText } = render(
         <ChannelsSection groupId="test-group" userRole="leader" />
       );
@@ -196,80 +214,97 @@ describe("ChannelsSection", () => {
       expect(getByText("5 leaders")).toBeTruthy();
     });
 
-    it("shows leader note for leaders channel", () => {
-      const { getByText } = render(
-        <ChannelsSection groupId="test-group" userRole="leader" />
-      );
-
-      expect(getByText("You're here because you're a leader")).toBeTruthy();
-    });
-
-    it("shows singular leader count correctly", () => {
-      mockChannelsData = [
-        mockMainChannel,
-        { ...mockLeadersChannel, memberCount: 1 },
-      ];
-
-      const { getByText } = render(
-        <ChannelsSection groupId="test-group" userRole="leader" />
-      );
-
-      expect(getByText("1 leader")).toBeTruthy();
-    });
-  });
-
-  describe("Custom Channels Section", () => {
-    it("renders CUSTOM CHANNELS header", () => {
-      const { getByText } = render(
-        <ChannelsSection groupId="test-group" userRole="member" />
-      );
-
-      expect(getByText("CUSTOM CHANNELS")).toBeTruthy();
-    });
-
-    it("renders custom channel names", () => {
+    it("renders custom channel names and member counts", () => {
       const { getByText } = render(
         <ChannelsSection groupId="test-group" userRole="member" />
       );
 
       expect(getByText("Directors")).toBeTruthy();
       expect(getByText("Volunteers")).toBeTruthy();
-    });
-
-    it("renders member counts for custom channels", () => {
-      const { getByText } = render(
-        <ChannelsSection groupId="test-group" userRole="member" />
-      );
-
       expect(getByText("8 members")).toBeTruthy();
       expect(getByText("15 members")).toBeTruthy();
     });
+  });
 
-    it("shows singular member count correctly", () => {
-      mockChannelsData = [
-        mockMainChannel,
-        { ...mockCustomChannels[0], memberCount: 1 },
-      ];
+  describe("No toggles, no trailing icon clusters", () => {
+    it("does not render any channel toggle switches for leaders", () => {
+      const { queryByTestId } = render(
+        <ChannelsSection groupId="test-group" userRole="leader" />
+      );
 
+      expect(queryByTestId("channel-toggle-general")).toBeNull();
+      expect(queryByTestId("channel-toggle-leaders")).toBeNull();
+      expect(queryByTestId("channel-toggle-reach-out")).toBeNull();
+    });
+
+    it("does not render leave (exit) icons on custom channel rows", () => {
+      const { queryAllByText } = render(
+        <ChannelsSection groupId="test-group" userRole="member" />
+      );
+
+      expect(queryAllByText("exit-outline")).toHaveLength(0);
+    });
+
+    it("does not render manage-members (people-outline) icons", () => {
+      const { queryAllByText } = render(
+        <ChannelsSection groupId="test-group" userRole="leader" />
+      );
+
+      expect(queryAllByText("people-outline")).toHaveLength(0);
+    });
+  });
+
+  describe("Navigation", () => {
+    it("navigates to General chat (not info) on tap", () => {
       const { getByText } = render(
         <ChannelsSection groupId="test-group" userRole="member" />
       );
 
-      expect(getByText("1 member")).toBeTruthy();
+      act(() => {
+        fireEvent.press(getByText("General").parent!.parent!.parent!);
+      });
+
+      expect(mockPush).toHaveBeenCalledWith("/inbox/test-group/general");
     });
 
-    it("shows empty state for leaders with no custom channels", () => {
-      mockChannelsData = [mockMainChannel, mockLeadersChannel];
-
+    it("navigates to Leaders /info on tap", () => {
       const { getByText } = render(
         <ChannelsSection groupId="test-group" userRole="leader" />
       );
 
-      expect(getByText("No custom channels yet")).toBeTruthy();
+      act(() => {
+        fireEvent.press(getByText("Leaders").parent!.parent!.parent!);
+      });
+
+      expect(mockPush).toHaveBeenCalledWith("/inbox/test-group/leaders/info");
+    });
+
+    it("navigates to custom channel /info on tap", () => {
+      const { getByText } = render(
+        <ChannelsSection groupId="test-group" userRole="member" />
+      );
+
+      act(() => {
+        fireEvent.press(getByText("Directors").parent!.parent!.parent!);
+      });
+
+      expect(mockPush).toHaveBeenCalledWith("/inbox/test-group/directors/info");
+    });
+
+    it("navigates to create channel screen", () => {
+      const { getByText } = render(
+        <ChannelsSection groupId="test-group" userRole="leader" />
+      );
+
+      act(() => {
+        fireEvent.press(getByText("Create Channel").parent!);
+      });
+
+      expect(mockPush).toHaveBeenCalledWith("/inbox/test-group/create");
     });
   });
 
-  describe("Unread Badges", () => {
+  describe("Unread badges", () => {
     it("displays unread badge on Leaders channel", () => {
       const { getByText } = render(
         <ChannelsSection groupId="test-group" userRole="leader" />
@@ -296,7 +331,6 @@ describe("ChannelsSection", () => {
         <ChannelsSection groupId="test-group" userRole="leader" />
       );
 
-      // Should not have any numeric badges
       expect(queryByText("0")).toBeNull();
     });
 
@@ -311,125 +345,8 @@ describe("ChannelsSection", () => {
     });
   });
 
-  describe("Leaders Channel Toggle", () => {
-    it("shows toggle switches for leaders (General + Leaders)", () => {
-      const { getByTestId } = render(
-        <ChannelsSection groupId="test-group" userRole="leader" />
-      );
-
-      expect(getByTestId("channel-toggle-general")).toBeTruthy();
-      expect(getByTestId("channel-toggle-leaders")).toBeTruthy();
-    });
-
-    it("leaders channel toggle is on when channel is enabled", () => {
-      const { getByTestId } = render(
-        <ChannelsSection groupId="test-group" userRole="leader" />
-      );
-
-      const leadersSwitch = getByTestId("channel-toggle-leaders");
-      expect(leadersSwitch.props.value).toBe(true);
-    });
-
-    it("leaders channel toggle is off when channel is archived", () => {
-      mockChannelsData = [
-        mockMainChannel,
-        { ...mockLeadersChannel, isArchived: true },
-      ];
-
-      const { getByTestId } = render(
-        <ChannelsSection groupId="test-group" userRole="leader" />
-      );
-
-      const leadersSwitch = getByTestId("channel-toggle-leaders");
-      expect(leadersSwitch.props.value).toBe(false);
-    });
-
-    it("calls toggleLeadersChannel mutation when leaders toggle is used", async () => {
-      mockToggleLeadersChannelMutation.mockResolvedValueOnce(undefined);
-
-      const { getByTestId } = render(
-        <ChannelsSection groupId="test-group" userRole="leader" />
-      );
-
-      const toggle = getByTestId("channel-toggle-leaders");
-
-      await act(async () => {
-        fireEvent(toggle, "valueChange", false);
-      });
-
-      await waitFor(() => {
-        expect(mockToggleLeadersChannelMutation).toHaveBeenCalledWith({
-          groupId: "test-group",
-          enabled: false,
-        });
-      });
-    });
-
-    it("shows error alert on leaders toggle failure", async () => {
-      mockToggleLeadersChannelMutation.mockRejectedValueOnce(
-        new Error("Toggle failed")
-      );
-
-      const { getByTestId } = render(
-        <ChannelsSection groupId="test-group" userRole="leader" />
-      );
-
-      const toggle = getByTestId("channel-toggle-leaders");
-
-      await act(async () => {
-        fireEvent(toggle, "valueChange", false);
-      });
-
-      await waitFor(() => {
-        expect(Alert.alert).toHaveBeenCalledWith("Error", "Toggle failed");
-      });
-    });
-
-    it("hides channel toggles for non-leaders", () => {
-      const { queryByTestId } = render(
-        <ChannelsSection groupId="test-group" userRole="member" />
-      );
-
-      expect(queryByTestId("channel-toggle-general")).toBeNull();
-      expect(queryByTestId("channel-toggle-leaders")).toBeNull();
-    });
-
-    it("shows disabled state for leaders channel name when archived", () => {
-      mockChannelsData = [
-        mockMainChannel,
-        { ...mockLeadersChannel, isArchived: true },
-      ];
-
-      const { getByText } = render(
-        <ChannelsSection groupId="test-group" userRole="leader" />
-      );
-
-      const leadersText = getByText("Leaders");
-      // Check that the disabled style is applied (color: #999999)
-      expect(leadersText.props.style).toContainEqual({ color: "#999999" });
-    });
-  });
-
-  describe("Leader-Only Features", () => {
-    it("shows manage members button for leaders on custom channels", () => {
-      const { getAllByText } = render(
-        <ChannelsSection groupId="test-group" userRole="leader" />
-      );
-
-      // people-outline icons for manage members
-      const manageIcons = getAllByText("people-outline");
-      expect(manageIcons.length).toBe(mockCustomChannels.length);
-    });
-
-    it("hides manage members button for non-leaders", () => {
-      const { queryByText } = render(
-        <ChannelsSection groupId="test-group" userRole="member" />
-      );
-
-      expect(queryByText("people-outline")).toBeNull();
-    });
-
-    it("shows create channel button for leaders", () => {
+  describe("Leader-only affordances", () => {
+    it("shows Create Channel for leaders", () => {
       const { getByText } = render(
         <ChannelsSection groupId="test-group" userRole="leader" />
       );
@@ -437,250 +354,12 @@ describe("ChannelsSection", () => {
       expect(getByText("Create Channel")).toBeTruthy();
     });
 
-    it("hides create channel button for non-leaders", () => {
+    it("hides Create Channel for non-leaders", () => {
       const { queryByText } = render(
         <ChannelsSection groupId="test-group" userRole="member" />
       );
 
       expect(queryByText("Create Channel")).toBeNull();
-    });
-
-    it("shows create button for admins", () => {
-      const { getByText } = render(
-        <ChannelsSection groupId="test-group" userRole="admin" />
-      );
-
-      expect(getByText("Create Channel")).toBeTruthy();
-    });
-  });
-
-  describe("Leave Channel", () => {
-    it("shows leave button for custom channels", () => {
-      const { getAllByText } = render(
-        <ChannelsSection groupId="test-group" userRole="member" />
-      );
-
-      // exit-outline icons for leave
-      const leaveIcons = getAllByText("exit-outline");
-      expect(leaveIcons.length).toBe(mockCustomChannels.length);
-    });
-
-    it("shows confirmation dialog when leaving channel", () => {
-      const { getAllByText } = render(
-        <ChannelsSection groupId="test-group" userRole="member" />
-      );
-
-      const leaveIcons = getAllByText("exit-outline");
-
-      act(() => {
-        fireEvent.press(leaveIcons[0].parent!.parent!);
-      });
-
-      expect(Alert.alert).toHaveBeenCalledWith(
-        "Leave Channel",
-        expect.stringContaining("Directors"),
-        expect.any(Array)
-      );
-    });
-
-    it("calls leaveChannel mutation after confirmation", async () => {
-      mockLeaveChannelMutation.mockResolvedValueOnce(undefined);
-
-      const { getAllByText } = render(
-        <ChannelsSection groupId="test-group" userRole="member" />
-      );
-
-      const leaveIcons = getAllByText("exit-outline");
-
-      act(() => {
-        fireEvent.press(leaveIcons[0].parent!.parent!);
-      });
-
-      const alertCalls = (Alert.alert as jest.Mock).mock.calls;
-      const alertButtons = alertCalls[0][2];
-      const leaveButton = alertButtons.find((b: any) => b.text === "Leave");
-
-      await act(async () => {
-        await leaveButton.onPress();
-      });
-
-      expect(mockLeaveChannelMutation).toHaveBeenCalledWith({
-        channelId: "channel-custom-1",
-      });
-    });
-
-    it("shows error alert on leave failure", async () => {
-      mockLeaveChannelMutation.mockRejectedValueOnce(
-        new Error("Failed to leave channel")
-      );
-
-      const { getAllByText } = render(
-        <ChannelsSection groupId="test-group" userRole="member" />
-      );
-
-      const leaveIcons = getAllByText("exit-outline");
-
-      act(() => {
-        fireEvent.press(leaveIcons[0].parent!.parent!);
-      });
-
-      const alertCalls = (Alert.alert as jest.Mock).mock.calls;
-      const leaveButton = alertCalls[0][2].find((b: any) => b.text === "Leave");
-
-      await act(async () => {
-        await leaveButton.onPress();
-      });
-
-      await waitFor(() => {
-        expect(Alert.alert).toHaveBeenCalledWith(
-          "Error",
-          "Failed to leave channel"
-        );
-      });
-    });
-  });
-
-  describe("Navigation", () => {
-    it("navigates to General channel on tap", () => {
-      const { getByText } = render(
-        <ChannelsSection groupId="test-group" userRole="member" />
-      );
-
-      const generalChannel = getByText("General");
-
-      act(() => {
-        fireEvent.press(generalChannel.parent!.parent!);
-      });
-
-      expect(mockPush).toHaveBeenCalledWith("/inbox/test-group/general");
-    });
-
-    it("navigates to Leaders channel on tap", () => {
-      const { getByText } = render(
-        <ChannelsSection groupId="test-group" userRole="leader" />
-      );
-
-      const leadersChannel = getByText("Leaders");
-
-      act(() => {
-        fireEvent.press(leadersChannel.parent!.parent!);
-      });
-
-      expect(mockPush).toHaveBeenCalledWith("/inbox/test-group/leaders");
-    });
-
-    it("navigates to custom channel on tap", () => {
-      const { getByText } = render(
-        <ChannelsSection groupId="test-group" userRole="member" />
-      );
-
-      const directorsChannel = getByText("Directors");
-
-      act(() => {
-        fireEvent.press(directorsChannel.parent!.parent!);
-      });
-
-      expect(mockPush).toHaveBeenCalledWith("/inbox/test-group/directors");
-    });
-
-    it("navigates to create channel screen", () => {
-      const { getByText } = render(
-        <ChannelsSection groupId="test-group" userRole="leader" />
-      );
-
-      const createButton = getByText("Create Channel");
-
-      act(() => {
-        fireEvent.press(createButton.parent!);
-      });
-
-      expect(mockPush).toHaveBeenCalledWith("/inbox/test-group/create");
-    });
-
-    it("navigates to manage members for custom channel", () => {
-      const { getAllByText } = render(
-        <ChannelsSection groupId="test-group" userRole="leader" />
-      );
-
-      const manageIcons = getAllByText("people-outline");
-
-      act(() => {
-        fireEvent.press(manageIcons[0].parent!.parent!);
-      });
-
-      expect(mockPush).toHaveBeenCalledWith("/inbox/test-group/directors/members");
-    });
-
-    it("does not navigate to disabled Leaders channel", () => {
-      mockChannelsData = [
-        mockMainChannel,
-        { ...mockLeadersChannel, isArchived: true },
-      ];
-
-      const { getByText } = render(
-        <ChannelsSection groupId="test-group" userRole="leader" />
-      );
-
-      const leadersChannel = getByText("Leaders");
-
-      act(() => {
-        fireEvent.press(leadersChannel.parent!.parent!);
-      });
-
-      // Should not navigate when disabled
-      expect(mockPush).not.toHaveBeenCalledWith(
-        expect.stringContaining("leaders")
-      );
-    });
-  });
-
-  describe("Channel Icons", () => {
-    it("renders chatbubbles icon for General channel", () => {
-      const { getByText } = render(
-        <ChannelsSection groupId="test-group" userRole="member" />
-      );
-
-      expect(getByText("chatbubbles")).toBeTruthy();
-    });
-
-    it("renders star icon for Leaders channel", () => {
-      const { getByText } = render(
-        <ChannelsSection groupId="test-group" userRole="leader" />
-      );
-
-      expect(getByText("star")).toBeTruthy();
-    });
-
-    it("renders chatbubble icon for custom channels", () => {
-      const { getAllByText } = render(
-        <ChannelsSection groupId="test-group" userRole="member" />
-      );
-
-      // chatbubble (singular) for custom channels
-      const chatIcons = getAllByText("chatbubble");
-      expect(chatIcons.length).toBe(mockCustomChannels.length);
-    });
-  });
-
-  describe("Visibility Rules", () => {
-    it("hides custom channels section for non-leaders with no custom channels", () => {
-      mockChannelsData = [mockMainChannel];
-
-      const { queryByText } = render(
-        <ChannelsSection groupId="test-group" userRole="member" />
-      );
-
-      expect(queryByText("CUSTOM CHANNELS")).toBeNull();
-    });
-
-    it("shows custom channels section for leaders even with no custom channels", () => {
-      mockChannelsData = [mockMainChannel, mockLeadersChannel];
-
-      const { getByText } = render(
-        <ChannelsSection groupId="test-group" userRole="leader" />
-      );
-
-      expect(getByText("CUSTOM CHANNELS")).toBeTruthy();
     });
 
     it("shows Leaders row for leaders even when channel does not exist yet", () => {

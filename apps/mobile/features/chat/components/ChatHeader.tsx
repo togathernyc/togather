@@ -12,7 +12,6 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { AppImage } from "@components/ui";
 import { useTheme } from "@hooks/useTheme";
-import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { getGroupTypeColorScheme } from "../../../constants/groupTypes";
 import { useIsDesktopWeb } from "../../../hooks/useIsDesktopWeb";
 
@@ -21,12 +20,17 @@ type ChatHeaderProps = {
   displayType: string;
   displayImage: string;
   groupTypeId: number;
-  /** When provided, renders a tappable "N members" link under the group name. */
+  /** Member count rendered next to the group-type badge. */
   memberCount?: number;
   onBack: () => void;
-  onMenuPress: () => void;
+  /**
+   * Tap handler for the (i) info icon in the top-right. For General chats
+   * this should route to the group page; for non-General channels it
+   * should route to the per-channel info screen.
+   */
+  onInfoPress: () => void;
+  /** Tap handler for the entire identity block (avatar + name + meta). */
   onGroupPagePress: () => void;
-  onMembersPress?: () => void;
 };
 
 export const ChatHeader = memo(function ChatHeader({
@@ -36,12 +40,10 @@ export const ChatHeader = memo(function ChatHeader({
   groupTypeId,
   memberCount,
   onBack,
-  onMenuPress,
+  onInfoPress,
   onGroupPagePress,
-  onMembersPress,
 }: ChatHeaderProps) {
   const { colors: themeColors } = useTheme();
-  const { primaryColor } = useCommunityTheme();
   const scheme = getGroupTypeColorScheme(groupTypeId);
   const badgeColors = { bg: scheme.bg, text: scheme.color };
   const isDesktopWeb = useIsDesktopWeb();
@@ -54,8 +56,17 @@ export const ChatHeader = memo(function ChatHeader({
         </TouchableOpacity>
       )}
 
-      {/* Group Image - clickable to go to group page */}
-      <TouchableOpacity onPress={onGroupPagePress}>
+      {/* Whole identity block — avatar + name + badge + member count — is
+          one tap target that routes to the group page. Mirrors the DM
+          chat-header pattern where tapping anywhere in the title row goes
+          to the chat info. The dedicated `onMembersPress` link is gone;
+          members are reachable from the group page. */}
+      <TouchableOpacity
+        onPress={onGroupPagePress}
+        style={styles.identityBlock}
+        accessibilityRole="button"
+        accessibilityLabel={`${displayName} — open group page`}
+      >
         <AppImage
           source={displayImage}
           style={styles.groupImage}
@@ -66,41 +77,34 @@ export const ChatHeader = memo(function ChatHeader({
             backgroundColor: '#E5E5E5',
           }}
         />
-      </TouchableOpacity>
-
-      {/* Group Info */}
-      <View style={styles.headerInfo}>
-        <Text style={[styles.groupName, { color: themeColors.text }]} numberOfLines={1}>
-          {displayName}
-        </Text>
-        <View style={styles.headerMetaRow}>
-          {displayType && (
-            <View style={[styles.headerBadge, { backgroundColor: badgeColors.bg }]}>
-              <Text style={[styles.headerBadgeText, { color: badgeColors.text }]}>
-                {displayType}
-              </Text>
-            </View>
-          )}
-          {typeof memberCount === "number" && memberCount > 0 && (
-            <TouchableOpacity
-              onPress={onMembersPress}
-              disabled={!onMembersPress}
-              hitSlop={6}
-              style={styles.memberCountButton}
-            >
+        <View style={styles.headerInfo}>
+          <Text style={[styles.groupName, { color: themeColors.text }]} numberOfLines={1}>
+            {displayName}
+          </Text>
+          <View style={styles.headerMetaRow}>
+            {!!displayType && (
+              <View style={[styles.headerBadge, { backgroundColor: badgeColors.bg }]}>
+                <Text style={[styles.headerBadgeText, { color: badgeColors.text }]}>
+                  {displayType}
+                </Text>
+              </View>
+            )}
+            {typeof memberCount === "number" && memberCount > 0 && (
               <Text
-                style={[styles.memberCountText, { color: primaryColor }]}
+                style={[styles.memberCountText, { color: themeColors.textSecondary }]}
               >
                 {memberCount} {memberCount === 1 ? "member" : "members"}
               </Text>
-            </TouchableOpacity>
-          )}
+            )}
+          </View>
         </View>
-      </View>
+      </TouchableOpacity>
 
-      {/* Menu Button */}
-      <TouchableOpacity onPress={onMenuPress} style={styles.menuButton}>
-        <Ionicons name="ellipsis-vertical" size={20} color={themeColors.text} />
+      {/* Info Button — replaces the legacy 3-dot menu. Routes via the
+          parent's onInfoPress to either the group page (General) or the
+          per-channel info screen. */}
+      <TouchableOpacity onPress={onInfoPress} style={styles.menuButton} accessibilityLabel="Channel info">
+        <Ionicons name="information-circle-outline" size={26} color={themeColors.text} />
       </TouchableOpacity>
     </View>
   );
@@ -146,6 +150,11 @@ const styles = StyleSheet.create({
     padding: 4,
     marginRight: 4,
   },
+  identityBlock: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+  },
   groupImage: {
     width: 40,
     height: 40,
@@ -175,12 +184,9 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "600",
   },
-  memberCountButton: {
-    // Hit-target is tight to the text. Tappability signalled by brand color.
-  },
   memberCountText: {
     fontSize: 12,
-    fontWeight: "600",
+    fontWeight: "500",
   },
   menuButton: {
     padding: 8,

@@ -29,8 +29,11 @@ export const TOOLBAR_TOOLS = {
     icon: "checkmark-done-outline",
     label: "Tasks",
   },
-  events: { id: "events", icon: "calendar-outline", label: "Events" },
-  bots: { id: "bots", icon: "hardware-chip-outline", label: "Bots" },
+  // NOTE: "events" and "bots" were retired from the toolbar — they live
+  // as sections on the group page (UpcomingEventsSection,
+  // GroupBotsSection). Existing groups whose `leaderToolbarTools` still
+  // references these IDs are filtered out at the consumer (ChatNavigation
+  // skips IDs not in this record).
   sync: {
     id: "sync",
     icon: "sync-outline",
@@ -62,7 +65,7 @@ export const ALL_TOOL_IDS = Object.keys(TOOLBAR_TOOLS) as ToolId[];
  * - "tasks" is NOT included by default - group leaders must explicitly enable it.
  * - "sync" is NOT included by default - must be explicitly enabled.
  */
-export const DEFAULT_TOOLS = ["attendance", "followup", "events", "bots"];
+export const DEFAULT_TOOLS = ["attendance", "followup"];
 
 /**
  * Resource tool ID helpers.

@@ -15,6 +15,21 @@ jest.mock("@components/ui", () => {
   };
 });
 
+// Mock useTheme — MembersRow now uses theme tokens for the leader badge
+// and the +N overflow circle. The header "MEMBERS" label moved out to the
+// section header rendered by GroupDetailScreen, so these tests focus on
+// avatar layout only.
+jest.mock("@hooks/useTheme", () => ({
+  useTheme: () => ({
+    colors: {
+      text: "#1a1a1a",
+      textSecondary: "#666666",
+      border: "#e5e5e5",
+      surfaceSecondary: "#f5f5f5",
+    },
+  }),
+}));
+
 const createQueryClient = () =>
   new QueryClient({
     defaultOptions: {
@@ -44,14 +59,12 @@ describe("MembersRow", () => {
   it("renders members when provided", () => {
     renderWithProvider(<MembersRow members={mockMembers} />);
 
-    expect(screen.getByText("MEMBERS")).toBeTruthy();
     expect(screen.getAllByTestId("avatar").length).toBe(3);
   });
 
   it("renders leaders when provided", () => {
     renderWithProvider(<MembersRow leaders={mockLeaders} />);
 
-    expect(screen.getByText("MEMBERS")).toBeTruthy();
     expect(screen.getAllByTestId("avatar").length).toBe(2);
   });
 
@@ -79,8 +92,8 @@ describe("MembersRow", () => {
   });
 
   it("does not render when no members or leaders", () => {
-    renderWithProvider(<MembersRow members={[]} leaders={[]} />);
-    expect(screen.queryByText("MEMBERS")).toBeNull();
+    const { toJSON } = renderWithProvider(<MembersRow members={[]} leaders={[]} />);
+    expect(toJSON()).toBeNull();
   });
 
   it("shows remaining count when members exceed maxVisible", () => {
@@ -96,11 +109,11 @@ describe("MembersRow", () => {
   });
 
   it("handles undefined members and leaders gracefully", () => {
-    renderWithProvider(<MembersRow />);
-    expect(screen.queryByText("MEMBERS")).toBeNull();
+    let result = renderWithProvider(<MembersRow />);
+    expect(result.toJSON()).toBeNull();
 
-    renderWithProvider(<MembersRow members={undefined} leaders={undefined} />);
-    expect(screen.queryByText("MEMBERS")).toBeNull();
+    result = renderWithProvider(<MembersRow members={undefined} leaders={undefined} />);
+    expect(result.toJSON()).toBeNull();
   });
 
   it("handles members with missing names", () => {
@@ -116,4 +129,3 @@ describe("MembersRow", () => {
     expect(avatars.length).toBe(3);
   });
 });
-

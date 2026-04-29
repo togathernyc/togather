@@ -8,10 +8,16 @@ import {
   Alert,
   RefreshControl,
   Modal,
+  Linking,
+  Platform,
+  Share,
+  ActionSheetIOS,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import * as Clipboard from "expo-clipboard";
+import { DOMAIN_CONFIG } from "@togather/shared";
 import { useTheme } from "@hooks/useTheme";
 import { GroupDetailSkeleton } from "./GroupDetailSkeleton";
 import { useAuth } from "@providers/AuthProvider";
@@ -26,18 +32,22 @@ import { useMyPendingJoinRequests } from "../hooks/useMyPendingJoinRequests";
 import { PendingRequestLimitModal } from "./PendingRequestLimitModal";
 import { isGroupMember } from "../utils";
 import { useUserData } from "@features/profile/hooks/useUserData";
-import { RSVPModal } from "./RSVPModal";
 import { GroupHeader } from "./GroupHeader";
 import { GroupOptionsModal } from "./GroupOptionsModal";
 import { NextEventSection } from "./NextEventSection";
 import { MembersRow } from "./MembersRow";
 import { HighlightsGrid } from "./HighlightsGrid";
-import { GroupMapSection } from "./GroupMapSection";
 import { GroupNonMemberView } from "./GroupNonMemberView";
 import { ChannelsSection } from "./ChannelsSection";
+import { UpcomingEventsSection } from "./UpcomingEventsSection";
+import { GroupBotsSection } from "./GroupBotsSection";
 import { Group } from "../types";
 import { ImageViewerManager } from "@/providers/ImageViewerProvider";
-import { getExternalChatInfo, openExternalChatLink } from "@features/chat/utils/externalChat";
+import { formatCadence } from "../utils";
+import {
+  getExternalChatInfo,
+  openExternalChatLink,
+} from "@features/chat/utils/externalChat";
 
 export function GroupDetailScreen() {
   const params = useLocalSearchParams<{ group_id: string }>();
@@ -46,84 +56,76 @@ export function GroupDetailScreen() {
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
-  const [showRSVPModal, setShowRSVPModal] = useState(false);
   const [showOptionsModal, setShowOptionsModal] = useState(false);
   const [showJoinSuccessModal, setShowJoinSuccessModal] = useState(false);
   const [showPendingLimitModal, setShowPendingLimitModal] = useState(false);
 
-  // Pending join request cap (frontend stopgap — backend allows unlimited).
-  // When the user already has 2 pending requests in the active community we
-  // surface a friction modal instead of submitting another request.
-  // We also track loading: until the query has resolved, isAtLimit is false
-  // by default (empty list), which would let an at-cap user slip through.
-  // The Join button is disabled and handleJoinGroup returns early until the
-  // count is known.
   const {
     isAtLimit: isAtPendingLimit,
     isLoading: isPendingLimitLoading,
   } = useMyPendingJoinRequests();
 
-  const { data: group, isLoading, error, refetch, isRefetching } = useGroupDetails(group_id);
+  const {
+    data: group,
+    isLoading,
+    error,
+    refetch,
+    isRefetching,
+  } = useGroupDetails(group_id);
   const { data: userData } = useUserData(!!user);
 
-  // Use Convex _id for navigation, fallback to group_id for legacy
   const groupIdentifier = group?._id || group_id;
 
-  // Mutations for group actions
   const leaveGroupMutation = useLeaveGroup();
   const joinGroupMutation = useJoinGroup(groupIdentifier);
   const withdrawMutation = useWithdrawJoinRequest(groupIdentifier);
   const archiveGroupMutation = useArchiveGroup(groupIdentifier);
 
-  // Handle pull-to-refresh - must be before any early returns to satisfy Rules of Hooks
   const handleRefresh = useCallback(() => {
     refetch();
   }, [refetch]);
 
-  // Check if current user is a member of the group
-  // Use the API's user_request_status field as the source of truth
-  // 'accepted' means the user is a member, 'pending' means waiting for approval, null/'declined' means not a member
   const isMember = useMemo(() => {
     if (!group || !user?.id) {
       return false;
     }
-
-    // Primary check: user_request_status from API (most reliable)
     if (group.user_request_status === "accepted") {
       return true;
     }
-
-    // Secondary check: user_role indicates membership (includes leaders and admins)
     if (group.user_role && group.user_role !== null) {
       return true;
     }
-
-    // Fallback check: user in group.members array
     const memberCheck = isGroupMember(group, user.id);
     if (memberCheck) {
       return true;
     }
-
-    // Final fallback: user's group_memberships contains this group
     if (
       userData?.group_memberships &&
       Array.isArray(userData.group_memberships)
     ) {
       const hasMembership = userData.group_memberships.some(
-        (membership: any) => membership.group?._id === group._id
+        (membership: any) => membership.group?._id === group._id,
       );
       if (hasMembership) {
         return true;
       }
     }
-
     return false;
   }, [group, user?.id, userData?.group_memberships]);
 
-  // Check if user is a community admin
   const isAdmin = user?.is_admin === true;
+  const isLeader =
+    group?.user_role === "leader" || group?.user_role === "admin";
+  const canEditGroup = useMemo(() => {
+    if (!group || !user?.id) return false;
+    if (user.is_admin === true) return true;
+    return (
+      group.leaders?.some((leader) => String(leader.id) === String(user.id)) ||
+      false
+    );
+  }, [group, user?.id, user?.is_admin]);
+  const canArchiveGroup = isAdmin && !group?.is_announcement_group;
 
-  // Navigate to members page - use Convex _id for navigation
   const handleMembersPress = () => {
     if (!group?._id) return;
     router.push(`/leader-tools/${group._id}/members`);
@@ -146,12 +148,15 @@ export function GroupDetailScreen() {
           style: "destructive",
           onPress: () => {
             if (user?.id) {
-              leaveGroupMutation.mutate({ groupId: groupIdentifier, userId: String(user.id) });
+              leaveGroupMutation.mutate({
+                groupId: groupIdentifier,
+                userId: String(user.id),
+              });
             }
             setShowOptionsModal(false);
           },
         },
-      ]
+      ],
     );
   };
 
@@ -160,35 +165,19 @@ export function GroupDetailScreen() {
       Alert.alert("Error", "Please log in to join a group.");
       return;
     }
-
     if (!group?._id && !group?.id) {
       Alert.alert("Error", "Group information is missing. Please try again.");
       return;
     }
-
-    // Frontend stopgap: if the user already has the maximum number of pending
-    // join requests in this community, show the limit modal instead of
-    // submitting another request. The cap exists to keep leaders from getting
-    // overwhelmed with requests from people who join 3+ groups and ghost.
-    //
-    // Defensive guard: if the pending-requests query hasn't resolved yet,
-    // refuse the submission. Without this an at-cap user could slip through
-    // during the loading window (isAtLimit defaults to false on empty data).
-    // The Join button is also disabled below while loading, but we double
-    // gate here in case anything else triggers handleJoinGroup.
-    if (isPendingLimitLoading) {
-      return;
-    }
+    if (isPendingLimitLoading) return;
     if (isAtPendingLimit) {
       setShowPendingLimitModal(true);
       return;
     }
-
     try {
       await joinGroupMutation.mutateAsync();
       setShowJoinSuccessModal(true);
     } catch (error) {
-      // Error alert is already handled in the hook
       console.error("Join group error:", error);
     }
   };
@@ -198,18 +187,13 @@ export function GroupDetailScreen() {
       "Withdraw Request",
       "Are you sure you want to withdraw your join request?",
       [
-        {
-          text: "Cancel",
-          style: "cancel",
-        },
+        { text: "Cancel", style: "cancel" },
         {
           text: "Withdraw",
           style: "destructive",
-          onPress: () => {
-            withdrawMutation.mutate();
-          },
+          onPress: () => withdrawMutation.mutate(),
         },
-      ]
+      ],
     );
   };
 
@@ -220,11 +204,7 @@ export function GroupDetailScreen() {
         group?.title || group?.name || "this group"
       }"? This will hide the group from all members. This action can be undone by a community admin.`,
       [
-        {
-          text: "Cancel",
-          style: "cancel",
-          onPress: () => setShowOptionsModal(false),
-        },
+        { text: "Cancel", style: "cancel" },
         {
           text: "Archive",
           style: "destructive",
@@ -232,43 +212,80 @@ export function GroupDetailScreen() {
             await archiveGroupMutation.mutate();
           },
         },
-      ]
+      ],
     );
   };
 
+  const handleEditGroup = () => {
+    if (!group?._id) return;
+    router.push(`/groups/${group._id}/edit`);
+  };
+
+  const handleShareGroup = async () => {
+    if (!group?.shortId) {
+      Alert.alert("Cannot Share", "This group doesn't have a shareable link yet.");
+      return;
+    }
+    const groupUrl = DOMAIN_CONFIG.groupShareUrl(group.shortId);
+    const groupName = group.name || group.title || "Group";
+
+    if (Platform.OS === "ios") {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: ["Cancel", "Copy Link", "Share"],
+          cancelButtonIndex: 0,
+        },
+        async (buttonIndex) => {
+          if (buttonIndex === 1) {
+            await Clipboard.setStringAsync(groupUrl);
+            Alert.alert("Link Copied", "Group link has been copied to clipboard.");
+          } else if (buttonIndex === 2) {
+            await Share.share({
+              message: `${groupName}\n${groupUrl}`,
+              url: groupUrl,
+            });
+          }
+        },
+      );
+    } else {
+      await Share.share({ message: `${groupName}\n${groupUrl}` });
+    }
+  };
+
+  const handlePinChannels = () => {
+    if (!group?._id) return;
+    router.push(`/(user)/leader-tools/${group._id}/pin-channels`);
+  };
+
+  const handleToolbarSettings = () => {
+    if (!group?._id) return;
+    router.push(`/(user)/leader-tools/${group._id}/toolbar-settings`);
+  };
+
   if (isLoading) {
-    return (
-      <>
-        <GroupDetailSkeleton />
-      </>
-    );
+    return <GroupDetailSkeleton />;
   }
 
   if (error || !group) {
     return (
-      <>
-        <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
-          <Text style={[styles.errorText, { color: colors.error }]}>Group not found</Text>
-          <TouchableOpacity
-            style={[styles.button, { backgroundColor: colors.link }]}
-            onPress={() => {
-              if (router.canGoBack()) {
-                router.back();
-              } else {
-                router.replace("/groups");
-              }
-            }}
-          >
-            <Text style={[styles.buttonText, { color: colors.textInverse }]}>Go Back</Text>
-          </TouchableOpacity>
-        </View>
-      </>
+      <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
+        <Text style={[styles.errorText, { color: colors.error }]}>Group not found</Text>
+        <TouchableOpacity
+          style={[styles.button, { backgroundColor: colors.link }]}
+          onPress={() => {
+            if (router.canGoBack()) {
+              router.back();
+            } else {
+              router.replace("/groups");
+            }
+          }}
+        >
+          <Text style={[styles.buttonText, { color: colors.textInverse }]}>Go Back</Text>
+        </TouchableOpacity>
+      </View>
     );
   }
 
-  // Show non-member view if user is not a member.
-  // Non-member admins should also see this view so they can join the group,
-  // but the GroupNonMemberView provides admin-specific features (menu, member list access).
   if (!isMember) {
     return (
       <>
@@ -279,9 +296,6 @@ export function GroupDetailScreen() {
           isJoining={joinGroupMutation.isPending || isPendingLimitLoading}
           isWithdrawing={withdrawMutation.isPending}
         />
-
-        {/* Pending request limit modal — fires when the user is already at
-            the cap and tries to request to join another group. */}
         <PendingRequestLimitModal
           visible={showPendingLimitModal}
           onDismiss={() => setShowPendingLimitModal(false)}
@@ -290,8 +304,6 @@ export function GroupDetailScreen() {
             router.push("/(tabs)/profile");
           }}
         />
-
-        {/* Join Success Modal */}
         <Modal
           visible={showJoinSuccessModal}
           transparent
@@ -331,31 +343,51 @@ export function GroupDetailScreen() {
     );
   }
 
-  // Debug: Log group data to help diagnose missing sections
-  if (__DEV__) {
-    console.log("GroupDetailScreen - Group data:", {
-      _id: group._id,
-      hasDate: !!(group as any).date,
-      hasNextMeetingDate: !!(group as any).next_meeting_date,
-      hasSchedule: !!(group as any).group_schedule_details,
-      membersCount: group.members?.length || 0,
-      leadersCount: group.leaders?.length || 0,
-      members_count: group.members_count,
-      highlightsCount: group.highlights?.length || 0,
-      hasHighlights: !!group.highlights,
-      // Membership detection fields
-      user_request_status: group.user_request_status,
-      user_role: group.user_role,
-      isMember: isMember,
-    });
-  }
+  const cadence = formatCadence(group);
+  const address =
+    group.full_address ||
+    (group.address_line1 || group.city || group.state || group.zip_code
+      ? [
+          group.address_line1,
+          group.address_line2,
+          [group.city, group.state].filter(Boolean).join(", "),
+          group.zip_code,
+        ]
+          .filter(Boolean)
+          .join(", ")
+      : null) ||
+    group.location ||
+    null;
 
-  // Show member view
+  const handleAddressPress = async () => {
+    if (!address) return;
+    const encoded = encodeURIComponent(address);
+    const url =
+      Platform.OS === "ios"
+        ? `maps://maps.apple.com/?q=${encoded}`
+        : `https://www.google.com/maps/search/?api=1&query=${encoded}`;
+    try {
+      const canOpen = await Linking.canOpenURL(url);
+      if (canOpen) {
+        await Linking.openURL(url);
+      } else {
+        await Linking.openURL(
+          `https://www.google.com/maps/search/?api=1&query=${encoded}`,
+        );
+      }
+    } catch (err) {
+      console.error("Error opening maps:", err);
+    }
+  };
+
+  const showDetailsCard = !!cadence || !!address;
+  const externalChatLink = (group as any).externalChatLink as string | undefined;
+
   return (
     <>
       <ScrollView
         style={[styles.scrollView, { backgroundColor: colors.background }]}
-        contentContainerStyle={{ paddingTop: insets.top }}
+        contentContainerStyle={{ paddingTop: insets.top, paddingBottom: 24 }}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
@@ -365,126 +397,67 @@ export function GroupDetailScreen() {
           />
         }
       >
-        {/* Header with image, name, and cadence */}
+        {/* Centered hero (DM-style). The (i) icon is gone — you're
+            already on the info surface; share lives in the top right. */}
         <GroupHeader
           group={group}
-          onMenuPress={() => setShowOptionsModal(true)}
-          showMenu={true}
+          onSharePress={group.shortId ? handleShareGroup : undefined}
+          canEdit={canEditGroup}
         />
 
-        {/* Description */}
-        <View style={[styles.descriptionContainer, { backgroundColor: colors.surfaceSecondary }]}>
-          <Text style={[styles.description, { color: colors.textSecondary }]}>
-            {group.description || "No description available."}
-          </Text>
-        </View>
-
-        {/* Chat Section - Link to group chat */}
-        {(group as any).main_channel_id && (
-          <View style={[styles.chatSection, { backgroundColor: colors.surfaceSecondary }]}>
+        {/* MEMBERS — moved above channels */}
+        {((group.members && group.members.length > 0) ||
+          (group.leaders && group.leaders.length > 0) ||
+          (group.members_count && group.members_count > 0)) && (
+          <View style={styles.section}>
+            <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
+              MEMBERS{group.members_count ? ` · ${group.members_count}` : ""}
+            </Text>
             <TouchableOpacity
-              style={[styles.chatCard, { backgroundColor: colors.surface }]}
-              onPress={() => {
-                const mainChannelId = (group as any).main_channel_id;
-                const leadersChannelId = (group as any).leaders_channel_id;
-                router.push({
-                  pathname: `/inbox/${mainChannelId}`,
-                  params: {
-                    groupId: group._id,
-                    groupName: group.title || group.name || "",
-                    groupType: group.group_type_name || "",
-                    groupTypeSlug: (group as any).group_type_slug || "",
-                    groupTypeId: String(group.group_type || 3),
-                    imageUrl: group.preview || "",
-                    isLeader: (group.user_role === "leader" || group.user_role === "admin") ? "1" : "0",
-                    leadersChannelId: leadersChannelId || "",
-                    isAnnouncementGroup: (group as any).is_announcement_group ? "1" : "0",
-                    externalChatLink: (group as any).externalChatLink || "",
-                  },
-                });
-              }}
               activeOpacity={0.7}
+              onPress={isLeader || isAdmin ? handleMembersPress : undefined}
+              disabled={!(isLeader || isAdmin)}
+              style={[styles.card, { backgroundColor: colors.surfaceSecondary }]}
             >
-              <View style={[styles.chatIconContainer, { backgroundColor: colors.link + "15" }]}>
-                <Ionicons name="chatbubbles" size={24} color={colors.link} />
-              </View>
-              <View style={styles.chatInfo}>
-                <Text style={[styles.chatTitle, { color: colors.text }]}>Group Chat</Text>
-                <Text style={[styles.chatSubtitle, { color: colors.textSecondary }]}>Message your group members</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={20} color={colors.link} />
+              <MembersRow
+                members={group.members}
+                leaders={group.leaders}
+                totalCount={group.members_count ?? undefined}
+              />
+              {(isLeader || isAdmin) && (
+                <View style={[styles.viewAllRow, { borderTopColor: colors.border }]}>
+                  <Text style={[styles.viewAllText, { color: colors.text }]}>
+                    View all members
+                  </Text>
+                  <Ionicons
+                    name="chevron-forward"
+                    size={18}
+                    color={colors.textTertiary}
+                  />
+                </View>
+              )}
             </TouchableOpacity>
           </View>
         )}
 
-        {/* External Chat Section */}
-        {(group as any).externalChatLink && (() => {
-          const externalChatInfo = getExternalChatInfo((group as any).externalChatLink);
-          return (
-            <View style={[styles.externalChatSection, { backgroundColor: colors.surfaceSecondary }]}>
-              <Text style={[styles.sectionTitle, { color: colors.text }]}>EXTERNAL CHAT</Text>
-              <TouchableOpacity
-                style={[styles.externalChatCard, { backgroundColor: colors.surface }]}
-                onPress={() => openExternalChatLink((group as any).externalChatLink)}
-                activeOpacity={0.7}
-              >
-                <View style={[styles.externalChatIconContainer, { backgroundColor: externalChatInfo.color + "15" }]}>
-                  <Ionicons
-                    name={externalChatInfo.iconName as any}
-                    size={24}
-                    color={externalChatInfo.color}
-                  />
-                </View>
-                <View style={styles.externalChatInfo}>
-                  <Text style={[styles.externalChatTitle, { color: colors.text }]}>
-                    Join on {externalChatInfo.name}
-                  </Text>
-                  <Text style={[styles.externalChatSubtitle, { color: colors.textSecondary }]}>
-                    This group also chats on {externalChatInfo.name}
-                  </Text>
-                </View>
-                <Ionicons name="open-outline" size={20} color={externalChatInfo.color} />
-              </TouchableOpacity>
-            </View>
-          );
-        })()}
+        {/* UPCOMING EVENTS — horizontal scroll, sits between Members and
+            Channels per product design. Hidden when there are no upcoming
+            events. */}
+        {group._id && <UpcomingEventsSection groupId={group._id} />}
 
-        {/* Channels Section - Shows all channels with management options */}
+        {/* CHANNELS */}
         {group._id && (
-          <ChannelsSection
-            groupId={group._id}
-            userRole={group.user_role}
-          />
+          <ChannelsSection groupId={group._id} userRole={group.user_role} />
         )}
 
-        {/* Map Section */}
-        <GroupMapSection group={group} />
+        {/* BOTS — replaces the legacy "Bots" toolbar chip in chat. Leader
+            only; renders the same bot cards + config modals BotsScreen
+            renders. */}
+        {group._id && (
+          <GroupBotsSection groupId={group._id} isLeader={isLeader || isAdmin} />
+        )}
 
-        {/* Next Event - Always show if group has date info */}
-        <NextEventSection group={group} currentRSVP={null} />
-
-        {/* Members - Show if members or leaders exist, or if members_count > 0 */}
-        {/* Clickable for admins/leaders to navigate to members page */}
-        {/* Note: Non-members are handled by GroupNonMemberView (early return above) */}
-        {(group.members && group.members.length > 0) ||
-        (group.leaders && group.leaders.length > 0) ||
-        (group.members_count && group.members_count > 0) ? (
-          isAdmin ||
-          group.user_role === "leader" ||
-          group.user_role === "admin" ? (
-            <TouchableOpacity onPress={handleMembersPress} activeOpacity={0.7}>
-              <MembersRow members={group.members} leaders={group.leaders} />
-              <View style={[styles.viewMembersHint, { backgroundColor: colors.surfaceSecondary }]}>
-                <Text style={[styles.viewMembersText, { color: colors.link }]}>View all members</Text>
-                <Ionicons name="chevron-forward" size={16} color={colors.link} />
-              </View>
-            </TouchableOpacity>
-          ) : (
-            <MembersRow members={group.members} leaders={group.leaders} />
-          )
-        ) : null}
-
-        {/* Highlights - Show if highlights exist */}
+        {/* Highlights */}
         {group.highlights && group.highlights.length > 0 && (
           <HighlightsGrid
             highlights={group.highlights as any}
@@ -492,18 +465,181 @@ export function GroupDetailScreen() {
               const imageUrls = (group.highlights as any)
                 .map((h: any) => h.image_url)
                 .filter(Boolean);
-
               const index = (group.highlights as any).findIndex(
-                (h: any) => h.id === clickedHighlight.id
+                (h: any) => h.id === clickedHighlight.id,
               );
-
               ImageViewerManager.show(imageUrls, Math.max(0, index));
             }}
           />
         )}
+
+        {/* Next event */}
+        <NextEventSection group={group} currentRSVP={null} />
+
+        {/* External chat */}
+        {!!externalChatLink &&
+          (() => {
+            const externalChatInfo = getExternalChatInfo(externalChatLink);
+            return (
+              <View style={styles.section}>
+                <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
+                  EXTERNAL CHAT
+                </Text>
+                <TouchableOpacity
+                  style={[styles.card, styles.externalRow, { backgroundColor: colors.surfaceSecondary }]}
+                  onPress={() => openExternalChatLink(externalChatLink)}
+                  activeOpacity={0.7}
+                >
+                  <View
+                    style={[
+                      styles.externalIcon,
+                      { backgroundColor: externalChatInfo.color + "15" },
+                    ]}
+                  >
+                    <Ionicons
+                      name={externalChatInfo.iconName as any}
+                      size={20}
+                      color={externalChatInfo.color}
+                    />
+                  </View>
+                  <View style={styles.externalInfo}>
+                    <Text style={[styles.externalTitle, { color: colors.text }]}>
+                      Join on {externalChatInfo.name}
+                    </Text>
+                    <Text
+                      style={[styles.externalSubtitle, { color: colors.textSecondary }]}
+                    >
+                      This group also chats on {externalChatInfo.name}
+                    </Text>
+                  </View>
+                  <Ionicons name="open-outline" size={18} color={externalChatInfo.color} />
+                </TouchableOpacity>
+              </View>
+            );
+          })()}
+
+        {/* DETAILS — schedule + address */}
+        {showDetailsCard && (
+          <View style={styles.section}>
+            <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
+              DETAILS
+            </Text>
+            <View style={[styles.card, { backgroundColor: colors.surfaceSecondary }]}>
+              {!!cadence && (
+                <View style={styles.detailRow}>
+                  <Ionicons name="calendar-outline" size={20} color={colors.icon} />
+                  <Text style={[styles.detailText, { color: colors.text }]}>{cadence}</Text>
+                </View>
+              )}
+              {!!address && (
+                <TouchableOpacity
+                  onPress={handleAddressPress}
+                  activeOpacity={0.7}
+                  style={[
+                    styles.detailRow,
+                    cadence && {
+                      borderTopWidth: StyleSheet.hairlineWidth,
+                      borderTopColor: colors.border,
+                    },
+                  ]}
+                >
+                  <Ionicons name="location-outline" size={20} color={colors.icon} />
+                  <Text
+                    style={[styles.detailText, { color: colors.text }]}
+                    numberOfLines={2}
+                  >
+                    {address}
+                  </Text>
+                  <Ionicons
+                    name="chevron-forward"
+                    size={18}
+                    color={colors.textTertiary}
+                  />
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        )}
+
+        {/* GROUP ACTIONS */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
+            GROUP ACTIONS
+          </Text>
+          <View style={[styles.card, { backgroundColor: colors.surfaceSecondary }]}>
+            {isLeader && (
+              <ActionRow
+                icon="pin-outline"
+                label="Pin Channels"
+                onPress={handlePinChannels}
+                color={colors.text}
+                iconColor={colors.icon}
+                topBorder={false}
+                borderColor={colors.border}
+              />
+            )}
+            {isLeader && (
+              <ActionRow
+                icon="options-outline"
+                label="Toolbar Settings"
+                onPress={handleToolbarSettings}
+                color={colors.text}
+                iconColor={colors.icon}
+                topBorder
+                borderColor={colors.border}
+              />
+            )}
+            {group.shortId && (
+              <ActionRow
+                icon="share-outline"
+                label="Share Group"
+                onPress={handleShareGroup}
+                color={colors.text}
+                iconColor={colors.icon}
+                topBorder={isLeader}
+                borderColor={colors.border}
+              />
+            )}
+            {canEditGroup && (
+              <ActionRow
+                icon="create-outline"
+                label="Edit Group"
+                onPress={handleEditGroup}
+                color={colors.text}
+                iconColor={colors.icon}
+                topBorder
+                borderColor={colors.border}
+              />
+            )}
+            {canArchiveGroup && (
+              <ActionRow
+                icon="archive-outline"
+                label="Archive Group"
+                onPress={handleArchiveGroup}
+                color={colors.text}
+                iconColor={colors.icon}
+                topBorder
+                borderColor={colors.border}
+              />
+            )}
+            {!group.is_announcement_group && (
+              <ActionRow
+                icon="exit-outline"
+                label="Leave Group"
+                onPress={handleLeaveGroup}
+                color={colors.destructive}
+                iconColor={colors.destructive}
+                topBorder
+                borderColor={colors.border}
+              />
+            )}
+          </View>
+        </View>
       </ScrollView>
 
-      {/* Options Modal */}
+      {/* Kept mounted for any external openers; the (i) on the hero no
+          longer opens it. Migrating fully out of GroupOptionsModal would
+          touch the non-member flow too — out of scope for this redesign. */}
       <GroupOptionsModal
         visible={showOptionsModal}
         group={group}
@@ -514,6 +650,38 @@ export function GroupDetailScreen() {
         isArchiving={archiveGroupMutation.isPending}
       />
     </>
+  );
+}
+
+function ActionRow({
+  icon,
+  label,
+  onPress,
+  color,
+  iconColor,
+  topBorder,
+  borderColor,
+}: {
+  icon: React.ComponentProps<typeof Ionicons>["name"];
+  label: string;
+  onPress: () => void;
+  color: string;
+  iconColor: string;
+  topBorder: boolean;
+  borderColor: string;
+}) {
+  return (
+    <TouchableOpacity
+      activeOpacity={0.7}
+      onPress={onPress}
+      style={[
+        styles.actionRow,
+        topBorder && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: borderColor },
+      ]}
+    >
+      <Ionicons name={icon} size={20} color={iconColor} />
+      <Text style={[styles.actionLabel, { color }]}>{label}</Text>
+    </TouchableOpacity>
   );
 }
 
@@ -541,105 +709,84 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
   },
-  descriptionContainer: {
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    marginTop: 0,
+  section: {
+    paddingHorizontal: 12,
+    paddingTop: 16,
+    paddingBottom: 8,
   },
-  description: {
-    fontSize: 16,
-    lineHeight: 24,
+  sectionHeader: {
+    fontSize: 11,
+    fontWeight: "600",
+    letterSpacing: 0.6,
+    marginBottom: 8,
+    paddingHorizontal: 8,
   },
-  viewMembersHint: {
+  card: {
+    borderRadius: 12,
+    overflow: "hidden",
+  },
+  viewAllRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 8,
-    marginTop: -8,
-    paddingBottom: 16,
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
   },
-  viewMembersText: {
-    fontSize: 14,
+  viewAllText: {
+    fontSize: 15,
     fontWeight: "500",
-    marginRight: 4,
   },
-  // External Chat Section styles
-  externalChatSection: {
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-  },
-  sectionTitle: {
-    fontSize: 14,
-    fontWeight: "600",
-    letterSpacing: 0.5,
-    marginBottom: 12,
-  },
-  externalChatCard: {
+  detailRow: {
     flexDirection: "row",
     alignItems: "center",
-    borderRadius: 12,
-    padding: 12,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 1,
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    minHeight: 48,
   },
-  externalChatIconContainer: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    justifyContent: "center",
+  detailText: {
+    flex: 1,
+    fontSize: 15,
+  },
+  actionRow: {
+    flexDirection: "row",
     alignItems: "center",
-    marginRight: 12,
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    minHeight: 48,
   },
-  externalChatInfo: {
+  actionLabel: {
+    fontSize: 16,
+    fontWeight: "500",
+  },
+  externalRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    minHeight: 56,
+  },
+  externalIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  externalInfo: {
     flex: 1,
   },
-  externalChatTitle: {
+  externalTitle: {
     fontSize: 16,
     fontWeight: "600",
     marginBottom: 2,
   },
-  externalChatSubtitle: {
+  externalSubtitle: {
     fontSize: 13,
   },
-  // Chat Section styles
-  chatSection: {
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-  },
-  chatCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    borderRadius: 12,
-    padding: 12,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 1,
-  },
-  chatIconContainer: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 12,
-  },
-  chatInfo: {
-    flex: 1,
-  },
-  chatTitle: {
-    fontSize: 16,
-    fontWeight: "600",
-    marginBottom: 2,
-  },
-  chatSubtitle: {
-    fontSize: 13,
-  },
-  // Join Success Modal styles
   modalOverlay: {
     flex: 1,
     justifyContent: "center",

@@ -2,31 +2,35 @@ import React, { useMemo } from "react";
 import { View, Text, StyleSheet, ScrollView } from "react-native";
 import { Avatar } from "@components/ui";
 import { GroupMember } from "../types";
-import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 
 interface MembersRowProps {
   members?: GroupMember[];
   leaders?: GroupMember[];
   maxVisible?: number;
-  totalCount?: number; // Optional total count for preview mode (when we only have partial data)
+  totalCount?: number;
 }
 
+/**
+ * Horizontal avatar preview for the MEMBERS card on the group page.
+ * Initials avatars now use neutral gray (theme-aware) — the previous
+ * red/green community-tinted leader rings have been retired in favour of
+ * the cleaner DM-info aesthetic. Leaders are still surfaced via a
+ * subtle dark dot in the corner.
+ */
 export function MembersRow({
   members = [],
   leaders = [],
   maxVisible = 10,
   totalCount,
 }: MembersRowProps) {
-  const { primaryColor } = useCommunityTheme();
+  const { colors } = useTheme();
 
-  // Merge leaders and members, ensuring leaders appear first and aren't duplicated
   const mergedMembers = useMemo(() => {
     const leaderIds = new Set(leaders.map((leader) => leader.id));
-    // Filter out members who are also leaders to avoid duplicates
     const nonLeaderMembers = members.filter(
-      (member) => !leaderIds.has(member.id)
+      (member) => !leaderIds.has(member.id),
     );
-    // Leaders first, then regular members
     return [...leaders, ...nonLeaderMembers];
   }, [members, leaders]);
 
@@ -36,13 +40,11 @@ export function MembersRow({
 
   const leaderIds = new Set(leaders.map((leader) => leader.id));
   const visibleMembers = mergedMembers.slice(0, maxVisible);
-  // Use provided totalCount if available (for preview mode), otherwise calculate from array
   const actualTotal = totalCount ?? mergedMembers.length;
   const remainingCount = actualTotal - Math.min(maxVisible, mergedMembers.length);
 
   return (
     <View style={styles.container}>
-      <Text style={styles.header}>MEMBERS</Text>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -51,34 +53,37 @@ export function MembersRow({
         {visibleMembers.map((member, index) => {
           const isLeader = leaderIds.has(member.id);
           return (
-            <View
-              key={member.id || index}
-              style={styles.avatarContainer}
-            >
-              {isLeader ? (
-                <View style={[styles.leaderWrapper, { borderColor: primaryColor }]}>
-                  <Avatar
-                    name={`${member.first_name || ""} ${member.last_name || ""}`.trim()}
-                    imageUrl={member.profile_photo}
-                    size={56}
-                  />
-                  <View style={[styles.leaderBadge, { backgroundColor: primaryColor }]} />
-                </View>
-              ) : (
-                <Avatar
-                  name={`${member.first_name || ""} ${member.last_name || ""}`.trim()}
-                  imageUrl={member.profile_photo}
-                  size={56}
+            <View key={member.id || index} style={styles.avatarContainer}>
+              <Avatar
+                name={`${member.first_name || ""} ${member.last_name || ""}`.trim()}
+                imageUrl={member.profile_photo}
+                size={48}
+                placeholderBackgroundColor={colors.border}
+              />
+              {isLeader && (
+                <View
+                  style={[
+                    styles.leaderBadge,
+                    {
+                      backgroundColor: colors.text,
+                      borderColor: colors.surfaceSecondary,
+                    },
+                  ]}
                 />
               )}
             </View>
           );
         })}
         {remainingCount > 0 && (
-          <View style={styles.countContainer}>
-            <View style={styles.countCircle}>
-              <Text style={styles.countText}>+{remainingCount}</Text>
-            </View>
+          <View
+            style={[
+              styles.countCircle,
+              { backgroundColor: colors.border },
+            ]}
+          >
+            <Text style={[styles.countText, { color: colors.textSecondary }]}>
+              +{remainingCount}
+            </Text>
           </View>
         )}
       </ScrollView>
@@ -88,64 +93,35 @@ export function MembersRow({
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: "#F5F5F5",
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    marginTop: 0,
-  },
-  header: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#333",
-    marginBottom: 12,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
   },
   scrollContent: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
+    gap: 8,
   },
   avatarContainer: {
-    marginRight: 0,
     position: "relative",
-  },
-  leaderWrapper: {
-    position: "relative",
-    borderRadius: 30,
-    borderWidth: 3,
-    // borderColor set dynamically via style prop
-    padding: 2,
   },
   leaderBadge: {
     position: "absolute",
     top: -2,
     right: -2,
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    // backgroundColor set dynamically via style prop
+    width: 12,
+    height: 12,
+    borderRadius: 6,
     borderWidth: 2,
-    borderColor: "#FFFFFF",
-    zIndex: 1,
-  },
-  countContainer: {
-    marginLeft: 4,
-    justifyContent: "center",
-    alignItems: "center",
   },
   countCircle: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: "#E0E0E0",
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     justifyContent: "center",
     alignItems: "center",
   },
   countText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "600",
-    color: "#666",
   },
 });
-
