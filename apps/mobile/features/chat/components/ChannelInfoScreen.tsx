@@ -149,6 +149,9 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
   const leaveChannelMutation = useAuthenticatedMutation(
     api.functions.messaging.channels.leaveChannel,
   );
+  const archiveCustomChannelMutation = useAuthenticatedMutation(
+    api.functions.messaging.channels.archiveCustomChannel,
+  );
   const enableInviteLinkMutation = useAuthenticatedMutation(
     api.functions.messaging.channelInvites.enableInviteLink,
   );
@@ -158,6 +161,8 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
   const [renameSubmitting, setRenameSubmitting] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
   const [leaveVisible, setLeaveVisible] = useState(false);
+  const [archiveVisible, setArchiveVisible] = useState(false);
+  const [archiving, setArchiving] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [pcoSettingsVisible, setPcoSettingsVisible] = useState(false);
   const [requestInFlight, setRequestInFlight] = useState<string | null>(null);
@@ -297,6 +302,20 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
       setLeaving(false);
     }
   }, [channel?._id, leaveChannelMutation, groupId, router]);
+
+  const handleArchiveChannel = useCallback(async () => {
+    if (!channel?._id) return;
+    setArchiving(true);
+    try {
+      await archiveCustomChannelMutation({ channelId: channel._id });
+      setArchiveVisible(false);
+      router.replace(`/groups/${groupId}` as any);
+    } catch (e: any) {
+      Alert.alert("Couldn't archive", e?.message || "Please try again.");
+    } finally {
+      setArchiving(false);
+    }
+  }, [channel?._id, archiveCustomChannelMutation, groupId, router]);
 
   const handleRename = useCallback(async () => {
     const trimmed = renameValue.trim();
@@ -448,7 +467,9 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
             <View style={[styles.sectionGroup, { backgroundColor: colors.surfaceSecondary }]}>
               {pendingRequests!.map((req: any, idx: number) => {
                 const inFlight = requestInFlight === (req._id as string);
-                const requesterName = req.userName || req.user?.displayName || "Someone";
+                // Backend `getPendingRequests` returns these fields directly
+                // on each enriched row — see channelInvites.ts.
+                const requesterName = req.displayName || "Someone";
                 return (
                   <View
                     key={req._id}
@@ -462,7 +483,7 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
                   >
                     <Avatar
                       name={requesterName}
-                      imageUrl={req.userPhoto || req.user?.profilePhoto}
+                      imageUrl={req.profilePhoto}
                       size={40}
                     />
                     <View style={styles.requestText}>
@@ -805,7 +826,7 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
                   Active state; archive is a stronger op). */}
               {isCustom && (
                 <Pressable
-                  onPress={handleManageMembers}
+                  onPress={() => setArchiveVisible(true)}
                   style={({ pressed }) => [
                     styles.actionRowFlat,
                     {
@@ -942,6 +963,17 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
         confirmText="Leave"
         destructive
         isLoading={leaving}
+      />
+
+      <ConfirmModal
+        visible={archiveVisible}
+        title="Archive channel"
+        message={`Archive #${channelDisplayName}? This removes all members and hides the channel. This action cannot be undone.`}
+        onConfirm={handleArchiveChannel}
+        onCancel={() => setArchiveVisible(false)}
+        confirmText="Archive"
+        destructive
+        isLoading={archiving}
       />
 
       {/* PCO Sync Settings — full-screen modal mounting the existing
