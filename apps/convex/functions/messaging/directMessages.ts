@@ -490,13 +490,26 @@ export const respondToChatRequest = mutation({
     // "Server Error" (which `throw new Error` produces in production mode).
     // See Sentry — recipients tapping Accept were getting an opaque "Server
     // Error" alert with no signal that they needed to re-authenticate.
+    //
+    // Catch is NARROWED to actual auth failures only. `requireAuth` performs
+    // DB lookups internally; a transient DB/runtime error from those would
+    // otherwise be misdiagnosed as a session-expiry issue, masking real
+    // server faults during incidents. Only the documented auth-failure
+    // messages get the friendly rewrite; everything else re-throws.
     let userId: Id<"users">;
     try {
       userId = await requireAuth(ctx, args.token);
-    } catch {
-      throw new ConvexError(
-        "Your sign-in has expired. Pull down to refresh, then try again.",
-      );
+    } catch (err) {
+      // Only the explicit "Not authenticated" message — every other failure
+      // (DB hiccup, runtime error inside requireAuth's internal lookups)
+      // re-throws so prod incidents aren't misdiagnosed as auth issues.
+      const message = err instanceof Error ? err.message : "";
+      if (message === "Not authenticated") {
+        throw new ConvexError(
+          "Your sign-in has expired. Pull down to refresh, then try again.",
+        );
+      }
+      throw err;
     }
 
     const membership = await ctx.db
