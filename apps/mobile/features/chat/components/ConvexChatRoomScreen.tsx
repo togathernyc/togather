@@ -1190,6 +1190,13 @@ const ConvexChatRoomScreenInner: React.FC = () => {
                 onCancelReply={handleCancelReply}
                 externalSendMessage={sendMessage}
                 externalIsSending={isSending}
+                // Ad-hoc DM where recipient hasn't accepted yet — strip
+                // attachment UI client-side. Backend rejects (messages.ts);
+                // hiding here means the user never triggers the failure path
+                // that previously cascaded into a navigator render loop.
+                recipientPending={
+                  isAdHocChannel && channelData?.recipientPending === true
+                }
               />
             ) : (
               <View style={[styles.readOnlyBanner, { backgroundColor: colors.surfaceSecondary, borderTopColor: colors.border }]}>

@@ -14,6 +14,7 @@ import { useMutation, api, useStoredAuthToken } from '@services/api/convex';
 import type { Id } from '@services/api/convex';
 import { useAuth } from '@providers/AuthProvider';
 import { useConnectionStatus } from '@providers/ConnectionProvider';
+import { classifyChatSendError } from '../utils/chatSendErrors';
 
 interface Attachment {
   type: string;
@@ -153,14 +154,26 @@ export function useSendMessage(
       } catch (error) {
         console.error('[useSendMessage] Failed to send message:', error);
 
-        // Mark optimistic message as error (NO auto-removal - user must retry or dismiss)
-        setOptimisticMessages((prev) =>
-          prev.map((msg) =>
-            msg._id === optimisticId
-              ? { ...msg, _status: 'error' as const }
-              : msg
-          )
-        );
+        // Soft-fail (e.g. attachments-blocked-pending, profile-photo-required):
+        // remove the optimistic message immediately so the composer's preview
+        // (image/GIF/file) clears and no lingering `_status: "error"` row keeps
+        // the message list re-rendering. The caller still gets the thrown
+        // error so it can show an inline hint via `classifyChatSendError`.
+        // Hard fails keep the row in `error` so the user can retry/dismiss.
+        const classification = classifyChatSendError(error);
+        if (classification.soft) {
+          setOptimisticMessages((prev) =>
+            prev.filter((msg) => msg._id !== optimisticId),
+          );
+        } else {
+          setOptimisticMessages((prev) =>
+            prev.map((msg) =>
+              msg._id === optimisticId
+                ? { ...msg, _status: 'error' as const }
+                : msg
+            )
+          );
+        }
 
         throw error;
       }

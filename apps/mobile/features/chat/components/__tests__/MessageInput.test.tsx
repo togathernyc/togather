@@ -92,6 +92,10 @@ jest.mock('../AttachmentPanel', () => ({
   AttachmentPanel: () => null,
 }));
 
+jest.mock('../GifPicker', () => ({
+  GifPicker: () => null,
+}));
+
 jest.mock('@hooks/useTheme', () => ({
   useTheme: () => ({
     colors: {
@@ -227,4 +231,97 @@ describe('MessageInput', () => {
       expect(input.props.scrollEnabled).toBe(true);
     });
   });
+
+  // ==========================================================================
+  // recipientPending — ad-hoc DM where the other party hasn't accepted yet.
+  //
+  // Regression guard for the Sentry crash on 2026-04-29: a user sent a GIF
+  // into a fresh DM, the backend rejected with `Cannot send attachments
+  // until the recipient accepts the request`, and the failure path
+  // ("composer holds onto staged GIF + optimistic-error row + user reopens
+  // picker") cascaded into a "Maximum update depth exceeded" loop inside
+  // the bottom-tab navigator.
+  //
+  // Hiding the trigger surface client-side is the cheapest fix: the user
+  // never reaches the failure path, so the failure path can never crash
+  // them.
+  // ==========================================================================
+  describe('recipientPending (DM not yet accepted)', () => {
+    it('hides the attachment (+) button so users cannot stage attachments', () => {
+      // The Pressable wrapping the "add" Ionicon is the only icon on the
+      // input row that triggers the attachment panel. With
+      // recipientPending=true it must not render at all (not just be
+      // `disabled`) — a disabled button still makes the panel reachable
+      // on web via keyboard, and the goal is to hard-strip the failure
+      // path that previously cascaded into "Maximum update depth".
+      const { UNSAFE_root, getByPlaceholderText } = render(
+        <MessageInput
+          channelId={'test-channel' as any}
+          recipientPending
+        />
+      );
+      const addIcons = UNSAFE_root.findAll(
+        (n: any) => n.props && n.props.name === 'add',
+      );
+      expect(addIcons).toHaveLength(0);
+      // Sanity: the text input still renders so plain-text sends remain
+      // possible (backend allows them on pending DMs).
+      expect(getByPlaceholderText('Message...')).toBeTruthy();
+    });
+
+    it('renders the attachment (+) button when recipientPending is false', () => {
+      // Negative control: confirms the gate above is the toggle, not a
+      // side effect of test setup. The attachment trigger is an Ionicon
+      // rendered with name="add"; UNSAFE_root.findAll walks the test tree
+      // looking for any node whose props match. (No testID exists on the
+      // current button — the structural test is good enough as a guard.)
+      const { UNSAFE_root } = render(
+        <MessageInput
+          channelId={'test-channel' as any}
+          recipientPending={false}
+        />
+      );
+      const addIcons = UNSAFE_root.findAll(
+        (n: any) => n.props && n.props.name === 'add',
+      );
+      expect(addIcons.length).toBeGreaterThan(0);
+    });
+
+    it('shows the recipient-pending hint copy when prop is true', () => {
+      const { queryByText } = render(
+        <MessageInput
+          channelId={'test-channel' as any}
+          recipientPending
+        />
+      );
+      expect(
+        queryByText(/accept your chat request before you can send/i)
+      ).toBeTruthy();
+    });
+
+    it('omits the recipient-pending hint when prop is false', () => {
+      const { queryByText } = render(
+        <MessageInput
+          channelId={'test-channel' as any}
+          recipientPending={false}
+        />
+      );
+      expect(
+        queryByText(/accept your chat request before you can send/i)
+      ).toBeNull();
+    });
+
+    it('still allows sending plain text when recipient is pending', () => {
+      // Backend permits text under 1000 chars to pending recipients — the
+      // composer must NOT hide the text input or send button.
+      const { getByPlaceholderText } = render(
+        <MessageInput
+          channelId={'test-channel' as any}
+          recipientPending
+        />
+      );
+      expect(getByPlaceholderText('Message...')).toBeTruthy();
+    });
+  });
 });
+

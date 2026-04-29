@@ -227,6 +227,7 @@ export const getChannel = query({
         slug: getChannelSlug(channel),
         myRequestState: undefined as string | undefined,
         inviterDisplayName: undefined as string | undefined,
+        recipientPending: false,
       };
     }
 
@@ -258,11 +259,30 @@ export const getChannel = query({
           inviterDisplayName = resolved.trim().length > 0 ? resolved : "Someone";
         }
       }
+      // recipientPending: true when any *other* live member of this ad-hoc
+      // channel still has requestState === "pending". Mirrors the server-side
+      // gate in `sendMessage` (messages.ts) which rejects attachments and
+      // over-length text in this state. Surfacing it here lets the client
+      // disable attachment buttons preemptively, so users never trigger the
+      // ConvexError that previously cascaded into a navigator render loop
+      // (Sentry: "Maximum update depth exceeded" while sending GIF in fresh
+      // DM — see PR fixing this).
+      const otherMembers = await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel", (q) => q.eq("channelId", args.channelId))
+        .collect();
+      const recipientPending = otherMembers.some(
+        (m) =>
+          m.userId !== userId &&
+          m.leftAt === undefined &&
+          m.requestState === "pending",
+      );
       return {
         ...channel,
         slug: getChannelSlug(channel),
         myRequestState: adHocMembership.requestState ?? "accepted",
         inviterDisplayName,
+        recipientPending,
       };
     }
     const groupId = channel.groupId;
@@ -319,6 +339,7 @@ export const getChannel = query({
       slug: getChannelSlug(channel),
       myRequestState: undefined as string | undefined,
       inviterDisplayName: undefined as string | undefined,
+      recipientPending: false,
     };
   },
 });
