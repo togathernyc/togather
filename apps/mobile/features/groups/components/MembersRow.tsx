@@ -3,12 +3,27 @@ import { View, Text, StyleSheet, ScrollView } from "react-native";
 import { Avatar } from "@components/ui";
 import { GroupMember } from "../types";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useTheme } from "@hooks/useTheme";
 
 interface MembersRowProps {
   members?: GroupMember[];
   leaders?: GroupMember[];
   maxVisible?: number;
   totalCount?: number; // Optional total count for preview mode (when we only have partial data)
+}
+
+/**
+ * Get initials from a member's name.
+ *
+ * Mirrors the AppImage helper but lives here so we can render initials inside
+ * a neutral-gray circle on the group page (vs. AppImage's hashed-color
+ * placeholder).
+ */
+function getMemberInitials(member: GroupMember): string {
+  const first = (member.first_name || "").trim();
+  const last = (member.last_name || "").trim();
+  if (!first && !last) return "?";
+  return ((first[0] || "") + (last[0] || "")).toUpperCase() || "?";
 }
 
 export function MembersRow({
@@ -18,6 +33,7 @@ export function MembersRow({
   totalCount,
 }: MembersRowProps) {
   const { primaryColor } = useCommunityTheme();
+  const { colors } = useTheme();
 
   // Merge leaders and members, ensuring leaders appear first and aren't duplicated
   const mergedMembers = useMemo(() => {
@@ -40,9 +56,11 @@ export function MembersRow({
   const actualTotal = totalCount ?? mergedMembers.length;
   const remainingCount = actualTotal - Math.min(maxVisible, mergedMembers.length);
 
+  const AVATAR_SIZE = 56;
+
   return (
-    <View style={styles.container}>
-      <Text style={styles.header}>MEMBERS</Text>
+    <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
+      <Text style={[styles.header, { color: colors.text }]}>MEMBERS</Text>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -50,6 +68,47 @@ export function MembersRow({
       >
         {visibleMembers.map((member, index) => {
           const isLeader = leaderIds.has(member.id);
+          const fullName = `${member.first_name || ""} ${member.last_name || ""}`.trim();
+          // Render the avatar via Avatar when a photo is present so transforms
+          // and loading states still work. When there's no photo we render a
+          // neutral gray circle with initials so the row reads as a clean
+          // member preview (no per-name colored placeholders).
+          const renderAvatar = (size: number) =>
+            member.profile_photo ? (
+              <Avatar
+                name={fullName}
+                imageUrl={member.profile_photo}
+                size={size}
+              />
+            ) : (
+              // testID mirrors Avatar's so existing test queries that count
+              // `getAllByTestId("avatar")` still see this member's slot.
+              <View
+                testID="avatar"
+                style={[
+                  styles.neutralAvatar,
+                  {
+                    width: size,
+                    height: size,
+                    borderRadius: size / 2,
+                    backgroundColor: colors.border,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.neutralAvatarInitials,
+                    {
+                      color: colors.textSecondary,
+                      fontSize: size * 0.4,
+                    },
+                  ]}
+                >
+                  {getMemberInitials(member)}
+                </Text>
+              </View>
+            );
+
           return (
             <View
               key={member.id || index}
@@ -57,27 +116,26 @@ export function MembersRow({
             >
               {isLeader ? (
                 <View style={[styles.leaderWrapper, { borderColor: primaryColor }]}>
-                  <Avatar
-                    name={`${member.first_name || ""} ${member.last_name || ""}`.trim()}
-                    imageUrl={member.profile_photo}
-                    size={56}
-                  />
-                  <View style={[styles.leaderBadge, { backgroundColor: primaryColor }]} />
+                  {renderAvatar(AVATAR_SIZE)}
+                  <View style={[styles.leaderBadge, { backgroundColor: primaryColor, borderColor: colors.surfaceSecondary }]} />
                 </View>
               ) : (
-                <Avatar
-                  name={`${member.first_name || ""} ${member.last_name || ""}`.trim()}
-                  imageUrl={member.profile_photo}
-                  size={56}
-                />
+                renderAvatar(AVATAR_SIZE)
               )}
             </View>
           );
         })}
         {remainingCount > 0 && (
           <View style={styles.countContainer}>
-            <View style={styles.countCircle}>
-              <Text style={styles.countText}>+{remainingCount}</Text>
+            <View
+              style={[
+                styles.countCircle,
+                { backgroundColor: colors.border },
+              ]}
+            >
+              <Text style={[styles.countText, { color: colors.textSecondary }]}>
+                +{remainingCount}
+              </Text>
             </View>
           </View>
         )}
@@ -88,7 +146,6 @@ export function MembersRow({
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: "#F5F5F5",
     paddingHorizontal: 16,
     paddingVertical: 16,
     marginTop: 0,
@@ -96,7 +153,6 @@ const styles = StyleSheet.create({
   header: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#333",
     marginBottom: 12,
     textTransform: "uppercase",
     letterSpacing: 0.5,
@@ -124,10 +180,16 @@ const styles = StyleSheet.create({
     width: 16,
     height: 16,
     borderRadius: 8,
-    // backgroundColor set dynamically via style prop
+    // backgroundColor + borderColor set dynamically via style prop
     borderWidth: 2,
-    borderColor: "#FFFFFF",
     zIndex: 1,
+  },
+  neutralAvatar: {
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  neutralAvatarInitials: {
+    fontWeight: "600",
   },
   countContainer: {
     marginLeft: 4,
@@ -138,14 +200,11 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: "#E0E0E0",
     justifyContent: "center",
     alignItems: "center",
   },
   countText: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#666",
   },
 });
-

@@ -104,8 +104,8 @@ export function GroupNonMemberView({
         {/* Show 3-dots menu for everyone (Share Group) and admins (Edit, Archive, etc.) */}
         <GroupHeader
           group={group}
-          showMenu={true}
-          onMenuPress={() => setShowOptionsModal(true)}
+          showInfo={true}
+          onInfoPress={() => setShowOptionsModal(true)}
         />
 
         {/* Description */}

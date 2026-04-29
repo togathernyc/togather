@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useState, useMemo, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -32,9 +32,10 @@ import { GroupOptionsModal } from "./GroupOptionsModal";
 import { NextEventSection } from "./NextEventSection";
 import { MembersRow } from "./MembersRow";
 import { HighlightsGrid } from "./HighlightsGrid";
-import { GroupMapSection } from "./GroupMapSection";
 import { GroupNonMemberView } from "./GroupNonMemberView";
 import { ChannelsSection } from "./ChannelsSection";
+import { GroupDetailsCard } from "./GroupDetailsCard";
+import { GroupActionsCard } from "./GroupActionsCard";
 import { Group } from "../types";
 import { ImageViewerManager } from "@/providers/ImageViewerProvider";
 import { getExternalChatInfo, openExternalChatLink } from "@features/chat/utils/externalChat";
@@ -50,6 +51,21 @@ export function GroupDetailScreen() {
   const [showOptionsModal, setShowOptionsModal] = useState(false);
   const [showJoinSuccessModal, setShowJoinSuccessModal] = useState(false);
   const [showPendingLimitModal, setShowPendingLimitModal] = useState(false);
+
+  // ScrollView ref so the hero (i) info button can scroll the user to the
+  // GROUP ACTIONS card at the bottom (phase 1 wiring — phase 2 will route
+  // to a dedicated info screen).
+  const scrollViewRef = useRef<ScrollView | null>(null);
+  const actionsCardYRef = useRef<number>(0);
+
+  const handleInfoPress = useCallback(() => {
+    // TODO(phase 2): route to a dedicated group-info screen. For now, scroll
+    // to the GROUP ACTIONS card so the actions are discoverable in one tap.
+    scrollViewRef.current?.scrollTo({
+      y: Math.max(0, actionsCardYRef.current - 16),
+      animated: true,
+    });
+  }, []);
 
   // Pending join request cap (frontend stopgap — backend allows unlimited).
   // When the user already has 2 pending requests in the active community we
@@ -354,6 +370,7 @@ export function GroupDetailScreen() {
   return (
     <>
       <ScrollView
+        ref={scrollViewRef}
         style={[styles.scrollView, { backgroundColor: colors.background }]}
         contentContainerStyle={{ paddingTop: insets.top }}
         showsVerticalScrollIndicator={false}
@@ -365,19 +382,24 @@ export function GroupDetailScreen() {
           />
         }
       >
-        {/* Header with image, name, and cadence */}
+        {/* Header with image, name, and cadence. Hero (i) info button now
+            replaces the legacy 3-dot menu — its actions live in the
+            GROUP ACTIONS card below. */}
         <GroupHeader
           group={group}
-          onMenuPress={() => setShowOptionsModal(true)}
-          showMenu={true}
+          onInfoPress={handleInfoPress}
+          showInfo={true}
         />
 
-        {/* Description */}
-        <View style={[styles.descriptionContainer, { backgroundColor: colors.surfaceSecondary }]}>
-          <Text style={[styles.description, { color: colors.textSecondary }]}>
-            {group.description || "No description available."}
-          </Text>
-        </View>
+        {/* Description — hidden entirely when empty so we don't surface a
+            "No description available." stub. */}
+        {group.description && group.description.trim() !== "" && (
+          <View style={[styles.descriptionContainer, { backgroundColor: colors.surfaceSecondary }]}>
+            <Text style={[styles.description, { color: colors.textSecondary }]}>
+              {group.description}
+            </Text>
+          </View>
+        )}
 
         {/* Chat Section - Link to group chat */}
         {(group as any).main_channel_id && (
@@ -457,8 +479,9 @@ export function GroupDetailScreen() {
           />
         )}
 
-        {/* Map Section */}
-        <GroupMapSection group={group} />
+        {/* DETAILS — schedule + address combined into one card, replacing
+            the legacy LOCATION map-icon block. */}
+        <GroupDetailsCard group={group} />
 
         {/* Next Event - Always show if group has date info */}
         <NextEventSection group={group} currentRSVP={null} />
@@ -501,6 +524,25 @@ export function GroupDetailScreen() {
             }}
           />
         )}
+
+        {/* GROUP ACTIONS — bottom card absorbing the legacy 3-dot menu's
+            actions. We capture the layout `y` so the hero (i) info button
+            can scroll the user here on tap. */}
+        <View
+          onLayout={(e) => {
+            actionsCardYRef.current = e.nativeEvent.layout.y;
+          }}
+        >
+          <GroupActionsCard
+            group={group}
+            isMember={isMember}
+            isLeader={
+              group.user_role === "leader" || group.user_role === "admin"
+            }
+            onLeavePress={handleLeaveGroup}
+            onArchivePress={handleArchiveGroup}
+          />
+        </View>
       </ScrollView>
 
       {/* Options Modal */}

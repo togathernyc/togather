@@ -156,19 +156,24 @@ export function getChannelCategory(channelType: string): "auto" | "custom" {
 
 /**
  * Whether a channel is leader-visible / member-active (not leader-disabled).
- * `isEnabled: false` hides the channel from members and blocks chat, but keeps memberships.
+ * `enabled: false` hides the channel from members and blocks chat, but keeps memberships.
+ *
+ * Reads the new unified `enabled` field, falling back to the legacy `isEnabled` for any
+ * docs that haven't yet been touched by the cleanup migration (`_migrations/cleanupChannelEnabled`).
  */
-export function channelIsLeaderEnabled(channel: { isEnabled?: boolean }): boolean {
+export function channelIsLeaderEnabled(channel: { enabled?: boolean; isEnabled?: boolean }): boolean {
+  if (channel.enabled !== undefined) return channel.enabled !== false;
   return channel.isEnabled !== false;
 }
 
 /**
  * Whether a channel is usable / listed for a given group's navigation (tab bar, inbox row).
- * Combines global leader disable (`isEnabled`) with per-linked-group hide for shared channels.
+ * Combines global leader disable (`enabled`) with per-linked-group hide for shared channels.
  */
 export function channelEffectiveEnabledForGroup(
   channel: {
     groupId?: Id<"groups">;
+    enabled?: boolean;
     isEnabled?: boolean;
     isShared?: boolean;
     sharedGroups?: Array<{

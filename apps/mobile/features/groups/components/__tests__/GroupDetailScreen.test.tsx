@@ -175,10 +175,10 @@ jest.mock("@/providers/ImageViewerProvider", () => ({
 jest.mock("../GroupHeader", () => {
   const { View, Text, Pressable } = require("react-native");
   return {
-    GroupHeader: ({ group, onMenuPress }: any) => (
+    GroupHeader: ({ group, onInfoPress }: any) => (
       <View testID="group-header">
         <Text testID="group-header-title">{group?.title || group?.name}</Text>
-        <Pressable testID="menu-button" onPress={onMenuPress}><Text>Menu</Text></Pressable>
+        <Pressable testID="menu-button" onPress={onInfoPress}><Text>Menu</Text></Pressable>
       </View>
     ),
   };

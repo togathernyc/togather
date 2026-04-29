@@ -19,11 +19,17 @@ const HEADER_HEIGHT = SCREEN_WIDTH * 0.6; // 60% of screen width for aspect rati
 
 interface GroupHeaderProps {
   group: Group;
-  onMenuPress?: () => void;
-  showMenu?: boolean;
+  /**
+   * Tap handler for the (i) info button in the top-right of the hero.
+   * Replaces the legacy 3-dot menu, whose actions now live in the
+   * "GROUP ACTIONS" card at the bottom of the screen.
+   */
+  onInfoPress?: () => void;
+  /** When false, the (i) button is hidden (e.g. non-member view). */
+  showInfo?: boolean;
 }
 
-export function GroupHeader({ group, onMenuPress, showMenu = true }: GroupHeaderProps) {
+export function GroupHeader({ group, onInfoPress, showInfo = true }: GroupHeaderProps) {
   const router = useRouter();
   const { colors } = useTheme();
   const previewUrl = group.preview || group.image_url;
@@ -55,13 +61,19 @@ export function GroupHeader({ group, onMenuPress, showMenu = true }: GroupHeader
           <Ionicons name="arrow-back" size={24} color={iconColor} />
         </TouchableOpacity>
         <View style={styles.topBarSpacer} />
-        {showMenu && onMenuPress && (
+        {showInfo && onInfoPress && (
           <TouchableOpacity
             style={styles.menuButton}
-            onPress={onMenuPress}
+            onPress={onInfoPress}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityRole="button"
+            accessibilityLabel="Group info"
           >
-            <Ionicons name="ellipsis-vertical" size={24} color={iconColor} />
+            <Ionicons
+              name="information-circle-outline"
+              size={28}
+              color={iconColor}
+            />
           </TouchableOpacity>
         )}
       </View>

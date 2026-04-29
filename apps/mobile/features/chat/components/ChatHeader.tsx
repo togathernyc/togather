@@ -24,7 +24,7 @@ type ChatHeaderProps = {
   /** When provided, renders a tappable "N members" link under the group name. */
   memberCount?: number;
   onBack: () => void;
-  onMenuPress: () => void;
+  onInfoPress: () => void;
   onGroupPagePress: () => void;
   onMembersPress?: () => void;
 };
@@ -36,7 +36,7 @@ export const ChatHeader = memo(function ChatHeader({
   groupTypeId,
   memberCount,
   onBack,
-  onMenuPress,
+  onInfoPress,
   onGroupPagePress,
   onMembersPress,
 }: ChatHeaderProps) {
@@ -98,9 +98,14 @@ export const ChatHeader = memo(function ChatHeader({
         </View>
       </View>
 
-      {/* Menu Button */}
-      <TouchableOpacity onPress={onMenuPress} style={styles.menuButton}>
-        <Ionicons name="ellipsis-vertical" size={20} color={themeColors.text} />
+      {/* Info Button — routes to channel info (or group page for General) */}
+      <TouchableOpacity
+        onPress={onInfoPress}
+        style={styles.menuButton}
+        accessibilityRole="button"
+        accessibilityLabel="Channel info"
+      >
+        <Ionicons name="information-circle-outline" size={26} color={themeColors.text} />
       </TouchableOpacity>
     </View>
   );

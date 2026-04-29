@@ -685,6 +685,20 @@ const ConvexChatRoomScreenInner: React.FC = () => {
     }
   }, [router, getGroupIdForNavigation]);
 
+  // Chat header (i) button: General routes to the group page (the channel and
+  // the group share the same audience), all other channels route to the new
+  // channel info screen.
+  const handleOpenChannelInfo = useCallback(() => {
+    const id = getGroupIdForNavigation();
+    if (!id) return;
+    const activeChannelType = channelTabs.find((t) => t.slug === activeSlug)?.channelType;
+    if (activeChannelType === "main" || !resolvedChannelSlug) {
+      router.push(`/groups/${id}`);
+      return;
+    }
+    router.push(`/inbox/${id}/${resolvedChannelSlug}/info`);
+  }, [router, getGroupIdForNavigation, channelTabs, activeSlug, resolvedChannelSlug]);
+
   const handleShareGroup = useCallback(() => {
     setMenuVisible(false);
     runAfterChatMenuDismiss(() => {
@@ -1014,7 +1028,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
               isAnnouncementGroup ? undefined : groupDetails?.memberCount
             }
             onBack={handleBack}
-            onMenuPress={() => setMenuVisible(true)}
+            onInfoPress={handleOpenChannelInfo}
             onGroupPagePress={handleGoToGroupPage}
             onMembersPress={handleGoToMembers}
           />

@@ -1020,7 +1020,7 @@ describe("linked-group leader channel visibility", () => {
       });
     });
 
-    await t.mutation(api.functions.messaging.channels.setCustomChannelLeaderEnabled, {
+    await t.mutation(api.functions.messaging.channels.setChannelEnabled, {
       token: data.secondaryLeaderToken,
       channelId: data.channelId,
       enabled: false,

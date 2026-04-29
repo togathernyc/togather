@@ -1692,6 +1692,11 @@ export const archiveChannel = mutation({
     }
     const groupId = channel.groupId;
 
+    // General channels are always-on and cannot be archived (they're a soft-delete equivalent).
+    if (channel.channelType === "main") {
+      throw new ConvexError("General channels cannot be archived.");
+    }
+
     // Only group leaders/admins can archive
     const groupMembership = await ctx.db
       .query("groupMembers")
@@ -1885,16 +1890,30 @@ export const unarchiveCustomChannel = mutation({
 });
 
 /**
- * Leader enable/disable for custom channels without changing memberships.
- * Distinct from archiveCustomChannel (soft delete + clear members).
+ * Unified leader on/off toggle for a chat channel (replaces the per-type
+ * toggleMainChannel / toggleLeadersChannel / toggleReachOutChannel /
+ * setCustomChannelLeaderEnabled mutations).
  *
- * Linked group leaders toggle `hiddenFromNavigation` only; owning group toggles global `isEnabled`.
+ *   - General (`channelType === "main"`) is always-on; calls throw.
+ *   - Disabling Leaders cascades-disables Reach Out for the same group.
+ *   - Enabling Reach Out requires Leaders to be enabled.
+ *   - PCO auto channels still go through `togglePcoChannel` because they need
+ *     to update `autoChannelConfigs` and re-schedule the rotation sync.
+ *
+ * Linked-group leaders (shared channels) toggle their own
+ * `sharedGroups[].hiddenFromNavigation` rather than the global `enabled`,
+ * via the shared `handleLinkedGroupToggle` helper.
+ *
+ * Updates only the unified `enabled` field. Does not touch `isArchived` or
+ * memberships — disable is meant to be temporary (e.g. quiet a channel until
+ * the next event), not a soft-delete.
  */
-export const setCustomChannelLeaderEnabled = mutation({
+export const setChannelEnabled = mutation({
   args: {
     token: v.string(),
     channelId: v.id("chatChannels"),
     enabled: v.boolean(),
+    /** When acting as a linked secondary group leader, the group on whose behalf you toggle. */
     managingGroupId: v.optional(v.id("groups")),
   },
   handler: async (ctx, args) => {
@@ -1905,35 +1924,46 @@ export const setCustomChannelLeaderEnabled = mutation({
       throw new ConvexError({ code: "NOT_FOUND", message: "Channel not found" });
     }
     if (!channel.groupId) {
-      throw new ConvexError({ code: "INVALID_OPERATION", message: "This operation is only valid for group channels" });
+      throw new ConvexError({
+        code: "INVALID_OPERATION",
+        message: "This operation is only valid for group channels",
+      });
     }
     const groupId = channel.groupId;
 
-    if (!isCustomChannel(channel.channelType)) {
+    // General channels are always-on.
+    if (channel.channelType === "main") {
+      throw new ConvexError("General channels cannot be disabled.");
+    }
+
+    // PCO auto-channel toggles need extra side-effects (sync config + rotation kick-off).
+    if (channel.channelType === "pco_services") {
       throw new ConvexError({
         code: "INVALID_OPERATION",
-        message: "Only custom channels support this toggle.",
+        message: "Use togglePcoChannel for PCO auto channels.",
       });
     }
 
     const managingGroupId = args.managingGroupId ?? groupId;
 
+    // Linked secondary group leaders only flip their per-group hidden flag.
     const linkedResult = await handleLinkedGroupToggle(
       ctx,
       channel,
       managingGroupId,
       userId,
       args.enabled,
-      "custom channels",
+      "channels",
     );
     if (linkedResult.handled) {
       return linkedResult.result;
     }
 
+    // Owning group: caller must be a leader of the channel's primary group.
     const groupMembership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
-        q.eq("groupId", groupId).eq("userId", userId)
+        q.eq("groupId", groupId).eq("userId", userId),
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -1941,42 +1971,59 @@ export const setCustomChannelLeaderEnabled = mutation({
     if (!isLeaderRole(groupMembership?.role)) {
       throw new ConvexError({
         code: "FORBIDDEN",
-        message: "Only group leaders can enable or disable custom channels",
+        message: "Only group leaders can enable or disable channels",
       });
     }
 
     const now = Date.now();
+    const currentlyEnabled = channelIsLeaderEnabled(channel);
 
-    if (!args.enabled) {
-      if (channel.isArchived || channel.isEnabled === false) {
-        return { channelId: args.channelId, status: "already_disabled" as const };
+    // Reach Out depends on Leaders being active when ENABLING.
+    if (args.enabled && channel.channelType === "reach_out") {
+      const leadersChannel = await ctx.db
+        .query("chatChannels")
+        .withIndex("by_group_type", (q) =>
+          q.eq("groupId", groupId).eq("channelType", "leaders"),
+        )
+        .first();
+      if (!leadersChannel || !channelIsLeaderEnabled(leadersChannel)) {
+        throw new ConvexError("Requires Leaders channel to be active.");
       }
-      await ctx.db.patch(args.channelId, {
-        isEnabled: false,
-        updatedAt: now,
-      });
-      return { channelId: args.channelId, status: "disabled" as const };
     }
 
-    if (channel.isArchived) {
-      await ctx.db.patch(args.channelId, {
-        isArchived: false,
-        archivedAt: undefined,
-        isEnabled: true,
-        updatedAt: now,
-      });
-      return { channelId: args.channelId, status: "enabled" as const };
-    }
-
-    if (channel.isEnabled !== false) {
+    // Idempotent no-op.
+    if (args.enabled && currentlyEnabled) {
       return { channelId: args.channelId, status: "already_enabled" as const };
+    }
+    if (!args.enabled && !currentlyEnabled) {
+      return { channelId: args.channelId, status: "already_disabled" as const };
     }
 
     await ctx.db.patch(args.channelId, {
-      isEnabled: true,
+      enabled: args.enabled,
       updatedAt: now,
     });
-    return { channelId: args.channelId, status: "enabled" as const };
+
+    // Cascade: disabling Leaders auto-disables Reach Out for the same group.
+    if (!args.enabled && channel.channelType === "leaders") {
+      const reachOut = await ctx.db
+        .query("chatChannels")
+        .withIndex("by_group_type", (q) =>
+          q.eq("groupId", groupId).eq("channelType", "reach_out"),
+        )
+        .first();
+      if (reachOut && channelIsLeaderEnabled(reachOut)) {
+        await ctx.db.patch(reachOut._id, {
+          enabled: false,
+          updatedAt: now,
+        });
+      }
+    }
+
+    return {
+      channelId: args.channelId,
+      status: (args.enabled ? "enabled" : "disabled") as "enabled" | "disabled",
+    };
   },
 });
 
@@ -3355,480 +3402,6 @@ export const testSyncUserChannelMemberships = action({
       userId: args.userId,
       groupId: args.groupId,
     });
-  },
-});
-
-/**
- * Toggle the leaders channel for a group (enable/disable).
- *
- * When enabled:
- * - Unarchives the channel
- * - Re-adds all current group leaders as members
- *
- * When disabled:
- * - Archives the channel (preserves history)
- * - Removes all members (soft delete with leftAt)
- *
- * This operation is idempotent - calling with enabled=true when already
- * enabled is a no-op, and vice versa.
- */
-export const toggleLeadersChannel = mutation({
-  args: {
-    token: v.string(),
-    groupId: v.id("groups"),
-    enabled: v.boolean(),
-  },
-  handler: async (ctx, args) => {
-    const userId = await requireAuth(ctx, args.token);
-    const now = Date.now();
-
-    // Verify caller is a group leader
-    const groupMembership = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group_user", (q) =>
-        q.eq("groupId", args.groupId).eq("userId", userId)
-      )
-      .filter((q) => q.eq(q.field("leftAt"), undefined))
-      .first();
-
-    if (!groupMembership) {
-      throw new Error("Not a member of this group");
-    }
-
-    if (groupMembership.role !== "leader" && groupMembership.role !== "admin") {
-      throw new Error("Only group leaders can toggle the leaders channel");
-    }
-
-    // Find the leaders channel for this group
-    const leadersChannel = await ctx.db
-      .query("chatChannels")
-      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
-      .filter((q) => q.eq(q.field("channelType"), "leaders"))
-      .first();
-
-    if (!leadersChannel) {
-      throw new Error("Leaders channel not found for this group");
-    }
-
-    // Check idempotency
-    const isCurrentlyArchived = leadersChannel.isArchived === true;
-
-    if (args.enabled && !isCurrentlyArchived) {
-      // Already enabled, no-op
-      return { channelId: leadersChannel._id, status: "already_enabled" };
-    }
-
-    if (!args.enabled && isCurrentlyArchived) {
-      // Already disabled, no-op
-      return { channelId: leadersChannel._id, status: "already_disabled" };
-    }
-
-    if (args.enabled) {
-      // ENABLE: Unarchive channel and re-add all leaders
-
-      // Unarchive the channel
-      await ctx.db.patch(leadersChannel._id, {
-        isArchived: false,
-        archivedAt: undefined,
-        updatedAt: now,
-      });
-
-      // Get all active group leaders
-      const groupLeaders = await ctx.db
-        .query("groupMembers")
-        .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
-        .filter((q) =>
-          q.and(
-            q.eq(q.field("leftAt"), undefined),
-            q.or(
-              q.eq(q.field("role"), "leader"),
-              q.eq(q.field("role"), "admin")
-            )
-          )
-        )
-        .collect();
-
-      // Re-add each leader to the channel
-      for (const leader of groupLeaders) {
-        const user = await ctx.db.get(leader.userId);
-        const displayName = user ? getDisplayName(user.firstName, user.lastName) : undefined;
-        const profilePhoto = user ? getMediaUrl(user.profilePhoto) : undefined;
-
-        // Check if they have an existing membership record
-        const existingMembership = await ctx.db
-          .query("chatChannelMembers")
-          .withIndex("by_channel_user", (q) =>
-            q.eq("channelId", leadersChannel._id).eq("userId", leader.userId)
-          )
-          .first();
-
-        if (existingMembership) {
-          if (existingMembership.leftAt) {
-            // Reactivate the membership
-            await ctx.db.patch(existingMembership._id, {
-              leftAt: undefined,
-              joinedAt: now,
-              role: "admin",
-              displayName,
-              profilePhoto,
-            });
-          }
-          // else: already an active member, skip
-        } else {
-          // Create new membership
-          await ctx.db.insert("chatChannelMembers", {
-            channelId: leadersChannel._id,
-            userId: leader.userId,
-            role: "admin",
-            joinedAt: now,
-            isMuted: false,
-            displayName,
-            profilePhoto,
-          });
-        }
-      }
-
-      // Update member count
-      await updateChannelMemberCount(ctx, leadersChannel._id);
-
-      return { channelId: leadersChannel._id, status: "enabled" };
-    } else {
-      // DISABLE: Archive channel and remove all members
-
-      // Archive the channel
-      await ctx.db.patch(leadersChannel._id, {
-        isArchived: true,
-        archivedAt: now,
-        updatedAt: now,
-      });
-
-      // Get all active members of the channel
-      const activeMembers = await ctx.db
-        .query("chatChannelMembers")
-        .withIndex("by_channel", (q) => q.eq("channelId", leadersChannel._id))
-        .filter((q) => q.eq(q.field("leftAt"), undefined))
-        .collect();
-
-      // Soft-delete each membership
-      for (const member of activeMembers) {
-        await ctx.db.patch(member._id, {
-          leftAt: now,
-        });
-      }
-
-      // Set member count to 0
-      await ctx.db.patch(leadersChannel._id, {
-        memberCount: 0,
-      });
-
-      return { channelId: leadersChannel._id, status: "disabled" };
-    }
-  },
-});
-
-/**
- * Toggle the Reach Out channel for a group.
- *
- * When enabled:
- * - Requires leaders channel to be enabled
- * - Creates or unarchives reach_out channel with slug "reach-out"
- * - Adds ALL active group members
- *
- * When disabled:
- * - Archives the channel
- * - Soft-deletes all memberships
- * - Clears reachOutConfig on the group
- */
-export const toggleReachOutChannel = mutation({
-  args: {
-    token: v.string(),
-    groupId: v.id("groups"),
-    enabled: v.boolean(),
-  },
-  handler: async (ctx, args) => {
-    const userId = await requireAuth(ctx, args.token);
-    const now = Date.now();
-
-    // Verify caller is a group leader
-    const groupMembership = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group_user", (q) =>
-        q.eq("groupId", args.groupId).eq("userId", userId)
-      )
-      .filter((q) => q.eq(q.field("leftAt"), undefined))
-      .first();
-
-    if (!groupMembership) {
-      throw new Error("Not a member of this group");
-    }
-
-    if (groupMembership.role !== "leader" && groupMembership.role !== "admin") {
-      throw new Error("Only group leaders can toggle the reach out channel");
-    }
-
-    if (args.enabled) {
-      // Verify leaders channel is enabled
-      const leadersChannel = await ctx.db
-        .query("chatChannels")
-        .withIndex("by_group_type", (q) =>
-          q.eq("groupId", args.groupId).eq("channelType", "leaders")
-        )
-        .first();
-
-      if (!leadersChannel || leadersChannel.isArchived) {
-        throw new Error("Leaders channel must be enabled before enabling Reach Out");
-      }
-    }
-
-    // Find existing reach_out channel
-    const existingChannel = await ctx.db
-      .query("chatChannels")
-      .withIndex("by_group_type", (q) =>
-        q.eq("groupId", args.groupId).eq("channelType", "reach_out")
-      )
-      .first();
-
-    if (args.enabled) {
-      let channelId: Id<"chatChannels">;
-
-      if (existingChannel && !existingChannel.isArchived) {
-        // Already enabled
-        return { channelId: existingChannel._id, status: "already_enabled" };
-      }
-
-      if (existingChannel) {
-        // Unarchive existing channel
-        await ctx.db.patch(existingChannel._id, {
-          isArchived: false,
-          archivedAt: undefined,
-          updatedAt: now,
-        });
-        channelId = existingChannel._id;
-      } else {
-        // Create new reach_out channel
-        channelId = await ctx.db.insert("chatChannels", {
-          groupId: args.groupId,
-          slug: "reach-out",
-          channelType: "reach_out",
-          name: "Reach Out",
-          createdById: userId,
-          createdAt: now,
-          updatedAt: now,
-          isArchived: false,
-          memberCount: 0,
-        });
-      }
-
-      // Add ALL active group members to the channel
-      const allMembers = await ctx.db
-        .query("groupMembers")
-        .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
-        .filter((q) => q.eq(q.field("leftAt"), undefined))
-        .collect();
-
-      for (const member of allMembers) {
-        const user = await ctx.db.get(member.userId);
-        const displayName = user ? getDisplayName(user.firstName, user.lastName) : undefined;
-        const profilePhoto = user ? getMediaUrl(user.profilePhoto) : undefined;
-
-        const existingMembership = await ctx.db
-          .query("chatChannelMembers")
-          .withIndex("by_channel_user", (q) =>
-            q.eq("channelId", channelId).eq("userId", member.userId)
-          )
-          .first();
-
-        if (existingMembership) {
-          if (existingMembership.leftAt) {
-            await ctx.db.patch(existingMembership._id, {
-              leftAt: undefined,
-              joinedAt: now,
-              role: "member",
-              displayName,
-              profilePhoto,
-            });
-          }
-        } else {
-          await ctx.db.insert("chatChannelMembers", {
-            channelId,
-            userId: member.userId,
-            role: "member",
-            joinedAt: now,
-            isMuted: false,
-            displayName,
-            profilePhoto,
-          });
-        }
-      }
-
-      await updateChannelMemberCount(ctx, channelId);
-
-      // Update group config
-      await ctx.db.patch(args.groupId, {
-        reachOutConfig: { enabled: true },
-      });
-
-      return { channelId, status: "enabled" };
-    } else {
-      // DISABLE
-      if (!existingChannel || existingChannel.isArchived) {
-        return { channelId: existingChannel?._id, status: "already_disabled" };
-      }
-
-      // Archive the channel
-      await ctx.db.patch(existingChannel._id, {
-        isArchived: true,
-        archivedAt: now,
-        updatedAt: now,
-      });
-
-      // Soft-delete all members
-      const activeMembers = await ctx.db
-        .query("chatChannelMembers")
-        .withIndex("by_channel", (q) => q.eq("channelId", existingChannel._id))
-        .filter((q) => q.eq(q.field("leftAt"), undefined))
-        .collect();
-
-      for (const member of activeMembers) {
-        await ctx.db.patch(member._id, { leftAt: now });
-      }
-
-      await ctx.db.patch(existingChannel._id, { memberCount: 0 });
-
-      // Update group config
-      await ctx.db.patch(args.groupId, {
-        reachOutConfig: { enabled: false },
-      });
-
-      return { channelId: existingChannel._id, status: "disabled" };
-    }
-  },
-});
-
-/**
- * Toggle the General (main) channel for a group.
- *
- * When enabled: unarchives and adds all active group members.
- * When disabled: archives, clears memberships (same pattern as leaders channel).
- */
-export const toggleMainChannel = mutation({
-  args: {
-    token: v.string(),
-    groupId: v.id("groups"),
-    enabled: v.boolean(),
-  },
-  handler: async (ctx, args) => {
-    const userId = await requireAuth(ctx, args.token);
-    const now = Date.now();
-
-    const groupMembership = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group_user", (q) =>
-        q.eq("groupId", args.groupId).eq("userId", userId)
-      )
-      .filter((q) => q.eq(q.field("leftAt"), undefined))
-      .first();
-
-    if (!groupMembership) {
-      throw new Error("Not a member of this group");
-    }
-
-    if (groupMembership.role !== "leader" && groupMembership.role !== "admin") {
-      throw new Error("Only group leaders can toggle the General channel");
-    }
-
-    const mainChannel = await ctx.db
-      .query("chatChannels")
-      .withIndex("by_group_type", (q) =>
-        q.eq("groupId", args.groupId).eq("channelType", "main")
-      )
-      .first();
-
-    if (!mainChannel) {
-      throw new Error("General channel not found for this group");
-    }
-
-    const isCurrentlyArchived = mainChannel.isArchived === true;
-
-    if (args.enabled && !isCurrentlyArchived) {
-      return { channelId: mainChannel._id, status: "already_enabled" as const };
-    }
-
-    if (!args.enabled && isCurrentlyArchived) {
-      return { channelId: mainChannel._id, status: "already_disabled" as const };
-    }
-
-    if (args.enabled) {
-      await ctx.db.patch(mainChannel._id, {
-        isArchived: false,
-        archivedAt: undefined,
-        updatedAt: now,
-      });
-
-      const allMembers = await ctx.db
-        .query("groupMembers")
-        .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
-        .filter((q) => q.eq(q.field("leftAt"), undefined))
-        .collect();
-
-      for (const member of allMembers) {
-        const user = await ctx.db.get(member.userId);
-        const displayName = user ? getDisplayName(user.firstName, user.lastName) : undefined;
-        const profilePhoto = user ? getMediaUrl(user.profilePhoto) : undefined;
-
-        const existingMembership = await ctx.db
-          .query("chatChannelMembers")
-          .withIndex("by_channel_user", (q) =>
-            q.eq("channelId", mainChannel._id).eq("userId", member.userId)
-          )
-          .first();
-
-        if (existingMembership) {
-          if (existingMembership.leftAt) {
-            await ctx.db.patch(existingMembership._id, {
-              leftAt: undefined,
-              joinedAt: now,
-              role: "member",
-              displayName,
-              profilePhoto,
-            });
-          }
-        } else {
-          await ctx.db.insert("chatChannelMembers", {
-            channelId: mainChannel._id,
-            userId: member.userId,
-            role: "member",
-            joinedAt: now,
-            isMuted: false,
-            displayName,
-            profilePhoto,
-          });
-        }
-      }
-
-      await updateChannelMemberCount(ctx, mainChannel._id);
-      return { channelId: mainChannel._id, status: "enabled" as const };
-    }
-
-    await ctx.db.patch(mainChannel._id, {
-      isArchived: true,
-      archivedAt: now,
-      updatedAt: now,
-    });
-
-    const activeMembers = await ctx.db
-      .query("chatChannelMembers")
-      .withIndex("by_channel", (q) => q.eq("channelId", mainChannel._id))
-      .filter((q) => q.eq(q.field("leftAt"), undefined))
-      .collect();
-
-    for (const member of activeMembers) {
-      await ctx.db.patch(member._id, { leftAt: now });
-    }
-
-    await ctx.db.patch(mainChannel._id, { memberCount: 0, updatedAt: now });
-
-    return { channelId: mainChannel._id, status: "disabled" as const };
   },
 });
 

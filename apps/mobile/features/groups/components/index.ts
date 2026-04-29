@@ -20,3 +20,5 @@ export * from "./MembersRow";
 export * from "./GroupMapSection";
 export * from "./HighlightsGrid";
 export * from "./ChannelsSection";
+export * from "./GroupDetailsCard";
+export * from "./GroupActionsCard";

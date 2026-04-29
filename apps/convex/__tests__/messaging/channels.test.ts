@@ -636,10 +636,11 @@ describe("Channel Archive", () => {
     const { groupId, communityId } = await seedTestData(t);
     const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
 
+    // General (main) channels are always-on and may not be archived; use leaders here.
     const channelId = await t.mutation(api.functions.messaging.channels.createChannel, {
       token: leaderToken,
       groupId,
-      channelType: "main",
+      channelType: "leaders",
       name: "To Archive",
     });
 
@@ -654,6 +655,26 @@ describe("Channel Archive", () => {
 
     expect(channel?.isArchived).toBe(true);
     expect(channel?.archivedAt).toBeDefined();
+  });
+
+  test("should reject archiving a General (main) channel", async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, communityId } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    const channelId = await t.mutation(api.functions.messaging.channels.createChannel, {
+      token: leaderToken,
+      groupId,
+      channelType: "main",
+      name: "Cannot Archive",
+    });
+
+    await expect(
+      t.mutation(api.functions.messaging.channels.archiveChannel, {
+        token: leaderToken,
+        channelId,
+      }),
+    ).rejects.toThrow(/General channels cannot be archived/);
   });
 
   test("should not allow non-admin to archive channel", async () => {
@@ -1951,7 +1972,7 @@ describe("listGroupChannels", () => {
       userIds: [userId],
     });
 
-    await t.mutation(api.functions.messaging.channels.setCustomChannelLeaderEnabled, {
+    await t.mutation(api.functions.messaging.channels.setChannelEnabled, {
       token: leaderToken,
       channelId: customResult.channelId,
       enabled: false,
@@ -2782,54 +2803,6 @@ describe("unarchiveCustomChannel", () => {
   });
 });
 
-describe("toggleMainChannel", () => {
-  test("leader can disable and re-enable the general channel", async () => {
-    const t = convexTest(schema, modules);
-    const { communityId, groupId, accessToken } = await seedTestData(t);
-    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
-
-    await t.mutation(api.functions.messaging.channels.createChannel, {
-      token: accessToken,
-      groupId,
-      channelType: "main",
-      name: "General",
-    });
-
-    await t.mutation(api.functions.messaging.channels.toggleMainChannel, {
-      token: leaderToken,
-      groupId,
-      enabled: false,
-    });
-
-    const mainAfterOff = await t.run(async (ctx) => {
-      return await ctx.db
-        .query("chatChannels")
-        .withIndex("by_group_type", (q) =>
-          q.eq("groupId", groupId).eq("channelType", "main")
-        )
-        .first();
-    });
-    expect(mainAfterOff?.isArchived).toBe(true);
-
-    await t.mutation(api.functions.messaging.channels.toggleMainChannel, {
-      token: leaderToken,
-      groupId,
-      enabled: true,
-    });
-
-    const mainAfterOn = await t.run(async (ctx) => {
-      return await ctx.db
-        .query("chatChannels")
-        .withIndex("by_group_type", (q) =>
-          q.eq("groupId", groupId).eq("channelType", "main")
-        )
-        .first();
-    });
-    expect(mainAfterOn?.isArchived).toBe(false);
-    expect(mainAfterOn?.memberCount).toBeGreaterThanOrEqual(2);
-  });
-});
-
 describe("togglePcoChannel", () => {
   test("leader can disable an active PCO channel", async () => {
     const t = convexTest(schema, modules);
@@ -2903,113 +2876,6 @@ describe("togglePcoChannel", () => {
         .unique();
     });
     expect(cfg?.isActive).toBe(false);
-  });
-});
-
-describe("setCustomChannelLeaderEnabled", () => {
-  test("disabling keeps channel memberships", async () => {
-    const t = convexTest(schema, modules);
-    const { communityId, groupId, userId } = await seedTestData(t);
-    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
-
-    const result = await t.mutation(api.functions.messaging.channels.createCustomChannel, {
-      token: leaderToken,
-      groupId,
-      name: "Directors",
-    });
-
-    await t.mutation(api.functions.messaging.channels.addChannelMembers, {
-      token: leaderToken,
-      channelId: result.channelId,
-      userIds: [userId],
-    });
-
-    await t.mutation(api.functions.messaging.channels.setCustomChannelLeaderEnabled, {
-      token: leaderToken,
-      channelId: result.channelId,
-      enabled: false,
-    });
-
-    const channel = await t.run(async (ctx) => ctx.db.get(result.channelId));
-    expect(channel?.isEnabled).toBe(false);
-    expect(channel?.isArchived).toBe(false);
-
-    const memberRows = await t.run(async (ctx) => {
-      return await ctx.db
-        .query("chatChannelMembers")
-        .withIndex("by_channel", (q) => q.eq("channelId", result.channelId))
-        .filter((q) => q.eq(q.field("leftAt"), undefined))
-        .collect();
-    });
-    expect(memberRows.length).toBeGreaterThanOrEqual(1);
-
-    await t.mutation(api.functions.messaging.channels.setCustomChannelLeaderEnabled, {
-      token: leaderToken,
-      channelId: result.channelId,
-      enabled: true,
-    });
-    const after = await t.run(async (ctx) => ctx.db.get(result.channelId));
-    expect(after?.isEnabled).not.toBe(false);
-  });
-
-  test("enabling an archived channel unarchives it", async () => {
-    const t = convexTest(schema, modules);
-    const { communityId, groupId } = await seedTestData(t);
-    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
-
-    const result = await t.mutation(api.functions.messaging.channels.createCustomChannel, {
-      token: leaderToken,
-      groupId,
-      name: "Archive Test",
-    });
-
-    // Archive the channel
-    await t.mutation(api.functions.messaging.channels.archiveCustomChannel, {
-      token: leaderToken,
-      channelId: result.channelId,
-    });
-
-    const archivedChannel = await t.run(async (ctx) => ctx.db.get(result.channelId));
-    expect(archivedChannel?.isArchived).toBe(true);
-
-    // Enable the channel (should unarchive it)
-    await t.mutation(api.functions.messaging.channels.setCustomChannelLeaderEnabled, {
-      token: leaderToken,
-      channelId: result.channelId,
-      enabled: true,
-    });
-
-    const after = await t.run(async (ctx) => ctx.db.get(result.channelId));
-    expect(after?.isArchived).toBe(false);
-    expect(after?.archivedAt).toBeUndefined();
-    expect(after?.isEnabled).toBe(true);
-  });
-
-  test("disabling an archived channel returns already_disabled", async () => {
-    const t = convexTest(schema, modules);
-    const { communityId, groupId } = await seedTestData(t);
-    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
-
-    const result = await t.mutation(api.functions.messaging.channels.createCustomChannel, {
-      token: leaderToken,
-      groupId,
-      name: "Archive Disable Test",
-    });
-
-    // Archive the channel
-    await t.mutation(api.functions.messaging.channels.archiveCustomChannel, {
-      token: leaderToken,
-      channelId: result.channelId,
-    });
-
-    // Disabling an archived channel should return already_disabled
-    const disableResult = await t.mutation(api.functions.messaging.channels.setCustomChannelLeaderEnabled, {
-      token: leaderToken,
-      channelId: result.channelId,
-      enabled: false,
-    });
-
-    expect(disableResult.status).toBe("already_disabled");
   });
 });
 

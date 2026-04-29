@@ -1464,6 +1464,16 @@ export default defineSchema({
     archivedAt: v.optional(v.number()), // Unix timestamp ms
     /** false = leader hid channel from members; memberships stay (unlike archive). undefined/true = active. */
     isEnabled: v.optional(v.boolean()),
+    /**
+     * Unified leader-controlled enable flag (replaces per-type toggles like isArchived-on-main).
+     * `false` = temporarily off (e.g., disabled until next event); memberships preserved.
+     * `undefined` / `true` = active. General (`channelType === "main"`) is always-on; this flag
+     * MUST stay true for general channels.
+     *
+     * Distinct from `isArchived` (soft-delete) and from the legacy `isEnabled` (which is being
+     * phased out — read it via the `channelIsLeaderEnabled` helper, not directly).
+     */
+    enabled: v.optional(v.boolean()),
     /** For channelType === "event": the meeting this channel is scoped to. */
     meetingId: v.optional(v.id("meetings")),
     /** Who toggled isEnabled=false (audit trail for disabling event chats). */

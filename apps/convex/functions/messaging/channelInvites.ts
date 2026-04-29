@@ -7,6 +7,7 @@
 
 import { v, ConvexError } from "convex/values";
 import { query, mutation } from "../../_generated/server";
+import type { MutationCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
@@ -290,6 +291,55 @@ export const getPendingRequestCountByGroup = query({
 // ============================================================================
 
 /**
+ * Authorize the caller for invite-link management on a channel.
+ *
+ * Leader-only ("approval_required" join mode): caller must be a leader of the channel's
+ * primary group. Open join mode also lets any participating-group member manage the link
+ * — shared channels span the primary group plus accepted secondary groups, so members of
+ * any of those groups are channel-eligible and can spin up a new invite link.
+ */
+async function requireInviteLinkManager(
+  ctx: { db: MutationCtx["db"] },
+  channel: {
+    groupId?: Id<"groups">;
+    isShared?: boolean;
+    sharedGroups?: Array<{ groupId: Id<"groups">; status: string }>;
+    joinMode?: string;
+  },
+  userId: Id<"users">,
+): Promise<void> {
+  if (!channel.groupId) throw new ConvexError("This operation is only valid for group channels");
+
+  const primaryMembership = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_group_user", (q) =>
+      q.eq("groupId", channel.groupId!).eq("userId", userId),
+    )
+    .filter((q) => q.eq(q.field("leftAt"), undefined))
+    .first();
+
+  if (primaryMembership && isLeaderRole(primaryMembership.role)) return;
+
+  // Approval-required keeps it leader-only.
+  if (channel.joinMode !== "open") {
+    throw new ConvexError("Only group leaders can manage invite links.");
+  }
+
+  // Open mode: any active member of a participating group qualifies.
+  const eligibleGroupIds = getEligibleGroupIds(channel);
+  for (const gid of eligibleGroupIds) {
+    const membership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) => q.eq("groupId", gid).eq("userId", userId))
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .first();
+    if (membership) return;
+  }
+
+  throw new ConvexError("Only group leaders can manage invite links.");
+}
+
+/**
  * Enable invite link for a channel. Generates shortId if not set.
  */
 export const enableInviteLink = mutation({
@@ -303,7 +353,6 @@ export const enableInviteLink = mutation({
     const channel = await ctx.db.get(args.channelId);
     if (!channel) throw new ConvexError("Channel not found");
     if (!channel.groupId) throw new ConvexError("This operation is only valid for group channels");
-    const groupId = channel.groupId;
 
     // Only custom channels
     if (channel.channelType !== "custom") {
@@ -312,18 +361,7 @@ export const enableInviteLink = mutation({
       );
     }
 
-    // Verify user is a group leader
-    const groupMembership = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group_user", (q) =>
-        q.eq("groupId", groupId).eq("userId", userId),
-      )
-      .filter((q) => q.eq(q.field("leftAt"), undefined))
-      .first();
-
-    if (!groupMembership || !isLeaderRole(groupMembership.role)) {
-      throw new ConvexError("Only group leaders can manage invite links.");
-    }
+    await requireInviteLinkManager(ctx, channel, userId);
 
     const shortId = channel.inviteShortId || generateShortId();
     await ctx.db.patch(args.channelId, {
@@ -384,19 +422,8 @@ export const regenerateInviteLink = mutation({
     const channel = await ctx.db.get(args.channelId);
     if (!channel) throw new ConvexError("Channel not found");
     if (!channel.groupId) throw new ConvexError("This operation is only valid for group channels");
-    const groupId = channel.groupId;
 
-    const groupMembership = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group_user", (q) =>
-        q.eq("groupId", groupId).eq("userId", userId),
-      )
-      .filter((q) => q.eq(q.field("leftAt"), undefined))
-      .first();
-
-    if (!groupMembership || !isLeaderRole(groupMembership.role)) {
-      throw new ConvexError("Only group leaders can manage invite links.");
-    }
+    await requireInviteLinkManager(ctx, channel, userId);
 
     const shortId = generateShortId();
     await ctx.db.patch(args.channelId, {
