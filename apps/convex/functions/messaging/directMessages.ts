@@ -485,7 +485,19 @@ export const respondToChatRequest = mutation({
     reportReason: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<{ ok: true }> => {
-    const userId = await requireAuth(ctx, args.token);
+    // Wrap requireAuth so a stale/invalidated token surfaces as a user-
+    // actionable message instead of getting masked as the generic Convex
+    // "Server Error" (which `throw new Error` produces in production mode).
+    // See Sentry — recipients tapping Accept were getting an opaque "Server
+    // Error" alert with no signal that they needed to re-authenticate.
+    let userId: Id<"users">;
+    try {
+      userId = await requireAuth(ctx, args.token);
+    } catch {
+      throw new ConvexError(
+        "Your sign-in has expired. Pull down to refresh, then try again.",
+      );
+    }
 
     const membership = await ctx.db
       .query("chatChannelMembers")
@@ -496,8 +508,20 @@ export const respondToChatRequest = mutation({
     if (!membership) {
       throw new ConvexError("Not a member of this channel");
     }
+    // Accept on an already-accepted membership is idempotent — the user
+    // probably double-tapped or got a stale UI; quietly succeed instead of
+    // throwing a confusing "not pending" error.
+    if (
+      args.response === "accept" &&
+      membership.requestState === "accepted" &&
+      membership.leftAt === undefined
+    ) {
+      return { ok: true };
+    }
     if (membership.requestState !== "pending") {
-      throw new ConvexError("This chat is not pending response");
+      throw new ConvexError(
+        "This chat is no longer waiting for a response.",
+      );
     }
 
     const channel = await ctx.db.get(args.channelId);
