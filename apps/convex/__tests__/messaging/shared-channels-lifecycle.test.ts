@@ -406,7 +406,8 @@ describe("Archive cascade — primary group archived", () => {
   test("archiving primary group archives all its owned channels", async () => {
     const t = convexTest(schema, modules);
     const ids = await seedSharedChannelData(t);
-    const { accessToken } = await generateTokens(ids.primaryLeaderId);
+    // Archive flips are community-admin-only (`groups.mutations.update`).
+    const { accessToken } = await generateTokens(ids.adminUserId);
 
     await t.mutation(api.functions.groups.mutations.update, {
       token: accessToken,
@@ -465,7 +466,7 @@ describe("Archive cascade — primary group archived", () => {
       }
     );
 
-    const { accessToken } = await generateTokens(ids.primaryLeaderId);
+    const { accessToken } = await generateTokens(ids.adminUserId);
     await t.mutation(api.functions.groups.mutations.update, {
       token: accessToken,
       groupId: ids.primaryGroupId,
@@ -488,7 +489,7 @@ describe("Archive cascade — primary group archived", () => {
   test("archiving primary group soft-deletes all channel members", async () => {
     const t = convexTest(schema, modules);
     const ids = await seedSharedChannelData(t);
-    const { accessToken } = await generateTokens(ids.primaryLeaderId);
+    const { accessToken } = await generateTokens(ids.adminUserId);
 
     await t.mutation(api.functions.groups.mutations.update, {
       token: accessToken,
@@ -514,7 +515,7 @@ describe("Archive cascade — primary group archived", () => {
   test("archiving primary group sets archivedAt on the group itself", async () => {
     const t = convexTest(schema, modules);
     const ids = await seedSharedChannelData(t);
-    const { accessToken } = await generateTokens(ids.primaryLeaderId);
+    const { accessToken } = await generateTokens(ids.adminUserId);
 
     await t.mutation(api.functions.groups.mutations.update, {
       token: accessToken,
@@ -538,7 +539,7 @@ describe("Archive cascade — secondary group archived", () => {
   test("archiving secondary group A removes its entry from sharedGroups", async () => {
     const t = convexTest(schema, modules);
     const ids = await seedSharedChannelData(t);
-    const { accessToken } = await generateTokens(ids.secondaryLeaderAId);
+    const { accessToken } = await generateTokens(ids.adminUserId);
 
     await t.mutation(api.functions.groups.mutations.update, {
       token: accessToken,
@@ -562,7 +563,7 @@ describe("Archive cascade — secondary group archived", () => {
   test("archiving secondary group soft-deletes members exclusive to that group", async () => {
     const t = convexTest(schema, modules);
     const ids = await seedSharedChannelData(t);
-    const { accessToken } = await generateTokens(ids.secondaryLeaderAId);
+    const { accessToken } = await generateTokens(ids.adminUserId);
 
     await t.mutation(api.functions.groups.mutations.update, {
       token: accessToken,
@@ -655,7 +656,7 @@ describe("Archive cascade — secondary group archived", () => {
       }
     );
 
-    const { accessToken } = await generateTokens(ids.secondaryLeaderAId);
+    const { accessToken } = await generateTokens(ids.adminUserId);
     await t.mutation(api.functions.groups.mutations.update, {
       token: accessToken,
       groupId: ids.secondaryGroupAId,
@@ -690,7 +691,7 @@ describe("Archive cascade — secondary group archived", () => {
   test("archiving secondary group keeps members who are also in primary group", async () => {
     const t = convexTest(schema, modules);
     const ids = await seedSharedChannelData(t);
-    const { accessToken } = await generateTokens(ids.secondaryLeaderAId);
+    const { accessToken } = await generateTokens(ids.adminUserId);
 
     await t.mutation(api.functions.groups.mutations.update, {
       token: accessToken,
@@ -721,7 +722,10 @@ describe("Archive cascade — secondary group archived", () => {
   test("archiving secondary group recomputes memberCount on shared channel", async () => {
     const t = convexTest(schema, modules);
     const ids = await seedSharedChannelData(t);
-    const { accessToken } = await generateTokens(ids.secondaryLeaderAId);
+    // Archive flips are gated to community admins (see
+    // `groups.mutations.update`) — use the seeded admin token, not the
+    // group leader's, to drive the cascade.
+    const { accessToken } = await generateTokens(ids.adminUserId);
 
     await t.mutation(api.functions.groups.mutations.update, {
       token: accessToken,
@@ -748,23 +752,20 @@ describe("Archive cascade — secondary group archived", () => {
   test("archiving the last secondary group sets isShared to false", async () => {
     const t = convexTest(schema, modules);
     const ids = await seedSharedChannelData(t);
+    // Archive is community-admin-only — same admin token drives both
+    // archive calls.
+    const { accessToken: adminToken } = await generateTokens(ids.adminUserId);
 
     // Archive secondary group A first
-    const { accessToken: tokenA } = await generateTokens(
-      ids.secondaryLeaderAId
-    );
     await t.mutation(api.functions.groups.mutations.update, {
-      token: tokenA,
+      token: adminToken,
       groupId: ids.secondaryGroupAId,
       isArchived: true,
     });
 
     // Now archive secondary group B
-    const { accessToken: tokenB } = await generateTokens(
-      ids.secondaryLeaderBId
-    );
     await t.mutation(api.functions.groups.mutations.update, {
-      token: tokenB,
+      token: adminToken,
       groupId: ids.secondaryGroupBId,
       isArchived: true,
     });
@@ -780,7 +781,8 @@ describe("Archive cascade — secondary group archived", () => {
   test("shared channel stays alive when secondary group is archived", async () => {
     const t = convexTest(schema, modules);
     const ids = await seedSharedChannelData(t);
-    const { accessToken } = await generateTokens(ids.secondaryLeaderAId);
+    // Community-admin-only — see comment on the previous archive test.
+    const { accessToken } = await generateTokens(ids.adminUserId);
 
     await t.mutation(api.functions.groups.mutations.update, {
       token: accessToken,

@@ -14,6 +14,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { Avatar } from "@components/ui";
+import { AdminViewNote } from "@components/ui/AdminViewNote";
 import { GroupHeader } from "./GroupHeader";
 import { MembersRow } from "./MembersRow";
 import { HighlightsGrid } from "./HighlightsGrid";
@@ -222,7 +223,9 @@ export function GroupNonMemberView({
         )}
 
         {/* LOCATION — admin-only. Address is sensitive for non-members so
-            the row stays gated. Matches the member view's DETAILS card. */}
+            the row stays gated. The disclaimer makes the asymmetry
+            explicit so admins know the field doesn't show to people
+            outside the group. Matches the member view's DETAILS card. */}
         {isAdmin && !!address && (
           <View style={sectionStyles.section}>
             <Text
@@ -263,6 +266,9 @@ export function GroupNonMemberView({
                   color={colors.textTertiary}
                 />
               </TouchableOpacity>
+            </View>
+            <View style={styles.adminNoteWrap}>
+              <AdminViewNote text="Address shown because you're a community admin. Members don't see it until they join." />
             </View>
           </View>
         )}
@@ -446,6 +452,11 @@ export function GroupNonMemberView({
                 </Container>
               );
             })()}
+            {isAdmin && (
+              <View style={styles.adminNoteWrap}>
+                <AdminViewNote text="Full roster shown because you're a community admin. Non-members see only public previews." />
+              </View>
+            )}
           </View>
         )}
 
@@ -521,6 +532,9 @@ const styles = StyleSheet.create({
   },
   spacer: {
     height: 20,
+  },
+  adminNoteWrap: {
+    marginTop: 8,
   },
   // Leaders horizontal scroll lives inside the section card.
   leadersScrollContent: {

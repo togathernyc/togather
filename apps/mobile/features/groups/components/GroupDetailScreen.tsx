@@ -113,8 +113,7 @@ export function GroupDetailScreen() {
   }, [group, user?.id, userData?.group_memberships]);
 
   const isAdmin = user?.is_admin === true;
-  const isLeader =
-    group?.user_role === "leader" || group?.user_role === "admin";
+  const isLeader = group?.user_role === "leader";
   const canEditGroup = useMemo(() => {
     if (!group || !user?.id) return false;
     if (user.is_admin === true) return true;

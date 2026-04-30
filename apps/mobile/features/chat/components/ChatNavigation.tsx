@@ -170,11 +170,11 @@ export const ChatToolbar = memo(function ChatToolbar({
   const token = useStoredAuthToken();
   const { colors: themeColors } = useTheme();
 
-  // Check if user is a leader/admin
-  const isLeaderOrAdmin = userRole === "leader" || userRole === "admin";
+  // Check if user is a group leader.
+  const isLeaderOrAdmin = userRole === "leader";
 
   // Fetch resources for this group
-  // Leaders/admins see ALL resources (to manage them), members see only visible ones
+  // Leaders see ALL resources (to manage them), members see only visible ones
   const allResources = useQuery(
     api.functions.groupResources.index.listByGroup,
     token && groupId && isLeaderOrAdmin

@@ -176,7 +176,7 @@ export function useGroupLeaderTools(groupId: string) {
           groupName: userGroup.name || "",
           groupType: userGroup.groupTypeId || "",
           groupTypeSlug: userGroup.groupTypeSlug || "",
-          isLeader: (userGroup.userRole === 'leader' || userGroup.userRole === 'admin') ? "1" : "0",
+          isLeader: userGroup.userRole === 'leader' ? "1" : "0",
           leadersChannelId: userGroup.leadersChannelId || "",
         },
       });

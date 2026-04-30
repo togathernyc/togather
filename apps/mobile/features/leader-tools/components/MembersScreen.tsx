@@ -19,6 +19,7 @@ import { useAuth } from "@providers/AuthProvider";
 import { MemberSearch, CommunityMember } from "@components/ui";
 import { formatError } from "@/utils/error-handling";
 import { DragHandle } from "@components/ui/DragHandle";
+import { AdminViewNote } from "@components/ui/AdminViewNote";
 import { useTheme } from "@hooks/useTheme";
 
 export function MembersScreen() {
@@ -35,8 +36,13 @@ export function MembersScreen() {
 
   // Check if user is an admin or leader of this group
   const isAdmin = user?.is_admin === true;
-  const isGroupLeader = group?.userRole === 'leader' || group?.userRole === 'admin';
+  const isGroupLeader = group?.userRole === 'leader';
   const canManageMembers = isAdmin || isGroupLeader;
+  // True when the viewer is here only because they're a community admin
+  // (not a member or leader of this specific group). Surfacing this lets
+  // them know their access is asymmetric — regular leaders/members see
+  // the same screen but only when they're in the group.
+  const isManagingAsAdminOnly = isAdmin && !isGroupLeader;
 
   // State for showing/hiding the add member section
   const [showAddMember, setShowAddMember] = useState(false);
@@ -136,6 +142,15 @@ export function MembersScreen() {
           </TouchableOpacity>
         )}
       </View>
+
+      {/* Admin-mode banner — only when managing via community-admin role
+          rather than being a leader of this specific group. */}
+      {isManagingAsAdminOnly && (
+        <AdminViewNote
+          variant="banner"
+          text="You're managing this group's members as a community admin."
+        />
+      )}
 
       {/* Add Member Search (Admins and Leaders) */}
       {canManageMembers && showAddMember && (

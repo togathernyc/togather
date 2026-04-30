@@ -41,6 +41,7 @@ import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Clipboard from "expo-clipboard";
 import { Avatar } from "@components/ui/Avatar";
+import { AdminViewNote } from "@components/ui/AdminViewNote";
 import { ConfirmModal } from "@components/ui/ConfirmModal";
 import { CustomModal } from "@components/ui/Modal";
 import { AutoChannelSettings } from "@features/channels";
@@ -209,10 +210,14 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
   );
 
   const isLeader = useMemo(() => {
-    return (
-      channel?.userGroupRole === "leader" || channel?.userGroupRole === "admin"
-    );
+    return channel?.userGroupRole === "leader";
   }, [channel?.userGroupRole]);
+  // Backend `getChannelBySlug` allows leaders to open custom / PCO channels
+  // they're not members of (and the Leaders channel for any leader). When
+  // the viewer is on this screen *because* they're a leader and not because
+  // they're actually in the channel, surface that asymmetry.
+  const isMemberOfChannel = channel?.isMember === true;
+  const isViewingAsLeaderOnly = isLeader && !isMemberOfChannel;
 
   const channelType = (channel?.channelType ?? "custom") as ChannelType;
   const isMain = channelType === "main";
@@ -410,6 +415,16 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
         style={styles.scroll}
         contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 24 }]}
       >
+        {/* Asymmetric-view banner — only when the viewer is here because
+            they're a group leader and isn't actually a member of the
+            channel itself (custom / PCO disabled / Leaders for non-leader-channel-members). */}
+        {isViewingAsLeaderOnly && (
+          <AdminViewNote
+            variant="banner"
+            text="You can see this channel as a group leader. Members not in the channel don't see it."
+          />
+        )}
+
         {/* Hero */}
         <View style={styles.heroSection}>
           <View style={[styles.heroIconCircle, { backgroundColor: iconCfg.bg }]}>
