@@ -22,12 +22,14 @@ import {
   StyleSheet,
   Pressable,
   Linking,
+  ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import type { Id } from '@services/api/convex';
 import { AppImage, ImageViewer } from '@components/ui';
 import { useReactions, type Reaction } from '@features/chat/hooks/useReactions';
+import { REACTIONS } from '@features/chat/components/MessageActionsOverlay';
 import { parseMessageContent } from '@features/shared/utils/linkify';
 import { getMediaUrl } from '@/utils/media';
 import { useTheme } from '@hooks/useTheme';
@@ -112,6 +114,26 @@ function EventCommentInner({ message, currentUserId, groupId, eventShortId, even
   // Image viewer for tap-to-expand on attachments.
   const [imageViewerVisible, setImageViewerVisible] = useState(false);
   const [imageViewerInitialIndex, setImageViewerInitialIndex] = useState(0);
+
+  // Inline emoji picker. Opened by the "+ react" button (in the actions
+  // row) and by long-pressing the comment body — same gestures the chat
+  // surface uses, just rendered inline instead of as a modal overlay
+  // because the activity feed is embedded in the event page's ScrollView.
+  const [reactionPickerVisible, setReactionPickerVisible] = useState(false);
+  const toggleReactionPicker = useCallback(() => {
+    setReactionPickerVisible((v) => !v);
+  }, []);
+  const handlePickerEmoji = useCallback(
+    async (emoji: string) => {
+      setReactionPickerVisible(false);
+      try {
+        await toggleReaction(emoji);
+      } catch (err) {
+        console.error('[EventComment] Failed to toggle reaction:', err);
+      }
+    },
+    [toggleReaction],
+  );
 
   // Categorize attachments — v1 only renders images.
   const { validImageAttachments, imageUrls } = useMemo(() => {
@@ -324,9 +346,78 @@ function EventCommentInner({ message, currentUserId, groupId, eventShortId, even
             )}
           </Pressable>
         ))}
+        {/* Inline "+" react opener. Pinned at the end of the existing
+            reaction pills so users can add a new emoji without leaving
+            the reading flow. */}
+        <Pressable
+          onPress={toggleReactionPicker}
+          style={[
+            styles.addReactionButton,
+            {
+              backgroundColor: themeColors.surfaceSecondary,
+              borderColor: themeColors.border,
+            },
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel="Add a reaction"
+          hitSlop={6}
+        >
+          <Ionicons
+            name="happy-outline"
+            size={14}
+            color={themeColors.textSecondary}
+          />
+          <Ionicons
+            name="add"
+            size={12}
+            color={themeColors.textSecondary}
+            style={styles.addReactionPlus}
+          />
+        </Pressable>
       </View>
     );
   };
+
+  // Inline emoji picker — appears below the comment when the user opens
+  // it via the "+ react" button or by long-pressing the body. We use an
+  // inline horizontal ScrollView (not a Modal) because EventActivity is
+  // already nested inside the event page's outer ScrollView and modals
+  // were rendering behind the scroll content on native (same root cause
+  // as the thread-page-behind-event-page bug fixed earlier in this app).
+  const renderReactionPicker = () => {
+    if (!reactionPickerVisible || message.isDeleted) return null;
+    return (
+      <View
+        style={[
+          styles.reactionPicker,
+          {
+            backgroundColor: themeColors.surfaceSecondary,
+            borderColor: themeColors.border,
+          },
+        ]}
+      >
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.reactionPickerContent}
+        >
+          {REACTIONS.map((r) => (
+            <Pressable
+              key={r.type}
+              onPress={() => handlePickerEmoji(r.emoji)}
+              style={styles.reactionPickerItem}
+              accessibilityRole="button"
+              accessibilityLabel={`React with ${r.emoji}`}
+              hitSlop={4}
+            >
+              <Text style={styles.reactionPickerEmoji}>{r.emoji}</Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+      </View>
+    );
+  };
+
 
   const isEdited =
     message.editedAt != null && message.editedAt !== message.createdAt;
@@ -347,8 +438,18 @@ function EventCommentInner({ message, currentUserId, groupId, eventShortId, even
         />
       </View>
 
-      {/* Body column */}
-      <View style={styles.body}>
+      {/* Body column. Long-press anywhere on the body opens the inline
+          reaction picker — mirrors the chat MessageItem gesture so the
+          two surfaces feel consistent. */}
+      <Pressable
+        style={styles.body}
+        onLongPress={message.isDeleted ? undefined : toggleReactionPicker}
+        delayLongPress={300}
+        accessibilityRole="button"
+        accessibilityLabel={
+          message.isDeleted ? undefined : 'Long press to react'
+        }
+      >
         {/* Header: name + relative time (+ edited) */}
         <View style={styles.headerRow}>
           <Text
@@ -375,24 +476,47 @@ function EventCommentInner({ message, currentUserId, groupId, eventShortId, even
         {/* Reactions */}
         {renderReactions()}
 
-        {/* Reply button — hidden on deleted messages so there's no affordance
-            to thread off a removed comment. */}
+        {/* Inline reaction picker — appears below the comment when opened
+            via the "+ react" button or by long-pressing the body. */}
+        {renderReactionPicker()}
+
+        {/* Action row: Reply + React. React stays visible even when no
+            reactions exist yet so the affordance is discoverable. */}
         {!message.isDeleted && (
-          <Pressable
-            onPress={handleReplyPress}
-            hitSlop={8}
-            style={styles.replyButton}
-            accessibilityRole="button"
-            accessibilityLabel="Reply to this comment"
-          >
-            <Text style={[styles.replyText, { color: themeColors.textSecondary }]}>
-              {message.threadReplyCount && message.threadReplyCount > 0
-                ? `Reply · ${message.threadReplyCount}`
-                : 'Reply'}
-            </Text>
-          </Pressable>
+          <View style={styles.actionRow}>
+            <Pressable
+              onPress={handleReplyPress}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Reply to this comment"
+            >
+              <Text style={[styles.replyText, { color: themeColors.textSecondary }]}>
+                {message.threadReplyCount && message.threadReplyCount > 0
+                  ? `Reply · ${message.threadReplyCount}`
+                  : 'Reply'}
+              </Text>
+            </Pressable>
+            {/* Show the inline "React" trigger only when there are no
+                existing reaction pills — otherwise the "+" opener inside
+                the pill row already surfaces the same picker, and a
+                duplicate down here would feel noisy. */}
+            {reactions.length === 0 && (
+              <Pressable
+                onPress={toggleReactionPicker}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Add a reaction"
+              >
+                <Text
+                  style={[styles.replyText, { color: themeColors.textSecondary }]}
+                >
+                  React
+                </Text>
+              </Pressable>
+            )}
+          </View>
         )}
-      </View>
+      </Pressable>
 
       {/* Fullscreen image gallery */}
       <ImageViewer
@@ -529,9 +653,49 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginLeft: 4,
   },
-  replyButton: {
+  // Inline "+" smiley shown at the end of the existing reactions row so
+  // users can add a new emoji without leaving the reading flow. Same pill
+  // shape as the existing reaction pills for visual consistency.
+  addReactionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 12,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    marginRight: 4,
+    marginBottom: 4,
+    borderWidth: 1,
+  },
+  addReactionPlus: {
+    marginLeft: 1,
+  },
+  // Inline emoji picker — drops below the comment body when opened.
+  reactionPicker: {
     marginTop: 6,
-    alignSelf: 'flex-start',
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: 4,
+    paddingVertical: 4,
+  },
+  reactionPickerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  reactionPickerItem: {
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  reactionPickerEmoji: {
+    fontSize: 22,
+  },
+  // Reply + React action row.
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    marginTop: 6,
   },
   replyText: {
     fontSize: 13,

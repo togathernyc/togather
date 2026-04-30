@@ -726,6 +726,11 @@ function DirectionsButton({
   const [isPressed, setIsPressed] = useState(false);
   return (
     <Pressable
+      // `flexShrink: 1, minWidth: 0` on the Pressable itself — this is the
+      // actual flex item in the row. Without it the inner View's
+      // flexShrink:1 can't kick in and the address text overflows past the
+      // right edge instead of truncating with ellipsis.
+      style={styles.directionsButtonPressable}
       accessibilityRole="button"
       accessibilityLabel={`Open ${location} in Maps`}
       onPress={(e) => {
@@ -1272,22 +1277,27 @@ const styles = StyleSheet.create({
   eventRow: {
     flexDirection: "row",
     alignItems: "center",
-    // Left padding is slightly reduced (13 vs 16) to make room for the 3px
-    // accent bar so overall row padding still reads as 16. Group rows use
-    // 16 — the delta here is negligible (~1–2px) and keeps the avatar's
-    // horizontal position aligned with the group rows above/below.
-    paddingLeft: 13,
+    // Match DM rows + group rows exactly — 16 left, 16 right — so avatars
+    // line up vertically across the mixed inbox. The accent bar is
+    // absolutely positioned over the leading edge instead of taking
+    // horizontal space.
+    paddingLeft: 16,
     paddingRight: 16,
     paddingVertical: 12,
+    position: "relative",
   },
-  // Thin left accent bar — the primary imminence signal.
+  // Thin left accent bar — pinned to the row's left edge as an overlay so
+  // it doesn't push the avatar out of alignment with neighboring DM /
+  // group rows. Hidden via `transparent` background when there's nothing
+  // urgent to signal.
   eventAccentBar: {
+    position: "absolute",
+    left: 0,
+    top: 8,
+    bottom: 8,
     width: 3,
-    alignSelf: "stretch",
-    borderRadius: 2,
-    marginRight: 10,
-    // When there's no accent color the bar still occupies space so avatars
-    // stay aligned with accented siblings.
+    borderTopRightRadius: 2,
+    borderBottomRightRadius: 2,
   },
   eventAvatarContainer: {
     position: "relative",
@@ -1382,6 +1392,14 @@ const styles = StyleSheet.create({
   eventMetaSeparator: {
     fontSize: 12,
     marginHorizontal: 6,
+  },
+  // Wraps the directions button. minWidth:0 + flexShrink:1 are necessary
+  // for the inner button + its `numberOfLines={1}` text to actually
+  // truncate when the row is narrow — without this the address overflows
+  // past the row's right edge.
+  directionsButtonPressable: {
+    flexShrink: 1,
+    minWidth: 0,
   },
   // Prominent filled pill next to the time — reads as a CTA. Primary-tinted
   // background so it doesn't blend into the surrounding muted row.
