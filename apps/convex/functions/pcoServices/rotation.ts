@@ -1013,13 +1013,18 @@ export const syncCommunityAutoChannels = internalAction({
         }
       }
 
-      // Step 8: Match each unique person once. matchAndLinkPcoPerson is a Convex
-      // mutation, not a PCO API call, so the concern here is latency rather than
-      // rate limits. We batch in groups of 10 to keep things tidy.
+      // Step 8: Match each unique person once. matchAndLinkPcoPerson is a
+      // Convex mutation, so failures are rare (transient OCC retry exhaustion,
+      // DB write conflict). We use Promise.allSettled here for the same reason
+      // we use it for contact lookups: a single failed match shouldn't reject
+      // the whole batch and abort every config in the community via the
+      // shared-phase catch path. Failed PIDs are omitted from matchByPerson
+      // and the dispatch loop's `if (!matchResult) continue;` already handles
+      // them.
       const MATCH_BATCH_SIZE = 10;
       for (let i = 0; i < personIdList.length; i += MATCH_BATCH_SIZE) {
         const batch = personIdList.slice(i, i + MATCH_BATCH_SIZE);
-        const results = await Promise.all(
+        const results = await Promise.allSettled(
           batch.map(async (pid) => {
             const contact = contactByPerson.get(pid);
             const matchResult = (await ctx.runMutation(
@@ -1034,8 +1039,10 @@ export const syncCommunityAutoChannels = internalAction({
             return { pid, matchResult };
           })
         );
-        for (const { pid, matchResult } of results) {
-          matchByPerson.set(pid, matchResult);
+        for (const r of results) {
+          if (r.status === "fulfilled") {
+            matchByPerson.set(r.value.pid, r.value.matchResult);
+          }
         }
       }
     } catch (sharedError) {
