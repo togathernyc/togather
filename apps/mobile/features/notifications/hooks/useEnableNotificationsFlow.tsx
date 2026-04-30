@@ -3,8 +3,10 @@
  *
  * Two surfaces drive opt-in (the inbox banner and the Settings master toggle)
  * and both need identical behavior across all four permission states. This
- * hook owns the sheet visibility state, the success toast, and the routing
- * logic; the surfaces just call `start()` and render `<>{flowElements}</>`.
+ * hook owns the sheet visibility state, the success toast, the routing
+ * logic, AND the auto-recovery on app foreground after a Settings hand-off
+ * (so any consumer of the hook gets the recovery behavior, not just the
+ * banner).
  *
  * Routing:
  *  - granted (app-disabled in our DB) → register token + success toast
@@ -12,7 +14,8 @@
  *  - denied-permanent → show coaching sheet → on confirm, Linking.openSettings()
  *  - unsupported (web/sim) → no-op; the surfaces should already hide
  */
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { AppState, AppStateStatus } from "react-native";
 import { useNotifications } from "@providers/NotificationProvider";
 import { Toast } from "@components/ui/Toast";
 import { NotificationSoftAskSheet } from "../components/NotificationSoftAskSheet";
@@ -113,11 +116,45 @@ export function useEnableNotificationsFlow(): UseEnableNotificationsFlowReturn {
     resolveAndClear("cancelled");
   }, [resolveAndClear]);
 
+  // Track whether the user just handed off to OS Settings, so when they
+  // foreground the app again we know to re-attempt token registration.
+  // Without this, the Settings screen (which uses this hook but doesn't
+  // mount its own AppState listener) silently strands users who grant in
+  // iOS Settings: status flips to granted but nothing re-registers the
+  // token, so `notificationsEnabled` stays false until they manually toggle.
+  const handedOffToSettingsRef = useRef(false);
+
   const onOpenSettings = useCallback(() => {
     setOpenSettingsVisible(false);
+    handedOffToSettingsRef.current = true;
     void openNotificationSettings();
     resolveAndClear("denied-permanent");
   }, [resolveAndClear]);
+
+  // Re-check OS state when the app foregrounds. If permission flipped to
+  // granted (typical when the user just turned it on in Settings) and the
+  // user previously handed off via this flow, silently re-register the
+  // token + show the success toast so the opt-in completes without another
+  // tap. The check is gated on `handedOffToSettingsRef` to avoid running
+  // on every foreground for users who never opened Settings via this hook.
+  useEffect(() => {
+    const sub = AppState.addEventListener(
+      "change",
+      async (next: AppStateStatus) => {
+        if (next !== "active") return;
+        if (!handedOffToSettingsRef.current) return;
+        const status = await getPermissionStatus();
+        if (status === "granted") {
+          handedOffToSettingsRef.current = false;
+          const outcome = await enableNotifications();
+          if (outcome === "enabled") {
+            setToastVisible(true);
+          }
+        }
+      },
+    );
+    return () => sub.remove();
+  }, [enableNotifications, getPermissionStatus]);
 
   const onOpenSettingsClose = useCallback(() => {
     setOpenSettingsVisible(false);

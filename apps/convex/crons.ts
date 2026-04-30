@@ -195,15 +195,16 @@ crons.hourly(
 // =============================================================================
 // DAILY NOTIFICATION-ENABLED SNAPSHOT + COUNTER SELF-HEAL
 // =============================================================================
-// Runs daily at 00:05 UTC. Re-seeds `notificationEnabledCounter` from
-// pushTokens (idempotent, paginated — no transaction limits) so the running
-// tally self-heals from any drift, then writes the daily snapshot row. This
-// also means new deploys don't need a manual backfill — the counter
-// becomes accurate within 24h automatically.
+// Runs daily at 23:55 UTC — late in the UTC day so the snapshot captures
+// "end of today" under today's date label (avoids the off-by-one delta
+// distortion the earlier 00:05-of-next-day schedule had). Backfill re-seeds
+// `notificationEnabledCounter` from pushTokens (idempotent, paginated — no
+// transaction limits) for self-healing; if backfill fails the snapshot
+// still runs.
 
 crons.daily(
   "daily-notification-enabled-snapshot",
-  { hourUTC: 0, minuteUTC: 5 },
+  { hourUTC: 23, minuteUTC: 55 },
   internal.functions.notifications.dailyEnabledSnapshot.runDaily
 );
 

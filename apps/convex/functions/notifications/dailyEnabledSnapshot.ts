@@ -9,9 +9,11 @@
  * Definition of "enabled": user has at least one row in `pushTokens` for the
  * current environment. Matches `notifications.preferences.preferences`.
  *
- * Cron: runs at 00:05 UTC daily. The snapshot's `date` is the UTC day that
- * just ended (e.g. firing at 00:05 UTC on 2026-04-30 writes a row dated
- * 2026-04-29 representing the count as the day closed).
+ * Cron: runs at 23:55 UTC daily — late in the UTC day so the counter we
+ * read aligns with the date label (the snapshot represents "end of day X"
+ * and is labelled X). The earlier 00:05-UTC-of-next-day approach backdated
+ * the row, so any token changes in the 0:00–0:05 sliver got attributed to
+ * the prior day and distorted the day-over-day delta.
  *
  * Idempotent: re-running for the same date overwrites the row.
  *
@@ -28,7 +30,6 @@ import { internal } from "../../_generated/api";
 import { getCurrentEnvironment } from "../../lib/notifications/send";
 import { readEnabledCount } from "../../lib/notifications/enabledCounter";
 
-const DAY_MS = 24 * 60 * 60 * 1000;
 const BACKFILL_PAGE_SIZE = 1000;
 
 /** "YYYY-MM-DD" for a given timestamp in UTC. */
@@ -41,9 +42,12 @@ export const run = internalMutation({
   handler: async (ctx) => {
     const environment = getCurrentEnvironment();
     const nowMs = Date.now();
-    // Snapshot represents the UTC day that just closed (e.g. fired at 00:05
-    // UTC on 4/30 → this is the count for 4/29 EOD).
-    const targetDate = toUtcDateString(nowMs - DAY_MS);
+    // Snapshot date matches the UTC day the cron is running in — cron is
+    // scheduled at 23:55 UTC, so this records "end of today" under today's
+    // date. We deliberately don't backdate to "yesterday": that mismatched
+    // the counter (read at run time = today) against the row label and
+    // attributed any token changes near midnight to the wrong day.
+    const targetDate = toUtcDateString(nowMs);
 
     // O(1) read from the running tally maintained by the token write paths.
     const enabledCount = await readEnabledCount(ctx, environment);
