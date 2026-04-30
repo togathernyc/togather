@@ -796,18 +796,44 @@ export const syncCommunityAutoChannels = internalAction({
         continue;
       }
 
-      // Step 3 (per-config): Run channel-scoped cleanup mutations. These are
-      // not PCO API calls, so they don't contribute to rate limits.
-      const removeExpiredResult = await ctx.runMutation(
-        internal.functions.pcoServices.rotation.removeExpiredMembers,
-        { channelId: config.channelId }
-      );
-      const removeNonMatchingResult = await ctx.runMutation(
-        internal.functions.pcoServices.rotation.removeNonMatchingMembers,
-        { channelId: config.channelId, configId: config._id }
-      );
-      const preflightRemoved =
-        removeExpiredResult.removedCount + removeNonMatchingResult.removedCount;
+      // Step 3 (per-config): Run channel-scoped cleanup mutations. Not PCO
+      // API calls, so no rate-limit cost. Wrapped per-config so a transient
+      // failure (e.g., updateChannelMemberCount patching a deleted channel
+      // mid-run) only fails THIS config — the rest of the community keeps
+      // syncing instead of aborting the whole batch.
+      let preflightRemoved: number;
+      try {
+        const removeExpiredResult = await ctx.runMutation(
+          internal.functions.pcoServices.rotation.removeExpiredMembers,
+          { channelId: config.channelId }
+        );
+        const removeNonMatchingResult = await ctx.runMutation(
+          internal.functions.pcoServices.rotation.removeNonMatchingMembers,
+          { channelId: config.channelId, configId: config._id }
+        );
+        preflightRemoved =
+          removeExpiredResult.removedCount + removeNonMatchingResult.removedCount;
+      } catch (preflightError) {
+        const errorMessage =
+          preflightError instanceof Error
+            ? preflightError.message
+            : "Unknown error";
+        // Best-effort status write — same delete-mid-run guard as elsewhere.
+        try {
+          await ctx.runMutation(
+            internal.functions.pcoServices.rotation.updateSyncStatus,
+            { configId: config._id, status: "error", error: errorMessage }
+          );
+        } catch {
+          // Swallow.
+        }
+        earlyResults.push({
+          configId: config._id,
+          status: "error",
+          error: errorMessage,
+        });
+        continue;
+      }
 
       // Validate timing config.
       const addMembersDaysBefore = pcoConfig.addMembersDaysBefore ?? 0;
