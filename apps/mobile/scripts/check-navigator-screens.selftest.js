@@ -334,4 +334,117 @@ let passed = 0;
   passed++;
 }
 
-console.log(`✅ check-navigator-screens self-tests: ${passed}/10 passed`);
+// ---------------------------------------------------------------------------
+// 11. Empty-fragment wrapped — `{flag && (<><Stack.Screen .../></>)}` — fail.
+//     Codex caught this as a bypass on the first round-trip fix. The token
+//     immediately before `<Stack.Screen>` is `>` (from the `<>` opener),
+//     not the operator, so the previous version returned null.
+// ---------------------------------------------------------------------------
+{
+  const { root, appRoot } = setup();
+  writeLayout(
+    appRoot,
+    "fragment",
+    `import { Stack } from 'expo-router';
+     export default function L({ flag }: any) {
+       return (
+         <Stack>
+           <Stack.Screen name="index" />
+           {flag && (<><Stack.Screen name="x" /></>)}
+         </Stack>
+       );
+     }`,
+  );
+  const result = runCheck(root);
+  assert(
+    result.code !== 0,
+    `Expected fail on fragment-wrapped && Screen; got pass: ${result.stdout}`,
+  );
+  passed++;
+}
+
+// ---------------------------------------------------------------------------
+// 12. Named-Fragment wrapped — `{flag && <Fragment><Stack.Screen .../></Fragment>}` — fail.
+// ---------------------------------------------------------------------------
+{
+  const { root, appRoot } = setup();
+  writeLayout(
+    appRoot,
+    "named-fragment",
+    `import { Stack } from 'expo-router';
+     import { Fragment } from 'react';
+     export default function L({ flag }: any) {
+       return (
+         <Stack>
+           <Stack.Screen name="index" />
+           {flag && <Fragment><Stack.Screen name="x" /></Fragment>}
+         </Stack>
+       );
+     }`,
+  );
+  const result = runCheck(root);
+  assert(
+    result.code !== 0,
+    `Expected fail on Fragment-wrapped && Screen; got pass: ${result.stdout}`,
+  );
+  passed++;
+}
+
+// ---------------------------------------------------------------------------
+// 13. Namespaced-Fragment wrapped —
+//     `{flag ? <React.Fragment><Stack.Screen .../></React.Fragment> : null}` — fail.
+// ---------------------------------------------------------------------------
+{
+  const { root, appRoot } = setup();
+  writeLayout(
+    appRoot,
+    "namespaced-fragment",
+    `import { Stack } from 'expo-router';
+     import * as React from 'react';
+     export default function L({ flag }: any) {
+       return (
+         <Stack>
+           <Stack.Screen name="index" />
+           {flag ? <React.Fragment><Stack.Screen name="x" /></React.Fragment> : null}
+         </Stack>
+       );
+     }`,
+  );
+  const result = runCheck(root);
+  assert(
+    result.code !== 0,
+    `Expected fail on React.Fragment-wrapped ternary Screen; got pass: ${result.stdout}`,
+  );
+  passed++;
+}
+
+// ---------------------------------------------------------------------------
+// 14. Sibling self-closed Screen does NOT trigger false positive when the
+//     current Screen is unconditional. The previous self-closing `/>` of a
+//     sibling should NOT be mistaken for a wrapping fragment.
+// ---------------------------------------------------------------------------
+{
+  const { root, appRoot } = setup();
+  writeLayout(
+    appRoot,
+    "siblings",
+    `import { Stack } from 'expo-router';
+     export default function L() {
+       return (
+         <Stack>
+           <Stack.Screen name="a" />
+           <Stack.Screen name="b" />
+           <Stack.Screen name="c" />
+         </Stack>
+       );
+     }`,
+  );
+  const result = runCheck(root);
+  assert(
+    result.code === 0,
+    `Expected pass on unconditional sibling screens; got fail: ${result.stderr}`,
+  );
+  passed++;
+}
+
+console.log(`✅ check-navigator-screens self-tests: ${passed}/14 passed`);

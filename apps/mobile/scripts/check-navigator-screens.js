@@ -105,24 +105,47 @@ const SCREEN_TAG_RE =
 
 /**
  * For a screen-tag match at index `idx` in source `code`, walk backwards
- * skipping whitespace and any number of opening parentheses, then check
- * the immediately preceding token for a conditional operator (`?`, `&&`,
+ * past transparent JSX scaffolding (whitespace, parentheses, and
+ * attribute-less opening tags like `<>` / `<Fragment>` / `<React.Fragment>`)
+ * and check whether the next token is a conditional operator (`?`, `&&`,
  * `||`). Returns the operator if found, else null.
  *
- * The paren-skip is important: codex review caught that a naive
- * "preceding char is the operator" check misses the common JSX form
+ * Why we keep extending this:
+ * - Initial version only checked the immediately preceding char. Missed
+ *   `{flag && (<Stack.Screen .../>)}` (codex P2).
+ * - Paren-skip added. Missed `{flag && (<><Stack.Screen .../></>)}` —
+ *   fragment-wrapped (codex P2 again).
+ * - Now: skip past attribute-less opening tags too, which catches
+ *   fragment-wrapped registrations and simple `<Container>` wrappers.
  *
- *     {flag && (<Stack.Screen ... />)}
- *     {flag ? (<Stack.Screen ... />) : null}
- *
- * because the character right before `<Stack.Screen>` is `(`, not the
- * operator. We skip any sequence of whitespace and `(` before checking.
- * Multiple parens (`(( <Stack.Screen .../> ))`) are handled too.
+ * Limit of the heuristic: tags WITH attributes (`<View style={x}><Stack.
+ * Screen/></View>`) are not skipped — the regex stops at `}` / `=` /
+ * quotes inside the tag. If codex finds a bypass through attribute-bearing
+ * wrappers, switch to a TypeScript JSX AST instead of regex.
  */
 function findGuardingOperator(code, idx) {
   let i = idx - 1;
-  // Skip whitespace and opening parens (alternating until neither matches).
-  while (i >= 0 && (/\s/.test(code[i]) || code[i] === "(")) i--;
+  while (i >= 0) {
+    const c = code[i];
+    // Skip whitespace and opening parens.
+    if (/\s/.test(c) || c === "(") {
+      i--;
+      continue;
+    }
+    // Skip an attribute-less opening tag of the form `<>` or `<Identifier>`
+    // (Identifier can include dots for namespaces, like `<React.Fragment>`).
+    // We require attribute-less so we don't accidentally skip past complex
+    // wrappers and over-flag.
+    if (c === ">") {
+      let j = i - 1;
+      while (j >= 0 && /[A-Za-z0-9_$.]/.test(code[j])) j--;
+      if (j >= 0 && code[j] === "<") {
+        i = j - 1;
+        continue;
+      }
+    }
+    break;
+  }
   if (i < 1) return null;
   const two = code.slice(i - 1, i + 1);
   const one = code[i];
