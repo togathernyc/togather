@@ -33,10 +33,11 @@ export const run = internalMutation({
   handler: async (ctx) => {
     const environment = getCurrentEnvironment();
     const nowMs = Date.now();
-    // Snapshot represents the day that just closed (e.g. fired at 00:05 UTC
-    // on 4/30 → this is the count for 4/29 EOD). Subtract a minute so we're
-    // squarely inside yesterday's UTC window even with cron timing slop.
-    const targetDate = toUtcDateString(nowMs - 60_000);
+    // Snapshot represents the UTC day that just closed (e.g. fired at 00:05
+    // UTC on 4/30 → this is the count for 4/29 EOD). Subtract a full day —
+    // subtracting only a minute would still leave us inside the new UTC day
+    // and label the snapshot as today, breaking the "vs yesterday" comparison.
+    const targetDate = toUtcDateString(nowMs - DAY_MS);
 
     // Count distinct userIds with at least one push token in this env.
     // We don't have a per-environment index without a userId prefix, so we
