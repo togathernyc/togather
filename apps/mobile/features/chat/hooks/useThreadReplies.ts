@@ -91,6 +91,7 @@ export function useThreadReplies(
       isDeleted: false,
       senderName: r.senderName,
       senderProfilePhoto: r.senderProfilePhoto,
+      senderNotificationsDisabled: r.senderNotificationsDisabled,
     }));
 
     return {
