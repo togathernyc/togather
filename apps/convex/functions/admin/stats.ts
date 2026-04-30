@@ -16,6 +16,7 @@ import { Id, Doc } from "../../_generated/dataModel";
 import { now, getMediaUrl } from "../../lib/utils";
 import { requireAuth } from "../../lib/auth";
 import { requireCommunityAdmin, checkCommunityAdmin } from "./auth";
+import { getCurrentEnvironment } from "../../lib/notifications/send";
 
 type SuperAdminRange = "7d" | "30d" | "90d" | "all";
 type SuperAdminGranularity = "day" | "month";
@@ -1552,6 +1553,78 @@ export const getNotificationStats = query({
       byType: Object.entries(byType)
         .map(([type, stats]) => ({ type, ...stats }))
         .sort((a, b) => b.sent - a.sent),
+    };
+  },
+});
+
+/**
+ * Device-level notification opt-in counts for the superuser admin dashboard.
+ *
+ * Returns:
+ *   - `today`:        live count of distinct users with ≥1 push token in the
+ *                     current environment
+ *   - `yesterday`:    most recent dailyNotificationStats snapshot for this
+ *                     env (null if no snapshot has been taken yet — first day
+ *                     after deploy or before the cron has fired once)
+ *   - `delta`:        today - yesterday (null when yesterday is null)
+ *   - `percentChange`: (delta / yesterday) * 100 (null when yesterday is null
+ *                     or zero)
+ *
+ * "Enabled" matches the `notifications.preferences.preferences` query: token
+ * existence in `pushTokens` for the current environment, regardless of the
+ * `isActive` flag.
+ *
+ * Snapshots are written daily at 00:05 UTC by `dailyEnabledSnapshot.run`.
+ * Tokens are deleted on disable, so historical counts cannot be reconstructed
+ * without those snapshots.
+ */
+export const getDailyNotificationEnabledStats = query({
+  args: { token: v.string() },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const user = await ctx.db.get(userId);
+    if (!user?.isStaff && !user?.isSuperuser) {
+      throw new Error("Togather internal access required");
+    }
+
+    const environment = getCurrentEnvironment();
+
+    // Live "today" count — distinct userIds with at least one push token in
+    // this environment. Mirrors the snapshot mutation's logic so today and
+    // yesterday are apples-to-apples.
+    const distinctUsers = new Set<string>();
+    for await (const row of ctx.db.query("pushTokens")) {
+      if (row.environment !== environment) continue;
+      distinctUsers.add(row.userId);
+    }
+    const today = distinctUsers.size;
+
+    // Most recent snapshot for this environment (descending by date).
+    const lastSnapshot = await ctx.db
+      .query("dailyNotificationStats")
+      .withIndex("by_environment_date", (q) => q.eq("environment", environment))
+      .order("desc")
+      .first();
+
+    const yesterday = lastSnapshot?.enabledCount ?? null;
+    const yesterdayDate = lastSnapshot?.date ?? null;
+
+    let delta: number | null = null;
+    let percentChange: number | null = null;
+    if (yesterday !== null) {
+      delta = today - yesterday;
+      if (yesterday > 0) {
+        percentChange = (delta / yesterday) * 100;
+      }
+    }
+
+    return {
+      today,
+      yesterday,
+      yesterdayDate,
+      delta,
+      percentChange,
+      environment,
     };
   },
 });

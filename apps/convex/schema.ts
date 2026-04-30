@@ -869,6 +869,26 @@ export default defineSchema({
     lastProcessedHourMs: v.number(),
   }).index("by_key", ["key"]),
 
+  // Daily snapshot of distinct users with at least one active push token,
+  // scoped per environment. Populated by `dailyEnabledSnapshot.run` cron at
+  // 0:05 UTC. Drives the "notifications enabled — today vs yesterday" card on
+  // the superuser admin dashboard.
+  //
+  // We snapshot rather than compute historically because tokens are deleted
+  // on disable, so the row count at any past moment isn't reconstructible
+  // from the current `pushTokens` table.
+  //
+  // `date` is the UTC day this snapshot represents (e.g. "2026-04-29" for the
+  // run that fired at 00:05 UTC on 2026-04-30 covering the day that just ended).
+  dailyNotificationStats: defineTable({
+    date: v.string(),         // "YYYY-MM-DD" in UTC
+    environment: v.string(),  // "production" | "staging"
+    enabledCount: v.number(), // distinct userIds with ≥1 push token in this env
+    createdAt: v.number(),    // when the snapshot row was written
+  })
+    .index("by_environment_date", ["environment", "date"])
+    .index("by_date", ["date"]),
+
   // =============================================================================
   // PUSH TOKENS
   // =============================================================================

@@ -36,6 +36,7 @@ import { useInboxCache } from "../../../stores/inboxCache";
 import { Avatar } from "@components/ui/Avatar";
 import { useConvexFeatureFlag } from "@hooks/useConvexFeatureFlag";
 import { StackedMemberAvatars } from "./StackedMemberAvatars";
+import { EnableNotificationsBanner } from "@features/notifications/components/EnableNotificationsBanner";
 
 // Inbox event visibility is now driven server-side by
 // `INBOX_EVENT_HIDE_AFTER_MS` in apps/convex/functions/messaging/channels.ts
@@ -522,6 +523,7 @@ export function ChatInboxScreen({
       <Wrapper>
         <View style={[styles.container, { backgroundColor: colors.surface }]}>
           {renderHeader(true)}
+          <EnableNotificationsBanner />
           <ScrollView contentContainerStyle={styles.centeredScrollContent}>
             <Ionicons
               name="chatbubbles-outline"
@@ -543,6 +545,7 @@ export function ChatInboxScreen({
     <Wrapper>
       <View style={[styles.container, { backgroundColor: colors.surface }]}>
         {renderHeader(true)}
+        <EnableNotificationsBanner />
         <FlatList
           data={listItemsWithDm}
           renderItem={renderItem}

@@ -51,6 +51,28 @@ try {
 // Types
 // =========================================================================
 
+/**
+ * Coarse permission status used by the opt-in flow.
+ * - `granted`: OS allows push for this app
+ * - `undetermined`: OS hasn't been asked yet (or Android equivalent)
+ * - `denied`: OS-denied but `canAskAgain === true` (mostly Android)
+ * - `denied-permanent`: OS-denied and `canAskAgain === false` (iOS post-deny — only recovery is Settings)
+ * - `unsupported`: web, simulator, or expo-notifications unavailable
+ */
+export type PushPermissionStatus =
+  | 'granted'
+  | 'undetermined'
+  | 'denied'
+  | 'denied-permanent'
+  | 'unsupported';
+
+/** Outcome returned by `enableNotifications()`. */
+export type EnableNotificationsOutcome =
+  | 'enabled'
+  | 'denied'
+  | 'denied-permanent'
+  | 'unsupported';
+
 type NotificationContextType = {
   /** Expo push token for this device */
   expoPushToken: string | null;
@@ -62,6 +84,16 @@ type NotificationContextType = {
   isReady: boolean;
   /** Request notification permissions */
   requestPermissions: () => Promise<boolean>;
+  /**
+   * Unified opt-in flow used by the inbox banner and the settings master toggle.
+   * If the OS hasn't been asked, asks. If the OS already denied with no recourse,
+   * returns `denied-permanent` so the caller can open Settings. On grant, registers
+   * the push token (which also re-enables `notificationsEnabled` server-side since
+   * the flag is derived from token existence).
+   */
+  enableNotifications: () => Promise<EnableNotificationsOutcome>;
+  /** Read current OS permission state without prompting. */
+  getPermissionStatus: () => Promise<PushPermissionStatus>;
   /** Refresh unread count from server */
   refreshUnreadCount: () => Promise<void>;
   /** Handle notification received while app is open */
@@ -87,6 +119,8 @@ const NotificationContext = createContext<NotificationContextType>({
   unreadCount: 0,
   isReady: false,
   requestPermissions: async () => false,
+  enableNotifications: async () => 'unsupported',
+  getPermissionStatus: async () => 'unsupported',
   refreshUnreadCount: async () => {},
   lastNotification: null,
   handleNotificationTap: async () => {},
@@ -198,6 +232,26 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, []);
 
+  // Read current OS permission state without prompting. Used by the opt-in
+  // flow to decide whether to show a soft-ask sheet (undetermined), call
+  // through to the OS prompt, or jump straight to Settings (denied-permanent).
+  const getPermissionStatus = useCallback(async (): Promise<PushPermissionStatus> => {
+    if (!Notifications || !Device) return 'unsupported';
+    if (Platform.OS === 'web') return 'unsupported';
+    if (!Device.isDevice) return 'unsupported';
+
+    try {
+      const { status, canAskAgain } = await Notifications.getPermissionsAsync();
+      if (status === 'granted') return 'granted';
+      if (status === 'undetermined') return 'undetermined';
+      // status === 'denied' on iOS/Android
+      return canAskAgain ? 'denied' : 'denied-permanent';
+    } catch (error) {
+      console.error('getPermissionStatus failed:', error);
+      return 'unsupported';
+    }
+  }, []);
+
   // Register push token with backend using Convex
   const registerToken = useCallback(async () => {
     if (!Notifications || !isAuthenticated || !user) return;
@@ -251,6 +305,40 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
       console.error('Failed to register push token:', error);
     }
   }, [isAuthenticated, user, authToken, registerTokenMutation]);
+
+  // Unified opt-in flow. Asks the OS if it hasn't been asked, registers the
+  // push token on grant (which re-enables `notificationsEnabled` server-side
+  // since that flag is derived from token existence), and returns
+  // `denied-permanent` so callers can route the user to Settings when iOS has
+  // burned the one-shot prompt.
+  const enableNotifications = useCallback(async (): Promise<EnableNotificationsOutcome> => {
+    if (!Notifications || !Device) return 'unsupported';
+    if (Platform.OS === 'web') return 'unsupported';
+    if (!Device.isDevice) return 'unsupported';
+
+    try {
+      const current = await Notifications.getPermissionsAsync();
+      let status = current.status;
+      let canAskAgain = current.canAskAgain;
+
+      if (status !== 'granted' && canAskAgain) {
+        const result = await Notifications.requestPermissionsAsync();
+        status = result.status;
+        canAskAgain = result.canAskAgain;
+      }
+
+      if (status === 'granted') {
+        setIsEnabled(true);
+        await registerToken();
+        return 'enabled';
+      }
+
+      return canAskAgain ? 'denied' : 'denied-permanent';
+    } catch (error) {
+      console.error('enableNotifications failed:', error);
+      return 'denied';
+    }
+  }, [registerToken]);
 
   /**
    * Resolve a group ID for navigation.
@@ -662,6 +750,8 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
       unreadCount,
       isReady,
       requestPermissions,
+      enableNotifications,
+      getPermissionStatus,
       refreshUnreadCount,
       lastNotification,
       handleNotificationTap,
@@ -674,6 +764,8 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
       unreadCount,
       isReady,
       requestPermissions,
+      enableNotifications,
+      getPermissionStatus,
       refreshUnreadCount,
       lastNotification,
       handleNotificationTap,

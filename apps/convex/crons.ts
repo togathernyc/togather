@@ -192,4 +192,19 @@ crons.hourly(
   internal.functions.messaging.directMessages.cleanupOldDmRateLimits
 );
 
+// =============================================================================
+// DAILY NOTIFICATION-ENABLED SNAPSHOT
+// =============================================================================
+// Runs daily at 00:05 UTC to snapshot the count of users with at least one
+// push token (per environment) into `dailyNotificationStats`. The superuser
+// admin dashboard reads "today (live) vs yesterday (snapshot)" from this
+// table, plus the live `pushTokens` count for today. Tokens are deleted on
+// disable, so historical counts cannot be reconstructed without snapshots.
+
+crons.daily(
+  "daily-notification-enabled-snapshot",
+  { hourUTC: 0, minuteUTC: 5 },
+  internal.functions.notifications.dailyEnabledSnapshot.run
+);
+
 export default crons;

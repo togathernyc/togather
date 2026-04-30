@@ -90,6 +90,7 @@ import type * as functions_messaging_typing from "../functions/messaging/typing.
 import type * as functions_migrations from "../functions/migrations.js";
 import type * as functions_migrations_migrateToCommunityPeople from "../functions/migrations/migrateToCommunityPeople.js";
 import type * as functions_notifications_actions from "../functions/notifications/actions.js";
+import type * as functions_notifications_dailyEnabledSnapshot from "../functions/notifications/dailyEnabledSnapshot.js";
 import type * as functions_notifications_debug from "../functions/notifications/debug.js";
 import type * as functions_notifications_index from "../functions/notifications/index.js";
 import type * as functions_notifications_internal from "../functions/notifications/internal.js";
@@ -262,6 +263,7 @@ declare const fullApi: ApiFromModules<{
   "functions/migrations": typeof functions_migrations;
   "functions/migrations/migrateToCommunityPeople": typeof functions_migrations_migrateToCommunityPeople;
   "functions/notifications/actions": typeof functions_notifications_actions;
+  "functions/notifications/dailyEnabledSnapshot": typeof functions_notifications_dailyEnabledSnapshot;
   "functions/notifications/debug": typeof functions_notifications_debug;
   "functions/notifications/index": typeof functions_notifications_index;
   "functions/notifications/internal": typeof functions_notifications_internal;
