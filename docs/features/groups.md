@@ -313,31 +313,6 @@ import { MembersRow } from "@/features/groups/components/MembersRow";
 <MembersRow leaders={group.leaders} />
 ```
 
-### GroupMapSection
-
-**Location:** `features/groups/components/GroupMapSection.tsx`
-
-**Purpose:** Displays group location with map icon and option to open in maps app.
-
-**Features:**
-
-- Location display with map icon
-- "Open in Maps" button that opens location in native maps app
-- **Platform support:**
-  - iOS: Opens in Apple Maps
-  - Android/Web: Opens in Google Maps
-- **Conditional rendering:** Only renders when group has a location
-- **Props:**
-  - `group` - Group data (must have `location` field)
-
-**Usage:**
-
-```typescript
-import { GroupMapSection } from "@/features/groups/components/GroupMapSection";
-
-<GroupMapSection group={group} />;
-```
-
 ### HighlightsGrid
 
 **Location:** `features/groups/components/HighlightsGrid.tsx`

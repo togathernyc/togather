@@ -376,7 +376,12 @@ export function GroupNonMemberView({
               return (
                 <Container
                   {...(cardTappable
-                    ? { activeOpacity: 0.7, onPress: onMembersCardPress }
+                    ? {
+                        activeOpacity: 0.7,
+                        onPress: onMembersCardPress,
+                        accessibilityRole: "button" as const,
+                        accessibilityLabel: footerLabel,
+                      }
                     : {})}
                   style={[
                     sectionStyles.card,
