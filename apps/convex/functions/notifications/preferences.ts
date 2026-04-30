@@ -346,6 +346,14 @@ export const updateChannelPreferences = mutation({
           await ctx.db.delete(tokenDoc._id);
         }
 
+        // Mirror updatePreferences: if the user had any tokens in this env,
+        // they transitioned from enabled → disabled. Decrement the counter
+        // exactly once. Without this the running tally drifts every time a
+        // user disables via the channel-prefs path.
+        if (tokens.length > 0) {
+          await adjustEnabledCounter(ctx, currentEnv, -1);
+        }
+
         console.log(
           `[updateChannelPreferences] Disabled push for user ${userId}: ` +
           `deleted ${tokens.length} token(s) in ${currentEnv}`
