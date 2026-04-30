@@ -360,7 +360,7 @@ export function SuperAdminDashboardContent() {
         </>
       )}
 
-      {/* Device-level notification opt-in (today live vs yesterday snapshot).
+      {/* Device-level notification opt-in (today live vs most recent snapshot).
           Always shown to superusers — not gated on `notifStats.totals.sent` —
           because we want to see opt-in trend even on quiet days. */}
       {notifEnabledStats && (
@@ -376,7 +376,7 @@ export function SuperAdminDashboardContent() {
               {notifEnabledStats.today === 1 ? "user" : "users"}
             </Text>
           </View>
-          {notifEnabledStats.delta !== null && notifEnabledStats.yesterday !== null ? (
+          {notifEnabledStats.delta !== null && notifEnabledStats.previous !== null ? (
             <Text
               style={[
                 styles.enabledDelta,
@@ -395,7 +395,9 @@ export function SuperAdminDashboardContent() {
               {notifEnabledStats.percentChange !== null
                 ? ` (${notifEnabledStats.percentChange > 0 ? "+" : ""}${notifEnabledStats.percentChange.toFixed(1)}%)`
                 : ""}
-              {" since yesterday"}
+              {notifEnabledStats.previousDate
+                ? ` since ${formatDate(notifEnabledStats.previousDate)}`
+                : ""}
             </Text>
           ) : (
             <Text style={[styles.enabledDelta, { color: colors.textTertiary }]}>

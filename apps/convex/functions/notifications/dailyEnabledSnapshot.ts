@@ -75,12 +75,36 @@ export const run = internalMutation({
 });
 
 // ============================================================================
-// Backfill: one-time seeding of the running counter from existing pushTokens.
+// Daily orchestrator — wired into the cron.
 // ============================================================================
 //
-// The counter is maintained incrementally going forward, but the table
-// starts empty when this PR deploys. Run `backfillEnabledCounter` once after
-// deploy to seed it from the existing pushTokens rows. Paginated through an
+// Calls backfill (paginated re-seed of the counter from pushTokens, no
+// transaction limits since it's an action) and then the snapshot mutation.
+// This makes the counter self-healing — no manual post-deploy step required
+// before the dashboard is accurate, and any drift from the incremental
+// maintenance paths is corrected daily.
+
+export const runDaily = internalAction({
+  args: {},
+  // Explicit return-type annotation breaks the circular self-reference TS
+  // would otherwise hit when `internal.functions.notifications.dailyEnabledSnapshot.*`
+  // is read inside a function defined in that same module.
+  handler: async (ctx): Promise<{ date: string; environment: string; enabledCount: number }> => {
+    await ctx.runAction(
+      internal.functions.notifications.dailyEnabledSnapshot.backfillEnabledCounter,
+    );
+    return await ctx.runMutation(
+      internal.functions.notifications.dailyEnabledSnapshot.run,
+    );
+  },
+});
+
+// ============================================================================
+// Backfill: full re-seed of the running counter from pushTokens.
+// ============================================================================
+//
+// Originally documented as a one-time post-deploy step, now also called
+// daily by `runDaily` above so the counter self-heals. Paginated through an
 // action so it works regardless of token volume (no transaction-level scan
 // limits in actions calling internal queries).
 

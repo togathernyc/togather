@@ -1595,42 +1595,36 @@ export const getDailyNotificationEnabledStats = query({
     // (the previous approach hit Convex transaction scan limits at scale).
     const today = await readEnabledCount(ctx, environment);
 
-    // Compare against the snapshot dated exactly yesterday in UTC. We can't
-    // just use "most recent snapshot" because:
-    //   - between 00:00–00:05 UTC the cron hasn't run yet, so the most recent
-    //     row is from two days ago — the UI would mislabel a 2-day delta as
-    //     "since yesterday"
-    //   - if a cron run is skipped (deploy pause, etc.) the same staleness
-    //     mislabeling happens
-    // If yesterday's snapshot is missing, return null so the UI shows the
-    // honest "Awaiting first daily snapshot" state instead of a wrong delta.
-    const DAY_MS_LOCAL = 24 * 60 * 60 * 1000;
-    const yesterdayDate = new Date(Date.now() - DAY_MS_LOCAL)
-      .toISOString()
-      .slice(0, 10);
-
-    const yesterdaySnapshot = await ctx.db
+    // Compare against the most recent dailyNotificationStats snapshot for
+    // this environment. We deliberately do NOT compute "yesterday's date"
+    // from `Date.now()` here — Convex queries don't rerun on wall-clock
+    // changes, only on tracked-data changes. A dashboard left open across
+    // UTC midnight would have read a stale yesterdayDate. By returning the
+    // snapshot's actual date, the UI labels the delta against the real
+    // snapshot date (e.g. "since 2026-04-29") and the query naturally
+    // reactivates when the daily cron writes a new snapshot.
+    const lastSnapshot = await ctx.db
       .query("dailyNotificationStats")
-      .withIndex("by_environment_date", (q) =>
-        q.eq("environment", environment).eq("date", yesterdayDate),
-      )
-      .unique();
+      .withIndex("by_environment_date", (q) => q.eq("environment", environment))
+      .order("desc")
+      .first();
 
-    const yesterday = yesterdaySnapshot?.enabledCount ?? null;
+    const previous = lastSnapshot?.enabledCount ?? null;
+    const previousDate = lastSnapshot?.date ?? null;
 
     let delta: number | null = null;
     let percentChange: number | null = null;
-    if (yesterday !== null) {
-      delta = today - yesterday;
-      if (yesterday > 0) {
-        percentChange = (delta / yesterday) * 100;
+    if (previous !== null) {
+      delta = today - previous;
+      if (previous > 0) {
+        percentChange = (delta / previous) * 100;
       }
     }
 
     return {
       today,
-      yesterday,
-      yesterdayDate: yesterdaySnapshot?.date ?? null,
+      previous,
+      previousDate,
       delta,
       percentChange,
       environment,

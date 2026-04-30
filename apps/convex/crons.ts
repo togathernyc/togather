@@ -193,18 +193,18 @@ crons.hourly(
 );
 
 // =============================================================================
-// DAILY NOTIFICATION-ENABLED SNAPSHOT
+// DAILY NOTIFICATION-ENABLED SNAPSHOT + COUNTER SELF-HEAL
 // =============================================================================
-// Runs daily at 00:05 UTC to snapshot the count of users with at least one
-// push token (per environment) into `dailyNotificationStats`. The superuser
-// admin dashboard reads "today (live) vs yesterday (snapshot)" from this
-// table, plus the live `pushTokens` count for today. Tokens are deleted on
-// disable, so historical counts cannot be reconstructed without snapshots.
+// Runs daily at 00:05 UTC. Re-seeds `notificationEnabledCounter` from
+// pushTokens (idempotent, paginated — no transaction limits) so the running
+// tally self-heals from any drift, then writes the daily snapshot row. This
+// also means new deploys don't need a manual backfill — the counter
+// becomes accurate within 24h automatically.
 
 crons.daily(
   "daily-notification-enabled-snapshot",
   { hourUTC: 0, minuteUTC: 5 },
-  internal.functions.notifications.dailyEnabledSnapshot.run
+  internal.functions.notifications.dailyEnabledSnapshot.runDaily
 );
 
 export default crons;
