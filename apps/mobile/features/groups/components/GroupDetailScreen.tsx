@@ -424,16 +424,25 @@ export function GroupDetailScreen() {
               MEMBERS{group.members_count ? ` · ${group.members_count}` : ""}
             </Text>
             {(() => {
+              // Tap disabled in two cases:
+              //  1. Announcement group + non-leader (directory leak).
+              //  2. Caller isn't an actual group member — `getChannelBySlug`
+              //     refuses non-members, so the destination would dead-end
+              //     in a permanent loading spinner. (Community super-admins
+              //     who aren't group members fall here too; that's fine,
+              //     they can use admin-tools surfaces instead.)
               const isAnnouncementRoster =
                 !!group.is_announcement_group && !(isLeader || isAdmin);
-              const Container: React.ComponentType<any> = isAnnouncementRoster
-                ? View
-                : TouchableOpacity;
+              const hasGroupMembership = !!group.user_role;
+              const tapEnabled = !isAnnouncementRoster && hasGroupMembership;
+              const Container: React.ComponentType<any> = tapEnabled
+                ? TouchableOpacity
+                : View;
               return (
                 <Container
-                  {...(isAnnouncementRoster
-                    ? {}
-                    : { activeOpacity: 0.7, onPress: handleMembersPress })}
+                  {...(tapEnabled
+                    ? { activeOpacity: 0.7, onPress: handleMembersPress }
+                    : {})}
                   style={[styles.card, { backgroundColor: colors.surfaceSecondary }]}
                 >
                   <MembersRow
@@ -441,7 +450,7 @@ export function GroupDetailScreen() {
                     leaders={group.leaders}
                     totalCount={group.members_count ?? undefined}
                   />
-                  {!isAnnouncementRoster && (
+                  {tapEnabled && (
                     <View style={[styles.viewAllRow, { borderTopColor: colors.border }]}>
                       <Text style={[styles.viewAllText, { color: colors.text }]}>
                         View all members
