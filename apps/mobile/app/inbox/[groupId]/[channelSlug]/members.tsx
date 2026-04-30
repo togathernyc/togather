@@ -231,7 +231,19 @@ export default function ChannelMembersScreen() {
   // members. Avoids the prior split where requests, sync info, archive, and
   // join-mode all lived on this same surface.
   const unifiedList = useMemo((): ListItem[] => {
-    const syncedItems: ListItem[] = (membersData?.members || []).map((m) => ({
+    // Pin group leaders to the top so newcomers can immediately spot who to
+    // reach out to. Stable order preserved within each tier (the backend
+    // already returns leaders alphabetically inside the search path; the
+    // browse path is by channel-membership creation order — close enough
+    // for pure visual grouping).
+    const sortedMembers = [...(membersData?.members || [])].sort((a, b) => {
+      const aLeader =
+        a.groupRole === "leader" || a.groupRole === "admin" ? 0 : 1;
+      const bLeader =
+        b.groupRole === "leader" || b.groupRole === "admin" ? 0 : 1;
+      return aLeader - bLeader;
+    });
+    const syncedItems: ListItem[] = sortedMembers.map((m) => ({
       type: "synced" as const,
       data: m,
     }));
@@ -624,7 +636,13 @@ export default function ChannelMembersScreen() {
           canManage && isCustomChannel && (!isSharedChannel || isPrimaryGroup) && !(isOwner && isCurrentUser);
 
         return (
-          <View style={[styles.memberItem, { backgroundColor: colors.surface }]}>
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={() => router.push(`/profile/${member.userId}` as any)}
+            style={[styles.memberItem, { backgroundColor: colors.surface }]}
+            accessibilityRole="button"
+            accessibilityLabel={`Open ${member.displayName}'s profile`}
+          >
             <SyncedMemberRowContent
               member={member}
               primaryColor={primaryColor}
@@ -645,7 +663,7 @@ export default function ChannelMembersScreen() {
                 ) : undefined
               }
             />
-          </View>
+          </TouchableOpacity>
         );
       } else {
         const person = item.data;
@@ -665,7 +683,7 @@ export default function ChannelMembersScreen() {
         );
       }
     },
-    [canManage, isCustomChannel, isSharedChannel, isPrimaryGroup, user, removingMemberId, primaryColor, handleRemoveMember, colors, isDark, pendingRequests, handleBulkApprove, isBulkApproving, processingRequestId, handleApproveRequest, handleDeclineRequest]
+    [canManage, isCustomChannel, isSharedChannel, isPrimaryGroup, user, removingMemberId, primaryColor, handleRemoveMember, colors, isDark, pendingRequests, handleBulkApprove, isBulkApproving, processingRequestId, handleApproveRequest, handleDeclineRequest, router]
   );
 
   // Loading state
