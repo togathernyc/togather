@@ -15,7 +15,6 @@ import {
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Clipboard from "expo-clipboard";
 import { DOMAIN_CONFIG } from "@togather/shared";
 import { useTheme } from "@hooks/useTheme";
@@ -55,7 +54,6 @@ export function GroupDetailScreen() {
   const group_id = params.group_id;
   const router = useRouter();
   const { user } = useAuth();
-  const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const [showOptionsModal, setShowOptionsModal] = useState(false);
   const [showJoinSuccessModal, setShowJoinSuccessModal] = useState(false);
@@ -395,7 +393,8 @@ export function GroupDetailScreen() {
     <>
       <ScrollView
         style={[styles.scrollView, { backgroundColor: colors.background }]}
-        contentContainerStyle={{ paddingTop: insets.top, paddingBottom: 24 }}
+        // GroupHeader owns its own safe-area top inset; only need bottom padding here.
+        contentContainerStyle={{ paddingBottom: 24 }}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl

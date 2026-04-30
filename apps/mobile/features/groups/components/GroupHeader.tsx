@@ -17,6 +17,7 @@ import React from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Pressable } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Group } from "../types";
 import { formatCadence } from "../utils";
 import { Avatar } from "@components/ui";
@@ -38,6 +39,13 @@ export function GroupHeader({
 }: GroupHeaderProps) {
   const router = useRouter();
   const { colors } = useTheme();
+  // The screen this header sits on hides the native nav header
+  // (root `_layout.tsx` sets `headerShown: false`), so the back chevron is
+  // ours and has to clear the device safe area itself. Reading insets
+  // here keeps any consumer of `GroupHeader` (member view + non-member
+  // view) safe-area-correct without each one remembering to wrap the
+  // surrounding scroll view.
+  const insets = useSafeAreaInsets();
   const previewUrl = group.preview || group.image_url || null;
   const groupName = group?.title || group?.name || "Group";
   const cadence = formatCadence(group);
@@ -64,11 +72,11 @@ export function GroupHeader({
 
   return (
     <View style={[styles.container, { backgroundColor: colors.surface }]}>
-      <View style={styles.topBar}>
+      <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
         <TouchableOpacity
           style={styles.iconButton}
           onPress={handleBack}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
           accessibilityLabel="Back"
         >
           <Ionicons name="chevron-back" size={28} color={colors.text} />
@@ -78,7 +86,7 @@ export function GroupHeader({
           <TouchableOpacity
             style={styles.iconButton}
             onPress={onSharePress}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
             accessibilityLabel="Share group"
           >
             <Ionicons
@@ -150,7 +158,11 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   iconButton: {
-    padding: 4,
+    // ≥44pt tap target so back/share clear the iOS HIG minimum.
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
   },
   spacer: {
     flex: 1,
