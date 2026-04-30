@@ -70,17 +70,28 @@ export function UpcomingEventsSection({ groupId }: Props) {
             : isTomorrow(date)
               ? `Tomorrow · ${format(date, "h:mm a")}`
               : format(date, "EEE, MMM d · h:mm a");
+          // Legacy meetings can lack `shortId`; pushing `/e/undefined` would
+          // dead-end. Disable the card in that case rather than navigating.
+          const canOpen = !!event.shortId;
           return (
             <Pressable
               key={event._id}
-              onPress={() => router.push(`/events/${event._id}` as any)}
+              onPress={
+                canOpen
+                  ? () =>
+                      router.push(
+                        `/e/${event.shortId}?source=app` as any
+                      )
+                  : undefined
+              }
+              disabled={!canOpen}
               style={({ pressed }) => [
                 styles.card,
                 {
                   backgroundColor: colors.surfaceSecondary,
                   borderColor: colors.border,
                 },
-                pressed && { opacity: 0.85 },
+                pressed && canOpen && { opacity: 0.85 },
               ]}
             >
               {event.coverImage ? (

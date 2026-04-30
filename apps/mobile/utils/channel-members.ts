@@ -8,7 +8,14 @@ export interface ChannelMember {
   userId: Id<"users">;
   displayName: string;
   profilePhoto?: string;
+  /** Channel-scoped role: "owner" or "member". */
   role: string;
+  /**
+   * Group-scoped role: "leader" | "admin" | "member" (or undefined if not a
+   * group member — possible for synced PCO rows). Distinct from `role` so
+   * UI can show channel ownership and group leadership independently.
+   */
+  groupRole?: string;
   syncSource?: string;
   syncMetadata?: {
     serviceTypeName?: string;

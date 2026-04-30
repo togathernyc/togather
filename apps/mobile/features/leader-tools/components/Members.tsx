@@ -465,8 +465,15 @@ function MemberActionsModal({
     memberRole === MembershipRole.LEADER ||
     memberRole === 2;
   const isCurrentUser = user?.id === member?.id;
-  // Show promote/demote if user can manage members AND we have group role data
-  const canPromoteDemote = canManageMembers && memberRole !== undefined;
+  // Global community admins can self-promote/demote in any group they're a
+  // member of — useful when an admin needs leader powers in a group they
+  // didn't create. The backend (`groupMembers.updateRole`) already permits
+  // this via its `isCommAdmin` short-circuit; this just unhides the UI.
+  const isGlobalAdmin = user?.is_admin === true;
+  // Show promote/demote if user can manage members AND we have group role
+  // data. Self-actions are normally hidden, but global admins can self-act.
+  const canPromoteDemote =
+    canManageMembers && memberRole !== undefined && (!isCurrentUser || isGlobalAdmin);
 
   // Visible to ANY caller — non-admin members can still view profiles.
   const handleViewProfile = () => {
@@ -511,7 +518,7 @@ function MemberActionsModal({
                 View profile
               </Text>
             </TouchableOpacity>
-            {canPromoteDemote && !isCurrentUser && (
+            {canPromoteDemote && (
               <>
                 {isLeader ? (
                   <TouchableOpacity
