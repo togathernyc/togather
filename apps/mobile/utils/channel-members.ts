@@ -16,6 +16,13 @@ export interface ChannelMember {
    * UI can show channel ownership and group leadership independently.
    */
   groupRole?: string;
+  /**
+   * True when the user has no push tokens for the current environment.
+   * UI surfaces overlay a slashed-bell badge on the avatar so senders
+   * know not to expect immediate delivery. Source: `pushTokens` (see
+   * `lib/notifications/enabledStatus.ts` on the server).
+   */
+  notificationsDisabled?: boolean;
   syncSource?: string;
   syncMetadata?: {
     serviceTypeName?: string;

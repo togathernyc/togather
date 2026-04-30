@@ -12,6 +12,11 @@ interface ChannelMember {
   displayName: string;
   profilePhoto?: string;
   role: string;
+  /**
+   * Mirrors backend `getChannelMembers` so the @mention autocomplete and
+   * any other consumer can render the slashed-bell badge.
+   */
+  notificationsDisabled?: boolean;
 }
 
 interface UseChannelMembersResult {

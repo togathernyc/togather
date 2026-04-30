@@ -13,6 +13,7 @@ import { query, mutation } from "../../_generated/server";
 import { now, normalizePhone, getMediaUrl } from "../../lib/utils";
 import { requireAuth } from "../../lib/auth";
 import { searchCommunityMembersPaginated } from "../../lib/memberSearch";
+import { getUsersWithNotificationsDisabled } from "../../lib/notifications/enabledStatus";
 import { syncAnnouncementGroupMembership } from "../sync/memberships";
 import {
   requireCommunityAdmin,
@@ -180,8 +181,22 @@ export const searchCommunityMembers = query({
       return b.appLastLogin - a.appLastLogin;
     });
 
-    // Take only the requested limit and remove sort fields from response
-    const limitedMatches = matches.slice(0, limit).map(({ communityLastLogin, appLastLogin, ...rest }) => rest);
+    // Slice to the response limit BEFORE looking up notif-disabled status —
+    // pushTokens reads should scale with the number of rows we're actually
+    // returning, not with how many candidates the search index pulled
+    // back (up to 500). For broad queries this avoids hundreds of extra
+    // reads per keystroke (codex review #372).
+    const sliced = matches.slice(0, limit);
+    const sliceNotifsDisabled = await getUsersWithNotificationsDisabled(
+      ctx,
+      sliced.map((m) => m.id),
+    );
+    const limitedMatches = sliced.map(
+      ({ communityLastLogin, appLastLogin, ...rest }) => ({
+        ...rest,
+        notificationsDisabled: sliceNotifsDisabled.has(rest.id),
+      }),
+    );
 
     return {
       members: limitedMatches,
@@ -284,6 +299,10 @@ export const getCommunityMemberById = query({
     const attendedCount = communityAttendances.filter((a) => a.status === 1).length;
     const attendanceRate = totalAttendance > 0 ? (attendedCount / totalAttendance) * 100 : 0;
 
+    const notifsDisabled = await getUsersWithNotificationsDisabled(ctx, [
+      user._id,
+    ]);
+
     return {
       id: user._id,
       firstName: user.firstName || "",
@@ -292,6 +311,7 @@ export const getCommunityMemberById = query({
       phone: user.phone || null,
       phoneVerified: user.phoneVerified || false,
       profilePhoto: getMediaUrl(user.profilePhoto),
+      notificationsDisabled: notifsDisabled.has(user._id),
       dateOfBirth: user.dateOfBirth || null,
       lastLogin: communityMembership.lastLogin || null,
       communityMembership: {

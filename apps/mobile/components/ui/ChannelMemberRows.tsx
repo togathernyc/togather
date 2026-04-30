@@ -10,6 +10,7 @@ import React, { ReactNode } from "react";
 import { View, Text, StyleSheet, Image } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@hooks/useTheme";
+import { NotificationsDisabledBadge } from "@components/ui/NotificationsDisabledBadge";
 import type { ChannelMember, UnsyncedPerson } from "@/utils/channel-members";
 import { getDebugReasonText } from "@/utils/channel-members";
 
@@ -58,7 +59,9 @@ export function SyncedMemberRowContent({
 
   return (
     <>
-      {/* Avatar */}
+      {/* Avatar — wrapped in a relatively-positioned container so the
+          notifications-disabled badge can overlay the bottom-right corner
+          (same pattern used by `<Avatar>` in `components/ui/Avatar.tsx`). */}
       <View style={styles.memberAvatar}>
         {member.profilePhoto ? (
           <Image source={{ uri: member.profilePhoto }} style={styles.avatarImage} />
@@ -67,6 +70,9 @@ export function SyncedMemberRowContent({
             <Text style={[styles.avatarInitials, { color: colors.textInverse }]}>{initials}</Text>
           </View>
         )}
+        {member.notificationsDisabled ? (
+          <NotificationsDisabledBadge avatarSize={44} />
+        ) : null}
       </View>
 
       {/* Name and badges */}
@@ -192,19 +198,23 @@ export function UnsyncedPersonRowContent({
 
 const styles = StyleSheet.create({
   memberAvatar: {
+    // No overflow:hidden on the wrapper so the notifications-disabled
+    // badge can peek past the bottom-right corner. The inner Image /
+    // placeholder owns the circular crop.
     width: 44,
     height: 44,
-    borderRadius: 22,
-    overflow: "hidden",
     marginRight: 12,
+    position: "relative",
   },
   avatarImage: {
     width: "100%",
     height: "100%",
+    borderRadius: 22,
   },
   avatarPlaceholder: {
     width: "100%",
     height: "100%",
+    borderRadius: 22,
     justifyContent: "center",
     alignItems: "center",
   },

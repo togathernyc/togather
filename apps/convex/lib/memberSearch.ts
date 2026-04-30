@@ -14,6 +14,7 @@ import type { QueryCtx } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import { getMediaUrl, normalizePhone } from "./utils";
 import { COMMUNITY_ADMIN_THRESHOLD, PRIMARY_ADMIN_ROLE } from "./permissions";
+import { getUsersWithNotificationsDisabled } from "./notifications/enabledStatus";
 
 /**
  * Base member result returned by search
@@ -26,6 +27,13 @@ export interface MemberSearchResult {
   phone: string | null;
   profilePhoto: string | null;
   isAdmin: boolean;
+  /**
+   * True when the user has no push tokens for the current environment —
+   * UI surfaces overlay a slashed-bell badge on the avatar so admins know
+   * the person won't get an immediate push for any action they take.
+   * Truth source: `pushTokens` (see `lib/notifications/enabledStatus.ts`).
+   */
+  notificationsDisabled: boolean;
 }
 
 /**
@@ -314,9 +322,28 @@ export async function searchCommunityMembersInternal(
   );
   const memberships = await Promise.all(membershipPromises);
 
+  // Pre-compute the candidate set so we can batch the notif-disabled
+  // lookup once for the whole result. The loop below filters again with
+  // the limit, but the extra IDs collected here are negligible.
+  const candidateUserIds: Id<"users">[] = [];
+  const usersArray = Array.from(allMatchingUsers.values());
+  for (let i = 0; i < usersArray.length; i++) {
+    const user = usersArray[i];
+    const membership = memberships[i];
+    if (!membership) continue;
+    if (excludeIds.has(user._id)) continue;
+    if (excludedGroupUserIds?.has(user._id)) continue;
+    if (targetUserIds && !targetUserIds.has(user._id)) continue;
+    candidateUserIds.push(user._id);
+    if (candidateUserIds.length >= limit) break;
+  }
+  const notifsDisabled = await getUsersWithNotificationsDisabled(
+    ctx,
+    candidateUserIds,
+  );
+
   // Build results for users who are community members
   const results: (MemberSearchResult | AdminMemberSearchResult)[] = [];
-  const usersArray = Array.from(allMatchingUsers.values());
 
   for (let i = 0; i < usersArray.length; i++) {
     if (results.length >= limit) break;
@@ -346,6 +373,7 @@ export async function searchCommunityMembersInternal(
       phone: user.phone || null,
       profilePhoto: getMediaUrl(user.profilePhoto) ?? null,
       isAdmin,
+      notificationsDisabled: notifsDisabled.has(user._id),
     };
 
     if (includeAdminFields) {
@@ -419,6 +447,13 @@ export async function searchCommunityMembersPaginated(
       users.filter((u): u is NonNullable<typeof u> => u !== null).map((u) => [u._id, u])
     );
 
+    // Look up notif-disabled status for the page in one batched call so
+    // each row can render the slashed-bell badge.
+    const pageNotifsDisabled = await getUsersWithNotificationsDisabled(
+      ctx,
+      pageMemberships.map((m) => m.userId),
+    );
+
     // Build results - NO group counts (shown in detail view only for speed)
     const results: AdminMemberSearchResult[] = [];
     for (const membership of pageMemberships) {
@@ -438,6 +473,7 @@ export async function searchCommunityMembersPaginated(
         role: membership.roles ?? 0,
         lastLogin: membership.lastLogin || null,
         groupsCount: 0, // Not fetched in list view for performance - see detail view
+        notificationsDisabled: pageNotifsDisabled.has(user._id),
       });
     }
 
@@ -533,6 +569,13 @@ export async function searchCommunityMembersPaginated(
   // Apply pagination
   const paginatedMembers = matchingMembers.slice(skip, skip + pageSize);
 
+  // Look up notif-disabled status for the page in one batched call so
+  // each row can render the slashed-bell badge.
+  const filteredNotifsDisabled = await getUsersWithNotificationsDisabled(
+    ctx,
+    paginatedMembers.map(({ user }) => user._id),
+  );
+
   // Build results - NO group counts for performance (shown in detail view)
   const results: AdminMemberSearchResult[] = paginatedMembers.map(({ user, membership }) => {
     const isAdmin = (membership.roles ?? 0) >= COMMUNITY_ADMIN_THRESHOLD;
@@ -548,6 +591,7 @@ export async function searchCommunityMembersPaginated(
       role: membership.roles ?? 0,
       lastLogin: membership.lastLogin || null,
       groupsCount: 0, // Not fetched in list view for performance - see detail view
+      notificationsDisabled: filteredNotifsDisabled.has(user._id),
     };
   });
 

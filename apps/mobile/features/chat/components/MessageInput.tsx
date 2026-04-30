@@ -29,6 +29,7 @@ import { useSendMessage } from '../hooks/useConvexSendMessage';
 import { useConnectionStatus } from '@providers/ConnectionProvider';
 import { useTypingIndicators } from '../hooks/useTypingIndicators';
 import { useChannelMembers } from '../hooks/useChannelMembers';
+import { NotificationsDisabledBadge } from '@components/ui/NotificationsDisabledBadge';
 import { useLinkPreview } from '../hooks/useLinkPreview';
 import { LinkPreviewCard } from './LinkPreviewCard';
 import { FilePreview } from './FilePreview';
@@ -78,6 +79,7 @@ interface ChannelMember {
   userId: Id<"users">;
   displayName: string;
   profilePhoto?: string;
+  notificationsDisabled?: boolean;
 }
 
 interface MentionMatch {
@@ -906,18 +908,23 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
                 style={[styles.autocompleteItem, { borderBottomColor: themeColors.borderLight }]}
                 onPress={() => insertMention(item)}
               >
-                {item.profilePhoto ? (
-                  <Image
-                    source={{ uri: item.profilePhoto }}
-                    style={styles.autocompleteAvatar}
-                  />
-                ) : (
-                  <View style={[styles.autocompleteAvatar, styles.autocompleteAvatarPlaceholder]}>
-                    <Text style={styles.autocompleteAvatarText}>
-                      {item.displayName.charAt(0).toUpperCase()}
-                    </Text>
-                  </View>
-                )}
+                <View style={styles.autocompleteAvatarWrap}>
+                  {item.profilePhoto ? (
+                    <Image
+                      source={{ uri: item.profilePhoto }}
+                      style={styles.autocompleteAvatar}
+                    />
+                  ) : (
+                    <View style={[styles.autocompleteAvatar, styles.autocompleteAvatarPlaceholder]}>
+                      <Text style={styles.autocompleteAvatarText}>
+                        {item.displayName.charAt(0).toUpperCase()}
+                      </Text>
+                    </View>
+                  )}
+                  {item.notificationsDisabled ? (
+                    <NotificationsDisabledBadge avatarSize={32} />
+                  ) : null}
+                </View>
                 <Text style={[styles.autocompleteName, { color: themeColors.text }]}>{item.displayName}</Text>
               </Pressable>
             )}
@@ -1168,11 +1175,16 @@ const styles = StyleSheet.create({
     padding: 12,
     borderBottomWidth: 1,
   },
+  autocompleteAvatarWrap: {
+    width: 32,
+    height: 32,
+    marginRight: 12,
+    position: 'relative',
+  },
   autocompleteAvatar: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    marginRight: 12,
   },
   autocompleteAvatarPlaceholder: {
     backgroundColor: '#007AFF',

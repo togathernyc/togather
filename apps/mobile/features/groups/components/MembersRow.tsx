@@ -59,6 +59,8 @@ export function MembersRow({
                 imageUrl={member.profile_photo}
                 size={48}
                 placeholderBackgroundColor={colors.border}
+                notificationsDisabled={member.notificationsDisabled}
+                notificationsBadgeRingColor={colors.surfaceSecondary}
               />
               {isLeader && (
                 <View
