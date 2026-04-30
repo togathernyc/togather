@@ -1170,12 +1170,18 @@ export const syncCommunityAutoChannels = internalAction({
 
         for (const member of membersToProcess) {
           const pcoPersonId = member.pcoPersonId!;
-          const contact = contactByPerson.get(pcoPersonId);
-          if (!contact) {
-            // Should never happen since we collected from the same caches,
-            // but guard anyway.
-            continue;
-          }
+          // If getPersonContactInfo failed earlier (allSettled), fall back to
+          // the team-roster name with empty phone/email instead of skipping.
+          // Skipping would omit this person from expectedUserIds, and the
+          // subsequent removeStalePcoSyncedMembers call would yank them out of
+          // a channel they're still scheduled for. matchByPerson will still
+          // resolve via the "already_linked" path if they were linked on a
+          // prior run, keeping existing channel members intact.
+          const contact = contactByPerson.get(pcoPersonId) ?? {
+            name: member.name,
+            phone: null,
+            email: null,
+          };
           const matchResult = matchByPerson.get(pcoPersonId);
           if (!matchResult) continue;
 
