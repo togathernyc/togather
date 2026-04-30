@@ -223,4 +223,115 @@ let passed = 0;
   passed++;
 }
 
-console.log(`✅ check-navigator-screens self-tests: ${passed}/6 passed`);
+// ---------------------------------------------------------------------------
+// 7. Parenthesized && — `{flag && (<Stack.Screen .../>)}` — must still fail.
+//    Codex caught this gap on the initial PR; the immediate char before the
+//    Screen tag is `(`, not the operator, so a naive preceding-char check
+//    silently passes the conditional registration.
+// ---------------------------------------------------------------------------
+{
+  const { root, appRoot } = setup();
+  writeLayout(
+    appRoot,
+    "and-paren",
+    `import { Stack } from 'expo-router';
+     export default function L({ flag }: any) {
+       return (
+         <Stack>
+           <Stack.Screen name="index" />
+           {flag && (<Stack.Screen name="x" />)}
+         </Stack>
+       );
+     }`,
+  );
+  const result = runCheck(root);
+  assert(
+    result.code !== 0,
+    `Expected fail on parenthesized && Screen; got pass: ${result.stdout}`,
+  );
+  assert(
+    result.stderr.includes("&&"),
+    `Expected stderr to mention &&; got: ${result.stderr}`,
+  );
+  passed++;
+}
+
+// ---------------------------------------------------------------------------
+// 8. Parenthesized ternary — `{flag ? (<Stack.Screen .../>) : null}` — fail.
+// ---------------------------------------------------------------------------
+{
+  const { root, appRoot } = setup();
+  writeLayout(
+    appRoot,
+    "ternary-paren",
+    `import { Stack } from 'expo-router';
+     export default function L({ flag }: any) {
+       return (
+         <Stack>
+           <Stack.Screen name="index" />
+           {flag ? (<Stack.Screen name="x" />) : null}
+         </Stack>
+       );
+     }`,
+  );
+  const result = runCheck(root);
+  assert(
+    result.code !== 0,
+    `Expected fail on parenthesized ternary Screen; got pass: ${result.stdout}`,
+  );
+  passed++;
+}
+
+// ---------------------------------------------------------------------------
+// 9. Doubly-parenthesized — `{flag && ((<Stack.Screen .../>))}` — fail.
+// ---------------------------------------------------------------------------
+{
+  const { root, appRoot } = setup();
+  writeLayout(
+    appRoot,
+    "double-paren",
+    `import { Stack } from 'expo-router';
+     export default function L({ flag }: any) {
+       return (
+         <Stack>
+           <Stack.Screen name="index" />
+           {flag && ((<Stack.Screen name="x" />))}
+         </Stack>
+       );
+     }`,
+  );
+  const result = runCheck(root);
+  assert(
+    result.code !== 0,
+    `Expected fail on doubly-parenthesized && Screen; got pass: ${result.stdout}`,
+  );
+  passed++;
+}
+
+// ---------------------------------------------------------------------------
+// 10. Bare grouping parens (no operator) are still allowed — guards against
+//     over-broad paren-skipping.
+// ---------------------------------------------------------------------------
+{
+  const { root, appRoot } = setup();
+  writeLayout(
+    appRoot,
+    "bare-paren",
+    `import { Stack } from 'expo-router';
+     export default function L() {
+       return (
+         <Stack>
+           {(<Stack.Screen name="index" />)}
+         </Stack>
+       );
+     }`,
+  );
+  const result = runCheck(root);
+  assert(
+    result.code === 0,
+    `Expected pass on bare-paren grouping (no operator); got fail: ${result.stderr}`,
+  );
+  passed++;
+}
+
+console.log(`✅ check-navigator-screens self-tests: ${passed}/10 passed`);

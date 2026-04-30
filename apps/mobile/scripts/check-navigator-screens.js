@@ -105,15 +105,24 @@ const SCREEN_TAG_RE =
 
 /**
  * For a screen-tag match at index `idx` in source `code`, walk backwards
- * skipping whitespace and look for a conditional operator (`?`, `&&`,
- * `||`) that immediately precedes the tag. Returns the operator if found,
- * else null. We only look at the same statement — bail if we hit a
- * statement terminator.
+ * skipping whitespace and any number of opening parentheses, then check
+ * the immediately preceding token for a conditional operator (`?`, `&&`,
+ * `||`). Returns the operator if found, else null.
+ *
+ * The paren-skip is important: codex review caught that a naive
+ * "preceding char is the operator" check misses the common JSX form
+ *
+ *     {flag && (<Stack.Screen ... />)}
+ *     {flag ? (<Stack.Screen ... />) : null}
+ *
+ * because the character right before `<Stack.Screen>` is `(`, not the
+ * operator. We skip any sequence of whitespace and `(` before checking.
+ * Multiple parens (`(( <Stack.Screen .../> ))`) are handled too.
  */
 function findGuardingOperator(code, idx) {
   let i = idx - 1;
-  // Skip whitespace
-  while (i >= 0 && /\s/.test(code[i])) i--;
+  // Skip whitespace and opening parens (alternating until neither matches).
+  while (i >= 0 && (/\s/.test(code[i]) || code[i] === "(")) i--;
   if (i < 1) return null;
   const two = code.slice(i - 1, i + 1);
   const one = code[i];
