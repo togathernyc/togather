@@ -931,10 +931,20 @@ export const syncCommunityAutoChannels = internalAction({
       Id<"autoChannelConfigs">,
       FilterableMember[]
     >();
+    // Per-step error tracking: a single per-(serviceType) plan fetch or
+    // per-(serviceType, plan) member fetch shouldn't fail every config in
+    // the community — only the configs that actually depend on the failed
+    // data. We populate these maps inline and surface per-config errors at
+    // dispatch time via configFetchErrors.
+    const failedServiceTypeErrors = new Map<string, string>();
+    const failedPlanErrors = new Map<string, string>(); // "stId:planId" -> message
+    const configFetchErrors = new Map<Id<"autoChannelConfigs">, string>();
 
     try {
       // Now that we know there's PCO work to do, get one access token for the
-      // whole community.
+      // whole community. Auth failure is genuinely community-wide — there's
+      // no per-config remediation — so we let it fall through to the outer
+      // catch below.
       const accessToken = await getValidAccessToken(ctx, args.communityId);
 
       // Step 4: Compute the union of serviceTypeIds across surviving configs.
@@ -945,14 +955,23 @@ export const syncCommunityAutoChannels = internalAction({
         }
       }
 
-      // Step 5: Fetch upcoming plans once per unique service type.
+      // Step 5: Fetch upcoming plans once per unique service type. Each fetch
+      // is isolated — a failure for service type X only fails configs that
+      // depend on X, not unrelated configs in the community.
       for (const serviceTypeId of serviceTypeUnion) {
-        const plans = await fetchUpcomingPlans(
-          accessToken,
-          serviceTypeId,
-          DEFAULT_PLANS_LOOKAHEAD
-        );
-        plansByServiceType.set(serviceTypeId, plans);
+        try {
+          const plans = await fetchUpcomingPlans(
+            accessToken,
+            serviceTypeId,
+            DEFAULT_PLANS_LOOKAHEAD
+          );
+          plansByServiceType.set(serviceTypeId, plans);
+        } catch (e) {
+          failedServiceTypeErrors.set(
+            serviceTypeId,
+            e instanceof Error ? e.message : "Unknown error"
+          );
+        }
       }
 
       // For each config, compute its target plan per service type using its own
@@ -1004,16 +1023,25 @@ export const syncCommunityAutoChannels = internalAction({
 
       // Step 6: Fetch team members once per unique (serviceTypeId, planId).
       // We pass undefined for teamIds so we get every team — per-config team
-      // filtering happens in memory later via applyFilters.
+      // filtering happens in memory later via applyFilters. Each fetch is
+      // isolated so one failed plan doesn't fail configs that didn't depend
+      // on it.
       for (const key of planFetchSet) {
         const [serviceTypeId, planId] = key.split(":");
-        const members = await fetchPlanTeamMembers(
-          accessToken,
-          serviceTypeId,
-          planId,
-          undefined
-        );
-        membersByPlan.set(key, members);
+        try {
+          const members = await fetchPlanTeamMembers(
+            accessToken,
+            serviceTypeId,
+            planId,
+            undefined
+          );
+          membersByPlan.set(key, members);
+        } catch (e) {
+          failedPlanErrors.set(
+            key,
+            e instanceof Error ? e.message : "Unknown error"
+          );
+        }
       }
 
       // Step 6.5: Per-config build allMembers + applyFilters; cache the
@@ -1026,6 +1054,36 @@ export const syncCommunityAutoChannels = internalAction({
       const filteredPersonIds = new Set<string>();
       for (const ctxItem of contexts) {
         const selection = configPlanSelections.get(ctxItem.config._id);
+
+        // Surface per-step fetch failures that affect THIS config: any of
+        // its required service types or selected plans missing from the
+        // caches. Failed configs get an empty filteredMembers (so they don't
+        // contribute personIds for matching) and the dispatch loop's per-
+        // config catch records the error via updateSyncStatus.
+        const fetchErrorBits: string[] = [];
+        for (const stId of ctxItem.serviceTypeIds) {
+          const stError = failedServiceTypeErrors.get(stId);
+          if (stError) {
+            fetchErrorBits.push(`service type ${stId}: ${stError}`);
+          }
+        }
+        if (selection) {
+          for (const [stId, target] of selection.perServiceType) {
+            const planError = failedPlanErrors.get(`${stId}:${target.planId}`);
+            if (planError) {
+              fetchErrorBits.push(`plan ${target.planId}: ${planError}`);
+            }
+          }
+        }
+        if (fetchErrorBits.length > 0) {
+          configFetchErrors.set(
+            ctxItem.config._id,
+            `Shared PCO fetch failed: ${fetchErrorBits.join("; ")}`
+          );
+          filteredMembersByConfig.set(ctxItem.config._id, []);
+          continue;
+        }
+
         if (!selection) {
           filteredMembersByConfig.set(ctxItem.config._id, []);
           continue;
@@ -1134,11 +1192,12 @@ export const syncCommunityAutoChannels = internalAction({
         }
       }
     } catch (sharedError) {
-      // Shared PCO fetch phase failed (token refresh, 429/5xx on plans/members,
-      // etc.). Without this catch the function would exit without ever calling
-      // updateSyncStatus on the affected configs, leaving their lastSyncStatus
-      // showing a stale "success". Mark every surviving context as errored so
-      // admins see the real state, then return cleanly.
+      // Catches genuinely community-wide failures: most commonly token
+      // refresh during getValidAccessToken (no per-config remediation
+      // possible), or any unexpected programming error. Per-(serviceType)
+      // and per-(serviceType,plan) fetch failures are isolated above via
+      // failedServiceTypeErrors/failedPlanErrors and surfaced through the
+      // per-config dispatch path; they do NOT reach this catch.
       const errorMessage =
         sharedError instanceof Error ? sharedError.message : "Unknown error";
       const sharedErrorResults: PerConfigResult[] = [];
@@ -1182,6 +1241,16 @@ export const syncCommunityAutoChannels = internalAction({
       const syncedServices = selection?.syncedServices ?? [];
 
       try {
+        // If a per-step PCO fetch failed in a way that affects THIS config
+        // (one of its required service types or selected plans threw), fail
+        // just this config — the per-config catch below records the error
+        // via updateSyncStatus and we move on. Other configs in the
+        // community whose data is intact still sync normally.
+        const fetchError = configFetchErrors.get(config._id);
+        if (fetchError) {
+          throw new Error(fetchError);
+        }
+
         // Pre-filtered roster was built and cached during Step 6.5 of the
         // shared phase. Reading from the cache (instead of recomputing here)
         // keeps the dispatch deterministic with the matching pass that just
