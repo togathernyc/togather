@@ -861,34 +861,10 @@ export const syncCommunityAutoChannels = internalAction({
       return { processed: earlyResults.length, results: earlyResults };
     }
 
-    // Now that we know there's PCO work to do, get one access token for the
-    // whole community.
-    const accessToken = await getValidAccessToken(ctx, args.communityId);
-
-    // Step 4: Compute the union of serviceTypeIds across surviving configs.
-    const serviceTypeUnion = new Set<string>();
-    for (const ctxItem of contexts) {
-      for (const id of ctxItem.serviceTypeIds) {
-        serviceTypeUnion.add(id);
-      }
-    }
-
-    // Step 5: Fetch upcoming plans once per unique service type.
-    const plansByServiceType = new Map<
-      string,
-      Awaited<ReturnType<typeof fetchUpcomingPlans>>
-    >();
-    for (const serviceTypeId of serviceTypeUnion) {
-      const plans = await fetchUpcomingPlans(
-        accessToken,
-        serviceTypeId,
-        DEFAULT_PLANS_LOOKAHEAD
-      );
-      plansByServiceType.set(serviceTypeId, plans);
-    }
-
-    // For each config, compute its target plan per service type using its own
-    // add window. Cache so we don't recompute later.
+    // Hoist shared-phase state so the per-config dispatch below can read it
+    // on the success path. Populated inside the try block; on shared-phase
+    // failure we fall through to the catch and mark every surviving config
+    // as errored before returning.
     type TargetPlan = {
       planId: string;
       planDateMs: number;
@@ -898,135 +874,198 @@ export const syncCommunityAutoChannels = internalAction({
       perServiceType: Map<string, TargetPlan>;
       syncedServices: Array<{ serviceTypeId: string; planId: string; planDate: string }>;
     };
+    type MatchResult = {
+      userId: Id<"users"> | null;
+      status: "already_linked" | "matched" | "not_found";
+    };
+
+    const plansByServiceType = new Map<
+      string,
+      Awaited<ReturnType<typeof fetchUpcomingPlans>>
+    >();
+    const membersByPlan = new Map<
+      string,
+      Awaited<ReturnType<typeof fetchPlanTeamMembers>>
+    >();
+    const contactByPerson = new Map<
+      string,
+      { name: string; phone: string | null; email: string | null }
+    >();
+    const matchByPerson = new Map<string, MatchResult>();
     const configPlanSelections = new Map<
       Id<"autoChannelConfigs">,
       ConfigPlanSelection
     >();
 
-    const now = Date.now();
-    const planFetchSet = new Set<string>(); // "serviceTypeId:planId"
+    try {
+      // Now that we know there's PCO work to do, get one access token for the
+      // whole community.
+      const accessToken = await getValidAccessToken(ctx, args.communityId);
 
-    for (const ctxItem of contexts) {
-      const perServiceType = new Map<string, TargetPlan>();
-      const syncedServices: Array<{
-        serviceTypeId: string;
-        planId: string;
-        planDate: string;
-      }> = [];
+      // Step 4: Compute the union of serviceTypeIds across surviving configs.
+      const serviceTypeUnion = new Set<string>();
+      for (const ctxItem of contexts) {
+        for (const id of ctxItem.serviceTypeIds) {
+          serviceTypeUnion.add(id);
+        }
+      }
 
-      for (const serviceTypeId of ctxItem.serviceTypeIds) {
-        const plans = plansByServiceType.get(serviceTypeId);
-        if (!plans || plans.length === 0) continue;
+      // Step 5: Fetch upcoming plans once per unique service type.
+      for (const serviceTypeId of serviceTypeUnion) {
+        const plans = await fetchUpcomingPlans(
+          accessToken,
+          serviceTypeId,
+          DEFAULT_PLANS_LOOKAHEAD
+        );
+        plansByServiceType.set(serviceTypeId, plans);
+      }
 
-        let target: TargetPlan | null = null;
-        for (const plan of plans) {
-          const planDateMs = new Date(plan.attributes.sort_date).getTime();
-          const addDate = planDateMs - ctxItem.addWindowMs;
-          if (now >= addDate) {
-            target = {
-              planId: plan.id,
-              planDateMs,
-              planDateStr: plan.attributes.sort_date,
-            };
-            break;
+      // For each config, compute its target plan per service type using its own
+      // add window. Cache so we don't recompute later.
+      const now = Date.now();
+      const planFetchSet = new Set<string>(); // "serviceTypeId:planId"
+
+      for (const ctxItem of contexts) {
+        const perServiceType = new Map<string, TargetPlan>();
+        const syncedServices: Array<{
+          serviceTypeId: string;
+          planId: string;
+          planDate: string;
+        }> = [];
+
+        for (const serviceTypeId of ctxItem.serviceTypeIds) {
+          const plans = plansByServiceType.get(serviceTypeId);
+          if (!plans || plans.length === 0) continue;
+
+          let target: TargetPlan | null = null;
+          for (const plan of plans) {
+            const planDateMs = new Date(plan.attributes.sort_date).getTime();
+            const addDate = planDateMs - ctxItem.addWindowMs;
+            if (now >= addDate) {
+              target = {
+                planId: plan.id,
+                planDateMs,
+                planDateStr: plan.attributes.sort_date,
+              };
+              break;
+            }
+          }
+
+          if (!target) continue;
+          perServiceType.set(serviceTypeId, target);
+          syncedServices.push({
+            serviceTypeId,
+            planId: target.planId,
+            planDate: target.planDateStr,
+          });
+          planFetchSet.add(`${serviceTypeId}:${target.planId}`);
+        }
+
+        configPlanSelections.set(ctxItem.config._id, {
+          perServiceType,
+          syncedServices,
+        });
+      }
+
+      // Step 6: Fetch team members once per unique (serviceTypeId, planId).
+      // We pass undefined for teamIds so we get every team — per-config team
+      // filtering happens in memory later via applyFilters.
+      for (const key of planFetchSet) {
+        const [serviceTypeId, planId] = key.split(":");
+        const members = await fetchPlanTeamMembers(
+          accessToken,
+          serviceTypeId,
+          planId,
+          undefined
+        );
+        membersByPlan.set(key, members);
+      }
+
+      // Step 7: Dedupe people across all cached plans, then batch-fetch contact
+      // info concurrently in groups of 10. We use Promise.allSettled so a single
+      // failed lookup (transient 5xx, deleted-but-still-rostered person, etc.)
+      // doesn't abort the entire community's sync. Failed PIDs are simply
+      // omitted from contactByPerson — those people won't be added this run,
+      // but unrelated channels still sync.
+      const uniquePersonIds = new Set<string>();
+      for (const members of membersByPlan.values()) {
+        for (const m of members) {
+          if (m.pcoPersonId) {
+            uniquePersonIds.add(m.pcoPersonId);
           }
         }
-
-        if (!target) continue;
-        perServiceType.set(serviceTypeId, target);
-        syncedServices.push({
-          serviceTypeId,
-          planId: target.planId,
-          planDate: target.planDateStr,
-        });
-        planFetchSet.add(`${serviceTypeId}:${target.planId}`);
       }
 
-      configPlanSelections.set(ctxItem.config._id, {
-        perServiceType,
-        syncedServices,
-      });
-    }
-
-    // Step 6: Fetch team members once per unique (serviceTypeId, planId).
-    // We pass undefined for teamIds so we get every team — per-config team
-    // filtering happens in memory later via applyFilters.
-    const membersByPlan = new Map<
-      string,
-      Awaited<ReturnType<typeof fetchPlanTeamMembers>>
-    >();
-    for (const key of planFetchSet) {
-      const [serviceTypeId, planId] = key.split(":");
-      const members = await fetchPlanTeamMembers(
-        accessToken,
-        serviceTypeId,
-        planId,
-        undefined
-      );
-      membersByPlan.set(key, members);
-    }
-
-    // Step 7: Dedupe people across all cached plans, then batch-fetch contact
-    // info concurrently in groups of 10. (Lower than the previous per-config
-    // batch of 15 because we now share contact lookups across configs and want
-    // headroom under PCO's 80/20s safe rate.)
-    const uniquePersonIds = new Set<string>();
-    for (const members of membersByPlan.values()) {
-      for (const m of members) {
-        if (m.pcoPersonId) {
-          uniquePersonIds.add(m.pcoPersonId);
+      const CONTACT_BATCH_SIZE = 10;
+      const personIdList = Array.from(uniquePersonIds);
+      for (let i = 0; i < personIdList.length; i += CONTACT_BATCH_SIZE) {
+        const batch = personIdList.slice(i, i + CONTACT_BATCH_SIZE);
+        const results = await Promise.allSettled(
+          batch.map(async (pid) => {
+            const contact = await getPersonContactInfo(accessToken, pid);
+            return { pid, contact };
+          })
+        );
+        for (const r of results) {
+          if (r.status === "fulfilled") {
+            contactByPerson.set(r.value.pid, r.value.contact);
+          }
         }
       }
-    }
 
-    const contactByPerson = new Map<
-      string,
-      { name: string; phone: string | null; email: string | null }
-    >();
-    const CONTACT_BATCH_SIZE = 10;
-    const personIdList = Array.from(uniquePersonIds);
-    for (let i = 0; i < personIdList.length; i += CONTACT_BATCH_SIZE) {
-      const batch = personIdList.slice(i, i + CONTACT_BATCH_SIZE);
-      const results = await Promise.all(
-        batch.map(async (pid) => {
-          const contact = await getPersonContactInfo(accessToken, pid);
-          return { pid, contact };
-        })
-      );
-      for (const { pid, contact } of results) {
-        contactByPerson.set(pid, contact);
+      // Step 8: Match each unique person once. matchAndLinkPcoPerson is a Convex
+      // mutation, not a PCO API call, so the concern here is latency rather than
+      // rate limits. We batch in groups of 10 to keep things tidy.
+      const MATCH_BATCH_SIZE = 10;
+      for (let i = 0; i < personIdList.length; i += MATCH_BATCH_SIZE) {
+        const batch = personIdList.slice(i, i + MATCH_BATCH_SIZE);
+        const results = await Promise.all(
+          batch.map(async (pid) => {
+            const contact = contactByPerson.get(pid);
+            const matchResult = (await ctx.runMutation(
+              internal.functions.pcoServices.matching.matchAndLinkPcoPerson,
+              {
+                communityId: args.communityId,
+                pcoPersonId: pid,
+                pcoPhone: contact?.phone || undefined,
+                pcoEmail: contact?.email || undefined,
+              }
+            )) as MatchResult;
+            return { pid, matchResult };
+          })
+        );
+        for (const { pid, matchResult } of results) {
+          matchByPerson.set(pid, matchResult);
+        }
       }
-    }
-
-    // Step 8: Match each unique person once. matchAndLinkPcoPerson is a Convex
-    // mutation, not a PCO API call, so the concern here is latency rather than
-    // rate limits. We batch in groups of 10 to keep things tidy.
-    type MatchResult = {
-      userId: Id<"users"> | null;
-      status: "already_linked" | "matched" | "not_found";
-    };
-    const matchByPerson = new Map<string, MatchResult>();
-    const MATCH_BATCH_SIZE = 10;
-    for (let i = 0; i < personIdList.length; i += MATCH_BATCH_SIZE) {
-      const batch = personIdList.slice(i, i + MATCH_BATCH_SIZE);
-      const results = await Promise.all(
-        batch.map(async (pid) => {
-          const contact = contactByPerson.get(pid);
-          const matchResult = (await ctx.runMutation(
-            internal.functions.pcoServices.matching.matchAndLinkPcoPerson,
-            {
-              communityId: args.communityId,
-              pcoPersonId: pid,
-              pcoPhone: contact?.phone || undefined,
-              pcoEmail: contact?.email || undefined,
-            }
-          )) as MatchResult;
-          return { pid, matchResult };
-        })
-      );
-      for (const { pid, matchResult } of results) {
-        matchByPerson.set(pid, matchResult);
+    } catch (sharedError) {
+      // Shared PCO fetch phase failed (token refresh, 429/5xx on plans/members,
+      // etc.). Without this catch the function would exit without ever calling
+      // updateSyncStatus on the affected configs, leaving their lastSyncStatus
+      // showing a stale "success". Mark every surviving context as errored so
+      // admins see the real state, then return cleanly.
+      const errorMessage =
+        sharedError instanceof Error ? sharedError.message : "Unknown error";
+      const sharedErrorResults: PerConfigResult[] = [];
+      for (const ctxItem of contexts) {
+        await ctx.runMutation(
+          internal.functions.pcoServices.rotation.updateSyncStatus,
+          {
+            configId: ctxItem.config._id,
+            status: "error",
+            error: errorMessage,
+          }
+        );
+        sharedErrorResults.push({
+          configId: ctxItem.config._id,
+          status: "error",
+          error: errorMessage,
+        });
       }
+      return {
+        processed: earlyResults.length + sharedErrorResults.length,
+        results: [...earlyResults, ...sharedErrorResults],
+      };
     }
 
     // Step 9: Per-config dispatch in memory.
