@@ -12,7 +12,7 @@ import {
   internalQuery,
 } from "../../_generated/server";
 import { internal } from "../../_generated/api";
-import { Id } from "../../_generated/dataModel";
+import { Doc, Id } from "../../_generated/dataModel";
 import {
   fetchUpcomingPlans,
   fetchPlanTeamMembers,
@@ -171,7 +171,17 @@ export const checkAndSyncUserToAutoChannels = internalAction({
     userId: v.id("users"),
     groupId: v.id("groups"),
   },
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args
+  ): Promise<
+    | { synced: false; reason: string }
+    | {
+        synced: true;
+        channelCount: number;
+        failedConfigIds?: string[];
+      }
+  > => {
     // Get all auto-channel configs for this group
     const configs = await ctx.runQuery(
       internal.functions.pcoServices.rotation.getAutoChannelConfigsForGroup,
@@ -182,21 +192,43 @@ export const checkAndSyncUserToAutoChannels = internalAction({
       return { synced: false, reason: "no_auto_channels" };
     }
 
+    // All configs in a group belong to the same community.
+    const communityId = configs[0].communityId;
+
+    // Single batched call shares plan/contact fetches across all configs in
+    // the group, instead of N separate syncs that each re-hit PCO.
+    let batched: CommunitySyncResult;
+    try {
+      batched = await ctx.runAction(
+        internal.functions.pcoServices.rotation.syncCommunityAutoChannels,
+        { communityId, configIds: configs.map((c) => c._id) }
+      );
+    } catch (error) {
+      console.error(
+        `Failed to sync auto-channels for group ${args.groupId}:`,
+        error
+      );
+      return {
+        synced: true,
+        channelCount: 0,
+        failedConfigIds: configs.map((c) => c._id),
+      };
+    }
+
     let syncedToChannels = 0;
     const failedConfigIds: string[] = [];
-
-    // For each config, run a sync to check if this user should be added
-    // The sync logic will handle checking if the user is scheduled and adding them if so
-    for (const config of configs) {
-      try {
-        await ctx.runAction(
-          internal.functions.pcoServices.rotation.syncAutoChannel,
-          { configId: config._id }
+    for (const r of batched.results) {
+      if (r.status === "error") {
+        console.error(
+          `Failed to sync auto-channel ${r.configId}:`,
+          r.error
         );
+        failedConfigIds.push(r.configId);
+      } else {
+        // Both "skipped" and "success" count as a successful sync attempt,
+        // matching the legacy behavior where syncAutoChannel returning a
+        // skip didn't count as a failure.
         syncedToChannels++;
-      } catch (error) {
-        console.error(`Failed to sync auto-channel ${config._id}:`, error);
-        failedConfigIds.push(config._id);
       }
     }
 
@@ -632,87 +664,198 @@ type SyncAutoChannelResult =
     };
 
 /**
- * Sync a single auto channel - the main rotation action.
- * Supports both legacy single-service-type configs and new filter-based multi-service configs.
+ * Per-config result returned by syncCommunityAutoChannels.
+ * Mirrors the shape of SyncAutoChannelResult plus configId, plus
+ * "error" status used when an individual config fails mid-batch.
  */
-export const syncAutoChannel = internalAction({
+type PerConfigResult =
+  | { configId: Id<"autoChannelConfigs">; status: "skipped"; reason: string }
+  | {
+      configId: Id<"autoChannelConfigs">;
+      status: "success";
+      addedCount: number;
+      removedCount: number;
+    }
+  | {
+      configId: Id<"autoChannelConfigs">;
+      status: "success";
+      addedCount: number;
+      removedCount: number;
+      planId: string;
+      planDate: string;
+    }
+  | {
+      configId: Id<"autoChannelConfigs">;
+      status: "success";
+      addedCount: number;
+      removedCount: number;
+      syncedServices: Array<{ serviceTypeId: string; planId: string; planDate: string }>;
+    }
+  | {
+      configId: Id<"autoChannelConfigs">;
+      status: "error";
+      error: string;
+    };
+
+type CommunitySyncResult = {
+  processed: number;
+  results: PerConfigResult[];
+};
+
+type AutoChannelConfigDoc = Doc<"autoChannelConfigs">;
+
+/**
+ * Batched community-level PCO Services sync.
+ *
+ * The cron job used to call syncAutoChannel(configId) per channel, which made
+ * each config independently re-fetch upcoming plans, team members, and per-person
+ * contact info from PCO. With several configs in a community sharing the same
+ * service types, cumulative API calls inside PCO's 100/20s rate limit window
+ * blew past the threshold and triggered HTTP 429s.
+ *
+ * This action fetches each (serviceType, plan) and each person's contact info
+ * exactly once per community per sync, then dispatches matched members into
+ * each config's channel using in-memory filtering. The fix is volume reduction —
+ * there is no retry/backoff logic.
+ *
+ * If `configIds` is provided, only those configs are synced (still using shared
+ * caches); otherwise all active PCO configs for the community are synced.
+ */
+export const syncCommunityAutoChannels = internalAction({
   args: {
-    configId: v.id("autoChannelConfigs"),
+    communityId: v.id("communities"),
+    configIds: v.optional(v.array(v.id("autoChannelConfigs"))),
   },
-  handler: async (ctx, args): Promise<SyncAutoChannelResult> => {
-    // Get the config
-    const config = await ctx.runQuery(
-      internal.functions.pcoServices.rotation.getAutoChannelConfigById,
-      { configId: args.configId }
-    );
-
-    if (!config || !config.isActive) {
-      return { status: "skipped", reason: "Config not found or inactive" };
-    }
-
-    if (config.integrationType !== "pco_services") {
-      return { status: "skipped", reason: "Not a PCO Services config" };
-    }
-
-    const pcoConfig = config.config;
-
-    // Migrate to filter-based config (handles both legacy and new formats)
-    const filters = migrateToFilterConfig(pcoConfig);
-
-    // Get service type IDs to process
-    const serviceTypeIds = filters?.serviceTypeIds?.length
-      ? filters.serviceTypeIds
-      : pcoConfig.serviceTypeId ? [pcoConfig.serviceTypeId] : [];
-
-    if (serviceTypeIds.length === 0) {
-      return { status: "skipped", reason: "No service type configured" };
-    }
-
-    try {
-      // Get access token
-      const accessToken = await getValidAccessToken(ctx, config.communityId);
-
-      // Step 1a: Remove expired members (scheduled removal time passed)
-      const removeExpiredResult = await ctx.runMutation(
-        internal.functions.pcoServices.rotation.removeExpiredMembers,
-        { channelId: config.channelId }
+  handler: async (ctx, args): Promise<CommunitySyncResult> => {
+    // Step 1: Load configs for the community.
+    let configs: AutoChannelConfigDoc[];
+    if (args.configIds && args.configIds.length > 0) {
+      const loaded = await Promise.all(
+        args.configIds.map((id) =>
+          ctx.runQuery(
+            internal.functions.pcoServices.rotation.getAutoChannelConfigById,
+            { configId: id }
+          )
+        )
       );
-
-      // Step 1b: Remove members who no longer match current filters
-      // This handles filter changes - members added under old filters should be removed
-      const removeNonMatchingResult = await ctx.runMutation(
-        internal.functions.pcoServices.rotation.removeNonMatchingMembers,
-        { channelId: config.channelId, configId: args.configId }
+      configs = loaded.filter(
+        (c): c is AutoChannelConfigDoc =>
+          !!c &&
+          c.isActive === true &&
+          c.integrationType === "pco_services" &&
+          c.communityId === args.communityId
       );
+    } else {
+      const all = await ctx.runQuery(
+        internal.functions.pcoServices.rotation.getActiveAutoChannelConfigs,
+        {}
+      );
+      configs = all.filter((c) => c.communityId === args.communityId);
+    }
 
-      // Combine removal counts for reporting
-      const totalRemoved = removeExpiredResult.removedCount + removeNonMatchingResult.removedCount;
+    if (configs.length === 0) {
+      return { processed: 0, results: [] };
+    }
 
-      // Validate config timing values before using them
+    // Per-config preflight: timing validation + channel-scoped removal mutations.
+    // We defer the PCO access-token fetch until we know at least one config
+    // has serviceTypeIds — otherwise a community without an active PCO
+    // integration would fail before we can return a clean "skipped" result.
+    // We track per-config working state so we can fall through to dispatch later.
+    type ConfigContext = {
+      config: AutoChannelConfigDoc;
+      filters: FilterConfig | null;
+      serviceTypeIds: string[];
+      addMembersDaysBefore: number;
+      removeMembersDaysAfter: number;
+      addWindowMs: number;
+      removeWindowMs: number;
+      preflightRemoved: number;
+      serviceTypeNameMap: Map<string, string>;
+    };
+
+    const contexts: ConfigContext[] = [];
+    const earlyResults: PerConfigResult[] = [];
+
+    for (const config of configs) {
+      const pcoConfig = config.config;
+      const filters = migrateToFilterConfig(pcoConfig);
+
+      const serviceTypeIds = filters?.serviceTypeIds?.length
+        ? filters.serviceTypeIds
+        : pcoConfig.serviceTypeId
+          ? [pcoConfig.serviceTypeId]
+          : [];
+
+      if (serviceTypeIds.length === 0) {
+        earlyResults.push({
+          configId: config._id,
+          status: "skipped",
+          reason: "No service type configured",
+        });
+        continue;
+      }
+
+      // Step 3 (per-config): Run channel-scoped cleanup mutations. Not PCO
+      // API calls, so no rate-limit cost. Wrapped per-config so a transient
+      // failure (e.g., updateChannelMemberCount patching a deleted channel
+      // mid-run) only fails THIS config — the rest of the community keeps
+      // syncing instead of aborting the whole batch.
+      let preflightRemoved: number;
+      try {
+        const removeExpiredResult = await ctx.runMutation(
+          internal.functions.pcoServices.rotation.removeExpiredMembers,
+          { channelId: config.channelId }
+        );
+        const removeNonMatchingResult = await ctx.runMutation(
+          internal.functions.pcoServices.rotation.removeNonMatchingMembers,
+          { channelId: config.channelId, configId: config._id }
+        );
+        preflightRemoved =
+          removeExpiredResult.removedCount + removeNonMatchingResult.removedCount;
+      } catch (preflightError) {
+        const errorMessage =
+          preflightError instanceof Error
+            ? preflightError.message
+            : "Unknown error";
+        // Best-effort status write — same delete-mid-run guard as elsewhere.
+        try {
+          await ctx.runMutation(
+            internal.functions.pcoServices.rotation.updateSyncStatus,
+            { configId: config._id, status: "error", error: errorMessage }
+          );
+        } catch {
+          // Swallow.
+        }
+        earlyResults.push({
+          configId: config._id,
+          status: "error",
+          error: errorMessage,
+        });
+        continue;
+      }
+
+      // Validate timing config.
       const addMembersDaysBefore = pcoConfig.addMembersDaysBefore ?? 0;
       const removeMembersDaysAfter = pcoConfig.removeMembersDaysAfter ?? 0;
-
       if (addMembersDaysBefore < 0 || removeMembersDaysAfter < 0) {
         await ctx.runMutation(
           internal.functions.pcoServices.rotation.updateSyncStatus,
           {
-            configId: args.configId,
+            configId: config._id,
             status: "error",
             error: "Invalid timing config: days values must be non-negative",
           }
         );
-        return { status: "skipped", reason: "Invalid timing configuration" };
+        earlyResults.push({
+          configId: config._id,
+          status: "skipped",
+          reason: "Invalid timing configuration",
+        });
+        continue;
       }
 
-      const now = Date.now();
-      const addWindowMs = addMembersDaysBefore * MS_PER_DAY;
-      const removeWindowMs = removeMembersDaysAfter * MS_PER_DAY;
-
-      // Step 2: Collect members from all service types within the add window
-      const allMembers: FilterableMember[] = [];
-      const syncedServices: Array<{ serviceTypeId: string; planId: string; planDate: string }> = [];
-
-      // Build a map from serviceTypeId to serviceTypeName for display
+      // Build serviceTypeId -> serviceTypeName map for display.
       const serviceTypeNameMap = new Map<string, string>();
       if (filters?.serviceTypeNames && filters.serviceTypeIds) {
         for (let i = 0; i < filters.serviceTypeIds.length; i++) {
@@ -724,221 +867,490 @@ export const syncAutoChannel = internalAction({
         }
       }
 
-      for (const serviceTypeId of serviceTypeIds) {
-        // Get upcoming plans for this service type
-        const plans = await fetchUpcomingPlans(
-          accessToken,
-          serviceTypeId,
-          DEFAULT_PLANS_LOOKAHEAD
-        );
+      contexts.push({
+        config,
+        filters,
+        serviceTypeIds,
+        addMembersDaysBefore,
+        removeMembersDaysAfter,
+        addWindowMs: addMembersDaysBefore * MS_PER_DAY,
+        removeWindowMs: removeMembersDaysAfter * MS_PER_DAY,
+        preflightRemoved,
+        serviceTypeNameMap,
+      });
+    }
 
-        if (plans.length === 0) {
-          continue;
-        }
+    // If every config was skipped, we have no PCO work to do — return early
+    // without acquiring an access token (which would fail for communities
+    // without an active PCO integration).
+    if (contexts.length === 0) {
+      return { processed: earlyResults.length, results: earlyResults };
+    }
 
-        // Find the plan within the add window
-        let targetPlan: (typeof plans)[0] & { planDateMs: number } | null = null;
-        for (const plan of plans) {
-          const planDate = new Date(plan.attributes.sort_date).getTime();
-          const addDate = planDate - addWindowMs;
+    // Hoist shared-phase state so the per-config dispatch below can read it
+    // on the success path. Populated inside the try block; on shared-phase
+    // failure we fall through to the catch and mark every surviving config
+    // as errored before returning.
+    type TargetPlan = {
+      planId: string;
+      planDateMs: number;
+      planDateStr: string;
+    };
+    type ConfigPlanSelection = {
+      perServiceType: Map<string, TargetPlan>;
+      syncedServices: Array<{ serviceTypeId: string; planId: string; planDate: string }>;
+    };
+    type MatchResult = {
+      userId: Id<"users"> | null;
+      status: "already_linked" | "matched" | "not_found";
+    };
 
-          // Check if we're in the add window for this plan
-          if (now >= addDate) {
-            targetPlan = { ...plan, planDateMs: planDate };
-            break;
-          }
-        }
+    const plansByServiceType = new Map<
+      string,
+      Awaited<ReturnType<typeof fetchUpcomingPlans>>
+    >();
+    const membersByPlan = new Map<
+      string,
+      Awaited<ReturnType<typeof fetchPlanTeamMembers>>
+    >();
+    const contactByPerson = new Map<
+      string,
+      { name: string; phone: string | null; email: string | null }
+    >();
+    const matchByPerson = new Map<string, MatchResult>();
+    const configPlanSelections = new Map<
+      Id<"autoChannelConfigs">,
+      ConfigPlanSelection
+    >();
+    // Per-config filtered roster, populated after fetching plan members. We
+    // only call matchAndLinkPcoPerson on people who survive at least one
+    // config's filters — without this, we'd write Planning Center person↔user
+    // links for people excluded from every channel (declined status, wrong
+    // team, etc.) and add unnecessary mutation load.
+    const filteredMembersByConfig = new Map<
+      Id<"autoChannelConfigs">,
+      FilterableMember[]
+    >();
+    // Per-step error tracking: a single per-(serviceType) plan fetch or
+    // per-(serviceType, plan) member fetch shouldn't fail every config in
+    // the community — only the configs that actually depend on the failed
+    // data. We populate these maps inline and surface per-config errors at
+    // dispatch time via configFetchErrors.
+    const failedServiceTypeErrors = new Map<string, string>();
+    const failedPlanErrors = new Map<string, string>(); // "stId:planId" -> message
+    const configFetchErrors = new Map<Id<"autoChannelConfigs">, string>();
 
-        if (!targetPlan) {
-          continue;
-        }
+    try {
+      // Now that we know there's PCO work to do, get one access token for the
+      // whole community. Auth failure is genuinely community-wide — there's
+      // no per-config remediation — so we let it fall through to the outer
+      // catch below.
+      const accessToken = await getValidAccessToken(ctx, args.communityId);
 
-        // Track synced service
-        syncedServices.push({
-          serviceTypeId,
-          planId: targetPlan.id,
-          planDate: targetPlan.attributes.sort_date,
-        });
-
-        // Determine teamIds for fetching members
-        // For filter-based config, use filters.teamIds
-        // For legacy config, check syncScope
-        let teamIds: string[] | undefined = undefined;
-        if (filters?.teamIds && filters.teamIds.length > 0) {
-          teamIds = filters.teamIds;
-        } else if (pcoConfig.syncScope !== "all_teams" && pcoConfig.teamIds?.length) {
-          teamIds = pcoConfig.teamIds;
-        }
-
-        // Fetch team members for this plan
-        const members = await fetchPlanTeamMembers(
-          accessToken,
-          serviceTypeId,
-          targetPlan.id,
-          teamIds
-        );
-
-        // Calculate scheduled removal date for this plan
-        const scheduledRemovalAt = targetPlan.planDateMs + removeWindowMs;
-
-        // Extract service name from plan title or date
-        const serviceName = targetPlan.attributes.title ||
-          new Date(targetPlan.planDateMs).toLocaleDateString("en-US", {
-            weekday: "long",
-            month: "short",
-            day: "numeric",
-          });
-
-        // Transform to FilterableMember format
-        const serviceTypeName = serviceTypeNameMap.get(serviceTypeId);
-        for (const member of members) {
-          allMembers.push({
-            pcoPersonId: member.pcoPersonId,
-            name: member.name,
-            position: member.position,
-            teamId: member.teamId,
-            teamName: member.teamName,
-            status: member.status,
-            scheduledRemovalAt,
-            serviceTypeId,
-            serviceTypeName,
-            planId: targetPlan.id,
-            planDate: targetPlan.planDateMs,
-          });
+      // Step 4: Compute the union of serviceTypeIds across surviving configs.
+      const serviceTypeUnion = new Set<string>();
+      for (const ctxItem of contexts) {
+        for (const id of ctxItem.serviceTypeIds) {
+          serviceTypeUnion.add(id);
         }
       }
 
-      if (allMembers.length === 0) {
-        // We are inside the add window for at least one plan (syncedServices) but
-        // nobody is scheduled — drop anyone still in the channel from a prior sync.
-        let staleRemoved = 0;
-        if (syncedServices.length > 0) {
-          const staleResult = await ctx.runMutation(
-            internal.functions.pcoServices.rotation.removeStalePcoSyncedMembers,
+      // Step 5: Fetch upcoming plans once per unique service type. Each fetch
+      // is isolated — a failure for service type X only fails configs that
+      // depend on X, not unrelated configs in the community.
+      for (const serviceTypeId of serviceTypeUnion) {
+        try {
+          const plans = await fetchUpcomingPlans(
+            accessToken,
+            serviceTypeId,
+            DEFAULT_PLANS_LOOKAHEAD
+          );
+          plansByServiceType.set(serviceTypeId, plans);
+        } catch (e) {
+          failedServiceTypeErrors.set(
+            serviceTypeId,
+            e instanceof Error ? e.message : "Unknown error"
+          );
+        }
+      }
+
+      // For each config, compute its target plan per service type using its own
+      // add window. Cache so we don't recompute later.
+      const now = Date.now();
+      const planFetchSet = new Set<string>(); // "serviceTypeId:planId"
+
+      for (const ctxItem of contexts) {
+        const perServiceType = new Map<string, TargetPlan>();
+        const syncedServices: Array<{
+          serviceTypeId: string;
+          planId: string;
+          planDate: string;
+        }> = [];
+
+        for (const serviceTypeId of ctxItem.serviceTypeIds) {
+          const plans = plansByServiceType.get(serviceTypeId);
+          if (!plans || plans.length === 0) continue;
+
+          let target: TargetPlan | null = null;
+          for (const plan of plans) {
+            const planDateMs = new Date(plan.attributes.sort_date).getTime();
+            const addDate = planDateMs - ctxItem.addWindowMs;
+            if (now >= addDate) {
+              target = {
+                planId: plan.id,
+                planDateMs,
+                planDateStr: plan.attributes.sort_date,
+              };
+              break;
+            }
+          }
+
+          if (!target) continue;
+          perServiceType.set(serviceTypeId, target);
+          syncedServices.push({
+            serviceTypeId,
+            planId: target.planId,
+            planDate: target.planDateStr,
+          });
+          planFetchSet.add(`${serviceTypeId}:${target.planId}`);
+        }
+
+        configPlanSelections.set(ctxItem.config._id, {
+          perServiceType,
+          syncedServices,
+        });
+      }
+
+      // Step 6: Fetch team members once per unique (serviceTypeId, planId).
+      // We pass undefined for teamIds so we get every team — per-config team
+      // filtering happens in memory later via applyFilters. Each fetch is
+      // isolated so one failed plan doesn't fail configs that didn't depend
+      // on it.
+      for (const key of planFetchSet) {
+        const [serviceTypeId, planId] = key.split(":");
+        try {
+          const members = await fetchPlanTeamMembers(
+            accessToken,
+            serviceTypeId,
+            planId,
+            undefined
+          );
+          membersByPlan.set(key, members);
+        } catch (e) {
+          failedPlanErrors.set(
+            key,
+            e instanceof Error ? e.message : "Unknown error"
+          );
+        }
+      }
+
+      // Step 6.5: Per-config build allMembers + applyFilters; cache the
+      // filtered roster and collect the union of pcoPersonIds across configs.
+      // Doing this BEFORE Steps 7-8 preserves a behavior from the legacy
+      // per-config flow: matchAndLinkPcoPerson only runs for people who
+      // survive at least one config's filters. Otherwise we'd write Planning
+      // Center person↔user links for declined or wrong-team people and add
+      // mutation load for people no channel cares about.
+      const filteredPersonIds = new Set<string>();
+      for (const ctxItem of contexts) {
+        const selection = configPlanSelections.get(ctxItem.config._id);
+
+        // Surface per-step fetch failures that affect THIS config: any of
+        // its required service types or selected plans missing from the
+        // caches. Failed configs get an empty filteredMembers (so they don't
+        // contribute personIds for matching) and the dispatch loop's per-
+        // config catch records the error via updateSyncStatus.
+        const fetchErrorBits: string[] = [];
+        for (const stId of ctxItem.serviceTypeIds) {
+          const stError = failedServiceTypeErrors.get(stId);
+          if (stError) {
+            fetchErrorBits.push(`service type ${stId}: ${stError}`);
+          }
+        }
+        if (selection) {
+          for (const [stId, target] of selection.perServiceType) {
+            const planError = failedPlanErrors.get(`${stId}:${target.planId}`);
+            if (planError) {
+              fetchErrorBits.push(`plan ${target.planId}: ${planError}`);
+            }
+          }
+        }
+        if (fetchErrorBits.length > 0) {
+          configFetchErrors.set(
+            ctxItem.config._id,
+            `Shared PCO fetch failed: ${fetchErrorBits.join("; ")}`
+          );
+          filteredMembersByConfig.set(ctxItem.config._id, []);
+          continue;
+        }
+
+        if (!selection) {
+          filteredMembersByConfig.set(ctxItem.config._id, []);
+          continue;
+        }
+
+        const allMembers: FilterableMember[] = [];
+        for (const [serviceTypeId, target] of selection.perServiceType) {
+          const planMembers =
+            membersByPlan.get(`${serviceTypeId}:${target.planId}`) ?? [];
+          const scheduledRemovalAt = target.planDateMs + ctxItem.removeWindowMs;
+          const serviceTypeName = ctxItem.serviceTypeNameMap.get(serviceTypeId);
+          for (const m of planMembers) {
+            allMembers.push({
+              pcoPersonId: m.pcoPersonId,
+              name: m.name,
+              position: m.position,
+              teamId: m.teamId,
+              teamName: m.teamName,
+              status: m.status,
+              scheduledRemovalAt,
+              serviceTypeId,
+              serviceTypeName,
+              planId: target.planId,
+              planDate: target.planDateMs,
+            });
+          }
+        }
+
+        // Effective teamIds: filters.teamIds wins; else legacy teamIds (unless
+        // syncScope is "all_teams"). Mirrors the legacy dispatch logic.
+        let effectiveTeamIds: string[] | undefined = undefined;
+        if (ctxItem.filters?.teamIds && ctxItem.filters.teamIds.length > 0) {
+          effectiveTeamIds = ctxItem.filters.teamIds;
+        } else if (
+          ctxItem.config.config.syncScope !== "all_teams" &&
+          ctxItem.config.config.teamIds?.length
+        ) {
+          effectiveTeamIds = ctxItem.config.config.teamIds;
+        }
+
+        const filtered = applyFilters(allMembers, {
+          teamIds: effectiveTeamIds,
+          positions: ctxItem.filters?.positions,
+          statuses: ctxItem.filters?.statuses,
+        });
+
+        filteredMembersByConfig.set(ctxItem.config._id, filtered);
+        for (const m of filtered) {
+          if (m.pcoPersonId) filteredPersonIds.add(m.pcoPersonId);
+        }
+      }
+
+      // Step 7: Batch-fetch contact info for the filtered roster only,
+      // concurrently in groups of 10. We use Promise.allSettled so a single
+      // failed lookup (transient 5xx, deleted-but-still-rostered person, etc.)
+      // doesn't abort the entire community's sync. Failed PIDs are simply
+      // omitted from contactByPerson — those people won't be added this run,
+      // but unrelated channels still sync.
+      const CONTACT_BATCH_SIZE = 10;
+      const personIdList = Array.from(filteredPersonIds);
+      for (let i = 0; i < personIdList.length; i += CONTACT_BATCH_SIZE) {
+        const batch = personIdList.slice(i, i + CONTACT_BATCH_SIZE);
+        const results = await Promise.allSettled(
+          batch.map(async (pid) => {
+            const contact = await getPersonContactInfo(accessToken, pid);
+            return { pid, contact };
+          })
+        );
+        for (const r of results) {
+          if (r.status === "fulfilled") {
+            contactByPerson.set(r.value.pid, r.value.contact);
+          }
+        }
+      }
+
+      // Step 8: Match each unique person once. matchAndLinkPcoPerson is a
+      // Convex mutation, so failures are rare (transient OCC retry exhaustion,
+      // DB write conflict). We use Promise.allSettled here for the same reason
+      // we use it for contact lookups: a single failed match shouldn't reject
+      // the whole batch and abort every config in the community via the
+      // shared-phase catch path. Failed PIDs are omitted from matchByPerson
+      // and the dispatch loop's `if (!matchResult) continue;` already handles
+      // them.
+      const MATCH_BATCH_SIZE = 10;
+      for (let i = 0; i < personIdList.length; i += MATCH_BATCH_SIZE) {
+        const batch = personIdList.slice(i, i + MATCH_BATCH_SIZE);
+        const results = await Promise.allSettled(
+          batch.map(async (pid) => {
+            const contact = contactByPerson.get(pid);
+            const matchResult = (await ctx.runMutation(
+              internal.functions.pcoServices.matching.matchAndLinkPcoPerson,
+              {
+                communityId: args.communityId,
+                pcoPersonId: pid,
+                pcoPhone: contact?.phone || undefined,
+                pcoEmail: contact?.email || undefined,
+              }
+            )) as MatchResult;
+            return { pid, matchResult };
+          })
+        );
+        for (const r of results) {
+          if (r.status === "fulfilled") {
+            matchByPerson.set(r.value.pid, r.value.matchResult);
+          }
+        }
+      }
+    } catch (sharedError) {
+      // Catches genuinely community-wide failures: most commonly token
+      // refresh during getValidAccessToken (no per-config remediation
+      // possible), or any unexpected programming error. Per-(serviceType)
+      // and per-(serviceType,plan) fetch failures are isolated above via
+      // failedServiceTypeErrors/failedPlanErrors and surfaced through the
+      // per-config dispatch path; they do NOT reach this catch.
+      const errorMessage =
+        sharedError instanceof Error ? sharedError.message : "Unknown error";
+      const sharedErrorResults: PerConfigResult[] = [];
+      for (const ctxItem of contexts) {
+        // Guard the per-config status write: a config could have been deleted
+        // mid-run (rare but possible during admin edits), in which case the
+        // patch throws. We don't want one missing config to abort the recovery
+        // loop and leave the remaining configs without their per-config error
+        // result.
+        try {
+          await ctx.runMutation(
+            internal.functions.pcoServices.rotation.updateSyncStatus,
             {
-              channelId: config.channelId,
-              expectedUserIds: [],
+              configId: ctxItem.config._id,
+              status: "error",
+              error: errorMessage,
             }
           );
-          staleRemoved = staleResult.removedCount;
+        } catch {
+          // Swallow — we still surface the error in the per-config result
+          // below so callers see what happened.
         }
-
-        await ctx.runMutation(
-          internal.functions.pcoServices.rotation.updateSyncStatus,
-          {
-            configId: args.configId,
-            status: "success",
-            // Note: "No plans within add window" is informational, not an error
-          }
-        );
-        return {
-          status: "success",
-          addedCount: 0,
-          removedCount: totalRemoved + staleRemoved,
-        };
-      }
-
-      // Step 3: Apply filters (teamIds already filtered at API level in fetchPlanTeamMembers)
-      const filteredMembers = applyFilters(allMembers, {
-        // Note: teamIds omitted - already filtered when fetching from PCO API
-        positions: filters?.positions,
-        statuses: filters?.statuses,
-      });
-
-      // Step 4: Deduplicate across services (same person scheduled in multiple services)
-      const uniqueMembers = deduplicateByPersonId(filteredMembers);
-
-      // Step 5: Add members to channel and track unmatched
-      let addedCount = 0;
-      const expectedUserIds = new Set<Id<"users">>();
-      const unmatchedPeople: Array<{
-        pcoPersonId: string;
-        pcoName: string;
-        pcoPhone?: string;
-        pcoEmail?: string;
-        serviceTypeName?: string;
-        teamName?: string;
-        position?: string;
-        reason: string;
-      }> = [];
-
-      // Filter to members with valid pcoPersonId
-      const membersToProcess = uniqueMembers.filter((m) => m.pcoPersonId);
-
-      // Batch fetch contact info for all members in chunks of 15
-      // PCO rate limit is 100 requests per 20 seconds, so 15 concurrent is safe
-      const BATCH_SIZE = 15;
-      const contactInfoMap = new Map<
-        string,
-        { name: string; phone: string | null; email: string | null }
-      >();
-
-      for (let i = 0; i < membersToProcess.length; i += BATCH_SIZE) {
-        const batch = membersToProcess.slice(i, i + BATCH_SIZE);
-        const contactPromises = batch.map(async (member) => {
-          const contact = await getPersonContactInfo(
-            accessToken,
-            member.pcoPersonId!
-          );
-          return { pcoPersonId: member.pcoPersonId!, contact };
+        sharedErrorResults.push({
+          configId: ctxItem.config._id,
+          status: "error",
+          error: errorMessage,
         });
-
-        const batchResults = await Promise.all(contactPromises);
-        for (const { pcoPersonId, contact } of batchResults) {
-          contactInfoMap.set(pcoPersonId, contact);
-        }
       }
+      return {
+        processed: earlyResults.length + sharedErrorResults.length,
+        results: [...earlyResults, ...sharedErrorResults],
+      };
+    }
 
-      // Now process each member with the pre-fetched contact info
-      for (const member of membersToProcess) {
-        const pcoPersonId = member.pcoPersonId!;
-        const contact = contactInfoMap.get(pcoPersonId)!;
+    // Step 9: Per-config dispatch in memory.
+    const dispatchResults: PerConfigResult[] = [];
 
-        // Match and link the PCO person to a Together user
-        const matchResult = await ctx.runMutation(
-          internal.functions.pcoServices.matching.matchAndLinkPcoPerson,
-          {
-            communityId: config.communityId,
-            pcoPersonId,
-            pcoPhone: contact.phone || undefined,
-            pcoEmail: contact.email || undefined,
+    for (const ctxItem of contexts) {
+      const { config, preflightRemoved } = ctxItem;
+      const selection = configPlanSelections.get(config._id);
+      const syncedServices = selection?.syncedServices ?? [];
+
+      try {
+        // If a per-step PCO fetch failed in a way that affects THIS config
+        // (one of its required service types or selected plans threw), fail
+        // just this config — the per-config catch below records the error
+        // via updateSyncStatus and we move on. Other configs in the
+        // community whose data is intact still sync normally.
+        const fetchError = configFetchErrors.get(config._id);
+        if (fetchError) {
+          throw new Error(fetchError);
+        }
+
+        // Pre-filtered roster was built and cached during Step 6.5 of the
+        // shared phase. Reading from the cache (instead of recomputing here)
+        // keeps the dispatch deterministic with the matching pass that just
+        // ran — we only have match results for people who survived at least
+        // one config's filters.
+        const filteredMembers = filteredMembersByConfig.get(config._id) ?? [];
+        const uniqueMembers = deduplicateByPersonId(filteredMembers);
+
+        let addedCount = 0;
+        const expectedUserIds = new Set<Id<"users">>();
+        const unmatchedPeople: Array<{
+          pcoPersonId: string;
+          pcoName: string;
+          pcoPhone?: string;
+          pcoEmail?: string;
+          serviceTypeName?: string;
+          teamName?: string;
+          position?: string;
+          reason: string;
+        }> = [];
+
+        const membersToProcess = uniqueMembers.filter((m) => m.pcoPersonId);
+
+        for (const member of membersToProcess) {
+          const pcoPersonId = member.pcoPersonId!;
+          // If getPersonContactInfo failed earlier (allSettled), fall back to
+          // the team-roster name with empty phone/email instead of skipping.
+          // Skipping would omit this person from expectedUserIds, and the
+          // subsequent removeStalePcoSyncedMembers call would yank them out of
+          // a channel they're still scheduled for. matchByPerson will still
+          // resolve via the "already_linked" path if they were linked on a
+          // prior run, keeping existing channel members intact.
+          const contact = contactByPerson.get(pcoPersonId) ?? {
+            name: member.name,
+            phone: null,
+            email: null,
+          };
+          const matchResult = matchByPerson.get(pcoPersonId);
+          if (!matchResult) {
+            // matchAndLinkPcoPerson rejected for this PID (transient OCC retry
+            // exhaustion or DB write conflict). Silently skipping would omit
+            // the person from expectedUserIds and let removeStalePcoSyncedMembers
+            // yank them out of a channel they're still scheduled for. Throwing
+            // here fails ONLY this config (the per-config catch below records
+            // the error and we move on); other configs in the community still
+            // sync, and stale-removal is skipped on this errored config.
+            throw new Error(
+              `Failed to match scheduled PCO person ${pcoPersonId} (${member.name}) — refusing to sync this config to avoid removing valid members`
+            );
           }
-        );
 
-        // Build service name for this member's plan
-        const serviceName = member.planDate
-          ? new Date(member.planDate).toLocaleDateString("en-US", {
-              weekday: "long",
-              month: "short",
-              day: "numeric",
-            })
-          : "Service";
+          const serviceName = member.planDate
+            ? new Date(member.planDate).toLocaleDateString("en-US", {
+                weekday: "long",
+                month: "short",
+                day: "numeric",
+              })
+            : "Service";
 
-        if (matchResult.userId) {
-          // Try to add to channel with sync metadata and PCO name as fallback
-          const addResult = await ctx.runMutation(
-            internal.functions.pcoServices.rotation.addChannelMember,
-            {
-              channelId: config.channelId,
-              userId: matchResult.userId,
-              syncEventId: member.planId || "unknown",
-              scheduledRemovalAt: member.scheduledRemovalAt,
-              pcoName: contact.name, // Use PCO name as fallback if user doesn't have name in Togather
-              syncMetadata: {
+          if (matchResult.userId) {
+            const addResult = await ctx.runMutation(
+              internal.functions.pcoServices.rotation.addChannelMember,
+              {
+                channelId: config.channelId,
+                userId: matchResult.userId,
+                syncEventId: member.planId || "unknown",
+                scheduledRemovalAt: member.scheduledRemovalAt,
+                pcoName: contact.name,
+                syncMetadata: {
+                  serviceTypeName: member.serviceTypeName || undefined,
+                  teamName: member.teamName || undefined,
+                  position: member.position || undefined,
+                  serviceDate: member.planDate,
+                  serviceName,
+                },
+              }
+            );
+
+            if (addResult.success) {
+              addedCount++;
+              expectedUserIds.add(matchResult.userId);
+            } else {
+              unmatchedPeople.push({
+                pcoPersonId,
+                pcoName: contact.name,
+                pcoPhone: contact.phone || undefined,
+                pcoEmail: contact.email || undefined,
                 serviceTypeName: member.serviceTypeName || undefined,
                 teamName: member.teamName || undefined,
                 position: member.position || undefined,
-                serviceDate: member.planDate,
-                serviceName,
-              },
+                reason: addResult.reason || "unknown",
+              });
             }
-          );
-
-          if (addResult.success) {
-            addedCount++;
-            expectedUserIds.add(matchResult.userId);
           } else {
-            // User was matched but couldn't be added to channel (e.g., not in group)
+            let reason = "not_in_community";
+            if (!contact.phone && !contact.email) {
+              reason = "no_contact_info";
+            } else if (matchResult.status === "not_found") {
+              reason = contact.phone ? "phone_mismatch" : "email_mismatch";
+            }
             unmatchedPeople.push({
               pcoPersonId,
               pcoName: contact.name,
@@ -947,103 +1359,173 @@ export const syncAutoChannel = internalAction({
               serviceTypeName: member.serviceTypeName || undefined,
               teamName: member.teamName || undefined,
               position: member.position || undefined,
-              reason: addResult.reason || "unknown",
+              reason,
             });
           }
-        } else {
-          // Track unmatched person with their PCO info
-          let reason = "not_in_community";
-          if (!contact.phone && !contact.email) {
-            reason = "no_contact_info";
-          } else if (matchResult.status === "not_found") {
-            reason = contact.phone ? "phone_mismatch" : "email_mismatch";
-          }
-
-          unmatchedPeople.push({
-            pcoPersonId,
-            pcoName: contact.name,
-            pcoPhone: contact.phone || undefined,
-            pcoEmail: contact.email || undefined,
-            serviceTypeName: member.serviceTypeName || undefined,
-            teamName: member.teamName || undefined,
-            position: member.position || undefined,
-            reason,
-          });
         }
-      }
 
-      // Step 6: Remove PCO-synced members who are no longer on the roster returned
-      // above (handles role changes, unscheduling, and filter narrowing).
-      let staleRemoved = 0;
-      if (syncedServices.length > 0) {
-        const staleResult = await ctx.runMutation(
-          internal.functions.pcoServices.rotation.removeStalePcoSyncedMembers,
+        let staleRemoved = 0;
+        if (syncedServices.length > 0) {
+          const staleResult = await ctx.runMutation(
+            internal.functions.pcoServices.rotation.removeStalePcoSyncedMembers,
+            {
+              channelId: config.channelId,
+              expectedUserIds: Array.from(expectedUserIds),
+            }
+          );
+          staleRemoved = staleResult.removedCount;
+        }
+        const totalRemovedWithStale = preflightRemoved + staleRemoved;
+
+        const firstSyncedService = syncedServices[0];
+        await ctx.runMutation(
+          internal.functions.pcoServices.rotation.updateSyncStatus,
           {
-            channelId: config.channelId,
-            expectedUserIds: Array.from(expectedUserIds),
+            configId: config._id,
+            status: "success",
+            currentEventId: firstSyncedService?.planId,
+            currentEventDate: firstSyncedService
+              ? new Date(firstSyncedService.planDate).getTime()
+              : undefined,
+            syncResults: {
+              matchedCount: addedCount,
+              unmatchedCount: unmatchedPeople.length,
+              unmatchedPeople:
+                unmatchedPeople.length > 0 ? unmatchedPeople : undefined,
+            },
           }
         );
-        staleRemoved = staleResult.removedCount;
-      }
 
-      const totalRemovedWithStale = totalRemoved + staleRemoved;
-
-      // Update sync status with results
-      // For multi-service sync, use the first synced service for currentEventId/currentEventDate
-      const firstSyncedService = syncedServices[0];
-      await ctx.runMutation(
-        internal.functions.pcoServices.rotation.updateSyncStatus,
-        {
-          configId: args.configId,
-          status: "success",
-          currentEventId: firstSyncedService?.planId,
-          currentEventDate: firstSyncedService
-            ? new Date(firstSyncedService.planDate).getTime()
-            : undefined,
-          syncResults: {
-            matchedCount: addedCount,
-            unmatchedCount: unmatchedPeople.length,
-            unmatchedPeople: unmatchedPeople.length > 0 ? unmatchedPeople : undefined,
-          },
+        if (syncedServices.length > 1) {
+          dispatchResults.push({
+            configId: config._id,
+            status: "success",
+            addedCount,
+            removedCount: totalRemovedWithStale,
+            syncedServices,
+          });
+        } else if (syncedServices.length === 1) {
+          dispatchResults.push({
+            configId: config._id,
+            status: "success",
+            addedCount,
+            removedCount: totalRemovedWithStale,
+            planId: syncedServices[0].planId,
+            planDate: syncedServices[0].planDate,
+          });
+        } else {
+          dispatchResults.push({
+            configId: config._id,
+            status: "success",
+            addedCount,
+            removedCount: totalRemovedWithStale,
+          });
         }
-      );
-
-      // Return result with multi-service info if applicable
-      if (syncedServices.length > 1) {
-        return {
-          status: "success",
-          addedCount,
-          removedCount: totalRemovedWithStale,
-          syncedServices,
-        };
-      } else if (syncedServices.length === 1) {
-        return {
-          status: "success",
-          addedCount,
-          removedCount: totalRemovedWithStale,
-          planId: syncedServices[0].planId,
-          planDate: syncedServices[0].planDate,
-        };
-      }
-
-      return {
-        status: "success",
-        addedCount,
-        removedCount: totalRemovedWithStale,
-      };
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      await ctx.runMutation(
-        internal.functions.pcoServices.rotation.updateSyncStatus,
-        {
-          configId: args.configId,
+      } catch (error) {
+        // Per-config error: record on the config and continue. The wrapper
+        // syncAutoChannel still throws to its caller (see below) so test
+        // expectations and existing scheduler call sites don't change.
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown error";
+        // Same guard as the shared-phase catch: if the config was deleted
+        // during the run, the patch throws and would otherwise abort the
+        // dispatch loop for the rest of the community batch.
+        try {
+          await ctx.runMutation(
+            internal.functions.pcoServices.rotation.updateSyncStatus,
+            {
+              configId: config._id,
+              status: "error",
+              error: errorMessage,
+            }
+          );
+        } catch {
+          // Swallow — we still surface the error in dispatchResults below.
+        }
+        dispatchResults.push({
+          configId: config._id,
           status: "error",
           error: errorMessage,
-        }
-      );
-      throw error;
+        });
+      }
     }
+
+    const allResults: PerConfigResult[] = [...earlyResults, ...dispatchResults];
+    return { processed: allResults.length, results: allResults };
+  },
+});
+
+/**
+ * Sync a single auto channel - thin wrapper around syncCommunityAutoChannels.
+ *
+ * Preserved as a wrapper (rather than removed) so existing call sites
+ * (manual "Sync Now", scheduler.runAfter on auto-channel create/re-enable)
+ * keep working without changes.
+ */
+export const syncAutoChannel = internalAction({
+  args: {
+    configId: v.id("autoChannelConfigs"),
+  },
+  handler: async (ctx, args): Promise<SyncAutoChannelResult> => {
+    // Load the config first so we can get the communityId and short-circuit
+    // on the same skip cases the original implementation handled.
+    const config = await ctx.runQuery(
+      internal.functions.pcoServices.rotation.getAutoChannelConfigById,
+      { configId: args.configId }
+    );
+
+    if (!config || !config.isActive) {
+      return { status: "skipped", reason: "Config not found or inactive" };
+    }
+    if (config.integrationType !== "pco_services") {
+      return { status: "skipped", reason: "Not a PCO Services config" };
+    }
+
+    const batched = await ctx.runAction(
+      internal.functions.pcoServices.rotation.syncCommunityAutoChannels,
+      { communityId: config.communityId, configIds: [args.configId] }
+    );
+
+    const result = batched.results[0];
+    if (!result) {
+      // Should not happen — we passed exactly one configId — but treat as a
+      // skip rather than throwing.
+      return { status: "skipped", reason: "Config not found or inactive" };
+    }
+
+    if (result.status === "error") {
+      // syncCommunityAutoChannels already called updateSyncStatus; throw to
+      // match the legacy contract (callers in actions.ts handle thrown errors).
+      throw new Error(result.error);
+    }
+
+    if (result.status === "skipped") {
+      return { status: "skipped", reason: result.reason };
+    }
+
+    // Success branches — strip configId before returning.
+    if ("syncedServices" in result) {
+      return {
+        status: "success",
+        addedCount: result.addedCount,
+        removedCount: result.removedCount,
+        syncedServices: result.syncedServices,
+      };
+    }
+    if ("planId" in result) {
+      return {
+        status: "success",
+        addedCount: result.addedCount,
+        removedCount: result.removedCount,
+        planId: result.planId,
+        planDate: result.planDate,
+      };
+    }
+    return {
+      status: "success",
+      addedCount: result.addedCount,
+      removedCount: result.removedCount,
+    };
   },
 });
 
@@ -1059,11 +1541,16 @@ type ProcessAllResult = {
     planId?: string;
     planDate?: string;
     reason?: string;
+    syncedServices?: Array<{ serviceTypeId: string; planId: string; planDate: string }>;
   }>;
 };
 
 /**
  * Process all active auto channels - called by cron job.
+ *
+ * Groups configs by community and dispatches one batched sync per community
+ * via syncCommunityAutoChannels, dramatically reducing PCO API call volume
+ * (one fetch per (serviceType, plan, person) instead of one per channel).
  */
 export const processAllAutoChannels = internalAction({
   args: {},
@@ -1073,22 +1560,44 @@ export const processAllAutoChannels = internalAction({
       {}
     );
 
-    const results: ProcessAllResult["results"] = [];
+    // Group configs by communityId.
+    const byCommunity = new Map<Id<"communities">, typeof configs>();
     for (const config of configs) {
+      const list = byCommunity.get(config.communityId) ?? [];
+      list.push(config);
+      byCommunity.set(config.communityId, list);
+    }
+
+    const results: ProcessAllResult["results"] = [];
+    for (const [communityId, communityConfigs] of byCommunity) {
       try {
-        const result = await ctx.runAction(
-          internal.functions.pcoServices.rotation.syncAutoChannel,
-          { configId: config._id }
+        // Pass the configIds we already loaded so syncCommunityAutoChannels
+        // doesn't re-run a global getActiveAutoChannelConfigs scan inside each
+        // community batch (which would turn one table-wide read into N reads
+        // for N communities and amplify cron memory/runtime as tenants grow).
+        const batched = await ctx.runAction(
+          internal.functions.pcoServices.rotation.syncCommunityAutoChannels,
+          {
+            communityId,
+            configIds: communityConfigs.map((c) => c._id),
+          }
         );
-        results.push({ configId: config._id, ...result });
+        for (const r of batched.results) {
+          // Spread keeps shape identical to the previous per-config flatten.
+          results.push({ ...r });
+        }
       } catch (error) {
+        // Whole-community failure — record an error entry per config so the
+        // result shape (one entry per config) is preserved.
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error";
-        results.push({
-          configId: config._id,
-          status: "error",
-          error: errorMessage,
-        });
+        for (const config of communityConfigs) {
+          results.push({
+            configId: config._id,
+            status: "error",
+            error: errorMessage,
+          });
+        }
       }
     }
 
