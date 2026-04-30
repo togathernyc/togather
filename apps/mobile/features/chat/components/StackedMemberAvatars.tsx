@@ -5,6 +5,8 @@ import { Avatar } from "@components/ui/Avatar";
 type StackMember = {
   name: string;
   imageUrl: string | null;
+  /** When true, the slashed-bell badge overlays this avatar in the stack. */
+  notificationsDisabled?: boolean;
 };
 
 type Props = {
@@ -32,7 +34,13 @@ export function StackedMemberAvatars({
     const m = visible[0]!;
     return (
       <View style={{ width: size, height: size }}>
-        <Avatar name={m.name} imageUrl={m.imageUrl ?? undefined} size={size} />
+        <Avatar
+          name={m.name}
+          imageUrl={m.imageUrl ?? undefined}
+          size={size}
+          notificationsDisabled={m.notificationsDisabled}
+          notificationsBadgeRingColor={surfaceColor}
+        />
       </View>
     );
   }

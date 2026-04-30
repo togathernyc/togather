@@ -21,6 +21,13 @@ export interface CommunityMember {
   is_admin: boolean;
   last_login: string | null;
   created_at: string | null;
+  /**
+   * True when the user has no push tokens for the current environment —
+   * UI surfaces overlay a slashed-bell badge on the avatar so admins/leaders
+   * know not to expect immediate delivery for any notification-emitting
+   * action they take. See `lib/notifications/enabledStatus.ts`.
+   */
+  notifications_disabled?: boolean;
 }
 
 /**

@@ -39,6 +39,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
 import { useMemberSearch, UseMemberSearchOptions, parseSearchTerms } from "@hooks/useMemberSearch";
+import { NotificationsDisabledBadge } from "@components/ui/NotificationsDisabledBadge";
 import type { CommunityMember } from "@/types/community";
 
 // Re-export types for convenience
@@ -144,6 +145,9 @@ function DefaultMemberItem({
             <Text style={[styles.avatarText, { color: colors.textInverse }]}>{initials}</Text>
           </View>
         )}
+        {member.notifications_disabled ? (
+          <NotificationsDisabledBadge avatarSize={48} />
+        ) : null}
       </View>
       <View style={styles.memberInfo}>
         <Text style={[styles.memberName, { color: colors.text }]} numberOfLines={1}>
@@ -543,19 +547,23 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   avatar: {
+    // Wrapper drops overflow:hidden so the slashed-bell badge can peek
+    // past the bottom-right corner; inner image/placeholder owns the
+    // circular crop.
     width: 44,
     height: 44,
-    borderRadius: 22,
     marginRight: 12,
-    overflow: "hidden",
+    position: "relative",
   },
   avatarImage: {
     width: "100%",
     height: "100%",
+    borderRadius: 22,
   },
   avatarPlaceholder: {
     width: "100%",
     height: "100%",
+    borderRadius: 22,
     justifyContent: "center",
     alignItems: "center",
   },

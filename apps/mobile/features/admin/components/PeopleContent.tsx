@@ -25,6 +25,7 @@ import type { Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
+import { NotificationsDisabledBadge } from "@components/ui/NotificationsDisabledBadge";
 
 // Type for transformed community member (snake_case for compatibility)
 interface CommunityMember {
@@ -36,6 +37,7 @@ interface CommunityMember {
   profile_photo: string | null;
   is_admin: boolean;
   is_primary_admin: boolean;
+  notifications_disabled: boolean;
 }
 
 const PAGE_SIZE = 50;
@@ -111,6 +113,7 @@ export function PeopleContent() {
       profile_photo: m.profilePhoto,
       is_admin: m.isAdmin,
       is_primary_admin: false,
+      notifications_disabled: !!m.notificationsDisabled,
     }));
   }, [searchData?.members]);
 
@@ -129,6 +132,7 @@ export function PeopleContent() {
       profile_photo: m.profilePhoto,
       is_admin: m.isAdmin,
       is_primary_admin: m.isPrimaryAdmin,
+      notifications_disabled: !!m.notificationsDisabled,
     }));
   }, []);
 
@@ -420,6 +424,9 @@ function MemberCard({ member, onPress }: MemberCardProps) {
             <Text style={styles.avatarInitials}>{initials}</Text>
           </View>
         )}
+        {member.notifications_disabled ? (
+          <NotificationsDisabledBadge avatarSize={48} />
+        ) : null}
       </View>
       <View style={styles.memberInfo}>
         <View style={styles.memberNameRow}>
@@ -585,18 +592,22 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   memberAvatar: {
+    // overflow:hidden moved off the wrapper so the notifications-disabled
+    // badge can peek past the bottom-right corner — same pattern as the
+    // shared `<Avatar>` primitive.
     width: 56,
     height: 56,
-    borderRadius: 28,
-    overflow: "hidden",
+    position: "relative",
   },
   avatarImage: {
     width: "100%",
     height: "100%",
+    borderRadius: 28,
   },
   avatarPlaceholder: {
     width: "100%",
     height: "100%",
+    borderRadius: 28,
     justifyContent: "center",
     alignItems: "center",
   },

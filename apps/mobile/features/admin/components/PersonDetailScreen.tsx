@@ -32,6 +32,7 @@ import { useAuth } from "@/providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
 import { formatError } from "@/utils/error-handling";
+import { NotificationsDisabledBadge } from "@components/ui/NotificationsDisabledBadge";
 
 // Role constants (matching backend)
 const COMMUNITY_ROLES = {
@@ -84,6 +85,7 @@ export function PersonDetailScreen() {
         email: rawMember.email,
         phone: rawMember.phone,
         profile_photo: rawMember.profilePhoto,
+        notifications_disabled: !!(rawMember as any).notificationsDisabled,
         last_login: rawMember.lastLogin,
         created_at: rawMember.communityMembership?.joinedAt,
         is_admin: rawMember.communityMembership?.isAdmin ?? false,
@@ -388,6 +390,9 @@ export function PersonDetailScreen() {
                   <Text style={styles.avatarInitials}>{initials}</Text>
                 </View>
               )}
+              {member.notifications_disabled ? (
+                <NotificationsDisabledBadge avatarSize={80} />
+              ) : null}
             </View>
             <View style={styles.profileInfo}>
               <View style={styles.nameRow}>
@@ -793,18 +798,22 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   profileAvatar: {
+    // Wrapper drops overflow:hidden so the notifications-disabled badge
+    // can peek past the bottom-right corner. Inner image/placeholder
+    // owns the circular crop.
     width: 80,
     height: 80,
-    borderRadius: 40,
-    overflow: "hidden",
+    position: "relative",
   },
   avatarImage: {
     width: "100%",
     height: "100%",
+    borderRadius: 40,
   },
   avatarPlaceholder: {
     width: "100%",
     height: "100%",
+    borderRadius: 40,
     justifyContent: "center",
     alignItems: "center",
   },

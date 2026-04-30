@@ -157,6 +157,7 @@ export function useGroupDetails(groupId: string | null | undefined) {
             last_name: m.user?.lastName || "",
             email: m.user?.email || "",
             profile_photo: m.user?.profileImage || undefined,
+            notificationsDisabled: !!m.user?.notificationsDisabled,
           })) || [],
         leaders:
           effectiveLeaders?.map((l: any) => ({
@@ -165,6 +166,7 @@ export function useGroupDetails(groupId: string | null | undefined) {
             last_name: l.lastName || "",
             email: l.email || "",
             profile_photo: l.profilePhoto || undefined,
+            notificationsDisabled: !!l.notificationsDisabled,
           })) || [],
         highlights: [], // Not yet available in Convex
       }
@@ -195,6 +197,7 @@ export function useGroupDetails(groupId: string | null | undefined) {
           last_name: m.lastName || "",
           profile_photo: m.profileImage || undefined,
           role: m.role || "member",
+          notificationsDisabled: !!m.notificationsDisabled,
         })) || [],
         // Leader preview — intentionally exposed to non-members so they can
         // DM a leader before joining the group. Capped at 8 by the backend.
@@ -204,6 +207,7 @@ export function useGroupDetails(groupId: string | null | undefined) {
           last_name: l.lastName || "",
           profile_photo: l.profileImage || undefined,
           role: l.role || "leader",
+          notificationsDisabled: !!l.notificationsDisabled,
         })) || [],
         leader_preview_total_count: effectiveLeaderPreview?.totalCount || 0,
       }

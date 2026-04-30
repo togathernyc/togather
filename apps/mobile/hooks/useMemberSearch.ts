@@ -96,6 +96,7 @@ function transformMember(m: any): CommunityMember {
     is_admin: m.isAdmin ?? false,
     last_login: m.lastLogin ?? null,
     created_at: null, // Backend doesn't return this field
+    notifications_disabled: !!m.notificationsDisabled,
   };
 }
 

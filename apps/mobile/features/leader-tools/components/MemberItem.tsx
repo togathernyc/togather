@@ -40,6 +40,7 @@ function MemberItemInner({
           name={`${member.first_name} ${member.last_name}`}
           imageUrl={member.profile_photo}
           size={40}
+          notificationsDisabled={!!member.notifications_disabled}
         />
         <View style={styles.memberDetails}>
           <Text style={[styles.memberName, { color: colors.text }]}>

@@ -103,6 +103,12 @@ export interface GroupMember {
   last_name: string;
   email?: string;
   profile_photo?: string;
+  /**
+   * True when the user has no push tokens for the current environment —
+   * used to render the slashed-bell badge on their avatar in `MembersRow`
+   * and other consumers. See `lib/notifications/enabledStatus.ts`.
+   */
+  notificationsDisabled?: boolean;
   // Request tracking fields
   request_status?: string | null;
   requested_at?: string | null;

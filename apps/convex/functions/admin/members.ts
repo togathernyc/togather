@@ -13,6 +13,7 @@ import { query, mutation } from "../../_generated/server";
 import { now, normalizePhone, getMediaUrl } from "../../lib/utils";
 import { requireAuth } from "../../lib/auth";
 import { searchCommunityMembersPaginated } from "../../lib/memberSearch";
+import { getUsersWithNotificationsDisabled } from "../../lib/notifications/enabledStatus";
 import { syncAnnouncementGroupMembership } from "../sync/memberships";
 import {
   requireCommunityAdmin,
@@ -145,9 +146,20 @@ export const searchCommunityMembers = query({
       profilePhoto: string | null;
       isAdmin: boolean;
       role: number;
+      notificationsDisabled: boolean;
       communityLastLogin: number;
       appLastLogin: number;
     }> = [];
+
+    // Batched notif-disabled lookup so each row can show the slashed-bell.
+    const candidateUserIds = allResults
+      .map((u, i) => ({ user: u, membership: memberships[i] }))
+      .filter(({ membership }) => membership && membership.status !== 3)
+      .map(({ user }) => user._id);
+    const notifsDisabled = await getUsersWithNotificationsDisabled(
+      ctx,
+      candidateUserIds,
+    );
 
     for (let i = 0; i < allResults.length; i++) {
       const user = allResults[i];
@@ -165,6 +177,7 @@ export const searchCommunityMembers = query({
         profilePhoto: getMediaUrl(user.profilePhoto) ?? null,
         isAdmin: (membership.roles ?? 0) >= ADMIN_ROLE_THRESHOLD,
         role: membership.roles ?? COMMUNITY_ROLES.MEMBER,
+        notificationsDisabled: notifsDisabled.has(user._id),
         communityLastLogin: membership.lastLogin ?? 0,
         appLastLogin: user.lastLogin ?? 0,
       });
@@ -284,6 +297,10 @@ export const getCommunityMemberById = query({
     const attendedCount = communityAttendances.filter((a) => a.status === 1).length;
     const attendanceRate = totalAttendance > 0 ? (attendedCount / totalAttendance) * 100 : 0;
 
+    const notifsDisabled = await getUsersWithNotificationsDisabled(ctx, [
+      user._id,
+    ]);
+
     return {
       id: user._id,
       firstName: user.firstName || "",
@@ -292,6 +309,7 @@ export const getCommunityMemberById = query({
       phone: user.phone || null,
       phoneVerified: user.phoneVerified || false,
       profilePhoto: getMediaUrl(user.profilePhoto),
+      notificationsDisabled: notifsDisabled.has(user._id),
       dateOfBirth: user.dateOfBirth || null,
       lastLogin: communityMembership.lastLogin || null,
       communityMembership: {
