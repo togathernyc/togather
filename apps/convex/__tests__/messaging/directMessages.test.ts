@@ -505,6 +505,78 @@ describe("sendMessage gating on pending channels", () => {
 });
 
 // ============================================================================
+// getChannel.recipientPending — surfaces the same gate to the client so the
+// composer can hide attachment buttons preemptively. Without this, the user
+// hit the server rejection at send-time, which previously cascaded into a
+// "Maximum update depth exceeded" navigator render loop (Sentry,
+// 2026-04-29: Takida → Blessing fresh-DM GIF send crash).
+// ============================================================================
+
+describe("getChannel recipientPending exposure (ad-hoc DMs)", () => {
+  test("returns recipientPending=true to the inviter while recipient is pending", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Pending Surface Community");
+    const { accessToken: aToken } = await createUserInCommunity(t, communityId, {
+      firstName: "Alice",
+    });
+    const { userId: bId } = await createUserInCommunity(t, communityId, {
+      firstName: "Bob",
+    });
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.directMessages.createOrGetDirectChannel,
+      { token: aToken, communityId, recipientUserId: bId },
+    );
+
+    const channel = await t.query(api.functions.messaging.channels.getChannel, {
+      token: aToken,
+      channelId,
+    });
+
+    expect(channel).not.toBeNull();
+    expect(channel?.recipientPending).toBe(true);
+    // Caller (Alice) is auto-accepted on the create path; only Bob is pending.
+    expect(channel?.myRequestState).toBe("accepted");
+  });
+
+  test("returns recipientPending=false after the recipient accepts", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Accepted Surface Community");
+    const { accessToken: aToken } = await createUserInCommunity(t, communityId, {
+      firstName: "Alice",
+    });
+    const { userId: bId, accessToken: bToken } = await createUserInCommunity(
+      t,
+      communityId,
+      { firstName: "Bob" },
+    );
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.directMessages.createOrGetDirectChannel,
+      { token: aToken, communityId, recipientUserId: bId },
+    );
+
+    // Sanity: pending pre-accept.
+    const beforeAccept = await t.query(
+      api.functions.messaging.channels.getChannel,
+      { token: aToken, channelId },
+    );
+    expect(beforeAccept?.recipientPending).toBe(true);
+
+    await t.mutation(
+      api.functions.messaging.directMessages.respondToChatRequest,
+      { token: bToken, channelId, response: "accept" },
+    );
+
+    const afterAccept = await t.query(
+      api.functions.messaging.channels.getChannel,
+      { token: aToken, channelId },
+    );
+    expect(afterAccept?.recipientPending).toBe(false);
+  });
+});
+
+// ============================================================================
 // listChatRequests
 // ============================================================================
 

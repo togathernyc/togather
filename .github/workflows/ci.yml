@@ -119,6 +119,12 @@ jobs:
         working-directory: apps/mobile
         run: node scripts/check-native-imports.js
 
+      - name: Check navigator screen registrations
+        working-directory: apps/mobile
+        run: |
+          node scripts/check-navigator-screens.selftest.js
+          node scripts/check-navigator-screens.js
+
       - name: Verify Metro bundler (catch import errors)
         working-directory: apps/mobile
         run: |
