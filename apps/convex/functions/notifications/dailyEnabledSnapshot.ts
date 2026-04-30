@@ -132,6 +132,17 @@ export const setEnabledCounter = internalMutation({
   },
 });
 
+/** Return all environments that currently have a counter row. Used by
+ *  backfill to detect rows that need zeroing because their env had no
+ *  tokens this scan (full churn of users in that env since last backfill). */
+export const listCounterEnvironments = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("notificationEnabledCounter").collect();
+    return rows.map((r) => r.environment);
+  },
+});
+
 /**
  * One-time backfill action — pages through the entire `pushTokens` table,
  * tallies distinct userIds per environment, and writes the resulting counts
@@ -174,6 +185,20 @@ export const backfillEnabledCounter = internalAction({
       totalRows += result.page.length;
       if (result.isDone) break;
       cursor = result.continueCursor;
+    }
+
+    // Zero out any environment that has an existing counter row but no
+    // tokens in this scan — without this, `backfillEnabledCounter` would
+    // leave stale counts for envs whose users have all churned out, making
+    // the function silently non-idempotent and the dashboard permanently
+    // overstated for that env.
+    const knownEnvs: string[] = await ctx.runQuery(
+      internal.functions.notifications.dailyEnabledSnapshot.listCounterEnvironments,
+    );
+    for (const env of knownEnvs) {
+      if (!usersByEnv.has(env)) {
+        usersByEnv.set(env, new Set());
+      }
     }
 
     const summary: Array<{ environment: string; count: number }> = [];
