@@ -342,6 +342,7 @@ export function MessageList({
             isDeleted: message.isDeleted,
             senderName: message.senderName,
             senderProfilePhoto: message.senderProfilePhoto,
+            senderNotificationsDisabled: message.senderNotificationsDisabled,
             mentionedUserIds: message.mentionedUserIds,
             threadReplyCount: message.threadReplyCount,
             hideLinkPreview: message.hideLinkPreview,

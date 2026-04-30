@@ -88,6 +88,9 @@ export interface PrefetchedMessage {
   threadReplyCount?: number;
   senderName?: string;
   senderProfilePhoto?: string;
+  /** Mirrors backend `senderNotificationsDisabled` so the slashed-bell badge
+   *  can render on prefetched messages too. */
+  senderNotificationsDisabled?: boolean;
   hideLinkPreview?: boolean;
 }
 
@@ -107,6 +110,7 @@ export interface PrefetchedThreadReply {
   senderId?: string;
   senderName?: string;
   senderProfilePhoto?: string;
+  senderNotificationsDisabled?: boolean;
   createdAt: number;
 }
 

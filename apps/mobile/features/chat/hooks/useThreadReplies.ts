@@ -22,6 +22,7 @@ interface ThreadReply {
   isDeleted: boolean;
   senderName?: string;
   senderProfilePhoto?: string;
+  senderNotificationsDisabled?: boolean;
   attachments?: Array<{
     type: string;
     url: string;
