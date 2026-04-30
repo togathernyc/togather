@@ -146,20 +146,9 @@ export const searchCommunityMembers = query({
       profilePhoto: string | null;
       isAdmin: boolean;
       role: number;
-      notificationsDisabled: boolean;
       communityLastLogin: number;
       appLastLogin: number;
     }> = [];
-
-    // Batched notif-disabled lookup so each row can show the slashed-bell.
-    const candidateUserIds = allResults
-      .map((u, i) => ({ user: u, membership: memberships[i] }))
-      .filter(({ membership }) => membership && membership.status !== 3)
-      .map(({ user }) => user._id);
-    const notifsDisabled = await getUsersWithNotificationsDisabled(
-      ctx,
-      candidateUserIds,
-    );
 
     for (let i = 0; i < allResults.length; i++) {
       const user = allResults[i];
@@ -177,7 +166,6 @@ export const searchCommunityMembers = query({
         profilePhoto: getMediaUrl(user.profilePhoto) ?? null,
         isAdmin: (membership.roles ?? 0) >= ADMIN_ROLE_THRESHOLD,
         role: membership.roles ?? COMMUNITY_ROLES.MEMBER,
-        notificationsDisabled: notifsDisabled.has(user._id),
         communityLastLogin: membership.lastLogin ?? 0,
         appLastLogin: user.lastLogin ?? 0,
       });
@@ -193,8 +181,22 @@ export const searchCommunityMembers = query({
       return b.appLastLogin - a.appLastLogin;
     });
 
-    // Take only the requested limit and remove sort fields from response
-    const limitedMatches = matches.slice(0, limit).map(({ communityLastLogin, appLastLogin, ...rest }) => rest);
+    // Slice to the response limit BEFORE looking up notif-disabled status —
+    // pushTokens reads should scale with the number of rows we're actually
+    // returning, not with how many candidates the search index pulled
+    // back (up to 500). For broad queries this avoids hundreds of extra
+    // reads per keystroke (codex review #372).
+    const sliced = matches.slice(0, limit);
+    const sliceNotifsDisabled = await getUsersWithNotificationsDisabled(
+      ctx,
+      sliced.map((m) => m.id),
+    );
+    const limitedMatches = sliced.map(
+      ({ communityLastLogin, appLastLogin, ...rest }) => ({
+        ...rest,
+        notificationsDisabled: sliceNotifsDisabled.has(rest.id),
+      }),
+    );
 
     return {
       members: limitedMatches,
