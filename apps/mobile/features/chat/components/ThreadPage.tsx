@@ -277,6 +277,7 @@ export function ThreadPage({
                       isDeleted: item.data.isDeleted,
                       senderName: item.data.senderName,
                       senderProfilePhoto: item.data.senderProfilePhoto,
+                      senderNotificationsDisabled: item.data.senderNotificationsDisabled,
                     }}
                     currentUserId={currentUserId}
                     onLongPress={handleLongPressMessage}
@@ -315,6 +316,7 @@ export function ThreadPage({
                     isDeleted: item.data.isDeleted,
                     senderName: item.data.senderName,
                     senderProfilePhoto: item.data.senderProfilePhoto,
+                    senderNotificationsDisabled: item.data.senderNotificationsDisabled,
                   }}
                   currentUserId={currentUserId}
                   onLongPress={handleLongPressMessage}

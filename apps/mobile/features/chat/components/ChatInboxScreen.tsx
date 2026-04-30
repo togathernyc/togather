@@ -1024,10 +1024,13 @@ type DirectInboxRowData = {
     userId: Id<"users">;
     displayName: string;
     profilePhoto: string | null;
+    notificationsDisabled: boolean;
   }>;
   lastMessageAt: number | null;
   lastMessagePreview: string | null;
   lastMessageSenderName: string | null;
+  lastMessageSenderId: Id<"users"> | null;
+  lastMessageSenderNotificationsDisabled: boolean;
   unreadCount: number;
   isMuted: boolean;
 };
@@ -1100,6 +1103,8 @@ function DirectMessageRow({ row, primaryColor, colors }: DirectMessageRowProps) 
           name={primaryAvatar?.displayName ?? headerName}
           imageUrl={primaryAvatar?.profilePhoto ?? undefined}
           size={56}
+          notificationsDisabled={primaryAvatar?.notificationsDisabled ?? false}
+          notificationsBadgeRingColor={colors.surface}
         />
       )}
       <View style={styles.dmRowContent}>

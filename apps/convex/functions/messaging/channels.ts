@@ -24,6 +24,7 @@ import { syncUserChannelMembershipsLogic } from "../sync/memberships";
 import { updateChannelMemberCount } from "./helpers";
 import { matchesSearchTerms, parseSearchTerms } from "../../lib/memberSearch";
 import { canAccessEventChannel } from "./eventChat";
+import { getUsersWithNotificationsDisabled } from "../../lib/notifications/enabledStatus";
 
 // ============================================================================
 // Constants
@@ -814,6 +815,11 @@ export const getChannelMembers = query({
         })
       );
 
+      const pageNotifsDisabled = await getUsersWithNotificationsDisabled(
+        ctx,
+        page.map(({ member }) => member.userId),
+      );
+
       return {
         members: page.map(({ member, user }, idx) => ({
           id: member._id,
@@ -827,6 +833,7 @@ export const getChannelMembers = query({
           groupRole: pageGroupRoles[idx] ?? undefined,
           syncSource: member.syncSource,
           syncMetadata: member.syncMetadata,
+          notificationsDisabled: pageNotifsDisabled.has(member.userId),
         })),
         nextCursor,
         totalCount: matchedMembers.length,
@@ -877,9 +884,18 @@ export const getChannelMembers = query({
       })
     );
 
+    const browseNotifsDisabled = await getUsersWithNotificationsDisabled(
+      ctx,
+      enrichedMembers.map((m) => m.userId),
+    );
+    const enrichedMembersWithNotifs = enrichedMembers.map((m) => ({
+      ...m,
+      notificationsDisabled: browseNotifsDisabled.has(m.userId),
+    }));
+
     // Return member data with pagination info
     return {
-      members: enrichedMembers,
+      members: enrichedMembersWithNotifs,
       nextCursor: hasMore ? JSON.stringify(result.continueCursor) : null,
       // Note: totalCount is expensive for large channels, use channel.memberCount instead
       totalCount: channel.memberCount || 0,
@@ -1362,6 +1378,21 @@ export const getInboxChannels = query({
       });
     }
 
+    // Look up notif-disabled status for every distinct lastMessageSenderId
+    // referenced by the inbox so each row can render the slashed-bell badge
+    // next to the sender's avatar/name.
+    const inboxSenderIds = Array.from(
+      new Set(
+        allChannels
+          .map((ch) => ch.lastMessageSenderId)
+          .filter((id): id is Id<"users"> => !!id),
+      ),
+    );
+    const inboxSenderNotifsDisabled = await getUsersWithNotificationsDisabled(
+      ctx,
+      inboxSenderIds,
+    );
+
     // Build the result grouped by group
     const result: Array<{
       group: {
@@ -1382,6 +1413,7 @@ export const getInboxChannels = query({
         lastMessageAt: number | null;
         lastMessageSenderName: string | null;
         lastMessageSenderId: Id<"users"> | null;
+        lastMessageSenderNotificationsDisabled: boolean;
         unreadCount: number;
         isShared: boolean | undefined;
         isEnabled: boolean | undefined;
@@ -1494,6 +1526,9 @@ export const getInboxChannels = query({
           lastMessageAt: ch.lastMessageAt || null,
           lastMessageSenderName: ch.lastMessageSenderName || null,
           lastMessageSenderId: ch.lastMessageSenderId || null,
+          lastMessageSenderNotificationsDisabled: ch.lastMessageSenderId
+            ? inboxSenderNotifsDisabled.has(ch.lastMessageSenderId)
+            : false,
           unreadCount: unreadCounts.get(ch._id) || 0,
           isShared: ch.isShared || undefined,
           isEnabled: ch.isEnabled,

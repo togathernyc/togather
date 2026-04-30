@@ -19,6 +19,7 @@ export interface UserProfile {
   firstName?: string;
   lastName?: string;
   profilePhoto: string | null;
+  notificationsDisabled: boolean;
   bio: string | null;
   instagramHandle: string | null;
   linkedinHandle: string | null;

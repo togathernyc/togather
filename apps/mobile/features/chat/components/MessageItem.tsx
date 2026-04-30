@@ -26,6 +26,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import type { Id } from '@services/api/convex';
 import { AppImage, ImageViewer } from '@components/ui';
+import { NotificationsDisabledBadge } from '@components/ui/NotificationsDisabledBadge';
 import { useReadReceipts } from '@features/chat/hooks/useReadReceipts';
 import { useReactions, type Reaction } from '@features/chat/hooks/useReactions';
 import { EventLinkCard } from './EventLinkCard';
@@ -67,6 +68,12 @@ interface MessageItemProps {
     isDeleted: boolean;
     senderName?: string;
     senderProfilePhoto?: string;
+    /**
+     * True when the sender has push notifications disabled (no token in
+     * the current environment). Drives the slashed-bell badge over the
+     * sender's avatar so readers know not to expect immediate read/response.
+     */
+    senderNotificationsDisabled?: boolean;
     mentionedUserIds?: Id<"users">[];
     threadReplyCount?: number;
     hideLinkPreview?: boolean;
@@ -952,6 +959,12 @@ function MessageItemInner({
                 backgroundColor: '#E5E5E5',
               }}
             />
+            {message.senderNotificationsDisabled ? (
+              <NotificationsDisabledBadge
+                avatarSize={24}
+                ringColor={themeColors.background}
+              />
+            ) : null}
           </Pressable>
         )}
 

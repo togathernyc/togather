@@ -57,6 +57,7 @@ type SearchResult = {
   displayName: string;
   profilePhoto: string | null;
   sharedCommunityNames: string[];
+  notificationsDisabled: boolean;
 };
 
 type Member = {
@@ -65,6 +66,7 @@ type Member = {
   profilePhoto: string | null;
   isSelf: boolean;
   isInviter: boolean;
+  notificationsDisabled: boolean;
 };
 
 const SEARCH_DEBOUNCE_MS = 200;
@@ -133,6 +135,7 @@ export function ChatInfoScreen({ channelId }: Props) {
       profilePhoto: m.profilePhoto,
       isSelf: false,
       isInviter: m.userId === creatorId,
+      notificationsDisabled: m.notificationsDisabled,
     }));
     const self: Member = {
       userId: currentUserId,
@@ -140,6 +143,10 @@ export function ChatInfoScreen({ channelId }: Props) {
       profilePhoto: (user as { profile_photo?: string | null } | null)?.profile_photo ?? null,
       isSelf: true,
       isInviter: currentUserId === creatorId,
+      // The current viewer's own row in chat info doesn't need a "you don't
+      // have notifications" indicator — they already get the inbox banner
+      // and Settings warning. Always render as enabled here.
+      notificationsDisabled: false,
     };
     return [self, ...others];
   }, [inboxRow, currentUserId, creatorId, selfDisplayName, user]);
@@ -410,6 +417,8 @@ export function ChatInfoScreen({ channelId }: Props) {
                 name={m.displayName}
                 imageUrl={m.profilePhoto}
                 size={40}
+                notificationsDisabled={m.notificationsDisabled}
+                notificationsBadgeRingColor={colors.surfaceSecondary}
               />
               <View style={styles.memberRowText}>
                 <Text
@@ -774,6 +783,8 @@ function AddPeopleModal({
           name={item.displayName}
           imageUrl={item.profilePhoto}
           size={40}
+          notificationsDisabled={item.notificationsDisabled}
+          notificationsBadgeRingColor={colors.surface}
         />
         <View style={styles.searchRowText}>
           <Text style={[styles.searchRowName, { color: colors.text }]} numberOfLines={1}>
