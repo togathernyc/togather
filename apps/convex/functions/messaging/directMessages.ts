@@ -19,6 +19,7 @@ import type { Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { checkRateLimit } from "../../lib/rateLimit";
 import { getDisplayName, getMediaUrl, normalizePhone } from "../../lib/utils";
+import { getUsersWithNotificationsDisabled } from "../../lib/notifications/enabledStatus";
 
 // ============================================================================
 // Constants
@@ -1213,11 +1214,17 @@ export const searchUsersInSharedCommunities = query({
       return aName.localeCompare(bName);
     });
 
-    return candidates.slice(0, limit).map((c) => ({
+    const sliced = candidates.slice(0, limit);
+    const notifsDisabled = await getUsersWithNotificationsDisabled(
+      ctx,
+      sliced.map((c) => c.user._id),
+    );
+    return sliced.map((c) => ({
       userId: c.user._id,
       displayName: getDisplayName(c.user.firstName, c.user.lastName),
       profilePhoto: getMediaUrl(c.user.profilePhoto) ?? null,
       sharedCommunityNames: communityName ? [communityName] : [],
+      notificationsDisabled: notifsDisabled.has(c.user._id),
     }));
   },
 });
@@ -1258,6 +1265,7 @@ export const getAdHocChannelMembers = query({
       userId: Id<"users">;
       displayName: string;
       profilePhoto: string | null;
+      notificationsDisabled: boolean;
     }>;
   } | null> => {
     const userId = await requireAuth(ctx, args.token);
@@ -1293,6 +1301,11 @@ export const getAdHocChannelMembers = query({
     const otherUsers = await Promise.all(
       others.map((m) => ctx.db.get(m.userId)),
     );
+    const otherIds = others.map((m) => m.userId);
+    const otherNotifsDisabled = await getUsersWithNotificationsDisabled(
+      ctx,
+      otherIds,
+    );
     const otherMembers = others
       .map((m, i) => {
         const u = otherUsers[i];
@@ -1304,6 +1317,7 @@ export const getAdHocChannelMembers = query({
             m.displayName ||
             "Member",
           profilePhoto: getMediaUrl(u.profilePhoto ?? m.profilePhoto) ?? null,
+          notificationsDisabled: otherNotifsDisabled.has(m.userId),
         };
       })
       .filter((x): x is NonNullable<typeof x> => x !== null);
@@ -1341,10 +1355,13 @@ export const getDirectInbox = query({
         userId: Id<"users">;
         displayName: string;
         profilePhoto: string | null;
+        notificationsDisabled: boolean;
       }>;
       lastMessageAt: number | null;
       lastMessagePreview: string | null;
       lastMessageSenderName: string | null;
+      lastMessageSenderId: Id<"users"> | null;
+      lastMessageSenderNotificationsDisabled: boolean;
       unreadCount: number;
       isMuted: boolean;
     }> = [];
@@ -1385,12 +1402,24 @@ export const getDirectInbox = query({
         .withIndex("by_channel", (q) => q.eq("channelId", channel._id))
         .filter((q) => q.eq(q.field("leftAt"), undefined))
         .collect();
+      const otherMemberIds = otherMemberRows
+        .filter((m) => m.userId !== userId)
+        .map((m) => m.userId);
+      const senderIdForRow = channel.lastMessageSenderId ?? null;
+      const idsToCheck = senderIdForRow
+        ? [...otherMemberIds, senderIdForRow]
+        : otherMemberIds;
+      const rowNotifsDisabled = await getUsersWithNotificationsDisabled(
+        ctx,
+        idsToCheck,
+      );
       const otherMembers = otherMemberRows
         .filter((m) => m.userId !== userId)
         .map((m) => ({
           userId: m.userId,
           displayName: m.displayName ?? "",
           profilePhoto: getMediaUrl(m.profilePhoto) ?? null,
+          notificationsDisabled: rowNotifsDisabled.has(m.userId),
         }));
 
       // Read state → unread count.
@@ -1411,6 +1440,10 @@ export const getDirectInbox = query({
         lastMessageAt: channel.lastMessageAt ?? null,
         lastMessagePreview: channel.lastMessagePreview ?? null,
         lastMessageSenderName: channel.lastMessageSenderName ?? null,
+        lastMessageSenderId: senderIdForRow,
+        lastMessageSenderNotificationsDisabled: senderIdForRow
+          ? rowNotifsDisabled.has(senderIdForRow)
+          : false,
         unreadCount,
         isMuted: row.isMuted,
       });

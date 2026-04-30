@@ -26,6 +26,26 @@ import {
 import { checkRateLimit } from "../../lib/rateLimit";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
 import { canAccessEventChannel } from "./eventChat";
+import { getUsersWithNotificationsDisabled } from "../../lib/notifications/enabledStatus";
+
+/**
+ * Decorate a list of message rows with `senderNotificationsDisabled` so chat
+ * surfaces can render the slashed-bell badge next to the sender's avatar.
+ * Batches one pushTokens lookup per distinct senderId.
+ */
+async function attachSenderNotifsDisabled(
+  ctx: QueryCtx,
+  messages: Doc<"chatMessages">[],
+): Promise<Array<Doc<"chatMessages"> & { senderNotificationsDisabled: boolean }>> {
+  const senderIds = messages
+    .map((m) => m.senderId)
+    .filter((id): id is Id<"users"> => !!id);
+  const disabled = await getUsersWithNotificationsDisabled(ctx, senderIds);
+  return messages.map((m) => ({
+    ...m,
+    senderNotificationsDisabled: m.senderId ? disabled.has(m.senderId) : false,
+  }));
+}
 
 /**
  * Same access check as `canAccessEventChannel` but keyed off a meeting doc
@@ -435,9 +455,10 @@ export const getMessages = query({
     // Reverse to chronological order (oldest first, newest at bottom)
     // This is the expected order for chat UIs
     const chronologicalMessages = [...pageMessages].reverse();
+    const decorated = await attachSenderNotifsDisabled(ctx, chronologicalMessages);
 
     return {
-      messages: chronologicalMessages,
+      messages: decorated,
       hasMore,
       cursor,
     };
@@ -493,9 +514,10 @@ export const getThreadReplies = query({
 
     const hasMore = replies.length === limit;
     const cursor = replies.length > 0 ? replies[replies.length - 1]._id : undefined;
+    const decorated = await attachSenderNotifsDisabled(ctx, replies);
 
     return {
-      messages: replies,
+      messages: decorated,
       hasMore,
       cursor,
     };

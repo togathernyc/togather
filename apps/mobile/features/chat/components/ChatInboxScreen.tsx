@@ -36,6 +36,7 @@ import { useInboxCache } from "../../../stores/inboxCache";
 import { Avatar } from "@components/ui/Avatar";
 import { useConvexFeatureFlag } from "@hooks/useConvexFeatureFlag";
 import { StackedMemberAvatars } from "./StackedMemberAvatars";
+import { EnableNotificationsBanner } from "@features/notifications/components/EnableNotificationsBanner";
 
 // Inbox event visibility is now driven server-side by
 // `INBOX_EVENT_HIDE_AFTER_MS` in apps/convex/functions/messaging/channels.ts
@@ -522,6 +523,7 @@ export function ChatInboxScreen({
       <Wrapper>
         <View style={[styles.container, { backgroundColor: colors.surface }]}>
           {renderHeader(true)}
+          <EnableNotificationsBanner />
           <ScrollView contentContainerStyle={styles.centeredScrollContent}>
             <Ionicons
               name="chatbubbles-outline"
@@ -543,6 +545,7 @@ export function ChatInboxScreen({
     <Wrapper>
       <View style={[styles.container, { backgroundColor: colors.surface }]}>
         {renderHeader(true)}
+        <EnableNotificationsBanner />
         <FlatList
           data={listItemsWithDm}
           renderItem={renderItem}
@@ -1021,10 +1024,13 @@ type DirectInboxRowData = {
     userId: Id<"users">;
     displayName: string;
     profilePhoto: string | null;
+    notificationsDisabled: boolean;
   }>;
   lastMessageAt: number | null;
   lastMessagePreview: string | null;
   lastMessageSenderName: string | null;
+  lastMessageSenderId: Id<"users"> | null;
+  lastMessageSenderNotificationsDisabled: boolean;
   unreadCount: number;
   isMuted: boolean;
 };
@@ -1097,6 +1103,8 @@ function DirectMessageRow({ row, primaryColor, colors }: DirectMessageRowProps) 
           name={primaryAvatar?.displayName ?? headerName}
           imageUrl={primaryAvatar?.profilePhoto ?? undefined}
           size={56}
+          notificationsDisabled={primaryAvatar?.notificationsDisabled ?? false}
+          notificationsBadgeRingColor={colors.surface}
         />
       )}
       <View style={styles.dmRowContent}>

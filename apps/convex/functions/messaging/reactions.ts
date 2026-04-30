@@ -9,6 +9,7 @@ import { query, mutation } from "../../_generated/server";
 import type { Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { canAccessEventChannel } from "./eventChat";
+import { getUsersWithNotificationsDisabled } from "../../lib/notifications/enabledStatus";
 
 // ============================================================================
 // Queries
@@ -259,6 +260,10 @@ export const getReactionDetails = query({
       .collect();
 
     // Fetch user details for each reactor
+    const reactorNotifsDisabled = await getUsersWithNotificationsDisabled(
+      ctx,
+      reactions.map((r) => r.userId),
+    );
     const users = await Promise.all(
       reactions.map(async (reaction) => {
         const user = await ctx.db.get(reaction.userId);
@@ -273,6 +278,7 @@ export const getReactionDetails = query({
           userId: reaction.userId,
           displayName,
           profilePhoto: user.profilePhoto ?? null,
+          notificationsDisabled: reactorNotifsDisabled.has(reaction.userId),
         };
       })
     );

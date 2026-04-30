@@ -192,4 +192,20 @@ crons.hourly(
   internal.functions.messaging.directMessages.cleanupOldDmRateLimits
 );
 
+// =============================================================================
+// DAILY NOTIFICATION-ENABLED SNAPSHOT + COUNTER SELF-HEAL
+// =============================================================================
+// Runs daily at 23:55 UTC — late in the UTC day so the snapshot captures
+// "end of today" under today's date label (avoids the off-by-one delta
+// distortion the earlier 00:05-of-next-day schedule had). Backfill re-seeds
+// `notificationEnabledCounter` from pushTokens (idempotent, paginated — no
+// transaction limits) for self-healing; if backfill fails the snapshot
+// still runs.
+
+crons.daily(
+  "daily-notification-enabled-snapshot",
+  { hourUTC: 23, minuteUTC: 55 },
+  internal.functions.notifications.dailyEnabledSnapshot.runDaily
+);
+
 export default crons;

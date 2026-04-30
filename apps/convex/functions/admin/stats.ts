@@ -16,6 +16,8 @@ import { Id, Doc } from "../../_generated/dataModel";
 import { now, getMediaUrl } from "../../lib/utils";
 import { requireAuth } from "../../lib/auth";
 import { requireCommunityAdmin, checkCommunityAdmin } from "./auth";
+import { getCurrentEnvironment } from "../../lib/notifications/send";
+import { readEnabledCount } from "../../lib/notifications/enabledCounter";
 
 type SuperAdminRange = "7d" | "30d" | "90d" | "all";
 type SuperAdminGranularity = "day" | "month";
@@ -1552,6 +1554,80 @@ export const getNotificationStats = query({
       byType: Object.entries(byType)
         .map(([type, stats]) => ({ type, ...stats }))
         .sort((a, b) => b.sent - a.sent),
+    };
+  },
+});
+
+/**
+ * Device-level notification opt-in counts for the superuser admin dashboard.
+ *
+ * Returns:
+ *   - `today`:        live count of distinct users with ≥1 push token in the
+ *                     current environment
+ *   - `yesterday`:    most recent dailyNotificationStats snapshot for this
+ *                     env (null if no snapshot has been taken yet — first day
+ *                     after deploy or before the cron has fired once)
+ *   - `delta`:        today - yesterday (null when yesterday is null)
+ *   - `percentChange`: (delta / yesterday) * 100 (null when yesterday is null
+ *                     or zero)
+ *
+ * "Enabled" matches the `notifications.preferences.preferences` query: token
+ * existence in `pushTokens` for the current environment, regardless of the
+ * `isActive` flag.
+ *
+ * Snapshots are written daily at 00:05 UTC by `dailyEnabledSnapshot.run`.
+ * Tokens are deleted on disable, so historical counts cannot be reconstructed
+ * without those snapshots.
+ */
+export const getDailyNotificationEnabledStats = query({
+  args: { token: v.string() },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const user = await ctx.db.get(userId);
+    if (!user?.isStaff && !user?.isSuperuser) {
+      throw new Error("Togather internal access required");
+    }
+
+    const environment = getCurrentEnvironment();
+
+    // Live "today" count — read the running tally maintained by the token
+    // write paths in O(1) instead of scanning the full pushTokens table
+    // (the previous approach hit Convex transaction scan limits at scale).
+    const today = await readEnabledCount(ctx, environment);
+
+    // Compare against the most recent dailyNotificationStats snapshot for
+    // this environment. We deliberately do NOT compute "yesterday's date"
+    // from `Date.now()` here — Convex queries don't rerun on wall-clock
+    // changes, only on tracked-data changes. A dashboard left open across
+    // UTC midnight would have read a stale yesterdayDate. By returning the
+    // snapshot's actual date, the UI labels the delta against the real
+    // snapshot date (e.g. "since 2026-04-29") and the query naturally
+    // reactivates when the daily cron writes a new snapshot.
+    const lastSnapshot = await ctx.db
+      .query("dailyNotificationStats")
+      .withIndex("by_environment_date", (q) => q.eq("environment", environment))
+      .order("desc")
+      .first();
+
+    const previous = lastSnapshot?.enabledCount ?? null;
+    const previousDate = lastSnapshot?.date ?? null;
+
+    let delta: number | null = null;
+    let percentChange: number | null = null;
+    if (previous !== null) {
+      delta = today - previous;
+      if (previous > 0) {
+        percentChange = (delta / previous) * 100;
+      }
+    }
+
+    return {
+      today,
+      previous,
+      previousDate,
+      delta,
+      percentChange,
+      environment,
     };
   },
 });

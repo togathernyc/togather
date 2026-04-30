@@ -11,6 +11,7 @@ import { now } from "../../lib/utils";
 import { platformValidator } from "../../lib/validators";
 import { requireAuth } from "../../lib/auth";
 import { getCurrentEnvironment } from "../../lib/notifications/send";
+import { adjustEnabledCounter } from "../../lib/notifications/enabledCounter";
 
 // ============================================================================
 // Public Mutations
@@ -62,6 +63,13 @@ export const registerToken = mutation({
       lastUsedAt: timestamp,
     });
 
+    // Maintain the enabled-count running tally: only increment when the user
+    // transitions from 0 → 1 token in this env. If they already had a token
+    // (re-register on relaunch), the count is unchanged.
+    if (existingTokens.length === 0) {
+      await adjustEnabledCounter(ctx, environment, 1);
+    }
+
     return {
       success: true,
       message: "Push token registered successfully",
@@ -83,10 +91,42 @@ export const unregisterToken = mutation({
       .withIndex("by_token", (q) => q.eq("token", args.token))
       .collect();
 
+    // Group the to-be-deleted tokens by (userId, environment) so we can
+    // decrement the enabled-count counter exactly once per (user, env) pair
+    // that loses its last token in that environment.
+    const affected: Array<{ userId: string; environment: string }> = [];
+    for (const tokenDoc of tokens) {
+      affected.push({
+        userId: tokenDoc.userId,
+        environment: tokenDoc.environment ?? "",
+      });
+    }
+
     let deletedCount = 0;
     for (const tokenDoc of tokens) {
       await ctx.db.delete(tokenDoc._id);
       deletedCount++;
+    }
+
+    // For each affected (user, env), check whether they still have any
+    // tokens left in that env after deletion. If not, that user transitions
+    // back to "disabled" → -1 on the counter. Skip rows with empty
+    // environment (legacy/unscoped tokens) — they're not in the counter.
+    const seen = new Set<string>();
+    for (const { userId, environment } of affected) {
+      if (!environment) continue;
+      const key = `${userId}|${environment}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      const remaining = await ctx.db
+        .query("pushTokens")
+        .withIndex("by_user", (q) => q.eq("userId", userId as any))
+        .filter((q) => q.eq(q.field("environment"), environment))
+        .first();
+      if (!remaining) {
+        await adjustEnabledCounter(ctx, environment, -1);
+      }
     }
 
     return {

@@ -22,6 +22,7 @@ interface ThreadReply {
   isDeleted: boolean;
   senderName?: string;
   senderProfilePhoto?: string;
+  senderNotificationsDisabled?: boolean;
   attachments?: Array<{
     type: string;
     url: string;
@@ -90,6 +91,7 @@ export function useThreadReplies(
       isDeleted: false,
       senderName: r.senderName,
       senderProfilePhoto: r.senderProfilePhoto,
+      senderNotificationsDisabled: r.senderNotificationsDisabled,
     }));
 
     return {

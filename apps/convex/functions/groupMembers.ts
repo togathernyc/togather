@@ -29,6 +29,7 @@ import { requireAuth, getOptionalAuth } from "../lib/auth";
 import { isCommunityAdmin, ADMIN_ROLE_THRESHOLD } from "../lib/permissions";
 import { syncUserChannelMembershipsLogic } from "./sync/memberships";
 import { isActiveMembership, isActiveLeader, hasLeft } from "../lib/helpers";
+import { getUsersWithNotificationsDisabled } from "../lib/notifications/enabledStatus";
 
 // ============================================================================
 // Member Queries
@@ -207,6 +208,8 @@ export const list = query({
       }
     });
 
+    const notifsDisabled = await getUsersWithNotificationsDisabled(ctx, userIds);
+
     // Map members to response with user details
     const membersWithUsers = paginatedMembers.map((member) => {
       const user = userMap.get(member.userId);
@@ -224,6 +227,7 @@ export const list = query({
               lastName: user.lastName || "",
               email: user.email || "",
               profileImage: getMediaUrl(user.profilePhoto),
+              notificationsDisabled: notifsDisabled.has(user._id),
             }
           : null,
       };
@@ -289,6 +293,7 @@ export const getMemberPreview = query({
     // Batch fetch users
     const userIds = previewMembers.map((m) => m.userId);
     const users = await Promise.all(userIds.map((id) => ctx.db.get(id)));
+    const notifsDisabled = await getUsersWithNotificationsDisabled(ctx, userIds);
 
     // Build response with limited public info only
     const membersPreview = previewMembers
@@ -301,6 +306,7 @@ export const getMemberPreview = query({
           lastName: user.lastName || "",
           profileImage: getMediaUrl(user.profilePhoto),
           role: member.role,
+          notificationsDisabled: notifsDisabled.has(user._id),
         };
       })
       .filter(Boolean);
@@ -367,6 +373,10 @@ export const getLeaderPreview = query({
 
     // Batch fetch users
     const users = await Promise.all(slice.map((m) => ctx.db.get(m.userId)));
+    const notifsDisabled = await getUsersWithNotificationsDisabled(
+      ctx,
+      slice.map((m) => m.userId),
+    );
 
     const leadersPreview = slice
       .map((membership, i) => {
@@ -378,6 +388,7 @@ export const getLeaderPreview = query({
           lastName: user.lastName || "",
           profileImage: getMediaUrl(user.profilePhoto),
           role: membership.role,
+          notificationsDisabled: notifsDisabled.has(user._id),
         };
       })
       .filter(Boolean);

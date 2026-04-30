@@ -90,6 +90,7 @@ import type * as functions_messaging_typing from "../functions/messaging/typing.
 import type * as functions_migrations from "../functions/migrations.js";
 import type * as functions_migrations_migrateToCommunityPeople from "../functions/migrations/migrateToCommunityPeople.js";
 import type * as functions_notifications_actions from "../functions/notifications/actions.js";
+import type * as functions_notifications_dailyEnabledSnapshot from "../functions/notifications/dailyEnabledSnapshot.js";
 import type * as functions_notifications_debug from "../functions/notifications/debug.js";
 import type * as functions_notifications_index from "../functions/notifications/index.js";
 import type * as functions_notifications_internal from "../functions/notifications/internal.js";
@@ -154,6 +155,7 @@ import type * as lib_memberSearch from "../lib/memberSearch.js";
 import type * as lib_membership from "../lib/membership.js";
 import type * as lib_notifications_definitions from "../lib/notifications/definitions.js";
 import type * as lib_notifications_emailTemplates from "../lib/notifications/emailTemplates.js";
+import type * as lib_notifications_enabledCounter from "../lib/notifications/enabledCounter.js";
 import type * as lib_notifications_index from "../lib/notifications/index.js";
 import type * as lib_notifications_registry from "../lib/notifications/registry.js";
 import type * as lib_notifications_send from "../lib/notifications/send.js";
@@ -262,6 +264,7 @@ declare const fullApi: ApiFromModules<{
   "functions/migrations": typeof functions_migrations;
   "functions/migrations/migrateToCommunityPeople": typeof functions_migrations_migrateToCommunityPeople;
   "functions/notifications/actions": typeof functions_notifications_actions;
+  "functions/notifications/dailyEnabledSnapshot": typeof functions_notifications_dailyEnabledSnapshot;
   "functions/notifications/debug": typeof functions_notifications_debug;
   "functions/notifications/index": typeof functions_notifications_index;
   "functions/notifications/internal": typeof functions_notifications_internal;
@@ -326,6 +329,7 @@ declare const fullApi: ApiFromModules<{
   "lib/membership": typeof lib_membership;
   "lib/notifications/definitions": typeof lib_notifications_definitions;
   "lib/notifications/emailTemplates": typeof lib_notifications_emailTemplates;
+  "lib/notifications/enabledCounter": typeof lib_notifications_enabledCounter;
   "lib/notifications/index": typeof lib_notifications_index;
   "lib/notifications/registry": typeof lib_notifications_registry;
   "lib/notifications/send": typeof lib_notifications_send;

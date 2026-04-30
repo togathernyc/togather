@@ -869,6 +869,42 @@ export default defineSchema({
     lastProcessedHourMs: v.number(),
   }).index("by_key", ["key"]),
 
+  // Daily snapshot of distinct users with at least one active push token,
+  // scoped per environment. Populated by `dailyEnabledSnapshot.run` cron at
+  // 0:05 UTC. Drives the "notifications enabled — today vs yesterday" card on
+  // the superuser admin dashboard.
+  //
+  // We snapshot rather than compute historically because tokens are deleted
+  // on disable, so the row count at any past moment isn't reconstructible
+  // from the current `pushTokens` table.
+  //
+  // `date` is the UTC day this snapshot represents (e.g. "2026-04-29" for the
+  // run that fired at 00:05 UTC on 2026-04-30 covering the day that just ended).
+  dailyNotificationStats: defineTable({
+    date: v.string(),         // "YYYY-MM-DD" in UTC
+    environment: v.string(),  // "production" | "staging"
+    enabledCount: v.number(), // distinct userIds with ≥1 push token in this env
+    createdAt: v.number(),    // when the snapshot row was written
+  })
+    .index("by_environment_date", ["environment", "date"])
+    .index("by_date", ["date"]),
+
+  // Running count of distinct users with ≥1 push token, scoped per
+  // environment. Maintained incrementally by mutations that insert/delete
+  // pushTokens rows (registerToken, unregisterToken, updatePreferences
+  // disable, user-delete cascade). Both the daily snapshot cron and the
+  // superuser dashboard query read this counter in O(1) instead of scanning
+  // the full pushTokens table — that scan would hit Convex transaction
+  // limits as token volume grows.
+  //
+  // One row per environment. Seeded by `backfillEnabledCounter`
+  // (paginated action) on first deploy.
+  notificationEnabledCounter: defineTable({
+    environment: v.string(),  // "production" | "staging"
+    count: v.number(),        // distinct userIds with ≥1 push token in this env
+    updatedAt: v.number(),
+  }).index("by_environment", ["environment"]),
+
   // =============================================================================
   // PUSH TOKENS
   // =============================================================================

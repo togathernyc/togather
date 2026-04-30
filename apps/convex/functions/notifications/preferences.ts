@@ -10,6 +10,7 @@ import { query, mutation } from "../../_generated/server";
 import { Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { getCurrentEnvironment } from "../../lib/notifications/send";
+import { adjustEnabledCounter } from "../../lib/notifications/enabledCounter";
 
 // ============================================================================
 // Group Notification Settings
@@ -238,6 +239,12 @@ export const updatePreferences = mutation({
         await ctx.db.delete(token._id);
       }
 
+      // If the user had at least one token in this env, they transitioned
+      // from enabled → disabled. Decrement the running tally exactly once.
+      if (tokens.length > 0) {
+        await adjustEnabledCounter(ctx, environment, -1);
+      }
+
       console.log(
         `[updatePreferences] Disabled push for user ${userId}: ` +
         `deleted ${tokens.length} token(s) in ${environment}`
@@ -337,6 +344,14 @@ export const updateChannelPreferences = mutation({
 
         for (const tokenDoc of tokens) {
           await ctx.db.delete(tokenDoc._id);
+        }
+
+        // Mirror updatePreferences: if the user had any tokens in this env,
+        // they transitioned from enabled → disabled. Decrement the counter
+        // exactly once. Without this the running tally drifts every time a
+        // user disables via the channel-prefs path.
+        if (tokens.length > 0) {
+          await adjustEnabledCounter(ctx, currentEnv, -1);
         }
 
         console.log(

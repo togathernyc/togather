@@ -18,6 +18,11 @@ import { now, normalizePhone, getMediaUrl, buildSearchText } from "../lib/utils"
 import { requireAuth, getOptionalAuth } from "../lib/auth";
 import { parseDate } from "../lib/validation";
 import { COMMUNITY_ROLES, COMMUNITY_ADMIN_THRESHOLD } from "../lib/permissions";
+import { adjustEnabledCounter } from "../lib/notifications/enabledCounter";
+import {
+  getUsersWithNotificationsDisabled,
+  isUserNotificationsDisabled,
+} from "../lib/notifications/enabledStatus";
 
 /**
  * Get current user profile
@@ -43,22 +48,33 @@ type PublicUserFields = {
   firstName: string | undefined;
   lastName: string | undefined;
   profilePhoto: string | undefined;
+  /**
+   * True when the user has no push tokens for the current environment — UI
+   * surfaces render a "notifications disabled" badge so senders know not to
+   * expect immediate delivery. Truth source matches `pushTokens` (see
+   * `lib/notifications/enabledStatus.ts`).
+   */
+  notificationsDisabled: boolean;
 };
 
 /**
  * Extract only public fields from a user document
  */
-function extractPublicFields(user: {
-  _id: Id<"users">;
-  firstName?: string;
-  lastName?: string;
-  profilePhoto?: string;
-}): PublicUserFields {
+function extractPublicFields(
+  user: {
+    _id: Id<"users">;
+    firstName?: string;
+    lastName?: string;
+    profilePhoto?: string;
+  },
+  notificationsDisabled: boolean,
+): PublicUserFields {
   return {
     _id: user._id,
     firstName: user.firstName,
     lastName: user.lastName,
     profilePhoto: user.profilePhoto,
+    notificationsDisabled,
   };
 }
 
@@ -79,7 +95,8 @@ export const getById = query({
     }
 
     // Return only public fields to prevent PII exposure
-    return extractPublicFields(user);
+    const notificationsDisabled = await isUserNotificationsDisabled(ctx, user._id);
+    return extractPublicFields(user, notificationsDisabled);
   },
 });
 
@@ -152,11 +169,14 @@ export const getProfile = query({
       }
     }
 
+    const notificationsDisabled = await isUserNotificationsDisabled(ctx, user._id);
+
     return {
       _id: user._id,
       firstName: user.firstName,
       lastName: user.lastName,
       profilePhoto: getMediaUrl(user.profilePhoto) ?? null,
+      notificationsDisabled,
       bio: user.bio ?? null,
       instagramHandle: user.instagramHandle ?? null,
       linkedinHandle: user.linkedinHandle ?? null,
@@ -535,11 +555,15 @@ export const getByIds = query({
     );
 
     // Filter out null users and deactivated users, return only public fields
-    return users
-      .filter((user): user is NonNullable<typeof user> =>
-        user !== null && user.isActive !== false
-      )
-      .map(extractPublicFields);
+    const livingUsers = users.filter(
+      (user): user is NonNullable<typeof user> =>
+        user !== null && user.isActive !== false,
+    );
+    const disabled = await getUsersWithNotificationsDisabled(
+      ctx,
+      livingUsers.map((u) => u._id),
+    );
+    return livingUsers.map((u) => extractPublicFields(u, disabled.has(u._id)));
   },
 });
 
@@ -607,6 +631,8 @@ export const me = query({
       }
     }
 
+    const notificationsDisabled = await isUserNotificationsDisabled(ctx, userId);
+
     return {
       id: user._id,
       legacyId: user.legacyId,
@@ -615,6 +641,7 @@ export const me = query({
       email: user.email || "",
       isStaff: user.isStaff || false,
       isSuperuser: user.isSuperuser || false,
+      notificationsDisabled,
       phone: user.phone || null,
       phoneVerified: user.phoneVerified || false,
       profilePhoto: getMediaUrl(user.profilePhoto),
@@ -845,7 +872,22 @@ export const deleteAccountInternal = internalMutation({
     // 4. Remove chat channel memberships
     await deleteByUserIndex("chatChannelMembers", "by_user");
 
-    // 5. Remove push tokens
+    // 5. Remove push tokens — decrement the per-environment enabled counter
+    //    once per env where this user had ≥1 token, BEFORE deletion (so we
+    //    can still see what envs they had tokens in).
+    {
+      const userTokens = await ctx.db
+        .query("pushTokens")
+        .withIndex("by_user", (q) => q.eq("userId", args.userId))
+        .collect();
+      const envs = new Set<string>();
+      for (const t of userTokens) {
+        if (t.environment) envs.add(t.environment);
+      }
+      for (const env of envs) {
+        await adjustEnabledCounter(ctx, env, -1);
+      }
+    }
     await deleteByUserIndex("pushTokens", "by_user");
 
     // 6. Remove notifications

@@ -51,6 +51,28 @@ try {
 // Types
 // =========================================================================
 
+/**
+ * Coarse permission status used by the opt-in flow.
+ * - `granted`: OS allows push for this app
+ * - `undetermined`: OS hasn't been asked yet (or Android equivalent)
+ * - `denied`: OS-denied but `canAskAgain === true` (mostly Android)
+ * - `denied-permanent`: OS-denied and `canAskAgain === false` (iOS post-deny — only recovery is Settings)
+ * - `unsupported`: web, simulator, or expo-notifications unavailable
+ */
+export type PushPermissionStatus =
+  | 'granted'
+  | 'undetermined'
+  | 'denied'
+  | 'denied-permanent'
+  | 'unsupported';
+
+/** Outcome returned by `enableNotifications()`. */
+export type EnableNotificationsOutcome =
+  | 'enabled'
+  | 'denied'
+  | 'denied-permanent'
+  | 'unsupported';
+
 type NotificationContextType = {
   /** Expo push token for this device */
   expoPushToken: string | null;
@@ -60,8 +82,22 @@ type NotificationContextType = {
   unreadCount: number;
   /** Whether the notification system is ready */
   isReady: boolean;
-  /** Request notification permissions */
+  /**
+   * Request OS permission and (if granted) register the push token. Returns
+   * `true` only when both the OS prompt was granted AND the token was
+   * persisted to Convex.
+   */
   requestPermissions: () => Promise<boolean>;
+  /**
+   * Unified opt-in flow used by the inbox banner and the settings master toggle.
+   * If the OS hasn't been asked, asks. If the OS already denied with no recourse,
+   * returns `denied-permanent` so the caller can open Settings. On grant, registers
+   * the push token (which also re-enables `notificationsEnabled` server-side since
+   * the flag is derived from token existence).
+   */
+  enableNotifications: () => Promise<EnableNotificationsOutcome>;
+  /** Read current OS permission state without prompting. */
+  getPermissionStatus: () => Promise<PushPermissionStatus>;
   /** Refresh unread count from server */
   refreshUnreadCount: () => Promise<void>;
   /** Handle notification received while app is open */
@@ -87,6 +123,8 @@ const NotificationContext = createContext<NotificationContextType>({
   unreadCount: 0,
   isReady: false,
   requestPermissions: async () => false,
+  enableNotifications: async () => 'unsupported',
+  getPermissionStatus: async () => 'unsupported',
   refreshUnreadCount: async () => {},
   lastNotification: null,
   handleNotificationTap: async () => {},
@@ -198,14 +236,40 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, []);
 
-  // Register push token with backend using Convex
-  const registerToken = useCallback(async () => {
-    if (!Notifications || !isAuthenticated || !user) return;
+  // Read current OS permission state without prompting. Used by the opt-in
+  // flow to decide whether to show a soft-ask sheet (undetermined), call
+  // through to the OS prompt, or jump straight to Settings (denied-permanent).
+  const getPermissionStatus = useCallback(async (): Promise<PushPermissionStatus> => {
+    if (!Notifications || !Device) return 'unsupported';
+    if (Platform.OS === 'web') return 'unsupported';
+    if (!Device.isDevice) return 'unsupported';
+
+    try {
+      const { status, canAskAgain } = await Notifications.getPermissionsAsync();
+      if (status === 'granted') return 'granted';
+      if (status === 'undetermined') return 'undetermined';
+      // status === 'denied' on iOS/Android
+      return canAskAgain ? 'denied' : 'denied-permanent';
+    } catch (error) {
+      console.error('getPermissionStatus failed:', error);
+      return 'unsupported';
+    }
+  }, []);
+
+  // Register push token with backend using Convex.
+  //
+  // Returns `true` only when the token was successfully persisted to Convex.
+  // Returns `false` for any failure (web/missing-prereqs/network/auth) so
+  // callers like `enableNotifications` don't show success UI when the
+  // backend write didn't actually happen — leaving notifications
+  // effectively disabled despite the user seeing a confirmation toast.
+  const registerToken = useCallback(async (): Promise<boolean> => {
+    if (!Notifications || !isAuthenticated || !user) return false;
 
     // Skip push notifications on web - requires VAPID key configuration
     if (Platform.OS === 'web') {
       console.log('Push notifications not supported on web (VAPID not configured)');
-      return;
+      return false;
     }
 
     try {
@@ -225,7 +289,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
       const storedUserId = await AsyncStorage.getItem("convex_user_id");
       if (!storedUserId) {
         console.warn('No stored user ID for push token registration');
-        return;
+        return false;
       }
 
       // Register with backend using Convex
@@ -237,7 +301,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
 
       if (!authToken) {
         console.warn('No auth token available for push token registration');
-        return;
+        return false;
       }
 
       await registerTokenMutation({
@@ -247,10 +311,51 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
         bundleId,
       });
       console.log('Push token registered with backend');
+      return true;
     } catch (error) {
       console.error('Failed to register push token:', error);
+      return false;
     }
   }, [isAuthenticated, user, authToken, registerTokenMutation]);
+
+  // Unified opt-in flow. Asks the OS if it hasn't been asked, registers the
+  // push token on grant (which re-enables `notificationsEnabled` server-side
+  // since that flag is derived from token existence), and returns
+  // `denied-permanent` so callers can route the user to Settings when iOS has
+  // burned the one-shot prompt.
+  const enableNotifications = useCallback(async (): Promise<EnableNotificationsOutcome> => {
+    if (!Notifications || !Device) return 'unsupported';
+    if (Platform.OS === 'web') return 'unsupported';
+    if (!Device.isDevice) return 'unsupported';
+
+    try {
+      const current = await Notifications.getPermissionsAsync();
+      let status = current.status;
+      let canAskAgain = current.canAskAgain;
+
+      if (status !== 'granted' && canAskAgain) {
+        const result = await Notifications.requestPermissionsAsync();
+        status = result.status;
+        canAskAgain = result.canAskAgain;
+      }
+
+      if (status === 'granted') {
+        setIsEnabled(true);
+        // Only return `enabled` when the backend write actually succeeded.
+        // `registerToken` returns false on any failure (network, auth,
+        // missing prereqs) so we don't tell the user notifications are on
+        // when the token never landed in Convex — without this, the
+        // success toast fires even though notifications stay broken.
+        const registered = await registerToken();
+        return registered ? 'enabled' : 'denied';
+      }
+
+      return canAskAgain ? 'denied' : 'denied-permanent';
+    } catch (error) {
+      console.error('enableNotifications failed:', error);
+      return 'denied';
+    }
+  }, [registerToken]);
 
   /**
    * Resolve a group ID for navigation.
@@ -662,6 +767,8 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
       unreadCount,
       isReady,
       requestPermissions,
+      enableNotifications,
+      getPermissionStatus,
       refreshUnreadCount,
       lastNotification,
       handleNotificationTap,
@@ -674,6 +781,8 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
       unreadCount,
       isReady,
       requestPermissions,
+      enableNotifications,
+      getPermissionStatus,
       refreshUnreadCount,
       lastNotification,
       handleNotificationTap,

@@ -577,6 +577,8 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
                       name={displayName}
                       imageUrl={m.profilePhoto}
                       size={40}
+                      notificationsDisabled={!!m.notificationsDisabled}
+                      notificationsBadgeRingColor={colors.surfaceSecondary}
                     />
                     <View style={styles.memberRowText}>
                       <Text

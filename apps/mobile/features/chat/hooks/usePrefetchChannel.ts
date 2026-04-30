@@ -353,6 +353,7 @@ async function fetchThreadRepliesBatch(
           senderId: msg.senderId,
           senderName: msg.senderName,
           senderProfilePhoto: msg.senderProfilePhoto,
+          senderNotificationsDisabled: msg.senderNotificationsDisabled,
           createdAt: msg.createdAt,
         }));
         return { messageId: messageId.toString(), replies };

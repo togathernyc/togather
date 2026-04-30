@@ -14,14 +14,13 @@ import {
   ActivityIndicator,
   TouchableOpacity,
   Alert,
-  Platform,
 } from 'react-native';
-import Constants from 'expo-constants';
 import { useNotifications } from '@providers/NotificationProvider';
-import { useQuery, useAuthenticatedMutation, useMutation, api } from '@services/api/convex';
+import { useQuery, useAuthenticatedMutation, api } from '@services/api/convex';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
 import { useTheme } from '@hooks/useTheme';
 import { useAuth } from '@providers/AuthProvider';
+import { useEnableNotificationsFlow } from '@features/notifications/hooks/useEnableNotificationsFlow';
 import type { Id } from '@services/api/convex';
 
 type GroupNotificationToggleProps = {
@@ -91,7 +90,7 @@ const GroupNotificationToggle: React.FC<GroupNotificationToggleProps> = ({
 
 export const NotificationPreferencesSection: React.FC = () => {
   const { user, token } = useAuth();
-  const { isEnabled, requestPermissions, expoPushToken } = useNotifications();
+  const { isEnabled, expoPushToken } = useNotifications();
   const { primaryColor } = useCommunityTheme();
   const { colors } = useTheme();
   const userId = user?.id as Id<"users"> | undefined;
@@ -107,19 +106,10 @@ export const NotificationPreferencesSection: React.FC = () => {
   // Update master toggle mutation
   const updatePreferences = useAuthenticatedMutation(api.functions.notifications.preferences.updatePreferences);
 
-  // Register token mutation (for enabling notifications)
-  const registerTokenMutation = useMutation(api.functions.notifications.tokens.registerToken);
-
-  const handleEnableNotifications = async (): Promise<boolean> => {
-    const granted = await requestPermissions();
-    if (!granted) {
-      Alert.alert(
-        'Permission Required',
-        'Please enable notifications in your device settings to receive updates.'
-      );
-    }
-    return granted;
-  };
+  // Shared opt-in flow — handles soft-ask, OS prompt, denied-permanent → Settings,
+  // and the post-grant success toast. Replaces the old custom Alert path which
+  // silently failed when OS perms were denied (no actual button to open Settings).
+  const enableFlow = useEnableNotificationsFlow();
 
   // Retry handler for error state
   const handleRetry = () => {
@@ -163,40 +153,27 @@ export const NotificationPreferencesSection: React.FC = () => {
   const handleToggleMaster = async (enabled: boolean) => {
     if (!userId || !token) return;
 
+    if (enabled) {
+      // Delegate to the shared opt-in flow. This:
+      //   - prompts the OS (or shows the soft-ask sheet first if undetermined)
+      //   - opens the coaching sheet → Settings hand-off when the OS has
+      //     already permanently denied (the bug the old Alert path silently
+      //     left users stuck on)
+      //   - registers the push token on grant, which flips
+      //     `preferences.notificationsEnabled` to true on its own (server
+      //     derives that flag from token existence)
+      //
+      // No "Saving..." indicator here — the sheet/OS prompt is the user's
+      // feedback. The query is reactive, and if the user cancelled or denied,
+      // the toggle naturally remains off.
+      void enableFlow.start();
+      return;
+    }
+
     setIsUpdating(true);
     try {
-      if (enabled) {
-        // When enabling, first check if we have permissions and token
-        if (!devicePermissionsGranted) {
-          // Request permissions - this will trigger NotificationProvider to register token
-          const granted = await handleEnableNotifications();
-          if (!granted) {
-            setIsUpdating(false);
-            return;
-          }
-        }
-
-        // If we already have a token, register it now
-        // Otherwise, NotificationProvider will handle registration after permissions are granted
-        if (expoPushToken) {
-          const platform = Platform.OS as 'ios' | 'android' | 'web';
-          const bundleId = platform === 'ios'
-            ? Constants.expoConfig?.ios?.bundleIdentifier
-            : Constants.expoConfig?.android?.package;
-
-          await registerTokenMutation({
-            authToken: token,
-            token: expoPushToken,
-            platform,
-            bundleId,
-          });
-        }
-        // If expoPushToken is null, NotificationProvider's useEffect will handle it
-        // after permissions are granted. The UI will update reactively via the preferences query.
-      } else {
-        // When disabling, delete the token via updatePreferences
-        await updatePreferences({ notificationsEnabled: false });
-      }
+      // When disabling, delete the token via updatePreferences
+      await updatePreferences({ notificationsEnabled: false });
     } catch (error) {
       Alert.alert('Error', 'Failed to update notification preference');
     } finally {
@@ -236,7 +213,9 @@ export const NotificationPreferencesSection: React.FC = () => {
           </Text>
           <TouchableOpacity
             style={[styles.enableButton, { backgroundColor: colors.warning }]}
-            onPress={handleEnableNotifications}
+            onPress={() => {
+              void enableFlow.start();
+            }}
           >
             <Text style={[styles.enableButtonText, { color: colors.textInverse }]}>Grant Permission</Text>
           </TouchableOpacity>
@@ -281,6 +260,8 @@ export const NotificationPreferencesSection: React.FC = () => {
           <Text style={[styles.savingText, { color: colors.textSecondary }]}>Saving...</Text>
         </View>
       )}
+
+      {enableFlow.flowElements}
     </View>
   );
 };

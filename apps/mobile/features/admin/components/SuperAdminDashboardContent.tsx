@@ -71,6 +71,15 @@ export function SuperAdminDashboardContent() {
     token && isInternalUser ? { token, daysAgo, timeZone } : "skip"
   );
 
+  // Device-level "notifications enabled" — today (live count) vs yesterday
+  // (last daily snapshot from the dailyEnabledSnapshot cron). Not day-scoped
+  // so we don't pass `daysAgo` here; it's always "right now vs the most
+  // recent snapshot".
+  const notifEnabledStats = useQuery(
+    api.functions.admin.stats.getDailyNotificationEnabledStats,
+    token && isInternalUser ? { token } : "skip"
+  );
+
   const pendingProposals = useQuery(
     api.functions.ee.proposals.list,
     token && isInternalUser ? { token, status: "pending" } : "skip"
@@ -351,6 +360,53 @@ export function SuperAdminDashboardContent() {
         </>
       )}
 
+      {/* Device-level notification opt-in (today live vs most recent snapshot).
+          Always shown to superusers — not gated on `notifStats.totals.sent` —
+          because we want to see opt-in trend even on quiet days. */}
+      {notifEnabledStats && (
+        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <Text style={[styles.metricLabel, { color: colors.textSecondary }]}>
+            Notifications enabled (device level)
+          </Text>
+          <View style={styles.enabledRow}>
+            <Text style={[styles.enabledValue, { color: colors.text }]}>
+              {notifEnabledStats.today.toLocaleString()}
+            </Text>
+            <Text style={[styles.enabledUnit, { color: colors.textSecondary }]}>
+              {notifEnabledStats.today === 1 ? "user" : "users"}
+            </Text>
+          </View>
+          {notifEnabledStats.delta !== null && notifEnabledStats.previous !== null ? (
+            <Text
+              style={[
+                styles.enabledDelta,
+                {
+                  color:
+                    notifEnabledStats.delta > 0
+                      ? colors.success
+                      : notifEnabledStats.delta < 0
+                        ? colors.error
+                        : colors.textSecondary,
+                },
+              ]}
+            >
+              {notifEnabledStats.delta > 0 ? "↑" : notifEnabledStats.delta < 0 ? "↓" : "·"}{" "}
+              {Math.abs(notifEnabledStats.delta).toLocaleString()}
+              {notifEnabledStats.percentChange !== null
+                ? ` (${notifEnabledStats.percentChange > 0 ? "+" : ""}${notifEnabledStats.percentChange.toFixed(1)}%)`
+                : ""}
+              {notifEnabledStats.previousDate
+                ? ` since ${formatDate(notifEnabledStats.previousDate)}`
+                : ""}
+            </Text>
+          ) : (
+            <Text style={[styles.enabledDelta, { color: colors.textTertiary }]}>
+              Awaiting first daily snapshot
+            </Text>
+          )}
+        </View>
+      )}
+
       {/* Notification Stats */}
       {notifStats && notifStats.totals.sent > 0 && (
         <>
@@ -543,6 +599,24 @@ const styles = StyleSheet.create({
   },
   notifTypeStats: {
     fontSize: 12,
+  },
+  enabledRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    gap: 6,
+    marginTop: 2,
+  },
+  enabledValue: {
+    fontSize: 28,
+    fontWeight: "800",
+  },
+  enabledUnit: {
+    fontSize: 14,
+  },
+  enabledDelta: {
+    fontSize: 13,
+    fontWeight: "500",
+    marginTop: 6,
   },
   proposalHeader: {
     flexDirection: "row",
