@@ -128,7 +128,14 @@ export function GroupDetailScreen() {
 
   const handleMembersPress = () => {
     if (!group?._id) return;
-    router.push(`/leader-tools/${group._id}/members`);
+    // Leaders/admins land on the full member-management surface (promote /
+    // demote / remove from group / add member). Regular members get the
+    // read-only roster on the general channel — same humans, no controls.
+    if (isLeader || isAdmin) {
+      router.push(`/leader-tools/${group._id}/members`);
+      return;
+    }
+    router.push(`/inbox/${group._id}/general/members` as any);
   };
 
   const handleLeaveGroup = () => {
@@ -405,7 +412,10 @@ export function GroupDetailScreen() {
           canEdit={canEditGroup}
         />
 
-        {/* MEMBERS — moved above channels */}
+        {/* MEMBERS — moved above channels. Announcement groups contain the
+            entire community, so exposing the full roster to a regular member
+            would be a directory leak. Leaders/admins still get the full
+            list there for moderation. */}
         {((group.members && group.members.length > 0) ||
           (group.leaders && group.leaders.length > 0) ||
           (group.members_count && group.members_count > 0)) && (
@@ -413,30 +423,39 @@ export function GroupDetailScreen() {
             <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
               MEMBERS{group.members_count ? ` · ${group.members_count}` : ""}
             </Text>
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={isLeader || isAdmin ? handleMembersPress : undefined}
-              disabled={!(isLeader || isAdmin)}
-              style={[styles.card, { backgroundColor: colors.surfaceSecondary }]}
-            >
-              <MembersRow
-                members={group.members}
-                leaders={group.leaders}
-                totalCount={group.members_count ?? undefined}
-              />
-              {(isLeader || isAdmin) && (
-                <View style={[styles.viewAllRow, { borderTopColor: colors.border }]}>
-                  <Text style={[styles.viewAllText, { color: colors.text }]}>
-                    View all members
-                  </Text>
-                  <Ionicons
-                    name="chevron-forward"
-                    size={18}
-                    color={colors.textTertiary}
+            {(() => {
+              const isAnnouncementRoster =
+                !!group.is_announcement_group && !(isLeader || isAdmin);
+              const Container: React.ComponentType<any> = isAnnouncementRoster
+                ? View
+                : TouchableOpacity;
+              return (
+                <Container
+                  {...(isAnnouncementRoster
+                    ? {}
+                    : { activeOpacity: 0.7, onPress: handleMembersPress })}
+                  style={[styles.card, { backgroundColor: colors.surfaceSecondary }]}
+                >
+                  <MembersRow
+                    members={group.members}
+                    leaders={group.leaders}
+                    totalCount={group.members_count ?? undefined}
                   />
-                </View>
-              )}
-            </TouchableOpacity>
+                  {!isAnnouncementRoster && (
+                    <View style={[styles.viewAllRow, { borderTopColor: colors.border }]}>
+                      <Text style={[styles.viewAllText, { color: colors.text }]}>
+                        View all members
+                      </Text>
+                      <Ionicons
+                        name="chevron-forward"
+                        size={18}
+                        color={colors.textTertiary}
+                      />
+                    </View>
+                  )}
+                </Container>
+              );
+            })()}
           </View>
         )}
 
@@ -454,7 +473,7 @@ export function GroupDetailScreen() {
             only; renders the same bot cards + config modals BotsScreen
             renders. */}
         {group._id && (
-          <GroupBotsSection groupId={group._id} isLeader={isLeader || isAdmin} />
+          <GroupBotsSection groupId={group._id} isLeader={isLeader} />
         )}
 
         {/* Highlights */}

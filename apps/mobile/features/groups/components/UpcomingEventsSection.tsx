@@ -73,7 +73,9 @@ export function UpcomingEventsSection({ groupId }: Props) {
           return (
             <Pressable
               key={event._id}
-              onPress={() => router.push(`/events/${event._id}` as any)}
+              onPress={() =>
+                router.push(`/e/${event.shortId}?source=app` as any)
+              }
               style={({ pressed }) => [
                 styles.card,
                 {

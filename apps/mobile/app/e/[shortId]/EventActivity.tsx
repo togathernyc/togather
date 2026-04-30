@@ -32,6 +32,7 @@ import {
 import { useTheme } from "@hooks/useTheme";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { ReactionsProvider } from "@/features/chat/context/ReactionsContext";
+import { useReadState } from "@/features/chat/hooks/useReadState";
 import { Ionicons } from "@expo/vector-icons";
 import { EventComment } from "./EventComment";
 import { EventCommentSheet } from "./EventCommentSheet";
@@ -154,6 +155,22 @@ export function EventActivity({
     () => messages.map((m: any) => m._id),
     [messages]
   );
+
+  // Clear the inbox unread badge for this event's channel when the user
+  // views it, and re-fire as new live messages arrive. EventActivity is the
+  // event page's chat surface, so without this the badge persists forever.
+  // Mirrors ConvexChatRoomScreen's auto-mount markAsRead.
+  const { markAsRead } = useReadState(channelId);
+  const latestMessageId = liveMessages.length
+    ? (liveMessages[liveMessages.length - 1]._id as Id<"chatMessages">)
+    : null;
+  React.useEffect(() => {
+    if (!channelId || !canAccess) return;
+    markAsRead(latestMessageId ?? undefined).catch(() => {
+      // Silently swallow — markAsRead also no-ops for ad-hoc channels with
+      // missing profile photo. We don't want a toast here.
+    });
+  }, [channelId, canAccess, latestMessageId, markAsRead]);
 
   const handleLoadOlder = useCallback(() => {
     if (isLoadingOlder || !olderCursor || !hasMoreOlder) return;
