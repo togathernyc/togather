@@ -1048,14 +1048,24 @@ export const syncCommunityAutoChannels = internalAction({
         sharedError instanceof Error ? sharedError.message : "Unknown error";
       const sharedErrorResults: PerConfigResult[] = [];
       for (const ctxItem of contexts) {
-        await ctx.runMutation(
-          internal.functions.pcoServices.rotation.updateSyncStatus,
-          {
-            configId: ctxItem.config._id,
-            status: "error",
-            error: errorMessage,
-          }
-        );
+        // Guard the per-config status write: a config could have been deleted
+        // mid-run (rare but possible during admin edits), in which case the
+        // patch throws. We don't want one missing config to abort the recovery
+        // loop and leave the remaining configs without their per-config error
+        // result.
+        try {
+          await ctx.runMutation(
+            internal.functions.pcoServices.rotation.updateSyncStatus,
+            {
+              configId: ctxItem.config._id,
+              status: "error",
+              error: errorMessage,
+            }
+          );
+        } catch {
+          // Swallow — we still surface the error in the per-config result
+          // below so callers see what happened.
+        }
         sharedErrorResults.push({
           configId: ctxItem.config._id,
           status: "error",
@@ -1447,9 +1457,16 @@ export const processAllAutoChannels = internalAction({
     const results: ProcessAllResult["results"] = [];
     for (const [communityId, communityConfigs] of byCommunity) {
       try {
+        // Pass the configIds we already loaded so syncCommunityAutoChannels
+        // doesn't re-run a global getActiveAutoChannelConfigs scan inside each
+        // community batch (which would turn one table-wide read into N reads
+        // for N communities and amplify cron memory/runtime as tenants grow).
         const batched = await ctx.runAction(
           internal.functions.pcoServices.rotation.syncCommunityAutoChannels,
-          { communityId }
+          {
+            communityId,
+            configIds: communityConfigs.map((c) => c._id),
+          }
         );
         for (const r of batched.results) {
           // Spread keeps shape identical to the previous per-config flatten.
