@@ -10,6 +10,7 @@ import { query, mutation } from "../../_generated/server";
 import { Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { getCurrentEnvironment } from "../../lib/notifications/send";
+import { adjustEnabledCounter } from "../../lib/notifications/enabledCounter";
 
 // ============================================================================
 // Group Notification Settings
@@ -236,6 +237,12 @@ export const updatePreferences = mutation({
 
       for (const token of tokens) {
         await ctx.db.delete(token._id);
+      }
+
+      // If the user had at least one token in this env, they transitioned
+      // from enabled → disabled. Decrement the running tally exactly once.
+      if (tokens.length > 0) {
+        await adjustEnabledCounter(ctx, environment, -1);
       }
 
       console.log(

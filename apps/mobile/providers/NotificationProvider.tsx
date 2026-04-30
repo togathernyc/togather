@@ -82,7 +82,11 @@ type NotificationContextType = {
   unreadCount: number;
   /** Whether the notification system is ready */
   isReady: boolean;
-  /** Request notification permissions */
+  /**
+   * Request OS permission and (if granted) register the push token. Returns
+   * `true` only when both the OS prompt was granted AND the token was
+   * persisted to Convex.
+   */
   requestPermissions: () => Promise<boolean>;
   /**
    * Unified opt-in flow used by the inbox banner and the settings master toggle.
@@ -252,14 +256,20 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, []);
 
-  // Register push token with backend using Convex
-  const registerToken = useCallback(async () => {
-    if (!Notifications || !isAuthenticated || !user) return;
+  // Register push token with backend using Convex.
+  //
+  // Returns `true` only when the token was successfully persisted to Convex.
+  // Returns `false` for any failure (web/missing-prereqs/network/auth) so
+  // callers like `enableNotifications` don't show success UI when the
+  // backend write didn't actually happen — leaving notifications
+  // effectively disabled despite the user seeing a confirmation toast.
+  const registerToken = useCallback(async (): Promise<boolean> => {
+    if (!Notifications || !isAuthenticated || !user) return false;
 
     // Skip push notifications on web - requires VAPID key configuration
     if (Platform.OS === 'web') {
       console.log('Push notifications not supported on web (VAPID not configured)');
-      return;
+      return false;
     }
 
     try {
@@ -279,7 +289,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
       const storedUserId = await AsyncStorage.getItem("convex_user_id");
       if (!storedUserId) {
         console.warn('No stored user ID for push token registration');
-        return;
+        return false;
       }
 
       // Register with backend using Convex
@@ -291,7 +301,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
 
       if (!authToken) {
         console.warn('No auth token available for push token registration');
-        return;
+        return false;
       }
 
       await registerTokenMutation({
@@ -301,8 +311,10 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
         bundleId,
       });
       console.log('Push token registered with backend');
+      return true;
     } catch (error) {
       console.error('Failed to register push token:', error);
+      return false;
     }
   }, [isAuthenticated, user, authToken, registerTokenMutation]);
 
@@ -329,8 +341,13 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
 
       if (status === 'granted') {
         setIsEnabled(true);
-        await registerToken();
-        return 'enabled';
+        // Only return `enabled` when the backend write actually succeeded.
+        // `registerToken` returns false on any failure (network, auth,
+        // missing prereqs) so we don't tell the user notifications are on
+        // when the token never landed in Convex — without this, the
+        // success toast fires even though notifications stay broken.
+        const registered = await registerToken();
+        return registered ? 'enabled' : 'denied';
       }
 
       return canAskAgain ? 'denied' : 'denied-permanent';

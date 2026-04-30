@@ -17,6 +17,7 @@ import { now, getMediaUrl } from "../../lib/utils";
 import { requireAuth } from "../../lib/auth";
 import { requireCommunityAdmin, checkCommunityAdmin } from "./auth";
 import { getCurrentEnvironment } from "../../lib/notifications/send";
+import { readEnabledCount } from "../../lib/notifications/enabledCounter";
 
 type SuperAdminRange = "7d" | "30d" | "90d" | "all";
 type SuperAdminGranularity = "day" | "month";
@@ -1589,15 +1590,10 @@ export const getDailyNotificationEnabledStats = query({
 
     const environment = getCurrentEnvironment();
 
-    // Live "today" count — distinct userIds with at least one push token in
-    // this environment. Mirrors the snapshot mutation's logic so today and
-    // yesterday are apples-to-apples.
-    const distinctUsers = new Set<string>();
-    for await (const row of ctx.db.query("pushTokens")) {
-      if (row.environment !== environment) continue;
-      distinctUsers.add(row.userId);
-    }
-    const today = distinctUsers.size;
+    // Live "today" count — read the running tally maintained by the token
+    // write paths in O(1) instead of scanning the full pushTokens table
+    // (the previous approach hit Convex transaction scan limits at scale).
+    const today = await readEnabledCount(ctx, environment);
 
     // Most recent snapshot for this environment (descending by date).
     const lastSnapshot = await ctx.db

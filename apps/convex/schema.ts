@@ -889,6 +889,22 @@ export default defineSchema({
     .index("by_environment_date", ["environment", "date"])
     .index("by_date", ["date"]),
 
+  // Running count of distinct users with ≥1 push token, scoped per
+  // environment. Maintained incrementally by mutations that insert/delete
+  // pushTokens rows (registerToken, unregisterToken, updatePreferences
+  // disable, user-delete cascade). Both the daily snapshot cron and the
+  // superuser dashboard query read this counter in O(1) instead of scanning
+  // the full pushTokens table — that scan would hit Convex transaction
+  // limits as token volume grows.
+  //
+  // One row per environment. Seeded by `backfillEnabledCounter`
+  // (paginated action) on first deploy.
+  notificationEnabledCounter: defineTable({
+    environment: v.string(),  // "production" | "staging"
+    count: v.number(),        // distinct userIds with ≥1 push token in this env
+    updatedAt: v.number(),
+  }).index("by_environment", ["environment"]),
+
   // =============================================================================
   // PUSH TOKENS
   // =============================================================================

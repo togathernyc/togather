@@ -18,6 +18,7 @@ import { now, normalizePhone, getMediaUrl, buildSearchText } from "../lib/utils"
 import { requireAuth, getOptionalAuth } from "../lib/auth";
 import { parseDate } from "../lib/validation";
 import { COMMUNITY_ROLES, COMMUNITY_ADMIN_THRESHOLD } from "../lib/permissions";
+import { adjustEnabledCounter } from "../lib/notifications/enabledCounter";
 
 /**
  * Get current user profile
@@ -845,7 +846,22 @@ export const deleteAccountInternal = internalMutation({
     // 4. Remove chat channel memberships
     await deleteByUserIndex("chatChannelMembers", "by_user");
 
-    // 5. Remove push tokens
+    // 5. Remove push tokens — decrement the per-environment enabled counter
+    //    once per env where this user had ≥1 token, BEFORE deletion (so we
+    //    can still see what envs they had tokens in).
+    {
+      const userTokens = await ctx.db
+        .query("pushTokens")
+        .withIndex("by_user", (q) => q.eq("userId", args.userId))
+        .collect();
+      const envs = new Set<string>();
+      for (const t of userTokens) {
+        if (t.environment) envs.add(t.environment);
+      }
+      for (const env of envs) {
+        await adjustEnabledCounter(ctx, env, -1);
+      }
+    }
     await deleteByUserIndex("pushTokens", "by_user");
 
     // 6. Remove notifications
