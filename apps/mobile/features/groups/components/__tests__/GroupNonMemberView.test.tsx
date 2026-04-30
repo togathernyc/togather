@@ -87,16 +87,6 @@ jest.mock("../MembersRow", () => {
   };
 });
 
-jest.mock("../GroupMapSection", () => {
-  const { View, Text } = require("react-native");
-  return {
-    GroupMapSection: ({ group }: any) =>
-      group.location ? (
-        <View testID="map-section"><Text>Map: {group.location}</Text></View>
-      ) : null,
-  };
-});
-
 jest.mock("../HighlightsGrid", () => {
   const { View, Text } = require("react-native");
   return {
@@ -271,7 +261,7 @@ describe("GroupNonMemberView", () => {
     expect(screen.getByTestId("group-header")).toBeTruthy();
   });
 
-  it("shows default description when description is missing", () => {
+  it("hides the description section when description is missing", () => {
     const onJoinPress = jest.fn();
     const groupWithoutDescription = { ...mockGroup, description: undefined };
 
@@ -282,7 +272,11 @@ describe("GroupNonMemberView", () => {
       />
     );
 
-    expect(screen.getByText("No description available.")).toBeTruthy();
+    // The empty-state placeholder ("No description available.") was removed
+    // along with the full-bleed description block — the section now only
+    // renders when there's something meaningful to show.
+    expect(screen.queryByText("No description available.")).toBeNull();
+    expect(screen.getByTestId("group-header")).toBeTruthy();
   });
 });
 

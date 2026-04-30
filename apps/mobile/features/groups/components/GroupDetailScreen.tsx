@@ -41,6 +41,7 @@ import { GroupNonMemberView } from "./GroupNonMemberView";
 import { ChannelsSection } from "./ChannelsSection";
 import { UpcomingEventsSection } from "./UpcomingEventsSection";
 import { GroupBotsSection } from "./GroupBotsSection";
+import { sectionStyles } from "./sectionStyles";
 import { Group } from "../types";
 import { ImageViewerManager } from "@/providers/ImageViewerProvider";
 import { formatCadence } from "../utils";
@@ -419,8 +420,8 @@ export function GroupDetailScreen() {
         {((group.members && group.members.length > 0) ||
           (group.leaders && group.leaders.length > 0) ||
           (group.members_count && group.members_count > 0)) && (
-          <View style={styles.section}>
-            <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
+          <View style={sectionStyles.section}>
+            <Text style={[sectionStyles.sectionHeader, { color: colors.textSecondary }]}>
               MEMBERS{group.members_count ? ` · ${group.members_count}` : ""}
             </Text>
             {(() => {
@@ -443,7 +444,7 @@ export function GroupDetailScreen() {
                   {...(tapEnabled
                     ? { activeOpacity: 0.7, onPress: handleMembersPress }
                     : {})}
-                  style={[styles.card, { backgroundColor: colors.surfaceSecondary }]}
+                  style={[sectionStyles.card, { backgroundColor: colors.surfaceSecondary }]}
                 >
                   <MembersRow
                     members={group.members}
@@ -451,8 +452,8 @@ export function GroupDetailScreen() {
                     totalCount={group.members_count ?? undefined}
                   />
                   {tapEnabled && (
-                    <View style={[styles.viewAllRow, { borderTopColor: colors.border }]}>
-                      <Text style={[styles.viewAllText, { color: colors.text }]}>
+                    <View style={[sectionStyles.viewAllRow, { borderTopColor: colors.border }]}>
+                      <Text style={[sectionStyles.viewAllText, { color: colors.text }]}>
                         View all members
                       </Text>
                       <Ionicons
@@ -509,12 +510,12 @@ export function GroupDetailScreen() {
           (() => {
             const externalChatInfo = getExternalChatInfo(externalChatLink);
             return (
-              <View style={styles.section}>
-                <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
+              <View style={sectionStyles.section}>
+                <Text style={[sectionStyles.sectionHeader, { color: colors.textSecondary }]}>
                   EXTERNAL CHAT
                 </Text>
                 <TouchableOpacity
-                  style={[styles.card, styles.externalRow, { backgroundColor: colors.surfaceSecondary }]}
+                  style={[sectionStyles.card, styles.externalRow, { backgroundColor: colors.surfaceSecondary }]}
                   onPress={() => openExternalChatLink(externalChatLink)}
                   activeOpacity={0.7}
                 >
@@ -548,15 +549,15 @@ export function GroupDetailScreen() {
 
         {/* DETAILS — schedule + address */}
         {showDetailsCard && (
-          <View style={styles.section}>
-            <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
+          <View style={sectionStyles.section}>
+            <Text style={[sectionStyles.sectionHeader, { color: colors.textSecondary }]}>
               DETAILS
             </Text>
-            <View style={[styles.card, { backgroundColor: colors.surfaceSecondary }]}>
+            <View style={[sectionStyles.card, { backgroundColor: colors.surfaceSecondary }]}>
               {!!cadence && (
-                <View style={styles.detailRow}>
+                <View style={sectionStyles.detailRow}>
                   <Ionicons name="calendar-outline" size={20} color={colors.icon} />
-                  <Text style={[styles.detailText, { color: colors.text }]}>{cadence}</Text>
+                  <Text style={[sectionStyles.detailText, { color: colors.text }]}>{cadence}</Text>
                 </View>
               )}
               {!!address && (
@@ -564,7 +565,7 @@ export function GroupDetailScreen() {
                   onPress={handleAddressPress}
                   activeOpacity={0.7}
                   style={[
-                    styles.detailRow,
+                    sectionStyles.detailRow,
                     cadence && {
                       borderTopWidth: StyleSheet.hairlineWidth,
                       borderTopColor: colors.border,
@@ -573,7 +574,7 @@ export function GroupDetailScreen() {
                 >
                   <Ionicons name="location-outline" size={20} color={colors.icon} />
                   <Text
-                    style={[styles.detailText, { color: colors.text }]}
+                    style={[sectionStyles.detailText, { color: colors.text }]}
                     numberOfLines={2}
                   >
                     {address}
@@ -590,11 +591,11 @@ export function GroupDetailScreen() {
         )}
 
         {/* GROUP ACTIONS */}
-        <View style={styles.section}>
-          <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
+        <View style={sectionStyles.section}>
+          <Text style={[sectionStyles.sectionHeader, { color: colors.textSecondary }]}>
             GROUP ACTIONS
           </Text>
-          <View style={[styles.card, { backgroundColor: colors.surfaceSecondary }]}>
+          <View style={[sectionStyles.card, { backgroundColor: colors.surfaceSecondary }]}>
             {isLeader && (
               <ActionRow
                 icon="pin-outline"
@@ -736,46 +737,6 @@ const styles = StyleSheet.create({
   buttonText: {
     fontSize: 16,
     fontWeight: "600",
-  },
-  section: {
-    paddingHorizontal: 12,
-    paddingTop: 16,
-    paddingBottom: 8,
-  },
-  sectionHeader: {
-    fontSize: 11,
-    fontWeight: "600",
-    letterSpacing: 0.6,
-    marginBottom: 8,
-    paddingHorizontal: 8,
-  },
-  card: {
-    borderRadius: 12,
-    overflow: "hidden",
-  },
-  viewAllRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderTopWidth: StyleSheet.hairlineWidth,
-  },
-  viewAllText: {
-    fontSize: 15,
-    fontWeight: "500",
-  },
-  detailRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    minHeight: 48,
-  },
-  detailText: {
-    flex: 1,
-    fontSize: 15,
   },
   actionRow: {
     flexDirection: "row",
