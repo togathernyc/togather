@@ -138,10 +138,17 @@ export function useGroupDetails(groupId: string | null | undefined) {
         default_meeting_link: effectiveGroup.defaultMeetingLink || null,
         preview: (effectiveGroup as any).preview || null,
         is_announcement_group: effectiveGroup.isAnnouncementGroup || false,
-        // Use actual members count if available, fallback to preview count for non-members
-        members_count: (effectiveMembers?.length || 0) + (effectiveLeaders?.length || 0) > 0
-          ? (effectiveMembers?.length || 0) + (effectiveLeaders?.length || 0)
-          : effectiveMemberPreview?.totalCount || 0,
+        // Prefer the general/main channel's memberCount — every active group
+        // member is also a main-channel member, so this is the authoritative
+        // count for "people in this group" and avoids undercounting when the
+        // members list is paginated. Falls back to list lengths for legacy
+        // payloads that don't carry memberCount, then to preview totalCount
+        // for the non-member path.
+        members_count:
+          (effectiveGroup as any).memberCount ??
+          ((effectiveMembers?.length || 0) + (effectiveLeaders?.length || 0) > 0
+            ? (effectiveMembers?.length || 0) + (effectiveLeaders?.length || 0)
+            : effectiveMemberPreview?.totalCount || 0),
         // Flatten member data to match GroupMember type expected by MembersRow
         members:
           effectiveMembers?.map((m: any) => ({
