@@ -90,9 +90,21 @@ export const runDaily = internalAction({
   // would otherwise hit when `internal.functions.notifications.dailyEnabledSnapshot.*`
   // is read inside a function defined in that same module.
   handler: async (ctx): Promise<{ date: string; environment: string; enabledCount: number }> => {
-    await ctx.runAction(
-      internal.functions.notifications.dailyEnabledSnapshot.backfillEnabledCounter,
-    );
+    // Backfill is best-effort. A transient action failure (timeout, memory
+    // pressure during the paginated scan) must NOT block the snapshot write
+    // — otherwise the admin trend would stall for that day. The counter
+    // itself self-heals on the next successful run; missing a snapshot row
+    // is the more visible failure mode, so the snapshot must always run.
+    try {
+      await ctx.runAction(
+        internal.functions.notifications.dailyEnabledSnapshot.backfillEnabledCounter,
+      );
+    } catch (error) {
+      console.error(
+        "[runDaily] backfillEnabledCounter failed; proceeding to snapshot anyway:",
+        error,
+      );
+    }
     return await ctx.runMutation(
       internal.functions.notifications.dailyEnabledSnapshot.run,
     );
