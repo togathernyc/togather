@@ -1200,7 +1200,18 @@ export const syncCommunityAutoChannels = internalAction({
             email: null,
           };
           const matchResult = matchByPerson.get(pcoPersonId);
-          if (!matchResult) continue;
+          if (!matchResult) {
+            // matchAndLinkPcoPerson rejected for this PID (transient OCC retry
+            // exhaustion or DB write conflict). Silently skipping would omit
+            // the person from expectedUserIds and let removeStalePcoSyncedMembers
+            // yank them out of a channel they're still scheduled for. Throwing
+            // here fails ONLY this config (the per-config catch below records
+            // the error and we move on); other configs in the community still
+            // sync, and stale-removal is skipped on this errored config.
+            throw new Error(
+              `Failed to match scheduled PCO person ${pcoPersonId} (${member.name}) — refusing to sync this config to avoid removing valid members`
+            );
+          }
 
           const serviceName = member.planDate
             ? new Date(member.planDate).toLocaleDateString("en-US", {
