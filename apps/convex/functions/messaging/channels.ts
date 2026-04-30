@@ -663,34 +663,41 @@ export const getChannelMembers = query({
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
 
-    if (!membership) {
-      // If not a channel member, check elevated permissions:
-      // - group leaders/admins can view members of any channel in their group
-      // - community admins can manage/view members across all groups in community
-      const groupMembership = await ctx.db
-        .query("groupMembers")
-        .withIndex("by_group_user", (q) =>
-          q.eq("groupId", groupId).eq("userId", userId)
-        )
-        .filter((q) =>
-          q.and(
-            q.eq(q.field("leftAt"), undefined),
-            q.or(
-              q.eq(q.field("role"), "leader"),
-              q.eq(q.field("role"), "admin")
-            )
+    // Resolve elevated-permission state once. We need it both as the
+    // fallback when the caller isn't a channel member AND to gate the
+    // announcement-group full roster (every community member is auto-added
+    // to the announcement group's main channel, so plain channel
+    // membership isn't enough authorization for the directory dump).
+    const callerGroupMembership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", groupId).eq("userId", userId)
+      )
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("leftAt"), undefined),
+          q.or(
+            q.eq(q.field("role"), "leader"),
+            q.eq(q.field("role"), "admin")
           )
         )
-        .first();
+      )
+      .first();
+    const group = await ctx.db.get(groupId);
+    const isCommAdmin = group
+      ? await isCommunityAdmin(ctx, group.communityId, userId)
+      : false;
+    const isElevated = !!callerGroupMembership || isCommAdmin;
 
-      const group = await ctx.db.get(groupId);
-      const isCommAdmin = group
-        ? await isCommunityAdmin(ctx, group.communityId, userId)
-        : false;
+    if (!membership && !isElevated) {
+      return { members: [], nextCursor: null, totalCount: 0 };
+    }
 
-      if (!groupMembership && !isCommAdmin) {
-        return { members: [], nextCursor: null, totalCount: 0 };
-      }
+    // Announcement groups span the whole community; treating "channel
+    // member" as authorization there would expose the full directory to
+    // anyone in the community. Restrict the full roster to leaders/admins.
+    if (group?.isAnnouncementGroup && !isElevated) {
+      return { members: [], nextCursor: null, totalCount: 0 };
     }
 
     if (searchTerms.length > 0) {
@@ -770,8 +777,24 @@ export const getChannelMembers = query({
           ? String(cursorIndex + limit)
           : null;
 
+      // Resolve the group-level role for each visible member so the client
+      // can flag leaders/admins distinctly from channel "owner"/"member"
+      // (which is channel-scoped). One indexed lookup per row.
+      const pageGroupRoles = await Promise.all(
+        page.map(async ({ member }) => {
+          const gm = await ctx.db
+            .query("groupMembers")
+            .withIndex("by_group_user", (q) =>
+              q.eq("groupId", groupId).eq("userId", member.userId)
+            )
+            .filter((q) => q.eq(q.field("leftAt"), undefined))
+            .first();
+          return gm?.role ?? null;
+        })
+      );
+
       return {
-        members: page.map(({ member, user }) => ({
+        members: page.map(({ member, user }, idx) => ({
           id: member._id,
           userId: member.userId,
           displayName:
@@ -780,6 +803,7 @@ export const getChannelMembers = query({
             "Unknown",
           profilePhoto: member.profilePhoto || getMediaUrl(user.profilePhoto) || undefined,
           role: member.role,
+          groupRole: pageGroupRoles[idx] ?? undefined,
           syncSource: member.syncSource,
           syncMetadata: member.syncMetadata,
         })),
@@ -800,10 +824,21 @@ export const getChannelMembers = query({
     const hasMore = result.page.length > limit;
     const members = hasMore ? result.page.slice(0, limit) : result.page;
 
-    // Enrich member data with fresh user info (denormalized displayName may be stale/missing)
+    // Enrich member data with fresh user info (denormalized displayName may
+    // be stale/missing) and resolve each member's group-level role so the
+    // client can surface a "Leader" badge distinct from channel ownership.
     const enrichedMembers = await Promise.all(
       members.map(async (member) => {
-        const user = await ctx.db.get(member.userId);
+        const [user, groupMembership] = await Promise.all([
+          ctx.db.get(member.userId),
+          ctx.db
+            .query("groupMembers")
+            .withIndex("by_group_user", (q) =>
+              q.eq("groupId", groupId).eq("userId", member.userId)
+            )
+            .filter((q) => q.eq(q.field("leftAt"), undefined))
+            .first(),
+        ]);
         const freshDisplayName = user
           ? getDisplayName(user.firstName, user.lastName)
           : member.displayName;
@@ -814,6 +849,7 @@ export const getChannelMembers = query({
           displayName: freshDisplayName || member.displayName || "Unknown",
           profilePhoto: member.profilePhoto || (user ? getMediaUrl(user.profilePhoto) : undefined),
           role: member.role,
+          groupRole: groupMembership?.role ?? undefined,
           syncSource: member.syncSource,
           syncMetadata: member.syncMetadata,
         };

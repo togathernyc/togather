@@ -49,6 +49,10 @@ export function SyncedMemberRowContent({
   const { colors, isDark } = useTheme();
   const isOwner = member.role === "owner";
   const isAdmin = member.role === "admin";
+  // Group-level leadership — separate from channel ownership. Surfaced as a
+  // "Leader" pill so members know who to reach out to about the group.
+  const isGroupLeader =
+    member.groupRole === "leader" || member.groupRole === "admin";
   const isPcoSynced = member.syncSource === "pco_services";
   const initials = getInitials(member.displayName);
 
@@ -74,17 +78,21 @@ export function SyncedMemberRowContent({
           {isCurrentUser && <Text style={[styles.youBadge, { color: colors.textTertiary }]}>(you)</Text>}
         </View>
 
-        {/* Role badges */}
-        {isOwner && (
+        {/* Role badges. Leader takes precedence — it's the most useful
+            signal to non-leaders ("who do I contact?"). */}
+        {isGroupLeader ? (
+          <View style={[styles.roleBadge, { backgroundColor: `${primaryColor}20` }]}>
+            <Text style={[styles.roleBadgeText, { color: primaryColor }]}>Leader</Text>
+          </View>
+        ) : isOwner ? (
           <View style={[styles.roleBadge, { backgroundColor: `${primaryColor}20` }]}>
             <Text style={[styles.roleBadgeText, { color: primaryColor }]}>Owner</Text>
           </View>
-        )}
-        {isAdmin && !isOwner && (
+        ) : isAdmin ? (
           <View style={[styles.roleBadge, { backgroundColor: `${primaryColor}20` }]}>
             <Text style={[styles.roleBadgeText, { color: primaryColor }]}>Admin</Text>
           </View>
-        )}
+        ) : null}
 
         {/* PCO sync metadata - team and position */}
         {isPcoSynced && member.syncMetadata && (
