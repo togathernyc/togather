@@ -38,16 +38,21 @@ function toUtcDateString(ts: number): string {
 }
 
 export const run = internalMutation({
-  args: {},
-  handler: async (ctx) => {
+  args: {
+    // Optional override so `runDaily` can pin the snapshot date to the
+    // cron-fire time. If the paginated backfill before this mutation runs
+    // past midnight UTC, computing from `Date.now()` here would write the
+    // row under the wrong day and leave the intended day with no row.
+    // Defaults to today (UTC) when called directly from the dashboard.
+    targetDate: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
     const environment = getCurrentEnvironment();
     const nowMs = Date.now();
-    // Snapshot date matches the UTC day the cron is running in — cron is
-    // scheduled at 23:55 UTC, so this records "end of today" under today's
-    // date. We deliberately don't backdate to "yesterday": that mismatched
-    // the counter (read at run time = today) against the row label and
-    // attributed any token changes near midnight to the wrong day.
-    const targetDate = toUtcDateString(nowMs);
+    // Cron at 23:55 UTC labels the row as today, so the counter (read at
+    // run time, late in the UTC day) and the label both fall in the same
+    // UTC day.
+    const targetDate = args.targetDate ?? toUtcDateString(nowMs);
 
     // O(1) read from the running tally maintained by the token write paths.
     const enabledCount = await readEnabledCount(ctx, environment);
@@ -94,6 +99,13 @@ export const runDaily = internalAction({
   // would otherwise hit when `internal.functions.notifications.dailyEnabledSnapshot.*`
   // is read inside a function defined in that same module.
   handler: async (ctx): Promise<{ date: string; environment: string; enabledCount: number }> => {
+    // Pin the snapshot date to the cron-fire time, BEFORE backfill runs.
+    // Backfill is paginated and could take longer than the 5-minute
+    // 23:55→00:00 UTC window; without this pin, a slow backfill would
+    // cause the snapshot to be dated the next UTC day and leave the
+    // intended day with no row.
+    const targetDate = toUtcDateString(Date.now());
+
     // Backfill is best-effort. A transient action failure (timeout, memory
     // pressure during the paginated scan) must NOT block the snapshot write
     // — otherwise the admin trend would stall for that day. The counter
@@ -111,6 +123,7 @@ export const runDaily = internalAction({
     }
     return await ctx.runMutation(
       internal.functions.notifications.dailyEnabledSnapshot.run,
+      { targetDate },
     );
   },
 });
