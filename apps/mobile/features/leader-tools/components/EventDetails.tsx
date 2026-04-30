@@ -608,8 +608,13 @@ export function EventDetails({
               </View>
             )}
 
-            {/* Leader/admin-only toggle (creators always get notified; see sender). */}
-            {canManageEvent && rsvpEnabled && (
+            {/* Leader-only toggle. Backend `toggleRsvpLeaderNotifications`
+                is strictly leader-only per ADR-022 — this controls whose
+                notifications fire (the group leaders'), so creators and
+                community admins shouldn't be able to silence them.
+                Creators always get notified via `notifyRsvpReceived` and
+                don't need a toggle here. */}
+            {isLeader && rsvpEnabled && (
               <View style={[styles.detailCard, { backgroundColor: colors.surface }]}>
                 <View style={styles.detailRow}>
                   <Ionicons name="notifications-outline" size={20} color={colors.textSecondary} />
