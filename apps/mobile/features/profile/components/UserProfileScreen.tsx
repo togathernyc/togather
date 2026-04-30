@@ -183,6 +183,33 @@ export function UserProfileScreen() {
       >
         <UserProfileHeader profile={profile} />
         <UserProfileBadges profile={profile} />
+        {profile.notificationsDisabled && !isSelf ? (
+          <View
+            style={[
+              styles.notifsDisabledNote,
+              {
+                backgroundColor: colors.surfaceSecondary,
+                borderColor: colors.border,
+              },
+            ]}
+          >
+            <Ionicons
+              name="notifications-off-outline"
+              size={16}
+              color={colors.textSecondary}
+              style={styles.notifsDisabledIcon}
+            />
+            <Text
+              style={[
+                styles.notifsDisabledText,
+                { color: colors.textSecondary },
+              ]}
+            >
+              This person has notifications disabled and may not see your
+              message right away.
+            </Text>
+          </View>
+        ) : null}
         {showMessageButton ? (
           <MessageButton
             onPress={handleMessagePress}
@@ -330,5 +357,22 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 15,
     fontWeight: '600',
+  },
+  notifsDisabledNote: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  notifsDisabledIcon: {
+    marginTop: 1,
+    marginRight: 8,
+  },
+  notifsDisabledText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 18,
   },
 });

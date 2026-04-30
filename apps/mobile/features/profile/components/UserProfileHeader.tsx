@@ -7,6 +7,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { AppImage } from '@components/ui';
 import { ImageViewer } from '@components/ui/ImageViewer';
+import { NotificationsDisabledBadge } from '@components/ui/NotificationsDisabledBadge';
 import { useTheme } from '@hooks/useTheme';
 
 import type { UserProfile } from '../hooks/useUserProfile';
@@ -41,16 +42,24 @@ export function UserProfileHeader({ profile }: UserProfileHeaderProps) {
           if (profile.profilePhoto) setViewerVisible(true);
         }}
       >
-        <AppImage
-          source={profile.profilePhoto ?? undefined}
-          style={styles.avatar}
-          optimizedWidth={200}
-          placeholder={{
-            type: 'initials',
-            name: displayName,
-            backgroundColor: '#E5E5E5',
-          }}
-        />
+        <View style={styles.avatarWrapper}>
+          <AppImage
+            source={profile.profilePhoto ?? undefined}
+            style={styles.avatar}
+            optimizedWidth={200}
+            placeholder={{
+              type: 'initials',
+              name: displayName,
+              backgroundColor: '#E5E5E5',
+            }}
+          />
+          {profile.notificationsDisabled ? (
+            <NotificationsDisabledBadge
+              avatarSize={96}
+              ringColor={colors.surface}
+            />
+          ) : null}
+        </View>
       </TouchableOpacity>
       <Text style={[styles.name, { color: colors.text }]}>{displayName}</Text>
       {memberSinceLabel && (
@@ -85,11 +94,16 @@ const styles = StyleSheet.create({
     padding: 24,
     borderRadius: 12,
   },
+  avatarWrapper: {
+    position: 'relative',
+    width: 96,
+    height: 96,
+    marginBottom: 12,
+  },
   avatar: {
     width: 96,
     height: 96,
     borderRadius: 48,
-    marginBottom: 12,
   },
   name: {
     fontSize: 22,

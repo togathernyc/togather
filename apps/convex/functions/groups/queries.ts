@@ -12,6 +12,7 @@ import { paginationArgs } from "../../lib/validators";
 import { requireAuth, getOptionalAuth } from "../../lib/auth";
 import { isCommunityAdmin } from "../../lib/permissions";
 import { isLeaderRole } from "../../lib/helpers";
+import { getUsersWithNotificationsDisabled } from "../../lib/notifications/enabledStatus";
 
 /**
  * Get group by ID
@@ -260,8 +261,13 @@ export const getByShortId = query({
       return bLeader - aLeader;
     });
 
+    const previewSlice = sortedMembers.slice(0, 5);
+    const previewNotifsDisabled = await getUsersWithNotificationsDisabled(
+      ctx,
+      previewSlice.map((gm) => gm.userId),
+    );
     const memberPreview = [];
-    for (const gm of sortedMembers.slice(0, 5)) {
+    for (const gm of previewSlice) {
       const user = await ctx.db.get(gm.userId);
       if (user) {
         memberPreview.push({
@@ -270,6 +276,7 @@ export const getByShortId = query({
           last_name: user.lastName || "",
           profile_photo: getMediaUrl(user.profilePhoto),
           isLeader: isLeaderRole(gm.role),
+          notificationsDisabled: previewNotifsDisabled.has(user._id),
         });
       }
     }
