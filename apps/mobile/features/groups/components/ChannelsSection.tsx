@@ -68,7 +68,11 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
   const { primaryColor } = useCommunityTheme();
   const { colors } = useTheme();
 
-  const isLeader = userRole === "leader" || userRole === "admin";
+  // The legacy `groupMembers.role === "admin"` enum is no longer assigned
+  // by the backend (only "member" / "leader" exist). The defensive `||
+  // "admin"` checks scattered through the app are dead — drop them as we
+  // touch each surface.
+  const isLeader = userRole === "leader";
 
   const pendingInvites = useQuery(
     api.functions.messaging.sharedChannels.listPendingInvitesForGroup,
@@ -236,7 +240,7 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
       name: channel.name,
       subtitle: enabled
         ? `${channel.memberCount} member${channel.memberCount !== 1 ? "s" : ""}`
-        : "Hidden from members",
+        : "Hidden — visible to leaders",
       enabled,
       onPress: () => navigateToChannelInfo(channel.slug),
       unreadCount: channel.unreadCount,

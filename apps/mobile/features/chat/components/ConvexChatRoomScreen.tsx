@@ -336,9 +336,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   const isRoleLoading = groupDetails === undefined && groupData === undefined;
   const isUserLeader =
     groupDetails?.userRole === "leader" ||
-    groupDetails?.userRole === "admin" ||
     groupData?.userRole === "leader" ||
-    groupData?.userRole === "admin" ||
     // While loading, show leaders tab if navigating to leaders channel (avoids flash)
     (isRoleLoading && channelTypeParam === "leaders") ||
     false;

@@ -314,6 +314,24 @@ export const update = mutation({
       "edit this group"
     );
 
+    // Archive/unarchive cascades to channels and soft-deletes every active
+    // member — that's a community-wide operation, not a group-leader one.
+    // Tighten to community-admin-only so the backend matches the UI gate
+    // (which has always hidden the button from non-admins). Without this
+    // a group leader could call `update({ isArchived: true })` directly.
+    if (args.isArchived !== undefined) {
+      const isCommAdminForArchive = await isCommunityAdmin(
+        ctx,
+        currentGroup.communityId,
+        userId,
+      );
+      if (!isCommAdminForArchive) {
+        throw new Error(
+          "Only community admins can archive or unarchive groups",
+        );
+      }
+    }
+
     // Filter out undefined values
     const cleanedUpdates = Object.fromEntries(
       Object.entries(updates).filter(([, val]) => val !== undefined)

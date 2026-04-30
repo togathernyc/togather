@@ -45,11 +45,13 @@ export function useLeaderGroups() {
   const isLoading = groupsData === undefined;
   const error = null; // Convex throws on error, handle with ErrorBoundary
 
-  // Backend returns role as string: "member", "leader", "admin"
+  // Backend assigns "member" or "leader" only — the legacy "admin" enum
+  // is no longer produced. Keep the MembershipRole.LEADER comparison for
+  // any callers that still pass the typed enum.
   const leaderGroups = useMemo(() => {
     return groups?.filter(
       (group: any) =>
-        group.role === "leader" || group.role === "admin" || group.role === MembershipRole.LEADER
+        group.role === "leader" || group.role === MembershipRole.LEADER
     ) || [];
   }, [groups]);
 

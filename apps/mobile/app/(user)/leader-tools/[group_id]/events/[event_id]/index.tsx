@@ -27,7 +27,7 @@ function EventDetailsPage() {
   // Check if current user is a leader based on userRole from Convex response
   const isLeader = React.useMemo(() => {
     if (!group) return false;
-    return group.userRole === "leader" || group.userRole === "admin";
+    return group.userRole === "leader";
   }, [group]);
 
   // Parse the event identifier

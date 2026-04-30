@@ -71,9 +71,7 @@ export function ThreadPage({
   // leader/admin role concept — `useGroupDetails` is called with undefined
   // (skipped inside the hook) and `isUserLeader` stays false.
   const { data: groupDetails } = useGroupDetails(groupId);
-  const isUserLeader =
-    groupDetails?.user_role === "leader" ||
-    groupDetails?.user_role === "admin";
+  const isUserLeader = groupDetails?.user_role === "leader";
   // Community admins can delete any message in groups within their community
   const isCommunityAdmin = user?.is_admin === true;
 

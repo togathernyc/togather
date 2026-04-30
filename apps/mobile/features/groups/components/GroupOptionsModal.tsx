@@ -19,6 +19,7 @@ import { useAuth } from "@providers/AuthProvider";
 import { Group } from "../types";
 import { DOMAIN_CONFIG } from "@togather/shared";
 import { useTheme } from "@hooks/useTheme";
+import { AdminViewNote } from "@components/ui/AdminViewNote";
 import * as Clipboard from "expo-clipboard";
 
 const { height: SCREEN_HEIGHT } = Dimensions.get("window");
@@ -135,23 +136,25 @@ export function GroupOptionsModal({
 
   // Check if current user is a leader or community admin
   // Community admins (user.is_admin === true) can edit any group in their community
-  const canEditGroup = useMemo(() => {
+  const isCommunityAdmin = user?.is_admin === true;
+  const isGroupLeader = useMemo(() => {
     if (!group || !user?.id) return false;
+    // Compare as strings since user.id is a Convex ID string.
+    return (
+      group.leaders?.some(
+        (leader) => String(leader.id) === String(user.id),
+      ) || false
+    );
+  }, [group, user?.id]);
+  const canEditGroup = isCommunityAdmin || isGroupLeader;
+  // True when the viewer can edit only because they're a community admin
+  // (not because they lead the group). Used to surface the asymmetric
+  // affordance to the user.
+  const isEditingAsAdminOnly = canEditGroup && isCommunityAdmin && !isGroupLeader;
 
-    // Check if user is a community admin
-    const isCommunityAdmin = user.is_admin === true;
-
-    // Check if user is a group leader
-    // Compare as strings since user.id is now a Convex ID string
-    const isGroupLeader = group.leaders?.some((leader) => String(leader.id) === String(user.id)) || false;
-
-    return isCommunityAdmin || isGroupLeader;
-  }, [group, user?.id, user?.is_admin]);
-
-  // Only community admins can archive groups
-  const canArchiveGroup = useMemo(() => {
-    return user?.is_admin === true;
-  }, [user?.is_admin]);
+  // Only community admins can archive groups (matches backend gate in
+  // `groups/mutations.update` — leaders are blocked by the API).
+  const canArchiveGroup = isCommunityAdmin;
 
   const handleArchiveGroup = () => {
     if (onArchiveGroup) {
@@ -193,27 +196,39 @@ export function GroupOptionsModal({
             )}
 
             {canEditGroup && (
-              <TouchableOpacity
-                style={[styles.optionButton, styles.editButton]}
-                onPress={handleEditGroup}
-                disabled={isLeaving || isArchiving}
-              >
-                <Text style={styles.editButtonText}>Edit Group</Text>
-              </TouchableOpacity>
+              <>
+                <TouchableOpacity
+                  style={[styles.optionButton, styles.editButton]}
+                  onPress={handleEditGroup}
+                  disabled={isLeaving || isArchiving}
+                >
+                  <Text style={styles.editButtonText}>Edit Group</Text>
+                </TouchableOpacity>
+                {isEditingAsAdminOnly && (
+                  <View style={styles.disclaimerWrap}>
+                    <AdminViewNote text="Editing this group as a community admin." />
+                  </View>
+                )}
+              </>
             )}
 
             {canArchiveGroup && !group?.is_announcement_group && (
-              <TouchableOpacity
-                style={[styles.optionButton, styles.archiveButton]}
-                onPress={handleArchiveGroup}
-                disabled={isLeaving || isArchiving}
-              >
-                {isArchiving ? (
-                  <ActivityIndicator color="#ffffff" size="small" />
-                ) : (
-                  <Text style={styles.archiveButtonText}>Archive Group</Text>
-                )}
-              </TouchableOpacity>
+              <>
+                <TouchableOpacity
+                  style={[styles.optionButton, styles.archiveButton]}
+                  onPress={handleArchiveGroup}
+                  disabled={isLeaving || isArchiving}
+                >
+                  {isArchiving ? (
+                    <ActivityIndicator color="#ffffff" size="small" />
+                  ) : (
+                    <Text style={styles.archiveButtonText}>Archive Group</Text>
+                  )}
+                </TouchableOpacity>
+                <View style={styles.disclaimerWrap}>
+                  <AdminViewNote text="Archiving cascades to all channels and members. Community admins only." />
+                </View>
+              </>
             )}
 
             {group?.is_announcement_group ? (
@@ -281,6 +296,11 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     gap: 12,
+  },
+  disclaimerWrap: {
+    // Pulls the disclaimer up against the button it explains so the
+    // pairing reads as one row, not two stacked items.
+    marginTop: -4,
   },
   optionButton: {
     paddingVertical: 18,

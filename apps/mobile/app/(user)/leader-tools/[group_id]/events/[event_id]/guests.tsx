@@ -46,7 +46,7 @@ function GuestListPage() {
 
   const isLeader = React.useMemo(() => {
     if (!group) return false;
-    return group.userRole === "leader" || group.userRole === "admin";
+    return group.userRole === "leader";
   }, [group]);
 
   // Fetch meeting details using Convex

@@ -63,9 +63,7 @@ export default function TaskReminderTesterPage() {
   // Filter to groups where user is a leader
   const leaderGroups = useMemo(() => {
     if (!groups) return [];
-    return groups.filter(
-      (g: any) => g.userRole === "leader" || g.userRole === "admin"
-    );
+    return groups.filter((g: any) => g.userRole === "leader");
   }, [groups]);
 
   // Get members of selected group

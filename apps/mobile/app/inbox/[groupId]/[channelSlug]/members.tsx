@@ -195,7 +195,7 @@ export default function ChannelMembersScreen() {
   const canManage = useMemo(() => {
     if (!channelData || !user) return false;
     const isOwner = channelData.role === "owner";
-    const isGroupLeader = channelData.userGroupRole === "leader" || channelData.userGroupRole === "admin";
+    const isGroupLeader = channelData.userGroupRole === "leader";
     return isOwner || isGroupLeader;
   }, [channelData, user]);
 
@@ -237,10 +237,8 @@ export default function ChannelMembersScreen() {
     // browse path is by channel-membership creation order — close enough
     // for pure visual grouping).
     const sortedMembers = [...(membersData?.members || [])].sort((a, b) => {
-      const aLeader =
-        a.groupRole === "leader" || a.groupRole === "admin" ? 0 : 1;
-      const bLeader =
-        b.groupRole === "leader" || b.groupRole === "admin" ? 0 : 1;
+      const aLeader = a.groupRole === "leader" ? 0 : 1;
+      const bLeader = b.groupRole === "leader" ? 0 : 1;
       return aLeader - bLeader;
     });
     const syncedItems: ListItem[] = sortedMembers.map((m) => ({
@@ -787,14 +785,34 @@ export default function ChannelMembersScreen() {
           (Leader Controls › PCO sync settings). Skipping the banner keeps
           this surface focused on member management. */}
 
-      {/* Members list (unified: synced members first, unsynced at bottom) */}
+      {/* Members list (unified: synced members first, unsynced at bottom).
+          For an announcement group viewed by a non-leader/admin, the
+          backend deliberately returns an empty roster (every community
+          member belongs to the announcement group, so exposing the full
+          list would be a directory leak). Without an explainer the
+          surface reads as "No Members" which is misleading — replace
+          with a restricted-view note. */}
       {unifiedList.length === 0 ? (
         <View style={styles.emptyContainer}>
           <Ionicons name="people-outline" size={64} color={colors.textTertiary} />
-          <Text style={[styles.emptyTitle, { color: colors.text }]}>No Members</Text>
-          <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
-            This channel has no members yet.
-          </Text>
+          {groupData?.isAnnouncementGroup && !canManage ? (
+            <>
+              <Text style={[styles.emptyTitle, { color: colors.text }]}>
+                Roster restricted
+              </Text>
+              <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
+                The full member list of an announcement group is visible
+                to leaders and community admins only.
+              </Text>
+            </>
+          ) : (
+            <>
+              <Text style={[styles.emptyTitle, { color: colors.text }]}>No Members</Text>
+              <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
+                This channel has no members yet.
+              </Text>
+            </>
+          )}
         </View>
       ) : (
         <FlatList

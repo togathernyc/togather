@@ -116,8 +116,8 @@ export default function ToolbarSettingsScreen() {
     }
   }, [group]);
 
-  // Check if user has access (leader/admin)
-  const canAccess = group?.userRole === "leader" || group?.userRole === "admin";
+  // Check if user has access (group leader)
+  const canAccess = group?.userRole === "leader";
 
   // Handle back navigation
   const handleBack = () => {

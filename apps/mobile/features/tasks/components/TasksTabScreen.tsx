@@ -239,9 +239,7 @@ export function TasksTabScreen() {
   ) as Array<{ _id: string; name: string; userRole?: string }> | undefined;
 
   const leaderGroups = useMemo(() => {
-    return (groups ?? []).filter(
-      (group) => group.userRole === "leader" || group.userRole === "admin",
-    );
+    return (groups ?? []).filter((group) => group.userRole === "leader");
   }, [groups]);
 
   const hasLeaderAccess = useAuthenticatedQuery(

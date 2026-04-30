@@ -23,6 +23,7 @@ import { useQuery, useAuthenticatedMutation, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { Avatar } from "@components/ui/Avatar";
 import { AppImage } from "@components/ui/AppImage";
+import { AdminViewNote } from "@components/ui/AdminViewNote";
 import { CommunityWideBadge } from "@components/ui/CommunityWideBadge";
 import { SeriesBadge } from "@components/ui/SeriesBadge";
 import { FloatingRsvpButtons } from "./FloatingRsvpButtons";
@@ -94,6 +95,17 @@ export function EventDetails({
     const hosts = ((meeting as any)?.hostUserIds as string[] | undefined) ?? [];
     return hosts.some((id) => String(id) === String(user.id));
   })();
+
+  // Community admins can manage events even when they aren't a leader of
+  // the hosting group — backend `canEditMeeting` (and `eventBlasts`) allow
+  // them. Treat them as having leader-level affordances here so they can
+  // actually act on what the API permits.
+  const isCommunityAdmin = user?.is_admin === true;
+  const canManageEvent = isLeader || isCreator || isCommunityAdmin;
+  // Show "you're seeing this as community admin" disclaimer only when the
+  // viewer is acting via admin role, not via being a leader/host of this
+  // group/event.
+  const isViewingAsAdminOnly = isCommunityAdmin && !isLeader && !isCreator;
 
   // Fetch RSVPs for the meeting (using Convex)
   const rsvpsRaw = useQuery(
@@ -370,7 +382,7 @@ export function EventDetails({
         >
           <Ionicons name="flag-outline" size={20} color={colors.text} />
         </TouchableOpacity>
-        {(isLeader || isCreator) && (
+        {canManageEvent && (
           <TouchableOpacity
             testID="edit-button"
             style={[styles.editButton, { backgroundColor: colors.surfaceSecondary }]}
@@ -393,6 +405,15 @@ export function EventDetails({
           </View>
         ) : (
           <>
+            {/* Admin-mode banner — only when the viewer's elevated access
+                comes from being a community admin (not from leading the
+                hosting group or hosting the event itself). */}
+            {isViewingAsAdminOnly && (
+              <View style={styles.adminNoteWrap}>
+                <AdminViewNote text="You're managing this event as a community admin." />
+              </View>
+            )}
+
             {/* Cover Image */}
             {displayCoverImage ? (
               <AppImage
@@ -587,8 +608,8 @@ export function EventDetails({
               </View>
             )}
 
-            {/* Leader-only toggle (creators always get notified; see sender). */}
-            {isLeader && rsvpEnabled && (
+            {/* Leader/admin-only toggle (creators always get notified; see sender). */}
+            {canManageEvent && rsvpEnabled && (
               <View style={[styles.detailCard, { backgroundColor: colors.surface }]}>
                 <View style={styles.detailRow}>
                   <Ionicons name="notifications-outline" size={20} color={colors.textSecondary} />
@@ -702,8 +723,11 @@ export function EventDetails({
             )}
 
             {/* Host actions: Message Attendees + Blast History. Available to
-                creators too (ADR-022) — backend enforces. */}
-            {(isLeader || isCreator) && (
+                creators too (ADR-022). Backend `canEditMeeting` also allows
+                community admins (`eventBlasts.ts` enforces), so the UI
+                opens to them as well — matched here so the affordance
+                isn't hidden from someone the API permits. */}
+            {canManageEvent && (
               <TouchableOpacity
                 style={[styles.messageAttendeesButton, { backgroundColor: colors.surface }]}
                 onPress={() => setShowBlastSheet(true)}
@@ -715,7 +739,7 @@ export function EventDetails({
               </TouchableOpacity>
             )}
 
-            {(isLeader || isCreator) && meetingId && (
+            {canManageEvent && meetingId && (
               <EventBlastHistory meetingId={meetingId} />
             )}
 
@@ -820,7 +844,7 @@ export function EventDetails({
       </Modal>
 
       {/* Event Blast Sheet */}
-      {isLeader && (
+      {canManageEvent && (
         <EventBlastSheet
           visible={showBlastSheet}
           meetingId={meetingId}
@@ -885,6 +909,9 @@ const styles = StyleSheet.create({
   contentContainer: {
     padding: 20,
     paddingBottom: 180, // Space for floating RSVP buttons
+  },
+  adminNoteWrap: {
+    marginBottom: 12,
   },
   sectionTitle: {
     fontSize: 12,

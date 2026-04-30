@@ -469,7 +469,7 @@ export function RunSheetScreen({
 
   // Check if user can access settings (group leader/admin or community admin)
   const isAdmin = user?.is_admin === true;
-  const isGroupLeader = groupData?.userRole === "leader" || groupData?.userRole === "admin";
+  const isGroupLeader = groupData?.userRole === "leader";
   const canAccessSettings = isAdmin || isGroupLeader;
 
   // Extract available roles from notes
