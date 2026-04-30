@@ -17,6 +17,5 @@ export * from "./GroupHeader";
 export * from "./GroupOptionsModal";
 export * from "./NextEventSection";
 export * from "./MembersRow";
-export * from "./GroupMapSection";
 export * from "./HighlightsGrid";
 export * from "./ChannelsSection";

@@ -142,15 +142,6 @@ jest.mock("../MembersRow", () => {
   };
 });
 
-jest.mock("../GroupMapSection", () => {
-  const { View, Text } = require("react-native");
-  return {
-    GroupMapSection: ({ group }: any) =>
-      group.location ? (
-        <View testID="map-section"><Text>Map: {group.location}</Text></View>
-      ) : null,
-  };
-});
 
 jest.mock("../HighlightsGrid", () => {
   const { View, Text } = require("react-native");

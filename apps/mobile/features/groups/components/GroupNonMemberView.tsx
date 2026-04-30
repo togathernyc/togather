@@ -1,5 +1,14 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from "react-native";
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  Alert,
+  Linking,
+  Platform,
+} from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@hooks/useTheme";
@@ -8,9 +17,9 @@ import { Avatar } from "@components/ui";
 import { GroupHeader } from "./GroupHeader";
 import { MembersRow } from "./MembersRow";
 import { HighlightsGrid } from "./HighlightsGrid";
-import { GroupMapSection } from "./GroupMapSection";
 import { JoinGroupButton } from "./JoinGroupButton";
 import { GroupOptionsModal } from "./GroupOptionsModal";
+import { sectionStyles } from "./sectionStyles";
 import { Group } from "../types";
 import { ImageViewerManager } from "@/providers/ImageViewerProvider";
 import { useAuth } from "@providers/AuthProvider";
@@ -24,6 +33,12 @@ interface GroupNonMemberViewProps {
   isWithdrawing?: boolean;
 }
 
+/**
+ * Non-member group page. Shares the section/card layout primitives with
+ * `GroupDetailScreen` (the member view) via `sectionStyles` so spacing
+ * stays consistent. Sections only a member should see (channels, bots,
+ * group actions, full address for non-admins) are gated out here.
+ */
 export function GroupNonMemberView({
   group,
   onJoinPress,
@@ -56,14 +71,13 @@ export function GroupNonMemberView({
     router.push(`/profile/${userId}` as any);
   };
 
-  // Check if user is a community admin - admins should see the menu even if not a member
+  // Community admins see the menu and admin-only details (location)
+  // even when they're not a member of this specific group.
   const isAdmin = user?.is_admin === true;
 
-  // Archive group mutation (for admins)
   const groupIdentifier = group?._id;
   const archiveGroupMutation = useArchiveGroup(groupIdentifier);
 
-  // Handle archive group (for admins)
   const handleArchiveGroup = () => {
     Alert.alert(
       "Archive Group",
@@ -93,6 +107,80 @@ export function GroupNonMemberView({
     router.push(`/leader-tools/${group._id}/members`);
   };
 
+  // Resolve a single address string the same way the member view does so
+  // the LOCATION card behaves identically for community admins.
+  const address =
+    group.full_address ||
+    (group.address_line1 || group.city || group.state || group.zip_code
+      ? [
+          group.address_line1,
+          group.address_line2,
+          [group.city, group.state].filter(Boolean).join(", "),
+          group.zip_code,
+        ]
+          .filter(Boolean)
+          .join(", ")
+      : null) ||
+    group.location ||
+    null;
+
+  const handleAddressPress = async () => {
+    if (!address) return;
+    const encoded = encodeURIComponent(address);
+    const url =
+      Platform.OS === "ios"
+        ? `maps://maps.apple.com/?q=${encoded}`
+        : `https://www.google.com/maps/search/?api=1&query=${encoded}`;
+    try {
+      const canOpen = await Linking.canOpenURL(url);
+      if (canOpen) {
+        await Linking.openURL(url);
+      } else {
+        await Linking.openURL(
+          `https://www.google.com/maps/search/?api=1&query=${encoded}`
+        );
+      }
+    } catch (err) {
+      console.error("Error opening maps:", err);
+    }
+  };
+
+  const memberPreview = ((group as any).member_preview ??
+    []) as Array<unknown>;
+
+  // Admins see the full member roster. Non-admins only see what's publicly
+  // exposed via `member_preview` (or a count fallback) — privacy-preserving,
+  // matching the prior behavior the existing tests assert.
+  const hasMemberRowForAdmin =
+    isAdmin &&
+    ((group.members && group.members.length > 0) ||
+      (group.leaders && group.leaders.length > 0));
+  const hasMemberRowForNonAdmin = !isAdmin && memberPreview.length > 0;
+  const showMemberRow = hasMemberRowForAdmin || hasMemberRowForNonAdmin;
+  const showMemberCountFallback =
+    !isAdmin &&
+    !hasMemberRowForNonAdmin &&
+    !!group.members_count &&
+    group.members_count > 0;
+  const showMembersCard = showMemberRow || showMemberCountFallback;
+
+  const isPendingRequest = group.user_request_status === "pending";
+
+  // Tap behavior on the MEMBERS card mirrors the member view: admins land
+  // on the management roster; everyone else gets a friendly nudge to join
+  // (or sees the pending state when their request is in flight).
+  const onMembersCardPress = () => {
+    if (isAdmin) {
+      handleMembersPress();
+      return;
+    }
+    if (isPendingRequest) return;
+    Alert.alert(
+      "Members",
+      "Join this group to see all members. Use the button below to request to join."
+    );
+  };
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <ScrollView
@@ -100,166 +188,268 @@ export function GroupNonMemberView({
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
       >
-        {/* Header with image, name, and cadence. Tapping the share icon
-            opens the GroupOptionsModal which non-members rely on for
-            "Share Group" + admin "Edit/Archive". The (i) icon was retired
-            — you're already on the info surface. */}
+        {/* Centered hero (DM-style). Tapping share opens the options modal
+            which non-members rely on for "Share Group" + admin "Archive". */}
         <GroupHeader
           group={group}
           onSharePress={() => setShowOptionsModal(true)}
         />
 
-        {/* Description */}
-        <View style={[styles.descriptionContainer, { backgroundColor: colors.surfaceSecondary }]}>
-          <Text style={[styles.description, { color: colors.textSecondary }]}>
-            {group.description || "No description available."}
-          </Text>
-        </View>
-
-        {/* Map Section - Only shown to admins for non-members
-            SECURITY: Location data should not be shown to non-members */}
-        {isAdmin && <GroupMapSection group={group} />}
-
-        {/* Leaders Section — exposed to non-members so they can DM a leader
-            before joining the group. Tap a leader card to open their profile,
-            where the Message button initiates a DM. */}
-        {leaderPreview.length > 0 && (
-          <View style={[styles.leadersContainer, { backgroundColor: colors.surfaceSecondary }]}>
-            <Text style={[styles.leadersTitle, { color: colors.text }]}>LEADERS</Text>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.leadersScrollContent}
+        {/* DESCRIPTION — wrapped in the shared section/card pattern so it
+            sits in the same visual rhythm as the rest of the page. */}
+        {!!group.description && group.description.trim().length > 0 && (
+          <View style={sectionStyles.section}>
+            <Text
+              style={[
+                sectionStyles.sectionHeader,
+                { color: colors.textSecondary },
+              ]}
             >
-              {leaderPreview.map((leader) => {
-                const fullName = `${leader.first_name || ""} ${leader.last_name || ""}`.trim();
-                const displayName =
-                  leader.first_name ||
-                  fullName ||
-                  "Leader";
-                return (
-                  <TouchableOpacity
-                    key={leader.id}
-                    onPress={() => handleLeaderPress(leader.id)}
-                    activeOpacity={0.7}
-                    accessibilityRole="button"
-                    accessibilityLabel={`View ${displayName}'s profile`}
-                    style={styles.leaderCardTouchable}
-                  >
-                    {/* Layout styles live on this inner View so they apply on
-                        React Native Web (Pressable/Touchable function-style
-                        is silently ignored on web). */}
-                    <View style={styles.leaderCard}>
-                      <View style={[styles.leaderAvatarWrapper, { borderColor: primaryColor }]}>
-                        <Avatar
-                          name={fullName || displayName}
-                          imageUrl={leader.profile_photo}
-                          size={56}
-                        />
-                        <View
-                          style={[
-                            styles.leaderBadge,
-                            { backgroundColor: primaryColor, borderColor: colors.surfaceSecondary },
-                          ]}
-                        />
-                      </View>
-                      <Text
-                        style={[styles.leaderName, { color: colors.text }]}
-                        numberOfLines={1}
-                      >
-                        {displayName}
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
+              ABOUT
+            </Text>
+            <View
+              style={[
+                sectionStyles.card,
+                styles.descriptionCard,
+                { backgroundColor: colors.surfaceSecondary },
+              ]}
+            >
+              <Text style={[styles.description, { color: colors.text }]}>
+                {group.description}
+              </Text>
+            </View>
           </View>
         )}
 
-        {/* Members Section */}
-        {/* Admins can see full member list and navigate to members page */}
-        {/* Non-admins see only member count with join prompt */}
-        {isAdmin ? (
-          ((group.members && group.members.length > 0) ||
-           (group.leaders && group.leaders.length > 0)) ? (
-            <TouchableOpacity onPress={handleMembersPress} activeOpacity={0.7}>
-              <MembersRow members={group.members} leaders={group.leaders} />
-              <View style={[styles.viewMembersHint, { backgroundColor: colors.surfaceSecondary }]}>
-                <Text style={[styles.viewMembersText, { color: colors.link }]}>View all members</Text>
-                <Ionicons name="chevron-forward" size={16} color={colors.link} />
-              </View>
-            </TouchableOpacity>
-          ) : null
-        ) : (
-          // Non-admins: show member preview avatars with count
-          // Use member_preview if available, otherwise fall back to count
-          (group.members_count && group.members_count > 0) ||
-          ((group as any).member_preview?.length > 0) ? (
-            group.user_request_status === "pending" ? (
-              // User has pending request - show preview but non-interactive
-              <View>
-                {(group as any).member_preview?.length > 0 ? (
-                  <MembersRow
-                    members={(group as any).member_preview}
-                    leaders={[]}
-                    maxVisible={5}
-                    totalCount={group.members_count || 0}
-                  />
-                ) : (
-                  <View style={[styles.nonMemberMembersContainer, { backgroundColor: colors.surfaceSecondary }]}>
-                    <Text style={[styles.nonMemberMembersTitle, { color: colors.text }]}>MEMBERS</Text>
-                    <View style={styles.nonMemberMembersRow}>
-                      <View style={[styles.nonMemberCountCircle, { backgroundColor: colors.border }]}>
-                        <Ionicons name="people" size={24} color={colors.textSecondary} />
-                      </View>
-                      <Text style={[styles.nonMemberMembersCount, { color: colors.text }]}>
-                        {group.members_count} members
-                      </Text>
-                    </View>
-                  </View>
-                )}
-                <View style={[styles.nonMemberHintContainer, { backgroundColor: colors.surfaceSecondary }]}>
-                  <Text style={[styles.nonMemberPendingHint, { color: colors.textSecondary }]}>Request pending - you'll see all members once approved</Text>
-                </View>
-              </View>
-            ) : (
-              // User can join - show preview, tap shows info alert
+        {/* LOCATION — admin-only. Address is sensitive for non-members so
+            the row stays gated. Matches the member view's DETAILS card. */}
+        {isAdmin && !!address && (
+          <View style={sectionStyles.section}>
+            <Text
+              style={[
+                sectionStyles.sectionHeader,
+                { color: colors.textSecondary },
+              ]}
+            >
+              LOCATION
+            </Text>
+            <View
+              style={[
+                sectionStyles.card,
+                { backgroundColor: colors.surfaceSecondary },
+              ]}
+            >
               <TouchableOpacity
-                onPress={() => {
-                  Alert.alert(
-                    "Members",
-                    "Join this group to see all members. Use the button below to request to join."
-                  );
-                }}
+                onPress={handleAddressPress}
                 activeOpacity={0.7}
+                style={sectionStyles.detailRow}
+                accessibilityRole="button"
+                accessibilityLabel={`Open ${address} in Maps`}
               >
-                {(group as any).member_preview?.length > 0 ? (
-                  <MembersRow
-                    members={(group as any).member_preview}
-                    leaders={[]}
-                    maxVisible={5}
-                    totalCount={group.members_count || 0}
-                  />
-                ) : (
-                  <View style={[styles.nonMemberMembersContainer, { backgroundColor: colors.surfaceSecondary }]}>
-                    <Text style={[styles.nonMemberMembersTitle, { color: colors.text }]}>MEMBERS</Text>
-                    <View style={styles.nonMemberMembersRow}>
-                      <View style={[styles.nonMemberCountCircle, { backgroundColor: colors.border }]}>
-                        <Ionicons name="people" size={24} color={colors.textSecondary} />
-                      </View>
-                      <Text style={styles.nonMemberMembersCount}>
-                        {group.members_count} members
-                      </Text>
-                    </View>
-                  </View>
-                )}
+                <Ionicons
+                  name="location-outline"
+                  size={20}
+                  color={colors.icon}
+                />
+                <Text
+                  style={[sectionStyles.detailText, { color: colors.text }]}
+                  numberOfLines={2}
+                >
+                  {address}
+                </Text>
+                <Ionicons
+                  name="chevron-forward"
+                  size={18}
+                  color={colors.textTertiary}
+                />
               </TouchableOpacity>
-            )
-          ) : null
+            </View>
+          </View>
         )}
 
-        {/* Highlights */}
+        {/* LEADERS — public on purpose so non-members can DM a leader before
+            joining. Tap a card to open their profile. */}
+        {leaderPreview.length > 0 && (
+          <View style={sectionStyles.section}>
+            <Text
+              style={[
+                sectionStyles.sectionHeader,
+                { color: colors.textSecondary },
+              ]}
+            >
+              LEADERS
+            </Text>
+            <View
+              style={[
+                sectionStyles.card,
+                { backgroundColor: colors.surfaceSecondary },
+              ]}
+            >
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.leadersScrollContent}
+              >
+                {leaderPreview.map((leader) => {
+                  const fullName = `${leader.first_name || ""} ${
+                    leader.last_name || ""
+                  }`.trim();
+                  const displayName = leader.first_name || fullName || "Leader";
+                  return (
+                    <TouchableOpacity
+                      key={leader.id}
+                      onPress={() => handleLeaderPress(leader.id)}
+                      activeOpacity={0.7}
+                      accessibilityRole="button"
+                      accessibilityLabel={`View ${displayName}'s profile`}
+                    >
+                      {/* Layout styles live on the inner View so they apply
+                          on React Native Web (Pressable/Touchable's
+                          function-style is silently ignored on web). */}
+                      <View style={styles.leaderCard}>
+                        <View
+                          style={[
+                            styles.leaderAvatarWrapper,
+                            { borderColor: primaryColor },
+                          ]}
+                        >
+                          <Avatar
+                            name={fullName || displayName}
+                            imageUrl={leader.profile_photo}
+                            size={56}
+                          />
+                          <View
+                            style={[
+                              styles.leaderBadge,
+                              {
+                                backgroundColor: primaryColor,
+                                borderColor: colors.surfaceSecondary,
+                              },
+                            ]}
+                          />
+                        </View>
+                        <Text
+                          style={[styles.leaderName, { color: colors.text }]}
+                          numberOfLines={1}
+                        >
+                          {displayName}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          </View>
+        )}
+
+        {/* MEMBERS — same card pattern as the member view. Privacy:
+              - Admins see the full roster (group.members / group.leaders).
+              - Non-admins only see `member_preview` (publicly safe), or a
+                count-only fallback if just the count is known.
+              - Nothing renders when neither path has data. */}
+        {showMembersCard && (
+          <View style={sectionStyles.section}>
+            <Text
+              style={[
+                sectionStyles.sectionHeader,
+                { color: colors.textSecondary },
+              ]}
+            >
+              MEMBERS
+              {group.members_count ? ` · ${group.members_count}` : ""}
+            </Text>
+            {(() => {
+              const cardTappable = isAdmin || !isPendingRequest;
+              const Container: React.ComponentType<any> = cardTappable
+                ? TouchableOpacity
+                : View;
+              const footerLabel = isAdmin
+                ? "View all members"
+                : isPendingRequest
+                  ? "Request pending — you'll see all members once approved"
+                  : "Join to see all members";
+              const previewMembers = isAdmin
+                ? group.members
+                : (memberPreview as any);
+              const previewLeaders = isAdmin ? group.leaders : [];
+              return (
+                <Container
+                  {...(cardTappable
+                    ? {
+                        activeOpacity: 0.7,
+                        onPress: onMembersCardPress,
+                        accessibilityRole: "button" as const,
+                        accessibilityLabel: footerLabel,
+                      }
+                    : {})}
+                  style={[
+                    sectionStyles.card,
+                    { backgroundColor: colors.surfaceSecondary },
+                  ]}
+                >
+                  {showMemberRow ? (
+                    <MembersRow
+                      members={previewMembers}
+                      leaders={previewLeaders}
+                      maxVisible={5}
+                      totalCount={group.members_count ?? undefined}
+                    />
+                  ) : (
+                    // Count-only fallback for non-admins when no public
+                    // preview avatars are available. Mirrors the prior
+                    // people-icon block but inside the shared card.
+                    <View style={sectionStyles.detailRow}>
+                      <Ionicons
+                        name="people-outline"
+                        size={20}
+                        color={colors.icon}
+                      />
+                      <Text
+                        style={[
+                          sectionStyles.detailText,
+                          { color: colors.text },
+                        ]}
+                      >
+                        {group.members_count}{" "}
+                        {group.members_count === 1 ? "member" : "members"}
+                      </Text>
+                    </View>
+                  )}
+                  <View
+                    style={[
+                      sectionStyles.viewAllRow,
+                      { borderTopColor: colors.border },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        sectionStyles.viewAllText,
+                        {
+                          color: isPendingRequest
+                            ? colors.textSecondary
+                            : colors.text,
+                          fontStyle: isPendingRequest ? "italic" : "normal",
+                        },
+                      ]}
+                    >
+                      {footerLabel}
+                    </Text>
+                    {!isPendingRequest && (
+                      <Ionicons
+                        name="chevron-forward"
+                        size={18}
+                        color={colors.textTertiary}
+                      />
+                    )}
+                  </View>
+                </Container>
+              );
+            })()}
+          </View>
+        )}
+
+        {/* HIGHLIGHTS — already a self-contained section component. */}
         {group.highlights && group.highlights.length > 0 && (
           <HighlightsGrid
             highlights={group.highlights as any}
@@ -288,7 +478,11 @@ export function GroupNonMemberView({
         isPending={isJoining || isWithdrawing}
         group={group}
         requestStatus={
-          group.user_request_status as "pending" | "accepted" | "declined" | null
+          group.user_request_status as
+            | "pending"
+            | "accepted"
+            | "declined"
+            | null
         }
       />
 
@@ -315,95 +509,26 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingBottom: 100, // Space for fixed button
+    paddingBottom: 100, // Space for fixed Join button
   },
-  descriptionContainer: {
+  descriptionCard: {
     paddingHorizontal: 16,
-    paddingVertical: 16,
-    marginTop: 0,
+    paddingVertical: 14,
   },
   description: {
-    fontSize: 16,
-    lineHeight: 24,
+    fontSize: 15,
+    lineHeight: 22,
   },
   spacer: {
     height: 20,
   },
-  viewMembersHint: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 8,
-    marginTop: -8,
-    paddingBottom: 16,
-  },
-  viewMembersText: {
-    fontSize: 14,
-    fontWeight: "500",
-    marginRight: 4,
-  },
-  // Non-member members section styles
-  nonMemberMembersContainer: {
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-  },
-  nonMemberMembersTitle: {
-    fontSize: 14,
-    fontWeight: "600",
-    marginBottom: 12,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-  nonMemberMembersRow: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  nonMemberCountCircle: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 12,
-  },
-  nonMemberMembersCount: {
-    flex: 1,
-    fontSize: 16,
-    fontWeight: "500",
-  },
-  nonMemberJoinHint: {
-    fontSize: 13,
-    textAlign: "center",
-  },
-  nonMemberPendingHint: {
-    fontSize: 13,
-    textAlign: "center",
-    fontStyle: "italic",
-  },
-  nonMemberHintContainer: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    marginTop: -8,
-  },
-  // Leaders section (non-members can tap a leader to message them)
-  leadersContainer: {
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-  },
-  leadersTitle: {
-    fontSize: 14,
-    fontWeight: "600",
-    marginBottom: 12,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
+  // Leaders horizontal scroll lives inside the section card.
   leadersScrollContent: {
     flexDirection: "row",
     alignItems: "flex-start",
     gap: 12,
-  },
-  leaderCardTouchable: {
-    // 44pt+ tap target enforced via inner padding/sizing below
+    paddingHorizontal: 12,
+    paddingVertical: 14,
   },
   leaderCard: {
     alignItems: "center",
@@ -436,4 +561,3 @@ const styles = StyleSheet.create({
     maxWidth: 72,
   },
 });
-
