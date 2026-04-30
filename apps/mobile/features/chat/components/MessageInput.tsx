@@ -47,6 +47,7 @@ import { VoiceRecorderBar } from './VoiceRecorderBar';
 import { AttachmentPanel } from './AttachmentPanel';
 import { useDraftStore } from '../../../stores/draftStore';
 import { GifPicker } from './GifPicker';
+import { classifyChatSendError } from '../utils/chatSendErrors';
 
 interface MessageInputProps {
   channelId: Id<"chatChannels"> | null;
@@ -62,6 +63,15 @@ interface MessageInputProps {
   externalSendMessage?: (content: string, options?: any) => Promise<void>;
   /** External sending state (from parent) */
   externalIsSending?: boolean;
+  /**
+   * Ad-hoc DM only: any other live member is still in `requestState: "pending"`.
+   * When true, attachment buttons (image, GIF, file, voice) are hidden so the
+   * user never triggers the server-side `Cannot send attachments…` rejection
+   * — that error path previously cascaded into a navigator render loop
+   * ("Maximum update depth exceeded", Sentry). Plain text under 1000 chars
+   * still sends. Sourced from `channels.getChannel` → `recipientPending`.
+   */
+  recipientPending?: boolean;
 }
 
 interface ChannelMember {
@@ -112,7 +122,7 @@ const filterMembers = (members: ChannelMember[], searchText: string): ChannelMem
   );
 };
 
-export function MessageInput({ channelId, replyToMessage, onCancelReply, hideReplyPreview, externalSendMessage, externalIsSending }: MessageInputProps) {
+export function MessageInput({ channelId, replyToMessage, onCancelReply, hideReplyPreview, externalSendMessage, externalIsSending, recipientPending = false }: MessageInputProps) {
   const { colors: themeColors } = useTheme();
   const { getDraft, setDraft: saveDraft, clearDraft } = useDraftStore();
   const initialDraft = channelId ? getDraft(channelId) : '';
@@ -130,6 +140,12 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   const [isVoiceRecording, setIsVoiceRecording] = useState(false);
   const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
   const [showGifPicker, setShowGifPicker] = useState(false);
+  // Inline hint shown after a soft-fail send (e.g. attachments-pending,
+  // profile-photo-required). Auto-clears after a short window. Used INSTEAD
+  // of Alert/popup, which previously kept enough state churning to crash the
+  // navigator on the failure path.
+  const [softErrorHint, setSoftErrorHint] = useState<string | null>(null);
+  const softErrorTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isWeb = Platform.OS === 'web';
   const prevChannelIdRef = useRef(channelId);
 
@@ -735,6 +751,29 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
       }
     } catch (error) {
       console.error('[MessageInput] Send failed:', error);
+      const classification = classifyChatSendError(error);
+      if (classification.soft) {
+        // Clear staged attachments — server already rejected, keeping them
+        // would confuse the user (they'd press send again, hit the same
+        // error). Plain-text drafts stay so the user can edit and resend.
+        setSelectedImages([]);
+        setUploadedImageUrls([]);
+        setSelectedFile(null);
+        setUploadedFile(null);
+        setSelectedVideo(null);
+        setUploadedVideo(null);
+        resetImageUpload();
+        resetFileUpload();
+        resetVideoUpload();
+        setSoftErrorHint(classification.userMessage);
+        if (softErrorTimerRef.current) {
+          clearTimeout(softErrorTimerRef.current);
+        }
+        softErrorTimerRef.current = setTimeout(() => {
+          setSoftErrorHint(null);
+          softErrorTimerRef.current = null;
+        }, 5000);
+      }
     }
   }, [
     channelId,
@@ -791,6 +830,9 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
       if (linkPreviewDebounceRef.current) {
         clearTimeout(linkPreviewDebounceRef.current);
       }
+      if (softErrorTimerRef.current) {
+        clearTimeout(softErrorTimerRef.current);
+      }
       setTyping(false);
     };
   }, [setTyping]);
@@ -800,8 +842,17 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   // Web: Enter sends, Shift+Enter newlines. Detached while the voice recorder replaces the input.
   useWebEnterToSend(textInputRef, canSend, handleSend, !isVoiceRecording);
 
-  // Build attachment panel options (WhatsApp-style grid)
+  // Build attachment panel options (WhatsApp-style grid).
+  //
+  // When `recipientPending` is true (ad-hoc DM where the other party hasn't
+  // accepted yet), the backend rejects any attachment send with
+  // `Cannot send attachments until the recipient accepts the request`. That
+  // failure path previously triggered a navigator render loop and crashed
+  // the app — so we strip the options entirely and hide the trigger button
+  // below. The user can still send plain text (which the backend allows up
+  // to 1000 chars on pending DMs).
   const attachmentOptions = React.useMemo(() => {
+    if (recipientPending) return [];
     const options: Array<{ id: string; label: string; icon: keyof typeof Ionicons.glyphMap; iconColor?: string; onPress: () => void }> = [
       { id: 'media', label: 'Media', icon: 'images', iconColor: '#007AFF', onPress: pickMedia },
       { id: 'camera', label: 'Camera', icon: 'camera', iconColor: '#333', onPress: captureMedia },
@@ -825,7 +876,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
       });
     }
     return options;
-  }, [captureMedia, pickMedia]);
+  }, [captureMedia, pickMedia, recipientPending]);
 
   const handleOptionPress = useCallback((option: { onPress: () => void }) => {
     setShowAttachmentMenu(false);
@@ -994,6 +1045,24 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
         </View>
       )}
 
+      {recipientPending && !isVoiceRecording && (
+        <View style={styles.offlineHint}>
+          <Ionicons name="lock-closed-outline" size={12} color={themeColors.textTertiary} />
+          <Text style={[styles.offlineHintText, { color: themeColors.textTertiary }]}>
+            They'll need to accept your chat request before you can send photos or GIFs.
+          </Text>
+        </View>
+      )}
+
+      {softErrorHint && !isVoiceRecording && (
+        <View style={styles.offlineHint} accessibilityRole="alert">
+          <Ionicons name="information-circle-outline" size={12} color={themeColors.textTertiary} />
+          <Text style={[styles.offlineHintText, { color: themeColors.textTertiary }]}>
+            {softErrorHint}
+          </Text>
+        </View>
+      )}
+
       {/* Voice Recorder Bar (replaces input when recording) */}
       {isVoiceRecording ? (
         <VoiceRecorderBar
@@ -1008,16 +1077,20 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
       <>
       {/* Input Row */}
       <View style={styles.inputRow}>
-        {/* Attachment Button (rotates to x when panel open) */}
-        <Pressable
-          style={styles.iconButton}
-          onPress={handleAttachmentPress}
-          disabled={uploading || isSending}
-        >
-          <Animated.View style={{ transform: [{ rotate: plusRotation }] }}>
-            <Ionicons name="add" size={28} color={uploading ? themeColors.textDisabled : themeColors.link} />
-          </Animated.View>
-        </Pressable>
+        {/* Attachment Button (rotates to x when panel open).
+            Hidden when the DM recipient hasn't accepted yet — see
+            `recipientPending` prop docs above. */}
+        {!recipientPending && (
+          <Pressable
+            style={styles.iconButton}
+            onPress={handleAttachmentPress}
+            disabled={uploading || isSending}
+          >
+            <Animated.View style={{ transform: [{ rotate: plusRotation }] }}>
+              <Ionicons name="add" size={28} color={uploading ? themeColors.textDisabled : themeColors.link} />
+            </Animated.View>
+          </Pressable>
+        )}
 
         {/* Text Input */}
         <TextInput
@@ -1066,9 +1139,11 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
       </>
       )}
 
-      {/* GIF Picker Modal */}
+      {/* GIF Picker Modal — never opens while the recipient hasn't accepted
+          (the trigger is gone, but the visibility guard is defensive against
+          an old `showGifPicker=true` lingering from before the prop flipped). */}
       <GifPicker
-        visible={showGifPicker}
+        visible={showGifPicker && !recipientPending}
         onSelect={handleGifSelect}
         onClose={() => setShowGifPicker(false)}
       />
