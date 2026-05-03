@@ -1403,6 +1403,91 @@ describe("Get Single Message", () => {
 });
 
 // ============================================================================
+// Live sender profile (always-fresh avatar/name)
+// ============================================================================
+
+describe("Live Sender Profile Override", () => {
+  test("getMessage returns the sender's current profile photo, not the snapshot", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { userId, channelId, accessToken } = await seedTestData(t);
+
+    // Send a message with the original profile photo set on the user.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(userId, { profilePhoto: "https://example.com/old.jpg" });
+    });
+    const messageId = await t.mutation(api.functions.messaging.messages.sendMessage, {
+      token: accessToken,
+      channelId,
+      content: "Hello",
+    });
+    vi.runAllTimers();
+    await t.finishInProgressScheduledFunctions();
+
+    // Now the user uploads a new photo (simulates updateProfile).
+    await t.run(async (ctx) => {
+      await ctx.db.patch(userId, {
+        profilePhoto: "https://example.com/new.jpg",
+        firstName: "Renamed",
+        lastName: "User",
+      });
+    });
+
+    const single = await t.query(api.functions.messaging.messages.getMessage, {
+      token: accessToken,
+      messageId,
+    });
+    expect(single?.senderProfilePhoto).toContain("https://example.com/new.jpg");
+    expect(single?.senderProfilePhoto).not.toContain("https://example.com/old.jpg");
+    expect(single?.senderName).toBe("Renamed User");
+
+    const list = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+    });
+    expect(list.messages[0].senderProfilePhoto).toContain("https://example.com/new.jpg");
+    expect(list.messages[0].senderName).toBe("Renamed User");
+  });
+
+  test("getThreadReplies returns the sender's current profile photo", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { userId, channelId, accessToken } = await seedTestData(t);
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(userId, { profilePhoto: "https://example.com/stale.jpg" });
+    });
+    const parentId = await t.mutation(api.functions.messaging.messages.sendMessage, {
+      token: accessToken,
+      channelId,
+      content: "Parent",
+    });
+    vi.runAllTimers();
+    await t.finishInProgressScheduledFunctions();
+
+    await t.mutation(api.functions.messaging.messages.sendMessage, {
+      token: accessToken,
+      channelId,
+      content: "Reply",
+      parentMessageId: parentId,
+    });
+    vi.runAllTimers();
+    await t.finishInProgressScheduledFunctions();
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(userId, { profilePhoto: "https://example.com/fresh.jpg" });
+    });
+
+    const result = await t.query(api.functions.messaging.messages.getThreadReplies, {
+      token: accessToken,
+      parentMessageId: parentId,
+    });
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0].senderProfilePhoto).toContain("https://example.com/fresh.jpg");
+  });
+});
+
+// ============================================================================
 // Thread Reply Count Display Tests
 // ============================================================================
 

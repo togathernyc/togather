@@ -48,6 +48,57 @@ async function attachSenderNotifsDisabled(
 }
 
 /**
+ * Override the denormalized `senderName` / `senderProfilePhoto` snapshots on a
+ * single message with the sender's current values from the `users` table.
+ *
+ * Why: messages snapshot the sender's name + avatar at send time so reads can
+ * stay single-table. When a user updates their profile, those snapshots go
+ * stale on every existing message they sent. Resolving live at read time keeps
+ * old chats in sync without touching every historical row.
+ *
+ * Falls back to the snapshot when the sender is missing (system/bot messages
+ * without a senderId, or users that have since been deleted).
+ */
+function applyLiveSenderProfile<M extends Doc<"chatMessages">>(
+  message: M,
+  user: Doc<"users"> | null,
+): M {
+  if (!user) return message;
+  return {
+    ...message,
+    senderName: getDisplayName(user.firstName, user.lastName),
+    senderProfilePhoto: getMediaUrl(user.profilePhoto),
+  };
+}
+
+/**
+ * Batched form of `applyLiveSenderProfile` — fetches each unique sender once
+ * and rewrites every message in the page with their current name + avatar.
+ */
+async function attachLiveSenderProfile<M extends Doc<"chatMessages">>(
+  ctx: QueryCtx,
+  messages: M[],
+): Promise<M[]> {
+  const uniqueSenderIds = Array.from(
+    new Set(
+      messages
+        .map((m) => m.senderId)
+        .filter((id): id is Id<"users"> => !!id),
+    ),
+  );
+  if (uniqueSenderIds.length === 0) return messages;
+  const users = await Promise.all(uniqueSenderIds.map((id) => ctx.db.get(id)));
+  const userById = new Map<Id<"users">, Doc<"users">>();
+  uniqueSenderIds.forEach((id, i) => {
+    const u = users[i];
+    if (u) userById.set(id, u);
+  });
+  return messages.map((m) =>
+    m.senderId ? applyLiveSenderProfile(m, userById.get(m.senderId) ?? null) : m,
+  );
+}
+
+/**
  * Same access check as `canAccessEventChannel` but keyed off a meeting doc
  * directly — used when the caller hasn't resolved a channel yet (e.g. the
  * first `sendMessage` call that lazy-creates the event channel).
@@ -182,6 +233,9 @@ export const getMessage = query({
         return null;
       }
 
+      const sender = message.senderId ? await ctx.db.get(message.senderId) : null;
+      const enriched = applyLiveSenderProfile(message, sender);
+
       // Event channels use meeting-based access rather than chatChannelMembers
       // (non-group-members can still participate via RSVP).
       const channel = await ctx.db.get(message.channelId);
@@ -189,7 +243,7 @@ export const getMessage = query({
         if (!(await canAccessEventChannel(ctx, userId, channel))) {
           return null;
         }
-        return message;
+        return enriched;
       }
 
       // Check if user has access to the channel
@@ -205,7 +259,7 @@ export const getMessage = query({
         return null;
       }
 
-      return message;
+      return enriched;
     } catch (error) {
       console.error("[getMessage] Failed to fetch message:", error);
       return null;
@@ -455,7 +509,8 @@ export const getMessages = query({
     // Reverse to chronological order (oldest first, newest at bottom)
     // This is the expected order for chat UIs
     const chronologicalMessages = [...pageMessages].reverse();
-    const decorated = await attachSenderNotifsDisabled(ctx, chronologicalMessages);
+    const withLiveProfile = await attachLiveSenderProfile(ctx, chronologicalMessages);
+    const decorated = await attachSenderNotifsDisabled(ctx, withLiveProfile);
 
     return {
       messages: decorated,
@@ -514,7 +569,8 @@ export const getThreadReplies = query({
 
     const hasMore = replies.length === limit;
     const cursor = replies.length > 0 ? replies[replies.length - 1]._id : undefined;
-    const decorated = await attachSenderNotifsDisabled(ctx, replies);
+    const withLiveProfile = await attachLiveSenderProfile(ctx, replies);
+    const decorated = await attachSenderNotifsDisabled(ctx, withLiveProfile);
 
     return {
       messages: decorated,
