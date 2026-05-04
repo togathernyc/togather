@@ -6,7 +6,7 @@
  */
 
 import { v } from "convex/values";
-import { action, type ActionCtx } from "../_generated/server";
+import { action, internalAction, type ActionCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
 
@@ -137,14 +137,23 @@ export const submitForm = action({
       }
     );
 
-    // 5. Auto-reply SMS — best-effort, never fails the submission
-    await maybeSendAutoReplySms(ctx, {
-      autoReplySms: landingPage.autoReplySms ?? null,
-      phone: trimmedPhone,
-      firstName: trimmedFirstName,
-      smsSnippets,
-      followupNoteId,
-    });
+    // 5. Auto-reply SMS — best-effort, never fails the submission.
+    // Wrap so any internal-mutation/scheduler error here cannot reject the
+    // action after the user, membership, and follow-up records are written.
+    try {
+      await maybeSendAutoReplySms(ctx, {
+        autoReplySms: landingPage.autoReplySms ?? null,
+        phone: trimmedPhone,
+        firstName: trimmedFirstName,
+        smsSnippets,
+        followupNoteId,
+      });
+    } catch (err) {
+      console.error(
+        `[landing-page] Auto-reply SMS dispatch failed for ${trimmedPhone}:`,
+        err,
+      );
+    }
 
     return {
       success: true,
@@ -228,13 +237,19 @@ async function maybeSendAutoReplySms(
   });
   if (!body) return;
 
-  // Per-recipient daily cap so repeat submissions don't spam the same phone
-  const allowed = await ctx.runMutation(
-    internal.functions.communityLandingPage.tryConsumeSmsRateLimit,
-    { phone: params.phone },
+  // Atomic check-cap-and-schedule — Twilio is invoked from the scheduled
+  // sendAutoReplySmsAndAudit action, so Twilio outages can't fail this form
+  // submission AND the actual sent/failed outcome lands in the audit note.
+  const outcome = await ctx.runMutation(
+    internal.functions.communityLandingPage.dispatchAutoReplySmsIfAllowed,
+    {
+      phone: params.phone,
+      message: body,
+      followupNoteId: params.followupNoteId,
+    },
   );
 
-  if (!allowed) {
+  if (outcome === "suppressed_cap") {
     console.warn(
       `[landing-page] Auto-reply SMS suppressed for ${params.phone}: daily cap reached`,
     );
@@ -247,23 +262,58 @@ async function maybeSendAutoReplySms(
         },
       );
     }
-    return;
   }
-
-  // Fire via scheduler so a Twilio outage can't fail the form submission
-  await ctx.scheduler.runAfter(0, internal.functions.auth.phoneOtp.sendSMS, {
-    phone: params.phone,
-    message: body,
-  });
-
-  if (params.followupNoteId) {
-    await ctx.runMutation(
-      internal.functions.communityLandingPage.recordSmsAuditOnNote,
-      {
-        noteId: params.followupNoteId,
-        outcome: "sent",
-        body,
-      },
-    );
-  }
+  // outcome === "scheduled": the dispatched action will write the audit
+  // (either "sent" or "send_failed") once Twilio resolves.
 }
+
+/**
+ * Dispatch a queued landing-page auto-reply SMS, then record the outcome
+ * (sent vs. failed) on the submission note. Scheduled by
+ * dispatchAutoReplySmsIfAllowed so Twilio errors land in the staff-visible
+ * note instead of bubbling into the form submission.
+ */
+export const sendAutoReplySmsAndAudit = internalAction({
+  args: {
+    phone: v.string(),
+    message: v.string(),
+    followupNoteId: v.union(v.id("memberFollowups"), v.null()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    let outcome: "sent" | "send_failed" = "sent";
+    let errorMessage: string | undefined;
+    try {
+      const result = await ctx.runAction(
+        internal.functions.auth.phoneOtp.sendSMS,
+        { phone: args.phone, message: args.message },
+      );
+      // sendSMS returns { success: false } when Twilio env vars are missing
+      if (!result.success) {
+        outcome = "send_failed";
+        errorMessage = "Twilio credentials not configured";
+      }
+    } catch (err: unknown) {
+      outcome = "send_failed";
+      errorMessage =
+        err instanceof Error ? err.message : String(err ?? "unknown error");
+      console.error(
+        `[landing-page] Auto-reply SMS dispatch failed for ${args.phone}:`,
+        err,
+      );
+    }
+
+    if (args.followupNoteId) {
+      await ctx.runMutation(
+        internal.functions.communityLandingPage.recordSmsAuditOnNote,
+        {
+          noteId: args.followupNoteId,
+          outcome,
+          body: args.message,
+          error: errorMessage,
+        },
+      );
+    }
+    return null;
+  },
+});

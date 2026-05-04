@@ -131,54 +131,90 @@ export const checkFormRateLimit = internalMutation({
 });
 
 /**
- * Try to consume a landing-page auto-reply SMS quota slot for this phone.
- * Returns true if allowed, false if the recipient has hit the daily cap.
+ * Atomically check the per-phone SMS daily cap and (if allowed) schedule
+ * the outbound SMS-with-audit action. Doing the cap check and the schedule
+ * in one mutation prevents the quota from being burned when the schedule
+ * step never lands — which would silently suppress future legitimate
+ * auto-replies to the same recipient.
  *
- * The form submission itself is already capped at 5/hour by phone, but a
- * tighter SMS cap (2 per 24h) prevents repeat submissions from spamming
- * the same recipient with auto-reply texts.
+ * Returns:
+ *   - "scheduled": within cap, dispatch action is queued; that action will
+ *     write the real outcome (sent/send_failed) to the audit note
+ *   - "suppressed_cap": cap hit, nothing queued; caller writes the audit
+ *
+ * The form submission itself is already capped at 5/hour by phone, but the
+ * tighter 2/24h SMS cap stops repeat submissions from spamming the same
+ * recipient with auto-replies.
  */
-export const tryConsumeSmsRateLimit = internalMutation({
-  args: { phone: v.string() },
-  returns: v.boolean(),
-  handler: async (ctx, args): Promise<boolean> => {
+export const dispatchAutoReplySmsIfAllowed = internalMutation({
+  args: {
+    phone: v.string(),
+    message: v.string(),
+    followupNoteId: v.union(v.id("memberFollowups"), v.null()),
+  },
+  returns: v.union(v.literal("scheduled"), v.literal("suppressed_cap")),
+  handler: async (ctx, args): Promise<"scheduled" | "suppressed_cap"> => {
     const normalizedPhone = normalizePhone(args.phone);
     const rateLimitKey = `landing_sms:${normalizedPhone}`;
     const ONE_DAY_MS = 24 * 60 * 60 * 1000;
     try {
       await checkRateLimit(ctx, rateLimitKey, 2, ONE_DAY_MS);
-      return true;
     } catch {
-      return false;
+      return "suppressed_cap";
     }
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.communityLandingPageActions.sendAutoReplySmsAndAudit,
+      {
+        phone: args.phone,
+        message: args.message,
+        followupNoteId: args.followupNoteId,
+      },
+    );
+    return "scheduled";
   },
 });
 
 /**
  * Append an audit trail to the landing-page submission note describing
- * the auto-reply SMS outcome. Called by the submitForm action once the
- * SMS attempt resolves so staff reviewing follow-ups see exactly what
- * the submitter received.
+ * the auto-reply SMS outcome. Called once the SMS attempt resolves so
+ * staff reviewing follow-ups see exactly what the submitter received
+ * (or didn't, and why).
  *
  * Outcomes:
  *   - "sent": include the rendered body so staff can reproduce what was texted
  *   - "suppressed_cap": the per-phone daily SMS cap was hit; SMS not sent
+ *   - "send_failed": the Twilio dispatch errored — body still recorded so
+ *     staff know what the recipient missed and can follow up manually
  */
 export const recordSmsAuditOnNote = internalMutation({
   args: {
     noteId: v.id("memberFollowups"),
-    outcome: v.union(v.literal("sent"), v.literal("suppressed_cap")),
+    outcome: v.union(
+      v.literal("sent"),
+      v.literal("suppressed_cap"),
+      v.literal("send_failed"),
+    ),
     body: v.optional(v.string()),
+    error: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
     const note = await ctx.db.get(args.noteId);
     if (!note) return null;
 
-    const block =
-      args.outcome === "sent"
-        ? `\n\n---\nAuto-Reply SMS sent:\n${args.body ?? ""}`
-        : `\n\n---\nAuto-Reply SMS suppressed: this phone has already received 2 auto-replies in the last 24 hours.`;
+    let block: string;
+    switch (args.outcome) {
+      case "sent":
+        block = `\n\n---\nAuto-Reply SMS sent:\n${args.body ?? ""}`;
+        break;
+      case "suppressed_cap":
+        block = `\n\n---\nAuto-Reply SMS suppressed: this phone has already received 2 auto-replies in the last 24 hours.`;
+        break;
+      case "send_failed":
+        block = `\n\n---\nAuto-Reply SMS FAILED to send${args.error ? ` (${args.error})` : ""}. The recipient did not receive this message:\n${args.body ?? ""}`;
+        break;
+    }
 
     const updatedContent = `${note.content}${block}`;
     await ctx.db.patch(args.noteId, { content: updatedContent });
