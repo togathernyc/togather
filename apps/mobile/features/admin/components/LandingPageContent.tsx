@@ -19,6 +19,8 @@ import {
   Alert,
   ActivityIndicator,
   Modal,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@hooks/useTheme";
@@ -810,6 +812,7 @@ function FieldEditorModal({
   const [options, setOptions] = useState("");
   const [placeholder, setPlaceholder] = useState("");
   const [buttonUrl, setButtonUrl] = useState("");
+  const [validationError, setValidationError] = useState<string | null>(null);
 
   useEffect(() => {
     if (visible) {
@@ -820,14 +823,18 @@ function FieldEditorModal({
       setOptions(field?.options?.join(", ") || "");
       setPlaceholder(field?.placeholder || "");
       setButtonUrl(field?.buttonUrl || "");
+      setValidationError(null);
     }
   }, [visible, field]);
 
   const isDecorative = DECORATIVE_TYPES.has(type);
 
   const handleSave = () => {
+    // Inline error rather than Alert.alert: on web the alert dialog can be
+    // suppressed by the browser/extensions, leaving users to think the
+    // button isn't wired up at all.
     if (!label.trim()) {
-      Alert.alert("Error", "Label is required");
+      setValidationError("Label is required");
       return;
     }
 
@@ -835,14 +842,15 @@ function FieldEditorModal({
       if (type === "button") {
         const trimmedUrl = buttonUrl.trim();
         if (!trimmedUrl) {
-          Alert.alert("Error", "Button link is required");
+          setValidationError("Button link is required");
           return;
         }
         if (!HTTP_URL_REGEX.test(trimmedUrl)) {
-          Alert.alert("Error", "Button link must start with http:// or https://");
+          setValidationError("Button link must start with http:// or https://");
           return;
         }
       }
+      setValidationError(null);
       onSave({
         label: label.trim(),
         type,
@@ -856,7 +864,9 @@ function FieldEditorModal({
 
     // Validate semicolons in options for dropdown/multiselect
     if ((type === "dropdown" || type === "multiselect") && options.includes(";")) {
-      Alert.alert("Error", "Option values cannot contain semicolons (;). Semicolons are reserved as the multi-select separator.");
+      setValidationError(
+        "Option values cannot contain semicolons (;). Semicolons are reserved as the multi-select separator.",
+      );
       return;
     }
 
@@ -869,13 +879,14 @@ function FieldEditorModal({
         : undefined;
 
     if ((type === "dropdown" || type === "multiselect") && (!parsedOptions || parsedOptions.length === 0)) {
-      Alert.alert("Error", "Add at least one option for dropdown and multi-select fields.");
+      setValidationError("Add at least one option for dropdown and multi-select fields.");
       return;
     }
 
     // Auto-select a slot based on type if not explicitly chosen
     const resolvedSlot = slot || undefined;
 
+    setValidationError(null);
     onSave({
       slot: resolvedSlot,
       label: label.trim(),
@@ -891,7 +902,10 @@ function FieldEditorModal({
 
   return (
     <Modal visible={visible} animationType="slide" transparent>
-      <View style={[modalStyles.overlay, { backgroundColor: colors.overlay }]}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        style={[modalStyles.overlay, { backgroundColor: colors.overlay }]}
+      >
         <View style={[modalStyles.container, { backgroundColor: colors.modalBackground }]}>
           <View style={[modalStyles.header, { borderBottomColor: colors.borderLight }]}>
             <Text style={[modalStyles.title, { color: colors.text }]}>
@@ -902,7 +916,7 @@ function FieldEditorModal({
             </TouchableOpacity>
           </View>
 
-          <ScrollView style={modalStyles.content}>
+          <ScrollView style={modalStyles.content} keyboardShouldPersistTaps="handled">
             <View style={styles.field}>
               <Text style={[styles.fieldLabel, { color: colors.text }]}>Label</Text>
               <TextInput
@@ -1053,13 +1067,22 @@ function FieldEditorModal({
             )}
           </ScrollView>
 
+          {validationError && (
+            <View style={[modalStyles.errorBanner, { backgroundColor: colors.destructive + "22", borderColor: colors.destructive }]}>
+              <Ionicons name="alert-circle-outline" size={16} color={colors.destructive} />
+              <Text style={[modalStyles.errorText, { color: colors.destructive }]}>
+                {validationError}
+              </Text>
+            </View>
+          )}
+
           <TouchableOpacity style={[modalStyles.saveButton, { backgroundColor: colors.buttonPrimary }]} onPress={handleSave}>
             <Text style={modalStyles.saveButtonText}>
               {field ? "Update" : "Add"} Field
             </Text>
           </TouchableOpacity>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -1094,6 +1117,7 @@ function RuleEditorModal({
   const [actionType, setActionType] = useState<string>("set_assignee");
   const [assigneePhone, setAssigneePhone] = useState("");
   const [snippet, setSnippet] = useState("");
+  const [validationError, setValidationError] = useState<string | null>(null);
 
   useEffect(() => {
     if (visible) {
@@ -1104,26 +1128,31 @@ function RuleEditorModal({
       setActionType(rule?.action.type || "set_assignee");
       setAssigneePhone(rule?.action.assigneePhone || "");
       setSnippet(rule?.action.snippet || "");
+      setValidationError(null);
     }
   }, [visible, rule]);
 
   const handleSave = () => {
+    // Inline error rather than Alert.alert: on web the alert dialog can be
+    // suppressed by the browser/extensions, leaving users to think the
+    // button isn't wired up at all.
     if (!name.trim()) {
-      Alert.alert("Error", "Rule name is required");
+      setValidationError("Rule name is required");
       return;
     }
     if (!conditionField) {
-      Alert.alert("Error", "Select a field for the condition");
+      setValidationError("Select a field for the condition");
       return;
     }
 
     if (actionType === "append_sms") {
       if (!snippet.trim()) {
-        Alert.alert("Error", "Add the SMS snippet to append");
+        setValidationError("Add the SMS snippet to append");
         return;
       }
     }
 
+    setValidationError(null);
     onSave({
       id: rule?.id || `rule_${Date.now()}`,
       name: name.trim(),
@@ -1151,7 +1180,10 @@ function RuleEditorModal({
 
   return (
     <Modal visible={visible} animationType="slide" transparent>
-      <View style={[modalStyles.overlay, { backgroundColor: colors.overlay }]}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        style={[modalStyles.overlay, { backgroundColor: colors.overlay }]}
+      >
         <View style={[modalStyles.container, { backgroundColor: colors.modalBackground }]}>
           <View style={[modalStyles.header, { borderBottomColor: colors.borderLight }]}>
             <Text style={[modalStyles.title, { color: colors.text }]}>
@@ -1162,7 +1194,7 @@ function RuleEditorModal({
             </TouchableOpacity>
           </View>
 
-          <ScrollView style={modalStyles.content}>
+          <ScrollView style={modalStyles.content} keyboardShouldPersistTaps="handled">
             <View style={styles.field}>
               <Text style={[styles.fieldLabel, { color: colors.text }]}>Rule Name</Text>
               <TextInput
@@ -1296,13 +1328,22 @@ function RuleEditorModal({
             )}
           </ScrollView>
 
+          {validationError && (
+            <View style={[modalStyles.errorBanner, { backgroundColor: colors.destructive + "22", borderColor: colors.destructive }]}>
+              <Ionicons name="alert-circle-outline" size={16} color={colors.destructive} />
+              <Text style={[modalStyles.errorText, { color: colors.destructive }]}>
+                {validationError}
+              </Text>
+            </View>
+          )}
+
           <TouchableOpacity style={[modalStyles.saveButton, { backgroundColor: colors.buttonPrimary }]} onPress={handleSave}>
             <Text style={modalStyles.saveButtonText}>
               {rule ? "Update" : "Add"} Rule
             </Text>
           </TouchableOpacity>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -1456,6 +1497,12 @@ const modalStyles = StyleSheet.create({
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     maxHeight: "85%",
+    // Explicit flex column so the ScrollView grows and the save button stays
+    // anchored at the bottom inside the container's max-height bounds.
+    // Without this, on web the ScrollView can collapse to its content height
+    // leaving the save button outside the modal's layout flow.
+    display: "flex",
+    flexDirection: "column",
   },
   header: {
     flexDirection: "row",
@@ -1470,6 +1517,24 @@ const modalStyles = StyleSheet.create({
   },
   content: {
     padding: 16,
+    flexGrow: 0,
+    flexShrink: 1,
+  },
+  errorBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginHorizontal: 16,
+    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  errorText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: "500",
   },
   chipContainer: {
     flexDirection: "row",
