@@ -11,10 +11,23 @@
 import type { MutationCtx } from "../_generated/server";
 
 /**
+ * Thrown by checkRateLimit when the caller has exceeded the allowed
+ * attempts inside the current window. Distinct from generic errors
+ * (DB failures, validation, etc.) so callers can branch on cap-reached
+ * vs. unexpected operational failure without string-matching.
+ */
+export class RateLimitExceededError extends Error {
+  constructor(message = "Too many attempts. Please try again later.") {
+    super(message);
+    this.name = "RateLimitExceededError";
+  }
+}
+
+/**
  * Check and increment rate limit counter.
  *
  * If the caller has exceeded `maxAttempts` within `windowMs`, throws
- * with a generic "Too many attempts" error (no details leaked).
+ * `RateLimitExceededError` with a generic message (no details leaked).
  *
  * If the previous window has expired, the counter resets automatically.
  *
@@ -50,7 +63,7 @@ export async function checkRateLimit(
 
     // Still within the window
     if (existing.attempts >= maxAttempts) {
-      throw new Error("Too many attempts. Please try again later.");
+      throw new RateLimitExceededError();
     }
 
     // Increment

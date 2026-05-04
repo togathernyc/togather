@@ -175,6 +175,23 @@ export const submitForm = action({
 const SMS_BODY_MAX = 1600;
 
 /**
+ * Truncate at most `max` UTF-16 code units without splitting a surrogate
+ * pair. Naive `String.prototype.slice` can leave a lone high surrogate at
+ * the boundary, producing an invalid string that downstream JSON
+ * serialization or the Twilio HTTP layer may reject.
+ */
+function truncateSmsBody(body: string, max: number): string {
+  if (body.length <= max) return body;
+  const sliced = body.slice(0, max);
+  const lastCode = sliced.charCodeAt(sliced.length - 1);
+  // High surrogate (0xD800–0xDBFF): drop it so we don't leave half a pair
+  if (lastCode >= 0xd800 && lastCode <= 0xdbff) {
+    return sliced.slice(0, -1);
+  }
+  return sliced;
+}
+
+/**
  * Substitute {firstName} placeholders. Falls back to "there" so an unset
  * first name doesn't leave a literal "{firstName}" in the message body.
  */
@@ -202,7 +219,7 @@ function composeAutoReplyBody(args: {
   }
   if (outro) parts.push(outro);
   const body = parts.join("\n\n");
-  return body.length > SMS_BODY_MAX ? body.slice(0, SMS_BODY_MAX) : body;
+  return truncateSmsBody(body, SMS_BODY_MAX);
 }
 
 async function maybeSendAutoReplySms(

@@ -18,7 +18,7 @@ import { VALID_CUSTOM_SLOTS } from "../lib/followupConstants";
 import { normalizePhone, buildSearchText, now } from "../lib/utils";
 import { syncUserChannelMembershipsLogic } from "./sync/memberships";
 import { ensureChannelsForGroupLogic } from "./messaging/channels";
-import { checkRateLimit } from "../lib/rateLimit";
+import { checkRateLimit, RateLimitExceededError } from "../lib/rateLimit";
 import { parseDateOptional } from "../lib/validation";
 
 // ============================================================================
@@ -159,8 +159,15 @@ export const dispatchAutoReplySmsIfAllowed = internalMutation({
     const ONE_DAY_MS = 24 * 60 * 60 * 1000;
     try {
       await checkRateLimit(ctx, rateLimitKey, 2, ONE_DAY_MS);
-    } catch {
-      return "suppressed_cap";
+    } catch (err) {
+      // Only translate true cap-reached signals into "suppressed_cap".
+      // Re-throw anything else (DB errors, etc.) so the caller's outer
+      // try/catch logs the operational failure instead of misreporting
+      // it as a daily-cap hit.
+      if (err instanceof RateLimitExceededError) {
+        return "suppressed_cap";
+      }
+      throw err;
     }
     await ctx.scheduler.runAfter(
       0,
