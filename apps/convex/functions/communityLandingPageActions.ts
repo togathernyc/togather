@@ -6,7 +6,7 @@
  */
 
 import { v } from "convex/values";
-import { action } from "../_generated/server";
+import { action, type ActionCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
 
@@ -124,7 +124,7 @@ export const submitForm = action({
 
     // 4. Set custom field values + notes + automation
     // Always call even without custom fields — ensures followup record, notes, and automation rules run
-    await ctx.runMutation(
+    const { smsSnippets, followupNoteId } = await ctx.runMutation(
       internal.functions.communityLandingPage.setCustomFieldsAndNotes,
       {
         communityId: community._id as Id<"communities">,
@@ -137,6 +137,15 @@ export const submitForm = action({
       }
     );
 
+    // 5. Auto-reply SMS — best-effort, never fails the submission
+    await maybeSendAutoReplySms(ctx, {
+      autoReplySms: landingPage.autoReplySms ?? null,
+      phone: trimmedPhone,
+      firstName: trimmedFirstName,
+      smsSnippets,
+      followupNoteId,
+    });
+
     return {
       success: true,
       user: {
@@ -147,3 +156,114 @@ export const submitForm = action({
     };
   },
 });
+
+// ============================================================================
+// Auto-reply SMS helpers
+// ============================================================================
+
+// Twilio's hard cap. sendSMS truncates as a backstop, but we want our own
+// bound so what staff see in admin matches what gets sent.
+const SMS_BODY_MAX = 1600;
+
+/**
+ * Substitute {firstName} placeholders. Falls back to "there" so an unset
+ * first name doesn't leave a literal "{firstName}" in the message body.
+ */
+function renderTemplate(template: string, firstName: string): string {
+  const safeName = firstName.trim() || "there";
+  return template.replace(/\{firstName\}/g, safeName);
+}
+
+/**
+ * Compose an auto-reply SMS body from the saved intro/outro and the
+ * snippets collected from matching automation rules.
+ */
+function composeAutoReplyBody(args: {
+  intro: string;
+  outro: string;
+  snippets: string[];
+  firstName: string;
+}): string {
+  const parts: string[] = [];
+  const intro = renderTemplate(args.intro, args.firstName).trim();
+  const outro = renderTemplate(args.outro, args.firstName).trim();
+  if (intro) parts.push(intro);
+  if (args.snippets.length > 0) {
+    parts.push(args.snippets.map((s) => renderTemplate(s, args.firstName)).join("\n"));
+  }
+  if (outro) parts.push(outro);
+  const body = parts.join("\n\n");
+  return body.length > SMS_BODY_MAX ? body.slice(0, SMS_BODY_MAX) : body;
+}
+
+async function maybeSendAutoReplySms(
+  ctx: ActionCtx,
+  params: {
+    autoReplySms:
+      | {
+          enabled: boolean;
+          intro: string;
+          outro: string;
+          sendIfNoSnippetsMatch: boolean;
+        }
+      | null
+      | undefined;
+    phone: string;
+    firstName: string;
+    smsSnippets: string[];
+    followupNoteId: Id<"memberFollowups"> | null;
+  },
+): Promise<void> {
+  const cfg = params.autoReplySms;
+  if (!cfg || !cfg.enabled) return;
+
+  const hasSnippets = params.smsSnippets.length > 0;
+  if (!hasSnippets && !cfg.sendIfNoSnippetsMatch) return;
+
+  const body = composeAutoReplyBody({
+    intro: cfg.intro,
+    outro: cfg.outro,
+    snippets: params.smsSnippets,
+    firstName: params.firstName,
+  });
+  if (!body) return;
+
+  // Per-recipient daily cap so repeat submissions don't spam the same phone
+  const allowed = await ctx.runMutation(
+    internal.functions.communityLandingPage.tryConsumeSmsRateLimit,
+    { phone: params.phone },
+  );
+
+  if (!allowed) {
+    console.warn(
+      `[landing-page] Auto-reply SMS suppressed for ${params.phone}: daily cap reached`,
+    );
+    if (params.followupNoteId) {
+      await ctx.runMutation(
+        internal.functions.communityLandingPage.recordSmsAuditOnNote,
+        {
+          noteId: params.followupNoteId,
+          outcome: "suppressed_cap",
+        },
+      );
+    }
+    return;
+  }
+
+  // Fire via scheduler so a Twilio outage can't fail the form submission
+  await ctx.scheduler.runAfter(0, internal.functions.auth.phoneOtp.sendSMS, {
+    phone: params.phone,
+    message: body,
+  });
+
+  if (params.followupNoteId) {
+    await ctx.runMutation(
+      internal.functions.communityLandingPage.recordSmsAuditOnNote,
+      {
+        noteId: params.followupNoteId,
+        outcome: "sent",
+        body,
+      },
+    );
+  }
+}

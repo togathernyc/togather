@@ -2096,10 +2096,27 @@ export default defineSchema({
           value: v.optional(v.string()),
         }),
         action: v.object({
-          type: v.string(), // "set_assignee"
+          type: v.string(), // "set_assignee" | "append_sms"
           assigneePhone: v.optional(v.string()),
           assigneeUserId: v.optional(v.id("users")),
+          // For append_sms: a single bullet/line appended to the auto-reply SMS
+          // when the rule's condition matches. Supports {firstName} substitution.
+          snippet: v.optional(v.string()),
         }),
+      }),
+    ),
+    // Auto-reply SMS sent to the submitter after their form submission.
+    // Each matching automation rule with type "append_sms" contributes a
+    // snippet between the intro and outro. Snippets and the intro/outro
+    // support {firstName} substitution.
+    autoReplySms: v.optional(
+      v.object({
+        enabled: v.boolean(),
+        intro: v.string(),
+        outro: v.string(),
+        // If true, the intro+outro is sent even when no append_sms rules match.
+        // If false, no SMS is sent unless at least one snippet is collected.
+        sendIfNoSnippetsMatch: v.boolean(),
       }),
     ),
     createdAt: v.number(),
