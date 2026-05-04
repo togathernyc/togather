@@ -66,8 +66,15 @@ export function useLandingPageConfig() {
           type: string;
           assigneePhone?: string;
           assigneeUserId?: Id<"users">;
+          snippet?: string;
         };
       }>;
+      autoReplySms?: {
+        enabled: boolean;
+        intro: string;
+        outro: string;
+        sendIfNoSnippetsMatch: boolean;
+      };
     }) => {
       if (!community?.id || !token) {
         throw new Error("Not authenticated");

@@ -89,10 +89,25 @@ type AutomationRule = {
     value?: string;
   };
   action: {
-    type: string;
+    type: string; // "set_assignee" | "append_sms"
     assigneePhone?: string;
     assigneeUserId?: Id<"users">;
+    snippet?: string;
   };
+};
+
+type AutoReplySmsConfig = {
+  enabled: boolean;
+  intro: string;
+  outro: string;
+  sendIfNoSnippetsMatch: boolean;
+};
+
+const DEFAULT_AUTO_REPLY_SMS: AutoReplySmsConfig = {
+  enabled: false,
+  intro: "Hey {firstName}! Thanks for connecting with us 🙌\nBased on what you shared:",
+  outro: "Someone from our team will follow up with you soon!",
+  sendIfNoSnippetsMatch: true,
 };
 
 export function LandingPageContent() {
@@ -115,6 +130,9 @@ export function LandingPageContent() {
 
   // Automation rules state
   const [automationRules, setAutomationRules] = useState<AutomationRule[]>([]);
+
+  // Auto-reply SMS state
+  const [autoReplySms, setAutoReplySms] = useState<AutoReplySmsConfig>(DEFAULT_AUTO_REPLY_SMS);
 
   // Modal state
   const [showFieldModal, setShowFieldModal] = useState(false);
@@ -176,8 +194,19 @@ export function LandingPageContent() {
             type: r.action.type,
             assigneePhone: r.action.assigneePhone,
             assigneeUserId: r.action.assigneeUserId,
+            snippet: r.action.snippet,
           },
         }))
+      );
+      setAutoReplySms(
+        config.autoReplySms
+          ? {
+              enabled: config.autoReplySms.enabled,
+              intro: config.autoReplySms.intro,
+              outro: config.autoReplySms.outro,
+              sendIfNoSnippetsMatch: config.autoReplySms.sendIfNoSnippetsMatch,
+            }
+          : DEFAULT_AUTO_REPLY_SMS
       );
       setIsDirty(false);
     }
@@ -213,6 +242,7 @@ export function LandingPageContent() {
         requireBirthday,
         formFields,
         automationRules,
+        autoReplySms,
       });
       setIsDirty(false);
       Alert.alert("Saved", "Landing page configuration saved successfully.");
@@ -546,7 +576,79 @@ export function LandingPageContent() {
       </View>
 
       {/* ================================================================ */}
-      {/* Section 3: Automation Rules */}
+      {/* Section 3: Auto-Reply SMS */}
+      {/* ================================================================ */}
+      <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Auto-Reply SMS</Text>
+        <Text style={[styles.sectionHint, { color: colors.textTertiary }]}>
+          One text is sent to the submitter after they fill out the form. Each
+          enabled rule below with action "Append to auto-reply" adds a line in
+          between. {"{firstName}"} is replaced with their first name.
+        </Text>
+
+        <View style={[styles.row, { borderBottomColor: colors.borderLight }]}>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.rowLabel, { color: colors.text }]}>Enabled</Text>
+            <Text style={[styles.rowHint, { color: colors.textTertiary }]}>
+              Sends a text to the submitter on each submission (capped at 2 per phone per 24h)
+            </Text>
+          </View>
+          <Switch
+            value={autoReplySms.enabled}
+            onValueChange={(v) => {
+              setAutoReplySms((prev) => ({ ...prev, enabled: v }));
+              markDirty();
+            }}
+          />
+        </View>
+
+        <View style={styles.field}>
+          <Text style={[styles.fieldLabel, { color: colors.text }]}>Intro</Text>
+          <TextInput
+            style={[styles.textInput, styles.multilineInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
+            value={autoReplySms.intro}
+            onChangeText={(v) => {
+              setAutoReplySms((prev) => ({ ...prev, intro: v }));
+              markDirty();
+            }}
+            placeholder="Hey {firstName}! Thanks for connecting with us..."
+            multiline
+          />
+        </View>
+
+        <View style={styles.field}>
+          <Text style={[styles.fieldLabel, { color: colors.text }]}>Outro</Text>
+          <TextInput
+            style={[styles.textInput, styles.multilineInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
+            value={autoReplySms.outro}
+            onChangeText={(v) => {
+              setAutoReplySms((prev) => ({ ...prev, outro: v }));
+              markDirty();
+            }}
+            placeholder="Someone from our team will follow up soon!"
+            multiline
+          />
+        </View>
+
+        <View style={[styles.row, { borderBottomColor: colors.borderLight }]}>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.rowLabel, { color: colors.text }]}>Send even when no rules match</Text>
+            <Text style={[styles.rowHint, { color: colors.textTertiary }]}>
+              If off, the SMS is only sent when at least one append-SMS rule matches the submission
+            </Text>
+          </View>
+          <Switch
+            value={autoReplySms.sendIfNoSnippetsMatch}
+            onValueChange={(v) => {
+              setAutoReplySms((prev) => ({ ...prev, sendIfNoSnippetsMatch: v }));
+              markDirty();
+            }}
+          />
+        </View>
+      </View>
+
+      {/* ================================================================ */}
+      {/* Section 4: Automation Rules */}
       {/* ================================================================ */}
       <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}>
         <View style={styles.sectionHeader}>
@@ -586,7 +688,9 @@ export function LandingPageContent() {
                   {rule.condition.value ? ` "${rule.condition.value}"` : ""} →{" "}
                   {rule.action.type === "set_assignee"
                     ? `assign to ${rule.action.assigneePhone || "..."}`
-                    : rule.action.type}
+                    : rule.action.type === "append_sms"
+                      ? `append SMS: "${(rule.action.snippet || "").slice(0, 60)}${(rule.action.snippet || "").length > 60 ? "…" : ""}"`
+                      : rule.action.type}
                 </Text>
               </View>
               <TouchableOpacity
@@ -964,6 +1068,11 @@ function FieldEditorModal({
 // Rule Editor Modal
 // ============================================================================
 
+const ACTION_TYPES = [
+  { value: "set_assignee", label: "Assign to person" },
+  { value: "append_sms", label: "Append to auto-reply SMS" },
+];
+
 function RuleEditorModal({
   visible,
   rule,
@@ -982,7 +1091,9 @@ function RuleEditorModal({
   const [conditionField, setConditionField] = useState("");
   const [conditionOperator, setConditionOperator] = useState("is_true");
   const [conditionValue, setConditionValue] = useState("");
+  const [actionType, setActionType] = useState<string>("set_assignee");
   const [assigneePhone, setAssigneePhone] = useState("");
+  const [snippet, setSnippet] = useState("");
 
   useEffect(() => {
     if (visible) {
@@ -990,7 +1101,9 @@ function RuleEditorModal({
       setConditionField(rule?.condition.field || "");
       setConditionOperator(rule?.condition.operator || "is_true");
       setConditionValue(rule?.condition.value || "");
+      setActionType(rule?.action.type || "set_assignee");
       setAssigneePhone(rule?.action.assigneePhone || "");
+      setSnippet(rule?.action.snippet || "");
     }
   }, [visible, rule]);
 
@@ -1004,6 +1117,13 @@ function RuleEditorModal({
       return;
     }
 
+    if (actionType === "append_sms") {
+      if (!snippet.trim()) {
+        Alert.alert("Error", "Add the SMS snippet to append");
+        return;
+      }
+    }
+
     onSave({
       id: rule?.id || `rule_${Date.now()}`,
       name: name.trim(),
@@ -1013,11 +1133,17 @@ function RuleEditorModal({
         operator: conditionOperator,
         value: conditionValue || undefined,
       },
-      action: {
-        type: "set_assignee",
-        assigneePhone: assigneePhone || undefined,
-        assigneeUserId: rule?.action.assigneeUserId,
-      },
+      action:
+        actionType === "append_sms"
+          ? {
+              type: "append_sms",
+              snippet: snippet.trim(),
+            }
+          : {
+              type: "set_assignee",
+              assigneePhone: assigneePhone || undefined,
+              assigneeUserId: rule?.action.assigneeUserId,
+            },
     });
   };
 
@@ -1115,17 +1241,59 @@ function RuleEditorModal({
 
             <Text style={[styles.fieldLabel, { marginTop: 8, color: colors.text }]}>Action</Text>
             <View style={styles.field}>
-              <Text style={[styles.fieldHint, { color: colors.textTertiary }]}>
-                Set assignee (enter phone number)
-              </Text>
-              <TextInput
-                style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
-                value={assigneePhone}
-                onChangeText={setAssigneePhone}
-                placeholder="(555) 555-5555"
-                keyboardType="phone-pad"
-              />
+              <View style={modalStyles.chipContainer}>
+                {ACTION_TYPES.map((a) => (
+                  <TouchableOpacity
+                    key={a.value}
+                    style={[
+                      modalStyles.chip, { borderColor: colors.inputBorder, backgroundColor: colors.buttonSecondary },
+                      actionType === a.value && { borderColor: colors.success, backgroundColor: colors.selectedBackground },
+                    ]}
+                    onPress={() => setActionType(a.value)}
+                  >
+                    <Text
+                      style={[
+                        modalStyles.chipText, { color: colors.textSecondary },
+                        actionType === a.value && { color: colors.success },
+                      ]}
+                    >
+                      {a.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
             </View>
+
+            {actionType === "set_assignee" && (
+              <View style={styles.field}>
+                <Text style={[styles.fieldHint, { color: colors.textTertiary }]}>
+                  Phone number of the person to assign this lead to
+                </Text>
+                <TextInput
+                  style={[styles.textInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
+                  value={assigneePhone}
+                  onChangeText={setAssigneePhone}
+                  placeholder="(555) 555-5555"
+                  keyboardType="phone-pad"
+                />
+              </View>
+            )}
+
+            {actionType === "append_sms" && (
+              <View style={styles.field}>
+                <Text style={[styles.fieldHint, { color: colors.textTertiary }]}>
+                  Line added to the auto-reply SMS when this rule matches.
+                  Supports {"{firstName}"}. Make sure the Auto-Reply SMS section above is enabled.
+                </Text>
+                <TextInput
+                  style={[styles.textInput, styles.multilineInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
+                  value={snippet}
+                  onChangeText={setSnippet}
+                  placeholder="• Dinner Party — find one near you in our app: https://..."
+                  multiline
+                />
+              </View>
+            )}
           </ScrollView>
 
           <TouchableOpacity style={[modalStyles.saveButton, { backgroundColor: colors.buttonPrimary }]} onPress={handleSave}>

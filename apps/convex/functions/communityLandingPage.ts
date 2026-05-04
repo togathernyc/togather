@@ -18,7 +18,7 @@ import { VALID_CUSTOM_SLOTS } from "../lib/followupConstants";
 import { normalizePhone, buildSearchText, now } from "../lib/utils";
 import { syncUserChannelMembershipsLogic } from "./sync/memberships";
 import { ensureChannelsForGroupLogic } from "./messaging/channels";
-import { checkRateLimit } from "../lib/rateLimit";
+import { checkRateLimit, RateLimitExceededError } from "../lib/rateLimit";
 import { parseDateOptional } from "../lib/validation";
 
 // ============================================================================
@@ -127,6 +127,119 @@ export const checkFormRateLimit = internalMutation({
     const rateLimitKey = `landing_form:${normalizedPhone}`;
     const ONE_HOUR_MS = 60 * 60 * 1000;
     await checkRateLimit(ctx, rateLimitKey, 5, ONE_HOUR_MS);
+  },
+});
+
+/**
+ * Atomically check the per-phone SMS daily cap and (if allowed) schedule
+ * the outbound SMS-with-audit action. Doing the cap check and the schedule
+ * in one mutation prevents the quota from being burned when the schedule
+ * step never lands — which would silently suppress future legitimate
+ * auto-replies to the same recipient.
+ *
+ * Returns:
+ *   - "scheduled": within cap, dispatch action is queued; that action will
+ *     write the real outcome (sent/send_failed) to the audit note
+ *   - "suppressed_cap": cap hit, nothing queued; caller writes the audit
+ *
+ * The form submission itself is already capped at 5/hour by phone, but the
+ * tighter 2/24h SMS cap stops repeat submissions from spamming the same
+ * recipient with auto-replies.
+ */
+export const dispatchAutoReplySmsIfAllowed = internalMutation({
+  args: {
+    phone: v.string(),
+    message: v.string(),
+    followupNoteId: v.union(v.id("memberFollowups"), v.null()),
+  },
+  returns: v.union(v.literal("scheduled"), v.literal("suppressed_cap")),
+  handler: async (ctx, args): Promise<"scheduled" | "suppressed_cap"> => {
+    const normalizedPhone = normalizePhone(args.phone);
+    const rateLimitKey = `landing_sms:${normalizedPhone}`;
+    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+    try {
+      await checkRateLimit(ctx, rateLimitKey, 2, ONE_DAY_MS);
+    } catch (err) {
+      // Only translate true cap-reached signals into "suppressed_cap".
+      // Re-throw anything else (DB errors, etc.) so the caller's outer
+      // try/catch logs the operational failure instead of misreporting
+      // it as a daily-cap hit.
+      if (err instanceof RateLimitExceededError) {
+        return "suppressed_cap";
+      }
+      throw err;
+    }
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.communityLandingPageActions.sendAutoReplySmsAndAudit,
+      {
+        phone: args.phone,
+        message: args.message,
+        followupNoteId: args.followupNoteId,
+      },
+    );
+    return "scheduled";
+  },
+});
+
+/**
+ * Append an audit trail to the landing-page submission note describing
+ * the auto-reply SMS outcome. Called once the SMS attempt resolves so
+ * staff reviewing follow-ups see exactly what the submitter received
+ * (or didn't, and why).
+ *
+ * Outcomes:
+ *   - "sent": include the rendered body so staff can reproduce what was texted
+ *   - "suppressed_cap": the per-phone daily SMS cap was hit; SMS not sent
+ *   - "send_failed": the Twilio dispatch errored — body still recorded so
+ *     staff know what the recipient missed and can follow up manually
+ */
+export const recordSmsAuditOnNote = internalMutation({
+  args: {
+    noteId: v.id("memberFollowups"),
+    outcome: v.union(
+      v.literal("sent"),
+      v.literal("suppressed_cap"),
+      v.literal("send_failed"),
+    ),
+    body: v.optional(v.string()),
+    error: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const note = await ctx.db.get(args.noteId);
+    if (!note) return null;
+
+    let block: string;
+    switch (args.outcome) {
+      case "sent":
+        block = `\n\n---\nAuto-Reply SMS sent:\n${args.body ?? ""}`;
+        break;
+      case "suppressed_cap":
+        block = `\n\n---\nAuto-Reply SMS suppressed: this phone has already received 2 auto-replies in the last 24 hours.`;
+        break;
+      case "send_failed":
+        block = `\n\n---\nAuto-Reply SMS FAILED to send${args.error ? ` (${args.error})` : ""}. The recipient did not receive this message:\n${args.body ?? ""}`;
+        break;
+    }
+
+    const updatedContent = `${note.content}${block}`;
+    await ctx.db.patch(args.noteId, { content: updatedContent });
+
+    // Mirror to latest-note denormalization on the score doc, if any
+    const groupMember = await ctx.db.get(note.groupMemberId);
+    if (groupMember) {
+      const scoreDoc = await ctx.db
+        .query("memberFollowupScores")
+        .withIndex("by_groupMember", (q) =>
+          q.eq("groupMemberId", note.groupMemberId),
+        )
+        .first();
+      if (scoreDoc && scoreDoc.latestNoteAt === note.createdAt) {
+        await ctx.db.patch(scoreDoc._id, { latestNote: updatedContent });
+      }
+    }
+    return null;
   },
 });
 
@@ -371,11 +484,19 @@ export const setCustomFieldsAndNotes = internalMutation({
           type: v.string(),
           assigneePhone: v.optional(v.string()),
           assigneeUserId: v.optional(v.id("users")),
+          snippet: v.optional(v.string()),
         }),
       })
     ),
   },
-  handler: async (ctx, args) => {
+  returns: v.object({
+    smsSnippets: v.array(v.string()),
+    followupNoteId: v.union(v.id("memberFollowups"), v.null()),
+  }),
+  handler: async (ctx, args): Promise<{
+    smsSnippets: string[];
+    followupNoteId: Id<"memberFollowups"> | null;
+  }> => {
     const timestamp = now();
 
     // Find announcement group
@@ -385,7 +506,7 @@ export const setCustomFieldsAndNotes = internalMutation({
       .filter((q) => q.eq(q.field("isAnnouncementGroup"), true))
       .first();
 
-    if (!announcementGroup) return;
+    if (!announcementGroup) return { smsSnippets: [], followupNoteId: null };
 
     // Find group membership
     const groupMember = await ctx.db
@@ -395,7 +516,7 @@ export const setCustomFieldsAndNotes = internalMutation({
       )
       .first();
 
-    if (!groupMember) return;
+    if (!groupMember) return { smsSnippets: [], followupNoteId: null };
 
     // Find or create memberFollowupScores record
     let scoreDoc = await ctx.db
@@ -441,7 +562,7 @@ export const setCustomFieldsAndNotes = internalMutation({
       scoreDoc = await ctx.db.get(scoreDocId);
     }
 
-    if (!scoreDoc) return;
+    if (!scoreDoc) return { smsSnippets: [], followupNoteId: null };
 
     // Update denormalized zipCode/dateOfBirth on existing score docs
     const scoreUpdates: Record<string, any> = {};
@@ -465,6 +586,7 @@ export const setCustomFieldsAndNotes = internalMutation({
     }
 
     // Generate notes summary
+    let followupNoteId: Id<"memberFollowups"> | null = null;
     if (args.generateNoteSummary) {
       const date = new Date(timestamp);
       const dateStr = date.toLocaleDateString("en-US", {
@@ -495,7 +617,7 @@ export const setCustomFieldsAndNotes = internalMutation({
 
       const noteContent = lines.join("\n");
 
-      await ctx.db.insert("memberFollowups", {
+      followupNoteId = await ctx.db.insert("memberFollowups", {
         groupMemberId: groupMember._id,
         createdById: args.userId, // Self-submitted
         type: "note",
@@ -510,13 +632,19 @@ export const setCustomFieldsAndNotes = internalMutation({
       });
     }
 
-    // Run automation rules (first matching rule wins for set_assignee)
+    // Run automation rules.
+    //   - set_assignee: first matching rule wins (preserves prior deterministic behavior)
+    //   - append_sms: every matching rule contributes a snippet, in rule order
+    let assigneeAssigned = false;
+    const smsSnippets: string[] = [];
+
     for (const rule of args.automationRules) {
       if (!rule.isEnabled) continue;
 
       const conditionMet = evaluateCondition(rule.condition, args.customFields);
+      if (!conditionMet) continue;
 
-      if (conditionMet && rule.action.type === "set_assignee") {
+      if (rule.action.type === "set_assignee" && !assigneeAssigned) {
         let assigneeId = rule.action.assigneeUserId;
 
         // Look up assignee by phone if no direct ID
@@ -544,9 +672,11 @@ export const setCustomFieldsAndNotes = internalMutation({
             groupMemberId: groupMember._id,
           });
 
-          // Stop after first matching assignee rule to provide deterministic behavior
-          break;
+          assigneeAssigned = true;
         }
+      } else if (rule.action.type === "append_sms") {
+        const snippet = rule.action.snippet?.trim();
+        if (snippet) smsSnippets.push(snippet);
       }
     }
 
@@ -555,6 +685,8 @@ export const setCustomFieldsAndNotes = internalMutation({
       communityId: args.communityId,
       userId: args.userId,
     });
+
+    return { smsSnippets, followupNoteId };
   },
 });
 
@@ -687,14 +819,59 @@ export const saveConfig = mutation({
           type: v.string(),
           assigneePhone: v.optional(v.string()),
           assigneeUserId: v.optional(v.id("users")),
+          snippet: v.optional(v.string()),
         }),
       })
+    ),
+    autoReplySms: v.optional(
+      v.object({
+        enabled: v.boolean(),
+        intro: v.string(),
+        outro: v.string(),
+        sendIfNoSnippetsMatch: v.boolean(),
+      }),
     ),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
     await requireCommunityAdmin(ctx, args.communityId, userId);
     const timestamp = Date.now();
+
+    // Validate automation rule actions
+    for (const rule of args.automationRules) {
+      if (rule.action.type === "append_sms") {
+        if (!rule.action.snippet?.trim()) {
+          throw new Error(
+            `Rule "${rule.name}" needs a snippet to append to the auto-reply SMS`,
+          );
+        }
+      } else if (rule.action.type === "set_assignee") {
+        // Existing behavior: assigneePhone or assigneeUserId is checked at runtime;
+        // saveConfig doesn't enforce so admins can stage rules before assignees exist
+      } else {
+        throw new Error(
+          `Rule "${rule.name}" has unknown action type "${rule.action.type}"`,
+        );
+      }
+    }
+
+    // Validate auto-reply SMS template if enabled
+    if (args.autoReplySms?.enabled) {
+      const intro = args.autoReplySms.intro.trim();
+      const outro = args.autoReplySms.outro.trim();
+      if (!intro && !outro) {
+        throw new Error(
+          "Auto-reply SMS needs at least an intro or outro before it can be enabled",
+        );
+      }
+      // Hard cap to keep auto-replies from blowing past Twilio's 1600-char limit
+      // before we even append rule snippets. Snippets get capped at send time.
+      if (intro.length + outro.length > 800) {
+        throw new Error(
+          "Auto-reply SMS intro + outro must be under 800 characters combined",
+        );
+      }
+    }
 
     // Slot prefix to allowed types mapping
     const SLOT_PREFIX_TYPE: Record<string, string[]> = {
@@ -771,6 +948,7 @@ export const saveConfig = mutation({
       requireBirthday: args.requireBirthday,
       formFields: args.formFields,
       automationRules: args.automationRules,
+      autoReplySms: args.autoReplySms,
       updatedAt: timestamp,
     };
 
