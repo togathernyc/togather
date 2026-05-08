@@ -745,7 +745,9 @@ describe("Get Message Read By", () => {
     expect(result.totalMembers).toBe(2);
   });
 
-  test("should throw error if user is not a member of the channel", async () => {
+  test("returns zero counts if user is not a member of the channel", async () => {
+    // Reactive query: must not throw on lost membership or it crashes the
+    // chat screen via ErrorBoundary.
     const t = convexTest(schema, modules);
     const { communityId, channelId } = await seedTestData(t);
 
@@ -775,32 +777,30 @@ describe("Get Message Read By", () => {
       });
     });
 
-    await expect(
-      t.query(api.functions.messaging.readState.getMessageReadBy, {
-        token: unauthorizedToken,
-        messageId,
-        channelId,
-      })
-    ).rejects.toThrow("Not a member of this channel");
+    const result = await t.query(api.functions.messaging.readState.getMessageReadBy, {
+      token: unauthorizedToken,
+      messageId,
+      channelId,
+    });
+    expect(result).toEqual({ readByCount: 0, totalMembers: 0 });
   });
 
-  test("should throw error if message does not exist", async () => {
+  test("returns zero counts if message does not exist", async () => {
+    // Reactive query: stale message id from a deleted message must not crash.
     const t = convexTest(schema, modules);
     const { userId, channelId, accessToken } = await seedTestData(t);
 
-    // Create a message and then delete it to get a valid but non-existent ID
     const messageId = await sendMessage(t, channelId, userId, "Test");
     await t.run(async (ctx) => {
       await ctx.db.delete(messageId);
     });
 
-    await expect(
-      t.query(api.functions.messaging.readState.getMessageReadBy, {
-        token: accessToken,
-        messageId,
-        channelId,
-      })
-    ).rejects.toThrow("Message not found");
+    const result = await t.query(api.functions.messaging.readState.getMessageReadBy, {
+      token: accessToken,
+      messageId,
+      channelId,
+    });
+    expect(result).toEqual({ readByCount: 0, totalMembers: 0 });
   });
 
   test("should throw error if message does not belong to channel", async () => {

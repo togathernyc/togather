@@ -4,7 +4,7 @@
  * Track unread counts and mark messages as read.
  */
 
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 import { query, mutation } from "../../_generated/server";
 import type { Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
@@ -140,18 +140,22 @@ export const getMessageReadBy = query({
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
 
+    // Lost-membership / stale-args during reactive re-fire: return a zero
+    // result instead of throwing. `getMessageReadBy` is rendered per message
+    // in the chat list and a throw crashes the screen via ErrorBoundary.
     if (!membership) {
-      throw new Error("Not a member of this channel");
+      return { readByCount: 0, totalMembers: 0 };
     }
 
     // Get the message to find its timestamp and sender
     const message = await ctx.db.get(args.messageId);
     if (!message) {
-      throw new Error("Message not found");
+      return { readByCount: 0, totalMembers: 0 };
     }
 
     if (message.channelId !== args.channelId) {
-      throw new Error("Message does not belong to this channel");
+      // Genuine arg mismatch — surface in Sentry rather than silently zero.
+      throw new ConvexError("Message does not belong to this channel");
     }
 
     // Get all active members of the channel (excluding the sender). Members
@@ -237,8 +241,12 @@ export const markAsRead = mutation({
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
 
+    // Lost-membership during reactive re-fire: silent no-op. The chat screen
+    // fires `markAsRead` from a useEffect without a .catch, so a throw
+    // surfaces as an unhandled rejection. There's nothing to mark read for
+    // a viewer who's no longer a member anyway.
     if (!membership) {
-      throw new Error("Not a member of this channel");
+      return;
     }
 
     // Ad-hoc channels (DM, group_dm) require an active profile photo on
