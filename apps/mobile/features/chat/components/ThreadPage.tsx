@@ -276,6 +276,7 @@ export function ThreadPage({
                       senderName: item.data.senderName,
                       senderProfilePhoto: item.data.senderProfilePhoto,
                       senderNotificationsDisabled: item.data.senderNotificationsDisabled,
+                      pollId: item.data.pollId,
                     }}
                     currentUserId={currentUserId}
                     onLongPress={handleLongPressMessage}

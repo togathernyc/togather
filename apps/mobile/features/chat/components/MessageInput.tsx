@@ -48,6 +48,7 @@ import { VoiceRecorderBar } from './VoiceRecorderBar';
 import { AttachmentPanel } from './AttachmentPanel';
 import { useDraftStore } from '../../../stores/draftStore';
 import { GifPicker } from './GifPicker';
+import { PollCreatorSheet } from './PollCreatorSheet';
 import { classifyChatSendError } from '../utils/chatSendErrors';
 
 interface MessageInputProps {
@@ -142,6 +143,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   const [isVoiceRecording, setIsVoiceRecording] = useState(false);
   const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
   const [showGifPicker, setShowGifPicker] = useState(false);
+  const [showPollCreator, setShowPollCreator] = useState(false);
   // Inline hint shown after a soft-fail send (e.g. attachments-pending,
   // profile-photo-required). Auto-clears after a short window. Used INSTEAD
   // of Alert/popup, which previously kept enough state churning to crash the
@@ -858,6 +860,15 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
     const options: Array<{ id: string; label: string; icon: keyof typeof Ionicons.glyphMap; iconColor?: string; onPress: () => void }> = [
       { id: 'media', label: 'Media', icon: 'images', iconColor: '#007AFF', onPress: pickMedia },
       { id: 'camera', label: 'Camera', icon: 'camera', iconColor: '#333', onPress: captureMedia },
+      {
+        id: 'poll',
+        label: 'Poll',
+        icon: 'bar-chart-outline',
+        iconColor: '#34A853',
+        onPress: () => {
+          if (channelId) setShowPollCreator(true);
+        },
+      },
     ];
     if (process.env.EXPO_PUBLIC_KLIPY_API_KEY) {
       options.push({
@@ -878,7 +889,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
       });
     }
     return options;
-  }, [captureMedia, pickMedia, recipientPending]);
+  }, [captureMedia, pickMedia, recipientPending, channelId]);
 
   const handleOptionPress = useCallback((option: { onPress: () => void }) => {
     setShowAttachmentMenu(false);
@@ -1154,6 +1165,17 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
         onSelect={handleGifSelect}
         onClose={() => setShowGifPicker(false)}
       />
+
+      {/* Poll Creator Modal — same `recipientPending` guard as the GIF picker
+          so an unaccepted DM never sees a poll composer. */}
+      {channelId && showPollCreator && !recipientPending && (
+        <PollCreatorSheet
+          mode="create"
+          visible={showPollCreator}
+          channelId={channelId}
+          onClose={() => setShowPollCreator(false)}
+        />
+      )}
     </View>
   );
 }
