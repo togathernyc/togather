@@ -40,7 +40,7 @@ export function useMessages(
   viewingGroupId?: Id<"groups"> | null
 ): UseMessagesResult {
   const token = useStoredAuthToken();
-  const { getChannelMessages, setChannelMessages } = useMessageCache();
+  const { getChannelMessages, setChannelMessages, clearChannel } = useMessageCache();
 
   // Pagination cursor — set temporarily during pagination, then reset to undefined
   // so the live subscription always watches the latest messages.
@@ -119,14 +119,27 @@ export function useMessages(
       } else {
         // Live subscription result — clear pagination loading state
         isLoadingMoreRef.current = false;
-        // Only update these from the live query if we haven't paginated yet
-        if (olderMessagesRef.current.messages.length === 0) {
+        if (result.messages.length === 0) {
+          // Live query returned 0 messages — buffered older pages and the
+          // persisted cache are stale (viewer lost channel access, all
+          // messages deleted, etc.). Drop both so the UI doesn't keep
+          // showing pre-revocation history, including on remount where the
+          // cache would otherwise hydrate the loading-state list before
+          // the next reactive empty page arrives.
+          if (olderMessagesRef.current.messages.length > 0) {
+            olderMessagesRef.current = { channelId: null, messages: [] };
+          }
+          clearChannel(channelId);
+          setHasMore(false);
+          lastCursorRef.current = result.cursor;
+        } else if (olderMessagesRef.current.messages.length === 0) {
+          // Only update these from the live query if we haven't paginated yet
           setHasMore(result.hasMore || false);
           lastCursorRef.current = result.cursor;
         }
       }
     }
-  }, [result, cursor, channelId]);
+  }, [result, cursor, channelId, clearChannel]);
 
   // Cache messages for offline use (only the live page)
   useEffect(() => {
@@ -161,7 +174,12 @@ export function useMessages(
       : [];
 
     if (olderMessages.length === 0) return liveMessages;
-    if (liveMessages.length === 0) return olderMessages;
+    if (liveMessages.length === 0) {
+      // Live says 0 messages — trust it. Buffered older pages are stale
+      // (the live useEffect clears the ref on the next tick); returning
+      // them here would leak pre-revocation history for one render.
+      return [];
+    }
 
     // Merge: live messages (newest) + older messages, deduplicating by ID
     const seenIds = new Set<string>();

@@ -243,7 +243,10 @@ describe("Start Typing", () => {
     expect(indicator2?.expiresAt).toBeGreaterThan(indicator1?.expiresAt || 0);
   });
 
-  test("should reject from non-channel-member", async () => {
+  test("silently no-ops for a non-channel-member", async () => {
+    // Mutation is fired on every keystroke from the chat composer; a throw
+    // becomes an unhandled rejection if the user lost membership while the
+    // screen is still mounted. Verify it returns cleanly and writes nothing.
     const t = convexTest(schema, modules);
     const { channelId, communityId } = await seedTestData(t);
 
@@ -261,12 +264,20 @@ describe("Start Typing", () => {
 
     const { accessToken: nonMemberToken } = await generateTokens(nonMemberId);
 
-    await expect(
-      t.mutation(api.functions.messaging.typing.startTyping, {
-        token: nonMemberToken,
-        channelId,
-      })
-    ).rejects.toThrow();
+    await t.mutation(api.functions.messaging.typing.startTyping, {
+      token: nonMemberToken,
+      channelId,
+    });
+
+    const indicator = await t.run(async (ctx) =>
+      ctx.db
+        .query("chatTypingIndicators")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", nonMemberId)
+        )
+        .first()
+    );
+    expect(indicator).toBeNull();
   });
 });
 

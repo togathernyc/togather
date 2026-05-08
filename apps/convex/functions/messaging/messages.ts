@@ -286,7 +286,7 @@ export const getMessages = query({
     // Get the channel to check group membership
     const channel = await ctx.db.get(args.channelId);
     if (!channel) {
-      throw new Error("Channel not found");
+      throw new ConvexError("Channel not found");
     }
 
     // Event channels use meeting-based access (RSVPers may not be group members).
@@ -345,9 +345,14 @@ export const getMessages = query({
         .filter((q) => q.eq(q.field("leftAt"), undefined))
         .first();
 
-      // If not a channel member, only group leaders/admins may load messages
+      // If not a channel member, only group leaders/admins may load messages.
+      // Return empty instead of throwing — `getMessages` is a reactive query and
+      // a throw crashes the chat screen via ErrorBoundary when membership is
+      // lost mid-session (e.g. user confirms a Leave Group alert while the
+      // chat screen is still mounted). The screen's own navigation flow handles
+      // the redirect; we just need to stop replying with messages.
       if (!channelMembership && !isLeaderRole(groupMembership?.role)) {
-        throw new Error("Not a member of this channel");
+        return { messages: [], hasMore: false, cursor: undefined };
       }
 
       // For bypassing global disabled check, consider leadership in owning group OR linked group
@@ -370,13 +375,15 @@ export const getMessages = query({
       const effectiveEnabled = args.viewingGroupId
         ? channelEffectiveEnabledForGroup(channel, args.viewingGroupId)
         : channelIsLeaderEnabled(channel);
+      // Disabled leader-only channel for a non-leader viewer: same reasoning
+      // as above — return empty rather than crash the chat screen.
       if (
         (isCustomChannel(channel.channelType) || channel.channelType === "pco_services") &&
         !effectiveEnabled &&
         !isOwningGroupLeader &&
         !isLinkedGroupLeader
       ) {
-        throw new Error("Channel is not available");
+        return { messages: [], hasMore: false, cursor: undefined };
       }
     }
 

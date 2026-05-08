@@ -120,8 +120,12 @@ export const startTyping = mutation({
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
 
+    // Lost-membership: silent no-op. The chat composer fires `startTyping`
+    // on every keystroke; a throw surfaces as an unhandled rejection if the
+    // user lost membership while the screen is still mounted. There's
+    // nothing to record for a non-member anyway.
     if (!membership) {
-      throw new Error("Not a member of this channel");
+      return;
     }
 
     const now = Date.now();
