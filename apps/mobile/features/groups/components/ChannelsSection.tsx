@@ -20,17 +20,22 @@
  * bottom of this section now live in GROUP ACTIONS on
  * GroupDetailScreen.
  */
-import React, { useCallback, useMemo } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
+  Alert,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { useQuery, api } from "@services/api/convex";
+import {
+  useQuery,
+  api,
+  useAuthenticatedMutation,
+} from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
@@ -95,12 +100,39 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
   const mainChannel = channels?.find((c: Channel) => c.channelType === "main");
   const leadersChannel = channels?.find((c: Channel) => c.channelType === "leaders");
   const reachOutChannel = channels?.find((c: Channel) => c.channelType === "reach_out");
+  const announcementsChannel = channels?.find(
+    (c: Channel) => c.channelType === "announcements"
+  );
   const pcoSyncedChannels = channels?.filter((c: Channel) => c.channelType === "pco_services") ?? [];
   const customChannels = channels?.filter((c: Channel) => c.channelType === "custom") ?? [];
 
   const leadersEnabled = !!leadersChannel && !leadersChannel.isArchived;
   const mainEnabled = !!mainChannel && !mainChannel.isArchived;
   const reachOutEnabled = !!reachOutChannel && !reachOutChannel.isArchived;
+  const announcementsEnabled =
+    !!announcementsChannel &&
+    !announcementsChannel.isArchived &&
+    announcementsChannel.isEnabled !== false;
+
+  const toggleAnnouncementsChannelMutation = useAuthenticatedMutation(
+    api.functions.messaging.channels.toggleAnnouncementsChannel
+  );
+  const [enablingAnnouncements, setEnablingAnnouncements] = useState(false);
+
+  const handleEnableAnnouncements = useCallback(async () => {
+    if (enablingAnnouncements) return;
+    setEnablingAnnouncements(true);
+    try {
+      await toggleAnnouncementsChannelMutation({
+        groupId: groupId as Id<"groups">,
+        enabled: true,
+      });
+    } catch (e: any) {
+      Alert.alert("Error", e?.message || "Failed to enable Announcements");
+    } finally {
+      setEnablingAnnouncements(false);
+    }
+  }, [enablingAnnouncements, groupId, toggleAnnouncementsChannelMutation]);
 
   const navigateToChannelChat = useCallback(
     (slug: string) => router.push(`/inbox/${groupId}/${slug}` as any),
@@ -188,6 +220,37 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
         : undefined,
       unreadCount: leadersChannel?.unreadCount,
       pinned: leadersChannel?.isPinned,
+    });
+  }
+
+  // Announcements: opt-in leader-broadcast channel. Leaders see the row
+  // even before the channel exists so they can enable it; members only see
+  // it once a leader has turned it on.
+  if (announcementsChannel || isLeader) {
+    const hasAnnouncementsRecord = !!announcementsChannel;
+    rows.push({
+      key: announcementsChannel?._id ?? "announcements-placeholder",
+      icon: "megaphone",
+      iconColor: "#E11D48",
+      iconBg: "#E11D4815",
+      name: "Announcements",
+      subtitle: hasAnnouncementsRecord
+        ? announcementsEnabled
+          ? `${announcementsChannel!.memberCount} member${announcementsChannel!.memberCount !== 1 ? "s" : ""} · Leaders post`
+          : "Disabled"
+        : enablingAnnouncements
+          ? "Enabling…"
+          : "Tap to enable — leaders post, members read",
+      enabled: announcementsEnabled,
+      // Placeholder (no record yet) tap → lazy-create via mutation.
+      // Existing record tap → channel info screen for further toggling.
+      onPress: hasAnnouncementsRecord
+        ? () => navigateToChannelInfo(announcementsChannel!.slug)
+        : isLeader
+          ? handleEnableAnnouncements
+          : undefined,
+      unreadCount: announcementsChannel?.unreadCount,
+      pinned: announcementsChannel?.isPinned,
     });
   }
 

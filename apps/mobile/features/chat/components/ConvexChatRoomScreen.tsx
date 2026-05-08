@@ -376,13 +376,23 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   const groupTypeIdSource = groupTypeIdParam || groupDetails?.groupTypeId || groupData?.groupTypeId;
   const groupTypeId = parseGroupTypeId(groupTypeIdSource);
   const isAnnouncementGroup = isAnnouncementGroupParam === "1" || groupDetails?.isAnnouncementGroup || false;
-  const canSendMessages = !isAnnouncementGroup || isUserLeader;
 
   // Determine if the active channel is a reach_out channel
   const isReachOutChannel = useMemo(() => {
     const activeTab = channelTabs.find((t) => t.slug === activeSlug);
     return activeTab?.channelType === "reach_out";
   }, [channelTabs, activeSlug]);
+
+  // Announcements channels: only group leaders may post. Everyone else falls
+  // through to the read-only banner.
+  const isAnnouncementsChannel = useMemo(() => {
+    const activeTab = channelTabs.find((t) => t.slug === activeSlug);
+    return activeTab?.channelType === "announcements";
+  }, [channelTabs, activeSlug]);
+
+  const canSendMessages =
+    (!isAnnouncementGroup || isUserLeader) &&
+    (!isAnnouncementsChannel || isUserLeader);
 
   // UI state
   const [menuVisible, setMenuVisible] = useState(false);
@@ -1199,7 +1209,9 @@ const ConvexChatRoomScreenInner: React.FC = () => {
             ) : (
               <View style={[styles.readOnlyBanner, { backgroundColor: colors.surfaceSecondary, borderTopColor: colors.border }]}>
                 <Text style={[styles.readOnlyText, { color: colors.textSecondary }]}>
-                  Only admins can post in this channel. You can react to messages.
+                  {isAnnouncementsChannel
+                    ? "Only leaders can post in Announcements. You can react to messages."
+                    : "Only admins can post in this channel. You can react to messages."}
                 </Text>
               </View>
             )}

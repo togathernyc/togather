@@ -236,6 +236,10 @@ export async function syncUserChannelMembershipsLogic(
       shouldBeInChannel = isActiveGroupMember && isLeaderOrAdmin;
     } else if (channel.channelType === "reach_out") {
       shouldBeInChannel = isActiveGroupMember;
+    } else if (channel.channelType === "announcements") {
+      // Announcements: every active group member is a channel member so they
+      // can read; posting is gated to leaders in sendMessage.
+      shouldBeInChannel = isActiveGroupMember;
     }
 
     // Get current channel membership

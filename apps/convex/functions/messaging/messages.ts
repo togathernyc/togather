@@ -699,6 +699,33 @@ export const sendMessage = mutation({
           throw new Error("This channel is disabled");
         }
       }
+
+      // Announcements channels are leader-broadcast: every active group
+      // member is a channel member (so unread counts work) but only group
+      // leaders can post. Block sends from non-leaders here regardless of
+      // channel-member role, since channel role is denormalized at sync time
+      // and may lag the source-of-truth on `groupMembers`.
+      if (channel.channelType === "announcements") {
+        if (!channelIsLeaderEnabled(channel) || channel.isArchived) {
+          throw new Error("This channel is disabled");
+        }
+        if (!channel.groupId) {
+          throw new Error("Invalid announcements channel");
+        }
+        const groupMembership = await ctx.db
+          .query("groupMembers")
+          .withIndex("by_group_user", (q) =>
+            q.eq("groupId", channel.groupId!).eq("userId", userId)
+          )
+          .filter((q) => q.eq(q.field("leftAt"), undefined))
+          .first();
+        if (!isLeaderRole(groupMembership?.role)) {
+          throw new ConvexError({
+            code: "FORBIDDEN",
+            message: "Only group leaders can post in Announcements",
+          });
+        }
+      }
     }
 
     // Get user info for denormalized fields
