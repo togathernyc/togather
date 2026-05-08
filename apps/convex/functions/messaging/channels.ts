@@ -3903,20 +3903,21 @@ export const toggleAnnouncementsChannel = mutation({
         // "announcements" before this feature shipped. Convex has no unique
         // constraint, so inserting here would silently produce two rows
         // sharing (groupId, slug) — getChannelBySlug uses .first() and could
-        // resolve to either, breaking routing. Refuse and let the leader
-        // rename the existing channel first.
+        // resolve to either, breaking routing. Reject any row regardless of
+        // archive state: getChannelBySlug({ includeArchived: true }) is used
+        // by the channel-info / active-state screens, so even an archived
+        // collision would resolve to the wrong row from those entry points.
         const slugCollision = await ctx.db
           .query("chatChannels")
           .withIndex("by_group_slug", (q) =>
             q.eq("groupId", args.groupId).eq("slug", "announcements")
           )
-          .filter((q) => q.eq(q.field("isArchived"), false))
           .first();
         if (slugCollision) {
           throw new ConvexError({
             code: "SLUG_CONFLICT",
             message:
-              "This group already has a channel using the slug \"announcements\". Rename or archive it before enabling the Announcements broadcast channel.",
+              "This group already has a channel using the slug \"announcements\" (possibly archived). Rename it before enabling the Announcements broadcast channel.",
           });
         }
         channelId = await ctx.db.insert("chatChannels", {
