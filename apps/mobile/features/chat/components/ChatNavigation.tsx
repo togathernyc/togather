@@ -84,6 +84,12 @@ export const ChatTabBar = memo(function ChatTabBar({
           const isActive = channel.slug === activeSlug;
           const hasUnread = !isActive && channel.unreadCount > 0;
           const displayName = getDisplayName(channel);
+          // Announcements renders as a compact megaphone-only tab to save
+          // horizontal space; the long word "Announcements" otherwise eats
+          // most of a phone-width tab bar. Accessibility label still reads
+          // the channel name for screen readers.
+          const isAnnouncements = channel.channelType === "announcements";
+          const tabColor = isActive ? primaryColor : themeColors.textSecondary;
 
           return (
             <TouchableOpacity
@@ -93,6 +99,7 @@ export const ChatTabBar = memo(function ChatTabBar({
               onLongPress={() => onTabLongPress?.(channel)}
               delayLongPress={300}
               activeOpacity={0.7}
+              accessibilityLabel={displayName}
             >
               <View style={styles.tabContent}>
                 {channel.isShared && (
@@ -103,12 +110,20 @@ export const ChatTabBar = memo(function ChatTabBar({
                     style={styles.sharedTabIcon}
                   />
                 )}
-                <Text
-                  style={[styles.tabText, { color: themeColors.textSecondary }, isActive && { color: primaryColor }]}
-                  numberOfLines={1}
-                >
-                  {displayName}
-                </Text>
+                {isAnnouncements ? (
+                  <Ionicons
+                    name="megaphone"
+                    size={18}
+                    color={tabColor}
+                  />
+                ) : (
+                  <Text
+                    style={[styles.tabText, { color: themeColors.textSecondary }, isActive && { color: primaryColor }]}
+                    numberOfLines={1}
+                  >
+                    {displayName}
+                  </Text>
+                )}
                 {hasUnread && <View style={[styles.unreadDot, { backgroundColor: themeColors.error }]} />}
               </View>
             </TouchableOpacity>
