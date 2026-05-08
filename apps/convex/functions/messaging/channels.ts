@@ -499,7 +499,9 @@ export const getChannelBySlug = query({
     }
 
     if (
-      (isCustomChannel(resolvedChannel.channelType) || resolvedChannel.channelType === "pco_services") &&
+      (isCustomChannel(resolvedChannel.channelType) ||
+        resolvedChannel.channelType === "pco_services" ||
+        resolvedChannel.channelType === "announcements") &&
       !channelEffectiveEnabledForGroup(resolvedChannel, args.groupId) &&
       !isLeaderOrAdmin
     ) {
@@ -2848,6 +2850,12 @@ export const leaveChannel = mutation({
           code: "CANNOT_LEAVE_AUTO_CHANNEL",
           message:
             "You can't leave the Leaders channel directly. You're in this channel because you're a group leader. Ask another leader to change your role to Member, and you'll be automatically removed.",
+        });
+      } else if (channel.channelType === "announcements") {
+        throw new ConvexError({
+          code: "CANNOT_LEAVE_AUTO_CHANNEL",
+          message:
+            "You can't leave the Announcements channel directly. Membership is automatic for active group members. Leave the group entirely if you want to opt out.",
         });
       }
     }
