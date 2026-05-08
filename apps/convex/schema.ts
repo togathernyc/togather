@@ -1621,7 +1621,7 @@ export default defineSchema({
     channelId: v.id("chatChannels"),
     senderId: v.optional(v.id("users")), // Optional for bot/system messages
     content: v.string(), // Message text
-    contentType: v.string(), // "text" | "image" | "file" | "system" | "bot" | "reach_out_request" | "task_card"
+    contentType: v.string(), // "text" | "image" | "file" | "system" | "bot" | "reach_out_request" | "task_card" | "poll"
     attachments: v.optional(
       v.array(
         v.object({
@@ -1661,6 +1661,8 @@ export default defineSchema({
     reachOutRequestId: v.optional(v.id("reachOutRequests")),
     // Canonical task reference for task-aware chat cards
     taskId: v.optional(v.id("tasks")),
+    // Poll reference for contentType === "poll"
+    pollId: v.optional(v.id("polls")),
     // Optional idempotency key for generated bot/task posts
     sourceKey: v.optional(v.string()),
     // For mirrored text blasts — backlink to the eventBlasts row so the UI
@@ -1674,6 +1676,75 @@ export default defineSchema({
     .index("by_parentMessage", ["parentMessageId"])
     .index("by_createdAt", ["createdAt"])
     .index("by_sourceKey", ["sourceKey"]),
+
+  /**
+   * Polls
+   *
+   * Posted into channels via the chat composer. Backed by a `chatMessages`
+   * row with `contentType: "poll"` and `pollId` pointing here. The card UI
+   * renders inline in place of the normal message bubble.
+   *
+   * v1 semantics:
+   *  - `isAnonymous`: always written `false`. Field is reserved for a future
+   *    setting that hides voter identity in `getPollVoters`.
+   *  - `closesAt`: never set in v1 (no deadline picker). Field is reserved
+   *    for a future scheduler-based auto-close. `status` only flips via
+   *    the manual `closePoll` mutation today.
+   *  - Authors and group leaders can edit/close/delete via `editPoll`,
+   *    `closePoll`, `deletePoll`. `editCount`/`editedAt` track edits so the
+   *    card can render an "edited" badge.
+   */
+  polls: defineTable({
+    channelId: v.id("chatChannels"),
+    /** Back-pointer to the host message. Set after the message is inserted. */
+    messageId: v.optional(v.id("chatMessages")),
+    authorId: v.id("users"),
+    question: v.string(),
+    options: v.array(
+      v.object({
+        /** Stable id; survives text edits so vote rows stay attached. */
+        id: v.string(),
+        text: v.string(),
+      }),
+    ),
+    allowMultiple: v.boolean(),
+    isAnonymous: v.boolean(),
+    closesAt: v.optional(v.number()),
+    status: v.union(v.literal("active"), v.literal("closed")),
+    closedAt: v.optional(v.number()),
+    /** Total votes (each ticked option counts once). */
+    voteCount: v.number(),
+    /** Unique voters (one per user even if they ticked multiple options). */
+    voterCount: v.number(),
+    editedAt: v.optional(v.number()),
+    editCount: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_channel", ["channelId"])
+    .index("by_message", ["messageId"]),
+
+  /**
+   * Poll Votes
+   *
+   * One row per (poll, option, voter). For multi-select polls a single voter
+   * may have multiple rows in the same poll. For single-select, the
+   * `by_poll_voter` index is used to enforce one row per voter.
+   *
+   * `voterId` is stored even though v1 isn't anonymous — needed for "you
+   * voted" indicators, double-vote prevention, and to support a future
+   * anonymous mode where identity is hidden in queries but tracked at rest.
+   */
+  pollVotes: defineTable({
+    pollId: v.id("polls"),
+    optionId: v.string(),
+    voterId: v.id("users"),
+    /** Denormalized for permission checks without re-fetching the poll. */
+    channelId: v.id("chatChannels"),
+    createdAt: v.number(),
+  })
+    .index("by_poll", ["pollId"])
+    .index("by_poll_option", ["pollId", "optionId"])
+    .index("by_poll_voter", ["pollId", "voterId"]),
 
   /**
    * Chat Message Reactions

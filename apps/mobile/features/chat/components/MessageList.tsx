@@ -67,6 +67,8 @@ interface Message {
   reachOutRequestId?: Id<"reachOutRequests">;
   // Canonical task reference for task cards
   taskId?: Id<"tasks">;
+  // Poll reference for contentType === "poll"
+  pollId?: Id<"polls">;
   // Present only on messages mirrored from an event text blast (SMS + push).
   blastId?: Id<"eventBlasts">;
 }
@@ -348,6 +350,7 @@ export function MessageList({
             hideLinkPreview: message.hideLinkPreview,
             reachOutRequestId: message.reachOutRequestId,
             taskId: message.taskId,
+            pollId: message.pollId,
             blastId: message.blastId,
           }}
           currentUserId={currentUserId}

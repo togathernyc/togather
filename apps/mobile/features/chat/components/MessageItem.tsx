@@ -41,6 +41,7 @@ import { ThreadReplies } from './ThreadReplies';
 import { ReactionDetailsModal } from './ReactionDetailsModal';
 import { ReachOutRequestCardFromMessage } from './ReachOutRequestCardFromMessage';
 import { TaskCardFromMessage } from './TaskCardFromMessage';
+import { PollCardFromMessage } from './PollCardFromMessage';
 import { extractEventShortIds, extractToolShortIds, extractChannelInviteShortIds, stripEventLinksFromText, stripToolLinksFromText, stripChannelInviteLinksFromText, extractFirstExternalUrl } from '../utils/eventLinkUtils';
 import { useLinkPreview } from '../hooks/useLinkPreview';
 import { parseMessageContent } from '@features/shared/utils/linkify';
@@ -79,6 +80,7 @@ interface MessageItemProps {
     hideLinkPreview?: boolean;
     reachOutRequestId?: Id<"reachOutRequests">;
     taskId?: Id<"tasks">;
+    pollId?: Id<"polls">;
     /** Present only on messages that mirror an event text blast (SMS + push). */
     blastId?: Id<"eventBlasts">;
   };
@@ -854,6 +856,17 @@ function MessageItemInner({
     );
   };
 
+  const renderPollCard = () => {
+    if (message.contentType !== "poll" || !message.pollId) {
+      return null;
+    }
+    return (
+      <View style={styles.eventCardsContainer}>
+        <PollCardFromMessage pollId={message.pollId} />
+      </View>
+    );
+  };
+
   // Render optimistic message status indicator
   const renderOptimisticStatus = () => {
     if (!isOptimistic || !optimisticStatus) return null;
@@ -978,7 +991,7 @@ function MessageItemInner({
           )}
 
           {/* Message bubble (hidden for special card messages) */}
-          {message.contentType !== "reach_out_request" && message.contentType !== "task_card" && (
+          {message.contentType !== "reach_out_request" && message.contentType !== "task_card" && message.contentType !== "poll" && (
             <View ref={bubbleRef} style={styles.bubbleWrapper}>
               <View
                 style={[
@@ -1056,6 +1069,9 @@ function MessageItemInner({
 
           {/* Task card */}
           {renderTaskCard()}
+
+          {/* Poll card */}
+          {renderPollCard()}
 
           {/* Event cards for meeting links */}
           {renderEventCards()}

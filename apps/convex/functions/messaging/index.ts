@@ -7,6 +7,7 @@
 
 export * as channels from "./channels";
 export * as messages from "./messages";
+export * as polls from "./polls";
 export * as reactions from "./reactions";
 export * as readState from "./readState";
 export * as blocking from "./blocking";
