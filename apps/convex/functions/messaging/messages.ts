@@ -378,7 +378,9 @@ export const getMessages = query({
       // Disabled leader-only channel for a non-leader viewer: same reasoning
       // as above — return empty rather than crash the chat screen.
       if (
-        (isCustomChannel(channel.channelType) || channel.channelType === "pco_services") &&
+        (isCustomChannel(channel.channelType) ||
+          channel.channelType === "pco_services" ||
+          channel.channelType === "announcements") &&
         !effectiveEnabled &&
         !isOwningGroupLeader &&
         !isLinkedGroupLeader
