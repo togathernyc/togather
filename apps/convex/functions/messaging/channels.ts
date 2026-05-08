@@ -69,13 +69,15 @@ function sortChannelsByPinOrder<T extends {
   const pinnedSlugSet = new Set(pinnedChannelSlugs);
 
   return channels.sort((a, b) => {
-    // Main channel always first
-    if (a.channelType === "main" && b.channelType !== "main") return -1;
-    if (a.channelType !== "main" && b.channelType === "main") return 1;
-
-    // Announcements channel second (broadcast channel surfaces near General)
+    // Announcements pins to the very front: it's an opt-in broadcast and
+    // renders as a compact icon-only tab, so anchoring it leftmost keeps
+    // the layout predictable and lets General stretch.
     if (a.channelType === "announcements" && b.channelType !== "announcements") return -1;
     if (a.channelType !== "announcements" && b.channelType === "announcements") return 1;
+
+    // Main channel second (the default destination for in-group chat)
+    if (a.channelType === "main" && b.channelType !== "main") return -1;
+    if (a.channelType !== "main" && b.channelType === "main") return 1;
 
     // Leaders channel third
     if (a.channelType === "leaders" && b.channelType !== "leaders") return -1;
