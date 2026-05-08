@@ -333,6 +333,9 @@ export function AutoChannelSettings({
           {config.lastSyncResults?.unmatchedPeople && config.lastSyncResults.unmatchedPeople.length > 0 && (
             <View style={[styles.unmatchedSection, { backgroundColor: isDark ? '#332b00' : '#FFF8E6' }]}>
               <Text style={[styles.unmatchedTitle, { color: isDark ? '#FFD60A' : '#B25000' }]}>People not found in Togather:</Text>
+              <Text style={[styles.unmatchedSubtitle, { color: isDark ? '#E5C870' : '#8A4500' }]}>
+                Matching is by phone number. Make sure each person's phone in PCO matches their Togather account.
+              </Text>
               {config.lastSyncResults.unmatchedPeople.map((person, index) => (
                 <View key={person.pcoPersonId} style={[
                   styles.unmatchedPerson,
@@ -672,6 +675,11 @@ const styles = StyleSheet.create({
   unmatchedTitle: {
     fontSize: 13,
     fontWeight: "600",
+    marginBottom: 4,
+  },
+  unmatchedSubtitle: {
+    fontSize: 12,
+    lineHeight: 16,
     marginBottom: 8,
   },
   unmatchedPerson: {
