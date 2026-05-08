@@ -44,10 +44,14 @@ jest.mock('@services/api/convex', () => ({
   },
 }));
 
+const mockClearChannel = jest.fn();
+const mockSetChannelMessages = jest.fn();
+
 jest.mock('../../../../stores/messageCache', () => ({
   useMessageCache: jest.fn(() => ({
     getChannelMessages: jest.fn((): null => null),
-    setChannelMessages: jest.fn(),
+    setChannelMessages: mockSetChannelMessages,
+    clearChannel: mockClearChannel,
   })),
 }));
 
@@ -58,9 +62,11 @@ describe('useMessages access-revoked', () => {
     mockLiveMessages = [{ _id: 'live-1', content: 'Live', createdAt: 100 }];
     mockOlderHasMore = true;
     mockLiveCursor = 'older-cursor';
+    mockClearChannel.mockClear();
+    mockSetChannelMessages.mockClear();
   });
 
-  it('clears buffered older messages when live query returns empty', async () => {
+  it('clears buffered older messages and persisted cache when live query returns empty', async () => {
     const { result, rerender } = renderHook(() => useMessages('ch-1' as any, 20));
 
     await waitFor(() => {
@@ -88,5 +94,7 @@ describe('useMessages access-revoked', () => {
       expect(result.current.messages).toHaveLength(0);
       expect(result.current.hasMore).toBe(false);
     });
+
+    expect(mockClearChannel).toHaveBeenCalledWith('ch-1');
   });
 });

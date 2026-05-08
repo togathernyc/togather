@@ -40,7 +40,7 @@ export function useMessages(
   viewingGroupId?: Id<"groups"> | null
 ): UseMessagesResult {
   const token = useStoredAuthToken();
-  const { getChannelMessages, setChannelMessages } = useMessageCache();
+  const { getChannelMessages, setChannelMessages, clearChannel } = useMessageCache();
 
   // Pagination cursor — set temporarily during pagination, then reset to undefined
   // so the live subscription always watches the latest messages.
@@ -120,12 +120,16 @@ export function useMessages(
         // Live subscription result — clear pagination loading state
         isLoadingMoreRef.current = false;
         if (result.messages.length === 0) {
-          // Live query returned 0 messages — buffered older pages are stale
-          // (viewer lost channel access, all messages deleted, etc.). Drop
-          // them so the UI doesn't keep showing pre-revocation history.
+          // Live query returned 0 messages — buffered older pages and the
+          // persisted cache are stale (viewer lost channel access, all
+          // messages deleted, etc.). Drop both so the UI doesn't keep
+          // showing pre-revocation history, including on remount where the
+          // cache would otherwise hydrate the loading-state list before
+          // the next reactive empty page arrives.
           if (olderMessagesRef.current.messages.length > 0) {
             olderMessagesRef.current = { channelId: null, messages: [] };
           }
+          clearChannel(channelId);
           setHasMore(false);
           lastCursorRef.current = result.cursor;
         } else if (olderMessagesRef.current.messages.length === 0) {
@@ -135,7 +139,7 @@ export function useMessages(
         }
       }
     }
-  }, [result, cursor, channelId]);
+  }, [result, cursor, channelId, clearChannel]);
 
   // Cache messages for offline use (only the live page)
   useEffect(() => {
