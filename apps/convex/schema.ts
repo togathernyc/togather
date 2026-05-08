@@ -1474,10 +1474,11 @@ export default defineSchema({
    *   - "custom" - Custom channel with manual membership
    *   - "pco_services" - Auto channel synced from PCO Services
    *   - "event" - Event-tied channel scoped to a meeting
+   *   - "announcements" - Leader-broadcast channel; visible to all members, only leaders can post (opt-in per group)
    *   - Future: "elvanto", "ccb", etc.
    *
    * Invariant: exactly one of `groupId` or `communityId` is set.
-   *   - groupId set: traditional group-channel ("main" | "leaders" | "custom" | "pco_services" | "event" | "reach_out")
+   *   - groupId set: traditional group-channel ("main" | "leaders" | "custom" | "pco_services" | "event" | "reach_out" | "announcements")
    *   - communityId set: ad-hoc channel ("dm" | "group_dm"), with `isAdHoc: true`
    * Enforced in mutations, not at the DB level (Convex has no constraints).
    */
@@ -1490,7 +1491,7 @@ export default defineSchema({
     /** For 1:1 DMs: deterministic key for dedup, sorted "userIdA::userIdB". */
     dmPairKey: v.optional(v.string()),
     slug: v.optional(v.string()), // URL-friendly, unique per group, immutable (optional for migration)
-    channelType: v.string(), // "main" | "leaders" | "dm" | "group_dm" | "custom" | "pco_services" | "event" | "reach_out"
+    channelType: v.string(), // "main" | "leaders" | "dm" | "group_dm" | "custom" | "pco_services" | "event" | "reach_out" | "announcements"
     name: v.string(),
     description: v.optional(v.string()),
     createdById: v.id("users"),

@@ -109,8 +109,9 @@ export function isActiveLeader<T extends SoftDeletableRecord & RoleRecord>(
  * Auto-managed channel types where membership is automatic.
  * - "main": General channel for all group members
  * - "leaders": Channel for leader/admin role members
+ * - "announcements": Leader-broadcast channel for all group members (opt-in per group)
  */
-export const AUTO_CHANNEL_TYPES = ["main", "leaders"] as const;
+export const AUTO_CHANNEL_TYPES = ["main", "leaders", "announcements"] as const;
 export type AutoChannelType = (typeof AUTO_CHANNEL_TYPES)[number];
 
 /**

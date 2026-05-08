@@ -73,11 +73,15 @@ function sortChannelsByPinOrder<T extends {
     if (a.channelType === "main" && b.channelType !== "main") return -1;
     if (a.channelType !== "main" && b.channelType === "main") return 1;
 
-    // Leaders channel second
+    // Announcements channel second (broadcast channel surfaces near General)
+    if (a.channelType === "announcements" && b.channelType !== "announcements") return -1;
+    if (a.channelType !== "announcements" && b.channelType === "announcements") return 1;
+
+    // Leaders channel third
     if (a.channelType === "leaders" && b.channelType !== "leaders") return -1;
     if (a.channelType !== "leaders" && b.channelType === "leaders") return 1;
 
-    // Reach out channel third
+    // Reach out channel fourth
     if (a.channelType === "reach_out" && b.channelType !== "reach_out") return -1;
     if (a.channelType !== "reach_out" && b.channelType === "reach_out") return 1;
 
@@ -495,7 +499,9 @@ export const getChannelBySlug = query({
     }
 
     if (
-      (isCustomChannel(resolvedChannel.channelType) || resolvedChannel.channelType === "pco_services") &&
+      (isCustomChannel(resolvedChannel.channelType) ||
+        resolvedChannel.channelType === "pco_services" ||
+        resolvedChannel.channelType === "announcements") &&
       !channelEffectiveEnabledForGroup(resolvedChannel, args.groupId) &&
       !isLeaderOrAdmin
     ) {
@@ -1455,7 +1461,9 @@ export const getInboxChannels = query({
           // User must be a member of the channel
           if (!userChannelIds.has(ch._id)) return false;
           if (
-            (isCustomChannel(ch.channelType) || ch.channelType === "pco_services") &&
+            (isCustomChannel(ch.channelType) ||
+              ch.channelType === "pco_services" ||
+              ch.channelType === "announcements") &&
             !channelIsLeaderEnabled(ch) &&
             !isLeaderOrAdmin
           ) {
@@ -1512,6 +1520,8 @@ export const getInboxChannels = query({
           displayName = "General";
         } else if (ch.channelType === "leaders") {
           displayName = "Leaders";
+        } else if (ch.channelType === "announcements") {
+          displayName = "Announcements";
         } else {
           // Custom channels use their actual name
           displayName = ch.name;
@@ -2841,6 +2851,12 @@ export const leaveChannel = mutation({
           message:
             "You can't leave the Leaders channel directly. You're in this channel because you're a group leader. Ask another leader to change your role to Member, and you'll be automatically removed.",
         });
+      } else if (channel.channelType === "announcements") {
+        throw new ConvexError({
+          code: "CANNOT_LEAVE_AUTO_CHANNEL",
+          message:
+            "You can't leave the Announcements channel directly. Membership is automatic for active group members. Leave the group entirely if you want to opt out.",
+        });
       }
     }
 
@@ -3805,6 +3821,196 @@ export const toggleReachOutChannel = mutation({
 
       return { channelId: existingChannel._id, status: "disabled" };
     }
+  },
+});
+
+/**
+ * Toggle the Announcements channel for a group.
+ *
+ * Announcements is an opt-in, leader-broadcast channel: visible to all
+ * active group members (read-only) while only leaders can post. Posting is
+ * gated in `sendMessage`; visibility/membership flows through the standard
+ * `chatChannelMembers` table so unread counts and inbox previews work.
+ *
+ * When enabled:
+ * - Lazy-creates the channel if it doesn't exist (slug "announcements")
+ * - Re-enables (clears `isEnabled: false`) if previously disabled
+ * - Adds all active group members
+ *
+ * When disabled:
+ * - Sets `isEnabled: false` (channel is hidden from members but memberships
+ *   stay so re-enabling later is cheap and history is preserved).
+ */
+export const toggleAnnouncementsChannel = mutation({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+    enabled: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const now = Date.now();
+
+    const groupMembership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", args.groupId).eq("userId", userId)
+      )
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .first();
+
+    if (!groupMembership) {
+      throw new ConvexError({
+        code: "FORBIDDEN",
+        message: "Not a member of this group",
+      });
+    }
+
+    if (!isLeaderRole(groupMembership.role)) {
+      throw new ConvexError({
+        code: "FORBIDDEN",
+        message: "Only group leaders can toggle the Announcements channel",
+      });
+    }
+
+    const existingChannel = await ctx.db
+      .query("chatChannels")
+      .withIndex("by_group_type", (q) =>
+        q.eq("groupId", args.groupId).eq("channelType", "announcements")
+      )
+      .first();
+
+    if (args.enabled) {
+      let channelId: Id<"chatChannels">;
+
+      if (existingChannel) {
+        // Already an announcements channel for this group — flip it back on.
+        const wasArchived = existingChannel.isArchived === true;
+        const wasDisabled = existingChannel.isEnabled === false;
+        if (!wasArchived && !wasDisabled) {
+          return { channelId: existingChannel._id, status: "already_enabled" as const };
+        }
+        await ctx.db.patch(existingChannel._id, {
+          isArchived: false,
+          archivedAt: undefined,
+          isEnabled: true,
+          disabledByUserId: undefined,
+          updatedAt: now,
+        });
+        channelId = existingChannel._id;
+      } else {
+        // A leader may already have created a *custom* channel with the slug
+        // "announcements" before this feature shipped. Convex has no unique
+        // constraint, so inserting here would silently produce two rows
+        // sharing (groupId, slug) — getChannelBySlug uses .first() and could
+        // resolve to either, breaking routing. Reject any row regardless of
+        // archive state: getChannelBySlug({ includeArchived: true }) is used
+        // by the channel-info / active-state screens, so even an archived
+        // collision would resolve to the wrong row from those entry points.
+        const slugCollision = await ctx.db
+          .query("chatChannels")
+          .withIndex("by_group_slug", (q) =>
+            q.eq("groupId", args.groupId).eq("slug", "announcements")
+          )
+          .first();
+        if (slugCollision) {
+          throw new ConvexError({
+            code: "SLUG_CONFLICT",
+            message:
+              "This group already has a channel using the slug \"announcements\" (possibly archived). Rename it before enabling the Announcements broadcast channel.",
+          });
+        }
+        channelId = await ctx.db.insert("chatChannels", {
+          groupId: args.groupId,
+          slug: "announcements",
+          channelType: "announcements",
+          name: "Announcements",
+          description:
+            "Leader announcements — visible to all members; only leaders can post.",
+          createdById: userId,
+          createdAt: now,
+          updatedAt: now,
+          isArchived: false,
+          isEnabled: true,
+          memberCount: 0,
+        });
+      }
+
+      // Add ALL active group members so unread counts work for everyone.
+      const allMembers = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .collect();
+
+      for (const member of allMembers) {
+        const user = await ctx.db.get(member.userId);
+        const displayName = user
+          ? getDisplayName(user.firstName, user.lastName)
+          : undefined;
+        const profilePhoto = user ? getMediaUrl(user.profilePhoto) : undefined;
+
+        const existingMembership = await ctx.db
+          .query("chatChannelMembers")
+          .withIndex("by_channel_user", (q) =>
+            q.eq("channelId", channelId).eq("userId", member.userId)
+          )
+          .first();
+
+        // Channel role mirrors group role so the member list shows leaders
+        // distinctly. Posting permission is enforced server-side in
+        // sendMessage by re-reading the group membership.
+        const channelRole = isLeaderRole(member.role) ? "admin" : "member";
+
+        if (existingMembership) {
+          if (existingMembership.leftAt !== undefined) {
+            await ctx.db.patch(existingMembership._id, {
+              leftAt: undefined,
+              joinedAt: now,
+              role: channelRole,
+              displayName,
+              profilePhoto,
+            });
+          } else if (existingMembership.role !== channelRole) {
+            await ctx.db.patch(existingMembership._id, {
+              role: channelRole,
+              displayName,
+              profilePhoto,
+            });
+          }
+        } else {
+          await ctx.db.insert("chatChannelMembers", {
+            channelId,
+            userId: member.userId,
+            role: channelRole,
+            joinedAt: now,
+            isMuted: false,
+            displayName,
+            profilePhoto,
+          });
+        }
+      }
+
+      await updateChannelMemberCount(ctx, channelId);
+
+      return { channelId, status: "enabled" as const };
+    }
+
+    // DISABLE
+    if (!existingChannel) {
+      return { channelId: undefined, status: "already_disabled" as const };
+    }
+    if (existingChannel.isEnabled === false || existingChannel.isArchived) {
+      return { channelId: existingChannel._id, status: "already_disabled" as const };
+    }
+
+    await ctx.db.patch(existingChannel._id, {
+      isEnabled: false,
+      disabledByUserId: userId,
+      updatedAt: now,
+    });
+
+    return { channelId: existingChannel._id, status: "disabled" as const };
   },
 });
 

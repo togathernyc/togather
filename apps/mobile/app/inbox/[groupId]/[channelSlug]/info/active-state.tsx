@@ -6,14 +6,15 @@
  * Explicit Active / Disabled choice with consequence text under each
  * option — NOT a single-tap toggle. Wires to whichever toggle mutation
  * exists per channel type:
- *   - "leaders":      toggleLeadersChannel
- *   - "reach_out":    toggleReachOutChannel
- *   - "custom":       setCustomChannelLeaderEnabled
- *   - "pco_services": togglePcoChannel
- *   - "main":         toggleMainChannel  (the General row in the group
- *                     page CHANNELS card always navigates to chat, so
- *                     this path isn't currently reachable from the UI,
- *                     but is wired for completeness)
+ *   - "leaders":       toggleLeadersChannel
+ *   - "reach_out":     toggleReachOutChannel
+ *   - "announcements": toggleAnnouncementsChannel
+ *   - "custom":        setCustomChannelLeaderEnabled
+ *   - "pco_services":  togglePcoChannel
+ *   - "main":          toggleMainChannel  (the General row in the group
+ *                      page CHANNELS card always navigates to chat, so
+ *                      this path isn't currently reachable from the UI,
+ *                      but is wired for completeness)
  *
  * Reach Out: when the Leaders channel is disabled at the group level,
  * the "Active" option is itself disabled and we surface a hint at the
@@ -82,6 +83,9 @@ export default function ChannelActiveStateRoute() {
   const toggleReachOutChannelMutation = useAuthenticatedMutation(
     api.functions.messaging.channels.toggleReachOutChannel,
   );
+  const toggleAnnouncementsChannelMutation = useAuthenticatedMutation(
+    api.functions.messaging.channels.toggleAnnouncementsChannel,
+  );
   const toggleMainChannelMutation = useAuthenticatedMutation(
     api.functions.messaging.channels.toggleMainChannel,
   );
@@ -135,6 +139,11 @@ export default function ChannelActiveStateRoute() {
             groupId: groupId as Id<"groups">,
             enabled: next,
           });
+        } else if (channelType === "announcements") {
+          await toggleAnnouncementsChannelMutation({
+            groupId: groupId as Id<"groups">,
+            enabled: next,
+          });
         } else if (channelType === "main") {
           await toggleMainChannelMutation({
             groupId: groupId as Id<"groups">,
@@ -170,6 +179,7 @@ export default function ChannelActiveStateRoute() {
       currentEnabled,
       toggleLeadersChannelMutation,
       toggleReachOutChannelMutation,
+      toggleAnnouncementsChannelMutation,
       toggleMainChannelMutation,
       togglePcoChannelMutation,
       setCustomChannelLeaderEnabledMutation,
@@ -273,6 +283,11 @@ function consequenceFor(channelType: string, active: boolean): string {
     return active
       ? "Reach Out is available to leaders for one-on-one outreach."
       : "Reach Out is hidden. Leaders won't see it in their tabs.";
+  }
+  if (channelType === "announcements") {
+    return active
+      ? "Announcements is visible to all members. Only leaders can post."
+      : "Announcements is hidden. Memberships are kept so re-enabling restores history.";
   }
   if (channelType === "main") {
     return active
