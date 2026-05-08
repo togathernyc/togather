@@ -76,20 +76,30 @@ export function PollCreatorSheet(props: PollCreatorSheetProps) {
   const editPoll = useAuthenticatedMutation(api.functions.messaging.polls.editPoll);
 
   // Reset draft when the sheet opens. For edit mode, hydrate from the
-  // existing poll. For create mode, start clean.
+  // existing poll snapshot at open time. For create mode, start clean.
+  // Only depend on `visible` here — including `props` would re-run the
+  // effect on every render (typing in the question/options calls
+  // setState, which re-renders and produces a new props object identity),
+  // wiping the user's in-progress draft on every keystroke.
+  const initialQuestion = mode === 'edit' ? props.initialQuestion : undefined;
+  const initialOptions = mode === 'edit' ? props.initialOptions : undefined;
+  const initialAllowMultiple = mode === 'edit' ? props.initialAllowMultiple : undefined;
   useEffect(() => {
     if (!visible) return;
     if (mode === 'edit') {
-      setQuestion(props.initialQuestion);
-      setOptions(props.initialOptions.map((o) => ({ id: o.id, text: o.text })));
-      setAllowMultiple(props.initialAllowMultiple);
+      setQuestion(initialQuestion ?? '');
+      setOptions(
+        (initialOptions ?? []).map((o) => ({ id: o.id, text: o.text })),
+      );
+      setAllowMultiple(initialAllowMultiple ?? false);
     } else {
       setQuestion('');
       setOptions([{ text: '' }, { text: '' }]);
       setAllowMultiple(false);
     }
     setSubmitting(false);
-  }, [visible, mode, props]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
 
   const trimmedOptions = useMemo(
     () => options.map((o) => ({ ...o, text: o.text.trim() })),

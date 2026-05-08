@@ -162,7 +162,7 @@ interface MessageForPreview {
  * Used for channel lastMessagePreview to show user-friendly strings like
  * "Sent a photo", "Sent a file", "Shared an event", etc.
  */
-function generateMessagePreview(message: MessageForPreview): string {
+export function generateMessagePreview(message: MessageForPreview): string {
   const content = message.content;
   const attachments = message.attachments;
 

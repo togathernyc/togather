@@ -26,6 +26,7 @@ import {
 } from "../../lib/helpers";
 import { getDisplayName, getMediaUrl } from "../../lib/utils";
 import { canAccessEventChannel } from "./eventChat";
+import { generateMessagePreview } from "./messages";
 
 const MAX_QUESTION_LENGTH = 280;
 const MAX_OPTION_TEXT_LENGTH = 120;
@@ -133,8 +134,50 @@ async function assertCanPostInChannel(
   }
 
   if (channel.isAdHoc) {
-    if (membership.requestState && membership.requestState !== "accepted") {
+    // Ad-hoc DM/group_dm gating mirrors `sendMessage` (apps/convex/functions/
+    // messaging/messages.ts ~755-825). Without these checks a user who can't
+    // send a normal message — because a recipient blocked them, they removed
+    // their profile photo, or the recipient hasn't accepted yet — could still
+    // post a poll and fan it out through the chat/notification pipeline.
+    if (membership.requestState !== "accepted") {
       throw new ConvexError("Accept the request before posting");
+    }
+
+    // Profile photo is a hard requirement on every send to an ad-hoc channel.
+    const sender = await ctx.db.get(userId);
+    if (!sender?.profilePhoto || sender.profilePhoto.trim() === "") {
+      throw new ConvexError("PROFILE_PHOTO_REQUIRED");
+    }
+
+    // Block enforcement: any active recipient who's blocked the sender
+    // rejects the send. Generic error keeps the block silent.
+    const otherMembers = await ctx.db
+      .query("chatChannelMembers")
+      .withIndex("by_channel", (q) => q.eq("channelId", channel._id))
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .collect();
+    for (const m of otherMembers) {
+      if (m.userId === userId) continue;
+      const block = await ctx.db
+        .query("chatUserBlocks")
+        .withIndex("by_blocker_blocked", (q) =>
+          q.eq("blockerId", m.userId).eq("blockedId", userId),
+        )
+        .first();
+      if (block) {
+        throw new ConvexError("Cannot send message in this chat");
+      }
+    }
+
+    // Pending-recipient gate: until the other party accepts, sendMessage
+    // restricts to plain text only. Polls aren't plain text — block them.
+    const hasPendingOthers = otherMembers.some(
+      (m) => m.userId !== userId && m.requestState === "pending",
+    );
+    if (hasPendingOthers) {
+      throw new ConvexError(
+        "Cannot send polls until the recipient accepts the request",
+      );
     }
   }
 }
@@ -600,14 +643,63 @@ export const deletePoll = mutation({
       await ctx.db.delete(v._id);
     }
 
+    const now = Date.now();
     if (poll.messageId) {
       const message = await ctx.db.get(poll.messageId);
       if (message && !message.isDeleted) {
         await ctx.db.patch(poll.messageId, {
           isDeleted: true,
-          deletedAt: Date.now(),
+          deletedAt: now,
           deletedById: userId,
         });
+
+        // If the deleted poll was the channel's most recent top-level
+        // message, the inbox preview / sort key would otherwise stay
+        // pointing at the now-removed poll. Mirror deleteMessage's
+        // recompute path so the channel snaps to the previous message.
+        const channel = await ctx.db.get(message.channelId);
+        if (
+          channel &&
+          channel.lastMessageAt &&
+          message.createdAt >= channel.lastMessageAt
+        ) {
+          const previousMessage = await ctx.db
+            .query("chatMessages")
+            .withIndex("by_channel_createdAt", (q) =>
+              q.eq("channelId", message.channelId),
+            )
+            .order("desc")
+            .filter((q) =>
+              q.and(
+                q.eq(q.field("isDeleted"), false),
+                q.neq(q.field("_id"), poll.messageId!),
+                q.eq(q.field("parentMessageId"), undefined),
+              ),
+            )
+            .first();
+
+          if (previousMessage) {
+            const preview = generateMessagePreview({
+              content: previousMessage.content,
+              attachments: previousMessage.attachments,
+            });
+            await ctx.db.patch(message.channelId, {
+              lastMessageAt: previousMessage.createdAt,
+              lastMessagePreview: preview,
+              lastMessageSenderId: previousMessage.senderId,
+              lastMessageSenderName: previousMessage.senderName,
+              updatedAt: now,
+            });
+          } else {
+            await ctx.db.patch(message.channelId, {
+              lastMessageAt: undefined,
+              lastMessagePreview: undefined,
+              lastMessageSenderId: undefined,
+              lastMessageSenderName: undefined,
+              updatedAt: now,
+            });
+          }
+        }
       }
     }
 
