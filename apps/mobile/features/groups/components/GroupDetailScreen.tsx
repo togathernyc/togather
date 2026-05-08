@@ -29,6 +29,7 @@ import {
 import { useWithdrawJoinRequest } from "../hooks/useWithdrawJoinRequest";
 import { useMyPendingJoinRequests } from "../hooks/useMyPendingJoinRequests";
 import { PendingRequestLimitModal } from "./PendingRequestLimitModal";
+import { AddGroupMembersModal } from "./AddGroupMembersModal";
 import { isGroupMember } from "../utils";
 import { useUserData } from "@features/profile/hooks/useUserData";
 import { GroupHeader } from "./GroupHeader";
@@ -58,6 +59,7 @@ export function GroupDetailScreen() {
   const [showOptionsModal, setShowOptionsModal] = useState(false);
   const [showJoinSuccessModal, setShowJoinSuccessModal] = useState(false);
   const [showPendingLimitModal, setShowPendingLimitModal] = useState(false);
+  const [showAddPeopleModal, setShowAddPeopleModal] = useState(false);
 
   const {
     isAtLimit: isAtPendingLimit,
@@ -467,6 +469,34 @@ export function GroupDetailScreen() {
           </View>
         )}
 
+        {/* Add people — leader/admin only. Mirrors the DM chat-info pattern:
+            a standalone tile sitting just under the members card.
+            Hidden on announcement groups (membership is implicit/community-wide). */}
+        {(isLeader || isAdmin) && group._id && !group.is_announcement_group && (
+          <View style={{ paddingHorizontal: 12, marginTop: 4 }}>
+            <TouchableOpacity
+              onPress={() => setShowAddPeopleModal(true)}
+              activeOpacity={0.7}
+              style={[
+                styles.addPeopleTile,
+                { backgroundColor: colors.surfaceSecondary },
+              ]}
+            >
+              <View
+                style={[
+                  styles.addPeopleIcon,
+                  { backgroundColor: colors.link + "1A" },
+                ]}
+              >
+                <Ionicons name="person-add" size={18} color={colors.link} />
+              </View>
+              <Text style={[styles.actionLabel, { color: colors.text }]}>
+                Add people
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* UPCOMING EVENTS — horizontal scroll, sits between Members and
             Channels per product design. Hidden when there are no upcoming
             events. */}
@@ -676,6 +706,14 @@ export function GroupDetailScreen() {
         isLeaving={leaveGroupMutation.isPending}
         isArchiving={archiveGroupMutation.isPending}
       />
+      {group._id && (isLeader || isAdmin) && (
+        <AddGroupMembersModal
+          visible={showAddPeopleModal}
+          onClose={() => setShowAddPeopleModal(false)}
+          groupId={group._id}
+          onAdded={() => refetch()}
+        />
+      )}
     </>
   );
 }
@@ -747,6 +785,22 @@ const styles = StyleSheet.create({
   actionLabel: {
     fontSize: 16,
     fontWeight: "500",
+  },
+  addPeopleTile: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderRadius: 12,
+    minHeight: 48,
+  },
+  addPeopleIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
   },
   externalRow: {
     flexDirection: "row",

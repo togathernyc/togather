@@ -1017,3 +1017,133 @@ export const listJoinRequests = query({
   },
 });
 
+/**
+ * Add a Togather user to a group, resolved by their linked PCO person ID.
+ *
+ * Powers the "Add to group" quick action on PCO synced channels for entries
+ * where the unmatched reason is `not_in_group` — the person is already in
+ * the community (matched via phone/email), but isn't in the group that
+ * owns this PCO channel. Resolution uses the
+ * `userCommunities.by_community_pcoPersonId` index so we can find the
+ * Togather userId from the PCO person ID alone.
+ */
+export const addByPcoPersonId = mutation({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+    pcoPersonId: v.string(),
+    role: v.optional(groupRoleValidator),
+  },
+  handler: async (ctx, args) => {
+    const addedBy = await requireAuth(ctx, args.token);
+    const timestamp = now();
+
+    const group = await ctx.db.get(args.groupId);
+    if (!group) {
+      throw new Error("Group not found");
+    }
+
+    // Caller must be a leader of this group OR a community admin.
+    const callerMembership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", args.groupId).eq("userId", addedBy)
+      )
+      .first();
+    const isGroupLeaderOrAdmin = isActiveLeader(callerMembership);
+    const isCommAdmin = await isCommunityAdmin(ctx, group.communityId, addedBy);
+    if (!isGroupLeaderOrAdmin && !isCommAdmin) {
+      throw new Error("Only group leaders or community admins can add members");
+    }
+
+    // Resolve the Togather user via the community-scoped PCO index. The
+    // query is keyed by (communityId, pcoPersonId) so the lookup is safe
+    // across communities even if the same PCO person ID exists elsewhere.
+    const linkedMembership = await ctx.db
+      .query("userCommunities")
+      .withIndex("by_community_pcoPersonId", (q) =>
+        q.eq("communityId", group.communityId).eq("pcoPersonId", args.pcoPersonId)
+      )
+      .first();
+
+    if (!linkedMembership || linkedMembership.status !== 1) {
+      // Reason classification on the channel-info screen is what surfaces
+      // this case to leaders; keep the message specific so they can route
+      // to "Invite via SMS" instead.
+      throw new Error(
+        "This person isn't linked to a Togather account in this community yet."
+      );
+    }
+
+    const userId = linkedMembership.userId;
+    const userToAdd = await ctx.db.get(userId);
+    if (!userToAdd) {
+      throw new Error("User not found");
+    }
+
+    const existingMember = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", args.groupId).eq("userId", userId)
+      )
+      .first();
+
+    if (existingMember && !existingMember.leftAt) {
+      throw new Error("User is already a member of this group");
+    }
+
+    if (existingMember) {
+      await ctx.db.patch(existingMember._id, {
+        role: args.role || "member",
+        leftAt: undefined,
+        joinedAt: timestamp,
+        notificationsEnabled: true,
+      });
+
+      await syncUserChannelMembershipsLogic(ctx, userId, args.groupId);
+
+      await ctx.scheduler.runAfter(
+        2000,
+        internal.functions.pcoServices.rotation.checkAndSyncUserToAutoChannels,
+        { userId, groupId: args.groupId }
+      );
+
+      return {
+        id: existingMember._id,
+        userId,
+        role: args.role || "member",
+        reactivated: true,
+      };
+    }
+
+    const memberId = await ctx.db.insert("groupMembers", {
+      groupId: args.groupId,
+      userId,
+      role: args.role || "member",
+      joinedAt: timestamp,
+      notificationsEnabled: true,
+    });
+
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.scheduledJobs.sendWelcomeMessage,
+      { groupId: args.groupId, userId }
+    );
+
+    await syncUserChannelMembershipsLogic(ctx, userId, args.groupId);
+
+    await ctx.scheduler.runAfter(
+      2000,
+      internal.functions.pcoServices.rotation.checkAndSyncUserToAutoChannels,
+      { userId, groupId: args.groupId }
+    );
+
+    return {
+      id: memberId,
+      userId,
+      role: args.role || "member",
+      reactivated: false,
+    };
+  },
+});
+

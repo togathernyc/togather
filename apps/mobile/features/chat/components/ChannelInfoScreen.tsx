@@ -35,6 +35,7 @@ import {
   Platform,
   TextInput,
   Modal,
+  Linking,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -55,6 +56,10 @@ import {
 } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { DOMAIN_CONFIG } from "@togather/shared";
+import {
+  getDebugReasonText,
+  type UnsyncedPerson,
+} from "@/utils/channel-members";
 
 type Props = {
   groupId: string;
@@ -156,6 +161,19 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
   const enableInviteLinkMutation = useAuthenticatedMutation(
     api.functions.messaging.channelInvites.enableInviteLink,
   );
+  const addByPcoPersonId = useAuthenticatedMutation(
+    api.functions.groupMembers.addByPcoPersonId,
+  );
+
+  // Auto channel config — drives the "Not in channel" section for PCO synced
+  // channels. Backend gates by leader role + community-admin, so a non-leader
+  // viewer just gets `null` here and the section won't render.
+  const autoChannelConfig = useQuery(
+    api.functions.pcoServices.queries.getAutoChannelConfigByChannel,
+    token && channel?._id && channel.channelType === "pco_services"
+      ? { token, channelId: channel._id }
+      : "skip",
+  );
 
   const [renameVisible, setRenameVisible] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -167,6 +185,9 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
   const [leaving, setLeaving] = useState(false);
   const [pcoSettingsVisible, setPcoSettingsVisible] = useState(false);
   const [requestInFlight, setRequestInFlight] = useState<string | null>(null);
+  const [unmatchedActionInFlight, setUnmatchedActionInFlight] = useState<
+    string | null
+  >(null);
 
   const handleJoinMode = useCallback(() => {
     router.push(`/inbox/${groupId}/${channelSlug}/info/join-mode` as any);
@@ -322,6 +343,72 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
     }
   }, [channel?._id, archiveCustomChannelMutation, groupId, router]);
 
+  const handleAddUnmatchedToGroup = useCallback(
+    async (person: UnsyncedPerson) => {
+      if (!groupId) return;
+      setUnmatchedActionInFlight(person.pcoPersonId);
+      try {
+        await addByPcoPersonId({
+          groupId: groupId as Id<"groups">,
+          pcoPersonId: person.pcoPersonId,
+        });
+        Alert.alert(
+          "Added to group",
+          `${person.pcoName} was added. They'll be synced into this channel on the next PCO sync.`,
+        );
+      } catch (e: any) {
+        Alert.alert(
+          "Couldn't add to group",
+          e?.message ?? "Please try again.",
+        );
+      } finally {
+        setUnmatchedActionInFlight(null);
+      }
+    },
+    [addByPcoPersonId, groupId],
+  );
+
+  const handleInviteUnmatchedBySMS = useCallback(
+    async (person: UnsyncedPerson) => {
+      if (!person.pcoPhone) return;
+      const groupName = groupData?.name?.trim() || "our group";
+      const shortId = groupData?.shortId;
+      const groupUrl = shortId
+        ? DOMAIN_CONFIG.groupShareUrl(shortId)
+        : DOMAIN_CONFIG.landingUrl;
+      // SMS originates from the leader's own number, so address the recipient
+      // directly by first name. PCO returns names as "First Last" (composed
+      // from first_name + last_name), so the first whitespace-separated
+      // token is the first name. Falls back to the full pcoName if empty.
+      const firstName =
+        person.pcoName?.trim().split(/\s+/)[0] || person.pcoName || "there";
+      const body =
+        `Hey ${firstName}, join the #${channelDisplayName} channel in ${groupName} on Togather so you can stay in the loop: ${groupUrl}`;
+
+      // sms: separator differs by platform — `?` on Android, `&` on iOS.
+      // See https://developer.apple.com/library/archive/featuredarticles/iPhoneURLScheme_Reference/SMSLinks/SMSLinks.html
+      const separator = Platform.OS === "ios" ? "&" : "?";
+      const phone = person.pcoPhone.replace(/\s+/g, "");
+      const url = `sms:${phone}${separator}body=${encodeURIComponent(body)}`;
+
+      try {
+        const can = await Linking.canOpenURL(url);
+        if (!can) {
+          Alert.alert(
+            "Can't open Messages",
+            "This device doesn't support SMS. The link has been copied so you can paste it into another app.",
+          );
+          await Clipboard.setStringAsync(body);
+          return;
+        }
+        await Linking.openURL(url);
+      } catch (e: any) {
+        Alert.alert("Couldn't open Messages", e?.message ?? "Please try again.");
+      }
+    },
+    [channelDisplayName, groupData?.name, groupData?.shortId],
+  );
+
   const handleRename = useCallback(async () => {
     const trimmed = renameValue.trim();
     if (!trimmed) {
@@ -401,6 +488,10 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
   const memberRows = channelMembers?.members ?? [];
   const totalMemberCount = channelMembers?.totalCount ?? channel.memberCount ?? 0;
   const ownerId = (channel as { createdById?: Id<"users"> }).createdById;
+  const unmatchedPeople: UnsyncedPerson[] =
+    (autoChannelConfig?.lastSyncResults?.unmatchedPeople as
+      | UnsyncedPerson[]
+      | undefined) ?? [];
 
   return (
     <View
@@ -631,6 +722,159 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
                 </Text>
               </Pressable>
             )}
+          </>
+        )}
+
+        {/* Not in channel — PCO synced channels only. Lists people scheduled
+            in PCO who couldn't be matched into the channel, with the reason
+            and quick actions. Mirrors the unmatched panel in PCO sync
+            settings (image 5 in the original spec). Only renders when the
+            backend returns unmatched data — leader access is enforced server
+            side via `getAutoChannelConfigByChannel`. */}
+        {isPco && isLeader && unmatchedPeople.length > 0 && (
+          <>
+            <SectionHeader
+              colors={colors}
+              label={`Not in channel · ${unmatchedPeople.length}`}
+            />
+            <View
+              style={[
+                styles.unmatchedHelperBox,
+                { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
+              ]}
+            >
+              <Ionicons name="information-circle" size={16} color={colors.textSecondary} />
+              <Text style={[styles.unmatchedHelperText, { color: colors.textSecondary }]}>
+                PCO matches Togather users by phone number. Make sure each
+                person's phone in PCO matches their Togather account.
+              </Text>
+            </View>
+            <View style={[styles.sectionGroup, { backgroundColor: colors.surfaceSecondary }]}>
+              {unmatchedPeople.map((person, idx) => {
+                const inFlight = unmatchedActionInFlight === person.pcoPersonId;
+                const canAddToGroup = person.reason === "not_in_group";
+                const canSmsInvite = !!person.pcoPhone;
+                return (
+                  <View
+                    key={person.pcoPersonId}
+                    style={[
+                      styles.unmatchedRow,
+                      idx > 0 && {
+                        borderTopWidth: StyleSheet.hairlineWidth,
+                        borderTopColor: colors.border,
+                      },
+                    ]}
+                  >
+                    <View style={styles.unmatchedHeaderRow}>
+                      <View style={styles.unmatchedAvatarWarn}>
+                        <Ionicons name="warning" size={20} color="#B25000" />
+                      </View>
+                      <View style={styles.unmatchedTextWrap}>
+                        <Text
+                          style={[styles.memberRowName, { color: colors.text }]}
+                          numberOfLines={1}
+                        >
+                          {person.pcoName}
+                        </Text>
+                        {(person.teamName || person.position) && (
+                          <Text
+                            style={[styles.unmatchedSubLabel, { color: colors.textSecondary }]}
+                            numberOfLines={1}
+                          >
+                            {[person.teamName, person.position]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </Text>
+                        )}
+                        {person.pcoPhone ? (
+                          <Text
+                            style={[styles.unmatchedContactLine, { color: colors.textSecondary }]}
+                            numberOfLines={1}
+                          >
+                            {`📱 ${person.pcoPhone}`}
+                          </Text>
+                        ) : null}
+                        {person.pcoEmail ? (
+                          <Text
+                            style={[styles.unmatchedContactLine, { color: colors.textSecondary }]}
+                            numberOfLines={1}
+                          >
+                            {`✉️ ${person.pcoEmail}`}
+                          </Text>
+                        ) : null}
+                        <Text
+                          style={[styles.unmatchedReasonText, { color: "#B25000" }]}
+                          numberOfLines={2}
+                        >
+                          {getDebugReasonText(person.reason, person)}
+                        </Text>
+                      </View>
+                    </View>
+                    {(canAddToGroup || canSmsInvite) && (
+                      <View style={styles.unmatchedActionsRow}>
+                        {canAddToGroup && (
+                          <Pressable
+                            onPress={() => handleAddUnmatchedToGroup(person)}
+                            disabled={inFlight}
+                            style={({ pressed }) => [
+                              styles.unmatchedActionBtn,
+                              {
+                                backgroundColor: pressed
+                                  ? primaryColor + "CC"
+                                  : primaryColor,
+                                opacity: inFlight ? 0.6 : 1,
+                              },
+                            ]}
+                          >
+                            {inFlight ? (
+                              <ActivityIndicator size="small" color="#fff" />
+                            ) : (
+                              <>
+                                <Ionicons name="person-add" size={14} color="#fff" />
+                                <Text style={styles.unmatchedActionLabelLight}>
+                                  Add to group
+                                </Text>
+                              </>
+                            )}
+                          </Pressable>
+                        )}
+                        {canSmsInvite && (
+                          <Pressable
+                            onPress={() => handleInviteUnmatchedBySMS(person)}
+                            disabled={inFlight}
+                            style={({ pressed }) => [
+                              styles.unmatchedActionBtn,
+                              {
+                                backgroundColor: pressed
+                                  ? colors.selectedBackground
+                                  : colors.surface,
+                                borderWidth: StyleSheet.hairlineWidth,
+                                borderColor: colors.border,
+                                opacity: inFlight ? 0.6 : 1,
+                              },
+                            ]}
+                          >
+                            <Ionicons
+                              name="chatbubble-ellipses-outline"
+                              size={14}
+                              color={colors.text}
+                            />
+                            <Text
+                              style={[
+                                styles.unmatchedActionLabel,
+                                { color: colors.text },
+                              ]}
+                            >
+                              Invite via SMS
+                            </Text>
+                          </Pressable>
+                        )}
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
+            </View>
           </>
         )}
 
@@ -1252,6 +1496,79 @@ const styles = StyleSheet.create({
   helperText: {
     fontSize: 12,
     lineHeight: 16,
+  },
+  unmatchedHelperBox: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    marginHorizontal: 12,
+    marginBottom: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  unmatchedHelperText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  unmatchedRow: {
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 10,
+  },
+  unmatchedHeaderRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+  unmatchedAvatarWarn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#FFE0B2",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  unmatchedTextWrap: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  unmatchedSubLabel: {
+    fontSize: 12,
+  },
+  unmatchedContactLine: {
+    fontSize: 12,
+  },
+  unmatchedReasonText: {
+    marginTop: 4,
+    fontSize: 12,
+    fontWeight: "500",
+  },
+  unmatchedActionsRow: {
+    flexDirection: "row",
+    gap: 8,
+    paddingLeft: 52,
+  },
+  unmatchedActionBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    minHeight: 32,
+  },
+  unmatchedActionLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  unmatchedActionLabelLight: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "600",
   },
   renameInput: {
     borderWidth: 1,
