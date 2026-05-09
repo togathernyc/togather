@@ -860,7 +860,13 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
     const options: Array<{ id: string; label: string; icon: keyof typeof Ionicons.glyphMap; iconColor?: string; onPress: () => void }> = [
       { id: 'media', label: 'Media', icon: 'images', iconColor: '#007AFF', onPress: pickMedia },
       { id: 'camera', label: 'Camera', icon: 'camera', iconColor: '#333', onPress: captureMedia },
-      {
+    ];
+    // Polls only make sense on top-level messages — `createPoll` doesn't
+    // accept a `parentMessageId`, so tapping it from a thread reply
+    // composer would post into the main channel instead of the thread.
+    // Hide the option when this MessageInput is rendered for a reply.
+    if (!replyToMessage) {
+      options.push({
         id: 'poll',
         label: 'Poll',
         icon: 'bar-chart-outline',
@@ -868,8 +874,8 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
         onPress: () => {
           if (channelId) setShowPollCreator(true);
         },
-      },
-    ];
+      });
+    }
     if (process.env.EXPO_PUBLIC_KLIPY_API_KEY) {
       options.push({
         id: 'gif',
@@ -889,7 +895,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
       });
     }
     return options;
-  }, [captureMedia, pickMedia, recipientPending, channelId]);
+  }, [captureMedia, pickMedia, recipientPending, channelId, replyToMessage]);
 
   const handleOptionPress = useCallback((option: { onPress: () => void }) => {
     setShowAttachmentMenu(false);
