@@ -964,10 +964,21 @@ export const getPollVoters = query({
     const canSeeIdentities =
       !poll.isAnonymous || isAuthor || isLeader;
 
-    const allVotes = await ctx.db
+    // Cap how many vote rows we materialize. Convex queries have a
+    // function-level read limit, and a poll with thousands of voters
+    // would otherwise either hit it or fan out one users.get per voter.
+    // For v1 community-app polls a few hundred is plenty; the UI shows
+    // a "+N more" hint when truncated. Move to true pagination if a
+    // real-world poll ever crosses this threshold.
+    const VOTERS_QUERY_CAP = 500;
+    const cappedVotes = await ctx.db
       .query("pollVotes")
       .withIndex("by_poll", (q) => q.eq("pollId", args.pollId))
-      .collect();
+      .take(VOTERS_QUERY_CAP + 1);
+    const truncated = cappedVotes.length > VOTERS_QUERY_CAP;
+    const allVotes = truncated
+      ? cappedVotes.slice(0, VOTERS_QUERY_CAP)
+      : cappedVotes;
 
     // Filter out users the viewer has blocked. Counts stay accurate
     // (blocker shouldn't see a skewed total) but identities of blocked
@@ -1041,6 +1052,10 @@ export const getPollVoters = query({
       voterCount: poll.voterCount,
       voteCount: poll.voteCount,
       options,
+      // True when the poll has more vote rows than VOTERS_QUERY_CAP and
+      // the returned `voters` arrays are a prefix of the full list. The
+      // sheet UI surfaces this with a "Showing first N voters" hint.
+      truncated,
     };
   },
 });

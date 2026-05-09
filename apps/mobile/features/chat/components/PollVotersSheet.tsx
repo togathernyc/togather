@@ -108,6 +108,21 @@ export function PollVotersSheet({ visible, pollId, onClose }: PollVotersSheetPro
             keyExtractor={(item, index) => `${item.userId}-${index}`}
             stickySectionHeadersEnabled={false}
             contentContainerStyle={styles.listContent}
+            ListHeaderComponent={
+              data.truncated ? (
+                <View
+                  style={[
+                    styles.truncatedBanner,
+                    { backgroundColor: colors.surfaceSecondary },
+                  ]}
+                >
+                  <Ionicons name="information-circle-outline" size={14} color={colors.textSecondary} />
+                  <Text style={[styles.truncatedText, { color: colors.textSecondary }]}>
+                    Showing the first voters. The list is capped for performance.
+                  </Text>
+                </View>
+              ) : null
+            }
             renderSectionHeader={({ section }) => (
               <View
                 style={[
@@ -239,5 +254,16 @@ const styles = StyleSheet.create({
   emptySectionText: {
     fontSize: 13,
     fontStyle: 'italic',
+  },
+  truncatedBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  truncatedText: {
+    fontSize: 12,
+    flex: 1,
   },
 });
