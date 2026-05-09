@@ -996,6 +996,23 @@ export const deleteMessage = mutation({
       deletedById: userId,
     });
 
+    // Poll messages have side data: a `polls` row + every `pollVotes` row
+    // for that poll. Without cascading here, deleting a poll message
+    // through the generic message-actions menu (long-press → Delete) would
+    // soft-delete the chat row but leave the poll active in the database
+    // — `getPoll` would still resolve, votes would persist, and the
+    // dedicated `polls.deletePoll` path becomes the only way to clean up.
+    if (message.contentType === "poll" && message.pollId) {
+      const votes = await ctx.db
+        .query("pollVotes")
+        .withIndex("by_poll", (q) => q.eq("pollId", message.pollId!))
+        .collect();
+      for (const v of votes) {
+        await ctx.db.delete(v._id);
+      }
+      await ctx.db.delete(message.pollId);
+    }
+
     // Update channel preview if the deleted message was the most recent
     // Re-read channel (already fetched above, but re-read for freshest lastMessageAt)
     const freshChannel = await ctx.db.get(message.channelId);
