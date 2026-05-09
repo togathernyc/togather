@@ -20,12 +20,19 @@ import {
   Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { Avatar } from '@components/ui';
 import { useTheme } from '@hooks/useTheme';
+import type { Id } from '@services/api/convex';
 
 export interface PollCardOption {
   id: string;
   text: string;
   count: number;
+  voterPreview: Array<{
+    userId: Id<'users'>;
+    displayName: string;
+    profilePhoto?: string;
+  }>;
 }
 
 export interface PollCardProps {
@@ -283,6 +290,53 @@ export function PollCard({
                 >
                   {opt.text}
                 </Text>
+                {/* Voter avatar stack — RSVP-style. Uses voterPreview
+                    (top 4 earliest voters) returned by getPoll, with a
+                    "+N" overflow chip when there are more. Tapping
+                    surfaces the full voters list via the parent
+                    onShowVoters callback. */}
+                {opt.voterPreview.length > 0 && (
+                  <Pressable
+                    onPress={onShowVoters}
+                    hitSlop={6}
+                    style={styles.avatarStack}
+                  >
+                    {opt.voterPreview.map((v, i) => (
+                      <View
+                        key={v.userId}
+                        style={[
+                          styles.avatarStackItem,
+                          {
+                            marginLeft: i === 0 ? 0 : -8,
+                            borderColor: colors.surface,
+                            zIndex: opt.voterPreview.length - i,
+                          },
+                        ]}
+                      >
+                        <Avatar
+                          name={v.displayName}
+                          imageUrl={v.profilePhoto}
+                          size={20}
+                        />
+                      </View>
+                    ))}
+                    {opt.count > opt.voterPreview.length && (
+                      <View
+                        style={[
+                          styles.avatarOverflow,
+                          {
+                            backgroundColor: colors.surfaceSecondary,
+                            borderColor: colors.surface,
+                          },
+                        ]}
+                      >
+                        <Text style={[styles.avatarOverflowText, { color: colors.textSecondary }]}>
+                          +{opt.count - opt.voterPreview.length}
+                        </Text>
+                      </View>
+                    )}
+                  </Pressable>
+                )}
                 {totalVotes > 0 && (
                   <Text style={[styles.optionCount, { color: colors.textSecondary }]}>
                     {opt.count}
@@ -448,6 +502,27 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     minWidth: 24,
     textAlign: 'right',
+  },
+  avatarStack: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  avatarStackItem: {
+    borderWidth: 1.5,
+    borderRadius: 12,
+  },
+  avatarOverflow: {
+    marginLeft: -8,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarOverflowText: {
+    fontSize: 9,
+    fontWeight: '600',
   },
   submitButton: {
     marginTop: 12,
