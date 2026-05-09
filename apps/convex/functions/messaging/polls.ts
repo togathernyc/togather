@@ -567,13 +567,33 @@ export const editPoll = mutation({
     });
 
     // Mirror question edits on the host message so the inbox preview and
-    // any text-search paths reflect the change.
+    // any text-search paths reflect the change. Also update the channel's
+    // denormalized lastMessagePreview when the edited poll IS the channel's
+    // current last message, otherwise the inbox row keeps showing the old
+    // question until another message lands.
     if (poll.messageId && args.question !== undefined) {
       await ctx.db.patch(poll.messageId, {
         content: newQuestion.trim(),
         editedAt: now,
         updatedAt: now,
       });
+
+      const hostMessage = await ctx.db.get(poll.messageId);
+      const channel = await ctx.db.get(poll.channelId);
+      if (
+        hostMessage &&
+        channel &&
+        channel.lastMessageAt &&
+        hostMessage.createdAt >= channel.lastMessageAt
+      ) {
+        const previewBase = `📊 ${newQuestion.trim()}`;
+        const preview =
+          previewBase.length > 100 ? previewBase.slice(0, 97) + "…" : previewBase;
+        await ctx.db.patch(poll.channelId, {
+          lastMessagePreview: preview,
+          updatedAt: now,
+        });
+      }
     }
   },
 });
