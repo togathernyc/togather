@@ -373,6 +373,23 @@ export const voteOnPoll = mutation({
         .first();
       if (!m) throw new ConvexError("Not a member of this channel");
 
+      // Disabled-channel gate. `getMessages` hides custom / pco_services /
+      // announcements channels from non-leaders when they're disabled, so
+      // a member with a stale-mounted poll card or direct pollId could
+      // otherwise still mutate poll state. Leaders can still moderate
+      // votes on disabled channels (closing the poll, etc), so we only
+      // block non-leaders here.
+      if (
+        isCustomChannel(channel.channelType) ||
+        channel.channelType === "pco_services" ||
+        channel.channelType === "announcements"
+      ) {
+        const enabled = channelIsLeaderEnabled(channel);
+        if (!enabled && !(await isChannelGroupLeader(ctx, channel, userId))) {
+          throw new ConvexError("This channel is disabled");
+        }
+      }
+
       // Ad-hoc DM/group_dm: a pending recipient can READ the request but
       // can't take any send-shape action until they accept. Voting writes
       // a row that fans out via reactivity, so it falls under the same
