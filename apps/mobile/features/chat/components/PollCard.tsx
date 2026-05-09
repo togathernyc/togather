@@ -47,6 +47,7 @@ export interface PollCardProps {
   onEdit: () => void;
   onClose: () => void;
   onDelete: () => void;
+  onShowVoters: () => void;
 }
 
 export function PollCard({
@@ -63,6 +64,7 @@ export function PollCard({
   onEdit,
   onClose,
   onDelete,
+  onShowVoters,
 }: PollCardProps) {
   const { colors } = useTheme();
   const isClosed = status === 'closed';
@@ -312,8 +314,14 @@ export function PollCard({
         </Pressable>
       )}
 
-      {/* Footer */}
-      <View style={styles.footer}>
+      {/* Footer — tap opens the voter list sheet (gated when there are
+          votes; tapping a "No votes yet" footer is a no-op). */}
+      <Pressable
+        onPress={voterCount > 0 ? onShowVoters : undefined}
+        disabled={voterCount === 0}
+        style={({ pressed }) => [styles.footer, pressed && voterCount > 0 && styles.footerPressed]}
+        hitSlop={6}
+      >
         <Text style={[styles.footerText, { color: colors.textSecondary }]}>
           {voterCount === 0
             ? 'No votes yet'
@@ -321,10 +329,13 @@ export function PollCard({
                 voteCount === 1 ? 'vote' : 'votes'
               }`}
         </Text>
+        {voterCount > 0 && (
+          <Ionicons name="chevron-forward" size={14} color={colors.textTertiary} />
+        )}
         {editCount > 0 && (
           <Text style={[styles.footerEdited, { color: colors.textTertiary }]}>edited</Text>
         )}
-      </View>
+      </Pressable>
     </View>
   );
 }
@@ -454,6 +465,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 10,
     gap: 8,
+  },
+  footerPressed: {
+    opacity: 0.6,
   },
   footerText: {
     fontSize: 12,

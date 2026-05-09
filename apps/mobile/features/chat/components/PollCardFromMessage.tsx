@@ -13,6 +13,7 @@ import { api, useQuery, useStoredAuthToken, useAuthenticatedMutation } from '@se
 import { useTheme } from '@hooks/useTheme';
 import { PollCard } from './PollCard';
 import { PollCreatorSheet } from './PollCreatorSheet';
+import { PollVotersSheet } from './PollVotersSheet';
 
 interface Props {
   pollId: Id<'polls'>;
@@ -22,6 +23,7 @@ export function PollCardFromMessage({ pollId }: Props) {
   const { colors } = useTheme();
   const token = useStoredAuthToken();
   const [editing, setEditing] = useState(false);
+  const [showingVoters, setShowingVoters] = useState(false);
 
   const poll = useQuery(
     api.functions.messaging.polls.getPoll,
@@ -83,6 +85,7 @@ export function PollCardFromMessage({ pollId }: Props) {
         onEdit={() => setEditing(true)}
         onClose={handleClose}
         onDelete={handleDelete}
+        onShowVoters={() => setShowingVoters(true)}
       />
       {editing && (
         <PollCreatorSheet
@@ -95,6 +98,11 @@ export function PollCardFromMessage({ pollId }: Props) {
           onClose={() => setEditing(false)}
         />
       )}
+      <PollVotersSheet
+        visible={showingVoters}
+        pollId={showingVoters ? pollId : null}
+        onClose={() => setShowingVoters(false)}
+      />
     </>
   );
 }
