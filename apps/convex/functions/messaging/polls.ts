@@ -817,6 +817,19 @@ export const getPoll = query({
     const canModerate = isAuthor || isLeader;
     const canSeeIdentities = !poll.isAnonymous || isAuthor || isLeader;
 
+    // Counts always include every vote (so a blocker doesn't see a
+    // skewed total). Voter identity surfaces — preview avatars and the
+    // voters sheet — strip blocked users so the blocker doesn't see the
+    // person they explicitly hid from their feed reappear here. This
+    // mirrors how `getMessages` filters blocked senders' messages.
+    const blockedRows = await ctx.db
+      .query("chatUserBlocks")
+      .withIndex("by_blocker", (q) => q.eq("blockerId", userId))
+      .collect();
+    const blockedUserIds = new Set<string>(
+      blockedRows.map((b) => b.blockedId),
+    );
+
     // Build per-option counts AND a small voter-avatar preview (first
     // few voters per option, ordered earliest-first). Batch user
     // fetches by unique voter id so a multi-voter doesn't fan out.
@@ -838,10 +851,12 @@ export const getPoll = query({
     let voterUserById = new Map<Id<"users">, Doc<"users">>();
     if (canSeeIdentities && allVotes.length > 0) {
       // Only fetch users actually needed for previews (top N earliest
-      // voters per option) so very-large polls don't fan out user reads.
+      // voters per option, blocked users skipped) so very-large polls
+      // don't fan out user reads.
       const idsNeeded = new Set<Id<"users">>();
       for (const [, votes] of votesByOption) {
         const top = [...votes]
+          .filter((v) => !blockedUserIds.has(v.voterId))
           .sort((a, b) => a.createdAt - b.createdAt)
           .slice(0, PREVIEW_LIMIT);
         for (const v of top) idsNeeded.add(v.voterId);
@@ -864,6 +879,7 @@ export const getPoll = query({
         const optionVotes = votesByOption.get(o.id) ?? [];
         const voterPreview = canSeeIdentities
           ? [...optionVotes]
+              .filter((v) => !blockedUserIds.has(v.voterId))
               .sort((a, b) => a.createdAt - b.createdAt)
               .slice(0, PREVIEW_LIMIT)
               .map((v) => {
@@ -953,9 +969,26 @@ export const getPollVoters = query({
       .withIndex("by_poll", (q) => q.eq("pollId", args.pollId))
       .collect();
 
+    // Filter out users the viewer has blocked. Counts stay accurate
+    // (blocker shouldn't see a skewed total) but identities of blocked
+    // voters are stripped — same shape as `getMessages`'s blocker filter.
+    const blockedRows = await ctx.db
+      .query("chatUserBlocks")
+      .withIndex("by_blocker", (q) => q.eq("blockerId", userId))
+      .collect();
+    const blockedUserIds = new Set<string>(
+      blockedRows.map((b) => b.blockedId),
+    );
+
     // Resolve voter identities. Batch a unique-id lookup so we hit `users`
     // once per voter regardless of how many options they ticked.
-    const uniqueVoterIds = Array.from(new Set(allVotes.map((v) => v.voterId)));
+    const uniqueVoterIds = Array.from(
+      new Set(
+        allVotes
+          .filter((v) => !blockedUserIds.has(v.voterId))
+          .map((v) => v.voterId),
+      ),
+    );
     const voterUsers = await Promise.all(
       uniqueVoterIds.map((id) => ctx.db.get(id)),
     );
@@ -976,6 +1009,7 @@ export const getPollVoters = query({
       const optionVotes = votesByOption.get(opt.id) ?? [];
       const voters = canSeeIdentities
         ? optionVotes
+            .filter((v) => !blockedUserIds.has(v.voterId))
             .map((v) => {
               const user = userById.get(v.voterId);
               if (!user) return null;
