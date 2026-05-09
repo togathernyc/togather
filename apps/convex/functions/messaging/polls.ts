@@ -856,3 +856,110 @@ export const getPoll = query({
     };
   },
 });
+
+/**
+ * Read the per-option voter list for a poll.
+ *
+ * Returned shape groups voters by option so the UI can render sections
+ * directly. Each voter includes display name + profile photo for rendering
+ * an avatar row.
+ *
+ * Visibility: same channel-member gate as `getPoll`. When `isAnonymous`
+ * is true (reserved for v1, never set today), non-leaders see option
+ * counts but no voter identities — leaders / poll author always see
+ * full identities for moderation reasons.
+ */
+export const getPollVoters = query({
+  args: {
+    token: v.string(),
+    pollId: v.id("polls"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const poll = await ctx.db.get(args.pollId);
+    if (!poll) return null;
+
+    const channel = await ctx.db.get(poll.channelId);
+    if (!channel) return null;
+
+    if (channel.channelType === "event") {
+      if (!(await canAccessEventChannel(ctx, userId, channel))) return null;
+    } else {
+      const m = await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", poll.channelId).eq("userId", userId),
+        )
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .first();
+      if (!m) return null;
+    }
+
+    const isAuthor = poll.authorId === userId;
+    const isLeader = await isChannelGroupLeader(ctx, channel, userId);
+    const canSeeIdentities =
+      !poll.isAnonymous || isAuthor || isLeader;
+
+    const allVotes = await ctx.db
+      .query("pollVotes")
+      .withIndex("by_poll", (q) => q.eq("pollId", args.pollId))
+      .collect();
+
+    // Resolve voter identities. Batch a unique-id lookup so we hit `users`
+    // once per voter regardless of how many options they ticked.
+    const uniqueVoterIds = Array.from(new Set(allVotes.map((v) => v.voterId)));
+    const voterUsers = await Promise.all(
+      uniqueVoterIds.map((id) => ctx.db.get(id)),
+    );
+    const userById = new Map<Id<"users">, Doc<"users">>();
+    uniqueVoterIds.forEach((id, i) => {
+      const u = voterUsers[i];
+      if (u) userById.set(id, u);
+    });
+
+    const votesByOption = new Map<string, Array<typeof allVotes[number]>>();
+    for (const v of allVotes) {
+      const arr = votesByOption.get(v.optionId) ?? [];
+      arr.push(v);
+      votesByOption.set(v.optionId, arr);
+    }
+
+    const options = poll.options.map((opt) => {
+      const optionVotes = votesByOption.get(opt.id) ?? [];
+      const voters = canSeeIdentities
+        ? optionVotes
+            .map((v) => {
+              const user = userById.get(v.voterId);
+              if (!user) return null;
+              return {
+                userId: v.voterId,
+                displayName: getDisplayName(user.firstName, user.lastName),
+                profilePhoto: getMediaUrl(user.profilePhoto),
+                createdAt: v.createdAt,
+              };
+            })
+            .filter(
+              (v): v is NonNullable<typeof v> => v !== null,
+            )
+            // Stable order: earliest voter first per option
+            .sort((a, b) => a.createdAt - b.createdAt)
+        : [];
+      return {
+        id: opt.id,
+        text: opt.text,
+        count: optionVotes.length,
+        voters,
+      };
+    });
+
+    return {
+      pollId: poll._id,
+      isAnonymous: poll.isAnonymous,
+      canSeeIdentities,
+      voterCount: poll.voterCount,
+      voteCount: poll.voteCount,
+      options,
+    };
+  },
+});
