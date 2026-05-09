@@ -811,20 +811,63 @@ export const getPoll = query({
       .withIndex("by_poll", (q) => q.eq("pollId", args.pollId))
       .collect();
 
+    const isAuthor = poll.authorId === userId;
+    const isLeader = await isChannelGroupLeader(ctx, channel, userId);
+    const canVote = poll.status === "active";
+    const canModerate = isAuthor || isLeader;
+    const canSeeIdentities = !poll.isAnonymous || isAuthor || isLeader;
+
+    // Counts always include every vote (so a blocker doesn't see a
+    // skewed total). Voter identity surfaces — preview avatars and the
+    // voters sheet — strip blocked users so the blocker doesn't see the
+    // person they explicitly hid from their feed reappear here. This
+    // mirrors how `getMessages` filters blocked senders' messages.
+    const blockedRows = await ctx.db
+      .query("chatUserBlocks")
+      .withIndex("by_blocker", (q) => q.eq("blockerId", userId))
+      .collect();
+    const blockedUserIds = new Set<string>(
+      blockedRows.map((b) => b.blockedId),
+    );
+
+    // Build per-option counts AND a small voter-avatar preview (first
+    // few voters per option, ordered earliest-first). Batch user
+    // fetches by unique voter id so a multi-voter doesn't fan out.
     const countsByOption = new Map<string, number>();
     const myVoteIds: string[] = [];
+    const votesByOption = new Map<string, Array<typeof allVotes[number]>>();
     for (const v of allVotes) {
       countsByOption.set(
         v.optionId,
         (countsByOption.get(v.optionId) ?? 0) + 1,
       );
       if (v.voterId === userId) myVoteIds.push(v.optionId);
+      const arr = votesByOption.get(v.optionId) ?? [];
+      arr.push(v);
+      votesByOption.set(v.optionId, arr);
     }
 
-    const isAuthor = poll.authorId === userId;
-    const isLeader = await isChannelGroupLeader(ctx, channel, userId);
-    const canVote = poll.status === "active";
-    const canModerate = isAuthor || isLeader;
+    const PREVIEW_LIMIT = 4;
+    let voterUserById = new Map<Id<"users">, Doc<"users">>();
+    if (canSeeIdentities && allVotes.length > 0) {
+      // Only fetch users actually needed for previews (top N earliest
+      // voters per option, blocked users skipped) so very-large polls
+      // don't fan out user reads.
+      const idsNeeded = new Set<Id<"users">>();
+      for (const [, votes] of votesByOption) {
+        const top = [...votes]
+          .filter((v) => !blockedUserIds.has(v.voterId))
+          .sort((a, b) => a.createdAt - b.createdAt)
+          .slice(0, PREVIEW_LIMIT);
+        for (const v of top) idsNeeded.add(v.voterId);
+      }
+      const ids = Array.from(idsNeeded);
+      const users = await Promise.all(ids.map((id) => ctx.db.get(id)));
+      ids.forEach((id, i) => {
+        const u = users[i];
+        if (u) voterUserById.set(id, u);
+      });
+    }
 
     return {
       _id: poll._id,
@@ -832,11 +875,31 @@ export const getPoll = query({
       messageId: poll.messageId,
       authorId: poll.authorId,
       question: poll.question,
-      options: poll.options.map((o) => ({
-        id: o.id,
-        text: o.text,
-        count: countsByOption.get(o.id) ?? 0,
-      })),
+      options: poll.options.map((o) => {
+        const optionVotes = votesByOption.get(o.id) ?? [];
+        const voterPreview = canSeeIdentities
+          ? [...optionVotes]
+              .filter((v) => !blockedUserIds.has(v.voterId))
+              .sort((a, b) => a.createdAt - b.createdAt)
+              .slice(0, PREVIEW_LIMIT)
+              .map((v) => {
+                const user = voterUserById.get(v.voterId);
+                if (!user) return null;
+                return {
+                  userId: v.voterId,
+                  displayName: getDisplayName(user.firstName, user.lastName),
+                  profilePhoto: getMediaUrl(user.profilePhoto),
+                };
+              })
+              .filter((x): x is NonNullable<typeof x> => x !== null)
+          : [];
+        return {
+          id: o.id,
+          text: o.text,
+          count: countsByOption.get(o.id) ?? 0,
+          voterPreview,
+        };
+      }),
       allowMultiple: poll.allowMultiple,
       isAnonymous: poll.isAnonymous,
       status: poll.status,
@@ -853,6 +916,146 @@ export const getPoll = query({
         canClose: canModerate && poll.status === "active",
         canDelete: canModerate,
       },
+    };
+  },
+});
+
+/**
+ * Read the per-option voter list for a poll.
+ *
+ * Returned shape groups voters by option so the UI can render sections
+ * directly. Each voter includes display name + profile photo for rendering
+ * an avatar row.
+ *
+ * Visibility: same channel-member gate as `getPoll`. When `isAnonymous`
+ * is true (reserved for v1, never set today), non-leaders see option
+ * counts but no voter identities — leaders / poll author always see
+ * full identities for moderation reasons.
+ */
+export const getPollVoters = query({
+  args: {
+    token: v.string(),
+    pollId: v.id("polls"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const poll = await ctx.db.get(args.pollId);
+    if (!poll) return null;
+
+    const channel = await ctx.db.get(poll.channelId);
+    if (!channel) return null;
+
+    if (channel.channelType === "event") {
+      if (!(await canAccessEventChannel(ctx, userId, channel))) return null;
+    } else {
+      const m = await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", poll.channelId).eq("userId", userId),
+        )
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .first();
+      if (!m) return null;
+    }
+
+    const isAuthor = poll.authorId === userId;
+    const isLeader = await isChannelGroupLeader(ctx, channel, userId);
+    const canSeeIdentities =
+      !poll.isAnonymous || isAuthor || isLeader;
+
+    // Cap how many vote rows we materialize. Convex queries have a
+    // function-level read limit, and a poll with thousands of voters
+    // would otherwise either hit it or fan out one users.get per voter.
+    // For v1 community-app polls a few hundred is plenty; the UI shows
+    // a "+N more" hint when truncated. Move to true pagination if a
+    // real-world poll ever crosses this threshold.
+    const VOTERS_QUERY_CAP = 500;
+    const cappedVotes = await ctx.db
+      .query("pollVotes")
+      .withIndex("by_poll", (q) => q.eq("pollId", args.pollId))
+      .take(VOTERS_QUERY_CAP + 1);
+    const truncated = cappedVotes.length > VOTERS_QUERY_CAP;
+    const allVotes = truncated
+      ? cappedVotes.slice(0, VOTERS_QUERY_CAP)
+      : cappedVotes;
+
+    // Filter out users the viewer has blocked. Counts stay accurate
+    // (blocker shouldn't see a skewed total) but identities of blocked
+    // voters are stripped — same shape as `getMessages`'s blocker filter.
+    const blockedRows = await ctx.db
+      .query("chatUserBlocks")
+      .withIndex("by_blocker", (q) => q.eq("blockerId", userId))
+      .collect();
+    const blockedUserIds = new Set<string>(
+      blockedRows.map((b) => b.blockedId),
+    );
+
+    // Resolve voter identities. Batch a unique-id lookup so we hit `users`
+    // once per voter regardless of how many options they ticked.
+    const uniqueVoterIds = Array.from(
+      new Set(
+        allVotes
+          .filter((v) => !blockedUserIds.has(v.voterId))
+          .map((v) => v.voterId),
+      ),
+    );
+    const voterUsers = await Promise.all(
+      uniqueVoterIds.map((id) => ctx.db.get(id)),
+    );
+    const userById = new Map<Id<"users">, Doc<"users">>();
+    uniqueVoterIds.forEach((id, i) => {
+      const u = voterUsers[i];
+      if (u) userById.set(id, u);
+    });
+
+    const votesByOption = new Map<string, Array<typeof allVotes[number]>>();
+    for (const v of allVotes) {
+      const arr = votesByOption.get(v.optionId) ?? [];
+      arr.push(v);
+      votesByOption.set(v.optionId, arr);
+    }
+
+    const options = poll.options.map((opt) => {
+      const optionVotes = votesByOption.get(opt.id) ?? [];
+      const voters = canSeeIdentities
+        ? optionVotes
+            .filter((v) => !blockedUserIds.has(v.voterId))
+            .map((v) => {
+              const user = userById.get(v.voterId);
+              if (!user) return null;
+              return {
+                userId: v.voterId,
+                displayName: getDisplayName(user.firstName, user.lastName),
+                profilePhoto: getMediaUrl(user.profilePhoto),
+                createdAt: v.createdAt,
+              };
+            })
+            .filter(
+              (v): v is NonNullable<typeof v> => v !== null,
+            )
+            // Stable order: earliest voter first per option
+            .sort((a, b) => a.createdAt - b.createdAt)
+        : [];
+      return {
+        id: opt.id,
+        text: opt.text,
+        count: optionVotes.length,
+        voters,
+      };
+    });
+
+    return {
+      pollId: poll._id,
+      isAnonymous: poll.isAnonymous,
+      canSeeIdentities,
+      voterCount: poll.voterCount,
+      voteCount: poll.voteCount,
+      options,
+      // True when the poll has more vote rows than VOTERS_QUERY_CAP and
+      // the returned `voters` arrays are a prefix of the full list. The
+      // sheet UI surfaces this with a "Showing first N voters" hint.
+      truncated,
     };
   },
 });
