@@ -20,12 +20,19 @@ import {
   Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { Avatar } from '@components/ui';
 import { useTheme } from '@hooks/useTheme';
+import type { Id } from '@services/api/convex';
 
 export interface PollCardOption {
   id: string;
   text: string;
   count: number;
+  voterPreview: Array<{
+    userId: Id<'users'>;
+    displayName: string;
+    profilePhoto?: string;
+  }>;
 }
 
 export interface PollCardProps {
@@ -47,6 +54,7 @@ export interface PollCardProps {
   onEdit: () => void;
   onClose: () => void;
   onDelete: () => void;
+  onShowVoters: () => void;
 }
 
 export function PollCard({
@@ -63,6 +71,7 @@ export function PollCard({
   onEdit,
   onClose,
   onDelete,
+  onShowVoters,
 }: PollCardProps) {
   const { colors } = useTheme();
   const isClosed = status === 'closed';
@@ -281,6 +290,53 @@ export function PollCard({
                 >
                   {opt.text}
                 </Text>
+                {/* Voter avatar stack — RSVP-style. Uses voterPreview
+                    (top 4 earliest voters) returned by getPoll, with a
+                    "+N" overflow chip when there are more. Tapping
+                    surfaces the full voters list via the parent
+                    onShowVoters callback. */}
+                {opt.voterPreview.length > 0 && (
+                  <Pressable
+                    onPress={onShowVoters}
+                    hitSlop={6}
+                    style={styles.avatarStack}
+                  >
+                    {opt.voterPreview.map((v, i) => (
+                      <View
+                        key={v.userId}
+                        style={[
+                          styles.avatarStackItem,
+                          {
+                            marginLeft: i === 0 ? 0 : -8,
+                            borderColor: colors.surface,
+                            zIndex: opt.voterPreview.length - i,
+                          },
+                        ]}
+                      >
+                        <Avatar
+                          name={v.displayName}
+                          imageUrl={v.profilePhoto}
+                          size={20}
+                        />
+                      </View>
+                    ))}
+                    {opt.count > opt.voterPreview.length && (
+                      <View
+                        style={[
+                          styles.avatarOverflow,
+                          {
+                            backgroundColor: colors.surfaceSecondary,
+                            borderColor: colors.surface,
+                          },
+                        ]}
+                      >
+                        <Text style={[styles.avatarOverflowText, { color: colors.textSecondary }]}>
+                          +{opt.count - opt.voterPreview.length}
+                        </Text>
+                      </View>
+                    )}
+                  </Pressable>
+                )}
                 {totalVotes > 0 && (
                   <Text style={[styles.optionCount, { color: colors.textSecondary }]}>
                     {opt.count}
@@ -312,8 +368,14 @@ export function PollCard({
         </Pressable>
       )}
 
-      {/* Footer */}
-      <View style={styles.footer}>
+      {/* Footer — tap opens the voter list sheet (gated when there are
+          votes; tapping a "No votes yet" footer is a no-op). */}
+      <Pressable
+        onPress={voterCount > 0 ? onShowVoters : undefined}
+        disabled={voterCount === 0}
+        style={({ pressed }) => [styles.footer, pressed && voterCount > 0 && styles.footerPressed]}
+        hitSlop={6}
+      >
         <Text style={[styles.footerText, { color: colors.textSecondary }]}>
           {voterCount === 0
             ? 'No votes yet'
@@ -321,10 +383,13 @@ export function PollCard({
                 voteCount === 1 ? 'vote' : 'votes'
               }`}
         </Text>
+        {voterCount > 0 && (
+          <Ionicons name="chevron-forward" size={14} color={colors.textTertiary} />
+        )}
         {editCount > 0 && (
           <Text style={[styles.footerEdited, { color: colors.textTertiary }]}>edited</Text>
         )}
-      </View>
+      </Pressable>
     </View>
   );
 }
@@ -438,6 +503,27 @@ const styles = StyleSheet.create({
     minWidth: 24,
     textAlign: 'right',
   },
+  avatarStack: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  avatarStackItem: {
+    borderWidth: 1.5,
+    borderRadius: 12,
+  },
+  avatarOverflow: {
+    marginLeft: -8,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarOverflowText: {
+    fontSize: 9,
+    fontWeight: '600',
+  },
   submitButton: {
     marginTop: 12,
     borderRadius: 10,
@@ -454,6 +540,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 10,
     gap: 8,
+  },
+  footerPressed: {
+    opacity: 0.6,
   },
   footerText: {
     fontSize: 12,
