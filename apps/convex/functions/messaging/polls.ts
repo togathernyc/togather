@@ -27,6 +27,7 @@ import {
 import { getDisplayName, getMediaUrl } from "../../lib/utils";
 import { canAccessEventChannel } from "./eventChat";
 import { generateMessagePreview } from "./messages";
+import { checkRateLimit } from "../../lib/rateLimit";
 
 const MAX_QUESTION_LENGTH = 280;
 const MAX_OPTION_TEXT_LENGTH = 120;
@@ -237,6 +238,13 @@ export const createPoll = mutation({
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
 
+    // Share the same rate-limit bucket as `sendMessage` (`msg:${userId}`,
+    // 20/min). Without this a member could fan polls out indefinitely
+    // through the same notification path while ordinary text messages
+    // are capped — and a poll fans out to every channel member just like
+    // a normal send.
+    await checkRateLimit(ctx, `msg:${userId}`, 20, 60_000);
+
     validatePollContent(args.question, args.options);
 
     const channel = await ctx.db.get(args.channelId);
@@ -364,6 +372,18 @@ export const voteOnPoll = mutation({
         .filter((q) => q.eq(q.field("leftAt"), undefined))
         .first();
       if (!m) throw new ConvexError("Not a member of this channel");
+
+      // Ad-hoc DM/group_dm: a pending recipient can READ the request but
+      // can't take any send-shape action until they accept. Voting writes
+      // a row that fans out via reactivity, so it falls under the same
+      // gate as `sendMessage` does for ad-hoc channels.
+      if (
+        channel.isAdHoc &&
+        m.requestState !== undefined &&
+        m.requestState !== "accepted"
+      ) {
+        throw new ConvexError("Accept the request before voting");
+      }
     }
 
     // Validate option ids belong to this poll.
