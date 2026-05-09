@@ -811,20 +811,48 @@ export const getPoll = query({
       .withIndex("by_poll", (q) => q.eq("pollId", args.pollId))
       .collect();
 
+    const isAuthor = poll.authorId === userId;
+    const isLeader = await isChannelGroupLeader(ctx, channel, userId);
+    const canVote = poll.status === "active";
+    const canModerate = isAuthor || isLeader;
+    const canSeeIdentities = !poll.isAnonymous || isAuthor || isLeader;
+
+    // Build per-option counts AND a small voter-avatar preview (first
+    // few voters per option, ordered earliest-first). Batch user
+    // fetches by unique voter id so a multi-voter doesn't fan out.
     const countsByOption = new Map<string, number>();
     const myVoteIds: string[] = [];
+    const votesByOption = new Map<string, Array<typeof allVotes[number]>>();
     for (const v of allVotes) {
       countsByOption.set(
         v.optionId,
         (countsByOption.get(v.optionId) ?? 0) + 1,
       );
       if (v.voterId === userId) myVoteIds.push(v.optionId);
+      const arr = votesByOption.get(v.optionId) ?? [];
+      arr.push(v);
+      votesByOption.set(v.optionId, arr);
     }
 
-    const isAuthor = poll.authorId === userId;
-    const isLeader = await isChannelGroupLeader(ctx, channel, userId);
-    const canVote = poll.status === "active";
-    const canModerate = isAuthor || isLeader;
+    const PREVIEW_LIMIT = 4;
+    let voterUserById = new Map<Id<"users">, Doc<"users">>();
+    if (canSeeIdentities && allVotes.length > 0) {
+      // Only fetch users actually needed for previews (top N earliest
+      // voters per option) so very-large polls don't fan out user reads.
+      const idsNeeded = new Set<Id<"users">>();
+      for (const [, votes] of votesByOption) {
+        const top = [...votes]
+          .sort((a, b) => a.createdAt - b.createdAt)
+          .slice(0, PREVIEW_LIMIT);
+        for (const v of top) idsNeeded.add(v.voterId);
+      }
+      const ids = Array.from(idsNeeded);
+      const users = await Promise.all(ids.map((id) => ctx.db.get(id)));
+      ids.forEach((id, i) => {
+        const u = users[i];
+        if (u) voterUserById.set(id, u);
+      });
+    }
 
     return {
       _id: poll._id,
@@ -832,11 +860,30 @@ export const getPoll = query({
       messageId: poll.messageId,
       authorId: poll.authorId,
       question: poll.question,
-      options: poll.options.map((o) => ({
-        id: o.id,
-        text: o.text,
-        count: countsByOption.get(o.id) ?? 0,
-      })),
+      options: poll.options.map((o) => {
+        const optionVotes = votesByOption.get(o.id) ?? [];
+        const voterPreview = canSeeIdentities
+          ? [...optionVotes]
+              .sort((a, b) => a.createdAt - b.createdAt)
+              .slice(0, PREVIEW_LIMIT)
+              .map((v) => {
+                const user = voterUserById.get(v.voterId);
+                if (!user) return null;
+                return {
+                  userId: v.voterId,
+                  displayName: getDisplayName(user.firstName, user.lastName),
+                  profilePhoto: getMediaUrl(user.profilePhoto),
+                };
+              })
+              .filter((x): x is NonNullable<typeof x> => x !== null)
+          : [];
+        return {
+          id: o.id,
+          text: o.text,
+          count: countsByOption.get(o.id) ?? 0,
+          voterPreview,
+        };
+      }),
       allowMultiple: poll.allowMultiple,
       isAnonymous: poll.isAnonymous,
       status: poll.status,
