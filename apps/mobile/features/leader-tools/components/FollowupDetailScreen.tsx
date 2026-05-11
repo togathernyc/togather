@@ -41,12 +41,14 @@ const SNOOZE_OPTIONS: { value: SnoozeDuration; label: string }[] = [
 export function FollowupDetailContent({
   groupId,
   memberId,
+  memberIdKind = "communityPeople",
   onClose,
   scrollToNotes,
   scrollToTasks,
 }: {
   groupId: string;
   memberId: string;
+  memberIdKind?: "communityPeople" | "groupMember";
   onClose?: () => void;
   scrollToNotes?: boolean;
   scrollToTasks?: boolean;
@@ -120,15 +122,21 @@ export function FollowupDetailContent({
   const member_id = memberId;
 
   // Fetch member history using Convex.
-  // Both per-group and cross-group modes now use communityPeople records via adaptCommunityPerson,
-  // so memberId is always a communityPeople ID.
+  // Per-group / cross-group entry points pass a communityPeople ID; the
+  // followup_assigned push notification route passes a groupMembers ID, so the
+  // caller signals which kind of ID this is via memberIdKind.
   const historyData = useAuthenticatedQuery(
     api.functions.communityPeople.history,
     member_id
-      ? {
-          communityPeopleId: member_id as Id<"communityPeople">,
-          currentUserId: currentUserId,
-        }
+      ? memberIdKind === "groupMember"
+        ? {
+            groupMemberId: member_id as Id<"groupMembers">,
+            currentUserId: currentUserId,
+          }
+        : {
+            communityPeopleId: member_id as Id<"communityPeople">,
+            currentUserId: currentUserId,
+          }
       : "skip"
   );
 
@@ -1549,7 +1557,11 @@ export function FollowupDetailContent({
 /**
  * Full-screen route wrapper — adds DragHandle.
  */
-export function FollowupDetailScreen() {
+export function FollowupDetailScreen({
+  memberIdKind,
+}: {
+  memberIdKind?: "communityPeople" | "groupMember";
+} = {}) {
   const { colors } = useTheme();
   const { group_id, member_id, cross_group } = useLocalSearchParams<{
     group_id: string;
@@ -1563,6 +1575,7 @@ export function FollowupDetailScreen() {
       <FollowupDetailContent
         groupId={group_id || ""}
         memberId={member_id || ""}
+        memberIdKind={memberIdKind}
       />
     </>
   );
