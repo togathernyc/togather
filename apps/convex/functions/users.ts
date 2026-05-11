@@ -482,6 +482,17 @@ export const update = mutation({
       });
     }
 
+    // If name changed, fan out marketing integration syncs (Clearstream / Flodesk)
+    // across the user's active communities. Per-community sync is a no-op if no
+    // marketing integration is connected, so over-firing is cheap.
+    if (args.firstName !== undefined || args.lastName !== undefined) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.integrations.triggers.syncUserAllCommunities,
+        { userId },
+      );
+    }
+
     // If zipCode changed, sync to all communityPeople records for this user
     if (args.zipCode !== undefined) {
       const cpRecords = await ctx.db

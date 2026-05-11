@@ -984,6 +984,18 @@ export const selectCommunityForUser = mutation({
           communityId: args.communityId,
         });
 
+        // Schedule marketing integration syncs (no-op if not connected)
+        await ctx.scheduler.runAfter(
+          0,
+          internal.functions.integrations.clearstream.syncUser,
+          { userId, communityId: args.communityId },
+        );
+        await ctx.scheduler.runAfter(
+          0,
+          internal.functions.integrations.flodesk.syncUser,
+          { userId, communityId: args.communityId },
+        );
+
         // Add to announcement group
         await ctx.runMutation(internal.functions.sync.memberships.syncMemberships, {
           userId,
@@ -1012,6 +1024,18 @@ export const selectCommunityForUser = mutation({
         userId,
         communityId: args.communityId,
       });
+
+      // Schedule marketing integration syncs (no-op if not connected)
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.integrations.clearstream.syncUser,
+        { userId, communityId: args.communityId },
+      );
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.integrations.flodesk.syncUser,
+        { userId, communityId: args.communityId },
+      );
 
       // Add to announcement group
       await ctx.runMutation(internal.functions.sync.memberships.syncMemberships, {
