@@ -303,8 +303,11 @@ export const _markError = internalMutation({
       )
       .first();
     if (integration) {
+      // Record the failure but leave `status` alone — flipping a connected
+      // integration to "error" would cause syncUser to short-circuit on every
+      // subsequent join/profile edit until an admin reconnects, so one
+      // transient API blip would disable the integration entirely.
       await ctx.db.patch(integration._id, {
-        status: "error",
         lastError: args.error,
         updatedAt: now(),
       });

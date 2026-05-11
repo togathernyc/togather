@@ -314,8 +314,11 @@ export const _markError = internalMutation({
       )
       .first();
     if (integration) {
+      // Record the failure but leave `status` alone — flipping a connected
+      // integration to "error" would cause syncUser to short-circuit on every
+      // subsequent join/profile edit until an admin reconnects, so one
+      // transient API blip would disable the integration entirely.
       await ctx.db.patch(integration._id, {
-        status: "error",
         lastError: args.error,
         updatedAt: now(),
       });
@@ -494,6 +497,10 @@ export const syncUser = internalAction({
           last: user.lastName || undefined,
           email: user.email || undefined,
           lists: [config.listId],
+          // Clearstream's create endpoint leaves an existing subscriber's
+          // attributes alone unless this flag is set, so profile edits would
+          // otherwise be silently dropped for users already on the list.
+          overwrite_attributes: true,
         }),
       });
       if (!res.ok) {
