@@ -1144,8 +1144,10 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
         groupName={eventData?.groupName}
       />
 
-      {/* Event Blast Sheet */}
-      {isLeader && (
+      {/* Event Blast Sheet — gate matches the CTA's canEdit predicate so
+          community admins (canEdit but !isLeader) get a working sheet, not
+          a no-op button. Server still authoritative. */}
+      {canEdit && (
         <EventBlastSheet
           visible={showBlastSheet}
           meetingId={eventData.id as string}
