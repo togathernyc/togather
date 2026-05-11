@@ -78,7 +78,8 @@ export function InviteGroupMembersSheet({
     if (initialized || !members) return;
     const defaultIds = new Set<string>();
     for (const m of members) {
-      if (m.hasPhone && !m.alreadyInvited && !m.alreadyRsvped) {
+      const reachable = m.hasPhone || m.hasPushTokens;
+      if (reachable && !m.alreadyInvited && !m.alreadyRsvped) {
         defaultIds.add(m.userId);
       }
     }
@@ -96,15 +97,16 @@ export function InviteGroupMembersSheet({
     });
   }, [members, search]);
 
-  // "Eligible" matches the default-seed predicate: members with a phone who
-  // haven't been invited and haven't already RSVP'd. Already-RSVP'd members
-  // are still tappable individually (a host may want to nudge them), but
-  // they're excluded from Select All so a bulk action can't accidentally
-  // re-text people who are already attending.
+  // "Eligible" = reachable (phone or push), not already invited, not already
+  // RSVP'd. Reachable-via-push-only members are included because the backend
+  // treats SMS-skipped as a non-failing channel.
   const eligibleCount = useMemo(
     () =>
       members?.filter(
-        (m) => m.hasPhone && !m.alreadyInvited && !m.alreadyRsvped,
+        (m) =>
+          (m.hasPhone || m.hasPushTokens) &&
+          !m.alreadyInvited &&
+          !m.alreadyRsvped,
       ).length ?? 0,
     [members],
   );
@@ -112,7 +114,12 @@ export function InviteGroupMembersSheet({
   const allEligibleSelected = useMemo(() => {
     if (!members) return false;
     return members
-      .filter((m) => m.hasPhone && !m.alreadyInvited && !m.alreadyRsvped)
+      .filter(
+        (m) =>
+          (m.hasPhone || m.hasPushTokens) &&
+          !m.alreadyInvited &&
+          !m.alreadyRsvped,
+      )
       .every((m) => selectedIds.has(m.userId));
   }, [members, selectedIds]);
 
@@ -131,7 +138,8 @@ export function InviteGroupMembersSheet({
       if (allEligibleSelected) return new Set();
       const next = new Set(prev);
       for (const m of members) {
-        if (m.hasPhone && !m.alreadyInvited && !m.alreadyRsvped) {
+        const reachable = m.hasPhone || m.hasPushTokens;
+        if (reachable && !m.alreadyInvited && !m.alreadyRsvped) {
           next.add(m.userId);
         }
       }
@@ -296,19 +304,23 @@ export function InviteGroupMembersSheet({
                 )}
 
                 {filtered.map((m) => {
-                  // RSVP'd members are disabled to prevent accidental
-                  // re-invites — the existing Text Blast handles messaging
-                  // attendees.
+                  // A member is unreachable only if they have neither a phone
+                  // nor an active push token. RSVP'd members are disabled to
+                  // prevent accidental re-invites — Text Blast handles that
+                  // path.
+                  const reachable = m.hasPhone || m.hasPushTokens;
                   const disabled =
-                    !m.hasPhone || m.alreadyInvited || m.alreadyRsvped;
+                    !reachable || m.alreadyInvited || m.alreadyRsvped;
                   const selected = selectedIds.has(m.userId);
                   const badge = m.alreadyInvited
                     ? "Invited"
-                    : !m.hasPhone
-                      ? "No phone"
-                      : m.alreadyRsvped
-                        ? "Going"
-                        : null;
+                    : !reachable
+                      ? "Unreachable"
+                      : !m.hasPhone
+                        ? "Push only"
+                        : m.alreadyRsvped
+                          ? "Going"
+                          : null;
                   return (
                     <TouchableOpacity
                       key={m.userId}
@@ -343,11 +355,9 @@ export function InviteGroupMembersSheet({
                             styles.badge,
                             {
                               color:
-                                badge === "No phone"
-                                  ? colors.textSecondary
-                                  : badge === "Going"
-                                    ? "#16A34A"
-                                    : colors.textSecondary,
+                                badge === "Going"
+                                  ? "#16A34A"
+                                  : colors.textSecondary,
                             },
                           ]}
                         >

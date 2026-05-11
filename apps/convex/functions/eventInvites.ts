@@ -21,6 +21,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import { requireAuth } from "../lib/auth";
 import { canEditMeeting } from "../lib/meetingPermissions";
 import { now, getMediaUrl } from "../lib/utils";
+import { getCurrentEnvironment } from "../lib/notifications/send";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
 
 // 24h cooldown between sends to the same recipient for a given meeting.
@@ -145,6 +146,24 @@ export const listGroupMembersForInvite = query({
       .collect();
     const rsvpUserIds = new Set(rsvps.map((r) => r.userId));
 
+    // Active push tokens per user, scoped to current environment. Mirrors the
+    // `getActiveTokensForUsers` internalQuery so a member with no phone but a
+    // live push token isn't falsely shown as uninvitable.
+    const environment = getCurrentEnvironment();
+    const tokenCounts = await Promise.all(
+      memberUserIds.map(async (id) => {
+        const tokens = await ctx.db
+          .query("pushTokens")
+          .withIndex("by_user", (q) => q.eq("userId", id))
+          .filter((q) => q.eq(q.field("environment"), environment))
+          .collect();
+        return [id, tokens.length] as const;
+      }),
+    );
+    const hasPushByUser = new Map(
+      tokenCounts.map(([id, n]) => [id, n > 0]),
+    );
+
     return users
       .map((user, i) => {
         if (!user) return null;
@@ -156,6 +175,7 @@ export const listGroupMembersForInvite = query({
           lastName: user.lastName ?? null,
           profilePhoto: getMediaUrl(user.profilePhoto) ?? null,
           hasPhone: !!user.phone,
+          hasPushTokens: hasPushByUser.get(id) ?? false,
           alreadyInvited: !!existing,
           inviteStatus: existing?.status ?? null,
           inviteRound: existing?.inviteRound ?? 0,
@@ -165,9 +185,12 @@ export const listGroupMembersForInvite = query({
       })
       .filter((m): m is NonNullable<typeof m> => m !== null)
       .sort((a, b) => {
-        // Already-invited last, then non-phone last, then alphabetical
+        // Already-invited last, then members with no reachable channel last,
+        // then alphabetical.
         if (a.alreadyInvited !== b.alreadyInvited) return a.alreadyInvited ? 1 : -1;
-        if (a.hasPhone !== b.hasPhone) return a.hasPhone ? -1 : 1;
+        const aReachable = a.hasPhone || a.hasPushTokens;
+        const bReachable = b.hasPhone || b.hasPushTokens;
+        if (aReachable !== bReachable) return aReachable ? -1 : 1;
         const an = `${a.firstName || ""} ${a.lastName || ""}`.toLowerCase();
         const bn = `${b.firstName || ""} ${b.lastName || ""}`.toLowerCase();
         return an.localeCompare(bn);
