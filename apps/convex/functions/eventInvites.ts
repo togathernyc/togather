@@ -379,10 +379,13 @@ export const reinvite = mutation({
       }
 
       const recipient = await ctx.db.get(recipientUserId);
+      // Always snapshot the current phone — never fall back to the old row's
+      // value. If the user removed/changed their phone, we should respect
+      // that and let SMS be skipped rather than texting the stale number.
       await ctx.db.patch(existing._id, {
         sentById: userId,
         personalNote: personalNote ?? existing.personalNote,
-        phone: recipient?.phone || existing.phone,
+        phone: recipient?.phone || undefined,
         status: "pending",
         smsStatus: undefined,
         pushStatus: undefined,
