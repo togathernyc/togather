@@ -101,8 +101,17 @@ export async function canEditMeeting(
     return true;
   }
 
-  if (meeting.communityId) {
-    return await isCommunityAdmin(ctx, meeting.communityId, userId);
+  // meeting.communityId is denormalized from the group and is optional on
+  // legacy rows. Fall back to the group's community so community admins keep
+  // edit access on those events — matches how the share page resolves the
+  // event's community for the local canEdit gate.
+  let communityId = meeting.communityId;
+  if (!communityId) {
+    const group = await ctx.db.get(meeting.groupId);
+    communityId = group?.communityId;
+  }
+  if (communityId) {
+    return await isCommunityAdmin(ctx, communityId, userId);
   }
   return false;
 }
