@@ -284,8 +284,22 @@ export const _getIntegration = internalQuery({
 });
 
 export const _getUserForSync = internalQuery({
-  args: { userId: v.id("users") },
+  args: {
+    userId: v.id("users"),
+    communityId: v.id("communities"),
+  },
   handler: async (ctx, args) => {
+    // Gate sync on active membership: queued syncs can fire after the user
+    // left or was removed, and the public admin wrapper accepts any userId.
+    const membership = await ctx.db
+      .query("userCommunities")
+      .withIndex("by_user_community", (q) =>
+        q.eq("userId", args.userId).eq("communityId", args.communityId),
+      )
+      .first();
+    if (!membership || membership.status !== 1) {
+      return null;
+    }
     return await ctx.db.get(args.userId);
   },
 });
@@ -464,10 +478,10 @@ export const syncUser = internalAction({
 
     const user = await ctx.runQuery(
       internal.functions.marketing.flodesk._getUserForSync,
-      { userId: args.userId },
+      { userId: args.userId, communityId: args.communityId },
     );
     if (!user) {
-      return { synced: false, reason: "user_not_found" };
+      return { synced: false, reason: "not_active_member" };
     }
     if (!user.email) {
       return { synced: false, reason: "no_email" };

@@ -295,8 +295,22 @@ export const _getIntegration = internalQuery({
 });
 
 export const _getUserForSync = internalQuery({
-  args: { userId: v.id("users") },
+  args: {
+    userId: v.id("users"),
+    communityId: v.id("communities"),
+  },
   handler: async (ctx, args) => {
+    // Gate sync on active membership: queued syncs can fire after the user
+    // left or was removed, and the public admin wrapper accepts any userId.
+    const membership = await ctx.db
+      .query("userCommunities")
+      .withIndex("by_user_community", (q) =>
+        q.eq("userId", args.userId).eq("communityId", args.communityId),
+      )
+      .first();
+    if (!membership || membership.status !== 1) {
+      return null;
+    }
     return await ctx.db.get(args.userId);
   },
 });
@@ -406,17 +420,46 @@ export const listGroups = action({
       throw new Error("No Clearstream API key configured");
     }
 
-    const res = await clearstreamFetch(apiKey, "/lists");
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(`Clearstream API error ${res.status}: ${body}`);
-    }
-    const data = (await res.json()) as {
-      lists?: Array<{ id: string | number; name: string; subscriber_count?: number }>;
-      data?: Array<{ id: string | number; name: string; subscriber_count?: number }>;
-    };
-    const lists = data.lists ?? data.data ?? [];
-    return lists.map((l) => ({
+    // /lists is paginated (page/limit/pages per Clearstream docs). Walk every
+    // page so the picker shows every list, not just the first one.
+    const limit = 100;
+    const all: Array<{
+      id: string | number;
+      name: string;
+      subscriber_count?: number;
+    }> = [];
+    let page = 1;
+    let pages = 1;
+    do {
+      const res = await clearstreamFetch(
+        apiKey,
+        `/lists?page=${page}&limit=${limit}`,
+      );
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(`Clearstream API error ${res.status}: ${body}`);
+      }
+      const data = (await res.json()) as {
+        lists?: Array<{
+          id: string | number;
+          name: string;
+          subscriber_count?: number;
+        }>;
+        data?: Array<{
+          id: string | number;
+          name: string;
+          subscriber_count?: number;
+        }>;
+        pages?: number;
+        meta?: { pages?: number; total_pages?: number };
+      };
+      const lists = data.lists ?? data.data ?? [];
+      all.push(...lists);
+      pages =
+        data.pages ?? data.meta?.pages ?? data.meta?.total_pages ?? 1;
+      page += 1;
+    } while (page <= pages);
+    return all.map((l) => ({
       id: String(l.id),
       name: l.name,
       subscriberCount: l.subscriber_count,
@@ -474,10 +517,10 @@ export const syncUser = internalAction({
 
     const user = await ctx.runQuery(
       internal.functions.marketing.clearstream._getUserForSync,
-      { userId: args.userId },
+      { userId: args.userId, communityId: args.communityId },
     );
     if (!user) {
-      return { synced: false, reason: "user_not_found" };
+      return { synced: false, reason: "not_active_member" };
     }
     if (!user.phone) {
       // Clearstream is SMS-only; no phone, no sync
