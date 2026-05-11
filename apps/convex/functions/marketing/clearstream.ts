@@ -427,6 +427,7 @@ export const listGroups = action({
       id: string | number;
       name: string;
       subscriber_count?: number;
+      locked?: boolean;
     }> = [];
     let page = 1;
     let pages = 1;
@@ -444,11 +445,13 @@ export const listGroups = action({
           id: string | number;
           name: string;
           subscriber_count?: number;
+          locked?: boolean;
         }>;
         data?: Array<{
           id: string | number;
           name: string;
           subscriber_count?: number;
+          locked?: boolean;
         }>;
         pages?: number;
         meta?: { pages?: number; total_pages?: number };
@@ -459,11 +462,16 @@ export const listGroups = action({
         data.pages ?? data.meta?.pages ?? data.meta?.total_pages ?? 1;
       page += 1;
     } while (page <= pages);
-    return all.map((l) => ({
-      id: String(l.id),
-      name: l.name,
-      subscriberCount: l.subscriber_count,
-    }));
+    // Locked lists (e.g. Clearstream-imported lists) reject subscriber writes,
+    // so excluding them from the picker prevents admins from picking a list
+    // that would break every member sync.
+    return all
+      .filter((l) => !l.locked)
+      .map((l) => ({
+        id: String(l.id),
+        name: l.name,
+        subscriberCount: l.subscriber_count,
+      }));
   },
 });
 
