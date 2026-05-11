@@ -120,7 +120,7 @@ export const listGroupMembersForInvite = query({
       .collect();
 
     const accepted = members.filter(
-      (m) => !m.requestStatus || m.requestStatus === "accepted",
+      (m) => !m.requestStatus || m.requestStatus === "accepted" || m.requestStatus === "approved",
     );
 
     const memberUserIds = accepted
@@ -249,7 +249,7 @@ export const initiate = mutation({
       .collect();
     const memberSet = new Set(
       memberships
-        .filter((m) => !m.requestStatus || m.requestStatus === "accepted")
+        .filter((m) => !m.requestStatus || m.requestStatus === "accepted" || m.requestStatus === "approved")
         .map((m) => m.userId),
     );
 
