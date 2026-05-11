@@ -291,7 +291,18 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
     const hosts = ((eventData as any)?.hosts as Array<{ id: string }> | undefined) ?? [];
     return hosts.some((h) => String(h.id) === String(user.id));
   })();
-  const canEdit = isLeader || isHost;
+  // Community admins of the event's community also pass canEditMeeting on
+  // the server. Check against the event's communityId (not the user's
+  // currently selected community) so admins viewing a cross-community share
+  // link still get the host UI.
+  const isEventCommunityAdmin =
+    !!(eventData as any)?.communityId &&
+    (userData?.community_memberships?.some(
+      (m: { role: number; community_id: number | string }) =>
+        m.role >= 3 &&
+        String(m.community_id) === String((eventData as any).communityId),
+    ) ?? false);
+  const canEdit = isLeader || isHost || isEventCommunityAdmin;
 
   // ============================================================================
   // Event Chat Mutations
