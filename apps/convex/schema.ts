@@ -200,6 +200,8 @@ export default defineSchema({
     externalIds: v.optional(
       v.object({
         planningCenterId: v.optional(v.string()),
+        clearstreamContactId: v.optional(v.string()),
+        flodeskSubscriberId: v.optional(v.string()),
       }),
     ),
     // Denormalized PCO person ID for efficient indexed lookups

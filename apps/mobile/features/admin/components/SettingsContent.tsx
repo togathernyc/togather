@@ -686,6 +686,10 @@ export function SettingsContent() {
                   onPress={() => {
                     if (integration.type === "planning_center") {
                       router.push("/leader-tools/integrations/planning-center");
+                    } else if (integration.type === "clearstream") {
+                      router.push("/leader-tools/integrations/clearstream");
+                    } else if (integration.type === "flodesk") {
+                      router.push("/leader-tools/integrations/flodesk");
                     }
                   }}
                 >
