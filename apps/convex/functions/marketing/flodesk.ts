@@ -380,7 +380,7 @@ export const listSegments = action({
   },
   handler: async (ctx, args): Promise<FlodeskSegment[]> => {
     const authResult = await ctx.runMutation(
-      internal.functions.integrations.flodesk._authorizeAdmin,
+      internal.functions.marketing.flodesk._authorizeAdmin,
       { token: args.token, communityId: args.communityId },
     );
     if (!authResult.isAdmin) {
@@ -390,7 +390,7 @@ export const listSegments = action({
     let apiKey = args.apiKey;
     if (!apiKey) {
       const integration = await ctx.runQuery(
-        internal.functions.integrations.flodesk._getIntegration,
+        internal.functions.marketing.flodesk._getIntegration,
         { communityId: args.communityId },
       );
       apiKey = (integration?.credentials as FlodeskCredentials | null)?.apiKey;
@@ -427,7 +427,7 @@ export const syncUser = internalAction({
     args,
   ): Promise<{ synced: boolean; reason?: string; subscriberId?: string }> => {
     const integration = await ctx.runQuery(
-      internal.functions.integrations.flodesk._getIntegration,
+      internal.functions.marketing.flodesk._getIntegration,
       { communityId: args.communityId },
     );
     if (!integration || integration.status !== "connected") {
@@ -444,7 +444,7 @@ export const syncUser = internalAction({
     }
 
     const user = await ctx.runQuery(
-      internal.functions.integrations.flodesk._getUserForSync,
+      internal.functions.marketing.flodesk._getUserForSync,
       { userId: args.userId },
     );
     if (!user) {
@@ -488,7 +488,7 @@ export const syncUser = internalAction({
 
       if (subscriberId) {
         await ctx.runMutation(
-          internal.functions.integrations.flodesk._storeSubscriberId,
+          internal.functions.marketing.flodesk._storeSubscriberId,
           {
             userId: args.userId,
             communityId: args.communityId,
@@ -497,14 +497,14 @@ export const syncUser = internalAction({
         );
       }
       await ctx.runMutation(
-        internal.functions.integrations.flodesk._markSynced,
+        internal.functions.marketing.flodesk._markSynced,
         { communityId: args.communityId },
       );
       return { synced: true, subscriberId };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       await ctx.runMutation(
-        internal.functions.integrations.flodesk._markError,
+        internal.functions.marketing.flodesk._markError,
         { communityId: args.communityId, error: message },
       );
       return { synced: false, reason: "api_error" };
@@ -523,14 +523,14 @@ export const runSyncUser = action({
     args,
   ): Promise<{ synced: boolean; reason?: string; subscriberId?: string }> => {
     const authResult = await ctx.runMutation(
-      internal.functions.integrations.flodesk._authorizeAdmin,
+      internal.functions.marketing.flodesk._authorizeAdmin,
       { token: args.token, communityId: args.communityId },
     );
     if (!authResult.isAdmin) {
       throw new Error("Only community admins can run a manual sync");
     }
     return await ctx.runAction(
-      internal.functions.integrations.flodesk.syncUser,
+      internal.functions.marketing.flodesk.syncUser,
       { communityId: args.communityId, userId: args.userId },
     );
   },

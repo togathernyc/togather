@@ -987,12 +987,12 @@ export const selectCommunityForUser = mutation({
         // Schedule marketing integration syncs (no-op if not connected)
         await ctx.scheduler.runAfter(
           0,
-          internal.functions.integrations.clearstream.syncUser,
+          internal.functions.marketing.clearstream.syncUser,
           { userId, communityId: args.communityId },
         );
         await ctx.scheduler.runAfter(
           0,
-          internal.functions.integrations.flodesk.syncUser,
+          internal.functions.marketing.flodesk.syncUser,
           { userId, communityId: args.communityId },
         );
 
@@ -1028,12 +1028,12 @@ export const selectCommunityForUser = mutation({
       // Schedule marketing integration syncs (no-op if not connected)
       await ctx.scheduler.runAfter(
         0,
-        internal.functions.integrations.clearstream.syncUser,
+        internal.functions.marketing.clearstream.syncUser,
         { userId, communityId: args.communityId },
       );
       await ctx.scheduler.runAfter(
         0,
-        internal.functions.integrations.flodesk.syncUser,
+        internal.functions.marketing.flodesk.syncUser,
         { userId, communityId: args.communityId },
       );
 

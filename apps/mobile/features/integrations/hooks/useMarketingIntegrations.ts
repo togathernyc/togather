@@ -18,7 +18,7 @@ import { useAuth } from "@providers/AuthProvider";
 export function useClearstreamStatus(enabled = true) {
   const { token, community } = useAuth();
   const result = useQuery(
-    api.functions.integrations.clearstream.status,
+    api.functions.marketing.clearstream.status,
     enabled && token && community?.id
       ? { token, communityId: community.id as Id<"communities"> }
       : "skip",
@@ -30,7 +30,7 @@ export function useClearstreamStatus(enabled = true) {
 }
 
 export function useConnectClearstream() {
-  const connect = useMutation(api.functions.integrations.clearstream.connect);
+  const connect = useMutation(api.functions.marketing.clearstream.connect);
   const { token, community } = useAuth();
   return async (args: {
     apiKey: string;
@@ -48,7 +48,7 @@ export function useConnectClearstream() {
 
 export function useSetClearstreamList() {
   const setList = useMutation(
-    api.functions.integrations.clearstream.setDestinationList,
+    api.functions.marketing.clearstream.setDestinationList,
   );
   const { token, community } = useAuth();
   return async (args: { listId: string; listName?: string }) => {
@@ -63,7 +63,7 @@ export function useSetClearstreamList() {
 
 export function useDisconnectClearstream() {
   const disconnect = useMutation(
-    api.functions.integrations.clearstream.disconnect,
+    api.functions.marketing.clearstream.disconnect,
   );
   const { token, community } = useAuth();
   return async () => {
@@ -77,7 +77,7 @@ export function useDisconnectClearstream() {
 
 export function useListClearstreamGroups() {
   const listGroups = useAction(
-    api.functions.integrations.clearstream.listGroups,
+    api.functions.marketing.clearstream.listGroups,
   );
   const { token, community } = useAuth();
   return async (apiKey?: string) => {
@@ -97,7 +97,7 @@ export function useListClearstreamGroups() {
 export function useFlodeskStatus(enabled = true) {
   const { token, community } = useAuth();
   const result = useQuery(
-    api.functions.integrations.flodesk.status,
+    api.functions.marketing.flodesk.status,
     enabled && token && community?.id
       ? { token, communityId: community.id as Id<"communities"> }
       : "skip",
@@ -109,7 +109,7 @@ export function useFlodeskStatus(enabled = true) {
 }
 
 export function useConnectFlodesk() {
-  const connect = useMutation(api.functions.integrations.flodesk.connect);
+  const connect = useMutation(api.functions.marketing.flodesk.connect);
   const { token, community } = useAuth();
   return async (args: {
     apiKey: string;
@@ -127,7 +127,7 @@ export function useConnectFlodesk() {
 
 export function useSetFlodeskSegment() {
   const setSegment = useMutation(
-    api.functions.integrations.flodesk.setDestinationSegment,
+    api.functions.marketing.flodesk.setDestinationSegment,
   );
   const { token, community } = useAuth();
   return async (args: { segmentId: string; segmentName?: string }) => {
@@ -142,7 +142,7 @@ export function useSetFlodeskSegment() {
 
 export function useDisconnectFlodesk() {
   const disconnect = useMutation(
-    api.functions.integrations.flodesk.disconnect,
+    api.functions.marketing.flodesk.disconnect,
   );
   const { token, community } = useAuth();
   return async () => {
@@ -156,7 +156,7 @@ export function useDisconnectFlodesk() {
 
 export function useListFlodeskSegments() {
   const listSegments = useAction(
-    api.functions.integrations.flodesk.listSegments,
+    api.functions.marketing.flodesk.listSegments,
   );
   const { token, community } = useAuth();
   return async (apiKey?: string) => {

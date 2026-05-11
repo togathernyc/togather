@@ -15,13 +15,14 @@
  * - Backfill: none. Only event-driven (user join / profile edit) pushes
  *   members. Existing members at connect time are not pushed.
  *
- * API reference: https://docs.clearstream.io
+ * API reference: https://api-docs.clearstream.io
  *   Base URL:  https://api.getclearstream.com/v1
- *   Auth:      Authorization: Bearer <api_key>
+ *   Auth:      X-Api-Key: <api_key>
  *   Endpoints used:
- *     GET    /lists                       — list groups for picker
- *     POST   /subscribers                 — create subscriber (idempotent on phone)
- *     POST   /lists/{list_id}/subscribers — add subscriber to list
+ *     GET    /lists                      — list groups for the picker
+ *     POST   /subscribers                — create/update subscriber by mobile_number
+ *                                          (accepts a `lists` array to add to lists
+ *                                          in the same call; idempotent)
  */
 
 import { v } from "convex/values";
@@ -65,8 +66,9 @@ async function clearstreamFetch(
   path: string,
   init: RequestInit = {},
 ): Promise<Response> {
+  // Clearstream uses an X-Api-Key header, not OAuth-style Bearer tokens.
   const headers: Record<string, string> = {
-    Authorization: `Bearer ${apiKey}`,
+    "X-Api-Key": apiKey,
     Accept: "application/json",
     ...((init.headers as Record<string, string>) || {}),
   };
@@ -381,7 +383,7 @@ export const listGroups = action({
   },
   handler: async (ctx, args): Promise<ClearstreamList[]> => {
     const authResult = await ctx.runMutation(
-      internal.functions.integrations.clearstream._authorizeAdmin,
+      internal.functions.marketing.clearstream._authorizeAdmin,
       { token: args.token, communityId: args.communityId },
     );
     if (!authResult.isAdmin) {
@@ -391,7 +393,7 @@ export const listGroups = action({
     let apiKey = args.apiKey;
     if (!apiKey) {
       const integration = await ctx.runQuery(
-        internal.functions.integrations.clearstream._getIntegration,
+        internal.functions.marketing.clearstream._getIntegration,
         { communityId: args.communityId },
       );
       apiKey = (integration?.credentials as ClearstreamCredentials | null)
@@ -451,7 +453,7 @@ export const syncUser = internalAction({
     args,
   ): Promise<{ synced: boolean; reason?: string; contactId?: string }> => {
     const integration = await ctx.runQuery(
-      internal.functions.integrations.clearstream._getIntegration,
+      internal.functions.marketing.clearstream._getIntegration,
       { communityId: args.communityId },
     );
     if (!integration || integration.status !== "connected") {
@@ -468,7 +470,7 @@ export const syncUser = internalAction({
     }
 
     const user = await ctx.runQuery(
-      internal.functions.integrations.clearstream._getUserForSync,
+      internal.functions.marketing.clearstream._getUserForSync,
       { userId: args.userId },
     );
     if (!user) {
@@ -480,51 +482,31 @@ export const syncUser = internalAction({
     }
 
     try {
-      // Create-or-update subscriber, then add to list.
-      // Clearstream identifies subscribers by phone, so POST /subscribers with
-      // the same phone returns the existing record rather than erroring.
-      const createRes = await clearstreamFetch(
-        credentials.apiKey,
-        "/subscribers",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            mobile_number: user.phone,
-            first_name: user.firstName || undefined,
-            last_name: user.lastName || undefined,
-            email: user.email || undefined,
-          }),
-        },
-      );
-      if (!createRes.ok) {
-        const body = await createRes.text().catch(() => "");
-        throw new Error(`subscriber upsert ${createRes.status}: ${body}`);
+      // POST /subscribers upserts by mobile_number AND can add the subscriber
+      // to one or more lists in a single call via the `lists` array, so no
+      // follow-up request is needed. Idempotent: re-posting the same number is
+      // not an error.
+      const res = await clearstreamFetch(credentials.apiKey, "/subscribers", {
+        method: "POST",
+        body: JSON.stringify({
+          mobile_number: user.phone,
+          first_name: user.firstName || undefined,
+          last_name: user.lastName || undefined,
+          email: user.email || undefined,
+          lists: [config.listId],
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(`subscriber upsert ${res.status}: ${body}`);
       }
-      const created = (await createRes.json()) as {
-        subscriber?: { id: string };
-        id?: string;
-      };
-      const contactId = created.subscriber?.id ?? created.id;
-      if (!contactId) {
-        throw new Error("Clearstream did not return a subscriber id");
-      }
-
-      const addRes = await clearstreamFetch(
-        credentials.apiKey,
-        `/lists/${encodeURIComponent(config.listId)}/subscribers`,
-        {
-          method: "POST",
-          body: JSON.stringify({ subscriber_id: contactId }),
-        },
-      );
-      // 409 = already on list; treat as success
-      if (!addRes.ok && addRes.status !== 409) {
-        const body = await addRes.text().catch(() => "");
-        throw new Error(`list add ${addRes.status}: ${body}`);
-      }
+      // Clearstream identifies subscribers by their mobile_number — there is
+      // no separate opaque id. We persist the phone we sent so a later sync
+      // can detect a number change.
+      const contactId = user.phone;
 
       await ctx.runMutation(
-        internal.functions.integrations.clearstream._storeContactId,
+        internal.functions.marketing.clearstream._storeContactId,
         {
           userId: args.userId,
           communityId: args.communityId,
@@ -532,14 +514,14 @@ export const syncUser = internalAction({
         },
       );
       await ctx.runMutation(
-        internal.functions.integrations.clearstream._markSynced,
+        internal.functions.marketing.clearstream._markSynced,
         { communityId: args.communityId },
       );
       return { synced: true, contactId };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       await ctx.runMutation(
-        internal.functions.integrations.clearstream._markError,
+        internal.functions.marketing.clearstream._markError,
         { communityId: args.communityId, error: message },
       );
       return { synced: false, reason: "api_error" };
@@ -562,14 +544,14 @@ export const runSyncUser = action({
     args,
   ): Promise<{ synced: boolean; reason?: string; contactId?: string }> => {
     const authResult = await ctx.runMutation(
-      internal.functions.integrations.clearstream._authorizeAdmin,
+      internal.functions.marketing.clearstream._authorizeAdmin,
       { token: args.token, communityId: args.communityId },
     );
     if (!authResult.isAdmin) {
       throw new Error("Only community admins can run a manual sync");
     }
     return await ctx.runAction(
-      internal.functions.integrations.clearstream.syncUser,
+      internal.functions.marketing.clearstream.syncUser,
       { communityId: args.communityId, userId: args.userId },
     );
   },
