@@ -41,12 +41,14 @@ const SNOOZE_OPTIONS: { value: SnoozeDuration; label: string }[] = [
 export function FollowupDetailContent({
   groupId,
   memberId,
+  memberIdKind = "communityPeople",
   onClose,
   scrollToNotes,
   scrollToTasks,
 }: {
   groupId: string;
   memberId: string;
+  memberIdKind?: "communityPeople" | "groupMember";
   onClose?: () => void;
   scrollToNotes?: boolean;
   scrollToTasks?: boolean;
@@ -120,15 +122,21 @@ export function FollowupDetailContent({
   const member_id = memberId;
 
   // Fetch member history using Convex.
-  // Both per-group and cross-group modes now use communityPeople records via adaptCommunityPerson,
-  // so memberId is always a communityPeople ID.
+  // Per-group / cross-group entry points pass a communityPeople ID; the
+  // followup_assigned push notification route passes a groupMembers ID, so the
+  // caller signals which kind of ID this is via memberIdKind.
   const historyData = useAuthenticatedQuery(
     api.functions.communityPeople.history,
     member_id
-      ? {
-          communityPeopleId: member_id as Id<"communityPeople">,
-          currentUserId: currentUserId,
-        }
+      ? memberIdKind === "groupMember"
+        ? {
+            groupMemberId: member_id as Id<"groupMembers">,
+            currentUserId: currentUserId,
+          }
+        : {
+            communityPeopleId: member_id as Id<"communityPeople">,
+            currentUserId: currentUserId,
+          }
       : "skip"
   );
 
@@ -228,6 +236,13 @@ export function FollowupDetailContent({
     };
   }, [historyData]);
 
+  // All mutations on this screen take a communityPeople ID. When the route
+  // param is a groupMembers ID (notification deep link), use the resolved
+  // communityPeople ID returned by the history query instead.
+  const communityPeopleId = historyData?.member?.id as
+    | Id<"communityPeople">
+    | undefined;
+
   // Convex mutations (auto-inject token)
   const addFollowup = useAuthenticatedMutation(api.functions.communityPeople.addFollowup);
   const snoozeMember = useAuthenticatedMutation(api.functions.communityPeople.snooze);
@@ -240,8 +255,9 @@ export function FollowupDetailContent({
   // Confirmation hook — logs action only after user confirms they completed it
   const { setPendingAction } = useContactConfirmation({
     onConfirm: (type) => {
+      if (!communityPeopleId) return;
       addFollowupMutation.mutate({
-        communityPeopleId: member_id || "",
+        communityPeopleId,
         type,
         content: type === "call" ? "Made a phone call" : "Sent a text message",
       });
@@ -339,25 +355,27 @@ export function FollowupDetailContent({
   };
 
   const handleMarkFollowedUp = () => {
+    if (!communityPeopleId) return;
     addFollowupMutation.mutate({
-      communityPeopleId: member_id || "",
+      communityPeopleId,
       type: "followed_up",
       content: "Marked as followed up",
     });
   };
 
   const handleAddNote = () => {
-    if (!noteText.trim()) return;
+    if (!noteText.trim() || !communityPeopleId) return;
     addFollowupMutation.mutate({
-      communityPeopleId: member_id || "",
+      communityPeopleId,
       type: "note",
       content: noteText.trim(),
     });
   };
 
   const handleSnooze = (duration: SnoozeDuration) => {
+    if (!communityPeopleId) return;
     snoozeMutation.mutate({
-      communityPeopleId: member_id || "",
+      communityPeopleId,
       duration,
       note: snoozeNote.trim() || undefined,
     });
@@ -388,11 +406,11 @@ export function FollowupDetailContent({
   };
 
   const handleConvertFollowup = async (newType: "call" | "text" | "followed_up") => {
-    if (!convertEntry || !member_id) return;
+    if (!convertEntry || !communityPeopleId) return;
     setIsConvertingFollowup(true);
     try {
       await convertFollowupTypeMut({
-        communityPeopleId: member_id as Id<"communityPeople">,
+        communityPeopleId,
         followupId: convertEntry.id as Id<"memberFollowups">,
         newType,
       });
@@ -1549,7 +1567,11 @@ export function FollowupDetailContent({
 /**
  * Full-screen route wrapper — adds DragHandle.
  */
-export function FollowupDetailScreen() {
+export function FollowupDetailScreen({
+  memberIdKind,
+}: {
+  memberIdKind?: "communityPeople" | "groupMember";
+} = {}) {
   const { colors } = useTheme();
   const { group_id, member_id, cross_group } = useLocalSearchParams<{
     group_id: string;
@@ -1563,6 +1585,7 @@ export function FollowupDetailScreen() {
       <FollowupDetailContent
         groupId={group_id || ""}
         memberId={member_id || ""}
+        memberIdKind={memberIdKind}
       />
     </>
   );
