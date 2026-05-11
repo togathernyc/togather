@@ -409,12 +409,12 @@ export const listGroups = action({
       throw new Error(`Clearstream API error ${res.status}: ${body}`);
     }
     const data = (await res.json()) as {
-      lists?: Array<{ id: string; name: string; subscriber_count?: number }>;
-      data?: Array<{ id: string; name: string; subscriber_count?: number }>;
+      lists?: Array<{ id: string | number; name: string; subscriber_count?: number }>;
+      data?: Array<{ id: string | number; name: string; subscriber_count?: number }>;
     };
     const lists = data.lists ?? data.data ?? [];
     return lists.map((l) => ({
-      id: l.id,
+      id: String(l.id),
       name: l.name,
       subscriberCount: l.subscriber_count,
     }));
@@ -490,8 +490,8 @@ export const syncUser = internalAction({
         method: "POST",
         body: JSON.stringify({
           mobile_number: user.phone,
-          first_name: user.firstName || undefined,
-          last_name: user.lastName || undefined,
+          first: user.firstName || undefined,
+          last: user.lastName || undefined,
           email: user.email || undefined,
           lists: [config.listId],
         }),
