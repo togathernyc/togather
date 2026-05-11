@@ -236,9 +236,21 @@ export const initiate = mutation({
       .collect();
     const existingSet = new Set(existing.map((inv) => inv.recipientUserId));
 
+    // Server-side RSVP guard. The picker disables already-RSVP'd rows, but
+    // the seed is computed once and a member can RSVP between sheet open
+    // and confirm; direct API callers also bypass the UI entirely. The
+    // intended path for messaging attendees is Text Blast, so skip them
+    // here rather than silently double-texting.
+    const rsvps = await ctx.db
+      .query("meetingRsvps")
+      .withIndex("by_meeting", (q) => q.eq("meetingId", args.meetingId))
+      .collect();
+    const rsvpSet = new Set(rsvps.map((r) => r.userId));
+
     let invited = 0;
     let alreadyInvited = 0;
     let skippedNotMember = 0;
+    let skippedRsvped = 0;
     const newInviteIds: Id<"eventInvites">[] = [];
     const ts = now();
     const seen = new Set<string>();
@@ -249,6 +261,10 @@ export const initiate = mutation({
 
       if (!memberSet.has(recipientUserId)) {
         skippedNotMember++;
+        continue;
+      }
+      if (rsvpSet.has(recipientUserId)) {
+        skippedRsvped++;
         continue;
       }
       if (existingSet.has(recipientUserId)) {
@@ -282,7 +298,7 @@ export const initiate = mutation({
       });
     }
 
-    return { invited, alreadyInvited, skippedNotMember };
+    return { invited, alreadyInvited, skippedNotMember, skippedRsvped };
   },
 });
 
