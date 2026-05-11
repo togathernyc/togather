@@ -541,12 +541,21 @@ export const send = internalAction({
         }
       }
 
+      // Aggregate status. "skipped" means we had nowhere to send (no phone /
+      // no push token) — that's a non-failure for the channel; what matters
+      // is whether the recipient got the invite via at least one channel and
+      // no requested channel hard-failed.
+      const smsDelivered = wantsSms && smsStatus === "succeeded";
+      const pushDelivered = wantsPush && pushStatus === "succeeded";
+      const smsFailed = wantsSms && smsStatus === "failed";
+      const pushFailed = wantsPush && pushStatus === "failed";
+      const anyDelivered = smsDelivered || pushDelivered;
+      const anyFailed = smsFailed || pushFailed;
+
       const overall =
-        (wantsSms ? smsStatus === "succeeded" : true) &&
-        (wantsPush ? pushStatus === "succeeded" : true)
+        anyDelivered && !anyFailed
           ? "sent"
-          : (wantsSms && smsStatus === "succeeded") ||
-              (wantsPush && pushStatus === "succeeded")
+          : anyDelivered
             ? "partial"
             : "failed";
 
