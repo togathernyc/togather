@@ -1151,10 +1151,13 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
           meetingId={eventData.id as string}
           eventTitle={eventData.title || "Event"}
           eventScheduledAt={
+            // getByShortId returns scheduledAt as an ISO string; the live
+            // Convex meeting doc returns it as a ms timestamp. Handle both
+            // so the SMS preview always renders the date/time.
             typeof eventData.scheduledAt === "number"
               ? eventData.scheduledAt
-              : eventData.scheduledAt
-                ? Number(eventData.scheduledAt) || undefined
+              : typeof eventData.scheduledAt === "string"
+                ? Date.parse(eventData.scheduledAt) || undefined
                 : undefined
           }
           eventLocation={

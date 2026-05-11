@@ -296,7 +296,11 @@ export function InviteGroupMembersSheet({
                 )}
 
                 {filtered.map((m) => {
-                  const disabled = !m.hasPhone || m.alreadyInvited;
+                  // RSVP'd members are disabled to prevent accidental
+                  // re-invites — the existing Text Blast handles messaging
+                  // attendees.
+                  const disabled =
+                    !m.hasPhone || m.alreadyInvited || m.alreadyRsvped;
                   const selected = selectedIds.has(m.userId);
                   const badge = m.alreadyInvited
                     ? "Invited"
