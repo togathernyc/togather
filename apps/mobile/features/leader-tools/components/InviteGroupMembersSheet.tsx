@@ -96,16 +96,23 @@ export function InviteGroupMembersSheet({
     });
   }, [members, search]);
 
+  // "Eligible" matches the default-seed predicate: members with a phone who
+  // haven't been invited and haven't already RSVP'd. Already-RSVP'd members
+  // are still tappable individually (a host may want to nudge them), but
+  // they're excluded from Select All so a bulk action can't accidentally
+  // re-text people who are already attending.
   const eligibleCount = useMemo(
     () =>
-      members?.filter((m) => m.hasPhone && !m.alreadyInvited).length ?? 0,
+      members?.filter(
+        (m) => m.hasPhone && !m.alreadyInvited && !m.alreadyRsvped,
+      ).length ?? 0,
     [members],
   );
 
   const allEligibleSelected = useMemo(() => {
     if (!members) return false;
     return members
-      .filter((m) => m.hasPhone && !m.alreadyInvited)
+      .filter((m) => m.hasPhone && !m.alreadyInvited && !m.alreadyRsvped)
       .every((m) => selectedIds.has(m.userId));
   }, [members, selectedIds]);
 
@@ -124,7 +131,9 @@ export function InviteGroupMembersSheet({
       if (allEligibleSelected) return new Set();
       const next = new Set(prev);
       for (const m of members) {
-        if (m.hasPhone && !m.alreadyInvited) next.add(m.userId);
+        if (m.hasPhone && !m.alreadyInvited && !m.alreadyRsvped) {
+          next.add(m.userId);
+        }
       }
       return next;
     });

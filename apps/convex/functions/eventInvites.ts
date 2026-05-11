@@ -417,17 +417,30 @@ export const send = internalAction({
       tokensByUser.set(userId, tokens);
     }
 
-    const sendsPush = invites.some((inv) => inv.channels.includes("push"));
-    if (sendsPush) {
-      const pushPayloads = invites.flatMap((inv) => {
-        if (!inv.channels.includes("push")) return [];
-        const tokens = tokensByUser.get(inv.recipientUserId) ?? [];
-        if (tokens.length === 0) return [];
-        const title = `${senderFirstName} invited you to ${eventTitle}`;
-        const body = inv.personalNote
-          ? `"${inv.personalNote}"`
-          : formatWhenAndWhere(meetingInfo);
-        return tokens.map((token) => ({
+    // Build per-invite push slices so we can map ticket outcomes back to each
+    // recipient. Each invite contributes 0..N tokens; the slice [start, end)
+    // indexes into the flattened payload array (and the returned tickets).
+    type PushSlice = { start: number; end: number };
+    const pushSliceByInvite = new Map<string, PushSlice>();
+    const pushPayloads: Array<{
+      token: string;
+      title: string;
+      body: string;
+      data: Record<string, unknown>;
+      imageUrl?: string;
+    }> = [];
+
+    for (const inv of invites) {
+      if (!inv.channels.includes("push")) continue;
+      const tokens = tokensByUser.get(inv.recipientUserId) ?? [];
+      if (tokens.length === 0) continue;
+      const start = pushPayloads.length;
+      const title = `${senderFirstName} invited you to ${eventTitle}`;
+      const body = inv.personalNote
+        ? `"${inv.personalNote}"`
+        : formatWhenAndWhere(meetingInfo);
+      for (const token of tokens) {
+        pushPayloads.push({
           token,
           title,
           body,
@@ -445,15 +458,20 @@ export const send = internalAction({
             groupInfo?.groupPhotoUrl ||
             groupInfo?.communityLogoUrl ||
             groupInfo?.groupAvatarUrl,
-        }));
-      });
-
-      if (pushPayloads.length > 0) {
-        await ctx.runAction(
-          internal.functions.notifications.internal.sendBatchPushNotifications,
-          { notifications: pushPayloads },
-        );
+        });
       }
+      pushSliceByInvite.set(inv._id, { start, end: pushPayloads.length });
+    }
+
+    // tickets[i] aligns 1:1 with pushPayloads[i]; the action always returns a
+    // tickets array of the same length (even on failure).
+    let pushTickets: Array<{ ok: boolean; error?: string }> = [];
+    if (pushPayloads.length > 0) {
+      const pushResult = await ctx.runAction(
+        internal.functions.notifications.internal.sendBatchPushNotifications,
+        { notifications: pushPayloads },
+      );
+      pushTickets = pushResult.tickets ?? [];
     }
 
     // Per-recipient SMS so we can record granular status (and so a single bad
@@ -461,14 +479,25 @@ export const send = internalAction({
     for (const inv of invites) {
       const wantsPush = inv.channels.includes("push");
       const wantsSms = inv.channels.includes("sms");
-      const userTokens = tokensByUser.get(inv.recipientUserId) ?? [];
 
       let smsStatus: "succeeded" | "failed" | "skipped" | undefined;
-      let pushStatus: "succeeded" | "skipped" | undefined;
+      let pushStatus: "succeeded" | "failed" | "skipped" | undefined;
       let failureReason: string | undefined;
 
       if (wantsPush) {
-        pushStatus = userTokens.length > 0 ? "succeeded" : "skipped";
+        const slice = pushSliceByInvite.get(inv._id);
+        if (!slice || slice.start === slice.end) {
+          // User had no active tokens — not a failure, just nowhere to send.
+          pushStatus = "skipped";
+        } else {
+          const sliceTickets = pushTickets.slice(slice.start, slice.end);
+          const anyOk = sliceTickets.some((t) => t.ok);
+          pushStatus = anyOk ? "succeeded" : "failed";
+          if (!anyOk) {
+            failureReason =
+              sliceTickets.find((t) => t.error)?.error ?? "push delivery failed";
+          }
+        }
       }
 
       if (wantsSms) {
