@@ -83,6 +83,8 @@ import { AttendanceConfirmationModal } from "@/features/events/components/Attend
 import { DOMAIN_CONFIG } from "@togather/shared";
 import * as Clipboard from "expo-clipboard";
 import { EventBlastSheet } from "@/features/leader-tools/components/EventBlastSheet";
+import { InviteGroupMembersSheet } from "@/features/leader-tools/components/InviteGroupMembersSheet";
+import { EventInvitesLog } from "@/features/leader-tools/components/EventInvitesLog";
 import { EventActivity } from "./EventActivity";
 
 /**
@@ -152,6 +154,7 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
   const [isJoiningCommunity, setIsJoiningCommunity] = useState(false);
   const [showAttendanceModal, setShowAttendanceModal] = useState(false);
   const [showBlastSheet, setShowBlastSheet] = useState(false);
+  const [showInviteSheet, setShowInviteSheet] = useState(false);
   const [authToken, setAuthToken] = useState<string | null>(null);
 
   // Load auth token from AsyncStorage for RSVP mutations
@@ -1005,9 +1008,19 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
             </View>
           )}
 
-          {/* Host actions: Message Attendees + Blast History. ADR-022 extends
-              this surface to creators — they're the host, so they should be
-              able to reach out to RSVPed guests. Backend is authoritative. */}
+          {/* Host actions: Invite members + Text Blast. Both gated by
+              canEditMeeting server-side; this just shows the CTAs. */}
+          {canEdit && (
+            <TouchableOpacity
+              style={[styles.messageAttendeesButton, { backgroundColor: colors.surfaceSecondary }]}
+              onPress={() => setShowInviteSheet(true)}
+            >
+              <Ionicons name="mail-outline" size={20} color={DEFAULT_PRIMARY_COLOR} />
+              <Text style={[styles.messageAttendeesText, { color: DEFAULT_PRIMARY_COLOR }]}>
+                Invite members
+              </Text>
+            </TouchableOpacity>
+          )}
           {canEdit && (
             <TouchableOpacity
               style={[styles.messageAttendeesButton, { backgroundColor: colors.surfaceSecondary }]}
@@ -1018,6 +1031,10 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
                 Text Blast
               </Text>
             </TouchableOpacity>
+          )}
+
+          {canEdit && eventData.id && (
+            <EventInvitesLog meetingId={eventData.id as string} />
           )}
         </View>
       </ScrollView>
@@ -1124,6 +1141,28 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
           eventTitle={eventData.title || "Event"}
           onClose={() => setShowBlastSheet(false)}
           onSent={() => setShowBlastSheet(false)}
+        />
+      )}
+
+      {/* Invite Group Members Sheet */}
+      {canEdit && (
+        <InviteGroupMembersSheet
+          visible={showInviteSheet}
+          meetingId={eventData.id as string}
+          eventTitle={eventData.title || "Event"}
+          eventScheduledAt={
+            typeof eventData.scheduledAt === "number"
+              ? eventData.scheduledAt
+              : eventData.scheduledAt
+                ? Number(eventData.scheduledAt) || undefined
+                : undefined
+          }
+          eventLocation={
+            (eventData as any).locationOverride ?? eventData.groupName ?? null
+          }
+          eventShortId={eventData.shortId ?? null}
+          senderFirstName={user?.firstName || "Someone"}
+          onClose={() => setShowInviteSheet(false)}
         />
       )}
 

@@ -46,6 +46,7 @@ import type * as functions_ee_billing from "../functions/ee/billing.js";
 import type * as functions_ee_notifications_proposalNotifications from "../functions/ee/notifications/proposalNotifications.js";
 import type * as functions_ee_proposals from "../functions/ee/proposals.js";
 import type * as functions_eventBlasts from "../functions/eventBlasts.js";
+import type * as functions_eventInvites from "../functions/eventInvites.js";
 import type * as functions_eventSeries from "../functions/eventSeries.js";
 import type * as functions_followupScoreComputation from "../functions/followupScoreComputation.js";
 import type * as functions_followupScoring from "../functions/followupScoring.js";
@@ -222,6 +223,7 @@ declare const fullApi: ApiFromModules<{
   "functions/ee/notifications/proposalNotifications": typeof functions_ee_notifications_proposalNotifications;
   "functions/ee/proposals": typeof functions_ee_proposals;
   "functions/eventBlasts": typeof functions_eventBlasts;
+  "functions/eventInvites": typeof functions_eventInvites;
   "functions/eventSeries": typeof functions_eventSeries;
   "functions/followupScoreComputation": typeof functions_followupScoreComputation;
   "functions/followupScoring": typeof functions_followupScoring;
