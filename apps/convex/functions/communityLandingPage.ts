@@ -337,17 +337,22 @@ export const joinCommunityInternal = internalMutation({
       )
       .first();
 
+    // A user becomes (or re-becomes) an active community member on either of
+    // two paths: a brand-new insert, or reactivation of a previously inactive
+    // membership. Both should trigger marketing sync — without the reactivation
+    // case, someone who left and rejoined via the landing page would skip the
+    // marketing destinations the other join paths handle.
+    let membershipBecameActive = false;
     if (existing) {
       if (existing.status !== 1) {
-        // Reactivate
         await ctx.db.patch(existing._id, {
           status: 1,
           updatedAt: timestamp,
         });
+        membershipBecameActive = true;
       }
       // If already active, still ensure announcement group membership below
     } else {
-      // Create new membership
       await ctx.db.insert("userCommunities", {
         communityId: args.communityId,
         userId: args.userId,
@@ -356,7 +361,10 @@ export const joinCommunityInternal = internalMutation({
         createdAt: timestamp,
         updatedAt: timestamp,
       });
+      membershipBecameActive = true;
+    }
 
+    if (membershipBecameActive) {
       // Schedule marketing integration syncs (no-op if not connected)
       await ctx.scheduler.runAfter(
         0,

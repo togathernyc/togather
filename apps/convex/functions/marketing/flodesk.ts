@@ -402,17 +402,33 @@ export const listSegments = action({
       throw new Error("No Flodesk API key configured");
     }
 
-    const res = await flodeskFetch(apiKey, "/segments");
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(`Flodesk API error ${res.status}: ${body}`);
-    }
-    const data = (await res.json()) as {
-      data?: Array<{ id: string; name: string }>;
-      segments?: Array<{ id: string; name: string }>;
-    };
-    const segments = data.data ?? data.segments ?? [];
-    return segments.map((s) => ({ id: s.id, name: s.name }));
+    // Flodesk paginates GET /segments (per_page defaults to 20). Request a
+    // larger page and follow `meta.total_pages` so the picker sees every
+    // segment on accounts with more than the default page.
+    const perPage = 100;
+    const all: Array<{ id: string; name: string }> = [];
+    let page = 1;
+    let totalPages = 1;
+    do {
+      const res = await flodeskFetch(
+        apiKey,
+        `/segments?page=${page}&per_page=${perPage}`,
+      );
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(`Flodesk API error ${res.status}: ${body}`);
+      }
+      const data = (await res.json()) as {
+        data?: Array<{ id: string; name: string }>;
+        segments?: Array<{ id: string; name: string }>;
+        meta?: { total_pages?: number };
+      };
+      const segments = data.data ?? data.segments ?? [];
+      all.push(...segments);
+      totalPages = data.meta?.total_pages ?? 1;
+      page += 1;
+    } while (page <= totalPages);
+    return all.map((s) => ({ id: s.id, name: s.name }));
   },
 });
 
