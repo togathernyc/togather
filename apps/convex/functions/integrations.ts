@@ -191,7 +191,7 @@ export const listAvailable = query({
         displayName: "Clearstream",
         description:
           "Sync community members into a Clearstream subscriber list so you can text them from your existing SMS marketing tool.",
-        isConnected: integrationMap.has("clearstream"),
+        isConnected: integrationMap.get("clearstream") === "connected",
         status: integrationMap.get("clearstream") || null,
       },
       {
@@ -199,7 +199,7 @@ export const listAvailable = query({
         displayName: "Flodesk",
         description:
           "Sync community members into a Flodesk segment so you can email them from your existing email marketing tool.",
-        isConnected: integrationMap.has("flodesk"),
+        isConnected: integrationMap.get("flodesk") === "connected",
         status: integrationMap.get("flodesk") || null,
       },
     ];

@@ -356,6 +356,18 @@ export const joinCommunityInternal = internalMutation({
         createdAt: timestamp,
         updatedAt: timestamp,
       });
+
+      // Schedule marketing integration syncs (no-op if not connected)
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.marketing.clearstream.syncUser,
+        { communityId: args.communityId, userId: args.userId },
+      );
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.marketing.flodesk.syncUser,
+        { communityId: args.communityId, userId: args.userId },
+      );
     }
 
     // Add to announcement group (handles defensive creation)
