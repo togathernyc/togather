@@ -236,6 +236,13 @@ export function FollowupDetailContent({
     };
   }, [historyData]);
 
+  // All mutations on this screen take a communityPeople ID. When the route
+  // param is a groupMembers ID (notification deep link), use the resolved
+  // communityPeople ID returned by the history query instead.
+  const communityPeopleId = historyData?.member?.id as
+    | Id<"communityPeople">
+    | undefined;
+
   // Convex mutations (auto-inject token)
   const addFollowup = useAuthenticatedMutation(api.functions.communityPeople.addFollowup);
   const snoozeMember = useAuthenticatedMutation(api.functions.communityPeople.snooze);
@@ -248,8 +255,9 @@ export function FollowupDetailContent({
   // Confirmation hook — logs action only after user confirms they completed it
   const { setPendingAction } = useContactConfirmation({
     onConfirm: (type) => {
+      if (!communityPeopleId) return;
       addFollowupMutation.mutate({
-        communityPeopleId: member_id || "",
+        communityPeopleId,
         type,
         content: type === "call" ? "Made a phone call" : "Sent a text message",
       });
@@ -347,25 +355,27 @@ export function FollowupDetailContent({
   };
 
   const handleMarkFollowedUp = () => {
+    if (!communityPeopleId) return;
     addFollowupMutation.mutate({
-      communityPeopleId: member_id || "",
+      communityPeopleId,
       type: "followed_up",
       content: "Marked as followed up",
     });
   };
 
   const handleAddNote = () => {
-    if (!noteText.trim()) return;
+    if (!noteText.trim() || !communityPeopleId) return;
     addFollowupMutation.mutate({
-      communityPeopleId: member_id || "",
+      communityPeopleId,
       type: "note",
       content: noteText.trim(),
     });
   };
 
   const handleSnooze = (duration: SnoozeDuration) => {
+    if (!communityPeopleId) return;
     snoozeMutation.mutate({
-      communityPeopleId: member_id || "",
+      communityPeopleId,
       duration,
       note: snoozeNote.trim() || undefined,
     });
@@ -396,11 +406,11 @@ export function FollowupDetailContent({
   };
 
   const handleConvertFollowup = async (newType: "call" | "text" | "followed_up") => {
-    if (!convertEntry || !member_id) return;
+    if (!convertEntry || !communityPeopleId) return;
     setIsConvertingFollowup(true);
     try {
       await convertFollowupTypeMut({
-        communityPeopleId: member_id as Id<"communityPeople">,
+        communityPeopleId,
         followupId: convertEntry.id as Id<"memberFollowups">,
         newType,
       });
