@@ -204,6 +204,31 @@ describe('OTAUpdateProvider', () => {
       expect(mockCheckForUpdate).not.toHaveBeenCalled();
     });
 
+    it('does NOT reload on inactive->active (Notification Center / call / Control Center)', async () => {
+      // Codex P2 #2 on PR #392: iOS transient interruptions like
+      // Notification Center, incoming calls, and Control Center go
+      // active -> inactive -> active without ever hitting 'background'.
+      // The previous regex /inactive|background/ matched these and would
+      // have triggered a destructive reloadAsync over a still-live UI.
+      mockCheckForUpdate.mockResolvedValue({ isAvailable: true });
+      mockFetchUpdate.mockResolvedValue({ isNew: true });
+
+      renderHook(() => useOTAUpdateStatus(), { wrapper });
+      await flushPromises();
+
+      jest.setSystemTime(STARTUP_GRACE_MS + 1);
+
+      act(() => {
+        appStateChangeHandler!('inactive');
+      });
+      act(() => {
+        appStateChangeHandler!('active');
+      });
+      await flushPromises();
+
+      expect(mockCheckForUpdate).not.toHaveBeenCalled();
+    });
+
     it('throttles re-checks within MIN_RECHECK_INTERVAL_MS', async () => {
       mockCheckForUpdate.mockResolvedValue({ isAvailable: false });
 

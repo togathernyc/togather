@@ -159,9 +159,13 @@ export const OTAUpdateProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return () => clearTimeout(timeoutId);
   }, [checkAndApply]);
 
-  // Re-check on real background -> active transitions only. iOS fires
-  // 'active' for transient system UI (Face ID, share sheets, permissions)
-  // without backgrounding the app; those should not retrigger a check.
+  // Re-check on real background -> active transitions only. iOS reports
+  // 'inactive' for transient system UI (Notification Center, incoming
+  // calls, Control Center, Face ID, share sheets) — the app never
+  // actually suspends and the previous state goes active -> inactive ->
+  // active. Treating those as resumes would trigger a destructive
+  // reloadAsync over a still-live UI. Only an actual 'background' state
+  // (the OS marked the app as suspended) qualifies.
   useEffect(() => {
     if (__DEV__) return;
 
@@ -169,7 +173,7 @@ export const OTAUpdateProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const previousAppState = previousAppStateRef.current;
       previousAppStateRef.current = nextAppState;
 
-      const cameFromBackground = !!previousAppState.match(/inactive|background/);
+      const cameFromBackground = previousAppState === 'background';
       if (nextAppState === 'active' && cameFromBackground) {
         checkAndApply('foreground');
       }
