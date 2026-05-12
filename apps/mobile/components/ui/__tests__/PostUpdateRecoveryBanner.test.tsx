@@ -15,12 +15,19 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 jest.mock('expo-updates', () => {
   let _updateId: string | null = null;
+  let _isEmbeddedLaunch = false;
   return {
     get updateId() {
       return _updateId;
     },
     set updateId(v: string | null) {
       _updateId = v;
+    },
+    get isEmbeddedLaunch() {
+      return _isEmbeddedLaunch;
+    },
+    set isEmbeddedLaunch(v: boolean) {
+      _isEmbeddedLaunch = v;
     },
   };
 });
@@ -42,6 +49,10 @@ const setUpdateId = (id: string | null) => {
   (Updates as { updateId: string | null }).updateId = id;
 };
 
+const setIsEmbeddedLaunch = (v: boolean) => {
+  (Updates as { isEmbeddedLaunch: boolean }).isEmbeddedLaunch = v;
+};
+
 const BANNER_TEXT = /app just updated/i;
 
 describe('PostUpdateRecoveryBanner', () => {
@@ -50,6 +61,7 @@ describe('PostUpdateRecoveryBanner', () => {
     mockGetItem.mockResolvedValue(null);
     mockSetItem.mockResolvedValue(undefined);
     setUpdateId(null);
+    setIsEmbeddedLaunch(false);
   });
 
   it('renders nothing in dev mode', async () => {
@@ -87,16 +99,54 @@ describe('PostUpdateRecoveryBanner', () => {
       expect(screen.queryByText(BANNER_TEXT)).toBeNull();
     });
 
-    it('seeds storage on first-ever launch and shows no banner', async () => {
-      setUpdateId('update-first');
+    it('embedded launch (fresh install): no storage activity, no banner', async () => {
+      setUpdateId('update-embedded');
+      setIsEmbeddedLaunch(true);
+      mockGetItem.mockResolvedValue(null);
+
+      render(<PostUpdateRecoveryBanner />);
+      await act(async () => {});
+
+      expect(mockGetItem).not.toHaveBeenCalled();
+      expect(mockSetItem).not.toHaveBeenCalled();
+      expect(screen.queryByText(BANNER_TEXT)).toBeNull();
+    });
+
+    it('embedded launch with a prior stored OTA id (App Store update): does not overwrite, no banner', async () => {
+      // A native App Store update bumps the embedded updateId. Without
+      // the isEmbeddedLaunch short-circuit the previous code would have
+      // read the (different) stored OTA id, treated it as a transition,
+      // shown the banner, AND overwritten the stored baseline — making
+      // the next *real* OTA transition impossible to detect.
+      setUpdateId('update-new-embedded');
+      setIsEmbeddedLaunch(true);
+      mockGetItem.mockResolvedValue('update-old-ota');
+
+      render(<PostUpdateRecoveryBanner />);
+      await act(async () => {});
+
+      expect(mockGetItem).not.toHaveBeenCalled();
+      expect(mockSetItem).not.toHaveBeenCalled();
+      expect(screen.queryByText(BANNER_TEXT)).toBeNull();
+    });
+
+    it('first launch with banner code on an OTA bundle (no stored id + non-embedded): SHOWS banner', async () => {
+      // The bug that shipped in PR #393's squash: existing users
+      // upgrading from a pre-banner bundle write nothing to storage on
+      // their old bundle, so `stored` is null. The original logic
+      // treated `!stored` as "fresh install" and suppressed the banner
+      // on the exact transition it's meant to help. Without the
+      // isEmbeddedLaunch disambiguation this user would never see it.
+      setUpdateId('update-with-banner');
+      setIsEmbeddedLaunch(false);
       mockGetItem.mockResolvedValue(null);
 
       render(<PostUpdateRecoveryBanner />);
 
       await waitFor(() => {
-        expect(mockSetItem).toHaveBeenCalledWith(STORAGE_KEY, 'update-first');
+        expect(screen.getByText(BANNER_TEXT)).toBeTruthy();
       });
-      expect(screen.queryByText(BANNER_TEXT)).toBeNull();
+      expect(mockSetItem).toHaveBeenCalledWith(STORAGE_KEY, 'update-with-banner');
     });
 
     it('does NOT show banner when updateId matches the stored value', async () => {
