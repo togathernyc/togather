@@ -28,9 +28,7 @@ interface InviteGroupMembersSheetProps {
   meetingId: string;
   eventTitle: string;
   eventScheduledAt?: number;
-  eventLocation?: string | null;
   eventShortId?: string | null;
-  senderFirstName: string;
   onClose: () => void;
   onSent?: (counts: { invited: number; alreadyInvited: number }) => void;
 }
@@ -42,9 +40,7 @@ export function InviteGroupMembersSheet({
   meetingId,
   eventTitle,
   eventScheduledAt,
-  eventLocation,
   eventShortId,
-  senderFirstName,
   onClose,
   onSent,
 }: InviteGroupMembersSheetProps) {
@@ -60,6 +56,17 @@ export function InviteGroupMembersSheet({
     api.functions.eventInvites.listGroupMembersForInvite,
     visible ? { meetingId: meetingId as Id<"meetings"> } : "skip",
   );
+
+  // Fetch the caller from Convex so the preview shows their actual first
+  // name. The auth-context user can be undefined here in cross-community
+  // share-link contexts, which previously left the preview saying
+  // "Someone invited you to …" while the server-rendered SMS used the
+  // real name.
+  const currentUser = useAuthenticatedQuery(
+    api.functions.users.getCurrentUser,
+    visible ? {} : "skip",
+  );
+  const senderFirstName = currentUser?.firstName?.trim() || "Someone";
 
   const initiate = useAuthenticatedMutation(
     api.functions.eventInvites.initiate,
@@ -79,7 +86,10 @@ export function InviteGroupMembersSheet({
     const defaultIds = new Set<string>();
     for (const m of members) {
       const reachable = m.hasPhone || m.hasPushTokens;
-      if (reachable && !m.alreadyInvited && !m.alreadyRsvped) {
+      // Self is included in the roster (for test sends) but excluded from
+      // the default selection so a routine "Invite everyone" tap doesn't
+      // text the host themselves.
+      if (reachable && !m.alreadyInvited && !m.alreadyRsvped && !m.isSelf) {
         defaultIds.add(m.userId);
       }
     }
@@ -98,15 +108,16 @@ export function InviteGroupMembersSheet({
   }, [members, search]);
 
   // "Eligible" = reachable (phone or push), not already invited, not already
-  // RSVP'd. Reachable-via-push-only members are included because the backend
-  // treats SMS-skipped as a non-failing channel.
+  // RSVP'd, and not self. Self stays tappable individually for test sends but
+  // is excluded from bulk Select All.
   const eligibleCount = useMemo(
     () =>
       members?.filter(
         (m) =>
           (m.hasPhone || m.hasPushTokens) &&
           !m.alreadyInvited &&
-          !m.alreadyRsvped,
+          !m.alreadyRsvped &&
+          !m.isSelf,
       ).length ?? 0,
     [members],
   );
@@ -118,7 +129,8 @@ export function InviteGroupMembersSheet({
         (m) =>
           (m.hasPhone || m.hasPushTokens) &&
           !m.alreadyInvited &&
-          !m.alreadyRsvped,
+          !m.alreadyRsvped &&
+          !m.isSelf,
       )
       .every((m) => selectedIds.has(m.userId));
   }, [members, selectedIds]);
@@ -139,7 +151,7 @@ export function InviteGroupMembersSheet({
       const next = new Set(prev);
       for (const m of members) {
         const reachable = m.hasPhone || m.hasPushTokens;
-        if (reachable && !m.alreadyInvited && !m.alreadyRsvped) {
+        if (reachable && !m.alreadyInvited && !m.alreadyRsvped && !m.isSelf) {
           next.add(m.userId);
         }
       }
@@ -148,34 +160,16 @@ export function InviteGroupMembersSheet({
   };
 
   const previewBody = useMemo(() => {
-    const firstSelectedFirstName =
-      (members ?? []).find((m) => selectedIds.has(m.userId))?.firstName ||
-      "Friend";
     const lead = `${senderFirstName} invited you to ${eventTitle}`;
     const when = eventScheduledAt
       ? formatScheduledForPreview(eventScheduledAt)
       : null;
-    const where = eventLocation || null;
-    const whenAndWhere = [when, where].filter(Boolean).join(" · ");
     const noteLine = note.trim() ? `\n\n"${note.trim()}"` : "";
     const link = eventShortId
       ? `\n\ntogather.app/e/${eventShortId}`
       : "";
-    // Preview swaps in the first recipient's first name for the leading line
-    // so the host sees a concrete example. The server uses the same template
-    // per recipient.
-    void firstSelectedFirstName; // reserved for {first_name} merge in v2
-    return `${lead}${whenAndWhere ? `\n${whenAndWhere}` : ""}${noteLine}${link}`;
-  }, [
-    members,
-    selectedIds,
-    senderFirstName,
-    eventTitle,
-    eventScheduledAt,
-    eventLocation,
-    eventShortId,
-    note,
-  ]);
+    return `${lead}${when ? `\n${when}` : ""}${noteLine}${link}`;
+  }, [senderFirstName, eventTitle, eventScheduledAt, eventShortId, note]);
 
   const handleSendPress = () => {
     if (selectedIds.size === 0) {
@@ -313,20 +307,23 @@ export function InviteGroupMembersSheet({
                   // A member is unreachable only if they have neither a phone
                   // nor an active push token. RSVP'd members are disabled to
                   // prevent accidental re-invites — Text Blast handles that
-                  // path.
+                  // path. Self stays tappable so the host can fire a test
+                  // invite to themselves.
                   const reachable = m.hasPhone || m.hasPushTokens;
                   const disabled =
                     !reachable || m.alreadyInvited || m.alreadyRsvped;
                   const selected = selectedIds.has(m.userId);
-                  const badge = m.alreadyInvited
-                    ? "Invited"
-                    : !reachable
-                      ? "Unreachable"
-                      : !m.hasPhone
-                        ? "Push only"
-                        : m.alreadyRsvped
-                          ? "Going"
-                          : null;
+                  const badge = m.isSelf
+                    ? "You"
+                    : m.alreadyInvited
+                      ? "Invited"
+                      : !reachable
+                        ? "Unreachable"
+                        : !m.hasPhone
+                          ? "Push only"
+                          : m.alreadyRsvped
+                            ? "Going"
+                            : null;
                   return (
                     <TouchableOpacity
                       key={m.userId}
@@ -363,7 +360,9 @@ export function InviteGroupMembersSheet({
                               color:
                                 badge === "Going"
                                   ? "#16A34A"
-                                  : colors.textSecondary,
+                                  : badge === "You"
+                                    ? DEFAULT_PRIMARY_COLOR
+                                    : colors.textSecondary,
                             },
                           ]}
                         >

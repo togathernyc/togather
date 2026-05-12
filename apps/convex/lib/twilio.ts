@@ -38,6 +38,12 @@ export function isTestPhone(phone: string): boolean {
 
   return testPhoneList.some((testPhone: string) => {
     const testCleaned = testPhone.replace(/\D/g, "");
+    // Guard against empty entries — without this, a stray placeholder like
+    // "-" or an empty token in OTP_TEST_PHONE_NUMBERS would match EVERY phone
+    // because every string `.endsWith("")` returns true. We hit this in prod
+    // on 2026-05-12: a misconfigured env var (`-`) silently turned the entire
+    // SMS pipeline into a test-only no-op.
+    if (!testCleaned) return false;
     return cleaned === testCleaned || cleaned.endsWith(testCleaned);
   });
 }
