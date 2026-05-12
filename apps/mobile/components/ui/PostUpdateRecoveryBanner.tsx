@@ -7,11 +7,15 @@
  * thread keeps running so this banner still appears, telling the user
  * how to recover (force-close + reopen) even when taps are dead.
  *
- * Detection: compare Updates.updateId against the last value we
- * persisted to AsyncStorage. If both are present and they differ, the
- * app just transitioned to a new bundle — show the banner. On the
- * very first launch (no stored value) we silently persist and skip
- * the banner, since there's nothing to recover from.
+ * Detection: bail entirely on embedded launches (Updates.isEmbeddedLaunch
+ * = true — fresh installs, App Store updates, emergency fallback to the
+ * embedded bundle); none of those carry a reloadAsync race. On OTA
+ * bundles, compare Updates.updateId against the value persisted to
+ * AsyncStorage from the previous OTA launch and show the banner if it's
+ * absent (first OTA launch with the banner code on this user's device,
+ * or first OTA after a native install) or different (a real OTA
+ * transition). The current id is then persisted so the banner is
+ * one-shot per bundle.
  *
  * Auto-dismisses after AUTO_DISMISS_MS (wedged users can't tap, but JS
  * setTimeout still fires). Tap-X works for non-wedged users.
@@ -41,9 +45,15 @@ export function PostUpdateRecoveryBanner() {
     let cancelled = false;
 
     (async () => {
+      // Bail out on embedded launches BEFORE touching storage. The
+      // embedded bundle's updateId changes with every native (App Store)
+      // update; reading and overwriting our stored OTA id here would
+      // falsely flag a native install as an OTA transition AND would
+      // corrupt the baseline for detecting the next *real* OTA. Native
+      // installs carry no reloadAsync race; nothing to recover from.
+      if (Updates.isEmbeddedLaunch) return;
+
       const currentUpdateId = Updates.updateId;
-      // Embedded launches have no updateId — there's no transition to
-      // recover from.
       if (!currentUpdateId) return;
 
       let stored: string | null = null;
@@ -56,7 +66,7 @@ export function PostUpdateRecoveryBanner() {
 
       if (cancelled) return;
 
-      // Persist the current id either way so the banner is one-shot.
+      // Persist the current id so the banner is one-shot per bundle.
       try {
         await AsyncStorage.setItem(STORAGE_KEY, currentUpdateId);
       } catch {
@@ -64,14 +74,13 @@ export function PostUpdateRecoveryBanner() {
         // next launch. Acceptable.
       }
 
-      // First-ever launch (or fresh install / cleared storage): nothing
-      // to recover from. Silently seed the value and skip.
-      if (!stored) return;
+      // We're on an OTA bundle. Show the banner when we have no prior
+      // record (first launch with the banner code on this user's
+      // device, or first OTA after a native install) or when the stored
+      // id differs from the current one (a tracked OTA transition).
+      const isTransition = !stored || stored !== currentUpdateId;
+      if (!isTransition) return;
 
-      // Same id: no transition happened.
-      if (stored === currentUpdateId) return;
-
-      // We just transitioned to a new bundle.
       setIsVisible(true);
       dismissTimerRef.current = setTimeout(() => {
         setIsVisible(false);
