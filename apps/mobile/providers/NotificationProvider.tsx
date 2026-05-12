@@ -493,6 +493,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
         break;
       case 'event_rsvp_received':
       case 'event_blast':
+      case 'event_invite':
       case 'event_updated':
       case 'meeting_reminder': {
         // Navigate to event detail screen

@@ -722,6 +722,32 @@ export default defineSchema({
     .index("by_group", ["groupId"]),
 
   // =============================================================================
+  // EVENT INVITES (one row per recipient — dedupes "already invited")
+  // =============================================================================
+
+  eventInvites: defineTable({
+    meetingId: v.id("meetings"),
+    groupId: v.id("groups"),
+    communityId: v.id("communities"),
+    sentById: v.id("users"),
+    recipientUserId: v.id("users"),
+    phone: v.optional(v.string()), // snapshot at send time
+    personalNote: v.optional(v.string()),
+    channels: v.array(v.string()), // ["sms", "push"]
+    // per-recipient status — pending → sent | partial | failed
+    status: v.string(),
+    smsStatus: v.optional(v.string()), // "succeeded" | "failed" | "skipped"
+    pushStatus: v.optional(v.string()),
+    failureReason: v.optional(v.string()),
+    inviteRound: v.number(), // 1 = first invite, 2+ = manual reminders
+    lastSentAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_meeting", ["meetingId"])
+    .index("by_meeting_recipient", ["meetingId", "recipientUserId"])
+    .index("by_group", ["groupId"]),
+
+  // =============================================================================
   // ADMIN BROADCASTS (targeted notifications with 2-party approval)
   // =============================================================================
 
