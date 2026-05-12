@@ -30,6 +30,10 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
   setItem: jest.fn(),
 }));
 
+jest.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => ({ top: 47, bottom: 0, left: 0, right: 0 }),
+}));
+
 const mockGetItem = AsyncStorage.getItem as jest.Mock;
 const mockSetItem = AsyncStorage.setItem as jest.Mock;
 
@@ -156,6 +160,27 @@ describe('PostUpdateRecoveryBanner', () => {
       fireEvent.press(screen.getByLabelText('Dismiss update notice'));
 
       expect(screen.queryByText(BANNER_TEXT)).toBeNull();
+    });
+
+    it('applies the top safe-area inset to the banner container', async () => {
+      // Codex P2 on PR #393: without the top inset the banner sat under
+      // the iOS notch / status bar in the very case it's meant to help.
+      // Mock returns top: 47 (typical iPhone notch).
+      setUpdateId('update-new');
+      mockGetItem.mockResolvedValue('update-old');
+
+      render(<PostUpdateRecoveryBanner />);
+
+      const text = await screen.findByText(BANNER_TEXT);
+      // The container is the banner View; on RN testing-library the parent
+      // node carries the merged style array.
+      const container = text.parent?.parent;
+      expect(container).toBeTruthy();
+      const styles = (container as any).props.style;
+      const flat = Array.isArray(styles)
+        ? Object.assign({}, ...styles.filter(Boolean))
+        : styles;
+      expect(flat.paddingTop).toBe(57); // 10 base + 47 inset
     });
 
     it('fails open if AsyncStorage.getItem throws', async () => {

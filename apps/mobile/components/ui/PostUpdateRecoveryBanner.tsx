@@ -19,6 +19,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Pressable, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Updates from 'expo-updates';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -28,6 +29,11 @@ export const AUTO_DISMISS_MS = 60_000;
 export function PostUpdateRecoveryBanner() {
   const [isVisible, setIsVisible] = useState(false);
   const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // StatusBarAwareContainer only adds bottom inset padding; on iOS notched
+  // devices and Android edge-to-edge builds the banner would otherwise sit
+  // under the status bar, obscuring the recovery instruction in exactly the
+  // post-update case it is meant to address (codex P2 on PR #393).
+  const insets = useSafeAreaInsets();
 
   useEffect(() => {
     if (__DEV__) return;
@@ -89,7 +95,7 @@ export function PostUpdateRecoveryBanner() {
   if (!isVisible) return null;
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingTop: 10 + insets.top }]}>
       <Ionicons name="information-circle" size={18} color="#fff" style={styles.icon} />
       <Text style={styles.text}>
         App just updated — if anything feels stuck, force-close and reopen.
@@ -110,7 +116,9 @@ const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 10,
+    // paddingTop is applied inline together with the top safe-area inset.
+    paddingTop: 10,
+    paddingBottom: 10,
     paddingHorizontal: 16,
     backgroundColor: '#1F2937',
   },
