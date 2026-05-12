@@ -35,6 +35,7 @@ import { StatusBar as BottomStatusBar, useStatusBarVisible, STATUS_BAR_CONTENT_H
 import { ConnectionProvider } from "@providers/ConnectionProvider";
 import { NativeUpdateModal } from "@components/ui/NativeUpdateModal";
 import { OTAUpdateModal } from "@components/ui/OTAUpdateModal";
+import { PostUpdateRecoveryBanner } from "@components/ui/PostUpdateRecoveryBanner";
 import { OTAUpdateProvider } from "@providers/OTAUpdateProvider";
 import { BirthdayCollectionModal } from "@components/legal/BirthdayCollectionModal";
 import { initializeMobileApiClient } from "@services/api/init";
@@ -225,6 +226,7 @@ function AppLayout() {
                     <NativeUpdateModal />
                     <OTAUpdateModal />
                     <BirthdayCollectionModal />
+                    <PostUpdateRecoveryBanner />
                     <TestFlightBanner />
                     <ThemedStack />
                   </StatusBarAwareContainer>
