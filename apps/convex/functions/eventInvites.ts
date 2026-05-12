@@ -99,7 +99,8 @@ export const list = query({
  *   - alreadyInvited: existing eventInvites row for this meeting+user
  *   - alreadyRsvped: existing RSVP for this meeting+user (any option)
  *
- * Skips the caller — leaders don't need to invite themselves.
+ * Includes the caller themselves — handy for sending a test invite to your
+ * own number/push token to preview what recipients will see.
  */
 export const listGroupMembersForInvite = query({
   args: {
@@ -123,9 +124,7 @@ export const listGroupMembersForInvite = query({
       (m) => !m.requestStatus || m.requestStatus === "accepted" || m.requestStatus === "approved",
     );
 
-    const memberUserIds = accepted
-      .map((m) => m.userId)
-      .filter((id) => id !== userId);
+    const memberUserIds = accepted.map((m) => m.userId);
 
     // Batch fetch users
     const users = await Promise.all(memberUserIds.map((id) => ctx.db.get(id)));
@@ -181,12 +180,14 @@ export const listGroupMembersForInvite = query({
           inviteRound: existing?.inviteRound ?? 0,
           lastSentAt: existing?.lastSentAt ?? null,
           alreadyRsvped: rsvpUserIds.has(id),
+          isSelf: id === userId,
         };
       })
       .filter((m): m is NonNullable<typeof m> => m !== null)
       .sort((a, b) => {
-        // Already-invited last, then members with no reachable channel last,
-        // then alphabetical.
+        // Self first (for the "test invite to me" workflow), then
+        // already-invited last, then unreachable last, then alphabetical.
+        if (a.isSelf !== b.isSelf) return a.isSelf ? -1 : 1;
         if (a.alreadyInvited !== b.alreadyInvited) return a.alreadyInvited ? 1 : -1;
         const aReachable = a.hasPhone || a.hasPushTokens;
         const bReachable = b.hasPhone || b.hasPushTokens;
@@ -480,7 +481,7 @@ export const send = internalAction({
       const title = `${senderFirstName} invited you to ${eventTitle}`;
       const body = inv.personalNote
         ? `"${inv.personalNote}"`
-        : formatWhenAndWhere(meetingInfo);
+        : formatScheduledAt(meetingInfo.scheduledAt);
       for (const token of tokens) {
         pushPayloads.push({
           token,
@@ -550,16 +551,25 @@ export const send = internalAction({
           const body = buildInviteSmsBody({
             senderFirstName,
             eventTitle,
-            whenAndWhere: formatWhenAndWhere(meetingInfo),
+            when: formatScheduledAt(meetingInfo.scheduledAt),
             personalNote: inv.personalNote ?? null,
             eventUrl,
           });
           try {
-            await ctx.runAction(internal.functions.auth.phoneOtp.sendSMS, {
-              phone: inv.phone,
-              message: body,
-            });
-            smsStatus = "succeeded";
+            const r = await ctx.runAction(
+              internal.functions.auth.phoneOtp.sendSMS,
+              { phone: inv.phone, message: body },
+            );
+            // sendSMS returns { success: false } without throwing for
+            // misconfigured Twilio creds and for the OTP_TEST_PHONE_NUMBERS
+            // bypass. Don't mark "succeeded" when the underlying action
+            // explicitly said it didn't deliver.
+            if (r?.success) {
+              smsStatus = "succeeded";
+            } else {
+              smsStatus = "failed";
+              failureReason = "sendSMS returned success: false";
+            }
           } catch (err) {
             smsStatus = "failed";
             failureReason = err instanceof Error ? err.message : String(err);
@@ -621,8 +631,6 @@ export const getMeetingForInvite = internalQuery({
       communityId: meeting.communityId,
       shortId: meeting.shortId,
       scheduledAt: meeting.scheduledAt,
-      locationOverride: meeting.locationOverride,
-      meetingType: meeting.meetingType,
     };
   },
 });
@@ -663,22 +671,6 @@ export const updateInviteStatus = internalMutation({
 // Body formatting
 // ============================================================================
 
-type MeetingForInvite = {
-  title: string | undefined;
-  scheduledAt: number;
-  locationOverride: string | undefined;
-  meetingType: number;
-};
-
-function formatWhenAndWhere(meeting: MeetingForInvite): string {
-  const when = formatScheduledAt(meeting.scheduledAt);
-  const where =
-    meeting.meetingType === 2
-      ? "Online"
-      : meeting.locationOverride || null;
-  return where ? `${when} · ${where}` : when;
-}
-
 function formatScheduledAt(ts: number): string {
   // Eastern is the default community timezone; date formatting in SMS is
   // intentionally simple — we don't ship the recipient's timezone server-side.
@@ -700,14 +692,14 @@ function formatScheduledAt(ts: number): string {
 function buildInviteSmsBody(parts: {
   senderFirstName: string;
   eventTitle: string;
-  whenAndWhere: string;
+  when: string;
   personalNote: string | null;
   eventUrl: string;
 }): string {
   const lead = `${parts.senderFirstName} invited you to ${parts.eventTitle}`;
   const note = parts.personalNote ? `\n\n"${parts.personalNote}"` : "";
   const link = parts.eventUrl ? `\n\n${parts.eventUrl}` : "";
-  const body = `${lead}\n${parts.whenAndWhere}${note}${link}`;
+  const body = `${lead}\n${parts.when}${note}${link}`;
   if (body.length <= SMS_MAX_LEN) return body;
   // Personal note is the most likely thing to push us over the limit — truncate it.
   const overage = body.length - SMS_MAX_LEN;

@@ -1173,11 +1173,7 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
                 ? Date.parse(eventData.scheduledAt) || undefined
                 : undefined
           }
-          eventLocation={
-            (eventData as any).locationOverride ?? eventData.groupName ?? null
-          }
           eventShortId={eventData.shortId ?? null}
-          senderFirstName={user?.firstName || "Someone"}
           onClose={() => setShowInviteSheet(false)}
         />
       )}
