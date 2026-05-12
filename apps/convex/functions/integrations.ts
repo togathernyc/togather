@@ -186,6 +186,22 @@ export const listAvailable = query({
         isConnected: integrationMap.has("planning_center"),
         status: integrationMap.get("planning_center") || null,
       },
+      {
+        type: "clearstream",
+        displayName: "Clearstream",
+        description:
+          "Sync community members into a Clearstream subscriber list so you can text them from your existing SMS marketing tool.",
+        isConnected: integrationMap.get("clearstream") === "connected",
+        status: integrationMap.get("clearstream") || null,
+      },
+      {
+        type: "flodesk",
+        displayName: "Flodesk",
+        description:
+          "Sync community members into a Flodesk segment so you can email them from your existing email marketing tool.",
+        isConnected: integrationMap.get("flodesk") === "connected",
+        status: integrationMap.get("flodesk") || null,
+      },
     ];
   },
 });

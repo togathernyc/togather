@@ -464,6 +464,18 @@ export const join = mutation({
           userId,
         });
 
+        // Schedule marketing integration syncs (no-op if not connected)
+        await ctx.scheduler.runAfter(
+          0,
+          internal.functions.marketing.clearstream.syncUser,
+          { communityId: args.communityId, userId },
+        );
+        await ctx.scheduler.runAfter(
+          0,
+          internal.functions.marketing.flodesk.syncUser,
+          { communityId: args.communityId, userId },
+        );
+
         // Re-add user to announcement group
         await addUserToAnnouncementGroup(ctx, args.communityId, userId, existing.roles ?? 1);
 
@@ -503,6 +515,18 @@ export const join = mutation({
       communityId: args.communityId,
       userId,
     });
+
+    // Schedule marketing integration syncs (no-op if not connected)
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.marketing.clearstream.syncUser,
+      { communityId: args.communityId, userId },
+    );
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.marketing.flodesk.syncUser,
+      { communityId: args.communityId, userId },
+    );
 
     // Add user to announcement group
     await addUserToAnnouncementGroup(ctx, args.communityId, userId, 1); // roles=1 is MEMBER

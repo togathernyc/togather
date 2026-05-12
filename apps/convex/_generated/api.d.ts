@@ -62,6 +62,8 @@ import type * as functions_groups_mutations from "../functions/groups/mutations.
 import type * as functions_groups_queries from "../functions/groups/queries.js";
 import type * as functions_integrations from "../functions/integrations.js";
 import type * as functions_linkPreview from "../functions/linkPreview.js";
+import type * as functions_marketing_clearstream from "../functions/marketing/clearstream.js";
+import type * as functions_marketing_flodesk from "../functions/marketing/flodesk.js";
 import type * as functions_meetingRsvps from "../functions/meetingRsvps.js";
 import type * as functions_meetings_attendance from "../functions/meetings/attendance.js";
 import type * as functions_meetings_communityEvents from "../functions/meetings/communityEvents.js";
@@ -239,6 +241,8 @@ declare const fullApi: ApiFromModules<{
   "functions/groups/queries": typeof functions_groups_queries;
   "functions/integrations": typeof functions_integrations;
   "functions/linkPreview": typeof functions_linkPreview;
+  "functions/marketing/clearstream": typeof functions_marketing_clearstream;
+  "functions/marketing/flodesk": typeof functions_marketing_flodesk;
   "functions/meetingRsvps": typeof functions_meetingRsvps;
   "functions/meetings/attendance": typeof functions_meetings_attendance;
   "functions/meetings/communityEvents": typeof functions_meetings_communityEvents;
