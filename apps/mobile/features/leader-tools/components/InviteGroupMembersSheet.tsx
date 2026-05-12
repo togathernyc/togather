@@ -211,12 +211,26 @@ export function InviteGroupMembersSheet({
     }
   };
 
+  // Android hardware-back routes to the outer Modal's onRequestClose. When the
+  // confirm overlay is open it should close the overlay only, not the whole
+  // sheet (matches what the previous nested Modal did via its own
+  // onRequestClose). While a send is in-flight, swallow the back-press so the
+  // sheet can't be dismissed mid-mutation.
+  const handleRequestClose = () => {
+    if (sending) return;
+    if (confirming) {
+      setConfirming(false);
+      return;
+    }
+    onClose();
+  };
+
   return (
     <Modal
       visible={visible}
       transparent
       animationType="slide"
-      onRequestClose={onClose}
+      onRequestClose={handleRequestClose}
     >
       <KeyboardAvoidingView
         style={{ flex: 1 }}
