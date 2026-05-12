@@ -197,12 +197,18 @@ export function InviteGroupMembersSheet({
       setConfirming(false);
       onSent?.(result);
       onClose();
-      Alert.alert(
-        "Invites sent",
-        result.alreadyInvited > 0
-          ? `${result.invited} invited, ${result.alreadyInvited} were already sent.`
-          : `${result.invited} on the way.`,
-      );
+      // Defer the Alert until after the Modal's dismissal animation has run.
+      // Firing Alert.alert in the same tick as Modal dismissal causes iOS
+      // touch handlers to deadlock — the parent screen looks fine but won't
+      // accept scrolls or taps until the app is restarted.
+      setTimeout(() => {
+        Alert.alert(
+          "Invites sent",
+          result.alreadyInvited > 0
+            ? `${result.invited} invited, ${result.alreadyInvited} were already sent.`
+            : `${result.invited} on the way.`,
+        );
+      }, 350);
     } catch (err) {
       console.error("Invite send error:", err);
       Alert.alert("Error", "Failed to send invites. Please try again.");
@@ -443,14 +449,20 @@ export function InviteGroupMembersSheet({
           </TouchableOpacity>
         </TouchableOpacity>
 
-        {/* Confirm sub-sheet */}
-        <Modal
-          visible={confirming}
-          transparent
-          animationType="fade"
-          onRequestClose={() => !sending && setConfirming(false)}
-        >
-          <View style={[styles.confirmOverlay, { backgroundColor: colors.overlay }]}>
+        {/* Confirm overlay — inline (NOT a nested Modal). React Native's
+            iOS dismissal animation gets confused when a Modal-in-a-Modal
+            unmounts simultaneously with the parent, leaving the underlying
+            screen unresponsive to touches until the app restarts. */}
+        {confirming && (
+          <View
+            style={[styles.confirmOverlay, { backgroundColor: colors.overlay }]}
+            pointerEvents="box-none"
+          >
+            <TouchableOpacity
+              activeOpacity={1}
+              style={StyleSheet.absoluteFill}
+              onPress={() => !sending && setConfirming(false)}
+            />
             <View
               style={[
                 styles.confirmCard,
@@ -491,7 +503,7 @@ export function InviteGroupMembersSheet({
               </TouchableOpacity>
             </View>
           </View>
-        </Modal>
+        )}
       </KeyboardAvoidingView>
     </Modal>
   );
@@ -671,7 +683,7 @@ const styles = StyleSheet.create({
   sendButtonText: { color: "#fff", fontSize: 15, fontWeight: "600" },
 
   confirmOverlay: {
-    flex: 1,
+    ...StyleSheet.absoluteFillObject,
     alignItems: "center",
     justifyContent: "center",
     padding: 24,
