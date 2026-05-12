@@ -88,15 +88,50 @@ describe('OTAUpdateProvider', () => {
       (global as any).__DEV__ = originalDev;
     });
 
-    it('skips initial mount check during startup grace window', async () => {
+    it('defers initial mount check until startup grace window passes', async () => {
       mockCheckForUpdate.mockResolvedValue({ isAvailable: false });
 
       renderHook(() => useOTAUpdateStatus(), { wrapper });
       await flushPromises();
 
-      // sessionAgeMs = 0, well under STARTUP_GRACE_MS.
+      // Mount-time check is scheduled via setTimeout(STARTUP_GRACE_MS);
+      // nothing fires immediately.
       expect(mockCheckForUpdate).not.toHaveBeenCalled();
       expect(mockReload).not.toHaveBeenCalled();
+    });
+
+    it('runs deferred mount check after startup grace expires (no foreground needed)', async () => {
+      // Codex P2 on PR #392: a user who opens the app after an OTA is
+      // published and stays foregrounded must still receive the update,
+      // even without a background→foreground transition.
+      mockCheckForUpdate.mockResolvedValue({ isAvailable: true });
+      mockFetchUpdate.mockResolvedValue({ isNew: true });
+      mockReload.mockResolvedValue(undefined);
+
+      renderHook(() => useOTAUpdateStatus(), { wrapper });
+      await flushPromises();
+
+      expect(mockCheckForUpdate).not.toHaveBeenCalled();
+
+      // Advance through the grace window; the deferred mount timer fires.
+      await act(async () => {
+        jest.advanceTimersByTime(STARTUP_GRACE_MS);
+        await flushPromises();
+      });
+
+      await waitFor(() => {
+        expect(mockFetchUpdate).toHaveBeenCalledTimes(1);
+      });
+
+      // Then through the settle window; reloadAsync fires.
+      await act(async () => {
+        jest.advanceTimersByTime(PRE_RELOAD_SETTLE_MS);
+        await flushPromises();
+      });
+
+      await waitFor(() => {
+        expect(mockReload).toHaveBeenCalledTimes(1);
+      });
     });
 
     it('transitions to idle when no update is available after grace passes', async () => {

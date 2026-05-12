@@ -140,8 +140,11 @@ export const OTAUpdateProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }, []);
 
-  // Run on mount. The startup grace inside checkAndApply will still gate
-  // the actual reload — this just kicks off the first check.
+  // Defer the initial mount check until after the startup grace window.
+  // Firing immediately would self-skip via the grace guard inside
+  // checkAndApply, and — if the user never backgrounds — no later
+  // foreground transition would ever retry. That regresses the forced
+  // auto-apply requirement (raised by codex on PR #392).
   useEffect(() => {
     if (__DEV__) {
       console.log('[OTAUpdate] Development mode - skipping update check');
@@ -149,7 +152,11 @@ export const OTAUpdateProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       return;
     }
 
-    checkAndApply('mount');
+    const timeoutId = setTimeout(() => {
+      checkAndApply('mount');
+    }, STARTUP_GRACE_MS);
+
+    return () => clearTimeout(timeoutId);
   }, [checkAndApply]);
 
   // Re-check on real background -> active transitions only. iOS fires
