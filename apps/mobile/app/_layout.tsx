@@ -97,7 +97,15 @@ function ThemedStack() {
         }}
       />
       <Stack.Screen
-        name="groups"
+        name="groups/[group_id]/index"
+        options={{
+          presentation: "modal",
+          animation: "slide_from_bottom",
+          gestureEnabled: true,
+        }}
+      />
+      <Stack.Screen
+        name="groups/[group_id]/edit"
         options={{
           presentation: "modal",
           animation: "slide_from_bottom",
@@ -139,7 +147,7 @@ function ThemedStack() {
       />
       {/* Onboarding - browser-only flow for community proposals, setup, and billing */}
       <Stack.Screen name="onboarding" />
-      <Stack.Screen name="billing" />
+      <Stack.Screen name="billing/[communityId]" />
     </Stack>
   );
 }
