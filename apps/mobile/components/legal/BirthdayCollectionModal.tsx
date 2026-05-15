@@ -19,11 +19,14 @@ import {
   Platform,
   TextInput,
   KeyboardAvoidingView,
+  InputAccessoryView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '@providers/AuthProvider';
 import { useAuthenticatedMutation, api } from '@services/api/convex';
 import { useTheme } from '@hooks/useTheme';
+
+const BIRTHDAY_ACCESSORY_ID = 'birthdayCollectionDone';
 
 interface BirthdayCollectionModalProps {
   onCompleted?: () => void;
@@ -184,6 +187,10 @@ export function BirthdayCollectionModal({ onCompleted }: BirthdayCollectionModal
                 keyboardType="number-pad"
                 maxLength={10}
                 autoFocus
+                returnKeyType="done"
+                onSubmitEditing={handleSubmit}
+                blurOnSubmit={false}
+                inputAccessoryViewID={Platform.OS === 'ios' ? BIRTHDAY_ACCESSORY_ID : undefined}
               />
               {error && <Text style={[styles.errorText, { color: colors.error }]}>{error}</Text>}
             </View>
@@ -218,6 +225,27 @@ export function BirthdayCollectionModal({ onCompleted }: BirthdayCollectionModal
           </View>
         </View>
       </KeyboardAvoidingView>
+      {Platform.OS === 'ios' && (
+        <InputAccessoryView nativeID={BIRTHDAY_ACCESSORY_ID}>
+          <View style={[styles.accessoryBar, { backgroundColor: colors.surfaceSecondary, borderTopColor: colors.border }]}>
+            <TouchableOpacity
+              onPress={handleSubmit}
+              disabled={saving || birthday.length < 10}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Text
+                style={[
+                  styles.accessoryDone,
+                  { color: colors.link },
+                  (saving || birthday.length < 10) && styles.accessoryDoneDisabled,
+                ]}
+              >
+                Done
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </InputAccessoryView>
+      )}
     </Modal>
   );
 }
@@ -318,5 +346,19 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 18,
     paddingBottom: 8,
+  },
+  accessoryBar: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  accessoryDone: {
+    fontSize: 17,
+    fontWeight: '600',
+  },
+  accessoryDoneDisabled: {
+    opacity: 0.4,
   },
 });
