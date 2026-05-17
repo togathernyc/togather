@@ -172,7 +172,8 @@ export function TeamSetupScreen() {
         >
           <Text style={[styles.intro, { color: colors.textSecondary }]}>
             {`#${channelName} is set up as a serving team. Define the roles `}
-            this team fills — each event can need a different number of each.
+            this team fills — each event plan can need a different number of
+            each.
           </Text>
 
           {showStarters && (

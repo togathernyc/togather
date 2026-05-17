@@ -1,9 +1,19 @@
 # ADR-023: Native Event Scheduling & Rostering (PCO Independence)
 
-> **Terminology.** No "service" language anywhere user-facing. A dated thing
-> volunteers are rostered to is an **event**. A team has **roles** (not
-> "positions"). PCO's product is still referred to as "PCO Services" because
-> that is its proper name.
+> **Terminology.** No "service" language anywhere user-facing. Togather has two
+> distinct concepts that both relate to dated activity, and they must never be
+> conflated in user-facing copy:
+>
+> - **Event** — a community event on the Events tab, backed by the `meetings`
+>   table. The user-facing word "event" is reserved for this.
+> - **Event Plan** — a dated thing volunteers are rostered to, backed by the
+>   `eventPlans` table. This is the volunteer scheduling/rostering feature. All
+>   user-facing copy for this concept says "event plan", never just "event".
+>
+> An Event Plan can be added to one or more Events (via the optional
+> `eventPlans.meetingIds` array). A team has **roles** (not "positions"). PCO's
+> product is still referred to as "PCO Services" because that is its proper
+> name.
 
 ## Status
 Proposed
@@ -44,8 +54,8 @@ PCO integration already treats a team as a channel. We make that explicit:
 | Serving team (Worship, Tech)  | `chatChannels`                           |
 | Team roster                   | `chatChannelMembers`                     |
 | Role on a team (Drums)        | `teamRoles` *(new)*                      |
-| A dated event needing volunteers | `eventPlans` *(new — see open Q1)*    |
-| Roles to fill on an event     | `neededRoles` *(new)*                    |
+| A dated event plan needing volunteers | `eventPlans` *(new — see open Q1)* |
+| Roles to fill on an event plan | `neededRoles` *(new)*                   |
 | A person scheduled to a role  | `roleAssignments` *(new)*                |
 
 Rationale for reusing channels rather than a dedicated `serviceTeams` table:
@@ -69,11 +79,11 @@ assigned to any of that team's roles.
 - A team's roles live in `teamRoles`, keyed by `channelId`. Each role has a
   name, a color, a sort order, and a `defaultNeeded` count.
 - Roles are managed in the channel's team settings (see the UX flow doc).
-- `defaultNeeded` seeds the `neededRoles` of a new event; it stays editable
-  per-event.
+- `defaultNeeded` seeds the `neededRoles` of a new event plan; it stays
+  editable per-event-plan.
 - The same role name on two different teams is two independent rows — roles do
   not cross team boundaries.
-- Archiving a role keeps it on past events but removes it from new ones.
+- Archiving a role keeps it on past event plans but removes it from new ones.
 - **Starter sets.** When a channel is first marked as a team, Togather offers a
   suggested role set inferred from the channel name (e.g. a "Worship" channel
   → Vocals / Drums / Keys / Guitar / Bass). The set is fully editable and
@@ -84,7 +94,7 @@ assigned to any of that team's roles.
 No new role field. `chatChannelMembers.role` already distinguishes
 `admin` / `moderator` / `member`.
 
-- **Schedulers** (define team roles, build events, assign people): channel
+- **Schedulers** (define team roles, build event plans, assign people): channel
   `admin` or `moderator`, plus campus group leaders and community admins.
 - **Volunteers** (accept/decline their own assignments): any channel member.
 
@@ -133,7 +143,7 @@ teamRoles: defineTable({
   createdById: v.id("users"),
 }).index("by_channel", ["channelId"]),
 
-// A dated event volunteers are rostered to. Belongs to a campus group.
+// A dated event plan volunteers are rostered to. Belongs to a campus group.
 eventPlans: defineTable({
   groupId: v.id("groups"),
   communityId: v.id("communities"),
@@ -153,7 +163,7 @@ eventPlans: defineTable({
 }).index("by_group", ["groupId"])
   .index("by_community_date", ["communityId", "eventDate"]),
 
-// "We need N of role X on this event."
+// "We need N of role X on this event plan."
 neededRoles: defineTable({
   planId: v.id("eventPlans"),
   channelId: v.id("chatChannels"),       // the team
@@ -162,7 +172,7 @@ neededRoles: defineTable({
 }).index("by_plan", ["planId"])
   .index("by_plan_channel", ["planId", "channelId"]),
 
-// A person scheduled to a role on an event.
+// A person scheduled to a role on an event plan.
 roleAssignments: defineTable({
   planId: v.id("eventPlans"),
   channelId: v.id("chatChannels"),
@@ -190,16 +200,16 @@ roleAssignments: defineTable({
   (`pcoPlanId` / `pcoAssignmentId` carry the linkage). The daily
   `pco-auto-channel-rotation` cron retires per-community as churches migrate.
 - **Run Sheet.** Currently reads the order of items from PCO. A native
-  `eventItems` table is **Phase 2** — Phase 1 events are rostering containers
-  only. Run Sheet keeps reading PCO during transition.
+  `eventItems` table is **Phase 2** — Phase 1 event plans are rostering
+  containers only. Run Sheet keeps reading PCO during transition.
 
 ## Phasing
 
-- **Phase 1 — Rostering MVP.** Team roles, events, needed roles, manual
+- **Phase 1 — Rostering MVP.** Team roles, event plans, needed roles, manual
   assignment, accept/decline, volunteer "My Schedule", double-booking warning,
   "previously filled by" quicklink. *(See `event-scheduling-phase-1-plan.md`.)*
 - **Phase 2 — Leader efficiency + agenda.** Matrix grid, auto-schedule
-  (rotation by longest-since-served), templates, recurring events, native
+  (rotation by longest-since-served), templates, recurring event plans, native
   order-of-items + Run Sheet cutover, PCO importer.
 - **Phase 3 — Worship depth.** Song library, arrangements, keys, CCLI.
 
@@ -214,17 +224,19 @@ roleAssignments: defineTable({
 
 ## Resolved decisions
 
-- **`eventPlans` stays separate from `meetings`.** Togather has two things
-  named "event": community events on the Events tab (`meetings`) and rostered
-  events (`eventPlans`). They stay distinct tables — the rostering lifecycle
+- **`eventPlans` stays separate from `meetings`.** Togather has two related
+  but distinct concepts: user-facing **Events** (community events on the
+  Events tab, `meetings`) and user-facing **Event Plans** (rostered event
+  plans, `eventPlans`). They stay distinct tables — the rostering lifecycle
   (draft → publish → assign → confirm) differs materially from RSVP — joined
-  by an optional `eventPlans.meetingIds` array when one rostered event maps to
+  by an optional `eventPlans.meetingIds` array when one event plan maps to
   one or more Events-tab events (e.g. multi-service day, multi-campus). Code
-  keeps `eventPlans` naming explicit to avoid the collision.
+  keeps `eventPlans` naming explicit, and user-facing copy always says
+  "event plan", to avoid the collision.
 
 ## Open questions
 
-1. Should a published event auto-create an event-scoped chat, or reuse the team
-   channel? Defer to Phase 1 implementation.
-2. Multi-campus events (one event, several campuses) — one `eventPlans` row per
-   campus for now; revisit in Phase 2.
+1. Should a published event plan auto-create an event-plan-scoped chat, or
+   reuse the team channel? Defer to Phase 1 implementation.
+2. Multi-campus event plans (one event plan, several campuses) — one
+   `eventPlans` row per campus for now; revisit in Phase 2.

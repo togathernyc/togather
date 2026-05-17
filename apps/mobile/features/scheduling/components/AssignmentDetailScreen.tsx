@@ -244,7 +244,7 @@ export function AssignmentDetailScreen() {
               <Text
                 style={[styles.sectionLabel, { color: colors.textSecondary }]}
               >
-                ON THIS EVENT
+                ON THIS EVENT PLAN
               </Text>
               <View
                 style={[

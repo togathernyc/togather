@@ -101,7 +101,7 @@ export function RolesEditor({ channelId }: { channelId: Id<"chatChannels"> }) {
     (role: Role) => {
       Alert.alert(
         "Archive role?",
-        `"${role.name}" stays on past events but won't appear on new ones.`,
+        `"${role.name}" stays on past event plans but won't appear on new ones.`,
         [
           { text: "Cancel", style: "cancel" },
           {
@@ -153,7 +153,7 @@ export function RolesEditor({ channelId }: { channelId: Id<"chatChannels"> }) {
       <View style={[styles.group, { backgroundColor: colors.surfaceSecondary }]}>
         {roles.length === 0 ? (
           <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-            No roles yet. Add the roles this team fills each event.
+            No roles yet. Add the roles this team fills each event plan.
           </Text>
         ) : (
           roles.map((role, idx) => (

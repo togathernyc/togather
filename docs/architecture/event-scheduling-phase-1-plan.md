@@ -1,22 +1,24 @@
 # Event Scheduling — Phase 1 Implementation Plan
 
 Companion to **ADR-023**. Phase 1 goal: a church can schedule its volunteers
-to events entirely in Togather, without Planning Center.
+to event plans entirely in Togather, without Planning Center.
 
-Terminology: a dated thing volunteers are rostered to is an **event**; a team
-has **roles**. No "service" language.
+Terminology: a dated thing volunteers are rostered to is an **event plan**
+(backed by `eventPlans`), distinct from a community **Event** on the Events tab
+(backed by `meetings`); a team has **roles**. No "service" language. An event
+plan can be added to one or more Events via `eventPlans.meetingIds`.
 
 Scope is **rostering only**. No order-of-items editing, no songs, no PCO
-importer — those are Phase 2+. Events in Phase 1 are dated containers that
+importer — those are Phase 2+. Event plans in Phase 1 are dated containers that
 assignments hang off.
 
 ## Definition of done
 
 A channel admin can:
 1. Mark a team channel as a serving team and define its roles.
-2. Create a dated event and declare needed roles ("2 Drums, 4 Vocals").
+2. Create a dated event plan and declare needed roles ("2 Drums, 4 Vocals").
 3. Assign channel members to roles, seeing who filled each before.
-4. Publish the event, sending push + SMS requests to assigned volunteers.
+4. Publish the event plan, sending push + SMS requests to assigned volunteers.
 
 A volunteer can:
 5. See their upcoming assignments in a "My Schedule" view.
@@ -63,11 +65,11 @@ New module `apps/convex/functions/scheduling/` (mirror `pcoServices/` layout).
   - `createEvent`, `updateEvent`, `deleteEvent` (mutations) — `deleteEvent`
     cascades to `neededRoles` + `roleAssignments`.
   - `setNeededRoles` (mutation) — declare counts per role. Seed from
-    `teamRoles.defaultNeeded` on event creation.
+    `teamRoles.defaultNeeded` on event-plan creation.
   - `listEvents` (query) — by group, upcoming, with fill summary
     (filled vs. needed per role).
-  - `getEvent` (query) — full event: needed roles, assignments grouped by role,
-    each assignment's status.
+  - `getEvent` (query) — full event plan: needed roles, assignments grouped by
+    role, each assignment's status.
 
 ### Track D — Backend: assignments & lifecycle
 
@@ -80,7 +82,7 @@ New module `apps/convex/functions/scheduling/` (mirror `pcoServices/` layout).
     (+ optional `declineNote`), stamps `respondedAt`. A `declined` assignment
     is left in place but the slot counts as open (fill summary counts
     `confirmed` + `unconfirmed` only).
-  - `publishEvent` (action) — set event `published`, then for every
+  - `publishEvent` (action) — set the event plan `published`, then for every
     `unconfirmed` assignment send a request notification (push + SMS) via the
     existing event-invite notification path, with accept/decline deep links.
   - `previousFillers` (query) — for a `roleId`, distinct `userId`s from
@@ -88,7 +90,7 @@ New module `apps/convex/functions/scheduling/` (mirror `pcoServices/` layout).
     `eventDate` desc. Powers the assign-UI quicklink.
 - `mySchedule.ts`
   - `myAssignments` (query) — `roleAssignments.by_user`, upcoming, joined with
-    event + role + channel display info.
+    event plan + role + channel display info.
 
 ### Track E — Mobile: scheduler UI
 
@@ -96,7 +98,8 @@ Under `apps/mobile/features/scheduling/` (new feature folder).
 
 - Team setup: a "Set up as serving team" affordance in channel settings; roles
   editor (add/rename/reorder/archive, color, default count).
-- Event list screen for a campus group — upcoming events with fill progress.
+- Event list screen for a campus group — upcoming event plans with fill
+  progress.
 - Event editor screen:
   - Date + time(s).
   - Needed-roles editor per team.
@@ -109,8 +112,8 @@ Under `apps/mobile/features/scheduling/` (new feature folder).
 ### Track F — Mobile: volunteer experience
 
 - "My Schedule" screen — upcoming assignments grouped by date, status pills.
-- Per-assignment Accept / Decline (and bulk accept-all per event); decline
-  prompts an optional one-line note.
+- Per-assignment Accept / Decline (and bulk accept-all per event plan);
+  decline prompts an optional one-line note.
 - Deep-link target so push/SMS request links open straight to the assignment.
 - Surface pending requests in the existing Inbox/notification UI.
 
@@ -136,9 +139,9 @@ Under `apps/mobile/features/scheduling/` (new feature folder).
 
 ## Explicitly deferred to Phase 2+
 
-Matrix grid, auto-schedule, templates, recurring events, native order-of-items
-+ Run Sheet cutover, PCO importer, song library, blockouts, role
-qualifications.
+Matrix grid, auto-schedule, templates, recurring event plans, native
+order-of-items + Run Sheet cutover, PCO importer, song library, blockouts,
+role qualifications.
 
 ## Risks / watch-items
 
@@ -148,6 +151,7 @@ qualifications.
   assignment.
 - **Notification volume** — `publishEvent` can fan out many requests; batch
   through the existing job worker rather than sending inline.
-- **Naming collision** — "event" maps to two tables (`meetings` and
-  `eventPlans`); keep `eventPlans` internal naming explicit in code per
-  ADR-023.
+- **Naming collision** — two distinct concepts: user-facing "Event"
+  (`meetings`) and user-facing "Event Plan" (`eventPlans`); keep `eventPlans`
+  internal naming explicit in code, and always say "event plan" in user-facing
+  copy, per ADR-023.

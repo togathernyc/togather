@@ -74,7 +74,7 @@ export function EventListScreen() {
       const date = nextSundayAtNine();
       const result = await createEvent({
         groupId,
-        title: "Untitled event",
+        title: "Untitled event plan",
         eventDate: date.getTime(),
         times: [{ label: "9:00 AM", startsAt: date.getTime() }],
       });
@@ -127,9 +127,9 @@ export function EventListScreen() {
         <View style={styles.emptyWrap}>
           <EmptyState
             icon="calendar-outline"
-            title="No upcoming events"
-            message="Create an event to start scheduling volunteers."
-            actionLabel="New event"
+            title="No upcoming event plans"
+            message="Create an event plan to start scheduling volunteers."
+            actionLabel="New event plan"
             onAction={handleNewEvent}
           />
         </View>

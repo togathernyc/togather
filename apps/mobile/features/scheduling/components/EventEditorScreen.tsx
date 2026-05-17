@@ -158,7 +158,7 @@ export function EventEditorScreen() {
   );
 
   const handleDelete = useCallback(() => {
-    Alert.alert("Delete event?", "This removes the event and all its assignments.", [
+    Alert.alert("Delete event plan?", "This removes the event plan and all its assignments.", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Delete",
@@ -188,7 +188,7 @@ export function EventEditorScreen() {
             try {
               const result = await publishEvent({ planId });
               Alert.alert(
-                "Event published",
+                "Event plan published",
                 result.requestCount > 0
                   ? `Sent ${result.requestCount} request${
                       result.requestCount === 1 ? "" : "s"
@@ -233,7 +233,7 @@ export function EventEditorScreen() {
         <Header onBack={handleBack} colors={colors} />
         <View style={styles.centered}>
           <Text style={[styles.errorText, { color: colors.textSecondary }]}>
-            This event is no longer available.
+            This event plan is no longer available.
           </Text>
         </View>
       </View>
@@ -268,7 +268,7 @@ export function EventEditorScreen() {
             onSubmitEditing={handleSaveTitle}
             autoFocus
             maxLength={120}
-            placeholder="Event title"
+            placeholder="Event plan title"
             placeholderTextColor={colors.textSecondary}
             style={[
               styles.titleInput,
@@ -359,7 +359,7 @@ export function EventEditorScreen() {
         {event.roles.length === 0 ? (
           <Text style={[styles.noRolesText, { color: colors.textSecondary }]}>
             No roles needed yet. Tap "Set needed roles" to declare how many of
-            each role this event needs.
+            each role this event plan needs.
           </Text>
         ) : (
           event.roles.map((role) => (
@@ -576,7 +576,7 @@ function Header({
       <TouchableOpacity onPress={onBack} hitSlop={12} style={styles.headerBtn}>
         <Ionicons name="chevron-back" size={28} color={colors.text} />
       </TouchableOpacity>
-      <Text style={[styles.headerTitle, { color: colors.text }]}>Event</Text>
+      <Text style={[styles.headerTitle, { color: colors.text }]}>Event plan</Text>
       {onDelete ? (
         <TouchableOpacity
           onPress={onDelete}
