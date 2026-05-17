@@ -13,7 +13,7 @@
  * scheduling.assignments.unassign / publishEvent, NeededRolesModal +
  * AssignSheet for the sub-flows.
  */
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -133,16 +133,51 @@ export function EventEditorScreen() {
     if (router.canGoBack()) router.back();
   }, [router]);
 
-  const handleSaveTitle = useCallback(async () => {
-    const trimmed = titleDraft.trim();
-    setEditingTitle(false);
+  // Title auto-saves: a debounced save fires as the scheduler types, and any
+  // still-pending save is flushed on blur/submit and on leaving the screen.
+  // (iOS does not reliably blur a TextInput when you tap elsewhere, so we
+  // must not depend on onBlur alone.)
+  const titleSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingTitleRef = useRef<string | null>(null);
+
+  const flushTitle = useCallback(async () => {
+    if (titleSaveTimer.current) {
+      clearTimeout(titleSaveTimer.current);
+      titleSaveTimer.current = null;
+    }
+    const pending = pendingTitleRef.current;
+    pendingTitleRef.current = null;
+    if (pending == null) return;
+    const trimmed = pending.trim();
     if (!trimmed || trimmed === event?.title) return;
     try {
       await updateEvent({ planId, title: trimmed });
     } catch (e: any) {
       Alert.alert("Couldn't rename", e?.message ?? "Please try again.");
     }
-  }, [titleDraft, event?.title, updateEvent, planId]);
+  }, [event?.title, updateEvent, planId]);
+
+  const handleTitleChange = useCallback(
+    (text: string) => {
+      setTitleDraft(text);
+      pendingTitleRef.current = text;
+      if (titleSaveTimer.current) clearTimeout(titleSaveTimer.current);
+      titleSaveTimer.current = setTimeout(() => {
+        void flushTitle();
+      }, 600);
+    },
+    [flushTitle],
+  );
+
+  const handleSaveTitle = useCallback(() => {
+    setEditingTitle(false);
+    void flushTitle();
+  }, [flushTitle]);
+
+  // Flush a pending title save when the screen unmounts.
+  const flushTitleRef = useRef(flushTitle);
+  flushTitleRef.current = flushTitle;
+  useEffect(() => () => void flushTitleRef.current(), []);
 
   const handleChangeDate = useCallback(
     async (date: Date | null) => {
@@ -292,9 +327,10 @@ export function EventEditorScreen() {
         {editingTitle ? (
           <TextInput
             value={titleDraft}
-            onChangeText={setTitleDraft}
+            onChangeText={handleTitleChange}
             onBlur={handleSaveTitle}
             onSubmitEditing={handleSaveTitle}
+            returnKeyType="done"
             autoFocus
             maxLength={120}
             placeholder="Event plan title"
