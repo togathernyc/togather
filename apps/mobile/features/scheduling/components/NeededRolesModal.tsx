@@ -22,6 +22,7 @@ import {
   Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { useTheme } from "@hooks/useTheme";
 import {
   useAuthenticatedQuery,
@@ -150,6 +151,8 @@ export function NeededRolesModal({
                 channel={channel}
                 counts={counts}
                 setCounts={setCounts}
+                groupId={groupId}
+                onClose={onClose}
               />
             ))}
           </ScrollView>
@@ -164,12 +167,17 @@ function TeamSection({
   channel,
   counts,
   setCounts,
+  groupId,
+  onClose,
 }: {
   channel: TeamChannel;
   counts: CountMap;
   setCounts: React.Dispatch<React.SetStateAction<CountMap>>;
+  groupId: Id<"groups">;
+  onClose: () => void;
 }) {
   const { colors } = useTheme();
+  const router = useRouter();
   const roles = useAuthenticatedQuery(
     api.functions.scheduling.roles.listRoles,
     { channelId: channel._id },
@@ -196,9 +204,24 @@ function TeamSection({
 
   return (
     <View style={styles.section}>
-      <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
-        {channel.name.toUpperCase()}
-      </Text>
+      <View style={styles.sectionHeaderRow}>
+        <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
+          {channel.name.toUpperCase()}
+        </Text>
+        <TouchableOpacity
+          hitSlop={8}
+          onPress={() => {
+            onClose();
+            router.push(
+              `/(user)/leader-tools/${groupId}/scheduling/team/${channel._id}`,
+            );
+          }}
+        >
+          <Text style={[styles.editRolesLink, { color: colors.buttonPrimary }]}>
+            Edit roles
+          </Text>
+        </TouchableOpacity>
+      </View>
       <View
         style={[styles.group, { backgroundColor: colors.surfaceSecondary }]}
       >
@@ -326,12 +349,21 @@ const styles = StyleSheet.create({
   section: {
     marginBottom: 8,
   },
+  sectionHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 12,
+    marginBottom: 8,
+  },
   sectionLabel: {
     fontSize: 11,
     fontWeight: "600",
     letterSpacing: 0.6,
-    marginTop: 12,
-    marginBottom: 8,
+  },
+  editRolesLink: {
+    fontSize: 13,
+    fontWeight: "600",
   },
   group: {
     borderRadius: 12,
