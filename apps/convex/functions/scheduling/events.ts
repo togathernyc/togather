@@ -257,29 +257,37 @@ function buildFillSummary(
   assignments: Doc<"roleAssignments">[],
 ) {
   const filledByRole = new Map<string, number>();
+  const confirmedByRole = new Map<string, number>();
   for (const assignment of assignments) {
     if (!FILLED_STATUSES.has(assignment.status)) continue;
     const key = assignment.roleId;
     filledByRole.set(key, (filledByRole.get(key) ?? 0) + 1);
+    if (assignment.status === "confirmed") {
+      confirmedByRole.set(key, (confirmedByRole.get(key) ?? 0) + 1);
+    }
   }
 
   let totalNeeded = 0;
   let totalFilled = 0;
+  let totalConfirmed = 0;
   const roles = neededRoles.map((needed) => {
     const filled = filledByRole.get(needed.roleId) ?? 0;
+    const confirmed = confirmedByRole.get(needed.roleId) ?? 0;
     totalNeeded += needed.count;
     // Over-assignment shouldn't make the event look >100% filled.
     totalFilled += Math.min(filled, needed.count);
+    totalConfirmed += Math.min(confirmed, needed.count);
     return {
       roleId: needed.roleId,
       channelId: needed.channelId,
       needed: needed.count,
       filled,
+      confirmed,
       open: Math.max(0, needed.count - filled),
     };
   });
 
-  return { roles, totalNeeded, totalFilled };
+  return { roles, totalNeeded, totalFilled, totalConfirmed };
 }
 
 /**

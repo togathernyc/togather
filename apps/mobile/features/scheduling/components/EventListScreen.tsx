@@ -24,7 +24,6 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
-import { ProgressBar } from "@components/ui/ProgressBar";
 import { EmptyState } from "@components/ui/EmptyState";
 import {
   useAuthenticatedQuery,
@@ -40,7 +39,11 @@ type EventRow = {
   eventDate: number;
   times: Array<{ label: string; startsAt: number }>;
   status: string;
-  fillSummary: { totalNeeded: number; totalFilled: number };
+  fillSummary: {
+    totalNeeded: number;
+    totalFilled: number;
+    totalConfirmed: number;
+  };
 };
 
 export function EventListScreen() {
@@ -141,8 +144,14 @@ export function EventListScreen() {
           ]}
         >
           {events.map((event) => {
-            const { totalNeeded, totalFilled } = event.fillSummary;
-            const progress = totalNeeded > 0 ? totalFilled / totalNeeded : 0;
+            const { totalNeeded, totalFilled, totalConfirmed } =
+              event.fillSummary;
+            const confirmedPct =
+              totalNeeded > 0 ? (totalConfirmed / totalNeeded) * 100 : 0;
+            const filledPct =
+              totalNeeded > 0 ? (totalFilled / totalNeeded) * 100 : 0;
+            // Filled-but-not-yet-confirmed portion of the bar.
+            const pendingPct = Math.max(0, filledPct - confirmedPct);
             const isPublished = event.status === "published";
             return (
               <Pressable
@@ -186,18 +195,36 @@ export function EventListScreen() {
                   />
                 </View>
                 <View style={styles.fillRow}>
-                  <View style={styles.fillBar}>
-                    <ProgressBar
-                      progress={progress}
-                      color={progress >= 1 ? colors.success : primaryColor}
-                      showPercentage={false}
+                  <View
+                    style={[styles.fillTrack, { backgroundColor: colors.border }]}
+                  >
+                    {/* Confirmed (accepted) — solid. */}
+                    <View
+                      style={{
+                        width: `${confirmedPct}%`,
+                        backgroundColor: colors.success,
+                      }}
+                    />
+                    {/* Filled but awaiting a response — faded. */}
+                    <View
+                      style={{
+                        width: `${pendingPct}%`,
+                        backgroundColor: colors.success + "59",
+                      }}
                     />
                   </View>
-                  <Text
-                    style={[styles.fillText, { color: colors.textSecondary }]}
-                  >
-                    {totalFilled}/{totalNeeded} filled
-                  </Text>
+                  <View style={styles.fillTextWrap}>
+                    <Text
+                      style={[styles.fillText, { color: colors.textSecondary }]}
+                    >
+                      {totalFilled}/{totalNeeded} filled
+                    </Text>
+                    <Text
+                      style={[styles.fillSubText, { color: colors.textSecondary }]}
+                    >
+                      {totalConfirmed} confirmed
+                    </Text>
+                  </View>
                 </View>
               </Pressable>
             );
@@ -294,12 +321,24 @@ const styles = StyleSheet.create({
     gap: 10,
     marginTop: 14,
   },
-  fillBar: {
+  fillTrack: {
     flex: 1,
+    height: 8,
+    borderRadius: 4,
+    flexDirection: "row",
+    overflow: "hidden",
+  },
+  fillTextWrap: {
+    alignItems: "flex-end",
   },
   fillText: {
     fontSize: 12,
     fontWeight: "500",
+  },
+  fillSubText: {
+    fontSize: 11,
+    marginTop: 1,
+    opacity: 0.8,
   },
   pill: {
     paddingHorizontal: 10,
