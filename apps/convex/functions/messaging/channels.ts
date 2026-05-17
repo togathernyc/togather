@@ -2506,6 +2506,13 @@ export const createCustomChannel = mutation({
     name: v.string(),
     description: v.optional(v.string()),
     joinMode: v.optional(v.union(v.literal("open"), v.literal("approval_required"))),
+    /**
+     * Whether to add the creator as an `owner` member of the new channel.
+     * Defaults to `true` (existing behavior). Event Team channels pass
+     * `false` — their creator manages the channel as a group leader and is
+     * not auto-added, since membership is auto-synced from event plans.
+     */
+    addCreatorAsMember: v.optional(v.boolean()),
   },
   returns: v.object({
     channelId: v.id("chatChannels"),
@@ -2566,6 +2573,7 @@ export const createCustomChannel = mutation({
     const slug = generateChannelSlug(trimmedName, existingSlugs);
 
     // 7. Insert chatChannels record
+    const addCreatorAsMember = args.addCreatorAsMember ?? true;
     const now = Date.now();
     const channelId = await ctx.db.insert("chatChannels", {
       groupId: args.groupId,
@@ -2577,21 +2585,28 @@ export const createCustomChannel = mutation({
       createdAt: now,
       updatedAt: now,
       isArchived: false,
-      memberCount: 1,
+      memberCount: addCreatorAsMember ? 1 : 0,
       joinMode: args.joinMode,
     });
 
-    // 8. Insert chatChannelMembers record for the creator as owner
-    const user = await ctx.db.get(userId);
-    await ctx.db.insert("chatChannelMembers", {
-      channelId,
-      userId,
-      role: "owner",
-      joinedAt: now,
-      isMuted: false,
-      displayName: user ? getDisplayName(user.firstName, user.lastName) : undefined,
-      profilePhoto: user ? getMediaUrl(user.profilePhoto) : undefined,
-    });
+    // 8. Insert chatChannelMembers record for the creator as owner.
+    // Skipped for Event Team channels (`addCreatorAsMember: false`) — their
+    // creator manages the channel as a group leader rather than joining it,
+    // and membership is auto-synced from event-plan assignments.
+    if (addCreatorAsMember) {
+      const user = await ctx.db.get(userId);
+      await ctx.db.insert("chatChannelMembers", {
+        channelId,
+        userId,
+        role: "owner",
+        joinedAt: now,
+        isMuted: false,
+        displayName: user
+          ? getDisplayName(user.firstName, user.lastName)
+          : undefined,
+        profilePhoto: user ? getMediaUrl(user.profilePhoto) : undefined,
+      });
+    }
 
     // 9. Return result
     return { channelId, slug };

@@ -14,12 +14,13 @@
  * Backend: scheduling.teams.markChannelAsTeam,
  * scheduling.roles.suggestStarterRoles / listRoles / createRole.
  */
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
+  Modal,
   Pressable,
   TouchableOpacity,
   ActivityIndicator,
@@ -28,6 +29,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Avatar } from "@components/ui/Avatar";
 import { useTheme } from "@hooks/useTheme";
 import {
   useAuthenticatedQuery,
@@ -41,15 +43,38 @@ import { ROLE_COLORS } from "../utils/format";
 type StarterRole = { name: string; defaultNeeded: number };
 type Role = { _id: Id<"teamRoles">; name: string };
 
+type PermanentMember = {
+  userId: Id<"users">;
+  displayName: string;
+  profilePhoto?: string;
+};
+
+/** Raw row shape returned by `groupMembers.list`. */
+type GroupMemberRow = {
+  id: string;
+  odUserId: Id<"users">;
+  user: {
+    firstName: string;
+    lastName: string;
+    profileImage?: string;
+  } | null;
+};
+
 export function TeamSetupScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { channel_id, channelName: channelNameParam } = useLocalSearchParams<{
+  const {
+    channel_id,
+    group_id,
+    channelName: channelNameParam,
+  } = useLocalSearchParams<{
     channel_id: string;
+    group_id: string;
     channelName?: string;
   }>();
   const channelId = channel_id as Id<"chatChannels">;
+  const groupId = group_id as Id<"groups"> | undefined;
 
   const roles = useAuthenticatedQuery(
     api.functions.scheduling.roles.listRoles,
@@ -283,9 +308,302 @@ export function TeamSetupScreen() {
             </Text>
             <RolesEditor channelId={channelId} />
           </View>
+
+          <View style={styles.section}>
+            <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
+              PERMANENT MEMBERS
+            </Text>
+            <Text style={[styles.sectionHint, { color: colors.textSecondary }]}>
+              These people are always in the channel, on top of whoever is
+              auto-added from event plans.
+            </Text>
+            <PermanentMembersSection channelId={channelId} groupId={groupId} />
+          </View>
         </ScrollView>
       )}
     </View>
+  );
+}
+
+/**
+ * Permanent members of a serving-team channel — manually-added people the
+ * rotation engine never removes. Lists them with a remove control and an
+ * "Add member" affordance that picks from the campus group's roster.
+ */
+function PermanentMembersSection({
+  channelId,
+  groupId,
+}: {
+  channelId: Id<"chatChannels">;
+  groupId?: Id<"groups">;
+}) {
+  const { colors } = useTheme();
+
+  const members = useAuthenticatedQuery(
+    api.functions.scheduling.teams.listPermanentMembers,
+    { channelId },
+  ) as PermanentMember[] | undefined;
+
+  const removeMember = useAuthenticatedMutation(
+    api.functions.scheduling.teams.removePermanentMember,
+  );
+
+  const [pickerVisible, setPickerVisible] = useState(false);
+  const [removing, setRemoving] = useState<string | null>(null);
+
+  const handleRemove = useCallback(
+    (member: PermanentMember) => {
+      Alert.alert(
+        "Remove member?",
+        `${member.displayName} will be removed from this channel.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Remove",
+            style: "destructive",
+            onPress: async () => {
+              setRemoving(member.userId as string);
+              try {
+                await removeMember({ channelId, userId: member.userId });
+              } catch (e: any) {
+                Alert.alert(
+                  "Couldn't remove",
+                  e?.message ?? "Please try again.",
+                );
+              } finally {
+                setRemoving(null);
+              }
+            },
+          },
+        ],
+      );
+    },
+    [removeMember, channelId],
+  );
+
+  if (members === undefined) {
+    return (
+      <View style={styles.permLoading}>
+        <ActivityIndicator size="small" color={colors.text} />
+      </View>
+    );
+  }
+
+  return (
+    <View>
+      <View style={[styles.group, { backgroundColor: colors.surfaceSecondary }]}>
+        {members.length === 0 ? (
+          <Text style={[styles.permEmpty, { color: colors.textSecondary }]}>
+            No permanent members yet.
+          </Text>
+        ) : (
+          members.map((member, idx) => (
+            <View
+              key={member.userId}
+              style={[
+                styles.permRow,
+                idx > 0 && {
+                  borderTopWidth: StyleSheet.hairlineWidth,
+                  borderTopColor: colors.border,
+                },
+              ]}
+            >
+              <Avatar
+                name={member.displayName}
+                imageUrl={member.profilePhoto}
+                size={36}
+              />
+              <Text
+                style={[styles.permName, { color: colors.text }]}
+                numberOfLines={1}
+              >
+                {member.displayName}
+              </Text>
+              {removing === (member.userId as string) ? (
+                <ActivityIndicator size="small" color={colors.text} />
+              ) : (
+                <Pressable
+                  onPress={() => handleRemove(member)}
+                  hitSlop={8}
+                  style={styles.iconBtn}
+                >
+                  <Ionicons
+                    name="close-circle"
+                    size={20}
+                    color={colors.destructive}
+                  />
+                </Pressable>
+              )}
+            </View>
+          ))
+        )}
+      </View>
+
+      <Pressable
+        onPress={() => setPickerVisible(true)}
+        disabled={!groupId}
+        style={({ pressed }) => [
+          styles.addRow,
+          { backgroundColor: colors.surfaceSecondary },
+          (pressed || !groupId) && { opacity: 0.7 },
+        ]}
+      >
+        <Ionicons name="person-add-outline" size={20} color={colors.text} />
+        <Text style={[styles.addLabel, { color: colors.text }]}>
+          Add member
+        </Text>
+      </Pressable>
+
+      {groupId && (
+        <AddMemberModal
+          visible={pickerVisible}
+          channelId={channelId}
+          groupId={groupId}
+          existingUserIds={
+            new Set((members ?? []).map((m) => m.userId as string))
+          }
+          onClose={() => setPickerVisible(false)}
+        />
+      )}
+    </View>
+  );
+}
+
+/** Picker modal: the campus group's members, minus current permanent members. */
+function AddMemberModal({
+  visible,
+  channelId,
+  groupId,
+  existingUserIds,
+  onClose,
+}: {
+  visible: boolean;
+  channelId: Id<"chatChannels">;
+  groupId: Id<"groups">;
+  existingUserIds: Set<string>;
+  onClose: () => void;
+}) {
+  const { colors } = useTheme();
+
+  const memberData = useAuthenticatedQuery(
+    api.functions.groupMembers.list,
+    visible ? { groupId, limit: 200 } : "skip",
+  ) as { items: GroupMemberRow[] } | undefined;
+
+  const addMember = useAuthenticatedMutation(
+    api.functions.scheduling.teams.addPermanentMember,
+  );
+  const [adding, setAdding] = useState<string | null>(null);
+
+  const candidates = useMemo<PermanentMember[]>(() => {
+    return (memberData?.items ?? [])
+      .filter(
+        (row): row is GroupMemberRow & { user: NonNullable<GroupMemberRow["user"]> } =>
+          row.user !== null,
+      )
+      .map((row) => ({
+        userId: row.odUserId,
+        displayName:
+          `${row.user.firstName} ${row.user.lastName}`.trim() || "Member",
+        profilePhoto: row.user.profileImage,
+      }))
+      .filter((m) => !existingUserIds.has(m.userId as string));
+  }, [memberData?.items, existingUserIds]);
+
+  const handleAdd = useCallback(
+    async (member: PermanentMember) => {
+      setAdding(member.userId as string);
+      try {
+        await addMember({ channelId, userId: member.userId });
+        onClose();
+      } catch (e: any) {
+        Alert.alert("Couldn't add", e?.message ?? "Please try again.");
+      } finally {
+        setAdding(null);
+      }
+    },
+    [addMember, channelId, onClose],
+  );
+
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={onClose}
+    >
+      <View style={[styles.modalContainer, { backgroundColor: colors.surface }]}>
+        <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
+          <Text style={[styles.modalTitle, { color: colors.text }]}>
+            Add permanent member
+          </Text>
+          <TouchableOpacity onPress={onClose} hitSlop={12}>
+            <Ionicons name="close" size={26} color={colors.text} />
+          </TouchableOpacity>
+        </View>
+
+        {memberData === undefined ? (
+          <View style={styles.centered}>
+            <ActivityIndicator size="small" color={colors.text} />
+          </View>
+        ) : (
+          <ScrollView contentContainerStyle={styles.modalScroll}>
+            <View
+              style={[
+                styles.group,
+                { backgroundColor: colors.surfaceSecondary },
+              ]}
+            >
+              {candidates.length === 0 ? (
+                <Text style={[styles.permEmpty, { color: colors.textSecondary }]}>
+                  Everyone in this group is already a permanent member.
+                </Text>
+              ) : (
+                candidates.map((member, idx) => {
+                  const busy = adding === (member.userId as string);
+                  return (
+                    <Pressable
+                      key={member.userId}
+                      onPress={() => handleAdd(member)}
+                      disabled={!!adding}
+                      style={({ pressed }) => [
+                        styles.permRow,
+                        idx > 0 && {
+                          borderTopWidth: StyleSheet.hairlineWidth,
+                          borderTopColor: colors.border,
+                        },
+                        pressed && { backgroundColor: colors.selectedBackground },
+                      ]}
+                    >
+                      <Avatar
+                        name={member.displayName}
+                        imageUrl={member.profilePhoto}
+                        size={36}
+                      />
+                      <Text
+                        style={[styles.permName, { color: colors.text }]}
+                        numberOfLines={1}
+                      >
+                        {member.displayName}
+                      </Text>
+                      {busy ? (
+                        <ActivityIndicator size="small" color={colors.text} />
+                      ) : (
+                        <Ionicons
+                          name="add"
+                          size={20}
+                          color={colors.textSecondary}
+                        />
+                      )}
+                    </Pressable>
+                  );
+                })
+              )}
+            </View>
+          </ScrollView>
+        )}
+      </View>
+    </Modal>
   );
 }
 
@@ -378,5 +696,65 @@ const styles = StyleSheet.create({
     fontSize: 13,
     textAlign: "center",
     marginTop: 12,
+  },
+  group: {
+    borderRadius: 12,
+    overflow: "hidden",
+  },
+  permLoading: {
+    paddingVertical: 24,
+    alignItems: "center",
+  },
+  permEmpty: {
+    fontSize: 14,
+    padding: 16,
+    lineHeight: 20,
+  },
+  permRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    minHeight: 56,
+  },
+  permName: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: "500",
+  },
+  iconBtn: {
+    padding: 4,
+  },
+  addRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 12,
+  },
+  addLabel: {
+    fontSize: 16,
+    fontWeight: "500",
+  },
+  modalContainer: {
+    flex: 1,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  modalTitle: {
+    fontSize: 17,
+    fontWeight: "600",
+  },
+  modalScroll: {
+    padding: 16,
   },
 });

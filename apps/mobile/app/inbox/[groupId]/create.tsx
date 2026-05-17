@@ -137,6 +137,10 @@ export default function CreateChannelScreen() {
         name: name.trim(),
         description: description.trim() || undefined,
         joinMode,
+        // Event Team channels don't auto-add the creator — they manage the
+        // channel as a group leader, and membership is auto-synced from
+        // event plans.
+        addCreatorAsMember: channelType !== "team",
       });
 
       if (channelType === "team") {
