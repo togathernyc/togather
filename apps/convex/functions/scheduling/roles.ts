@@ -12,7 +12,7 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "../../_generated/server";
 import { requireAuth } from "../../lib/auth";
-import { requireScheduler } from "./permissions";
+import { requireChannelGroupMember, requireScheduler } from "./permissions";
 import { suggestStarterRolesForName } from "./starterRoles";
 
 /** Sort roles by `sortOrder`, then creation time as a stable tiebreaker. */
@@ -193,7 +193,9 @@ export const reorderRoles = mutation({
 /**
  * List a channel's non-archived roles, sorted by display order.
  *
- * Auth: any authenticated user (read-only label data).
+ * Auth: an active member of the channel's campus group, or a community
+ * admin — a private team's role list should not be enumerable by arbitrary
+ * authenticated users.
  */
 export const listRoles = query({
   args: {
@@ -203,7 +205,8 @@ export const listRoles = query({
     includeArchived: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    await requireAuth(ctx, args.token);
+    const userId = await requireAuth(ctx, args.token);
+    await requireChannelGroupMember(ctx, args.channelId, userId);
 
     const roles = await ctx.db
       .query("teamRoles")
@@ -229,7 +232,9 @@ export const listRoles = query({
  * Pure convenience — the caller edits/dismisses before any `teamRoles` rows
  * are written. Returns nothing if the channel does not exist.
  *
- * Auth: any authenticated user.
+ * Auth: an active member of the channel's campus group, or a community
+ * admin — the response echoes the channel name, so it is gated like other
+ * channel-scoped reads.
  */
 export const suggestStarterRoles = query({
   args: {
@@ -237,12 +242,13 @@ export const suggestStarterRoles = query({
     channelId: v.id("chatChannels"),
   },
   handler: async (ctx, args) => {
-    await requireAuth(ctx, args.token);
+    const userId = await requireAuth(ctx, args.token);
 
-    const channel = await ctx.db.get(args.channelId);
-    if (!channel) {
-      return { channelName: null, roles: [] };
-    }
+    const channel = await requireChannelGroupMember(
+      ctx,
+      args.channelId,
+      userId,
+    );
 
     return {
       channelName: channel.name,

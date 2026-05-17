@@ -314,6 +314,83 @@ describe("seedNeededRolesFromDefaults", () => {
   });
 });
 
+describe("event query access control", () => {
+  it("listEvents rejects an authenticated outsider with a ConvexError", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const outsiderToken = (await generateTokens(world.outsiderId)).accessToken;
+
+    await expect(
+      t.query(api.functions.scheduling.events.listEvents, {
+        token: outsiderToken,
+        groupId: world.groupId,
+      }),
+    ).rejects.toThrow(ConvexError);
+  });
+
+  it("listEvents works for a group member", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const memberToken = (await generateTokens(world.channelMemberId))
+      .accessToken;
+
+    const events = await t.query(
+      api.functions.scheduling.events.listEvents,
+      { token: memberToken, groupId: world.groupId },
+    );
+    expect(Array.isArray(events)).toBe(true);
+  });
+
+  it("getEvent rejects an authenticated outsider with a ConvexError", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const outsiderToken = (await generateTokens(world.outsiderId)).accessToken;
+
+    const eventDate = Date.now() + 7 * DAY;
+    const { planId } = await t.mutation(
+      api.functions.scheduling.events.createEvent,
+      {
+        token: leaderToken,
+        groupId: world.groupId,
+        title: "Sunday",
+        eventDate,
+        times: [{ label: "9 AM", startsAt: eventDate }],
+      },
+    );
+
+    await expect(
+      t.query(api.functions.scheduling.events.getEvent, {
+        token: outsiderToken,
+        planId,
+      }),
+    ).rejects.toThrow(ConvexError);
+  });
+
+  it("getEvent works for a group member", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const memberToken = (await generateTokens(world.channelMemberId))
+      .accessToken;
+
+    const eventDate = Date.now() + 7 * DAY;
+    const { planId } = await t.mutation(
+      api.functions.scheduling.events.createEvent,
+      {
+        token: leaderToken,
+        groupId: world.groupId,
+        title: "Sunday",
+        eventDate,
+        times: [{ label: "9 AM", startsAt: eventDate }],
+      },
+    );
+
+    const event = await t.query(api.functions.scheduling.events.getEvent, {
+      token: memberToken,
+      planId,
+    });
+    expect(event).not.toBeNull();
+    expect(event!._id).toBe(planId);
+  });
+});
+
 describe("deleteEvent cascade", () => {
   it("deletes the plan, its neededRoles, and its roleAssignments", async () => {
     const { t, world } = await setupSchedulingWorld();

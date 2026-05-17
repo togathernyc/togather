@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
+import { ConvexError } from "convex/values";
 import { convexTest } from "convex-test";
 import schema from "../../schema";
 import { modules } from "../../test.setup";
@@ -508,6 +509,18 @@ describe("previousFillers", () => {
         fillers[i].lastServedDate,
       );
     }
+  });
+
+  it("rejects an authenticated outsider with a ConvexError", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const outsiderToken = (await generateTokens(world.outsiderId)).accessToken;
+
+    await expect(
+      t.query(api.functions.scheduling.assignments.previousFillers, {
+        token: outsiderToken,
+        roleId: world.roleId,
+      }),
+    ).rejects.toThrow(ConvexError);
   });
 
   it("excludes unconfirmed assignments", async () => {

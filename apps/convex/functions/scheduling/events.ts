@@ -17,6 +17,7 @@ import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import {
+  requireGroupMember,
   requireGroupScheduler,
   requirePlanScheduler,
 } from "./permissions";
@@ -437,7 +438,9 @@ function buildFillSummary(
 /**
  * List a group's events, upcoming first, each with a fill summary.
  *
- * Auth: any authenticated user.
+ * Auth: an active member of the group, or a community admin. Gating prevents
+ * an authenticated outsider from reading a private group's event plans,
+ * dates, notes, and fill summaries by supplying its `groupId`.
  */
 export const listEvents = query({
   args: {
@@ -447,7 +450,8 @@ export const listEvents = query({
     includePast: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    await requireAuth(ctx, args.token);
+    const userId = await requireAuth(ctx, args.token);
+    await requireGroupMember(ctx, args.groupId, userId);
 
     const plans = await ctx.db
       .query("eventPlans")
@@ -489,7 +493,10 @@ export const listEvents = query({
 /**
  * Get a single event with its needed roles and assignments grouped by role.
  *
- * Auth: any authenticated user.
+ * Auth: an active member of the event's group, or a community admin. Gating
+ * prevents an authenticated outsider from reading another group's event
+ * details — assignee names, statuses, and decline notes — via a guessed
+ * `planId`.
  */
 export const getEvent = query({
   args: {
@@ -497,10 +504,12 @@ export const getEvent = query({
     planId: v.id("eventPlans"),
   },
   handler: async (ctx, args) => {
-    await requireAuth(ctx, args.token);
+    const userId = await requireAuth(ctx, args.token);
 
     const plan = await ctx.db.get(args.planId);
     if (!plan) return null;
+
+    await requireGroupMember(ctx, plan.groupId, userId);
 
     const [neededRoles, assignments] = await Promise.all([
       ctx.db

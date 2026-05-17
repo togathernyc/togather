@@ -28,7 +28,7 @@ import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import { requireAuth, requireAuthFromTokenAction } from "../../lib/auth";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
-import { requirePlanScheduler } from "./permissions";
+import { requireChannelGroupMember, requirePlanScheduler } from "./permissions";
 
 /** Assignment statuses, for reference and validation. */
 const ASSIGNMENT_STATUSES = ["unconfirmed", "confirmed", "declined"] as const;
@@ -281,7 +281,9 @@ export const respondToAssignment = mutation({
  * recent first. Powers the assign-UI "previously filled by" quicklink
  * (ADR-023 — a derived query in place of a qualification table).
  *
- * Auth: any authenticated user.
+ * Auth: an active member of the role's campus group, or a community admin —
+ * the response leaks volunteer names, so it is gated like other
+ * group-scoped reads.
  */
 export const previousFillers = query({
   args: {
@@ -290,7 +292,13 @@ export const previousFillers = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    await requireAuth(ctx, args.token);
+    const userId = await requireAuth(ctx, args.token);
+
+    const role = await ctx.db.get(args.roleId);
+    if (!role) {
+      throw new ConvexError("Role not found");
+    }
+    await requireChannelGroupMember(ctx, role.channelId, userId);
 
     const assignments = await ctx.db
       .query("roleAssignments")

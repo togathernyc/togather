@@ -261,6 +261,45 @@ async function reconcileTeamChannelImpl(
 }
 
 /**
+ * Soft-remove every active auto-synced (`syncSource === "event_plan"`) member
+ * of a channel and refresh `chatChannels.memberCount`.
+ *
+ * Used when a channel stops being a serving team (`markChannelAsTeam` with
+ * `isTeam: false`): the rotation engine early-returns for non-serving
+ * channels, so its synced rows would otherwise be stranded as active members
+ * forever. Non-synced (manual / creator) rows are left untouched.
+ *
+ * Returns the number of rows soft-removed.
+ */
+export async function purgeSyncedMembers(
+  ctx: MutationCtx,
+  channelId: Id<"chatChannels">,
+): Promise<number> {
+  const now = Date.now();
+  const syncedMembers = await ctx.db
+    .query("chatChannelMembers")
+    .withIndex("by_channel_syncSource", (q) =>
+      q.eq("channelId", channelId).eq("syncSource", SYNC_SOURCE),
+    )
+    .collect();
+
+  let removed = 0;
+  for (const member of syncedMembers) {
+    if (member.leftAt !== undefined) continue; // already gone
+    await ctx.db.patch(member._id, {
+      leftAt: now,
+      scheduledRemovalAt: undefined,
+    });
+    removed += 1;
+  }
+
+  if (removed > 0) {
+    await updateChannelMemberCount(ctx, channelId);
+  }
+  return removed;
+}
+
+/**
  * Reconcile a single team channel's auto-synced membership against its event
  * plan assignments. Internal entrypoint used by assignment triggers and the
  * daily cron. Thin wrapper over `reconcileTeamChannelImpl`.

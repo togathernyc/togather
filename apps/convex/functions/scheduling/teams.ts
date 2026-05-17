@@ -12,6 +12,7 @@ import { requireAuth } from "../../lib/auth";
 import { getDisplayName, getMediaUrl } from "../../lib/utils";
 import { updateChannelMemberCount } from "../messaging/helpers";
 import { isScheduler, requireGroupMember, requireScheduler } from "./permissions";
+import { purgeSyncedMembers } from "./teamChannelSync";
 
 /**
  * Mark (or unmark) a channel as a serving team.
@@ -45,7 +46,20 @@ export const markChannelAsTeam = mutation({
       updatedAt: Date.now(),
     });
 
-    return { channelId: args.channelId, isServingTeam: isTeam };
+    // Disabling the team flag: the rotation engine (`reconcileTeamChannel`)
+    // early-returns for non-serving channels and the daily cron skips them,
+    // so any currently auto-synced members would be stranded as active
+    // members forever. Soft-remove them now and fix `memberCount`.
+    let removedSyncedMembers = 0;
+    if (!isTeam) {
+      removedSyncedMembers = await purgeSyncedMembers(ctx, args.channelId);
+    }
+
+    return {
+      channelId: args.channelId,
+      isServingTeam: isTeam,
+      removedSyncedMembers,
+    };
   },
 });
 

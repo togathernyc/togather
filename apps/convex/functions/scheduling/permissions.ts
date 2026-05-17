@@ -205,6 +205,34 @@ export async function requireGroupMember(
 }
 
 /**
+ * Require that `userId` may *view* a serving-team channel's data — resolves
+ * the channel to its owning campus group, then delegates to
+ * `requireGroupMember` (active group member or community admin).
+ *
+ * Used by read queries keyed by a `channelId` (channel roles, starter-role
+ * suggestions) so an authenticated outsider cannot enumerate another group's
+ * team data via a guessed channel id.
+ *
+ * @throws ConvexError if the channel/group is missing or the caller lacks
+ *   access.
+ */
+export async function requireChannelGroupMember(
+  ctx: QueryCtx | MutationCtx,
+  channelId: Id<"chatChannels">,
+  userId: Id<"users">,
+): Promise<Doc<"chatChannels">> {
+  const channel = await ctx.db.get(channelId);
+  if (!channel) {
+    throw new ConvexError("Channel not found");
+  }
+  if (!channel.groupId) {
+    throw new ConvexError("Channel is not attached to a campus group");
+  }
+  await requireGroupMember(ctx, channel.groupId, userId);
+  return channel;
+}
+
+/**
  * Resolve the campus-group scheduler used by an event plan, asserting the
  * caller may manage it. Returns both the plan and its owning group.
  *

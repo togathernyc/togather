@@ -23,6 +23,72 @@ async function setupSchedulingWorld() {
   return { t, world };
 }
 
+describe("markChannelAsTeam", () => {
+  it("soft-removes synced event_plan members when the team flag is disabled", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    // Insert an active auto-synced (event_plan) member directly — this is the
+    // kind of row the rotation engine owns and would otherwise strand.
+    await t.run(async (ctx) => {
+      await ctx.db.insert("chatChannelMembers", {
+        channelId: world.channelId,
+        userId: world.channelMemberId,
+        role: "member",
+        joinedAt: Date.now(),
+        isMuted: false,
+        syncSource: "event_plan",
+      });
+    });
+
+    const result = await t.mutation(
+      api.functions.scheduling.teams.markChannelAsTeam,
+      { token: leaderToken, channelId: world.channelId, isTeam: false },
+    );
+    expect(result.isServingTeam).toBe(false);
+    expect(result.removedSyncedMembers).toBe(1);
+
+    // The synced row is now soft-left; the channel is no longer a team.
+    await t.run(async (ctx) => {
+      const synced = await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_syncSource", (q) =>
+          q.eq("channelId", world.channelId).eq("syncSource", "event_plan"),
+        )
+        .collect();
+      expect(synced).toHaveLength(1);
+      expect(synced[0].leftAt).toBeDefined();
+
+      const channel = await ctx.db.get(world.channelId);
+      expect(channel?.isServingTeam).toBe(false);
+    });
+  });
+
+  it("leaves non-synced members untouched when the team flag is disabled", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    // The fixture's channelMemberId already has a non-synced (manual) row.
+    const result = await t.mutation(
+      api.functions.scheduling.teams.markChannelAsTeam,
+      { token: leaderToken, channelId: world.channelId, isTeam: false },
+    );
+    expect(result.removedSyncedMembers).toBe(0);
+
+    await t.run(async (ctx) => {
+      const manual = await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q
+            .eq("channelId", world.channelId)
+            .eq("userId", world.channelMemberId),
+        )
+        .first();
+      expect(manual?.leftAt).toBeUndefined();
+    });
+  });
+});
+
 describe("listTeamChannels", () => {
   it("returns the group's serving-team channels for a group member", async () => {
     const { t, world } = await setupSchedulingWorld();
