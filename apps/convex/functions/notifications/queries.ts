@@ -135,6 +135,8 @@ export const unreadCount = query({
       )
       .collect();
 
-    return { unreadCount: notifications.length };
+    // Exclude chat-message notifications so the global badge matches the
+    // feed (and its Inbox row), which also drop them — see the feed query.
+    return { unreadCount: notifications.filter(isFeedNotification).length };
   },
 });
