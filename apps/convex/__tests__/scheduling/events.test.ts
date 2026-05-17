@@ -10,7 +10,7 @@ import { convexTest } from "convex-test";
 import schema from "../../schema";
 import { modules } from "../../test.setup";
 import { generateTokens } from "../../lib/auth";
-import { api } from "../../_generated/api";
+import { api, internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import { buildSchedulingWorld } from "./fixtures";
 
@@ -256,5 +256,75 @@ describe("deleteEvent cascade", () => {
       expect(needed).toHaveLength(0);
       expect(assignments).toHaveLength(0);
     });
+  });
+
+  it("schedules a team-channel reconcile that drops synced members", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    // Event 2 days out — inside the rotation window, so the assignee is
+    // auto-synced into the team channel.
+    const eventDate = Date.now() + 2 * DAY;
+    const { planId } = await t.mutation(
+      api.functions.scheduling.events.createEvent,
+      {
+        token: leaderToken,
+        groupId: world.groupId,
+        title: "Soon",
+        eventDate,
+        times: [{ label: "9 AM", startsAt: eventDate }],
+      },
+    );
+    await t.mutation(api.functions.scheduling.assignments.assignRole, {
+      token: leaderToken,
+      planId,
+      channelId: world.channelId,
+      roleId: world.roleId,
+      userId: world.outsiderId,
+    });
+
+    const activeSynced = async () => {
+      const rows = await t.run(async (ctx) =>
+        ctx.db
+          .query("chatChannelMembers")
+          .withIndex("by_channel_syncSource", (q) =>
+            q.eq("channelId", world.channelId).eq("syncSource", "event_plan"),
+          )
+          .collect(),
+      );
+      return rows.filter(
+        (m) => m.userId === world.outsiderId && m.leftAt === undefined,
+      );
+    };
+
+    // Run the assignRole-triggered reconcile so the synced member exists.
+    await t.mutation(
+      internal.functions.scheduling.teamChannelSync.reconcileTeamChannel,
+      { channelId: world.channelId },
+    );
+    expect(await activeSynced()).toHaveLength(1);
+
+    // Delete the event. It should enqueue a reconcile for the channel.
+    await t.mutation(api.functions.scheduling.events.deleteEvent, {
+      token: leaderToken,
+      planId,
+    });
+    const scheduled = await t.run((ctx) =>
+      ctx.db.system.query("_scheduled_functions").collect(),
+    );
+    expect(
+      scheduled.some(
+        (r) =>
+          r.name.includes("teamChannelSync") &&
+          r.name.includes("reconcileTeamChannel"),
+      ),
+    ).toBe(true);
+
+    // Running that reconcile soft-removes the now-orphaned synced member.
+    await t.mutation(
+      internal.functions.scheduling.teamChannelSync.reconcileTeamChannel,
+      { channelId: world.channelId },
+    );
+    expect(await activeSynced()).toHaveLength(0);
   });
 });

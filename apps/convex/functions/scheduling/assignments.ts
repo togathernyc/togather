@@ -23,6 +23,7 @@ import {
   mutation,
   query,
 } from "../../_generated/server";
+import type { QueryCtx, MutationCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import { requireAuth, requireAuthFromTokenAction } from "../../lib/auth";
@@ -31,6 +32,59 @@ import { requirePlanScheduler } from "./permissions";
 
 /** Assignment statuses, for reference and validation. */
 const ASSIGNMENT_STATUSES = ["unconfirmed", "confirmed", "declined"] as const;
+
+/** Milliseconds in one day — used for calendar-day double-booking buckets. */
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * Floor a timestamp to the start of its UTC calendar day. Two `eventDate`
+ * values that share a bucket fall on the same calendar day, regardless of
+ * the time of day — this is what the double-booking "same day" rule means.
+ */
+function utcDayBucket(eventDate: number): number {
+  return Math.floor(eventDate / MS_PER_DAY) * MS_PER_DAY;
+}
+
+/**
+ * Validate that a `channelId`/`roleId` pair is internally consistent and
+ * belongs to the given group. Without this, a scheduler authorized for
+ * group A could pass a channel/role from an unrelated group B and have
+ * volunteers later synced into B's team channel.
+ *
+ * Asserts:
+ *   - the `teamRoles` row exists and its `channelId` equals `channelId`;
+ *   - the `chatChannels` row exists, is a serving team, and its `groupId`
+ *     equals `groupId` (the event plan's owning group).
+ *
+ * @throws ConvexError on any mismatch.
+ */
+async function requireChannelRolePair(
+  ctx: QueryCtx | MutationCtx,
+  channelId: Id<"chatChannels">,
+  roleId: Id<"teamRoles">,
+  groupId: Id<"groups">,
+): Promise<void> {
+  const role = await ctx.db.get(roleId);
+  if (!role) {
+    throw new ConvexError("Role not found");
+  }
+  if (role.channelId !== channelId) {
+    throw new ConvexError("Role does not belong to the specified team channel");
+  }
+
+  const channel = await ctx.db.get(channelId);
+  if (!channel) {
+    throw new ConvexError("Channel not found");
+  }
+  if (channel.isServingTeam !== true) {
+    throw new ConvexError("Channel is not a serving team");
+  }
+  if (channel.groupId !== groupId) {
+    throw new ConvexError(
+      "Team channel does not belong to this event's group",
+    );
+  }
+}
 
 /**
  * Assign a channel member to a role on an event. Creates an `unconfirmed`
@@ -56,6 +110,11 @@ export const assignRole = mutation({
     const callerId = await requireAuth(ctx, args.token);
     const { plan } = await requirePlanScheduler(ctx, args.planId, callerId);
 
+    // Security: the channelId/roleId pair must be consistent and belong to
+    // this event's group — otherwise a scheduler for one group could inject
+    // volunteers into an unrelated group's team channel via the later sync.
+    await requireChannelRolePair(ctx, args.channelId, args.roleId, plan.groupId);
+
     // Guard against assigning the same person to the same role twice.
     const roleAssignments = await ctx.db
       .query("roleAssignments")
@@ -67,14 +126,21 @@ export const assignRole = mutation({
       throw new ConvexError("This person is already assigned to this role");
     }
 
-    // Double-booking detection: any other assignment for this user on the
-    // same eventDate (across all teams/events).
-    const sameDay = await ctx.db
+    // Double-booking detection: any other assignment for this user that
+    // falls on the same calendar day (across all teams/events). We compare
+    // by UTC day bucket — two events on the same day at 9 AM and 11 AM have
+    // different `eventDate` values but still collide. Assignments on the
+    // current plan are excluded so re-assigning within an event never warns.
+    const targetDay = utcDayBucket(plan.eventDate);
+    const userAssignments = await ctx.db
       .query("roleAssignments")
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
-      .filter((q) => q.eq(q.field("eventDate"), plan.eventDate))
       .collect();
-    const doubleBooked = sameDay.length > 0;
+    const doubleBooked = userAssignments.some(
+      (a) =>
+        a.planId !== args.planId &&
+        utcDayBucket(a.eventDate) === targetDay,
+    );
 
     const assignmentId = await ctx.db.insert("roleAssignments", {
       planId: args.planId,

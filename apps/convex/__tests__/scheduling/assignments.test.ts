@@ -179,6 +179,123 @@ describe("assignment state machine", () => {
   });
 });
 
+describe("assignRole channel/role ownership validation", () => {
+  it("rejects a roleId that does not belong to the supplied channel", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 7);
+
+    // A second serving channel in the SAME group, with its own role. The
+    // role belongs to `otherChannelId`, not `world.channelId`.
+    const { otherChannelId, otherRoleId } = await t.run(async (ctx) => {
+      const otherChannelId = await ctx.db.insert("chatChannels", {
+        groupId: world.groupId,
+        communityId: world.communityId,
+        name: "Tech Team",
+        channelType: "custom",
+        memberCount: 0,
+        isArchived: false,
+        isServingTeam: true,
+        createdById: world.channelAdminId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      const otherRoleId = await ctx.db.insert("teamRoles", {
+        channelId: otherChannelId,
+        communityId: world.communityId,
+        name: "Sound",
+        sortOrder: 0,
+        isArchived: false,
+        createdAt: Date.now(),
+        createdById: world.channelAdminId,
+      });
+      return { otherChannelId, otherRoleId };
+    });
+
+    // channelId from one team, roleId from another → mismatch.
+    await expect(
+      t.mutation(api.functions.scheduling.assignments.assignRole, {
+        token: leaderToken,
+        planId,
+        channelId: world.channelId,
+        roleId: otherRoleId,
+        userId: world.channelMemberId,
+      }),
+    ).rejects.toThrow(/does not belong to the specified team channel/);
+
+    // Using a fully consistent foreign pair is fine (same group).
+    const ok = await t.mutation(
+      api.functions.scheduling.assignments.assignRole,
+      {
+        token: leaderToken,
+        planId,
+        channelId: otherChannelId,
+        roleId: otherRoleId,
+        userId: world.channelMemberId,
+      },
+    );
+    expect(ok.assignmentId).toBeTruthy();
+  });
+
+  it("rejects a channel/role pair belonging to a different group", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 7);
+
+    // A consistent channel+role pair, but owned by an unrelated group B.
+    const { foreignChannelId, foreignRoleId } = await t.run(async (ctx) => {
+      const groupTypeId = await ctx.db.insert("groupTypes", {
+        communityId: world.communityId,
+        name: "Campus",
+        slug: "campus-b",
+        isActive: true,
+        createdAt: Date.now(),
+        displayOrder: 2,
+      });
+      const foreignGroupId = await ctx.db.insert("groups", {
+        communityId: world.communityId,
+        groupTypeId,
+        name: "Queens Campus",
+        isArchived: false,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      const foreignChannelId = await ctx.db.insert("chatChannels", {
+        groupId: foreignGroupId,
+        communityId: world.communityId,
+        name: "Other Worship Team",
+        channelType: "custom",
+        memberCount: 0,
+        isArchived: false,
+        isServingTeam: true,
+        createdById: world.channelAdminId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      const foreignRoleId = await ctx.db.insert("teamRoles", {
+        channelId: foreignChannelId,
+        communityId: world.communityId,
+        name: "Bass",
+        sortOrder: 0,
+        isArchived: false,
+        createdAt: Date.now(),
+        createdById: world.channelAdminId,
+      });
+      return { foreignChannelId, foreignRoleId };
+    });
+
+    await expect(
+      t.mutation(api.functions.scheduling.assignments.assignRole, {
+        token: leaderToken,
+        planId,
+        channelId: foreignChannelId,
+        roleId: foreignRoleId,
+        userId: world.channelMemberId,
+      }),
+    ).rejects.toThrow(/does not belong to this event's group/);
+  });
+});
+
 describe("double-booking detection", () => {
   it("flags a user already assigned on the same day", async () => {
     const { t, world } = await setupSchedulingWorld();
@@ -228,6 +345,62 @@ describe("double-booking detection", () => {
       },
     );
     expect(secondAssign.doubleBooked).toBe(true);
+  });
+
+  it("flags same calendar day even when eventDate timestamps differ", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    // Two plans on the same UTC calendar day but at different times of day
+    // (9 AM vs 11 AM) → distinct eventDate millisecond values.
+    const dayStart =
+      Math.floor((Date.now() + 7 * DAY) / DAY) * DAY;
+    const morning = dayStart + 9 * 60 * 60 * 1000;
+    const midday = dayStart + 11 * 60 * 60 * 1000;
+
+    const planA = (
+      await t.mutation(api.functions.scheduling.events.createEvent, {
+        token: leaderToken,
+        groupId: world.groupId,
+        title: "9 AM Service",
+        eventDate: morning,
+        times: [{ label: "9 AM", startsAt: morning }],
+      })
+    ).planId;
+    const planB = (
+      await t.mutation(api.functions.scheduling.events.createEvent, {
+        token: leaderToken,
+        groupId: world.groupId,
+        title: "11 AM Service",
+        eventDate: midday,
+        times: [{ label: "11 AM", startsAt: midday }],
+      })
+    ).planId;
+
+    const first = await t.mutation(
+      api.functions.scheduling.assignments.assignRole,
+      {
+        token: leaderToken,
+        planId: planA,
+        channelId: world.channelId,
+        roleId: world.roleId,
+        userId: world.channelMemberId,
+      },
+    );
+    expect(first.doubleBooked).toBe(false);
+
+    const second = await t.mutation(
+      api.functions.scheduling.assignments.assignRole,
+      {
+        token: leaderToken,
+        planId: planB,
+        channelId: world.channelId,
+        roleId: world.roleId,
+        userId: world.channelMemberId,
+      },
+    );
+    // Exact-equality would miss this — calendar-day bucketing catches it.
+    expect(second.doubleBooked).toBe(true);
   });
 
   it("does not flag a user assigned on a different day", async () => {

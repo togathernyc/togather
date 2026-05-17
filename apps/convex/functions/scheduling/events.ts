@@ -12,6 +12,7 @@
 
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "../../_generated/server";
+import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import {
@@ -210,11 +211,26 @@ export const deleteEvent = mutation({
         .collect(),
     ]);
 
+    // Distinct team channels touched by this event's assignments — captured
+    // before the deletes so we can reconcile them afterwards.
+    const channelIds = [...new Set(assignments.map((a) => a.channelId))];
+
     await Promise.all([
       ...neededRoles.map((row) => ctx.db.delete(row._id)),
       ...assignments.map((row) => ctx.db.delete(row._id)),
     ]);
     await ctx.db.delete(args.planId);
+
+    // Auto-sync each affected team channel so its derived membership drops
+    // the now-deleted assignees immediately rather than waiting for the
+    // daily cron — mirrors `unassign`'s reconcile trigger.
+    for (const channelId of channelIds) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.scheduling.teamChannelSync.reconcileTeamChannel,
+        { channelId },
+      );
+    }
 
     return {
       deletedNeededRoles: neededRoles.length,
@@ -244,7 +260,35 @@ export const setNeededRoles = mutation({
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
-    await requirePlanScheduler(ctx, args.planId, userId);
+    const { plan } = await requirePlanScheduler(ctx, args.planId, userId);
+
+    // Security: each channelId/roleId pair must be consistent and belong to
+    // this event's group — otherwise a foreign team's role could be declared
+    // as needed and pull volunteers into another group's channel on publish.
+    for (const role of args.roles) {
+      if (role.count <= 0) continue;
+      const teamRole = await ctx.db.get(role.roleId);
+      if (!teamRole) {
+        throw new ConvexError("Role not found");
+      }
+      if (teamRole.channelId !== role.channelId) {
+        throw new ConvexError(
+          "Role does not belong to the specified team channel",
+        );
+      }
+      const channel = await ctx.db.get(role.channelId);
+      if (!channel) {
+        throw new ConvexError("Channel not found");
+      }
+      if (channel.isServingTeam !== true) {
+        throw new ConvexError("Channel is not a serving team");
+      }
+      if (channel.groupId !== plan.groupId) {
+        throw new ConvexError(
+          "Team channel does not belong to this event's group",
+        );
+      }
+    }
 
     const existing = await ctx.db
       .query("neededRoles")
