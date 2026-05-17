@@ -9,6 +9,7 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
+import { ConvexError } from "convex/values";
 import { convexTest } from "convex-test";
 import schema from "../../schema";
 import { modules } from "../../test.setup";
@@ -278,6 +279,44 @@ describe("team channel auto-sync — reconcileTeamChannel", () => {
     // No duplicate row created; the original manual row is untouched.
     expect(rows.length).toBe(1);
     expect(rows[0].syncSource).toBeUndefined();
+  });
+});
+
+describe("team channel auto-sync — triggerTeamChannelSync (public)", () => {
+  it("reconciles the channel for a scheduler", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 3);
+
+    // Event is 3 days out — inside the 5-day add window.
+    await insertAssignment(t, world, {
+      planId,
+      userId: world.outsiderId,
+      eventDate: Date.now() + 3 * DAY,
+    });
+
+    const result = await t.mutation(
+      api.functions.scheduling.teamChannelSync.triggerTeamChannelSync,
+      { token: leaderToken, channelId: world.channelId },
+    );
+    expect(result.addedCount).toBe(1);
+    expect(result.removedCount).toBe(0);
+
+    const members = await syncedMemberIds(t, world);
+    expect(members.has(world.outsiderId)).toBe(true);
+  });
+
+  it("rejects a non-scheduler with a ConvexError", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    // The outsider has no channel/group/community role — not a scheduler.
+    const outsiderToken = (await generateTokens(world.outsiderId)).accessToken;
+
+    await expect(
+      t.mutation(
+        api.functions.scheduling.teamChannelSync.triggerTeamChannelSync,
+        { token: outsiderToken, channelId: world.channelId },
+      ),
+    ).rejects.toThrow(ConvexError);
   });
 });
 

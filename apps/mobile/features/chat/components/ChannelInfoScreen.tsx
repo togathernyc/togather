@@ -164,6 +164,9 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
   const addByPcoPersonId = useAuthenticatedMutation(
     api.functions.groupMembers.addByPcoPersonId,
   );
+  const triggerTeamChannelSync = useAuthenticatedMutation(
+    api.functions.scheduling.teamChannelSync.triggerTeamChannelSync,
+  );
 
   // Auto channel config — drives the "Not in channel" section for PCO synced
   // channels. Backend gates by leader role + community-admin, so a non-leader
@@ -184,6 +187,7 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
   const [archiving, setArchiving] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [pcoSettingsVisible, setPcoSettingsVisible] = useState(false);
+  const [teamSyncing, setTeamSyncing] = useState(false);
   const [requestInFlight, setRequestInFlight] = useState<string | null>(null);
   const [unmatchedActionInFlight, setUnmatchedActionInFlight] = useState<
     string | null
@@ -342,6 +346,24 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
       setArchiving(false);
     }
   }, [channel?._id, archiveCustomChannelMutation, groupId, router]);
+
+  const handleTeamChannelSync = useCallback(async () => {
+    if (!channel?._id || teamSyncing) return;
+    setTeamSyncing(true);
+    try {
+      const result = await triggerTeamChannelSync({ channelId: channel._id });
+      const { addedCount, removedCount } = result;
+      const message =
+        addedCount === 0 && removedCount === 0
+          ? "Members are up to date."
+          : `${addedCount} added, ${removedCount} removed.`;
+      Alert.alert("Members synced", message);
+    } catch (e: any) {
+      Alert.alert("Couldn't sync", e?.message || "Please try again.");
+    } finally {
+      setTeamSyncing(false);
+    }
+  }, [channel?._id, teamSyncing, triggerTeamChannelSync]);
 
   const handleAddUnmatchedToGroup = useCallback(
     async (person: UnsyncedPerson) => {
@@ -1060,6 +1082,53 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
                   />
                 </Pressable>
               )}
+
+              {/* Sync members — for serving-team channels, force an
+                  immediate reconcile of auto-synced membership against the
+                  current event-plan assignments (ADR-023). */}
+              {isCustom &&
+                (channel as { isServingTeam?: boolean }).isServingTeam && (
+                  <Pressable
+                    onPress={handleTeamChannelSync}
+                    disabled={teamSyncing}
+                    style={({ pressed }) => [
+                      styles.actionRowFlat,
+                      {
+                        borderTopWidth: StyleSheet.hairlineWidth,
+                        borderTopColor: colors.border,
+                      },
+                      pressed && {
+                        backgroundColor: colors.selectedBackground,
+                      },
+                      teamSyncing && { opacity: 0.5 },
+                    ]}
+                  >
+                    <Ionicons
+                      name="sync-outline"
+                      size={20}
+                      color={colors.icon}
+                    />
+                    <Text
+                      style={[styles.actionLabel, { color: colors.text }]}
+                    >
+                      Sync members
+                    </Text>
+                    {teamSyncing ? (
+                      <ActivityIndicator
+                        size="small"
+                        color={colors.textTertiary}
+                        style={{ marginLeft: "auto" }}
+                      />
+                    ) : (
+                      <Ionicons
+                        name="chevron-forward"
+                        size={18}
+                        color={colors.textTertiary}
+                        style={{ marginLeft: "auto" }}
+                      />
+                    )}
+                  </Pressable>
+                )}
 
               {/* Rename — custom channels only (backend gates the rest). */}
               {isCustom && (
