@@ -187,16 +187,40 @@ async function reconcileTeamChannelImpl(
       continue;
     }
 
-    // The user may already be in the channel as a manual / creator member
-    // (no syncSource, or a different syncSource). We do not touch those rows
-    // — they are not auto-managed — and skip inserting a synced duplicate.
-    const manualRow = await ctx.db
+    // The user may already have a non-synced row in the channel. We only
+    // skip when that row is *active* (no `leftAt`) — an active manual /
+    // creator member is not auto-managed, and inserting a synced duplicate
+    // would give one user two active rows. A soft-left row, by contrast,
+    // means the user is NOT in the channel, so we reactivate it as a synced
+    // row (consistent with the re-add path above) rather than inserting a
+    // duplicate.
+    const priorRows = await ctx.db
       .query("chatChannelMembers")
       .withIndex("by_channel_user", (q) =>
         q.eq("channelId", args.channelId).eq("userId", userId),
       )
-      .first();
-    if (manualRow) {
+      .collect();
+    const activeRow = priorRows.find((r) => r.leftAt === undefined);
+    if (activeRow) {
+      continue;
+    }
+    const softLeftRow = priorRows.find((r) => r.leftAt !== undefined);
+    if (softLeftRow) {
+      await ctx.db.patch(softLeftRow._id, {
+        role: "member",
+        joinedAt: now,
+        isMuted: false,
+        syncSource: SYNC_SOURCE,
+        syncEventId: info.planId,
+        scheduledRemovalAt: removalAt,
+        syncMetadata,
+        leftAt: undefined,
+        displayName,
+        profilePhoto: user?.profilePhoto
+          ? getMediaUrl(user.profilePhoto)
+          : softLeftRow.profilePhoto,
+      });
+      added += 1;
       continue;
     }
 

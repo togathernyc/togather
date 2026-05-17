@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
+import { ConvexError } from "convex/values";
 import { convexTest } from "convex-test";
 import schema from "../../schema";
 import { modules } from "../../test.setup";
@@ -202,6 +203,113 @@ describe("duplicateEvent", () => {
         .withIndex("by_plan", (q) => q.eq("planId", copyId))
         .collect();
       expect(assignments).toHaveLength(0);
+    });
+  });
+});
+
+describe("seedNeededRolesFromDefaults", () => {
+  it("seeds neededRoles from a team channel's role defaults", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    const eventDate = Date.now() + 7 * DAY;
+    const { planId } = await t.mutation(
+      api.functions.scheduling.events.createEvent,
+      {
+        token: leaderToken,
+        groupId: world.groupId,
+        title: "Sunday",
+        eventDate,
+        times: [{ label: "9 AM", startsAt: eventDate }],
+      },
+    );
+
+    // The fixture's Drums role has defaultNeeded: 1.
+    const res = await t.mutation(
+      api.functions.scheduling.events.seedNeededRolesFromDefaults,
+      { token: leaderToken, planId, channelIds: [world.channelId] },
+    );
+    expect(res.neededRoleCount).toBe(1);
+  });
+
+  it("rejects a channel from another group with a ConvexError", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    const eventDate = Date.now() + 7 * DAY;
+    const { planId } = await t.mutation(
+      api.functions.scheduling.events.createEvent,
+      {
+        token: leaderToken,
+        groupId: world.groupId,
+        title: "Sunday",
+        eventDate,
+        times: [{ label: "9 AM", startsAt: eventDate }],
+      },
+    );
+
+    // A serving-team channel belonging to a DIFFERENT group/community.
+    const foreignChannelId = await t.run(async (ctx) => {
+      const foreignCommunityId = await ctx.db.insert("communities", {
+        name: "Other Community",
+        slug: "other",
+        isPublic: true,
+      });
+      const foreignGroupTypeId = await ctx.db.insert("groupTypes", {
+        communityId: foreignCommunityId,
+        name: "Campus",
+        slug: "campus",
+        isActive: true,
+        createdAt: Date.now(),
+        displayOrder: 1,
+      });
+      const foreignGroupId = await ctx.db.insert("groups", {
+        communityId: foreignCommunityId,
+        groupTypeId: foreignGroupTypeId,
+        name: "Foreign Campus",
+        isArchived: false,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      const channelId = await ctx.db.insert("chatChannels", {
+        groupId: foreignGroupId,
+        communityId: foreignCommunityId,
+        name: "Foreign Team",
+        channelType: "custom",
+        memberCount: 0,
+        isArchived: false,
+        isServingTeam: true,
+        createdById: world.groupLeaderId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert("teamRoles", {
+        channelId,
+        communityId: foreignCommunityId,
+        name: "Foreign Drums",
+        sortOrder: 0,
+        defaultNeeded: 2,
+        isArchived: false,
+        createdAt: Date.now(),
+        createdById: world.groupLeaderId,
+      });
+      return channelId;
+    });
+
+    await expect(
+      t.mutation(
+        api.functions.scheduling.events.seedNeededRolesFromDefaults,
+        { token: leaderToken, planId, channelIds: [foreignChannelId] },
+      ),
+    ).rejects.toThrow(ConvexError);
+
+    // Nothing seeded.
+    await t.run(async (ctx) => {
+      const needed = await ctx.db
+        .query("neededRoles")
+        .withIndex("by_plan", (q) => q.eq("planId", planId))
+        .collect();
+      expect(needed).toHaveLength(0);
     });
   });
 });

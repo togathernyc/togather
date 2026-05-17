@@ -253,6 +253,51 @@ describe("team channel auto-sync — reconcileTeamChannel", () => {
     expect(activeManual.length).toBe(3);
   });
 
+  it("re-adds a user whose only prior channel row is soft-left", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 3);
+
+    // The user once had a channel membership but was removed — only a
+    // soft-left row (leftAt set) remains, so they are NOT in the channel.
+    await t.run((ctx) =>
+      ctx.db.insert("chatChannelMembers", {
+        channelId: world.channelId,
+        userId: world.outsiderId,
+        role: "member",
+        joinedAt: Date.now() - 30 * DAY,
+        isMuted: false,
+        leftAt: Date.now() - 20 * DAY,
+      }),
+    );
+
+    // They are now assigned to an in-window event.
+    await insertAssignment(t, world, {
+      planId,
+      userId: world.outsiderId,
+      eventDate: Date.now() + 3 * DAY,
+    });
+
+    const result = await reconcile(t, world);
+    expect(result.added).toBe(1);
+
+    // The user is back in the channel.
+    expect((await syncedMemberIds(t, world)).has(world.outsiderId)).toBe(true);
+
+    // No duplicate row: exactly one row for the user, active and synced.
+    const rows = await t.run((ctx) =>
+      ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", world.channelId).eq("userId", world.outsiderId),
+        )
+        .collect(),
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].leftAt).toBeUndefined();
+    expect(rows[0].syncSource).toBe("event_plan");
+  });
+
   it("a manually-present member assigned to a role is left as a manual member", async () => {
     const { t, world } = await setupSchedulingWorld();
     const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;

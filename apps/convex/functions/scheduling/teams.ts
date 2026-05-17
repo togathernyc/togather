@@ -11,7 +11,7 @@ import { mutation, query } from "../../_generated/server";
 import { requireAuth } from "../../lib/auth";
 import { getDisplayName, getMediaUrl } from "../../lib/utils";
 import { updateChannelMemberCount } from "../messaging/helpers";
-import { isScheduler, requireScheduler } from "./permissions";
+import { isScheduler, requireGroupMember, requireScheduler } from "./permissions";
 
 /**
  * Mark (or unmark) a channel as a serving team.
@@ -52,7 +52,9 @@ export const markChannelAsTeam = mutation({
 /**
  * List the serving-team channels for a campus group.
  *
- * Auth: any active member of the group (read-only roster info).
+ * Auth: an active member of the group, or a community admin. Gating this
+ * prevents an authenticated outsider from enumerating a private group's
+ * team channel names and member counts.
  */
 export const listTeamChannels = query({
   args: {
@@ -60,7 +62,8 @@ export const listTeamChannels = query({
     groupId: v.id("groups"),
   },
   handler: async (ctx, args) => {
-    await requireAuth(ctx, args.token);
+    const userId = await requireAuth(ctx, args.token);
+    await requireGroupMember(ctx, args.groupId, userId);
 
     const channels = await ctx.db
       .query("chatChannels")

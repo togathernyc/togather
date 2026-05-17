@@ -12,6 +12,7 @@
 
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "../../_generated/server";
+import type { MutationCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
@@ -22,6 +23,38 @@ import {
 
 /** Statuses that consume a slot in fill-summary math (ADR-023). */
 const FILLED_STATUSES = new Set(["confirmed", "unconfirmed"]);
+
+/**
+ * Resolve a serving-team channel and assert it belongs to `groupId`.
+ *
+ * Shared by every mutation that seeds `neededRoles` from a caller-supplied
+ * `channelId` (`setNeededRoles`, `seedNeededRolesFromDefaults`). Without this
+ * check a caller authorized for one group could declare a foreign team's
+ * roles as needed and pull that team's volunteers into another group's
+ * channel on publish.
+ *
+ * @throws ConvexError if the channel is missing, not a serving team, or
+ *   belongs to a different group.
+ */
+async function requireGroupServingChannel(
+  ctx: MutationCtx,
+  channelId: Id<"chatChannels">,
+  groupId: Id<"groups">,
+): Promise<Doc<"chatChannels">> {
+  const channel = await ctx.db.get(channelId);
+  if (!channel) {
+    throw new ConvexError("Channel not found");
+  }
+  if (channel.isServingTeam !== true) {
+    throw new ConvexError("Channel is not a serving team");
+  }
+  if (channel.groupId !== groupId) {
+    throw new ConvexError(
+      "Team channel does not belong to this event's group",
+    );
+  }
+  return channel;
+}
 
 const timeValidator = v.object({
   label: v.string(),
@@ -288,18 +321,7 @@ export const setNeededRoles = mutation({
           "Role does not belong to the specified team channel",
         );
       }
-      const channel = await ctx.db.get(role.channelId);
-      if (!channel) {
-        throw new ConvexError("Channel not found");
-      }
-      if (channel.isServingTeam !== true) {
-        throw new ConvexError("Channel is not a serving team");
-      }
-      if (channel.groupId !== plan.groupId) {
-        throw new ConvexError(
-          "Team channel does not belong to this event's group",
-        );
-      }
+      await requireGroupServingChannel(ctx, role.channelId, plan.groupId);
     }
 
     const existing = await ctx.db
@@ -339,10 +361,14 @@ export const seedNeededRolesFromDefaults = mutation({
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
-    await requirePlanScheduler(ctx, args.planId, userId);
+    const { plan } = await requirePlanScheduler(ctx, args.planId, userId);
 
     let written = 0;
     for (const channelId of args.channelIds) {
+      // Security: only seed from serving-team channels that belong to this
+      // event's group — same check `setNeededRoles` / `assignRole` enforce.
+      await requireGroupServingChannel(ctx, channelId, plan.groupId);
+
       const roles = await ctx.db
         .query("teamRoles")
         .withIndex("by_channel", (q) => q.eq("channelId", channelId))

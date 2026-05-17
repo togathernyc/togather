@@ -162,6 +162,49 @@ export async function requireGroupScheduler(
 }
 
 /**
+ * Require that `userId` may *view* a campus group's serving-team roster —
+ * an active member of the group OR a community admin. This is a read-level
+ * gate (weaker than `requireGroupScheduler`, which demands leadership) used
+ * by listing queries so an authenticated outsider cannot enumerate a private
+ * group's team channels.
+ *
+ * @throws ConvexError if the group is missing or the caller lacks access.
+ */
+export async function requireGroupMember(
+  ctx: QueryCtx | MutationCtx,
+  groupId: Id<"groups">,
+  userId: Id<"users">,
+): Promise<Doc<"groups">> {
+  const group = await ctx.db.get(groupId);
+  if (!group) {
+    throw new ConvexError("Group not found");
+  }
+
+  const membership = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_group_user", (q) =>
+      q.eq("groupId", groupId).eq("userId", userId),
+    )
+    .filter((q) => q.eq(q.field("leftAt"), undefined))
+    .first();
+  const isActiveMember = !!(
+    membership &&
+    (!membership.requestStatus || membership.requestStatus === "accepted")
+  );
+  if (isActiveMember) {
+    return group;
+  }
+
+  if (await isCommunityAdmin(ctx, group.communityId, userId)) {
+    return group;
+  }
+
+  throw new ConvexError(
+    "You must be a member of this group to view its serving teams",
+  );
+}
+
+/**
  * Resolve the campus-group scheduler used by an event plan, asserting the
  * caller may manage it. Returns both the plan and its owning group.
  *
