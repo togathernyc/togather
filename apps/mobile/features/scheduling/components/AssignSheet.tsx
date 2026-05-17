@@ -46,8 +46,8 @@ type AssignablePerson = {
 /** Raw row shape returned by `groupMembers.list`. */
 type GroupMemberRow = {
   id: string;
-  odUserId: Id<"users">;
   user: {
+    id: Id<"users">;
     firstName: string;
     lastName: string;
     profileImage?: string;
@@ -97,7 +97,7 @@ export function AssignSheet({
       .filter((row): row is GroupMemberRow & { user: NonNullable<GroupMemberRow["user"]> } => row.user !== null)
       .map((row) => ({
         id: row.id,
-        userId: row.odUserId,
+        userId: row.user.id,
         displayName:
           `${row.user.firstName} ${row.user.lastName}`.trim() || "Member",
         profilePhoto: row.user.profileImage,

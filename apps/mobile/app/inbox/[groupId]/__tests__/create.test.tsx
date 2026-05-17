@@ -270,6 +270,7 @@ describe("CreateChannelScreen", () => {
           name: "Test Channel",
           description: "Test description",
           joinMode: "open",
+          addCreatorAsMember: true,
         });
       });
     });
@@ -297,6 +298,7 @@ describe("CreateChannelScreen", () => {
           name: "Test Channel",
           description: "Test description",
           joinMode: "open",
+          addCreatorAsMember: true,
         });
       });
     });
@@ -322,6 +324,7 @@ describe("CreateChannelScreen", () => {
           name: "Test Channel",
           description: undefined,
           joinMode: "open",
+          addCreatorAsMember: true,
         });
       });
     });
